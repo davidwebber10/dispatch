@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 import os from 'os';
 import path from 'path';
 import express from 'express';
@@ -7,15 +8,14 @@ import request from 'supertest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
-import { createFilesRouter } from './files.js';
-
-const TMP_UPLOAD_DIR = '/tmp/commandcenter-uploads';
+import { createFilesRouter, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
 
 function makeApp(workingDir: string) {
   const db = new Database(':memory:');
   initSchema(db);
   sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'test', workingDir });
   const app = express();
+  app.use(express.json());
   app.use('/api/sessions/:id/files', createFilesRouter(db));
   return app;
 }
@@ -55,5 +55,109 @@ describe('upload tmp dir resilience', () => {
       .attach('file', Buffer.from('world'), { filename: 'up.txt', contentType: 'text/plain' });
     expect(res.status).toBe(200);
     expect(fs.readFileSync(path.join(workDir, 'up.txt'), 'utf8')).toBe('world');
+  });
+});
+
+describe('path safety and read limits', () => {
+  let workDir: string;
+  beforeEach(() => { workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-sec-')); });
+  afterEach(() => { fs.rmSync(workDir, { recursive: true, force: true }); });
+
+  it('delete refuses the project root and leaves it intact', async () => {
+    fs.writeFileSync(path.join(workDir, 'keep.txt'), 'x');
+    for (const p of ['.', './', 'sub/..']) {
+      const res = await request(makeApp(workDir)).delete('/api/sessions/s1/files').query({ path: p });
+      expect(res.status).toBe(400);
+    }
+    expect(fs.existsSync(path.join(workDir, 'keep.txt'))).toBe(true);
+  });
+
+  it('delete refuses an empty path and a path outside the project', async () => {
+    const app = makeApp(workDir);
+    expect((await request(app).delete('/api/sessions/s1/files').query({ path: '' })).status).toBe(400);
+    expect((await request(app).delete('/api/sessions/s1/files').query({ path: '../x' })).status).toBe(403);
+    expect(fs.existsSync(workDir)).toBe(true);
+  });
+
+  it('delete still removes a file and a nested directory', async () => {
+    fs.mkdirSync(path.join(workDir, 'd/e'), { recursive: true });
+    fs.writeFileSync(path.join(workDir, 'f.txt'), 'x');
+    const app = makeApp(workDir);
+    expect((await request(app).delete('/api/sessions/s1/files').query({ path: 'f.txt' })).status).toBe(200);
+    expect((await request(app).delete('/api/sessions/s1/files').query({ path: 'd' })).status).toBe(200);
+    expect(fs.existsSync(path.join(workDir, 'd'))).toBe(false);
+  });
+
+  it('rename refuses the project root as source or target', async () => {
+    fs.writeFileSync(path.join(workDir, 'a.txt'), 'x');
+    const app = makeApp(workDir);
+    expect((await request(app).post('/api/sessions/s1/files/rename').send({ from: '.', to: 'moved' })).status).toBe(400);
+    expect((await request(app).post('/api/sessions/s1/files/rename').send({ from: 'a.txt', to: '.' })).status).toBe(400);
+    expect(fs.existsSync(path.join(workDir, 'a.txt'))).toBe(true);
+  });
+
+  it('read refuses a FIFO without hanging', async () => {
+    const fifo = path.join(workDir, 'pipe');
+    execFileSync('mkfifo', [fifo]);
+    const res = await request(makeApp(workDir)).get('/api/sessions/s1/files/read').query({ path: 'pipe' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/regular file/);
+  });
+
+  it('read refuses a device file and a directory', async () => {
+    const app = makeApp(workDir);
+    const dev = await request(app).get('/api/sessions/s1/files/read').query({ path: '/dev/zero' });
+    expect(dev.status).toBe(400);
+    const dir = await request(app).get('/api/sessions/s1/files/read').query({ path: '.' });
+    expect(dir.status).toBe(400);
+  });
+
+  it('read refuses a file over the size cap, and reads a normal one', async () => {
+    fs.writeFileSync(path.join(workDir, 'big.txt'), Buffer.alloc(5 * 1024 * 1024 + 1, 'a'));
+    fs.writeFileSync(path.join(workDir, 'ok.txt'), 'hello');
+    const app = makeApp(workDir);
+    expect((await request(app).get('/api/sessions/s1/files/read').query({ path: 'big.txt' })).status).toBe(413);
+    const ok = await request(app).get('/api/sessions/s1/files/read').query({ path: 'ok.txt' });
+    expect(ok.body.content).toBe('hello');
+  });
+
+  it('an array-valued path is a 400, not a 500', async () => {
+    const app = makeApp(workDir);
+    for (const url of ['/api/sessions/s1/files?path[]=x', '/api/sessions/s1/files/read?path[]=x', '/api/sessions/s1/files/mkdir?path[]=x']) {
+      const res = url.includes('mkdir') ? await request(app).post(url) : await request(app).get(url);
+      expect(res.status).toBe(400);
+    }
+  });
+});
+
+describe('upload limits and temp folder', () => {
+  let workDir: string;
+  beforeEach(() => { workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-up-')); });
+  afterEach(() => { fs.rmSync(workDir, { recursive: true, force: true }); });
+
+  it('the temp folder is private to the owner', async () => {
+    const app = makeApp(workDir);
+    fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true });
+    await request(app).post('/api/sessions/s1/files/upload').attach('file', Buffer.from('a'), { filename: 'a.txt', contentType: 'text/plain' });
+    expect(fs.statSync(TMP_UPLOAD_DIR).mode & 0o777).toBe(0o700);
+  });
+
+  it('upload over the limit is a 413 and leaves no temp file', async () => {
+    const before = fs.existsSync(TMP_UPLOAD_DIR) ? fs.readdirSync(TMP_UPLOAD_DIR).length : 0;
+    const res = await request(makeApp(workDir))
+      .post('/api/sessions/s1/files/upload')
+      .attach('file', Buffer.alloc(101 * 1024 * 1024), { filename: 'big.bin', contentType: 'application/octet-stream' });
+    expect(res.status).toBe(413);
+    expect(fs.existsSync(path.join(workDir, 'big.bin'))).toBe(false);
+    expect(fs.readdirSync(TMP_UPLOAD_DIR).length).toBe(before);
+  });
+
+  it('a refused upload destination deletes the temp file', async () => {
+    const before = fs.readdirSync(TMP_UPLOAD_DIR).length;
+    const res = await request(makeApp(workDir))
+      .post('/api/sessions/s1/files/upload?path=../outside')
+      .attach('file', Buffer.from('a'), { filename: 'a.txt', contentType: 'text/plain' });
+    expect(res.status).toBe(403);
+    expect(fs.readdirSync(TMP_UPLOAD_DIR).length).toBe(before);
   });
 });

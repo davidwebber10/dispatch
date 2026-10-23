@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { Router } from 'express';
@@ -13,7 +14,33 @@ import { platform } from '../platform/index.js';
  *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
 
-const UPLOAD_TMP_DIR = '/tmp/commandcenter-uploads';
+/** Cap on a file the editor reads: it is shown as text in the browser, so a larger one is not useful. */
+const MAX_READ_BYTES = 5 * 1024 * 1024;
+/** Cap on one upload into the project. The inbox keeps its own 50 MB cap. */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** Per-user temp folder for multer. A fixed shared name let another account create it first. */
+export const UPLOAD_TMP_DIR = path.join(os.tmpdir(), `dispatch-uploads-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`);
+
+/** Create (or re-check) the temp folder: owner-only, a real directory, owned by us. */
+function ensureUploadDir(): void {
+  fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(UPLOAD_TMP_DIR);
+  if (!st.isDirectory() || (typeof process.getuid === 'function' && st.uid !== process.getuid())) {
+    throw new Error('upload temp folder is not owned by this user');
+  }
+  if ((st.mode & 0o077) !== 0) fs.chmodSync(UPLOAD_TMP_DIR, 0o700);
+}
+
+/** A query value is only usable as a path when it is a single string (not `a[]=x` or `a[b]=x`). */
+function queryPath(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+function unlinkQuiet(file?: string): void {
+  if (!file) return;
+  try { fs.unlinkSync(file); } catch { /* already gone */ }
+}
 
 const FLAT_CAP = 20000;
 // Dependency and build-output dirs: huge, never what a search is for. Now that plain
@@ -62,14 +89,14 @@ export function createFilesRouter(db: Database.Database): Router {
   const tmpStorage = multer.diskStorage({
     destination: (_req, _file, cb) => {
       try {
-        fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+        ensureUploadDir();
         cb(null, UPLOAD_TMP_DIR);
       } catch (err) {
         cb(err as Error, UPLOAD_TMP_DIR);
       }
     },
   });
-  const upload = multer({ storage: tmpStorage });
+  const upload = multer({ storage: tmpStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
   const inboxUpload = multer({
     storage: tmpStorage,
     limits: { fileSize: 50 * 1024 * 1024 },
@@ -82,6 +109,11 @@ export function createFilesRouter(db: Database.Database): Router {
     const relative = path.relative(root, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
     return resolved;
+  }
+
+  /** True when `resolved` is the working directory itself (delete and rename refuse it). */
+  function isRoot(workingDir: string, resolved: string): boolean {
+    return resolved === path.resolve(workingDir);
   }
 
   /**
@@ -117,7 +149,8 @@ export function createFilesRouter(db: Database.Database): Router {
   // GET /api/sessions/:id/files?path=. — list directory
   router.get('/', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = (req.query.path as string) || '.';
+    const requestedPath = queryPath(req.query.path) || '.';
+    if (req.query.path !== undefined && queryPath(req.query.path) === undefined) return res.status(400).json({ error: 'invalid path parameter' });
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
@@ -192,16 +225,20 @@ export function createFilesRouter(db: Database.Database): Router {
   });
 
   // GET /api/sessions/:id/files/read?path=file.txt — read file
-  router.get('/read', (req, res) => {
+  router.get('/read', async (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveRead(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      const content = fs.readFileSync(resolved, 'utf-8');
+      // Regular files only: a device or FIFO can fill memory or block forever.
+      const st = await fs.promises.stat(resolved);
+      if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
+      if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
+      const content = await fs.promises.readFile(resolved, 'utf-8');
       res.json({ content, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -226,7 +263,7 @@ export function createFilesRouter(db: Database.Database): Router {
   };
   router.get('/image', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -258,7 +295,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // STRICT resolveSafe sandbox — same guard as the directory listing this is triggered from.
   router.get('/download', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -332,7 +369,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // PUT /api/sessions/:id/files/write?path=file.txt — write file
   router.put('/write', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -347,23 +384,32 @@ export function createFilesRouter(db: Database.Database): Router {
   });
 
   // POST /api/sessions/:id/files/upload — upload file
-  router.post('/upload', upload.single('file'), (req, res) => {
-    const session = (req as any).session;
-    const requestedPath = (req.query.path as string) || '.';
-    const resolved = resolveSafe(session.workingDir, requestedPath);
-    if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+  router.post('/upload', (req, res) => {
+    upload.single('file')(req, res, (uploadErr: any) => {
+      if (uploadErr instanceof multer.MulterError && uploadErr.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB` });
+      }
+      if (uploadErr) return res.status(400).json({ error: uploadErr.message });
 
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+      const session = (req as any).session;
+      const tmpFile = req.file?.path;
+      const requestedPath = queryPath(req.query.path) || '.';
+      const resolved = resolveSafe(session.workingDir, requestedPath);
+      if (!resolved) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
 
-    try {
-      const dest = path.join(resolved, req.file.originalname);
-      if (!dest.startsWith(session.workingDir)) return res.status(403).json({ error: 'Path traversal not allowed' });
-      fs.copyFileSync(req.file.path, dest);
-      fs.unlinkSync(req.file.path);
-      res.json({ ok: true, path: path.relative(session.workingDir, dest) });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+      try {
+        const dest = path.join(resolved, req.file.originalname);
+        if (!dest.startsWith(session.workingDir)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
+        fs.copyFileSync(req.file.path, dest);
+        fs.unlinkSync(req.file.path);
+        res.json({ ok: true, path: path.relative(session.workingDir, dest) });
+      } catch (err: any) {
+        unlinkQuiet(tmpFile);
+        res.status(400).json({ error: err.message });
+      }
+    });
   });
 
   // POST /api/sessions/:id/files/inbox — upload file into .dispatch/inbox
@@ -402,7 +448,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // POST /api/sessions/:id/files/mkdir?path=dir — create directory
   router.post('/mkdir', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -419,13 +465,16 @@ export function createFilesRouter(db: Database.Database): Router {
   // POST /api/sessions/:id/files/rename — rename a file or directory
   router.post('/rename', (req, res) => {
     const session = (req as any).session;
-    const fromPath = req.body.from as string;
-    const toPath = req.body.to as string;
+    const fromPath = req.body?.from as string;
+    const toPath = req.body?.to as string;
     if (!fromPath || !toPath) return res.status(400).json({ error: 'Missing from or to path' });
 
     const from = resolveSafe(session.workingDir, fromPath);
     const to = resolveSafe(session.workingDir, toPath);
     if (!from || !to) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (isRoot(session.workingDir, from) || isRoot(session.workingDir, to)) {
+      return res.status(400).json({ error: 'Cannot rename the project folder' });
+    }
 
     try {
       fs.renameSync(from, to);
@@ -438,11 +487,12 @@ export function createFilesRouter(db: Database.Database): Router {
   // DELETE /api/sessions/:id/files?path=file.txt — delete file or directory
   router.delete('/', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (isRoot(session.workingDir, resolved)) return res.status(400).json({ error: 'Cannot delete the project folder' });
 
     try {
       fs.rmSync(resolved, { recursive: true });
