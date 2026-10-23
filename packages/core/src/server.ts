@@ -25,6 +25,12 @@ import { AuthRequestService } from './auth/service.js';
 import { createAuthRouter } from './routes/auth.js';
 import { ClaudeLoginService } from './auth/claude-login.js';
 import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
+import { createAccessGate } from './auth/access-gate.js';
+import { createTokenSource } from './auth/access-token.js';
+import { createAccessConfig } from './auth/known-hosts.js';
+import { createTailscaleAccess } from './auth/tailscale-access.js';
+import { securityHeaders } from './auth/security-headers.js';
+import { lockDownDataDir } from './auth/private-dir.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
 import { writeOwnPid, removeOwnPid } from './platform/pid-file.js';
@@ -436,7 +442,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Ensure data directory exists
   const dataDir = platform.dataDir();
-  fs.mkdirSync(dataDir, { recursive: true });
+  // Private to the user before anything else is written (network exposure spec 7.14).
+  lockDownDataDir(dataDir, [platform.logDir()]);
 
   const browserShimEnv = platform.installBrowserShim({
     dataDir,
@@ -459,9 +466,25 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Strip the mount prefix ONCE, before anything routes. Everything downstream —
   // all 18 route mounts, the static handler, the SPA fallback — keeps its existing
   // root-relative paths and is unaware the app is served under a prefix.
+  app.use(securityHeaders);
   if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
   const boxGate = requireBoxToken(BOX_TOKEN);
   if (boxGate) app.use(boxGate);
+  // The request gate (network exposure spec, section 7). On a hosted box the box token above is
+  // the credential and the router is the only caller, so the gate stays out of the way there.
+  const accessGate = BOX_TOKEN
+    ? undefined
+    : createAccessGate({
+        getToken: createTokenSource(dataDir),
+        isGatewayPeer: (a) => platform.isHostGatewayPeer(a),
+        config: createAccessConfig(dataDir),
+        tailscale: createTailscaleAccess(),
+        basePath: BASE_PATH,
+      });
+  if (accessGate) {
+    app.post('/api/access/login', ...accessGate.loginRoute);
+    app.use(accessGate.middleware);
+  }
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
 
   // Create HTTP server
@@ -750,6 +773,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Handle HTTP upgrade for WebSocket connections
   server.on('upgrade', (request, socket, head) => {
+    // The gate is async (it may ask the tailscale CLI), so the whole handler waits for it.
+    // A socket that is not admitted gets an HTTP status line and is closed.
+    void handleUpgrade(request, socket, head).catch(() => socket.destroy());
+  });
+  const handleUpgrade = async (request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
+    // Node removes its own error listener before 'upgrade' fires, and ws adds one only inside
+    // handleUpgrade. The gate below awaits (it may run the tailscale CLI), so without this a
+    // peer reset in that window is an uncaught ECONNRESET that kills the daemon.
+    socket.on('error', () => socket.destroy());
     // The WS handler needs the same prefix strip as the HTTP side. Easy to overlook:
     // the two terminal regexes are unanchored so they'd still match a prefixed URL,
     // but the `url === '/api/events'` equality below would silently stop matching and
@@ -767,6 +799,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       return;
     }
     const url = stripped;
+    if (accessGate) {
+      const d = await accessGate.upgradeDecision(request, url);
+      if (socket.destroyed) return;
+      if (!d.ok) {
+        socket.end(`HTTP/1.1 ${d.status} ${d.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+        return;
+      }
+    }
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
       structuredWss.handleUpgrade(request, socket, head, (ws) => {
@@ -796,7 +836,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     } else {
       socket.destroy();
     }
-  });
+  };
 
   // Listen on the port
   const port = await new Promise<number>((resolve, reject) => {
@@ -853,6 +893,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
 
   console.log(`Dispatch server listening on port ${port}`);
+  if (accessGate) {
+    console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
+  }
 
   // Same idea for model capabilities: the spawn path is sync and reads caches only, so load
   // the OpenRouter and models.dev catalogs once now. A chat-only model resumed right after

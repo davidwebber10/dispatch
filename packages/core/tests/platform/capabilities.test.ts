@@ -48,3 +48,8 @@ describe('linux capabilities', () => {
     }
   });
 });
+
+test('macOS and plain Linux have no host gateway peer', () => {
+  expect(darwin.isHostGatewayPeer('192.168.32.1')).toBe(false);
+  expect(linux.isHostGatewayPeer('192.168.32.1')).toBe(false);
+});

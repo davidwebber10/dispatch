@@ -83,8 +83,10 @@ behind a **Cloudflare Tunnel** gated with **Cloudflare Access** so only you can 
 
 → **[docs/cloudflare.md](docs/cloudflare.md)** — full Tunnel + Zero Trust Access walkthrough.
 
-> ⚠️ Never expose `:3456` to the internet without a gate (Tailscale or Cloudflare Access) — the
-> daemon spawns shells and agents, so an open port is remote code execution.
+> ⚠️ The daemon spawns shells and agents, so an open port would be remote code execution. Dispatch
+> therefore answers only this computer and your own Tailscale devices without a sign-in. Every
+> other device must sign in once with the token from `dispatch access`. Details:
+> **[docs/network-access.md](docs/network-access.md)**.
 
 (For private, tailnet-only access without a public domain, Tailscale also works — see the note at the end of that doc.)
 

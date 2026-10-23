@@ -129,3 +129,23 @@ test('endlessDoc sends the branch and the worktree only when set', async () => {
   await api.endlessDoc('s1', 'docs/a.md', 'spec/a');
   expect(fetch).toHaveBeenLastCalledWith('/api/endless/doc?project=s1&path=docs%2Fa.md&branch=spec%2Fa', expect.anything());
 });
+
+test('a 401 auth_required reloads the page so the user lands on the sign-in page', async () => {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { reload });
+  sessionStorage.clear();
+  mockJson({ error: 'auth_required' }, 401);
+  await expect(api.listSessions()).rejects.toThrow(/401/);
+  expect(reload).toHaveBeenCalledTimes(1);
+});
+
+test('other 401s and other errors do not reload', async () => {
+  const reload = vi.fn();
+  vi.stubGlobal('location', { reload });
+  sessionStorage.clear();
+  mockJson({ error: 'bad_token' }, 401);
+  await expect(api.listSessions()).rejects.toThrow(/401/);
+  mockJson({ error: 'auth_required' }, 500);
+  await expect(api.listSessions()).rejects.toThrow(/500/);
+  expect(reload).not.toHaveBeenCalled();
+});
