@@ -38,6 +38,7 @@ import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, find
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
+import { effectiveSpawnDepth, findLiveCoordinator } from '../auth/key-scope.js';
 import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
@@ -106,6 +107,16 @@ export function pickRecoverableSession(
 ): string | null {
   if (files.length !== 1) return null;
   return files[0].birth >= terminalCreatedAtMs - 60_000 ? files[0].id : null;
+}
+
+/**
+ * A new root thread (no parent, no depth) is written with `spawnDepth: 0`, so the field is
+ * never missing on a new record (spec 6.1). A thread with a parent or its own depth is kept.
+ */
+function withRootSpawnDepth(config: Record<string, any> | undefined): Record<string, any> {
+  const c = config ?? {};
+  if (c.spawnedBy || typeof c.spawnDepth === 'number') return c;
+  return { ...c, spawnDepth: 0 };
 }
 
 export class SessionService {
@@ -542,7 +553,7 @@ export class SessionService {
       skipPermissions,
       workingDir: resolvedDir,
       externalId,
-      config,
+      config: withRootSpawnDepth(config),
     });
 
     try {
@@ -581,7 +592,7 @@ export class SessionService {
       label: displayLabel,
       labelSource,
       workingDir: session.working_dir,
-      config: { ...(config ?? {}), queued: true, queuedTask: task },
+      config: withRootSpawnDepth({ ...(config ?? {}), queued: true, queuedTask: task }),
     });
     this.setTerminalStatus(terminalId, 'queued');
 
@@ -659,7 +670,7 @@ export class SessionService {
       labelSource,
       skipPermissions: true,
       workingDir: resolvedDir,
-      config: { runner: true, runnerPrompt: prompt },
+      config: withRootSpawnDepth({ runner: true, runnerPrompt: prompt }),
     });
 
     try {
@@ -2017,9 +2028,7 @@ export class SessionService {
    * harness must be FOUND here, not shadowed by a new claude-code one.
    */
   findCoordinator(sessionId: string): terminalsDb.Terminal | null {
-    return terminalsDb.listBySession(this.db, sessionId)
-      .map(terminalsDb.rowToTerminal)
-      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator') ?? null;
+    return findLiveCoordinator(this.db, sessionId);
   }
 
   /**
@@ -2234,7 +2243,7 @@ export class SessionService {
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
       if (this.isPeerEligible(terminal.type)) {
-        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config)));
         prompts.push(this.peerPromptFor(terminal));
       }
       const developerNote = this.toolsAwareness?.() ?? null;
@@ -2411,7 +2420,7 @@ export class SessionService {
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
     if (this.isPeerEligible(terminal.type)) {
-      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config)));
       prompts.push(this.peerPromptFor(terminal));
     }
     const developerNote = this.toolsAwareness?.() ?? null;

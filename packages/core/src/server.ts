@@ -28,7 +28,7 @@ import { createBoxGate, upgradeAllowed } from './auth/box-token.js';
 import { createAccessGate } from './auth/access-gate.js';
 import { createTokenSource } from './auth/access-token.js';
 import { KeyRegistry } from './auth/principals.js';
-import { nullKeyScope } from './auth/key-scope.js';
+import { createKeyScope } from './auth/key-scope.js';
 import {
   createLoginKeyCheck, createPrincipalMiddleware, noCredentialStatsHandler, refuseKeyUpgrade, whoamiHandler,
 } from './auth/request-principal.js';
@@ -346,8 +346,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const keys = options.keys ?? new KeyRegistry();
   app.locals.keys = keys;
   const noCredentialStats = createNoCredentialStats({});
-  // TODO(Task7): pass the database-backed KeyScope; until then every scope lookup finds nothing.
-  app.use(createPrincipalMiddleware({ registry: keys, scope: nullKeyScope, via: 'test' }));
+  app.use(createPrincipalMiddleware({ registry: keys, scope: createKeyScope(db), via: 'test' }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
   app.get('/api/whoami', whoamiHandler);
   app.get('/api/access/no-credential-stats', noCredentialStatsHandler(noCredentialStats));
@@ -507,9 +506,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     app.post('/api/access/login', createLoginKeyCheck({ registry: keys }), ...accessGate.loginRoute);
     app.use(accessGate.middleware);
   }
-  // TODO(Task7): pass the database-backed KeyScope; until then every scope lookup finds nothing.
   app.use(createPrincipalMiddleware({
-    registry: keys, scope: nullKeyScope, getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
+    registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
   }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
   app.get('/api/whoami', whoamiHandler);

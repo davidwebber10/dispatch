@@ -433,6 +433,7 @@ describe('terminal routes', () => {
       expect(res.body.config).toEqual({
         transport: 'structured',
         role: 'agent',
+        spawnDepth: 0,
         autoArchive: true,
         autoArchiveMs: 60_000,
       });
@@ -463,7 +464,7 @@ describe('terminal routes', () => {
         .send({ enabled: false })
         .expect(200);
 
-      expect(res.body.config).toEqual({ transport: 'structured' });
+      expect(res.body.config).toEqual({ transport: 'structured', spawnDepth: 0 });
     });
 
     it('404s for an unknown terminal', async () => {
