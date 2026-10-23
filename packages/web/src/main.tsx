@@ -31,6 +31,13 @@ function primeSafeAreaInsets() {
 }
 primeSafeAreaInsets();
 
+// Kept out of index.html so the page needs no inline script (Content-Security-Policy: script-src 'self').
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+
 // Auto-update: a standalone PWA can stay open for days, running a stale bundle
 // long after a deploy (the window never re-navigates, so it never picks up the
 // new content-hashed assets). Poll the HTML shell for the entry script's hash and

@@ -90,6 +90,14 @@ behind a **Cloudflare Tunnel** gated with **Cloudflare Access** so only you can 
 
 (For private, tailnet-only access without a public domain, Tailscale also works — see the note at the end of that doc.)
 
+**One daemon per person.** Dispatch has no user accounts. Whoever holds the access token gets a
+shell on your computer as you, and can read your secrets. Do not share a daemon or its token with
+another person: each person runs their own. See **[docs/security.md](docs/security.md)**.
+
+**Agents run with your rights.** Agent threads start with their approval prompts turned off, so a
+thread can run commands and edit files as you without asking. Treat a thread's input (web pages,
+pull requests, files) as able to steer it.
+
 ---
 
 ## Daemon management
@@ -100,7 +108,7 @@ dispatch logs -f     # follow the logs
 dispatch restart     # restart it
 dispatch stop        # stop it
 dispatch start       # start it
-dispatch update      # git pull + rebuild + restart
+dispatch update      # update to the latest release, rebuild + restart
 dispatch uninstall   # stop + remove the launchd agent (keeps your data)
 dispatch run         # run in the foreground instead of as a daemon (Ctrl-C to stop)
 ```
@@ -179,8 +187,17 @@ timeout.
 ## Updating
 
 ```bash
-dispatch update     # git pull --ff-only, rebuild, restart
+dispatch update     # fast-forward to the latest release tag, rebuild, restart
 ```
+
+`dispatch update` installs the newest **release** (the latest `vX.Y.Z` tag), not whatever is at
+the tip of `main`. The release notes you read in the update prompt describe exactly that version.
+
+## Usage statistics
+
+Dispatch sends a small anonymous usage report (counts and a random install ID, never text,
+paths or names) to `dispatchd.app` about every 6 hours. Turn it off in **Settings**, or start the
+daemon with `DISPATCH_TELEMETRY=0`.
 
 ## Uninstalling
 

@@ -15,10 +15,11 @@ import { ImageLightbox, useViewerHost } from './ChatImage';
  * `minWidth:0` lets the host flex/grid track shrink so wide content (code blocks,
  * tables) scrolls inside `.md-view` instead of blowing out the column.
  */
-// SANITIZER NOTE: DOMPurify sanitization is now ACTIVE at this chokepoint — every render
+// SANITIZER NOTE: DOMPurify sanitization is ACTIVE at this chokepoint — every render
 // here (agent + coordinator markdown) passes through `sanitize()` below. `<img>` (with
 // `src`/`alt`) is explicitly allowed so markdown images + the new image layer survive;
 // DOMPurify keeps `data:` URIs for `<img>` by default, so inline base64 images render too.
+// A REMOTE image does not load by itself: holdRemoteImages() swaps it for a "Load image" control.
 // This does NOT cover every raw-HTML site: these other renders still call renderMarkdown +
 // dangerouslySetInnerHTML directly and must be swept the same way:
 //   ConversationView.tsx (L453, L459, L463, L464, L474) and toolviews/WebView.tsx (L16).
@@ -34,9 +35,56 @@ const sanitize = (html: string, keepFileLinks = false): string => {
     if (data.attrName === 'href' && (/^\s*file:\/\//i.test(data.attrValue) || BARE_DOC_LINE.test(data.attrValue.trim()))) data.forceKeepAttr = true;
   };
   if (keepFileLinks) DOMPurify.addHook('uponSanitizeAttribute', keep);
-  try { return DOMPurify.sanitize(html, { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] }); }
+  // Forbidden: style (a fake screen, or a css url() fetch), forms and fields (a post to another
+  // site), and media or <picture> sources (each one fetches a remote URL on its own).
+  try {
+    return DOMPurify.sanitize(html, {
+      ADD_TAGS: ['img'],
+      ADD_ATTR: ['src', 'alt'],
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'textarea', 'select', 'option', 'video', 'audio', 'source', 'track', 'picture', 'image', 'use'],
+      FORBID_ATTR: ['style', 'srcset', 'poster', 'background', 'action', 'formaction'],
+    });
+  }
   finally { if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep); }
 };
+
+/** True for an image the page may load at once: data:, blob:, or the app's own origin (relative paths included). */
+function isLocalImageSrc(src: string): boolean {
+  try {
+    const u = new URL(src, window.location.href);
+    return u.protocol === 'data:' || u.protocol === 'blob:' || u.origin === window.location.origin;
+  } catch { return false; }
+}
+
+/**
+ * A remote image is a way to send data out through the reader's browser (the address carries it), and
+ * agents write most of this Markdown. So the sanitized HTML keeps no remote <img>: each one becomes a
+ * "Load image" control, and the page only requests the address after a click (`loaded` holds the
+ * addresses the reader chose to load). Runs on inert markup, before it is attached, so nothing is requested here.
+ * A data-md-load-image attribute that came with the reply itself is removed first: it must not pose as the control.
+ */
+function holdRemoteImages(html: string, loaded: ReadonlySet<string>): string {
+  const forged = html.includes('data-md-load-image');
+  if (!html.includes('<img') && !forged) return html;
+  const box = document.createElement('template');
+  box.innerHTML = html;
+  for (const el of box.content.querySelectorAll('[data-md-load-image]')) el.removeAttribute('data-md-load-image');
+  for (const img of box.content.querySelectorAll('img')) {
+    const src = img.getAttribute('src') ?? '';
+    if (!src || isLocalImageSrc(src) || loaded.has(src)) continue;
+    let host = '';
+    try { host = new URL(src, window.location.href).host; } catch { /* shown without a host */ }
+    const hold = document.createElement('span');
+    hold.className = 'md-remote-image';
+    hold.setAttribute('role', 'button');
+    hold.setAttribute('tabindex', '0');
+    hold.setAttribute('data-md-load-image', src);
+    hold.setAttribute('title', src);
+    hold.textContent = `Load image${host ? ` from ${host}` : ''}${img.alt ? `: ${img.alt}` : ''}`;
+    img.replaceWith(hold);
+  }
+  return box.innerHTML;
+}
 
 /**
  * A surface that routes its links keeps no raw destination on a doc link or an unsupported one: a
@@ -174,12 +222,13 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs: own
   const withDocs = !!docs;
   const accept = docs?.accept;
   const linkOf = docs?.link;
+  const [loaded, setLoaded] = useState<ReadonlySet<string>>(() => new Set());
   const html = useMemo(() => {
-    const safe = sanitize(renderMarkdown(source), !!linkOf);
+    const safe = holdRemoteImages(sanitize(renderMarkdown(source), !!linkOf), loaded);
     const clean = openableImages(linkOf ? neutralizeLinks(safe, linkOf) : safe);
     const chipped = ledger ? chipifyHtml(clean, ledger.index) : clean;
     return withDocs ? docifyHtml(chipped, accept) : chipped;
-  }, [source, ledger, withDocs, accept, linkOf]);
+  }, [source, ledger, withDocs, accept, linkOf, loaded]);
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
   // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
   // delegated click handler on the chokepoint gives every markdown image the same viewer.
@@ -203,8 +252,17 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs: own
     return true;
   };
   const onAuxClick = (e: React.MouseEvent<HTMLDivElement>) => { if (e.button === 1) routeLink(e); };
+  /** A click on a "Load image" control (also inside a link): load that one address and go no further. */
+  const loadImage = (t: EventTarget): boolean => {
+    const hold = (t as HTMLElement).closest?.<HTMLElement>('[data-md-load-image]');
+    if (!hold) return false;
+    const src = hold.getAttribute('data-md-load-image');
+    if (src) setLoaded((prev) => new Set(prev).add(src));
+    return true;
+  };
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
+    if (loadImage(t)) { e.preventDefault(); e.stopPropagation(); return; }
     if (routeLink(e)) return;
     const doc = docs ? (t.closest?.('[data-doc-path]') as HTMLElement | null) : null;
     if (doc && docs) { e.stopPropagation(); docs.onOpen(doc.dataset.docPath!, doc.dataset.docBranch || null); return; }
@@ -221,6 +279,7 @@ export const Markdown = React.memo(function Markdown({ source, ledger, docs: own
   };
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (loadImage(e.target)) { e.preventDefault(); return; }
     const opener = (e.target as HTMLElement).closest?.<HTMLElement>('[data-md-image]');
     const img = opener?.querySelector('img');
     if (opener && img?.src) {
