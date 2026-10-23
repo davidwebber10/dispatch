@@ -48,6 +48,9 @@ function cleanupOnAbort(req: import('express').Request, res: import('express').R
   // when the body has simply been read in full).
   res.on('close', () => {
     if (res.writableFinished) return;
+    (req as any).uploadCancelled = true;
+    // First through the storage engine, so multer sees an error, not a finished file.
+    try { (req as any).uploadAbort?.(); } catch { /* already settled */ }
     const file = (req as any).uploadTmpPath as string | undefined;
     // Close the descriptor and the incoming stream, then remove the half-written file.
     for (const st of ((req as any).uploadStreams ?? []) as Array<{ destroy: () => void }>) { try { st.destroy(); } catch { /* already closed */ } }
@@ -124,6 +127,11 @@ export const uploadStorage: multer.StorageEngine = {
       out.once('close', () => unlinkQuiet(tmpPath));
       cb(err);
     };
+    // A cancel is a failure, whatever the streams look like: a writer destroyed before it finished
+    // still emits 'close', and that must not be mistaken for a finished upload.
+    const abort = () => fail(new Error('upload cancelled'));
+    (req as any).uploadAborts = [...(((req as any).uploadAborts as Array<() => void>) ?? []), abort];
+    (req as any).uploadAbort = () => { for (const a of (req as any).uploadAborts as Array<() => void>) a(); };
     file.stream.on('error', fail);
     out.on('error', fail);
     // 'close', not 'finish': the descriptor is released and a late close error is still an error.
@@ -473,6 +481,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
       const session = (req as any).session;
       const tmpFile = req.file?.path;
+      if ((req as any).uploadCancelled) { unlinkQuiet(tmpFile); return; }
       const requestedPath = queryPath(req.query.path) || '.';
       const resolved = resolveSafe(session.workingDir, requestedPath);
       if (!resolved) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
@@ -503,6 +512,7 @@ export function createFilesRouter(db: Database.Database): Router {
       if (err) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: err.message }); }
 
       const session = (req as any).session;
+      if ((req as any).uploadCancelled) { unlinkQuiet(req.file?.path); return; }
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
       try {

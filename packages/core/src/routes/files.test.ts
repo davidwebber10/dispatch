@@ -233,6 +233,29 @@ describe('upload limits and temp folder', () => {
     } finally { server.close(); }
   });
 
+  it('a dropped /upload never touches an existing destination file, and /inbox gets no attachment', async () => {
+    fs.writeFileSync(path.join(workDir, 'a.bin'), 'ORIGINAL');
+    const app = makeApp(workDir);
+    const server = await new Promise<import('http').Server>((resolve) => { const sv = app.listen(0, () => resolve(sv)); });
+    try {
+      const { port } = server.address() as import('net').AddressInfo;
+      const boundary = 'xXxBoundary';
+      for (const route of ['upload?path=.', 'inbox']) {
+        await new Promise<void>((resolve) => {
+          const req = http.request({ port, method: 'POST', path: `/api/sessions/s1/files/${route}`, headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(10 * 1024 * 1024) } });
+          req.on('error', () => resolve());
+          req.write(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+          req.write(Buffer.alloc(64 * 1024, 1));
+          setTimeout(() => { req.destroy(); resolve(); }, 200);
+        });
+      }
+      await new Promise((r) => setTimeout(r, 2500)); // past the delayed second cleanup pass
+      expect(fs.readFileSync(path.join(workDir, 'a.bin'), 'utf8')).toBe('ORIGINAL');
+      expect(fs.existsSync(path.join(workDir, '.dispatch', 'inbox')) ? fs.readdirSync(path.join(workDir, '.dispatch', 'inbox')) : []).toEqual([]);
+      expect(fs.readdirSync(TMP_UPLOAD_DIR)).toEqual([]);
+    } finally { server.close(); }
+  }, 15000);
+
   it('a refused upload destination deletes the temp file', async () => {
     const before = fs.readdirSync(TMP_UPLOAD_DIR).length;
     const res = await request(makeApp(workDir))
@@ -284,6 +307,32 @@ describe('upload storage engine', () => {
     setTimeout(() => (stream as any).emit('error', new Error('late')), 0);
     const { calls, req } = await p;
     expect(calls).toHaveLength(1);
+    fs.rmSync(req.uploadTmpPath, { force: true });
+  });
+
+  it('cancelling while the file is still opening never reports success and leaves no file', async () => {
+    const stream = new PassThrough();
+    const calls: Array<[Error | null, any]> = [];
+    const req: any = {};
+    uploadStorage._handleFile(req, fileOf(stream), (err: any, info: any) => { calls.push([err ?? null, info]); });
+    stream.end('complete body already parsed');
+    req.uploadAbort();                       // cancel in the same tick: the open has not finished
+    await new Promise((r) => setTimeout(r, 400));
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]?.message).toMatch(/cancel/i);
+    expect(calls[0][1]).toBeUndefined();
+    expect(fs.existsSync(req.uploadTmpPath)).toBe(false);
+    expect(req.uploadStreams.every((x: any) => x.destroyed)).toBe(true);
+  });
+
+  it('a cancel after success changes nothing (the answer was already given)', async () => {
+    const stream = new PassThrough();
+    const p = run(stream);
+    stream.end('x');
+    const { calls, req } = await p;
+    req.uploadAbort();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBeNull();
     fs.rmSync(req.uploadTmpPath, { force: true });
   });
 

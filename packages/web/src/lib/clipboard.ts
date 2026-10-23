@@ -28,15 +28,64 @@ export function clipboardImageSupported(): boolean {
  * the other site's CORS and the policy forbids it), so it fails and the caller says the copy failed.
  */
 export async function loadImageBlob(src: string): Promise<Blob> {
-  const m = /^data:([^,]*?),(.*)$/s.exec(src);
+  // The scheme and the base64 flag are case-insensitive (RFC 2397 and URL syntax).
+  if (/^blob:/i.test(src)) return drawToPngBlob(src);
+  const m = /^data:([^,]*),(.*)$/is.exec(src);
   if (!m) return (await fetch(src)).blob();
-  const meta = m[1].split(';');
-  const type = meta[0] || 'application/octet-stream';
-  if (!meta.includes('base64')) return new Blob([decodeURIComponent(m[2])], { type });
-  const bin = atob(decodeURIComponent(m[2]));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type });
+  const meta = m[1].split(';').map((p) => p.trim());
+  const type = meta[0] && !/^base64$/i.test(meta[0]) ? meta[0] : 'application/octet-stream';
+  const isBase64 = meta.slice(1).some((p) => /^base64$/i.test(p)) || /^base64$/i.test(meta[0]);
+  try {
+    // Percent-decode to BYTES (not text): a binary payload such as a PNG must survive unchanged.
+    const raw = percentDecodeBytes(m[2]);
+    if (!isBase64) return new Blob([raw as unknown as BlobPart], { type });
+    const bin = atob(String.fromCharCode(...raw).replace(/\s+/g, ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type });
+  } catch {
+    throw new Error('could not decode the image data');
+  }
+}
+
+/** %XX sequences become their byte; every other character becomes its UTF-8 bytes. A stray % stays as is. */
+function percentDecodeBytes(input: string): Uint8Array {
+  const enc = new TextEncoder();
+  const out: number[] = [];
+  for (let i = 0; i < input.length;) {
+    if (input[i] === '%' && /^[0-9a-fA-F]{2}$/.test(input.slice(i + 1, i + 3))) {
+      out.push(parseInt(input.slice(i + 1, i + 3), 16));
+      i += 3;
+    } else {
+      const cp = input.codePointAt(i)!;
+      const ch = String.fromCodePoint(cp);
+      out.push(...enc.encode(ch));
+      i += ch.length;
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+/**
+ * Draw an image the page can already show (a blob: URL of this page) onto a canvas and read it back as
+ * PNG. No request is made, so the connect-src policy is not involved, and a blob: URL is same-origin so
+ * the canvas is never tainted.
+ */
+function drawToPngBlob(url: string): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('no 2d context')); return; }
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((png) => (png ? resolve(png) : reject(new Error('canvas toBlob failed'))), 'image/png');
+    };
+    img.onerror = () => reject(new Error('image decode failed'));
+    img.src = url;
+  });
 }
 
 /**
@@ -49,24 +98,8 @@ export async function fetchAsPngBlob(src: string): Promise<Blob> {
   const blob = await loadImageBlob(src);
   if (blob.type === 'image/png') return blob;
   const objectUrl = URL.createObjectURL(blob);
-  try {
-    return await new Promise<Blob>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { reject(new Error('no 2d context')); return; }
-        ctx.drawImage(img, 0, 0);
-        canvas.toBlob((png) => (png ? resolve(png) : reject(new Error('canvas toBlob failed'))), 'image/png');
-      };
-      img.onerror = () => reject(new Error('image decode failed'));
-      img.src = objectUrl;
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+  try { return await drawToPngBlob(objectUrl); }
+  finally { URL.revokeObjectURL(objectUrl); }
 }
 
 /** Put `src` on the system clipboard as a PNG. Rejects if the browser refuses the write. */
