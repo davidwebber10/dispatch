@@ -17,6 +17,10 @@
     "./access": {
       "types": "./dist/auth/access-api.d.ts",
       "default": "./dist/auth/access-api.js"
+    },
+    "./credential": {
+      "types": "./dist/auth/credential.d.ts",
+      "default": "./dist/auth/credential.js"
     }
   },
   "scripts": {
