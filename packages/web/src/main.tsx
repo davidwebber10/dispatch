@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { reloadForSignIn } from './lib/signInReload';
 import './theme.css';
 import './tailwind.css';
 
@@ -42,7 +43,9 @@ function watchForUpdates() {
   const check = async () => {
     if (reloading || document.hidden) return;
     try {
-      const html = await (await fetch('/', { cache: 'no-store' })).text();
+      const shell = await fetch('/', { cache: 'no-store' });
+      if (shell.status === 401) { reloadForSignIn(); return; }
+      const html = await shell.text();
       const m = html.match(/\/assets\/index-[A-Za-z0-9_]+\.js/);
       if (m && !current.endsWith(m[0])) { reloading = true; location.reload(); }
     } catch { /* offline / transient — try again next tick */ }

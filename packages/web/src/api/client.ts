@@ -1,5 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
+import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress } from './types';
 
@@ -34,6 +35,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     // a deleted file from a directory or a refused path.
     let detail = '';
     try { const b = await res.json(); if (typeof b?.error === 'string') detail = b.error; } catch { /* not JSON */ }
+    if (res.status === 401 && detail === 'auth_required') reloadForSignIn();
     throw new ApiError(`${init?.method ?? 'GET'} ${path} failed: ${res.status}${detail ? ` — ${detail}` : ''}`, res.status);
   }
   if (res.status === 204) return undefined as T;
