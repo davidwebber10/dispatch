@@ -1,6 +1,9 @@
+import express from 'express';
+import type { IncomingMessage } from 'node:http';
 import { isLoopbackAddress } from '../files/reveal.js';
 import { tokenMatches } from './box-token.js';
-import { COOKIE_NAME, cookieValue, parseCookies } from './access-token.js';
+import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, parseCookies } from './access-token.js';
+import { signInPage } from './signin-page.js';
 import {
   isLoopbackName, normalizeHostHeader, originHostPort, type AccessConfig,
 } from './known-hosts.js';
@@ -103,4 +106,98 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
   }
   if (!via) return DENY_AUTH;
   return originAllowed(req, deps.config) ? { ok: true, via } : DENY_ORIGIN;
+}
+
+type Headers = IncomingMessage['headers'];
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+
+function factsFrom(
+  req: { socket: { remoteAddress?: string }; headers: Headers },
+  isApi: boolean,
+  isUpgrade: boolean,
+): GateRequest {
+  const h = req.headers;
+  return {
+    remoteAddress: req.socket.remoteAddress,
+    host: one(h.host),
+    origin: one(h.origin),
+    secFetchSite: one(h['sec-fetch-site']),
+    authorization: one(h.authorization),
+    cookie: one(h.cookie),
+    tailscaleUserLogin: one(h['tailscale-user-login']),
+    tailscaleFunnel: one(h['tailscale-funnel-request']),
+    isApi,
+    isUpgrade,
+  };
+}
+
+const LOGIN_PATH = '/api/access/login';
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_FAILURES = 10;
+
+export interface AccessGateOptions extends GateDeps {
+  /** Mount prefix (already stripped from req.url upstream). Used for the cookie Path and the sign-in page. */
+  basePath: string;
+  now?: () => number;
+}
+
+export interface AccessGate {
+  /** Mount after the box-token gate and the base-path strip, before body parsing. */
+  middleware: express.RequestHandler;
+  /** Mount as `app.post('/api/access/login', ...gate.loginRoute)` before the middleware. */
+  loginRoute: express.RequestHandler[];
+  /** Decision for a WebSocket upgrade. */
+  upgradeDecision(req: IncomingMessage, strippedUrl: string): Promise<Decision>;
+}
+
+export function createAccessGate(opts: AccessGateOptions): AccessGate {
+  const now = opts.now ?? Date.now;
+  const cookiePath = opts.basePath || '/';
+  const failures = new Map<string, { n: number; start: number }>();
+
+  const middleware: express.RequestHandler = (req, res, next) => {
+    const isApi = req.path === '/api' || req.path.startsWith('/api/');
+    decide(factsFrom(req, isApi, false), opts).then((d) => {
+      if (d.ok) return next();
+      res.setHeader('Cache-Control', 'no-store');
+      if (d.status === 401 && !isApi && (req.method === 'GET' || req.method === 'HEAD')) {
+        return void res.status(401).type('html').send(signInPage(opts.basePath));
+      }
+      res.status(d.status).json({ error: d.error });
+    }).catch(next);
+  };
+
+  const login: express.RequestHandler = (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const peer = req.socket.remoteAddress ?? '?';
+    // Login needs no credential, but the Origin rule still applies: a web page cannot post to it.
+    if (!originAllowed(factsFrom(req, true, false), opts.config)) {
+      return void res.status(403).json({ error: 'origin_refused' });
+    }
+    let rec = failures.get(peer);
+    if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(peer); rec = undefined; }
+    if (rec && rec.n >= LOGIN_MAX_FAILURES) return void res.status(429).json({ error: 'too_many_tries' });
+
+    const given = (req.body as { token?: unknown } | undefined)?.token;
+    const token = opts.getToken();
+    if (typeof given !== 'string' || !tokenMatches(token, given)) {
+      if (failures.size > 1000) failures.clear();
+      failures.set(peer, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
+      return void res.status(401).json({ error: 'bad_token' });
+    }
+    failures.delete(peer);
+    const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
+    const https = (req.socket as { encrypted?: boolean }).encrypted === true ||
+      (viaProxy && one(req.headers['x-forwarded-proto']) === 'https');
+    res.setHeader('Set-Cookie',
+      `${COOKIE_NAME}=${cookieValue(token)}; Path=${cookiePath}; Max-Age=${COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${https ? '; Secure' : ''}`);
+    res.json({ ok: true });
+  };
+
+  return {
+    middleware,
+    loginRoute: [express.json({ limit: '4kb' }), login],
+    upgradeDecision: (req, strippedUrl) =>
+      decide(factsFrom(req, strippedUrl.startsWith('/api/'), true), opts),
+  };
 }

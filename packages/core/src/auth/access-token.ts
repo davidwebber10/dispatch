@@ -61,3 +61,16 @@ export function parseCookies(header: string | undefined): Record<string, string>
   }
   return out;
 }
+
+/** Current token, re-read when the file changes, so `dispatch access rotate` needs no restart. */
+export function createTokenSource(dataDir: string): () => string {
+  let mtime = -1;
+  let token = ensureAccessToken(dataDir);
+  return () => {
+    try {
+      const m = fs.statSync(tokenPath(dataDir)).mtimeMs;
+      if (m !== mtime) { token = ensureAccessToken(dataDir); mtime = m; }
+    } catch { token = ensureAccessToken(dataDir); }
+    return token;
+  };
+}
