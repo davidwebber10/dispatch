@@ -679,6 +679,9 @@ Recommended: decide after stage 2 has run for a while (owner question PK-3).
 | 2 | A later minor (owner question PK-1) | Programs on this computer need a credential. The CLI and threads already have one. Each browser signs in once. |
 | 3 | Only if the owner chooses | Process check. |
 
+**Go condition for stage 1:** the restart mid-work test (section 9, end to end)
+passes for every harness and view, for a coordinator with a worker, and for Chat.
+
 **Go conditions for stage 2** (with PK-1 option A), all of them, not a date:
 
 1. The Codex check (6.3) passed, and every harness row of the end-to-end tests
@@ -869,6 +872,25 @@ daemon)
   to an owner-only route gets `403`; with its own key and `source: user` gets `403`.
 - A Chat turn can spawn a worker in another project; a summarizer key cannot.
 - `dispatch open` signs in a fresh browser profile.
+- **Restart mid-work (required before stage 1 ships, owner request 2026-10-23).**
+  Start, on the throwaway daemon, one thread per harness and view from the list
+  above, a project coordinator (overseer) with one worker, and a Chat turn. While
+  each is mid-task, restart the daemon (`dispatch restart` equivalent), then also
+  kill it hard (`kill -9`) and start it again. After each restart:
+  - every thread, the coordinator and Chat come back through their normal revive
+    path (browser socket, `ensureStructuredAlive`, coordinator kickstart, next Chat
+    turn) with a **new** key, and their next `list_threads`, `message_thread`,
+    `report_status` and ledger call succeeds with no `401` and no `403`;
+  - conversations, ledger items, files in the working directory and thread status
+    are the same as before the restart;
+  - the old key gets `401`;
+  - a `nohup` job that a thread started before the restart gets `401` and the
+    thread that started it is not affected;
+  - no thread, coordinator or Chat turn is left stuck in a state that needs the
+    owner to relaunch it by hand.
+  Repeat once with a Codex app-server crash instead of a daemon restart: the Codex
+  Pretty threads keep their key and keep working. A failure here blocks the stage 1
+  release.
 
 **Manual, WSL2 (follow-up, like network spec 10.3):** the Windows browser signs in
 with `dispatch open` from inside WSL; `curl.exe` started from a WSL thread gets `401`.
