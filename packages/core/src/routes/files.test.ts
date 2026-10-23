@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
+import http from 'http';
 import { execFileSync } from 'child_process';
 import os from 'os';
 import path from 'path';
@@ -186,6 +187,25 @@ describe('upload limits and temp folder', () => {
     expect(res.status).toBe(413);
     expect(fs.existsSync(path.join(workDir, 'big.bin'))).toBe(false);
     expect(fs.readdirSync(TMP_UPLOAD_DIR).length).toBe(before);
+  });
+
+  it('a client that drops the connection mid-upload leaves no temp file', async () => {
+    const app = makeApp(workDir);
+    const server = await new Promise<import('http').Server>((resolve) => { const sv = app.listen(0, () => resolve(sv)); });
+    try {
+      const { port } = server.address() as import('net').AddressInfo;
+      const boundary = 'xXxBoundary';
+      await new Promise<void>((resolve) => {
+        const req = http.request({ port, method: 'POST', path: '/api/sessions/s1/files/upload', headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(10 * 1024 * 1024) } });
+        req.on('error', () => resolve());
+        req.write(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+        req.write(Buffer.alloc(256 * 1024, 1));
+        // Let the daemon create the temp file, then drop the socket before the body is complete.
+        setTimeout(() => { req.destroy(); resolve(); }, 300);
+      });
+      await new Promise((r) => setTimeout(r, 500));
+      expect(fs.readdirSync(TMP_UPLOAD_DIR)).toEqual([]);
+    } finally { server.close(); }
   });
 
   it('a refused upload destination deletes the temp file', async () => {

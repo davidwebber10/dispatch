@@ -63,3 +63,17 @@ test('a reloaded list drops the fetched values, so the next reveal asks again', 
   fireEvent.click(screen.getAllByTitle('Reveal value')[0]);
   await waitFor(() => expect(screen.getByText('sk-live-2')).toBeInTheDocument());
 });
+
+test('a value that arrives after the list was reloaded is discarded', async () => {
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  let release!: (v: string) => void;
+  vi.mocked(api.getSecretValue).mockImplementationOnce(() => new Promise<string>((r) => { release = r; }));
+  fireEvent.click(screen.getAllByTitle('Reveal value')[0]);
+  fireEvent.click(screen.getByRole('button', { name: 'Re-sync' }));
+  await waitFor(() => expect(api.listSecrets).toHaveBeenCalledTimes(2));
+  release('stale-value');
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByText('stale-value')).not.toBeInTheDocument();
+  expect(screen.getAllByText('••••••••••••')).toHaveLength(2);
+});

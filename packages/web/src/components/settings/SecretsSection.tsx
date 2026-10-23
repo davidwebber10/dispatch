@@ -31,13 +31,16 @@ export function SecretsSection() {
   const [synced, setSynced] = useState(false);
   const [copied, setCopied] = useState('');
   const [sheet, setSheet] = useState(false);
+  // Bumped whenever the fetched values are dropped: a reveal or copy that was already in flight
+  // belongs to the old generation, and its answer is thrown away.
+  const generation = useRef(0);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => { void useSecrets.getState().loadStatus(); }, []);
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
   // A fetched value belongs to one project/config and one moment: drop them all when the list reloads
   // (an add, a delete, a re-sync) or the config changes, so reveal and copy never return a stale value.
-  useEffect(() => { setValues({}); setReveal({}); }, [secrets, status?.project, status?.config]);
+  useEffect(() => { generation.current += 1; setValues({}); setReveal({}); }, [secrets, status?.project, status?.config]);
   useEffect(() => {
     if (status?.project) { setProject(status.project); void useSecrets.getState().loadConfigs(status.project); }
     if (status?.config) setConfig(status.config);
@@ -91,24 +94,30 @@ export function SecretsSection() {
   }
 
   async function fetchValues(names: string[]): Promise<Record<string, string>> {
+    const gen = generation.current;
     const missing = names.filter((n) => values[n] === undefined);
     const got: Record<string, string> = {};
     try {
       await Promise.all(missing.map(async (n) => { got[n] = await api.getSecretValue(n); }));
     } catch { setErr('Could not load value.'); }
+    if (gen !== generation.current) return {}; // the list or config changed while this was in flight
     if (Object.keys(got).length) setValues((v) => ({ ...v, ...got }));
     return { ...values, ...got };
   }
 
   async function toggleOne(name: string) {
-    if (!reveal[name]) await fetchValues([name]);
+    if (!reveal[name]) {
+      const got = await fetchValues([name]);
+      if (got[name] === undefined) return;
+    }
     setReveal((r) => ({ ...r, [name]: !r[name] }));
   }
 
   async function toggleAll() {
     if (allShown) { setReveal({}); return; }
     const names = filtered.map((s) => s.name);
-    await fetchValues(names);
+    const got = await fetchValues(names);
+    if (names.some((n) => got[n] === undefined)) return;
     setReveal(Object.fromEntries(names.map((n) => [n, true])));
   }
 
@@ -116,7 +125,7 @@ export function SecretsSection() {
     if (busy) return;
     setErr('');
     try {
-      setValues({}); setReveal({});
+      generation.current += 1; setValues({}); setReveal({});
       await useSecrets.getState().loadSecrets();
       setSynced(true);
       timers.current.push(setTimeout(() => setSynced(false), 1500));

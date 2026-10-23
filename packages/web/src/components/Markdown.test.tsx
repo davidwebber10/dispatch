@@ -261,17 +261,13 @@ describe('sanitizer drops style, forms and media tags', () => {
     ['<video src="https://evil.test/v.mp4" poster="https://evil.test/p.png"></video>', 'video'],
     ['<audio src="https://evil.test/a.mp3"></audio>', 'audio'],
     ['<picture><source srcset="https://evil.test/a.png"></picture>', 'source'],
-    ['<svg><filter id="f"><feImage href="https://evil.test/a.png"/></filter><rect filter="url(#f)"/></svg>', 'feimage'],
-    ['<svg><rect mask="url(https://evil.test/m.svg#a)" fill="url(\'https://evil.test/f.svg#b\')" filter="url( https://evil.test/x)" clip-path="url(//evil.test/c)"/></svg>', 'rect[mask]'],
+    ['<svg><filter id="f"><feImage href="https://evil.test/a.png"/></filter><rect filter="url(#f)"/></svg>', 'svg'],
+    ['<svg><rect mask="u\\72l(https://evil.test/m.svg#a)" fill="url(&#x68;ttps://evil.test/f.svg#b)"/></svg>', 'svg'],
+    ['<math href="https://evil.test/x"><mi>x</mi></math>', 'math'],
     ['<textarea>x</textarea><select><option>a</option></select>', 'textarea'],
   ])('%s', (html, selector) => {
     const { container } = render(<Markdown source={html} />);
     expect(container.querySelector(selector)).toBeNull();
     expect(container.innerHTML).not.toContain('evil.test');
   });
-});
-
-it('keeps a same-document url(#id) reference on an SVG shape', () => {
-  const { container } = render(<Markdown source={'<svg><defs><clipPath id="c"><rect width="1" height="1"/></clipPath></defs><rect clip-path="url(#c)" width="2" height="2"/></svg>'} />);
-  expect(container.querySelector('rect[clip-path]')).not.toBeNull();
 });

@@ -38,6 +38,22 @@ function queryPath(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
+/**
+ * A client that drops the connection part way through an upload never gets multer's callback, so the
+ * half-written temp file is removed here: when the connection closes before a response went out. A second
+ * pass catches a file that multer created just after the close.
+ */
+function cleanupOnAbort(req: import('express').Request, res: import('express').Response): void {
+  // The RESPONSE closing without having finished means the client went away (req 'close' also fires
+  // when the body has simply been read in full).
+  res.on('close', () => {
+    if (res.writableFinished) return;
+    const file = (req as any).uploadTmpPath as string | undefined;
+    unlinkQuiet(file);
+    setTimeout(() => unlinkQuiet(file), 2000).unref();
+  });
+}
+
 function unlinkQuiet(file?: string): void {
   if (!file) return;
   try { fs.unlinkSync(file); } catch { /* already gone */ }
@@ -418,6 +434,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
   // POST /api/sessions/:id/files/upload — upload file
   router.post('/upload', (req, res) => {
+    cleanupOnAbort(req, res);
     upload.single('file')(req, res, (uploadErr: any) => {
       if (uploadErr instanceof multer.MulterError && uploadErr.code === 'LIMIT_FILE_SIZE') {
         unlinkQuiet((req as any).uploadTmpPath);
@@ -448,6 +465,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
   // POST /api/sessions/:id/files/inbox — upload file into .dispatch/inbox
   router.post('/inbox', (req, res) => {
+    cleanupOnAbort(req, res);
     inboxUpload.single('file')(req, res, (err: any) => {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
         unlinkQuiet((req as any).uploadTmpPath);
