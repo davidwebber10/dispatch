@@ -34,6 +34,20 @@ export function keyKindOf(value: string): KeyKind | null {
   return null;
 }
 
+/**
+ * The key-shaped Bearer value of an Authorization header, else null. A value that starts with a
+ * key prefix counts even when malformed, so a bad key is refused instead of falling back to
+ * another credential. Any other Bearer value is ignored (an older CLI may send a literal
+ * placeholder).
+ */
+export function bearerKey(authorization: string | undefined): string | null {
+  if (!authorization) return null;
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(authorization);
+  if (!m) return null;
+  const v = m[1];
+  return Object.values(KEY_PREFIX).some((p) => v.startsWith(p)) ? v : null;
+}
+
 export class KeyRegistry {
   private byHash = new Map<string, KeyPrincipal>();
   private hashByHandle = new Map<KeyHandle, string>();

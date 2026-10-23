@@ -48,12 +48,25 @@ export type Decision =
 const DENY_AUTH: Decision = { ok: false, status: 401, error: 'auth_required' };
 const DENY_ORIGIN: Decision = { ok: false, status: 403, error: 'origin_refused' };
 
-function hasCredential(req: GateRequest, token: string): boolean {
-  const auth = req.authorization;
-  if (auth && /^Bearer /i.test(auth) && tokenMatches(token, auth.slice(7).trim())) return true;
-  const cookie = parseCookies(req.cookie)[COOKIE_NAME];
-  return !!cookie && tokenMatches(cookieValue(token), cookie);
+/** Which owner credential a request carries: the Bearer access token, the cookie, or neither. */
+export function ownerCredentialKind(
+  authorization: string | undefined, cookieHeader: string | undefined, token: string,
+): 'token' | 'cookie' | null {
+  if (authorization && /^Bearer /i.test(authorization) && tokenMatches(token, authorization.slice(7).trim())) return 'token';
+  const cookie = parseCookies(cookieHeader)[COOKIE_NAME];
+  return cookie && tokenMatches(cookieValue(token), cookie) ? 'cookie' : null;
 }
+
+export function hasOwnerCredential(authorization: string | undefined, cookie: string | undefined, token: string): boolean {
+  return ownerCredentialKind(authorization, cookie, token) !== null;
+}
+
+function hasCredential(req: GateRequest, token: string): boolean {
+  return hasOwnerCredential(req.authorization, req.cookie, token);
+}
+
+/** Symbol under which the gate middleware records how it admitted a request (read by the principal middleware). */
+export const GATE_VIA = Symbol('dispatch.gateVia');
 
 async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps): Promise<boolean> {
   // A loopback name does not prove the caller is local when a proxy relayed the request: some
@@ -193,7 +206,7 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     const lower = req.path.toLowerCase();
     const isApi = lower === '/api' || lower.startsWith('/api/');
     decide(factsFrom(req, isApi, false), opts).then((d) => {
-      if (d.ok) return next();
+      if (d.ok) { (req as unknown as Record<symbol, unknown>)[GATE_VIA] = d.via; return next(); }
       res.setHeader('Cache-Control', 'no-store');
       if (d.status === 401 && !isApi && (req.method === 'GET' || req.method === 'HEAD')) {
         res.setHeader('Content-Security-Policy', signInPageCsp(opts.basePath));

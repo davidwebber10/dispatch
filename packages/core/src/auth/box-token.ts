@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { RequestHandler } from 'express';
 import type { IncomingMessage } from 'node:http';
+import { bearerKey, type KeyRegistry } from './principals.js';
 
 /**
  * Shared-secret gate for a hosted box.
@@ -54,4 +55,26 @@ export function requireBoxToken(expected: string | undefined): RequestHandler | 
 export function upgradeAllowed(expected: string | undefined, req: IncomingMessage): boolean {
   if (!expected) return true;
   return tokenMatches(expected, headerValue(req));
+}
+
+/**
+ * Box gate with per-thread keys (spec 6.8): admit a live key, else a box header, else the owner
+ * access token; refuse everything else with the same 401 as requireBoxToken. A request that
+ * carries a key is judged only as the key. Upgrades keep using upgradeAllowed (box header only).
+ */
+export function createBoxGate(opts: {
+  boxToken: string; registry: KeyRegistry; getToken: () => string | null;
+}): RequestHandler {
+  return (req, res, next) => {
+    const auth = Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization;
+    const key = bearerKey(auth);
+    if (key !== null) {
+      if (opts.registry.resolve(key)) return next();
+      return void res.status(401).json({ error: 'unauthorized' });
+    }
+    if (tokenMatches(opts.boxToken, headerValue(req))) return next();
+    const token = opts.getToken();
+    if (token && auth && /^Bearer /i.test(auth) && tokenMatches(token, auth.slice(7).trim())) return next();
+    res.status(401).json({ error: 'unauthorized' });
+  };
 }

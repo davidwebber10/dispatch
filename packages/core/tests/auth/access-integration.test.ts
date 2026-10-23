@@ -20,6 +20,7 @@ let output = '';
 let token: string;
 let projectDir: string;
 let terminalId = 'none';
+let threadKey = '';
 
 interface Res { status: number; headers: http.IncomingHttpHeaders; body: string }
 function call(opts: { method?: string; path: string; host?: string; via?: string; headers?: Record<string, string>; body?: string | Buffer }): Promise<Res> {
@@ -53,7 +54,7 @@ beforeAll(async () => {
   fs.mkdirSync(projectDir);
   port = 40000 + Math.floor(Math.random() * 20000);
   child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
-    `globalThis.fetch = async () => { throw new Error('offline test'); }; const { startServer } = await import('./src/server.ts'); await startServer({port:${port}});`], {
+    `globalThis.fetch = async () => { throw new Error('offline test'); }; const { startServer } = await import('./src/server.ts'); const s = await startServer({port:${port}}); console.log('MINTED_KEY=' + s.keys.mint({ kind: 'thread', terminalId: 'int-t1' }).key);`], {
     cwd: path.resolve(import.meta.dirname, '..', '..'),
     env: { HOME: home, USERPROFILE: home, PATH: process.env.PATH, SHELL: '/bin/sh', DISPATCH_TELEMETRY: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -63,10 +64,11 @@ beforeAll(async () => {
   await new Promise<void>((resolve, reject) => {
     const deadline = setTimeout(() => { clearInterval(poll); reject(new Error(output)); }, 20000);
     const poll = setInterval(() => {
-      if (/listening on port/.test(output)) { clearInterval(poll); clearTimeout(deadline); resolve(); }
+      if (/listening on port/.test(output) && /MINTED_KEY=\S+/.test(output)) { clearInterval(poll); clearTimeout(deadline); resolve(); }
     }, 25);
   });
   token = fs.readFileSync(path.join(home, '.dispatch', 'access-token'), 'utf8').trim();
+  threadKey = /MINTED_KEY=(\S+)/.exec(output)![1];
 }, 30000);
 
 afterAll(async () => {
@@ -96,6 +98,39 @@ describe('upgrade handling', () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(child.exitCode).toBeNull();
     expect((await call({ path: '/api/sessions' })).status).toBe(200);
+  });
+});
+
+describe('per-thread keys, stage 1', () => {
+  const bearer = () => ({ Authorization: `Bearer ${threadKey}` });
+  test('whoami with a minted key returns the terminal id', async () => {
+    const r = await call({ path: '/api/whoami', headers: bearer() });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body)).toMatchObject({ kind: 'thread', terminalId: 'int-t1' });
+  });
+  test('whoami with no credential from loopback is none', async () => {
+    const r = await call({ path: '/api/whoami' });
+    expect(JSON.parse(r.body)).toEqual({ kind: 'none' });
+  });
+  test('a WebSocket that carries a key is refused: terminal, structured, events', async () => {
+    expect(await wsOutcome(`ws://127.0.0.1:${port}/api/events`, bearer())).toBe('403');
+    expect(await wsOutcome(`ws://127.0.0.1:${port}/api/terminals/${terminalId}/ws`, bearer())).toBe('403');
+    expect(await wsOutcome(`ws://127.0.0.1:${port}/api/terminals/${terminalId}/structured-ws`, bearer())).toBe('403');
+  });
+  test('a key-bearing login is refused and sets no cookie', async () => {
+    const r = await call({ method: 'POST', path: '/api/access/login', headers: { ...bearer(), 'content-type': 'application/json' }, body: JSON.stringify({ token }) });
+    expect(r.status).toBe(403);
+    expect(r.headers['set-cookie']).toBeUndefined();
+  });
+  test('the stats route counts credential-free requests and refuses a key', async () => {
+    await call({ path: '/api/sessions' });
+    const r = await call({ path: '/api/access/no-credential-stats' });
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).program.total).toBeGreaterThan(0);
+    expect((await call({ path: '/api/access/no-credential-stats', headers: bearer() })).status).toBe(403);
+  });
+  test('the key never appears in the daemon output', () => {
+    expect(output.replace(/MINTED_KEY=\S+/, '')).not.toContain(threadKey);
   });
 });
 

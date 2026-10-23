@@ -24,9 +24,15 @@ import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
 import { createAuthRouter } from './routes/auth.js';
 import { ClaudeLoginService } from './auth/claude-login.js';
-import { requireBoxToken, upgradeAllowed } from './auth/box-token.js';
+import { createBoxGate, upgradeAllowed } from './auth/box-token.js';
 import { createAccessGate } from './auth/access-gate.js';
 import { createTokenSource } from './auth/access-token.js';
+import { KeyRegistry } from './auth/principals.js';
+import { nullKeyScope } from './auth/key-scope.js';
+import {
+  createLoginKeyCheck, createPrincipalMiddleware, noCredentialStatsHandler, refuseKeyUpgrade, whoamiHandler,
+} from './auth/request-principal.js';
+import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
@@ -244,6 +250,8 @@ interface CreateAppOptions {
   secretsService?: SecretsService;
   /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
   structuredCommand?: { command: string; args: string[] };
+  /** Inject the key registry (tests mint keys through it). Exposed as `app.locals.keys`. */
+  keys?: KeyRegistry;
 }
 
 /**
@@ -335,7 +343,14 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const { db, skipPty = false } = options;
 
   const app = express();
+  const keys = options.keys ?? new KeyRegistry();
+  app.locals.keys = keys;
+  const noCredentialStats = createNoCredentialStats({});
+  // TODO(Task7): pass the database-backed KeyScope; until then every scope lookup finds nothing.
+  app.use(createPrincipalMiddleware({ registry: keys, scope: nullKeyScope, via: 'test' }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
+  app.get('/api/whoami', whoamiHandler);
+  app.get('/api/access/no-credential-stats', noCredentialStatsHandler(noCredentialStats));
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -427,7 +442,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   return app;
 }
 
-export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void }> {
+export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
   const preferredPort = options?.port ?? 3456;
 
   // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
@@ -471,24 +486,34 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // root-relative paths and is unaware the app is served under a prefix.
   app.use(securityHeaders);
   if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
-  const boxGate = requireBoxToken(BOX_TOKEN);
-  if (boxGate) app.use(boxGate);
+  // The owner token file exists in both modes (a box admits the token as well as the box header).
+  const getAccessToken = createTokenSource(dataDir);
+  const keys = new KeyRegistry();
+  const noCredentialStats = createNoCredentialStats({});
+  if (BOX_TOKEN) app.use(createBoxGate({ boxToken: BOX_TOKEN, registry: keys, getToken: getAccessToken }));
   // The request gate (network exposure spec, section 7). On a hosted box the box token above is
   // the credential and the router is the only caller, so the gate stays out of the way there.
   const accessGate = BOX_TOKEN
     ? undefined
     : createAccessGate({
-        getToken: createTokenSource(dataDir),
+        getToken: getAccessToken,
         isGatewayPeer: (a) => platform.isHostGatewayPeer(a),
         config: createAccessConfig(dataDir),
         tailscale: createTailscaleAccess(),
         basePath: BASE_PATH,
       });
   if (accessGate) {
-    app.post('/api/access/login', ...accessGate.loginRoute);
+    // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
+    app.post('/api/access/login', createLoginKeyCheck({ registry: keys }), ...accessGate.loginRoute);
     app.use(accessGate.middleware);
   }
+  // TODO(Task7): pass the database-backed KeyScope; until then every scope lookup finds nothing.
+  app.use(createPrincipalMiddleware({
+    registry: keys, scope: nullKeyScope, getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
+  }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
+  app.get('/api/whoami', whoamiHandler);
+  app.get('/api/access/no-credential-stats', noCredentialStatsHandler(noCredentialStats));
 
   // Create HTTP server
   const server = http.createServer(app);
@@ -811,6 +836,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         return;
       }
     }
+    // No key opens a WebSocket (spec 6.4): the browser owns these sockets.
+    if (refuseKeyUpgrade(request)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
 
     if (url.match(/\/api\/terminals\/[^/]+\/structured-ws/)) {
       structuredWss.handleUpgrade(request, socket, head, (ws) => {
@@ -1020,7 +1050,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   process.on('SIGTERM', cleanup);
   process.on('SIGINT', cleanup);
 
-  return { port, cleanup };
+  return { port, cleanup, keys };
 }
 
 // When run directly via tsx src/server.ts
