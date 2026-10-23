@@ -7,6 +7,12 @@ your Mac to Cloudflare.
 
 Replace `dispatch.example.com` with your own hostname throughout.
 
+> **Dispatch now has its own sign-in.** The tunnel reaches Dispatch over loopback with your
+> public name in the `Host` header, which Dispatch does not know, so visitors see Dispatch's
+> sign-in page after Cloudflare Access. Run `dispatch access allow-host dispatch.example.com`
+> once to trust that name (Cloudflare Access is then your only gate), or sign in once per
+> browser with the token from `dispatch access`. See [network-access.md](network-access.md).
+
 ## Prerequisites
 
 - A domain whose DNS is managed by Cloudflare (added to your Cloudflare account).
