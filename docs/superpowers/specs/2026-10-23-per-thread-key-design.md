@@ -1,7 +1,7 @@
 ---
 title: Per-thread keys (the daemon stops trusting every local caller)
 date: 2026-10-23
-status: draft for owner review (review round 1 fixed)
+status: draft for owner review (review rounds 1 and 2 fixed; no round 3)
 base: main 0ce95415 (v3.4.0)
 builds on: docs/superpowers/specs/2026-10-22-network-exposure-design.md (Phase 1 shipped in v3.4.0)
 findings: SEC-05 (main), SEC-20, SEC-22, SEC-25 (unlocked by this design), SEC-04 (partly)
@@ -204,8 +204,15 @@ From stage 1 on, a key can no longer write these fields (6.4: the create body
 allowlist; `PATCH /api/terminals/ID` is owner only). **Records made before stage 1**
 were written from request bodies, so the daemon checks them before it mints a key:
 
-- `spawnDepth` that is missing, not an integer, or outside 0 to 3 counts as 3 (the
-  thread can no longer spawn).
+- `spawnDepth` that is missing on a record with no `spawnedBy` counts as 0, as the
+  spawn path does today (`sessions/service.ts:2227`). These are root threads: the
+  owner's own threads and the coordinators that the daemon creates without the field
+  (`sessions/service.ts:2050-2062`), and they must keep spawning workers after the
+  update. From stage 1 on, the daemon writes `spawnDepth: 0` on every root thread it
+  creates, so the field is never missing on a new record.
+- `spawnDepth` that is missing on a record **with** `spawnedBy`, not an integer, or
+  outside 0 to 3 counts as 3 (the thread can no longer spawn). No first-party path
+  makes such a record; the owner sees the thread and can archive it.
 - `spawnedBy` that names no thread in the same project counts as empty (no parent
   rights).
 - `role: coordinator` and `origin: endless` stay as stored. They are visible in the
@@ -329,7 +336,8 @@ the canary values. Outcomes:
   thread config carries `DISPATCH_AUTH_FILE`, the path of a `0600` file in the
   data directory (the path is not secret), and the agency MCP and the shim read the
   key from that file. The file is deleted at revoke.
-- `notify` does not inherit the env: the notify helper reads the same key file.
+- `notify` does not inherit the env: the notify program's argv carries the key file
+  path (not secret), and the helper reads the key from that file.
 - The default shell policy drops `DISPATCH_AUTH` despite `set`: the shim in Codex
   threads uses the key file. A user's own `include_only` filter can still drop it;
   then the sign-in banner from a Codex shell does not appear, and the release note
@@ -341,9 +349,13 @@ process exits, not only on archive. A key left in an old file is already revoked
 the delete is for hygiene. PR 103 adds a sweep for stale `thread-*.mcp.json` files;
 the same sweep covers the Grok and opencode homes and the key files.
 
-**Keys in transcripts.** A thread's transcript can show its own key (an agent that ran
-`env`). Peers and Chat can read transcripts, so the conversation routes redact any
-`dtk_`, `dck_` or `dsk_` value before they answer.
+**Keys in thread text.** A thread's own text can show its own key (an agent that ran
+`env`). Other threads, Chat and the coordinator read that text through several paths,
+so one redaction function replaces any `dtk_`, `dck_` or `dsk_` value in each of
+them: the conversation routes, the completion and question notices that embed a
+worker's last text in the coordinator's turn (`sessions/service.ts:1232-1252,1466-1473`),
+the thread report text that goes to Chat and its memory, and the Chat memory reads
+(`/api/endless/zoom` and the others).
 
 **The thread env loses the owner's credentials.** `platform/inherited-env.ts` drops
 `DISPATCH_BOX_TOKEN`, `OS_BOX_TOKEN` and any `DISPATCH_AUTH` of the daemon's own env
@@ -569,12 +581,24 @@ The sign-in page names both. `dispatch install` ends with `dispatch open`.
 - **New `dispatch api METHOD PATH`**, with an optional body from a file or stdin. It
   adds the owner token and prints the JSON answer. This is the low-friction path for
   the owner's own scripts: no token on the command line, no header to build.
-- **Inside a thread the CLI does not act as the owner.** When `DISPATCH_AUTH` starts
-  with `dtk_` or `dck_`, the CLI sends that key instead of the owner token, and
-  `dispatch access` (print, `--link`, `rotate`) refuses with "Run this in your own
-  terminal, not in a Dispatch thread." A shell tab (`dsk_`) is the owner at a
-  keyboard, so the CLI there uses the owner token as normal. This is a guard against
-  drift only: a thread can still read the file on purpose (section 8).
+- **Inside a thread the CLI does not act as the owner.** One credential resolver
+  (a small shared module) serves the CLI, the agency MCP, the memory MCP, the shim
+  and both hook helpers, so they cannot disagree:
+  1. `DISPATCH_AUTH` starts with `dsk_`: a shell tab, the owner at a keyboard. The
+     CLI uses the owner token as normal; the shim uses the shell key.
+  2. `DISPATCH_AUTH` starts with `dtk_` or `dck_`, or `DISPATCH_AUTH_FILE` is set:
+     thread mode. Use the key from the variable or the file.
+  3. No usable key, but a thread marker is present (`DISPATCH_TERMINAL_ID`,
+     `DISPATCH_TERMINAL` or `DISPATCH_AUTH_FILE`): thread mode with no credential.
+     The call **fails closed** with "This thread has no Dispatch key"; the resolver
+     never falls back to the owner token. This covers a Codex shell whose filter
+     dropped the variable, and a key file that cannot be read.
+  4. No marker at all: owner mode (the owner's own terminal).
+
+  In thread mode `dispatch access` (print, `--link`, `rotate`) and `dispatch open`
+  refuse with "Run this in your own terminal, not in a Dispatch thread." This is a
+  guard against drift only: a thread can still read the token file on purpose
+  (section 8).
 - **Scripts in other languages** read the token file themselves and send
   `Authorization: Bearer`. `docs/network-access.md` shows `curl -H @FILE`, where
   FILE holds the header line, so the token stays out of argv.
@@ -593,14 +617,18 @@ The sign-in page names both. `dispatch install` ends with `dispatch open`.
   The Windows browser signs in once (`dispatch open` inside WSL starts the Windows
   opener). Mirrored mode is the same as a local browser.
 - **Hosted box:** one authorization step serves both deployments. On a box the box
-  gate (`auth/box-token.ts`) stays first and admits a request that carries either a
-  valid box header or a live key; it refuses everything else, as today. The same
+  gate (`auth/box-token.ts`) stays first and admits a request that carries a valid
+  box header, a valid owner access token (`Authorization: Bearer`, for the CLI on the
+  box), or a live key; it refuses everything else, as today. The same
   principal resolution and route policy as on a local daemon then run on every
   admitted request, so a key on a box is exactly as narrow as on a laptop, and a key
   wins over a box header that a proxy may also add (precedence, 6.4). Upgrades on a
   box accept only the box header. The owner's credentials on a box are the box header
-  (the router) and the access token file, which the daemon creates in both modes, so
-  the CLI on the box works the same way. Threads no longer inherit the box token
+  (the router) and the access token. Today the daemon creates the token file only
+  when no box token is set (`server.ts:475-482`); this design creates it in both
+  modes, so the CLI on the box works the same way. The browser cookie stays a
+  local-mode credential (a box browser comes through the router with the box
+  header). Threads no longer inherit the box token
   (6.3). Stage 2 changes nothing on a box: the box gate never trusted loopback.
 - **Native Windows (port in progress on its own branch):** the design is OS-neutral.
   Two items for that port: the browser shim needs a Windows form that reads
@@ -746,9 +774,10 @@ This matches NE-4 in the network spec.
 - **K-11. Records forged before stage 1.** A thread that set `role: coordinator` or
   `origin: endless` on a record before stage 1 keeps it (6.1). The owner sees the
   role in the app and can archive the thread.
-- **K-12. A Codex user's own shell filter** can drop `DISPATCH_AUTH` from Codex shell
-  commands. Then a sign-in banner from a Codex shell does not appear; nothing else
-  breaks.
+- **K-12. A Codex user's own shell filter** can drop `DISPATCH_AUTH` and
+  `DISPATCH_AUTH_FILE` from Codex shell commands. Then a sign-in banner from a Codex
+  shell does not appear, and the CLI in that shell refuses to run calls that need a
+  credential (6.7: it fails closed, it never falls back to the owner token).
 
 ## 9. Tests
 
@@ -777,15 +806,19 @@ This matches NE-4 in the network spec.
 - Moves: after the owner moves a worker to another project, its old parent loses
   start, archive and answer on it.
 - Legacy records: a stored `spawnDepth` of 7 or `"x"` counts as 3; a `spawnedBy` in
-  another project counts as empty.
+  another project counts as empty; a coordinator record made by today's code (no
+  `spawnDepth`, no `spawnedBy`) counts as 0 and can spawn a worker; a worker record
+  with `spawnedBy` and no `spawnDepth` counts as 3; new root threads get
+  `spawnDepth: 0` written.
 - Revocation by handle: a relaunch whose old PTY exits after the new spawn keeps the
   new key valid; a Codex `failed` event revokes nothing; a failed spawn revokes its
   handle.
-- Transcript redaction: a conversation that contains a `dtk_` value comes back
-  redacted for a key caller.
-- Hosted box mode: owner box header, thread key, revoked key and no credential, each
-  on an owner-only route and an allowed route; a key plus a box header is judged as
-  the key.
+- Redaction: a `dtk_` value in a worker's text is redacted in the conversation
+  route, in the completion notice to the coordinator, in a thread report to Chat, and
+  in the Chat memory reads.
+- Hosted box mode: owner box header, owner access token (the CLI), thread key,
+  revoked key and no credential, each on an owner-only route and an allowed route; a
+  key plus a box header is judged as the key; the token file exists in box mode.
 - `source: user` refused for every key kind, accepted from the owner cookie.
 - Gate: stage 1 still admits a credential-free local request and logs it; stage 2
   refuses it with `401` (API) and the sign-in page (navigation); a request from this
@@ -800,6 +833,10 @@ This matches NE-4 in the network spec.
   none; uses a `dtk_` key inside a thread; `dispatch access` refuses inside a thread;
   a `dsk_` shell key does not change owner mode; `dispatch api` reads the body from a
   file and stdin; `dispatch open` on WSL falls back to printing the URL.
+- Credential resolver: under file delivery (`DISPATCH_AUTH_FILE`) and with
+  `DISPATCH_AUTH` filtered out but `DISPATCH_TERMINAL_ID` present, `dispatch api`,
+  `dispatch open` and `dispatch access` never use the owner token; an unreadable key
+  file fails closed.
 - Every caller refuses to send a key when `DISPATCH_API` is unset, and uses the real
   bound port when the daemon fell back from its preferred port.
 
@@ -843,8 +880,8 @@ with `dispatch open` from inside WSL; `curl.exe` started from a WSL thread gets 
 - New `packages/core/src/auth/one-time-code.ts`: codes for `dispatch open`.
 - `auth/access-gate.ts`: principal resolution; stage 1 count; stage 2 rule removal;
   own-tailnet-address exclusion.
-- `auth/box-token.ts`: admit a live key; the route policy then runs as on a local
-  daemon.
+- `auth/box-token.ts`: admit a live key or the owner access token; the route policy
+  then runs as on a local daemon. `server.ts`: create the token file in box mode too.
 - `server.ts`: attach the principal to each request; refuse keys on upgrades;
   `GET /api/whoami`.
 - Every route file: declare its policy at registration. `routes/terminals.ts`,
@@ -866,8 +903,13 @@ with `dispatch open` from inside WSL; `curl.exe` started from a WSL thread gets 
 - `auth/shim.ts`, `packages/core/scripts/codex-notify.mjs`,
   `packages/core/scripts/grok-hook.mjs`: send the key without argv.
 - `platform/inherited-env.ts`: drop owner credentials from the child env.
-- `packages/cli/src/index.ts`: token on HTTP calls, thread mode, `dispatch api`,
-  `dispatch open`.
+- New shared credential resolver (one module, used by the CLI, both MCP servers, the
+  shim and the hook helpers).
+- `packages/cli/src/index.ts`: token on HTTP calls, thread mode through the resolver,
+  `dispatch api`, `dispatch open`.
+- Redaction helper, used by the conversation routes, the coordinator notices
+  (`sessions/service.ts`), the Chat report path and the Chat memory reads
+  (`endless/`).
 - `auth/signin-page.ts`: accept `#code=`.
 - Docs: `docs/network-access.md`, `README.md`, the release notes for both stages,
   `.claude/skills/verify/SKILL.md`, `scripts/test-live-*.mjs`.
