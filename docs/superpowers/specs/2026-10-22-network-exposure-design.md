@@ -618,7 +618,7 @@ the `0700` directory covers them.
 
 ### 7.15 Owner decisions (resolved 2026-10-23)
 
-- **NE-1:** David Webber reviews the Phase 1 PR the same day it opens, before any
+- **NE-1:** the repository owner reviews the Phase 1 PR the same day it opens, before any
   release. The PR body says so. The build agent does not contact him.
 - **NE-3:** option A. Only devices on the owner's own Tailscale account skip
   sign-in. Coworkers on a shared tailnet must sign in.
@@ -801,7 +801,7 @@ offer. It stays a documented limit.
 
 The owner accepted every recommendation (see 7.15).
 
-1. **NE-1 (resolved: yes, David Webber, same day): Does the repository owner review Phase 1 before release?**
+1. **NE-1 (resolved: yes, same day): Does the repository owner review Phase 1 before release?**
    Recommended: yes. Open the PR, ask for review the same day, and release after
    approval. Phase 1 changes default behaviour for every install.
 2. **NE-2:** folded into NE-4. No current user is known to run Cloudflare or
