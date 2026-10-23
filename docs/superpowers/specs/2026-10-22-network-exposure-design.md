@@ -1,7 +1,7 @@
 ---
 title: Network exposure fix (issue 94)
 date: 2026-10-22
-status: draft, design only
+status: approved by the owner on 2026-10-23; Phase 1 under build
 base: origin/main 5c7ce554 (v3.3.1)
 issue: 94
 ---
@@ -579,6 +579,51 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
 - **R-5. The token file.** Anything running as the user can read
   `~/.dispatch/access-token`. Same as every other secret in `~/.dispatch`.
 
+### 7.13 Security headers (SEC-09, added 2026-10-23)
+
+Every HTTP response, including the sign-in page and error responses, carries:
+
+- `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so
+  no other site can frame Dispatch and overlay fake buttons on it.
+- `X-Content-Type-Options: nosniff`.
+- `Referrer-Policy: same-origin`, so file paths and session IDs in URLs do not leak
+  to other sites.
+
+Phase 1 does **not** send a script CSP. The web app and the doc viewer render
+Markdown and HTML, and a strict `script-src` needs a separate pass over the client
+(overview finding SEC-08). The headers above do not block inline scripts, styles,
+WebSockets or images, so the app keeps working. No route needs to be framed by
+another site, so `DENY` applies everywhere.
+
+### 7.14 Private data directory (SEC-18, added 2026-10-23)
+
+The overview suggested `process.umask(0o077)`. Phase 1 uses directory and file modes
+instead, because a process-wide umask is inherited by every terminal and agent the
+daemon spawns, and would make every file an agent creates in a project `0600`. A
+`0700` directory gives the same protection for the data, because other accounts
+cannot traverse into it whatever the modes of the files inside.
+
+At start, before the database opens, the daemon:
+
+- creates the data directory with mode `0700` and runs `chmod 0700` on it when it
+  already exists. It does the same for the log directory.
+- creates `dispatch.db` with mode `0600` when it does not exist, and runs
+  `chmod 0600` on `dispatch.db`, `dispatch.db-wal`, `dispatch.db-shm`, `access-token`
+  and `access.json` when they exist.
+- logs a warning and keeps starting if a `chmod` fails. Paths on a Windows mount
+  (`/mnt/c`) cannot hold Unix modes; there the step skips without a warning.
+
+Files that other code writes inside the data directory stay at their own modes;
+the `0700` directory covers them.
+
+### 7.15 Owner decisions (resolved 2026-10-23)
+
+- **NE-1:** David Webber reviews the Phase 1 PR the same day it opens, before any
+  release. The PR body says so. The build agent does not contact him.
+- **NE-3:** option A. Only devices on the owner's own Tailscale account skip
+  sign-in. Coworkers on a shared tailnet must sign in.
+- **NE-4:** no switch to turn the gate off.
+
 ## 8. Phase 2 design: full access model
 
 Phase 2 replaces "paste the token" with device pairing, gives the owner a settings
@@ -704,6 +749,12 @@ only if a real user needs it.
   limit.
 - Server-side regression: hooks, codex-notify and the shim still post to
   `127.0.0.1` with no token.
+- SEC-03 cases: a `text/plain` POST and a multipart POST with a foreign `Origin`
+  are refused with `403 origin_refused` (mkdir, upload, DELETE).
+- SEC-09: every response (200, 401, 403, sign-in page) has the headers of 7.13.
+- SEC-18: with a permissive umask, a fresh data directory is `0700`, a new database
+  file is `0600`, and an existing `0755` directory and `0644` database are tightened
+  at start. The daemon process umask is not changed.
 
 ### 10.2 Manual on macOS (can do here)
 
@@ -746,19 +797,19 @@ matches the issue comment: once the daemon is authenticated, no separate fix is
 needed. A full fix would need `openat`-style confined opens, which Node does not
 offer. It stays a documented limit.
 
-## 12. Open questions
+## 12. Open questions (all resolved 2026-10-23)
 
-Each has a recommended answer. They are repeated as owner decisions in the report.
+The owner accepted every recommendation (see 7.15).
 
-1. **NE-1: Does the repository owner review Phase 1 before release?**
+1. **NE-1 (resolved: yes, David Webber, same day): Does the repository owner review Phase 1 before release?**
    Recommended: yes. Open the PR, ask for review the same day, and release after
    approval. Phase 1 changes default behaviour for every install.
 2. **NE-2:** folded into NE-4. No current user is known to run Cloudflare or
    another proxy, so there is no separate proxy decision.
-3. **NE-3: Tailscale rule scope in Phase 1.** (A) Only devices owned by the same
+3. **NE-3 (resolved: A): Tailscale rule scope in Phase 1.** (A) Only devices owned by the same
    Tailscale user. (B) Any device the tailnet ACL allows (today's behaviour).
    Recommended: A. In a company tailnet, B gives coworkers a shell.
-4. **NE-4: A switch to turn the gate off.** Recommended: no switch. The token
+4. **NE-4 (resolved: no switch): A switch to turn the gate off.** Recommended: no switch. The token
    sign-in works in every setup, and a switch would be turned on and forgotten. An
    unknown user behind another proxy or tunnel also has `allow-host` (6.6). Do not
    trust a proxy's own header (for example `Cf-Access-Jwt-Assertion`) without
