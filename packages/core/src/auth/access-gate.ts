@@ -28,7 +28,7 @@ export interface GateRequest {
   /** Path starts with /api (after the base-path strip). */
   /** x-forwarded-for, forwarded, cf-connecting-ip or x-real-ip present: a proxy on this machine relayed the request. */
   proxied: boolean;
-  /** Last X-Forwarded-For entry: the address the nearest proxy saw. `tailscale serve` sets it to the tailnet client. */
+  /** The single X-Forwarded-For entry (undefined for a chain or an empty header). `tailscale serve` sets it to the tailnet client. */
   forwardedFor: string | undefined;
   isApi: boolean;
   isUpgrade: boolean;
@@ -63,7 +63,7 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
   // A Tailscale name counts for a loopback peer only when `tailscale serve` vouched for the
   // caller. Funnel traffic (public internet) carries no identity header, so it falls through.
   // The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
-  if (req.tailscaleUserLogin && !req.tailscaleFunnel) {
+  if (req.tailscaleUserLogin && req.tailscaleFunnel === undefined) { // Funnel: any value, even empty, means public
     const me = await deps.tailscale.self();
     if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) {
       // `tailscale serve` sets X-Forwarded-For to the tailnet client. Another local proxy that keeps
@@ -128,9 +128,17 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 /** Last X-Forwarded-For entry. Earlier entries are whatever the client sent; the last is the nearest proxy's view. */
 function lastForwarded(h: Headers): string | undefined {
+  return one(h['x-forwarded-for'])?.split(',').pop()?.trim() || undefined;
+}
+
+/** The single X-Forwarded-For entry, or undefined when the header is absent, empty or a chain. */
+function soleForwarded(h: Headers): string | undefined {
   const raw = one(h['x-forwarded-for']);
-  const last = raw?.split(',').pop()?.trim();
-  return last || undefined;
+  if (raw === undefined) return undefined;
+  // `tailscale serve` sets exactly one entry. A chain means a client-supplied entry went through a
+  // proxy that appended or kept it, so no entry can be trusted to name the real caller.
+  const parts = raw.split(',').map((x) => x.trim());
+  return parts.length === 1 && parts[0] ? parts[0] : undefined;
 }
 
 function factsFrom(
@@ -148,8 +156,9 @@ function factsFrom(
     cookie: one(h.cookie),
     tailscaleUserLogin: one(h['tailscale-user-login']),
     tailscaleFunnel: one(h['tailscale-funnel-request']),
-    proxied: !!(h['x-forwarded-for'] || h['forwarded'] || h['cf-connecting-ip'] || h['x-real-ip']),
-    forwardedFor: lastForwarded(h),
+    // Presence, not truthiness: an empty relay header still says a proxy relayed the request.
+    proxied: ['x-forwarded-for', 'forwarded', 'cf-connecting-ip', 'x-real-ip'].some((n) => h[n] !== undefined),
+    forwardedFor: soleForwarded(h),
     isApi,
     isUpgrade,
   };

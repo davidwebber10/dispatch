@@ -98,6 +98,12 @@ describe('tailscale serve (loopback peer, ts.net Host)', () => {
     const id = { ...serve, tailscaleUserLogin: 'me@example.com', proxied: true, forwardedFor: undefined };
     expect(await ok(id)).toBe(false);
   });
+  test('present-but-empty relay and funnel headers fail closed', async () => {
+    // factsFrom turns a present empty header into proxied=true / forwardedFor=undefined / funnel=''
+    const id = { ...serve, tailscaleUserLogin: 'me@example.com' };
+    expect(await ok({ ...id, proxied: true, forwardedFor: undefined })).toBe(false);
+    expect(await ok({ ...id, tailscaleFunnel: '' })).toBe(false);
+  });
   test('Funnel request: refused even with an identity-looking header', async () => {
     expect(await ok({ ...serve, tailscaleUserLogin: 'me@example.com', tailscaleFunnel: '?1' })).toBe(false);
   });

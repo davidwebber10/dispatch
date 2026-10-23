@@ -49,6 +49,9 @@ describe('dispatch access', () => {
     ['mac.tail1.ts.net:8080', 'http://mac.tail1.ts.net:8080/#access=tok-1'],
     ['[::1]:3490', 'http://[::1]:3490/#access=tok-1'],
     ['[::1]', 'http://[::1]:3456/#access=tok-1'],
+    ['https://mac.ts.net/#old', 'https://mac.ts.net/#access=tok-1'],
+    ['HTTPS://mac.ts.net', 'https://mac.ts.net/#access=tok-1'],
+    ['https://mac.ts.net/dispatch/', 'https://mac.ts.net/dispatch/#access=tok-1'],
     ['fd7a:115c:a1e0::1', 'http://[fd7a:115c:a1e0::1]:3456/#access=tok-1'],
   ])('--link %s does not add a second port', async (host, want) => {
     await run(['--link', host]);

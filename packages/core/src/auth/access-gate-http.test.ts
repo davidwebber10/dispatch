@@ -100,6 +100,39 @@ describe('hardening', () => {
   });
 });
 
+describe('relay headers seen from the wire', () => {
+  const serve = (headers: Record<string, string>) => {
+    peer = '127.0.0.1';
+    const getToken = createTokenSource(dir);
+    const gate = createAccessGate({
+      getToken, isGatewayPeer: () => false, config: createAccessConfig(dir),
+      tailscale: {
+        self: async () => ({ userId: 1, login: 'me@example.com', names: ['mac.tail1.ts.net'], ips: [] }),
+        isOwnerPeer: async (a) => a === '100.64.0.2',
+      },
+      basePath: '',
+    });
+    const app = express();
+    app.use((req, _res, next) => { Object.defineProperty(req.socket, 'remoteAddress', { value: peer, configurable: true }); next(); });
+    app.use(gate.middleware);
+    app.get('/api/x', (_req, res) => { res.json({ ok: true }); });
+    return request(app).get('/api/x').set('Host', 'mac.tail1.ts.net').set('Tailscale-User-Login', 'me@example.com').set(headers);
+  };
+  test('a real serve request (single owner X-Forwarded-For) passes', async () => {
+    expect((await serve({ 'X-Forwarded-For': '100.64.0.2' })).status).toBe(200);
+  });
+  test.each([
+    ['empty X-Forwarded-For', { 'X-Forwarded-For': '' }],
+    ['empty Forwarded', { Forwarded: '' }],
+    ['X-Real-IP only', { 'X-Real-IP': '100.64.0.2' }],
+    ['a chain ending in an owner address', { 'X-Forwarded-For': '203.0.113.4, 100.64.0.2' }],
+    ['a non-owner address', { 'X-Forwarded-For': '203.0.113.4' }],
+    ['an empty Funnel header', { 'X-Forwarded-For': '100.64.0.2', 'Tailscale-Funnel-Request': '' }],
+  ])('is refused: %s', async (_n, headers) => {
+    expect((await serve(headers)).status).toBe(401);
+  });
+});
+
 describe('login body errors', () => {
   test('malformed and oversized bodies get a JSON error, never a stack trace', async () => {
     const { app } = build();

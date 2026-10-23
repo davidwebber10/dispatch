@@ -133,7 +133,11 @@ export function probeHttp(port: number, probe?: (port: number) => boolean): stri
  */
 /** Base URL for `access --link`: a full URL as given; a host gets the daemon port unless it already has one. */
 export function linkBase(arg: string, port: number): string {
-  if (/^https?:\/\//.test(arg)) return arg.replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(arg)) {
+    let u: URL;
+    try { u = new URL(arg); } catch { throw new Error(`not a valid URL: ${arg}`); }
+    return `${u.origin}${u.pathname.replace(/\/+$/, '')}`; // any old #fragment, query and trailing slash are dropped
+  }
   if (/^\[[^\]]+\](:\d+)?$/.test(arg)) return /\]:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`; // [::1] or [::1]:3490
   if ((arg.match(/:/g) ?? []).length > 1) return `http://[${arg}]:${port}`;                                       // bare IPv6
   return /:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`;                                          // host or host:port
