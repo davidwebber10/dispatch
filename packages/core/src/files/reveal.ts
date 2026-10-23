@@ -19,7 +19,7 @@ export function isLoopbackAddress(addr: string | undefined): boolean {
 }
 
 /** Strip the port off a Host header value, unwrapping the bracketed IPv6 form. */
-function hostnameOf(host: string): string | null {
+export function hostnameOf(host: string): string | null {
   const h = host.trim().toLowerCase();
   if (!h) return null;
   if (h.startsWith('[')) {                        // "[::1]:3456" — bracketed IPv6 literal
