@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
 import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
 import { findDocPaths, docName } from '../lib/docPaths';
+import { isLocalImageSrc, remoteImageHost } from '../lib/remoteImage';
 import { classifyLink, type LinkAction } from '../lib/docLinks';
 import { useThreadDocs } from './threadDocs';
 import { ImageLightbox, useViewerHost } from './ChatImage';
@@ -50,14 +51,6 @@ const sanitize = (html: string, keepFileLinks = false): string => {
   finally { if (keepFileLinks) DOMPurify.removeHook('uponSanitizeAttribute', keep); }
 };
 
-/** True for an image the page may load at once: data:, blob:, or the app's own origin (relative paths included). */
-function isLocalImageSrc(src: string): boolean {
-  try {
-    const u = new URL(src, window.location.href);
-    return u.protocol === 'data:' || u.protocol === 'blob:' || u.origin === window.location.origin;
-  } catch { return false; }
-}
-
 /**
  * A remote image is a way to send data out through the reader's browser (the address carries it), and
  * agents write most of this Markdown. So the sanitized HTML keeps no remote <img>: each one becomes a
@@ -74,8 +67,7 @@ function holdRemoteImages(html: string, loaded: ReadonlySet<string>): string {
   for (const img of box.content.querySelectorAll('img')) {
     const src = img.getAttribute('src') ?? '';
     if (!src || isLocalImageSrc(src) || loaded.has(src)) continue;
-    let host = '';
-    try { host = new URL(src, window.location.href).host; } catch { /* shown without a host */ }
+    const host = remoteImageHost(src);
     const hold = document.createElement('span');
     hold.className = 'md-remote-image';
     hold.setAttribute('role', 'button');

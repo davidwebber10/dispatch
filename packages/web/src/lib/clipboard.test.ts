@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { clipboardImageSupported, copyImageToClipboard, copyText } from './clipboard';
+import { clipboardImageSupported, copyImageToClipboard, copyText, loadImageBlob } from './clipboard';
 
 class FakeClipboardItem {
   constructor(public items: Record<string, Blob>) {}
@@ -101,5 +101,45 @@ describe('copyText', () => {
     (document as any).execCommand = vi.fn(() => false);   // browser refused the copy
     await expect(copyText('hello')).rejects.toThrow();
     expect(document.querySelector('textarea')).toBeNull(); // still cleans up
+  });
+});
+
+const readText = (b: Blob) => new Promise<string>((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result)); fr.readAsText(b); });
+
+describe('loadImageBlob (the page policy allows connections to the app only)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it('decodes a base64 data: URI without calling fetch', async () => {
+    const fetchSpy = vi.fn(async () => { throw new Error('connect-src blocked'); });
+    vi.stubGlobal('fetch', fetchSpy);
+    const blob = await loadImageBlob('data:image/png;base64,aGVsbG8=');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(blob.type).toBe('image/png');
+    expect(await readText(blob)).toBe('hello');
+  });
+
+  it('decodes a plain (percent-encoded) data: URI without calling fetch', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const blob = await loadImageBlob('data:image/svg+xml,%3Csvg%3E%3C%2Fsvg%3E');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await readText(blob)).toBe('<svg></svg>');
+  });
+
+  it('still fetches a same-origin byte route', async () => {
+    const png = new Blob(['x'], { type: 'image/png' });
+    const fetchSpy = vi.fn(async () => ({ blob: async () => png }));
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await loadImageBlob('/api/sessions/s1/files/image?path=a.png')).toBe(png);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('copying a data: URI image reaches the clipboard with no fetch', async () => {
+    const write = vi.fn(async () => {});
+    vi.stubGlobal('ClipboardItem', FakeClipboardItem);
+    vi.stubGlobal('navigator', { clipboard: { write } });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connect-src blocked'); }));
+    await copyImageToClipboard('data:image/png;base64,aGVsbG8=');
+    expect(write).toHaveBeenCalledTimes(1);
   });
 });

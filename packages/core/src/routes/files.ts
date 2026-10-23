@@ -49,6 +49,8 @@ function cleanupOnAbort(req: import('express').Request, res: import('express').R
   res.on('close', () => {
     if (res.writableFinished) return;
     const file = (req as any).uploadTmpPath as string | undefined;
+    // Close the descriptor and the incoming stream, then remove the half-written file.
+    for (const st of ((req as any).uploadStreams ?? []) as Array<{ destroy: () => void }>) { try { st.destroy(); } catch { /* already closed */ } }
     unlinkQuiet(file);
     setTimeout(() => unlinkQuiet(file), 2000).unref();
   });
@@ -103,22 +105,28 @@ export function createFilesRouter(db: Database.Database): Router {
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
   // until a restart.
-  const tmpStorage = multer.diskStorage({
-    // The name is chosen here and kept on the request, so a write that fails half way can still be removed.
-    filename: (req, _file, cb) => {
-      const name = `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-      (req as any).uploadTmpPath = path.join(UPLOAD_TMP_DIR, name);
-      cb(null, name);
-    },
-    destination: (_req, _file, cb) => {
+  // Like multer's disk storage, but the write stream and the incoming stream are kept on the request
+  // so an aborted upload can close both (multer never calls back when the client just goes away, and
+  // would leave the descriptor open until the daemon exits).
+  const tmpStorage: multer.StorageEngine = {
+    _handleFile(req, file, cb) {
+      let tmpPath: string;
       try {
         ensureUploadDir();
-        cb(null, UPLOAD_TMP_DIR);
-      } catch (err) {
-        cb(err as Error, UPLOAD_TMP_DIR);
-      }
+        tmpPath = path.join(UPLOAD_TMP_DIR, `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+      } catch (err) { cb(err as Error); return; }
+      const out = fs.createWriteStream(tmpPath, { mode: 0o600 });
+      // Kept on the request from creation, so a write that fails half way can still be removed.
+      Object.assign(req, { uploadTmpPath: tmpPath, uploadStreams: [out, file.stream] });
+      file.stream.on('error', (err) => { out.destroy(); cb(err); });
+      out.on('error', cb);
+      out.on('finish', () => cb(null, { destination: UPLOAD_TMP_DIR, filename: path.basename(tmpPath), path: tmpPath, size: out.bytesWritten }));
+      file.stream.pipe(out);
     },
-  });
+    _removeFile(_req, file, cb) {
+      fs.unlink((file as { path: string }).path, (err) => cb(err && (err as NodeJS.ErrnoException).code !== 'ENOENT' ? err : null));
+    },
+  };
   const upload = multer({ storage: tmpStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
   const inboxUpload = multer({
     storage: tmpStorage,

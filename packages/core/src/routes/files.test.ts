@@ -208,6 +208,30 @@ describe('upload limits and temp folder', () => {
     } finally { server.close(); }
   });
 
+  it.skipIf(process.platform === 'win32' || !fs.existsSync('/dev/fd'))('a dropped upload releases its file handle, on /upload and /inbox', async () => {
+    const app = makeApp(workDir);
+    const server = await new Promise<import('http').Server>((resolve) => { const sv = app.listen(0, () => resolve(sv)); });
+    const openFds = () => fs.readdirSync('/dev/fd').length;
+    const drop = (route: string) => new Promise<void>((resolve) => {
+      const { port } = server.address() as import('net').AddressInfo;
+      const boundary = 'xXxBoundary';
+      const req = http.request({ port, method: 'POST', path: `/api/sessions/s1/files/${route}`, headers: { 'content-type': `multipart/form-data; boundary=${boundary}`, 'content-length': String(10 * 1024 * 1024) } });
+      req.on('error', () => resolve());
+      req.write(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.bin"\r\nContent-Type: application/octet-stream\r\n\r\n`);
+      req.write(Buffer.alloc(256 * 1024, 1));
+      setTimeout(() => { req.destroy(); resolve(); }, 300);
+    });
+    try {
+      await drop('upload'); await drop('inbox'); // warm up: sockets and lazy handles settle
+      await new Promise((r) => setTimeout(r, 500));
+      const before = openFds();
+      for (let i = 0; i < 3; i++) { await drop('upload'); await drop('inbox'); }
+      await new Promise((r) => setTimeout(r, 800));
+      expect(openFds()).toBeLessThanOrEqual(before);
+      expect(fs.readdirSync(TMP_UPLOAD_DIR)).toEqual([]);
+    } finally { server.close(); }
+  });
+
   it('a refused upload destination deletes the temp file', async () => {
     const before = fs.readdirSync(TMP_UPLOAD_DIR).length;
     const res = await request(makeApp(workDir))

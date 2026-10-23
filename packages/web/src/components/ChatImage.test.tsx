@@ -105,3 +105,21 @@ it('gives focus to the composer when the thumbnail that opened the viewer was re
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' }));
 });
+
+it('a web-address image is a "Load image" control until clicked, and requests nothing before', () => {
+  const { container } = render(<ChatImage src="https://img.example.com/a.png?d=1" alt="chart" />);
+  expect(container.querySelector('img')).toBeNull();
+  const btn = screen.getByRole('button', { name: /Load image from img\.example\.com/ });
+  fireEvent.click(btn);
+  expect(container.querySelector('img')!.getAttribute('src')).toBe('https://img.example.com/a.png?d=1');
+  expect(screen.queryByRole('button', { name: /Load image/ })).toBeNull();
+});
+
+it('data:, blob: and same-origin images load at once', () => {
+  const own = `${window.location.origin}/x.png`;
+  for (const src of ['data:image/png;base64,AAAA', 'blob:http://localhost/abc', '/api/sessions/s1/files/image?path=a.png', own]) {
+    const { container, unmount } = render(<ChatImage src={src} alt="a" />);
+    expect(container.querySelector('img')).not.toBeNull();
+    unmount();
+  }
+});
