@@ -41,9 +41,9 @@ describe('self', () => {
 
 describe('MagicDNS label', () => {
   test('the first label of DNSName counts even when the OS host name differs', async () => {
-    const status = JSON.stringify({ Self: { UserID: 7, DNSName: 'jasons-macbook-pro.t.ts.net.', HostName: "Jason's MacBook Pro", TailscaleIPs: [] } });
+    const status = JSON.stringify({ Self: { UserID: 7, DNSName: 'owners-laptop.t.ts.net.', HostName: "Owner's Laptop", TailscaleIPs: [] } });
     const me = await harness({ status }).ts.self();
-    expect(me?.names).toContain('jasons-macbook-pro');
+    expect(me?.names).toContain('owners-laptop');
   });
 });
 

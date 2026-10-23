@@ -28,6 +28,8 @@ export interface GateRequest {
   /** Path starts with /api (after the base-path strip). */
   /** x-forwarded-for, forwarded, cf-connecting-ip or x-real-ip present: a proxy on this machine relayed the request. */
   proxied: boolean;
+  /** Last X-Forwarded-For entry: the address the nearest proxy saw. `tailscale serve` sets it to the tailnet client. */
+  forwardedFor: string | undefined;
   isApi: boolean;
   isUpgrade: boolean;
 }
@@ -63,7 +65,13 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
   // The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
   if (req.tailscaleUserLogin && !req.tailscaleFunnel) {
     const me = await deps.tailscale.self();
-    if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) return true;
+    if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) {
+      // `tailscale serve` sets X-Forwarded-For to the tailnet client. Another local proxy that keeps
+      // the client's Host and merely forwards the identity header would carry a different address,
+      // so when the header is there it must name one of the owner's own devices.
+      if (!req.forwardedFor) return true;
+      return isTailscaleAddress(req.forwardedFor) && (await deps.tailscale.isOwnerPeer(req.forwardedFor));
+    }
   }
   return false;
 }
@@ -116,6 +124,13 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
 type Headers = IncomingMessage['headers'];
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
+/** Last X-Forwarded-For entry. Earlier entries are whatever the client sent; the last is the nearest proxy's view. */
+function lastForwarded(h: Headers): string | undefined {
+  const raw = one(h['x-forwarded-for']);
+  const last = raw?.split(',').pop()?.trim();
+  return last || undefined;
+}
+
 function factsFrom(
   req: { socket: { remoteAddress?: string }; headers: Headers },
   isApi: boolean,
@@ -132,6 +147,7 @@ function factsFrom(
     tailscaleUserLogin: one(h['tailscale-user-login']),
     tailscaleFunnel: one(h['tailscale-funnel-request']),
     proxied: !!(h['x-forwarded-for'] || h['forwarded'] || h['cf-connecting-ip'] || h['x-real-ip']),
+    forwardedFor: lastForwarded(h),
     isApi,
     isUpgrade,
   };
@@ -151,7 +167,7 @@ export interface AccessGate {
   /** Mount after the box-token gate and the base-path strip, before body parsing. */
   middleware: express.RequestHandler;
   /** Mount as `app.post('/api/access/login', ...gate.loginRoute)` before the middleware. */
-  loginRoute: express.RequestHandler[];
+  loginRoute: (express.RequestHandler | express.ErrorRequestHandler)[];
   /** Decision for a WebSocket upgrade. */
   upgradeDecision(req: IncomingMessage, strippedUrl: string): Promise<Decision>;
 }
@@ -181,7 +197,7 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     // Behind a same-machine proxy every client has the same peer address, so a visitor's failed
     // tries must not lock the owner out: also key on the proxy's view of the client.
     const proxied = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
-    const bucket = proxied ? `${peer}|${(one(req.headers['x-forwarded-for']) ?? '').split(',')[0].trim()}` : peer;
+    const bucket = proxied ? `${peer}|${lastForwarded(req.headers)}` : peer;
     // Login needs no credential, but the Origin rule still applies: a web page cannot post to it.
     if (!originAllowed(factsFrom(req, true, false), opts.config)) {
       return void res.status(403).json({ error: 'origin_refused' });
@@ -193,7 +209,10 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     const given = (req.body as { token?: unknown } | undefined)?.token;
     const token = opts.getToken();
     if (typeof given !== 'string' || !tokenMatches(token, given)) {
-      if (failures.size > 1000) failures.clear();
+      if (failures.size > 1000) {
+        for (const [k, v] of failures) if (now() - v.start >= LOGIN_WINDOW_MS) failures.delete(k);
+        if (failures.size > 1000) failures.clear();
+      }
       failures.set(bucket, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
       return void res.status(401).json({ error: 'bad_token' });
     }
@@ -208,7 +227,15 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
 
   return {
     middleware,
-    loginRoute: [express.json({ limit: '4kb' }), login],
+    loginRoute: [
+      express.json({ limit: '4kb' }),
+      // A malformed or oversized body must not reach the default handler: it prints a stack trace.
+      ((err, _req, res, _next) => {
+        void err;
+        res.status(typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? err.status : 400).json({ error: 'bad_request' });
+      }) as express.ErrorRequestHandler,
+      login,
+    ],
     upgradeDecision: (req, strippedUrl) =>
       decide(factsFrom(req, strippedUrl.toLowerCase().startsWith('/api/'), true), opts),
   };

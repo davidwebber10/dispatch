@@ -43,6 +43,10 @@ describe('dispatch access', () => {
     await run(['--link', 'mac.tail1.ts.net']);
     expect(out.join('\n')).toContain('http://mac.tail1.ts.net:3456/#access=tok-1');
   });
+  test('--link accepts a full URL (tailscale serve has no port)', async () => {
+    await run(['--link', 'https://mac.tail1.ts.net/']);
+    expect(out.join('\n')).toContain('https://mac.tail1.ts.net/#access=tok-1');
+  });
   test('rotate writes a new token and says every browser signs out', async () => {
     const a = await run(['rotate']);
     expect(a.rotateAccessToken).toHaveBeenCalledWith(dataDir);

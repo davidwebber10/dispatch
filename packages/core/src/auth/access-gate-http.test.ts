@@ -100,6 +100,26 @@ describe('hardening', () => {
   });
 });
 
+describe('login body errors', () => {
+  test('malformed and oversized bodies get a JSON error, never a stack trace', async () => {
+    const { app } = build();
+    const bad = await request(app).post('/api/access/login').set('Host', '192.168.1.5:3456').set('Content-Type', 'application/json').send('{bad');
+    expect(bad.status).toBe(400);
+    expect(bad.body).toEqual({ error: 'bad_request' });
+    const big = await request(app).post('/api/access/login').set('Host', '192.168.1.5:3456').send({ token: 'x'.repeat(10000) });
+    expect(big.status).toBe(413);
+    expect(big.text).not.toContain('node_modules');
+  });
+  test('the limiter keys on the last X-Forwarded-For entry, which a client cannot choose', async () => {
+    peer = '127.0.0.1';
+    const { app, getToken } = build();
+    const login = (xff: string, token: string) => request(app).post('/api/access/login')
+      .set('Host', 'localhost:3456').set('X-Forwarded-For', xff).send({ token });
+    for (let i = 0; i < 10; i++) await login(`spoof${i}, 203.0.113.9`, 'nope');
+    expect((await login('anything, 203.0.113.9', 'nope')).status).toBe(429);
+  });
+});
+
 describe('login', () => {
   const login = (app: express.Express, token: string, extra: Record<string, string> = {}) =>
     request(app).post('/api/access/login').set('Host', '192.168.1.5:3456').set(extra).send({ token });

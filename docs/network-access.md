@@ -24,7 +24,7 @@ are refused.
 2. Open Dispatch on the other device. It shows a sign-in page.
 3. Paste the token. The browser keeps a cookie for 400 days.
 
-`dispatch access --link HOST` prints a link for a phone: the token is in the part after `#`, which
+`dispatch access --link HOST` (or `--link https://MACHINE.ts.net` for `tailscale serve`) prints a link for a phone: the token is in the part after `#`, which
 browsers never send to a server.
 
 `dispatch access rotate` makes a new token and signs out every device.
@@ -43,8 +43,10 @@ curl -H @/tmp/dispatch-header http://MACHINE:3456/api/sessions
 ## Behind a proxy or tunnel
 
 A proxy on this computer (Cloudflare Tunnel or similar) reaches Dispatch over loopback, but with
-its own public name in `Host`. Even if the proxy rewrites `Host` to `localhost`, Dispatch sees its
-forwarding headers and still asks for sign-in. That name is not known, so people get the sign-in page. Either
+its own public name in `Host`. If the proxy adds forwarding headers (`X-Forwarded-For` and similar) Dispatch
+ignores a `localhost` Host and still asks for sign-in. A proxy that adds none (a plain nginx
+`proxy_pass`, `socat`, `ssh -R`) looks like a local caller, so do not put such a proxy in front of
+Dispatch without its own sign-in. That name is not known, so people get the sign-in page. Either
 sign in once per browser, or run `dispatch access allow-host YOUR.HOSTNAME`. Only add a name
 whose proxy has its own sign-in: Dispatch then trusts it like `localhost`. `tailscale funnel`
 (public internet) always gets the sign-in page.
@@ -61,6 +63,8 @@ other accounts on the same computer cannot read them.
 
 - Sign-in tries are counted per client; behind a proxy that hides the client address, one visitor's
   failed tries can delay another sign-in for a minute.
+- A proxy on this computer that adds no forwarding headers, or a raw TCP forwarder, is treated as
+  local. Give it its own sign-in, or do not use it.
 - Anything running as your own user can read the token file. Agents run as you.
 - Other accounts on the same computer can still reach Dispatch over loopback.
 - WSL2 with a `netsh interface portproxy` rule to the LAN: that traffic arrives like the Windows

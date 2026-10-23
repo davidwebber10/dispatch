@@ -25,7 +25,7 @@ function deps(): GateDeps {
 }
 const req = (o: Partial<GateRequest>): GateRequest => ({
   remoteAddress: '127.0.0.1', host: 'localhost:3456', origin: undefined, secFetchSite: undefined,
-  authorization: undefined, cookie: undefined, tailscaleUserLogin: undefined, tailscaleFunnel: undefined, proxied: false,
+  authorization: undefined, cookie: undefined, tailscaleUserLogin: undefined, tailscaleFunnel: undefined, proxied: false, forwardedFor: undefined,
   isApi: true, isUpgrade: false, ...o,
 });
 const ok = (r: Partial<GateRequest>) => decide(req(r), deps()).then((d) => d.ok);
@@ -87,6 +87,12 @@ describe('tailscale serve (loopback peer, ts.net Host)', () => {
   test('no identity header: refused', async () => { expect(await ok(serve)).toBe(false); });
   test('identity header of someone else (shared tailnet): refused', async () => {
     expect(await ok({ ...serve, tailscaleUserLogin: 'stranger@other.com' })).toBe(false);
+  });
+  test('serve with X-Forwarded-For of an owner device passes; of any other address is refused (forged header behind Caddy)', async () => {
+    const id = { ...serve, tailscaleUserLogin: 'me@example.com', proxied: true };
+    expect(await ok({ ...id, forwardedFor: '100.64.0.2' })).toBe(true);
+    expect(await ok({ ...id, forwardedFor: '203.0.113.9' })).toBe(false);
+    expect(await ok({ ...id, forwardedFor: '100.64.0.3' })).toBe(false);
   });
   test('Funnel request: refused even with an identity-looking header', async () => {
     expect(await ok({ ...serve, tailscaleUserLogin: 'me@example.com', tailscaleFunnel: '?1' })).toBe(false);
@@ -169,7 +175,7 @@ describe('relayed requests', () => {
   test('a relayed request still passes for an allow-host name and for tailscale serve', async () => {
     allowedHosts = ['proxy.example.com'];
     expect(await ok({ host: 'proxy.example.com', proxied: true })).toBe(true);
-    expect(await ok({ host: 'mac.tail1.ts.net', proxied: true, tailscaleUserLogin: 'me@example.com' })).toBe(true);
+    expect(await ok({ host: 'mac.tail1.ts.net', proxied: true, forwardedFor: '100.64.0.2', tailscaleUserLogin: 'me@example.com' })).toBe(true);
   });
   test('a credential still passes when relayed', async () => {
     expect(await ok({ host: 'localhost:3456', proxied: true, authorization: `Bearer ${TOKEN}` })).toBe(true);

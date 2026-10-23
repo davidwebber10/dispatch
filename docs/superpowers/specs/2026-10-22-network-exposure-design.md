@@ -494,9 +494,9 @@ For a request that passed section 7.1:
   401 so the service worker does not cache it.
 - It says what happened in one sentence, says how to get the token (`dispatch
   access` on the computer that runs Dispatch), and has one field. It posts to
-  `POST /api/access/login`, which sets the cookie and redirects to the base path.
+  `POST /api/access/login`, which sets the cookie and answers `{ok:true}`; the page then reloads itself.
 - `POST /api/access/login` is the only route open to an unauthenticated client.
-  It allows 10 failed tries per peer address per minute, then returns `429`. It is
+  It allows 10 failed tries per minute per peer address (behind a same-machine proxy: per peer plus the last `X-Forwarded-For` entry), then returns `429`. It is
   still subject to the Origin check.
 - A link with the token in the URL fragment (`#access=TOKEN`) also works: the page
   script reads the fragment, posts it, and clears it. The fragment never reaches a
@@ -584,12 +584,17 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
 - **R-4. A LAN that uses `100.64.0.0/10`** with a route more specific than
   Tailscale's, plus an attacker who takes the address of the owner's own device
   (7.2). Accepted.
+- **R-6. A same-machine proxy or forwarder that adds no forwarding header** (plain
+  nginx `proxy_pass`, `socat`, `ssh -R`) is indistinguishable from a local caller, and
+  the remote client chooses `Host`. Neither phase closes it; the owner must give such a
+  proxy its own sign-in. A `tailscale serve` identity header is trusted only when
+  `X-Forwarded-For`, if present, names one of the owner's own devices (found in review).
 - **R-5. The token file.** Anything running as the user can read
   `~/.dispatch/access-token`. Same as every other secret in `~/.dispatch`.
 
 ### 7.13 Security headers (SEC-09, added 2026-10-23)
 
-Every HTTP response, including the sign-in page and error responses, carries:
+Every HTTP response, including the sign-in page and error responses, carries (the image route replaces the CSP with `sandbox`; `X-Frame-Options` still applies there):
 
 - `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so
   no other site can frame Dispatch and overlay fake buttons on it.
@@ -599,7 +604,7 @@ Every HTTP response, including the sign-in page and error responses, carries:
 
 Phase 1 does **not** send a script CSP. The web app and the doc viewer render
 Markdown and HTML, and a strict `script-src` needs a separate pass over the client
-(overview finding SEC-08). The headers above do not block inline scripts, styles,
+(overview finding SEC-08). `X-Frame-Options: DENY` also stops the Browser tab pane from framing Dispatch itself; nothing does that today. The headers above do not block inline scripts, styles,
 WebSockets or images, so the app keeps working. No route needs to be framed by
 another site, so `DENY` applies everywhere.
 
