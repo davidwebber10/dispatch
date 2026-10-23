@@ -132,7 +132,8 @@ export function probeHttp(port: number, probe?: (port: number) => boolean): stri
  * server sees (the --link form puts it in the fragment, which browsers never send).
  */
 /** Base URL for `access --link`: a full URL as given; a host gets the daemon port unless it already has one. */
-export function linkBase(arg: string, port: number): string {
+export function linkBase(rawArg: string, port: number): string {
+  const arg = rawArg.trim();
   if (/^https?:\/\//i.test(arg)) {
     let u: URL;
     try { u = new URL(arg); } catch { throw new Error(`not a valid URL: ${arg}`); }
@@ -140,7 +141,8 @@ export function linkBase(arg: string, port: number): string {
   }
   if (/^\[[^\]]+\](:\d+)?$/.test(arg)) return /\]:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`; // [::1] or [::1]:3490
   if ((arg.match(/:/g) ?? []).length > 1) return `http://[${arg}]:${port}`;                                       // bare IPv6
-  return /:\d+$/.test(arg) ? `http://${arg}` : `http://${arg}:${port}`;                                          // host or host:port
+  const host = arg.replace(/\/+$/, ''); // `mac.ts.net/` must not become `mac.ts.net/:3456`
+  return /:\d+$/.test(host) ? `http://${host}` : `http://${host}:${port}`;                                          // host or host:port
 }
 
 async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {

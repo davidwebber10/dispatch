@@ -588,7 +588,7 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
   nginx `proxy_pass`, `socat`, `ssh -R`) is indistinguishable from a local caller, and
   the remote client chooses `Host`. Neither phase closes it; the owner must give such a
   proxy its own sign-in. A `tailscale serve` identity header is trusted only when
-  the request was relayed with `X-Forwarded-For` naming one of the owner's own devices; a relay header without it is refused (found in review). A relay chain, or an empty relay header, also fails. A proxy that passes one client-supplied `X-Forwarded-For` entry through unchanged, together with the identity header, cannot be told from `tailscale serve` and stays a residual (R-6).
+  the request was relayed with `X-Forwarded-For` naming one of the owner's own devices; a relay header without it is refused (found in review). A relay chain, or an empty relay header, also fails. A proxy that passes one client-supplied `X-Forwarded-For` entry through unchanged, together with the identity header, cannot be told from `tailscale serve`. The owner accepted this as a known limit on 2026-10-23: no code change, documented only (R-6).
 - **R-5. The token file.** Anything running as the user can read
   `~/.dispatch/access-token`. Same as every other secret in `~/.dispatch`.
 
@@ -631,9 +631,9 @@ the `0700` directory covers them.
 
 ### 7.15 Owner decisions (resolved 2026-10-23)
 
-- **NE-1:** updated 2026-10-23. The repository owner's review of the Phase 1 PR, a WSL2
-  test and a second-user phone check are **follow-ups after release, not release
-  blockers**. The owner's own phone test (Tailscale, Wi-Fi sign-in, `#access=` link,
+- **NE-1:** updated 2026-10-23. David Webber approved the Phase 1 PR (#102) via Google
+  Chat on 2026-10-23. A WSL2 test and a second-user phone check are **follow-ups after
+  release, not release blockers**. The owner's own phone test (Tailscale, Wi-Fi sign-in, `#access=` link,
   login cooldown) passed on a test copy. The build agent does not contact anyone.
 - **NE-3:** option A. Only devices on the owner's own Tailscale account skip
   sign-in. Coworkers on a shared tailnet must sign in.
@@ -717,8 +717,8 @@ only if a real user needs it.
 - **The fix reaches only installs that update.** The in-app update prompt already
   appears on every install (`update/checker.ts`). The release note should say
   that the update is important.
-- **Repository owner review:** Phase 1 changes default behaviour for every user. The
-  owner's review is a follow-up after release, not a blocker (decision NE-1).
+- **Owner review:** Phase 1 changes default behaviour for every user. David Webber
+  approved PR #102 on 2026-10-23 (decision NE-1).
 - **Public issue:** issue 94 is public and already describes the problem, so the
   release note can be factual. It should not give step-by-step attack details.
 
@@ -816,9 +816,9 @@ offer. It stays a documented limit.
 
 The owner accepted every recommendation (see 7.15).
 
-1. **NE-1 (resolved: review is a follow-up after release, not a blocker): Does the repository owner review Phase 1 before release?**
-   The original recommendation was review before release. The owner changed it on
-   2026-10-23 to a follow-up.
+1. **NE-1 (resolved: David Webber approved PR #102 on 2026-10-23): Does David Webber review Phase 1 before release?**
+   The original recommendation was review before release. The WSL2 test and a
+   second-user phone check became follow-ups after release.
 2. **NE-2:** folded into NE-4. No current user is known to run Cloudflare or
    another proxy, so there is no separate proxy decision.
 3. **NE-3 (resolved: A): Tailscale rule scope in Phase 1.** (A) Only devices owned by the same
