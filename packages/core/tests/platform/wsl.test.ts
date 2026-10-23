@@ -114,3 +114,10 @@ describe('interop probe (fileManagerName)', () => {
     expect(binfmtReads).toBe(1);
   });
 });
+test('isHostGatewayPeer: only the default gateway (plain or v4-mapped), never other private peers', () => {
+  const p = fakeWsl([]);
+  expect(p.isHostGatewayPeer('192.168.32.1')).toBe(true);
+  expect(p.isHostGatewayPeer('::ffff:192.168.32.1')).toBe(true);
+  expect(p.isHostGatewayPeer('192.168.32.7')).toBe(false);
+  expect(p.isHostGatewayPeer(undefined)).toBe(false);
+});

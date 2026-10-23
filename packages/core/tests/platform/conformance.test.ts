@@ -13,7 +13,7 @@ const wsl = createWslPlatform({
 const CONTRACT = [
   'id', 'flavor', 'fileManagerName', 'defaultShell', 'resolveLoginPath', 'dataDir', 'logDir',
   'resolveCommand', 'listProcessIds', 'claudeProjectDir', 'installBrowserShim', 'daemon',
-  'revealInFileManager', 'isLocalClient', 'toolPlatformKey', 'tailscaleStatus',
+  'revealInFileManager', 'isLocalClient', 'isHostGatewayPeer', 'toolPlatformKey', 'tailscaleStatus',
 ] as const;
 
 describe.each([['darwin', darwin], ['linux', linux], ['wsl', wsl]] as const)('%s conforms', (_name, p) => {
