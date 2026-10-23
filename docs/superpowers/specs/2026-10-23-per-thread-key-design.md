@@ -226,8 +226,14 @@ were written from request bodies, so the daemon checks them before it mints a ke
 
 **Overseer keys.** A thread key is an **overseer key** when, at request time, its
 row has `config.role: coordinator`, is not archived, has no `config.roleRun`, and is
-the live coordinator of its own current project (the same test as the ledger's
-"live coordinator in this project" check, `overseer/ledger-service.ts:162-170`).
+**the** live coordinator of its own current project: the one row that
+`findCoordinator(sessionId)` returns (`sessions/service.ts:2019-2023`, the first
+unarchived agent-harness coordinator row in the project's sort order). A second
+unarchived coordinator row in the same project is not an overseer key. The ledger's
+own check (`overseer/ledger-service.ts:162-170`) is wider (any unarchived coordinator
+row); it keeps its current behavior for ledger writes, and the overseer reach uses
+`findCoordinator` only. The same predicate decides a valid cross-project message
+target and the coordinator id that the project list returns.
 Every other thread key is a **worker key** (plain threads included). An overseer key
 gets the cross-project reach of 6.4.1; a worker key never does. Only the daemon makes
 coordinator rows (`ensureCoordinator`), and from stage 1 on no key can set
@@ -425,7 +431,7 @@ workers and to Chat spawns.
 | `GET /api/sessions/SID/terminals` | Worker key: `SID` is the caller's project. Overseer key: any project (6.4.1). |
 | `GET /api/terminals/ID`, `GET /api/terminals/ID/conversation` | Worker key: target is in the caller's project. Overseer key: any project (6.4.1). Keys are redacted from the transcript (6.3). |
 | `GET /api/terminals/ID/permission` | Worker key: target is in the caller's project. Overseer key: any project (6.4.1); this is a read and answers nothing. |
-| `GET /api/sessions/SID/overseer/worker-defaults` | `SID` is the caller's project (every key kind; it only feeds a spawn). |
+| `GET /api/sessions/SID/overseer/worker-defaults` | `SID` is the caller's project, for every thread key, overseers included (it only feeds a spawn). The Chat row below keeps any project. |
 | `POST /api/sessions/SID/terminals` (spawn and queue) | `SID` is the caller's project (overseer keys too). The create body allowlist above. `spawnDepth` = caller depth + 1, refused past `MAX_SPAWN_DEPTH` (3). |
 | `POST /api/terminals/ID/message` | Target is not the caller and is not a shell tab. Target is in the caller's project, or (overseer key only, 6.4.1) the target is the live overseer of another project. The daemon sets `source` to `coordinator` when the caller is the project's coordinator, else `agent`. A body `source: user` is refused. The per-pair hourly limit from `guards.ts` (10 per sender and target pair per hour) runs here, keyed by caller and target, for same-project and cross-project messages alike. A cross-project message gets the sender line of 6.4.1. |
 | `POST /api/terminals/ID/start` | Target is not the caller, and was spawned by the caller or the caller is the coordinator of the target's current project. |
@@ -464,8 +470,8 @@ different projects to see and talk to each other, so on 2026-10-23 the owner cho
 Rules:
 
 - **Message target.** A cross-project message is allowed only when the target row
-  has `config.role: coordinator`, is not archived, and is the live coordinator of its
-  own current project. Any other target in another project (a worker, a plain thread,
+  is its project's overseer by the 6.1 test (the row that `findCoordinator` returns
+  for its current project). Any other target in another project (a worker, a plain thread,
   a role run, a shell tab) gets `403 out_of_scope`. `message_agent` is for the
   caller's own workers and stays inside the project.
 - **Rate limit.** The daemon's one pair limiter (10 messages per sender and target
@@ -483,7 +489,13 @@ Rules:
   (never `user`).
 - **No forged sender line.** A message from any key (same project or not, Chat
   included) whose text holds the marker `[From the overseer of project` anywhere gets
-  `403 identity_mismatch`. So a worker cannot make a same-project message look like
+  `403 identity_mismatch`. The daemon checks the text **as it will be delivered**:
+  every text block and the flattened PTY text, after the same control-character
+  removal that `ptyMessagePayload` does (`sessions/pty-message.ts:49-54`), and also
+  with Unicode format characters (for example zero-width spaces) removed, case
+  ignored and runs of white space folded to one space. So a marker split by a NUL, a
+  zero-width space or a line break is still refused. One shared helper serves the
+  thread key rule and the Chat key rule. So a worker cannot make a same-project message look like
   it came from another project's overseer. Owner messages are not checked.
 - **Discovery.** An overseer finds other projects with a new agency MCP tool
   `list_projects` (backed by `GET /api/sessions`, trimmed for keys), and lists a
