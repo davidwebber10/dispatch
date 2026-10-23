@@ -31,7 +31,11 @@ export interface Ctx {
    * same PORT-derived value main() already bakes into ctx.port.
    */
   rolesFetch?: typeof fetch;
+  /** Optional injectable access-token module (test seam). Defaults to `dispatch-server/access`. */
+  accessLib?: AccessLib;
 }
+
+type AccessLib = typeof import('dispatch-server/access');
 
 function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
   return {
@@ -66,6 +70,7 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       const s = ctx.daemon.status();
       console.log(s.loaded ? `loaded yes${s.pid ? ` (pid ${s.pid})` : ''}` : 'loaded no');
       console.log(probeHttp(ctx.port, ctx.probe));
+      console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
       return;
     }
     case 'build':
@@ -91,9 +96,11 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
     case 'release':
       cmdRelease(ctx, rest);
       return;
+    case 'access':
+      return cmdAccess(ctx, rest);
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|release>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|release>`,
       );
   }
 }
@@ -117,6 +124,54 @@ export function probeHttp(port: number, probe?: (port: number) => boolean): stri
   return reachable
     ? `HTTP: reachable at ${url}`
     : `HTTP: not responding on ${url}`;
+}
+
+/**
+ * `dispatch access`: the sign-in token for devices that are not this computer (network
+ * exposure spec, 7.5). The token goes to stdout only: never into argv, a log or a URL that a
+ * server sees (the --link form puts it in the fragment, which browsers never send).
+ */
+async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
+  if (!ctx.dataDir) throw new Error('cannot find the Dispatch data directory');
+  const lib = ctx.accessLib ?? (await import('dispatch-server/access'));
+  const dataDir = ctx.dataDir;
+  const [sub, arg] = args;
+  switch (sub) {
+    case undefined:
+      console.log(`Access token: ${lib.ensureAccessToken(dataDir)}`);
+      console.log('');
+      console.log('To sign in another device:');
+      console.log(`  1. Open Dispatch on that device (for example http://THIS-COMPUTER:${ctx.port}).`);
+      console.log('  2. Paste the token into the sign-in page.');
+      console.log('Your own Tailscale devices and this computer need no token.');
+      console.log('Keep the token private. "dispatch access rotate" makes a new one and signs out every device.');
+      return;
+    case '--link':
+      if (!arg) throw new Error('usage: dispatch access --link <host>');
+      console.log(`http://${arg}:${ctx.port}/#access=${lib.ensureAccessToken(dataDir)}`);
+      return;
+    case 'rotate':
+      lib.rotateAccessToken(dataDir);
+      console.log('New access token written. Every signed-in device is signed out. Run "dispatch access" to see it.');
+      return;
+    case 'allow-host':
+      if (!arg) throw new Error('usage: dispatch access allow-host <name>');
+      lib.createAccessConfig(dataDir).addHost(arg);
+      console.log(`${arg} now counts as this computer. Only add a name whose proxy has its own sign-in.`);
+      return;
+    case 'remove-host':
+      if (!arg) throw new Error('usage: dispatch access remove-host <name>');
+      lib.createAccessConfig(dataDir).removeHost(arg);
+      console.log(`${arg} removed.`);
+      return;
+    case 'list-hosts': {
+      const hosts = lib.createAccessConfig(dataDir).allowedHosts();
+      console.log(hosts.length ? hosts.join('\n') : '(none)');
+      return;
+    }
+    default:
+      throw new Error('usage: dispatch access [--link <host> | rotate | allow-host <name> | remove-host <name> | list-hosts]');
+  }
 }
 
 /**

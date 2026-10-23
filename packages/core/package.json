@@ -13,6 +13,10 @@
     "./platform": {
       "types": "./dist/platform/index.d.ts",
       "default": "./dist/platform/index.js"
+    },
+    "./access": {
+      "types": "./dist/auth/access-api.d.ts",
+      "default": "./dist/auth/access-api.js"
     }
   },
   "scripts": {
