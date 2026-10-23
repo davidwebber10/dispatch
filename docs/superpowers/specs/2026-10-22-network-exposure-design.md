@@ -450,8 +450,9 @@ For a request that passed section 7.1:
 - No `Origin` header: allowed. Programs on the machine and plain navigations send
   none, and a web page cannot remove it from a cross-origin request.
 - `Origin` present: allowed only when its host and port equal the `Host` header
-  (same origin), or both are loopback names (the Vite dev server case), or the
-  origin is listed in `access.json`. Otherwise `403 {"error":"origin_refused"}`.
+  (same origin), or both are loopback names and `Sec-Fetch-Site` is absent or
+  `same-origin` (the Vite dev server case; a page on another local port is `same-site`
+  and is refused), or the origin is listed in `access.json`. Otherwise `403 {"error":"origin_refused"}`.
   `Origin: null` is refused.
 - Applies to every method on `/api` and to **every WebSocket upgrade**.
 - `/api` requests with `Sec-Fetch-Site: cross-site` are refused as well. That covers
