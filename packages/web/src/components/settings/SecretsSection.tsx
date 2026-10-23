@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Key, Eye, EyeSlash, Copy, Check, Trash } from '@phosphor-icons/react';
 import { useSecrets } from '../../stores/secrets';
+import { api } from '../../api/client';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { pageLabel, summaryLine, ghostBtn, fieldInput, solidBtn, Toggle, SearchInput, HoverRow, IconGhost, Sheet } from './ui';
 
@@ -24,6 +25,8 @@ export function SecretsSection() {
   const [newName, setNewName] = useState('');
   const [newValue, setNewValue] = useState('');
   const [reveal, setReveal] = useState<Record<string, boolean>>({});
+  // Values are fetched one at a time, on an explicit reveal or copy; the list carries names only.
+  const [values, setValues] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [synced, setSynced] = useState(false);
   const [copied, setCopied] = useState('');
@@ -84,10 +87,33 @@ export function SecretsSection() {
     setBusy(false);
   }
 
+  async function fetchValues(names: string[]): Promise<Record<string, string>> {
+    const missing = names.filter((n) => values[n] === undefined);
+    const got: Record<string, string> = {};
+    try {
+      await Promise.all(missing.map(async (n) => { got[n] = await api.getSecretValue(n); }));
+    } catch { setErr('Could not load value.'); }
+    if (Object.keys(got).length) setValues((v) => ({ ...v, ...got }));
+    return { ...values, ...got };
+  }
+
+  async function toggleOne(name: string) {
+    if (!reveal[name]) await fetchValues([name]);
+    setReveal((r) => ({ ...r, [name]: !r[name] }));
+  }
+
+  async function toggleAll() {
+    if (allShown) { setReveal({}); return; }
+    const names = filtered.map((s) => s.name);
+    await fetchValues(names);
+    setReveal(Object.fromEntries(names.map((n) => [n, true])));
+  }
+
   async function resync() {
     if (busy) return;
     setErr('');
     try {
+      setValues({}); setReveal({});
       await useSecrets.getState().loadSecrets();
       setSynced(true);
       timers.current.push(setTimeout(() => setSynced(false), 1500));
@@ -107,20 +133,22 @@ export function SecretsSection() {
     try { await useSecrets.getState().deleteSecret(name); } catch { setErr('Could not delete secret.'); }
   }
 
-  function copyValue(name: string, value: string) {
-    void navigator.clipboard?.writeText(value);
+  async function copyValue(name: string) {
+    const v = (await fetchValues([name]))[name];
+    if (v === undefined) return;
+    void navigator.clipboard?.writeText(v);
     setCopied(name);
     timers.current.push(setTimeout(() => setCopied((c) => (c === name ? '' : c)), 1200));
   }
 
-  const actions = (name: string, value: string) => {
+  const actions = (name: string) => {
     const shown = !!reveal[name];
     return (
       <span style={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
-        <IconGhost title={shown ? 'Hide value' : 'Reveal value'} active={shown} onClick={() => setReveal((r) => ({ ...r, [name]: !r[name] }))}>
+        <IconGhost title={shown ? 'Hide value' : 'Reveal value'} active={shown} onClick={() => void toggleOne(name)}>
           {shown ? <EyeSlash size={14} /> : <Eye size={14} />}
         </IconGhost>
-        <IconGhost title="Copy value" active={copied === name} onClick={() => copyValue(name, value)}>
+        <IconGhost title="Copy value" active={copied === name} onClick={() => void copyValue(name)}>
           {copied === name ? <Check size={14} /> : <Copy size={14} />}
         </IconGhost>
         {!readOnly && <IconGhost title="Delete secret" danger onClick={() => void remove(name)}><Trash size={14} /></IconGhost>}
@@ -128,8 +156,8 @@ export function SecretsSection() {
     );
   };
 
-  const valueCell = (name: string, value: string) => (reveal[name]
-    ? <span style={{ ...mono, color: 'var(--color-text-secondary)' }}>{value}</span>
+  const valueCell = (name: string) => (reveal[name] && values[name] !== undefined
+    ? <span style={{ ...mono, color: 'var(--color-text-secondary)' }}>{values[name]}</span>
     : <span style={{ color: 'var(--color-text-tertiary)', letterSpacing: '2px', fontSize: 10, overflow: 'hidden', whiteSpace: 'nowrap' }}>••••••••••••</span>);
 
   const addForm = (inSheet: boolean) => (
@@ -197,7 +225,7 @@ export function SecretsSection() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
             <SearchInput value={query} onChange={setQuery} placeholder="Filter variables" />
-            <button onClick={() => setReveal(allShown ? {} : Object.fromEntries(filtered.map((s) => [s.name, true])))} style={{ ...ghostBtn, fontSize: 11.5 }}>
+            <button onClick={() => void toggleAll()} style={{ ...ghostBtn, fontSize: 11.5 }}>
               {allShown ? 'Hide all values' : 'Reveal all values'}
             </button>
             {!isMobile && <span style={{ ...summaryLine, flexShrink: 0 }}>{secrets.length} variable{secrets.length === 1 ? '' : 's'}</span>}
@@ -214,15 +242,15 @@ export function SecretsSection() {
             <HoverRow key={s.name} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '9px 2px' }}>
               <span style={{ ...mono, color: '#e9e9ec' }}>{s.name}</span>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
-                <span style={{ minWidth: 0, overflow: 'hidden' }}>{valueCell(s.name, s.value)}</span>
-                {actions(s.name, s.value)}
+                <span style={{ minWidth: 0, overflow: 'hidden' }}>{valueCell(s.name)}</span>
+                {actions(s.name)}
               </span>
             </HoverRow>
           ) : (
             <HoverRow key={s.name} style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '7px 2px' }}>
               <span style={{ ...mono, color: '#e9e9ec' }}>{s.name}</span>
-              {valueCell(s.name, s.value)}
-              {actions(s.name, s.value)}
+              {valueCell(s.name)}
+              {actions(s.name)}
             </HoverRow>
           )))}
           {filtered.length === 0 && secrets.length > 0 && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', textAlign: 'center', padding: '14px 0' }}>No variables match “{query}”</div>}

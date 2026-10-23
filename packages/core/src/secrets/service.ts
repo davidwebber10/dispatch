@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DopplerClient, type DopplerProject, type DopplerConfig, type DopplerSecret } from './doppler.js';
+import { DopplerClient, type DopplerProject, type DopplerConfig } from './doppler.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 
 export interface DopplerStatus {
@@ -138,11 +138,19 @@ export class SecretsService {
     if (!project) throw new Error('project is required');
     return this.requireClient().listConfigs(project);
   }
-  async listSecrets(project?: string, config?: string): Promise<DopplerSecret[]> {
+  /**
+   * Names only, for the configured project/config. A different pair is refused so the
+   * route cannot be used to read another config the token happens to reach. Values are
+   * read one at a time through getSecret.
+   */
+  async listSecrets(project?: string, config?: string): Promise<Array<{ name: string }>> {
     const c = this.read();
-    const p = project || c.project, cf = config || c.config;
-    if (!p || !cf) throw new Error('project and config are required');
-    return this.requireClient().listSecrets(p, cf);
+    if (!c.project || !c.config) throw new Error('project and config are required');
+    if ((project && project !== c.project) || (config && config !== c.config)) {
+      throw new Error('invalid project or config: only the configured pair can be listed');
+    }
+    const all = await this.requireClient().listSecrets(c.project, c.config);
+    return all.map((s) => ({ name: s.name }));
   }
 
   /** Resolve a single secret's value by name (server-side only; never returned to clients). */
