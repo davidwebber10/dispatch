@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { preflightUpdate, parsePorcelain, type GitExec } from './apply.js';
+import { preflightUpdate, parsePorcelain, latestReleaseTag, type GitExec } from './apply.js';
 
 /** Builds a fake `git` runner from a map of `args.join(' ')` -> stdout (or a thrown Error). */
 function fakeGit(responses: Record<string, string | Error>): GitExec {
@@ -14,11 +14,10 @@ function fakeGit(responses: Record<string, string | Error>): GitExec {
 
 const CLEAN_AND_FF_ABLE = {
   'status --porcelain': '',
-  'fetch origin': '',
-  'rev-parse --abbrev-ref HEAD': 'main\n',
-  'rev-parse --abbrev-ref @{u}': 'origin/main\n',
+  'fetch origin --tags': '',
+  'tag -l v* --sort=-v:refname': 'v3.5.0\nv3.4.0\n',
   'rev-parse HEAD': 'abc123\n',
-  'rev-parse origin/main': 'def456\n',
+  'rev-parse v3.5.0^{commit}': 'def456\n',
   'merge-base --is-ancestor abc123 def456': '',
 };
 
@@ -40,6 +39,7 @@ describe('preflightUpdate', () => {
     const git = fakeGit({
       ...CLEAN_AND_FF_ABLE,
       'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
+      'merge-base --is-ancestor def456 abc123': new Error('exit code 1'),
     });
     const result = preflightUpdate('/repo', git);
     expect(result.ok).toBe(false);
@@ -51,7 +51,7 @@ describe('preflightUpdate', () => {
     const git = fakeGit({
       ...CLEAN_AND_FF_ABLE,
       'rev-parse HEAD': 'abc123\n',
-      'rev-parse origin/main': 'abc123\n',
+      'rev-parse v3.5.0^{commit}': 'abc123\n',
       'merge-base --is-ancestor abc123 abc123': '',
     });
     const result = preflightUpdate('/repo', git);
@@ -59,7 +59,7 @@ describe('preflightUpdate', () => {
   });
 
   it('fails when git fetch itself fails (e.g. offline)', () => {
-    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'fetch origin': new Error('could not resolve host') });
+    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'fetch origin --tags': new Error('could not resolve host') });
     const result = preflightUpdate('/repo', git);
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/git fetch failed/i);
@@ -91,7 +91,7 @@ describe('preflightUpdate', () => {
     };
     const result = preflightUpdate('/repo', git, { force: true });
     expect(result.ok).toBe(true);
-    expect(calls.some((c) => c.join(' ') === 'fetch origin')).toBe(true);
+    expect(calls.some((c) => c.join(' ') === 'fetch origin --tags')).toBe(true);
   });
 
   it('force:true does NOT skip the fast-forward/ancestor check — a diverged branch is never forceable', () => {
@@ -99,6 +99,7 @@ describe('preflightUpdate', () => {
       ...CLEAN_AND_FF_ABLE,
       'status --porcelain': ' M packages/core/src/server.ts\n',
       'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
+      'merge-base --is-ancestor def456 abc123': new Error('exit code 1'),
     });
     const result = preflightUpdate('/repo', git, { force: true });
     expect(result.ok).toBe(false);
@@ -106,37 +107,38 @@ describe('preflightUpdate', () => {
     expect(result.reason).toMatch(/diverged/i);
   });
 
-  it('fails with an actionable message when the branch has no upstream (local-only feature branch)', () => {
-    // The bug this fixes: a checkout on a never-pushed feature branch used to fail on the
-    // cryptic `could not resolve origin/<branch>`, and the suggested `dispatch update` fallback
-    // (git pull --ff-only) would fail too. Now it names the branch and says what to do.
+  it('updates to the newest release tag, never to the tip of main', () => {
+    // fakeGit throws on any unexpected invocation, so this passing proves the check ran against the
+    // tag (and never resolved origin/main or an upstream).
     const git = fakeGit({
-      'status --porcelain': '',
-      'fetch origin': '',
-      'rev-parse --abbrev-ref HEAD': 'feat/hosted-box-image\n',
-      'rev-parse --abbrev-ref @{u}': new Error("fatal: no upstream configured for branch 'feat/hosted-box-image'"),
+      ...CLEAN_AND_FF_ABLE,
+      'tag -l v* --sort=-v:refname': 'v3.10.0\nv3.9.2\n',
+      'rev-parse v3.10.0^{commit}': 'def456\n',
     });
+    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
+  });
+
+  it('ignores prerelease and non-release tags when picking the newest', () => {
+    const git = fakeGit({
+      ...CLEAN_AND_FF_ABLE,
+      'tag -l v* --sort=-v:refname': 'v3.6.0-rc1\nvnext\nv3.5.0\n',
+    });
+    expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
+  });
+
+  it('fails clearly when origin has no release tag', () => {
+    const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'tag -l v* --sort=-v:refname': '' });
     const result = preflightUpdate('/repo', git);
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/no upstream/i);
-    expect(result.reason).toContain('feat/hosted-box-image');
-    expect(result.reason).toMatch(/git checkout main/);
-    expect(result.reason).not.toMatch(/could not resolve origin\//); // the old cryptic phrasing is gone
+    expect(result.reason).toMatch(/No release tag/);
     expect(result.forceable).toBeFalsy();
   });
 
-  it("resolves the branch's actual upstream via @{u}, not origin/<branch>", () => {
-    // A branch named "stable" that tracks origin/main: the old code looked for origin/stable
-    // (which wouldn't exist). fakeGit throws on any unexpected invocation, so this passing proves
-    // the fast-forward check ran against origin/main — the resolved upstream — not origin/stable.
+  it('is fine when the checkout already contains the newest release (ahead of the tag)', () => {
     const git = fakeGit({
-      'status --porcelain': '',
-      'fetch origin': '',
-      'rev-parse --abbrev-ref HEAD': 'stable\n',
-      'rev-parse --abbrev-ref @{u}': 'origin/main\n',
-      'rev-parse HEAD': 'abc123\n',
-      'rev-parse origin/main': 'def456\n',
-      'merge-base --is-ancestor abc123 def456': '',
+      ...CLEAN_AND_FF_ABLE,
+      'merge-base --is-ancestor abc123 def456': new Error('exit code 1'),
+      'merge-base --is-ancestor def456 abc123': '',
     });
     expect(preflightUpdate('/repo', git)).toEqual({ ok: true });
   });
@@ -170,5 +172,13 @@ describe('parsePorcelain', () => {
     const { entries, overflow } = parsePorcelain(many);
     expect(entries).toHaveLength(50);
     expect(overflow).toBe(10);
+  });
+});
+
+describe('latestReleaseTag', () => {
+  it('takes the first plain vX.Y.Z line', () => {
+    expect(latestReleaseTag('v1.2.3\nv1.2.2\n')).toBe('v1.2.3');
+    expect(latestReleaseTag('v1.3.0-beta\nv1.2.3\n')).toBe('v1.2.3');
+    expect(latestReleaseTag('')).toBeNull();
   });
 });

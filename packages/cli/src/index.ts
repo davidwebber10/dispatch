@@ -382,7 +382,30 @@ async function rolesSetEnabled(ctx: Ctx, name: string, enabled: boolean): Promis
   console.log(`${entry.def.name}: ${action}d${suffix ? ' ' + suffix : ''}`);
 }
 
-// Order is: git pull → build (pnpm install, since fresh dependencies may be needed
+/**
+ * The newest plain release tag (vX.Y.Z) in `git tag -l` output sorted newest first; prerelease and
+ * other tag shapes are ignored. Keep in step with the same function in packages/core/src/update/apply.ts.
+ */
+export function latestReleaseTag(tagList: string): string | null {
+  return tagList.split('\n').map((t) => t.trim()).find((t) => /^v\d+\.\d+\.\d+$/.test(t)) ?? null;
+}
+
+/**
+ * Move this checkout to the newest release tag with a fast-forward, instead of pulling the tip of
+ * main: a release is the unit a person read the notes for, and main can hold unreleased commits.
+ * A checkout that already contains the tag is left where it is; a diverged one fails.
+ */
+function updateToLatestRelease(ctx: Ctx): void {
+  execFileSync('git', ['fetch', 'origin', '--tags'], { stdio: 'inherit', ...shellOf(ctx) });
+  const list = String(execFileSync('git', ['tag', '-l', 'v*', '--sort=-v:refname'], { encoding: 'utf8', ...shellOf(ctx) }) ?? '');
+  const tag = latestReleaseTag(list);
+  if (!tag) throw new Error('No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.');
+  console.log(`Updating to release ${tag}`);
+  // refs/tags/ form, not tag^{commit}: the caret is an escape character in cmd.exe.
+  execFileSync('git', ['merge', '--ff-only', `refs/tags/${tag}`], { stdio: 'inherit', ...shellOf(ctx) });
+}
+
+// Order is: fast-forward to the newest release tag → build (pnpm install, since fresh dependencies may be needed
 // post-pull, then `pnpm -r run build`) → restart. Restart goes through the platform
 // daemon controller unconditionally — darwin wraps launchctl kickstart, wsl kills and
 // respawns the pidfile-tracked process, and linux throws "not implemented" (headless
@@ -393,7 +416,7 @@ export function cmdUpdate(ctx: Ctx): void {
   try {
     progress.step('pull');
     const lockBefore = lockfileHash(ctx);
-    execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOf(ctx) });
+    updateToLatestRelease(ctx);
     const lockAfter = lockfileHash(ctx);
     progress.step('install');
     // Unchanged dependencies need no install: this saves 10-20 s on most updates.

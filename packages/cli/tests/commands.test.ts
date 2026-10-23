@@ -12,7 +12,7 @@ vi.mock('child_process', () => ({
 }));
 
 import { execFileSync, spawnSync } from 'child_process';
-import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate } from '../src/index.js';
+import { runCommand, lastLines, probeHttp, cmdBuild, cmdRun, cmdUpdate, latestReleaseTag } from '../src/index.js';
 
 // Give both mocks a harmless default implementation so tests that don't care about
 // child_process (routing, probe-via-injected-`probe`, etc.) keep behaving as if the
@@ -136,10 +136,11 @@ describe('cmdBuild', () => {
 });
 
 describe('cmdUpdate', () => {
-  test('runs git pull, then build, then daemon.restart() — in that order', () => {
+  test('fast-forwards to the newest release tag, then builds, then daemon.restart() — in that order', () => {
     const calls: string[] = [];
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${(args ?? []).join(' ')}`);
+      if (cmd === 'git' && args[0] === 'tag') return 'v3.10.0\nv3.9.2\nv3.10.0-rc1\n';
       return Buffer.from('');
     }) as any);
     const daemon = {
@@ -150,7 +151,10 @@ describe('cmdUpdate', () => {
 
     cmdUpdate({ daemon } as any);
 
-    const pullIdx = calls.findIndex(c => c === 'git pull --ff-only');
+    const pullIdx = calls.findIndex(c => c === 'git merge --ff-only refs/tags/v3.10.0');
+    // The tip of main is never pulled.
+    expect(calls.some(c => c.startsWith('git pull'))).toBe(false);
+    expect(calls.findIndex(c => c === 'git fetch origin --tags')).toBeLessThan(pullIdx);
     const installIdx = calls.findIndex(c => c === 'pnpm install');
     const buildIdx = calls.findIndex(c => c === 'pnpm -r run build');
     const restartIdx = calls.findIndex(c => c === 'daemon.restart');
@@ -169,7 +173,26 @@ describe('cmdUpdate', () => {
       restart: vi.fn(() => { throw new Error('restart: not implemented on linux'); }),
     };
 
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => (cmd === 'git' && args[0] === 'tag' ? 'v1.0.0\n' : '')) as any);
     expect(() => cmdUpdate({ daemon } as any)).toThrow('restart: not implemented on linux');
+  });
+});
+
+describe('cmdUpdate with no release tag', () => {
+  test('fails at the pull step instead of pulling main', () => {
+    const calls: string[] = [];
+    vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => { calls.push(`${cmd} ${args.join(' ')}`); return ''; }) as any);
+    const daemon = { restart: vi.fn() };
+    expect(() => cmdUpdate({ daemon } as any)).toThrow(/No release tag/);
+    expect(calls.some(c => c.startsWith('git pull') || c.startsWith('git merge'))).toBe(false);
+    expect(daemon.restart).not.toHaveBeenCalled();
+  });
+});
+
+describe('latestReleaseTag', () => {
+  test('first plain vX.Y.Z, skipping prerelease shapes', () => {
+    expect(latestReleaseTag('v2.0.0-rc1\nv1.9.0\nv1.8.0\n')).toBe('v1.9.0');
+    expect(latestReleaseTag('')).toBeNull();
   });
 });
 
@@ -186,13 +209,15 @@ describe('cmdUpdate progress file', () => {
     const seen: string[] = [];
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       if (cmd === 'git' && args[0] === 'rev-parse') return '';
+      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
+      if (cmd === 'git' && args[0] === 'fetch') return '';
       seen.push(`${read(dataDir).step}:${cmd} ${args[0]}`);
       return '';
     }) as any);
     const daemon = daemonWith(() => { seen.push(`${read(dataDir).state}:restart`); });
     cmdUpdate({ daemon, dataDir, repoRoot: dataDir } as any);
     expect(seen.map((x) => x.split(':')[0] + ':' + (x.includes(process.execPath) ? 'node' : x.split(':').slice(1).join(':')))).toEqual(
-      ['pull:git pull', 'install:pnpm install', 'build:pnpm -r', 'tools:node', 'restarting:restart']);
+      ['pull:git merge', 'install:pnpm install', 'build:pnpm -r', 'tools:node', 'restarting:restart']);
     const s = read(dataDir);
     expect(s).toMatchObject({ v: 1, state: 'restarting', step: 'restart', steps: ['pull', 'install', 'build', 'tools', 'restart'], error: null });
     expect(typeof s.pid).toBe('number');
@@ -203,6 +228,7 @@ describe('cmdUpdate progress file', () => {
     const dataDir = tmp();
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       if (cmd === 'pnpm' && args[0] === '-r') throw new Error('Command failed: pnpm -r run build');
+      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
       return '';
     }) as any);
     expect(() => cmdUpdate({ daemon: daemonWith(), dataDir, repoRoot: dataDir } as any)).toThrow('pnpm -r run build');
@@ -216,6 +242,7 @@ describe('cmdUpdate progress file', () => {
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${args.join(' ')}`);
       if (cmd === 'git' && args[0] === 'rev-parse') return 'abc123\n';
+      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
       return '';
     }) as any);
     cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);
@@ -231,6 +258,7 @@ describe('cmdUpdate progress file', () => {
     vi.mocked(execFileSync).mockImplementation(((cmd: string, args: string[]) => {
       calls.push(`${cmd} ${args.join(' ')}`);
       if (cmd === 'git' && args[0] === 'rev-parse') return `hash${++n}\n`;
+      if (cmd === 'git' && args[0] === 'tag') return 'v1.0.0\n';
       return '';
     }) as any);
     cmdUpdate({ daemon: daemonWith(), dataDir: repoRoot, repoRoot } as any);
