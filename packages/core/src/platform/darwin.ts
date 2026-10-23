@@ -58,6 +58,7 @@ export const darwin: Platform = {
     new Promise((resolve, reject) =>
       execFile('/usr/bin/open', ['-R', ...absPaths], { timeout: 3000 }, (err) => (err ? reject(err) : resolve()))),
   isLocalClient: (c) => !c.proxied && isLoopbackAddress(c.remoteAddress) && isLoopbackHost(c.host),
+  isHostGatewayPeer: () => false,
   toolPlatformKey: () => (process.arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64'),
   tailscaleStatus: () =>
     new Promise<TailscaleStatus>((resolve) => {

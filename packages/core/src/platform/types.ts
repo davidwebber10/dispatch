@@ -49,6 +49,8 @@ export interface Platform {
   revealInFileManager(absPaths: string[]): Promise<void>;
   /** True when the request client is genuinely on this machine (not behind a same-host proxy). */
   isLocalClient(client: RevealClient): boolean;
+  /** True when the socket peer is the Windows host's WSL NAT gateway (a Windows browser at localhost). Always false off WSL. */
+  isHostGatewayPeer(remoteAddress: string | undefined): boolean;
   /** Platform key used to select prebuilt tool binaries, e.g. 'darwin-arm64' | 'linux-x64'. */
   toolPlatformKey(): string;
   /** Current Tailscale status, or the null shape when Tailscale is absent/unreachable. */

@@ -65,6 +65,10 @@ export function createWslPlatform(deps: WslDeps = defaultDeps): Platform {
     }
     return gateway;
   };
+  const isGatewayPeer = (addr: string | undefined) => {
+    const gw = readGateway();
+    return !!gw && addr?.replace(/^::ffff:/, '') === gw;
+  };
   let interopChecked = false;
   let interopAvailable = false;
   return {
@@ -97,9 +101,10 @@ export function createWslPlatform(deps: WslDeps = defaultDeps): Platform {
     },
     // Windows-host browser over WSL NAT arrives from the gateway IP, not loopback.
     // Host-header + proxy-header discipline still refuses portproxy'd LAN and tunnels.
+    isHostGatewayPeer: isGatewayPeer,
     isLocalClient: (c) =>
       !c.proxied && isLoopbackHost(c.host) &&
-      (isLoopbackAddress(c.remoteAddress) || (!!readGateway() && c.remoteAddress?.replace(/^::ffff:/, '') === readGateway())),
+      (isLoopbackAddress(c.remoteAddress) || isGatewayPeer(c.remoteAddress)),
     tailscaleStatus: async () => {
       for (const bin of ['tailscale', 'tailscale.exe']) {
         try {
