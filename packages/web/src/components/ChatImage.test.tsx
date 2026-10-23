@@ -123,3 +123,12 @@ it('data:, blob: and same-origin images load at once', () => {
     unmount();
   }
 });
+
+it('a click approves that address only: a changed src asks again', () => {
+  const { container, rerender } = render(<ChatImage src="https://a.example.com/1.png" alt="x" />);
+  fireEvent.click(screen.getByRole('button', { name: /Load image/ }));
+  expect(container.querySelector('img')).not.toBeNull();
+  rerender(<ChatImage src="https://b.example.com/2.png" alt="x" />);
+  expect(container.querySelector('img')).toBeNull();
+  expect(screen.getByRole('button', { name: /Load image from b\.example\.com/ })).toBeInTheDocument();
+});

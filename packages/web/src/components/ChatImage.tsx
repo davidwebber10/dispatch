@@ -305,7 +305,9 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
   // A web address is a way to send data out through the reader's browser, so the image is only
   // requested after a click (the same rule as a Markdown image). data:, blob: and this app's own
   // routes load at once.
-  const [consented, setConsented] = useState(false);
+  // Consent names the address that was approved: a changed src needs its own click.
+  const [consentedSrc, setConsentedSrc] = useState<string | null>(null);
+  const consented = consentedSrc === src;
   if (!src) return null;
   if (!consented && !isLocalImageSrc(src)) {
     const from = remoteImageHost(src);
@@ -314,7 +316,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
         type="button"
         className="md-remote-image"
         title={src}
-        onClick={() => setConsented(true)}
+        onClick={() => setConsentedSrc(src)}
       >
         {`Load image${from ? ` from ${from}` : ''}${alt ? `: ${alt}` : ''}`}
       </button>

@@ -99,37 +99,58 @@ function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] |
   });
 }
 
+// Like multer's disk storage, but the write stream and the incoming stream are kept on the request
+// so an aborted upload can close both (multer never calls back when the client just goes away, and
+// would leave the descriptor open until the daemon exits).
+export const uploadStorage: multer.StorageEngine = {
+  _handleFile(req, file, cb) {
+    let tmpPath: string;
+    try {
+      ensureUploadDir();
+      tmpPath = path.join(UPLOAD_TMP_DIR, `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    } catch (err) { cb(err as Error); return; }
+    const out = fs.createWriteStream(tmpPath, { mode: 0o600 });
+    // Kept on the request from creation, so a write that fails half way can still be removed.
+    Object.assign(req, { uploadTmpPath: tmpPath, uploadStreams: [out, file.stream] });
+    // One answer to multer, whichever event comes first. A failure closes both streams and removes the
+    // file; the file may not exist yet if the open is still pending, so it is removed again on close.
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      out.destroy();
+      file.stream.destroy();
+      unlinkQuiet(tmpPath);
+      out.once('close', () => unlinkQuiet(tmpPath));
+      cb(err);
+    };
+    file.stream.on('error', fail);
+    out.on('error', fail);
+    // 'close', not 'finish': the descriptor is released and a late close error is still an error.
+    out.on('close', () => {
+      if (settled) return;
+      settled = true;
+      cb(null, { destination: UPLOAD_TMP_DIR, filename: path.basename(tmpPath), path: tmpPath, size: out.bytesWritten });
+    });
+    file.stream.pipe(out);
+  },
+  _removeFile(_req, file, cb) {
+    // multer can call this for a file that never got a path (a failed write after a size-limit stop).
+    const p = (file as { path?: string }).path;
+    if (!p) { cb(null); return; }
+    fs.unlink(p, (err) => cb(err && (err as NodeJS.ErrnoException).code !== 'ENOENT' ? err : null));
+  },
+};
+
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
   // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
   // until a restart.
-  // Like multer's disk storage, but the write stream and the incoming stream are kept on the request
-  // so an aborted upload can close both (multer never calls back when the client just goes away, and
-  // would leave the descriptor open until the daemon exits).
-  const tmpStorage: multer.StorageEngine = {
-    _handleFile(req, file, cb) {
-      let tmpPath: string;
-      try {
-        ensureUploadDir();
-        tmpPath = path.join(UPLOAD_TMP_DIR, `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
-      } catch (err) { cb(err as Error); return; }
-      const out = fs.createWriteStream(tmpPath, { mode: 0o600 });
-      // Kept on the request from creation, so a write that fails half way can still be removed.
-      Object.assign(req, { uploadTmpPath: tmpPath, uploadStreams: [out, file.stream] });
-      file.stream.on('error', (err) => { out.destroy(); cb(err); });
-      out.on('error', cb);
-      out.on('finish', () => cb(null, { destination: UPLOAD_TMP_DIR, filename: path.basename(tmpPath), path: tmpPath, size: out.bytesWritten }));
-      file.stream.pipe(out);
-    },
-    _removeFile(_req, file, cb) {
-      fs.unlink((file as { path: string }).path, (err) => cb(err && (err as NodeJS.ErrnoException).code !== 'ENOENT' ? err : null));
-    },
-  };
-  const upload = multer({ storage: tmpStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
+  const upload = multer({ storage: uploadStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
   const inboxUpload = multer({
-    storage: tmpStorage,
+    storage: uploadStorage,
     limits: { fileSize: 50 * 1024 * 1024 },
   });
 

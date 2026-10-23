@@ -11,7 +11,8 @@ import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
 // Own upload folder: this file empties and counts it, and must not touch the live daemon's or another test file's.
 vi.hoisted(() => { process.env.DISPATCH_UPLOAD_DIR = `${process.env.TMPDIR || '/tmp'}/dispatch-upload-test-${process.pid}`; });
-import { createFilesRouter, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
+import { PassThrough } from 'stream';
+import { createFilesRouter, uploadStorage, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
 
 afterAll(() => { fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true }); });
 
@@ -239,5 +240,58 @@ describe('upload limits and temp folder', () => {
       .attach('file', Buffer.from('a'), { filename: 'a.txt', contentType: 'text/plain' });
     expect(res.status).toBe(403);
     expect(fs.readdirSync(TMP_UPLOAD_DIR).length).toBe(before);
+  });
+});
+
+describe('upload storage engine', () => {
+  const fileOf = (stream: PassThrough) => ({ stream, fieldname: 'file', originalname: 'a.bin', encoding: '7bit', mimetype: 'x' }) as any;
+  const run = (stream: PassThrough) => new Promise<{ calls: Array<[Error | null, any]>; req: any }>((resolve) => {
+    const calls: Array<[Error | null, any]> = [];
+    const req: any = {};
+    uploadStorage._handleFile(req, fileOf(stream), (err: any, info: any) => { calls.push([err ?? null, info]); });
+    setTimeout(() => resolve({ calls, req }), 300);
+  });
+
+  it('a normal stream answers once with the temp path and size', async () => {
+    const stream = new PassThrough();
+    const p = run(stream);
+    stream.end('hello');
+    const { calls, req } = await p;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBeNull();
+    expect(fs.readFileSync(calls[0][1].path, 'utf8')).toBe('hello');
+    expect(calls[0][1].size).toBe(5);
+    expect(fs.statSync(calls[0][1].path).mode & 0o777).toBe(0o600);
+    fs.unlinkSync(req.uploadTmpPath);
+  });
+
+  it('an incoming-stream error answers once, closes the write stream and removes the temp file', async () => {
+    const stream = new PassThrough();
+    const p = run(stream);
+    stream.write('part');
+    setTimeout(() => stream.destroy(new Error('client went away')), 50);
+    const { calls, req } = await p;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]?.message).toMatch(/went away/);
+    expect(req.uploadStreams[0].destroyed).toBe(true);
+    expect(fs.existsSync(req.uploadTmpPath)).toBe(false);
+  });
+
+  it('an error right after the stream ended still answers only once', async () => {
+    const stream = new PassThrough();
+    const p = run(stream);
+    stream.end('data');
+    setTimeout(() => (stream as any).emit('error', new Error('late')), 0);
+    const { calls, req } = await p;
+    expect(calls).toHaveLength(1);
+    fs.rmSync(req.uploadTmpPath, { force: true });
+  });
+
+  it('_removeFile with no path does not throw, and removes a real one', async () => {
+    await new Promise<void>((resolve, reject) => uploadStorage._removeFile({} as any, {} as any, (e) => (e ? reject(e) : resolve())));
+    const f = path.join(os.tmpdir(), `dispatch-rm-${process.pid}`);
+    fs.writeFileSync(f, 'x');
+    await new Promise<void>((resolve, reject) => uploadStorage._removeFile({} as any, { path: f } as any, (e) => (e ? reject(e) : resolve())));
+    expect(fs.existsSync(f)).toBe(false);
   });
 });
