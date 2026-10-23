@@ -49,6 +49,8 @@ describe('refusals', () => {
     expect(r.status).toBe(401);
     expect(r.text).toContain('id="t"');
     expect(r.headers['x-frame-options']).toBe('DENY');
+    // The page script is inline: its policy must allow it by hash, or no remote device could sign in.
+    expect(r.headers['content-security-policy']).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
   });
   test('LAN POST outside /api: 401 JSON, not the page', async () => {
     const { app } = build();

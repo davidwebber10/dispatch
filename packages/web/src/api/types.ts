@@ -356,7 +356,7 @@ export interface OpencodeCatalogEntry {
 
 // Secrets (Doppler) — mirrors core /api/secrets.
 export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean }
-export interface DopplerSecret { name: string; value: string }
+export interface DopplerSecret { name: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }
 

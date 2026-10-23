@@ -100,12 +100,6 @@ it('the docs pass skips SVG text', () => {
   expect(container.querySelector('[data-doc-path]')).toBeNull();
 });
 
-it('the docs pass skips form text', () => {
-  const { container } = render(<Markdown source={'<textarea>docs/a.md</textarea>'} docs={{ onOpen: vi.fn() }} />);
-  expect(container.querySelector('[data-doc-path]')).toBeNull();
-  expect(container.querySelector('textarea')!.textContent).toBe('docs/a.md');
-});
-
 describe('Markdown: a link click with docs.link', () => {
   const projects = [{ id: 'p1', folder: '/Users/me/dev/app' }];
   const mount = (source: string) => {
@@ -208,4 +202,72 @@ it('a forged data-md-href on a web link cannot redirect its click', () => {
   fireEvent.click(screen.getByRole('link', { name: 'T' }));
   expect(open).toHaveBeenCalledWith('https://trusted.example/', '_blank', 'noopener,noreferrer');
   open.mockRestore();
+});
+
+describe('remote images need a click', () => {
+  it('a remote image is a placeholder with no <img> and no request until "Load image" is clicked', () => {
+    const { container } = render(<Markdown source="![the chart](https://img.example.com/c.png?d=1)" />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.innerHTML).not.toContain('<img');
+    const btn = screen.getByRole('button', { name: /Load image/ });
+    expect(btn.textContent).toContain('img.example.com');
+    fireEvent.click(btn);
+    const img = container.querySelector('img')!;
+    expect(img).not.toBeNull();
+    expect(img.getAttribute('src')).toBe('https://img.example.com/c.png?d=1');
+    expect(screen.queryByRole('button', { name: /Load image/ })).toBeNull();
+  });
+
+  it('Enter and Space also load it', () => {
+    const { container } = render(<Markdown source="![](https://img.example.com/a.png)" />);
+    fireEvent.keyDown(screen.getByRole('button', { name: /Load image/ }), { key: 'Enter' });
+    expect(container.querySelector('img')).not.toBeNull();
+  });
+
+  it('protocol-relative and http images are remote too', () => {
+    const { container } = render(<Markdown source={'![a](//evil.test/a.png) ![b](http://evil.test/b.png)'} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Load image/ })).toHaveLength(2);
+  });
+
+  it('same-origin, relative, data and blob images still render at once', () => {
+    const own = `${window.location.origin}/api/x.png`;
+    const { container } = render(<Markdown source={`![a](/api/sessions/s/files/image?path=a.png) ![b](rel/b.png) ![c](data:image/png;base64,AAAA) ![d](${own})`} />);
+    expect(container.querySelectorAll('img')).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: /Load image/ })).toBeNull();
+  });
+
+  it('raw HTML in a reply cannot pose as the placeholder', () => {
+    const { container } = render(<Markdown source={'<span role="button" data-md-load-image="https://evil.test/x.png">Load image</span>'} />);
+    fireEvent.click(container.querySelector('span')!);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('[data-md-load-image]')).toBeNull();
+  });
+
+  it('a remote image inside a link loads on click and does not follow the link', () => {
+    const { container } = render(<Markdown source="[![x](https://img.example.com/a.png)](https://example.com/page)" />);
+    const nav = vi.fn((e: Event) => e.preventDefault());
+    container.querySelector('a')!.addEventListener('click', nav);
+    fireEvent.click(screen.getByRole('button', { name: /Load image/ }));
+    expect(container.querySelector('img')).not.toBeNull();
+  });
+});
+
+describe('sanitizer drops style, forms and media tags', () => {
+  it.each([
+    ['<style>body{background:url(https://evil.test/x)}</style>text', 'style'],
+    ['<form action="https://evil.test"><input name="a"><button>go</button></form>', 'form'],
+    ['<p style="background:url(https://evil.test/x)">hi</p>', 'p[style]'],
+    ['<video src="https://evil.test/v.mp4" poster="https://evil.test/p.png"></video>', 'video'],
+    ['<audio src="https://evil.test/a.mp3"></audio>', 'audio'],
+    ['<picture><source srcset="https://evil.test/a.png"></picture>', 'source'],
+    ['<svg><filter id="f"><feImage href="https://evil.test/a.png"/></filter><rect filter="url(#f)"/></svg>', 'svg'],
+    ['<svg><rect mask="u\\72l(https://evil.test/m.svg#a)" fill="url(&#x68;ttps://evil.test/f.svg#b)"/></svg>', 'svg'],
+    ['<math href="https://evil.test/x"><mi>x</mi></math>', 'math'],
+    ['<textarea>x</textarea><select><option>a</option></select>', 'textarea'],
+  ])('%s', (html, selector) => {
+    const { container } = render(<Markdown source={html} />);
+    expect(container.querySelector(selector)).toBeNull();
+    expect(container.innerHTML).not.toContain('evil.test');
+  });
 });

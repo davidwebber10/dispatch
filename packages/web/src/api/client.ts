@@ -27,7 +27,7 @@ export class ApiError extends Error {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiPath(path), {
     method: init?.method ?? 'GET',
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+    headers: init?.body || init?.headers ? { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers as Record<string, string> | undefined) } : undefined,
     body: init?.body,
   });
   if (!res.ok) {
@@ -314,7 +314,10 @@ export const api = {
     const qs = params.toString();
     return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
   },
-  setSecret: (input: { name: string; value: string }) => req<DopplerSecret>('/api/secrets', { method: 'POST', body: body(input) }),
+  // One value, only on an explicit reveal or copy; the listing carries names only.
+  getSecretValue: async (name: string) =>
+    (await req<{ value: string }>(`/api/secrets/${encodeURIComponent(name)}/value`, { headers: { 'X-Dispatch-Reveal': '1' } })).value,
+  setSecret: (input: { name: string; value: string }) => req<void>('/api/secrets', { method: 'POST', body: body(input) }),
   deleteSecret: (name: string) => req<void>(`/api/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // Tools (bundled CLIs). `refresh` re-runs the auth checks instead of serving the cached answer.

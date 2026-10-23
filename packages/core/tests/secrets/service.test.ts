@@ -126,7 +126,7 @@ describe('SecretsService', () => {
     const client = fakeClient(true);
     const s = new SecretsService(dir, () => client, mcpPath);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
-    expect(await s.listSecrets()).toEqual([{ name: 'API_KEY', value: 'xyz' }]);
+    expect(await s.listSecrets()).toEqual([{ name: 'API_KEY' }]);
     await s.setSecret('A', 'b');
     expect(client.setSecret).toHaveBeenCalledWith('dispatch', 'dev', 'A', 'b');
     await s.deleteSecret('A');

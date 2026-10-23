@@ -83,6 +83,23 @@ describe('agency MCP: caller identity + standard injection path', () => {
     expect(written.mcpServers.dispatch.env.DISPATCH_SESSION).toBe('s1');
   });
 
+  it("the dispatch server is pointed at the daemon's real bound port, not PORT or 3456", () => {
+    const configPath = path.join(tmpDir, 'mcp-claude-port.json');
+    const { svc } = makeService(configPath);
+    const manager = new CapturingClaudeManager();
+    svc.setStructuredManager(manager);
+    const savedPort = process.env.PORT;
+    process.env.PORT = '3456';
+    try {
+      svc.setDaemonPort(41234);
+      const terminal = svc.createTerminal('s1', 'claude-code', 'Overseer', false, undefined, undefined, { transport: 'structured', role: 'coordinator' });
+      const written = JSON.parse(fs.readFileSync(path.join(path.dirname(configPath), `thread-${terminal.id}.mcp.json`), 'utf8'));
+      expect(written.mcpServers.dispatch.env.DISPATCH_PORT).toBe('41234');
+    } finally {
+      if (savedPort === undefined) delete process.env.PORT; else process.env.PORT = savedPort;
+    }
+  });
+
   it('a coordinator receives the peer context block, in its OWN --append-system-prompt, ahead of its persona', () => {
     const configPath = path.join(tmpDir, 'mcp-claude-coord-peer.json');
     const { svc } = makeService(configPath);

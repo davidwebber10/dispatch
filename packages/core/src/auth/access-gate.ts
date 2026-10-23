@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http';
 import { isLoopbackAddress } from '../files/reveal.js';
 import { tokenMatches } from './box-token.js';
 import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, parseCookies } from './access-token.js';
-import { signInPage } from './signin-page.js';
+import { signInPage, signInPageCsp } from './signin-page.js';
 import {
   isLoopbackName, normalizeHostHeader, originHostPort, type AccessConfig,
 } from './known-hosts.js';
@@ -196,6 +196,7 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
       if (d.ok) return next();
       res.setHeader('Cache-Control', 'no-store');
       if (d.status === 401 && !isApi && (req.method === 'GET' || req.method === 'HEAD')) {
+        res.setHeader('Content-Security-Policy', signInPageCsp(opts.basePath));
         return void res.status(401).type('html').send(signInPage(opts.basePath));
       }
       res.status(d.status).json({ error: d.error });

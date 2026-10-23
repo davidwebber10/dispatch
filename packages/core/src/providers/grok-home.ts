@@ -117,7 +117,11 @@ export function writeGrokHome(spec: GrokHomeSpec): string | null {
   fs.mkdirSync(pluginDir, { recursive: true });
 
   const mcpPath = path.join(pluginDir, '.mcp.json');
-  if (hasMcp) fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: spec.mcpServers }, null, 2));
+  if (hasMcp) {
+    // Owner-only, like the other per-thread MCP files; mode applies on create, so tighten an older file too.
+    fs.writeFileSync(mcpPath, JSON.stringify({ mcpServers: spec.mcpServers }, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(mcpPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+  }
   // Stale files from a previous spawn would keep injecting servers this one dropped.
   else if (fs.existsSync(mcpPath)) fs.rmSync(mcpPath, { force: true });
 

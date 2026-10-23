@@ -47,7 +47,7 @@ import { readHarnessSettings } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
-import { ptyMessagePayload, flattenForPty } from './pty-message.js';
+import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -164,6 +164,13 @@ export class SessionService {
      */
     private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json'),
   ) {}
+
+  /**
+   * The port the daemon actually bound. The agency helper sends its calls here, so it must not
+   * guess from PORT: the daemon can fall back to another port when its first choice is taken.
+   */
+  private daemonPort: number | null = null;
+  setDaemonPort(port: number): void { this.daemonPort = port; }
 
   setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
     this.secretsServerSpec = fn;
@@ -2115,6 +2122,9 @@ export class SessionService {
     const absolutePath = this.resolveTerminalFilePath(terminalId, requestedPath);
     if (!absolutePath) return null;
     if (!this.ptyManager.isAlive(terminalId)) throw new Error('Terminal process is not running');
+    // A path with a CR, ESC or other control character would be typed as keystrokes (quoting a path
+    // for a shell does not neutralize terminal control bytes), in both modes.
+    if (hasControlChars(absolutePath)) return null;
 
     const sentText = mode === 'shell-path'
       ? `${this.shellEscapePath(absolutePath)} `
@@ -2858,7 +2868,7 @@ export class SessionService {
       args: [agencyPath],
       env: {
         DISPATCH_SESSION: sessionId,
-        DISPATCH_PORT: String(process.env.PORT || 3456),
+        DISPATCH_PORT: String(this.daemonPort ?? process.env.PORT ?? 3456),
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
       },

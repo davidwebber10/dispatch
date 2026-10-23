@@ -39,6 +39,17 @@ export function createSecretsRouter(secrets: SecretsService, onWrite?: () => voi
     } catch (e) { fail(res, e); }
   });
 
+  // One value, on an explicit request. The header keeps it off any plain link or form
+  // navigation; the listing above never carries values.
+  router.get('/:name/value', async (req, res) => {
+    if (req.get('x-dispatch-reveal') !== '1') { res.status(400).json({ error: 'invalid request: reveal header required' }); return; }
+    try {
+      const value = await secrets.getSecret(req.params.name);
+      if (value === null) { res.status(404).json({ error: 'secret not found' }); return; }
+      res.set('Cache-Control', 'no-store').json({ value });
+    } catch (e) { fail(res, e); }
+  });
+
   router.post('/', async (req, res) => {
     const name = String(req.body?.name ?? '').trim();
     if (!name) { res.status(400).json({ error: 'name is required' }); return; }

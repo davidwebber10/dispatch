@@ -382,7 +382,39 @@ async function rolesSetEnabled(ctx: Ctx, name: string, enabled: boolean): Promis
   console.log(`${entry.def.name}: ${action}d${suffix ? ' ' + suffix : ''}`);
 }
 
-// Order is: git pull → build (pnpm install, since fresh dependencies may be needed
+/**
+ * The newest plain release tag (vX.Y.Z) among the tags ORIGIN advertises: the output of
+ * `git ls-remote --tags --refs origin`, lines of `sha<TAB>refs/tags/NAME`. Reading origin's list, not
+ * the local one, keeps a local-only tag from standing in for a release. Prerelease and other tag shapes
+ * are ignored; versions compare as numbers. Keep in step with the same function in packages/cli/src/index.ts.
+ */
+export function latestReleaseTag(lsRemote: string): string | null {
+  let best: { tag: string; v: number[] } | null = null;
+  for (const line of lsRemote.split('\n')) {
+    const m = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))\s*$/.exec(line.trim());
+    if (!m) continue;
+    const v = [Number(m[2]), Number(m[3]), Number(m[4])];
+    if (!best || v[0] > best.v[0] || (v[0] === best.v[0] && (v[1] > best.v[1] || (v[1] === best.v[1] && v[2] > best.v[2])))) best = { tag: m[1], v };
+  }
+  return best?.tag ?? null;
+}
+
+/**
+ * Move this checkout to the newest release tag with a fast-forward, instead of pulling the tip of
+ * main: a release is the unit a person read the notes for, and main can hold unreleased commits.
+ * A checkout that already contains the tag is left where it is; a diverged one fails.
+ */
+function updateToLatestRelease(ctx: Ctx): void {
+  execFileSync('git', ['fetch', 'origin', '--tags'], { stdio: 'inherit', ...shellOf(ctx) });
+  const list = String(execFileSync('git', ['ls-remote', '--tags', '--refs', 'origin'], { encoding: 'utf8', ...shellOf(ctx) }) ?? '');
+  const tag = latestReleaseTag(list);
+  if (!tag) throw new Error('No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.');
+  console.log(`Updating to release ${tag}`);
+  // refs/tags/ form, not tag^{commit}: the caret is an escape character in cmd.exe.
+  execFileSync('git', ['merge', '--ff-only', `refs/tags/${tag}`], { stdio: 'inherit', ...shellOf(ctx) });
+}
+
+// Order is: fast-forward to the newest release tag → build (pnpm install, since fresh dependencies may be needed
 // post-pull, then `pnpm -r run build`) → restart. Restart goes through the platform
 // daemon controller unconditionally — darwin wraps launchctl kickstart, wsl kills and
 // respawns the pidfile-tracked process, and linux throws "not implemented" (headless
@@ -393,7 +425,7 @@ export function cmdUpdate(ctx: Ctx): void {
   try {
     progress.step('pull');
     const lockBefore = lockfileHash(ctx);
-    execFileSync('git', ['pull', '--ff-only'], { stdio: 'inherit', ...shellOf(ctx) });
+    updateToLatestRelease(ctx);
     const lockAfter = lockfileHash(ctx);
     progress.step('install');
     // Unchanged dependencies need no install: this saves 10-20 s on most updates.

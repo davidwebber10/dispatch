@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process';
 import { isLoopbackAddress, isLoopbackHost, type RevealClient } from '../../src/files/reveal.js';
 import { platform } from '../../src/platform/index.js';
 import { createApp } from '../../src/server.js';
+import { UPLOAD_TMP_DIR } from '../../src/routes/files.js';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
@@ -23,7 +24,7 @@ function isGenuinelyLocal(client: RevealClient): boolean {
 describe('file routes', () => {
   let app: any;
   let tmpDir: string;
-  const uploadTmpDir = '/tmp/commandcenter-uploads';
+  const uploadTmpDir = UPLOAD_TMP_DIR;
 
   function listUploadTempFiles(): Set<string> {
     if (!fs.existsSync(uploadTmpDir)) return new Set();

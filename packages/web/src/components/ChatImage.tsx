@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
-import { clipboardImageSupported, copyImageToClipboard } from '../lib/clipboard';
+import { clipboardImageSupported, copyImageToClipboard, loadImageBlob } from '../lib/clipboard';
+import { isLocalImageSrc, remoteImageHost } from '../lib/remoteImage';
 
 /**
  * ChatImage — the shared, DUMB image renderer for BOTH chat surfaces: the agent
@@ -36,8 +37,7 @@ function slugify(input: string): string {
 
 async function downloadImage(src: string, alt: string | undefined) {
   try {
-    const res = await fetch(src);
-    const blob = await res.blob();
+    const blob = await loadImageBlob(src);
     const ext = MIME_EXT[blob.type] ?? 'png';
     const base = (alt && slugify(alt)) || `image-${Date.now()}`;
     const url = URL.createObjectURL(blob);
@@ -302,7 +302,26 @@ export function useViewerHost(): ((v: Viewing) => void) | null {
 export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
   const [open, setOpen] = useState(false);
   const host = useContext(ViewerContext);
+  // A web address is a way to send data out through the reader's browser, so the image is only
+  // requested after a click (the same rule as a Markdown image). data:, blob: and this app's own
+  // routes load at once.
+  // Consent names the address that was approved: a changed src needs its own click.
+  const [consentedSrc, setConsentedSrc] = useState<string | null>(null);
+  const consented = consentedSrc === src;
   if (!src) return null;
+  if (!consented && !isLocalImageSrc(src)) {
+    const from = remoteImageHost(src);
+    return (
+      <button
+        type="button"
+        className="md-remote-image"
+        title={src}
+        onClick={() => setConsentedSrc(src)}
+      >
+        {`Load image${from ? ` from ${from}` : ''}${alt ? `: ${alt}` : ''}`}
+      </button>
+    );
+  }
   return (
     <>
       {/* A real button: it takes keyboard focus, and Enter and Space open the viewer. */}

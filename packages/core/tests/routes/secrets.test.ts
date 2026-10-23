@@ -45,7 +45,7 @@ describe('secrets routes', () => {
     await request(app).put('/api/secrets/connection').send({ token: '', project: 'dispatch', config: 'dev' }).expect(200);
     expect((await request(app).get('/api/secrets/status').expect(200)).body.connected).toBe(true);
     const list = await request(app).get('/api/secrets').expect(200);
-    expect(list.body).toEqual([{ name: 'API_KEY', value: 'xyz' }]);
+    expect(list.body).toEqual([{ name: 'API_KEY' }]);
   });
 
   it('POST / upserts (204) and requires a name (400)', async () => {

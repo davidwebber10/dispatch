@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /** The sign-in page (network exposure spec, 7.6): inline, no assets, served with status 401. */
 export function signInPage(basePath: string): string {
   const base = JSON.stringify(basePath).replace(/</g, '\\u003c');
@@ -36,4 +38,23 @@ var m=/^#access=(.+)$/.exec(location.hash);
 if(m){history.replaceState(null,'',location.pathname+location.search);go(decodeURIComponent(m[1]));}
 })();
 </script></body></html>`;
+}
+
+/**
+ * The Content-Security-Policy for the sign-in page. It replaces the app's policy on that one response:
+ * the page has an inline script (its text depends on the base path), so the policy allows that script
+ * by hash and nothing else. Inline styles are allowed because the page's CSS is inline.
+ */
+export function signInPageCsp(basePath: string): string {
+  const script = /<script>([\s\S]*?)<\/script>/.exec(signInPage(basePath))?.[1] ?? '';
+  const hash = createHash('sha256').update(script).digest('base64');
+  return [
+    "default-src 'none'",
+    `script-src 'sha256-${hash}'`,
+    "style-src 'unsafe-inline'",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
 }

@@ -1,3 +1,4 @@
+import { stripControlChars } from './pty-message.js';
 import type Database from 'better-sqlite3';
 import * as watchesDb from '../db/watches.js';
 import * as terminalsDb from '../db/terminals.js';
@@ -85,6 +86,8 @@ const STATUS_PHRASING: Record<string, { happened: string; next: string }> = {
 
 export function composeWakeMessage(target: { id: string; label: string }, status: string, note: string | null): string {
   const phrasing = STATUS_PHRASING[status] ?? { happened: `changed status to ${status}`, next: 'Use read_thread for detail.' };
-  const askedClause = note ? ` You asked to watch it: "${note}".` : '';
-  return `Thread "${target.label}" (${target.id}) ${phrasing.happened}.${askedClause} ${phrasing.next}`;
+  // The note and the label are free text that ends up typed into a terminal: one line, no controls.
+  const oneLine = (t: string) => stripControlChars(t, { keepNewline: false });
+  const askedClause = note ? ` You asked to watch it: "${oneLine(note)}".` : '';
+  return `Thread "${oneLine(target.label)}" (${target.id}) ${phrasing.happened}.${askedClause} ${phrasing.next}`;
 }

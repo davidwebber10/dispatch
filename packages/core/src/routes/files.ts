@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import { Router } from 'express';
@@ -13,7 +14,55 @@ import { platform } from '../platform/index.js';
  *  the only route that shells out — an unbounded argv is not worth the risk. */
 const MAX_REVEAL_PATHS = 256;
 
-const UPLOAD_TMP_DIR = '/tmp/commandcenter-uploads';
+/** Cap on a file the editor reads: it is shown as text in the browser, so a larger one is not useful. */
+const MAX_READ_BYTES = 5 * 1024 * 1024;
+/** Cap on one upload into the project. The inbox keeps its own 50 MB cap. */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** Per-user temp folder for multer. A fixed shared name let another account create it first. DISPATCH_UPLOAD_DIR is for tests. */
+export const UPLOAD_TMP_DIR = process.env.DISPATCH_UPLOAD_DIR
+  || path.join(os.tmpdir(), `dispatch-uploads-${typeof process.getuid === 'function' ? process.getuid() : 'user'}`);
+
+/** Create (or re-check) the temp folder: owner-only, a real directory, owned by us. */
+function ensureUploadDir(): void {
+  fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(UPLOAD_TMP_DIR);
+  if (!st.isDirectory() || (typeof process.getuid === 'function' && st.uid !== process.getuid())) {
+    throw new Error('upload temp folder is not owned by this user');
+  }
+  if ((st.mode & 0o077) !== 0) fs.chmodSync(UPLOAD_TMP_DIR, 0o700);
+}
+
+/** A query value is only usable as a path when it is a single string (not `a[]=x` or `a[b]=x`). */
+function queryPath(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined;
+}
+
+/**
+ * A client that drops the connection part way through an upload never gets multer's callback, so the
+ * half-written temp file is removed here: when the connection closes before a response went out. A second
+ * pass catches a file that multer created just after the close.
+ */
+function cleanupOnAbort(req: import('express').Request, res: import('express').Response): void {
+  // The RESPONSE closing without having finished means the client went away (req 'close' also fires
+  // when the body has simply been read in full).
+  res.on('close', () => {
+    if (res.writableFinished) return;
+    (req as any).uploadCancelled = true;
+    // First through the storage engine, so multer sees an error, not a finished file.
+    try { (req as any).uploadAbort?.(); } catch { /* already settled */ }
+    const file = (req as any).uploadTmpPath as string | undefined;
+    // Close the descriptor and the incoming stream, then remove the half-written file.
+    for (const st of ((req as any).uploadStreams ?? []) as Array<{ destroy: () => void }>) { try { st.destroy(); } catch { /* already closed */ } }
+    unlinkQuiet(file);
+    setTimeout(() => unlinkQuiet(file), 2000).unref();
+  });
+}
+
+function unlinkQuiet(file?: string): void {
+  if (!file) return;
+  try { fs.unlinkSync(file); } catch { /* already gone */ }
+}
 
 const FLAT_CAP = 20000;
 // Dependency and build-output dirs: huge, never what a search is for. Now that plain
@@ -53,25 +102,63 @@ function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] |
   });
 }
 
+// Like multer's disk storage, but the write stream and the incoming stream are kept on the request
+// so an aborted upload can close both (multer never calls back when the client just goes away, and
+// would leave the descriptor open until the daemon exits).
+export const uploadStorage: multer.StorageEngine = {
+  _handleFile(req, file, cb) {
+    let tmpPath: string;
+    try {
+      ensureUploadDir();
+      tmpPath = path.join(UPLOAD_TMP_DIR, `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    } catch (err) { cb(err as Error); return; }
+    const out = fs.createWriteStream(tmpPath, { mode: 0o600 });
+    // Kept on the request from creation, so a write that fails half way can still be removed.
+    Object.assign(req, { uploadTmpPath: tmpPath, uploadStreams: [out, file.stream] });
+    // One answer to multer, whichever event comes first. A failure closes both streams and removes the
+    // file; the file may not exist yet if the open is still pending, so it is removed again on close.
+    let settled = false;
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      out.destroy();
+      file.stream.destroy();
+      unlinkQuiet(tmpPath);
+      out.once('close', () => unlinkQuiet(tmpPath));
+      cb(err);
+    };
+    // A cancel is a failure, whatever the streams look like: a writer destroyed before it finished
+    // still emits 'close', and that must not be mistaken for a finished upload.
+    const abort = () => fail(new Error('upload cancelled'));
+    (req as any).uploadAborts = [...(((req as any).uploadAborts as Array<() => void>) ?? []), abort];
+    (req as any).uploadAbort = () => { for (const a of (req as any).uploadAborts as Array<() => void>) a(); };
+    file.stream.on('error', fail);
+    out.on('error', fail);
+    // 'close', not 'finish': the descriptor is released and a late close error is still an error.
+    out.on('close', () => {
+      if (settled) return;
+      settled = true;
+      cb(null, { destination: UPLOAD_TMP_DIR, filename: path.basename(tmpPath), path: tmpPath, size: out.bytesWritten });
+    });
+    file.stream.pipe(out);
+  },
+  _removeFile(_req, file, cb) {
+    // multer can call this for a file that never got a path (a failed write after a size-limit stop).
+    const p = (file as { path?: string }).path;
+    if (!p) { cb(null); return; }
+    fs.unlink(p, (err) => cb(err && (err as NodeJS.ErrnoException).code !== 'ENOENT' ? err : null));
+  },
+};
+
 export function createFilesRouter(db: Database.Database): Router {
   const router = Router({ mergeParams: true });
   // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
   // until a restart.
-  const tmpStorage = multer.diskStorage({
-    destination: (_req, _file, cb) => {
-      try {
-        fs.mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
-        cb(null, UPLOAD_TMP_DIR);
-      } catch (err) {
-        cb(err as Error, UPLOAD_TMP_DIR);
-      }
-    },
-  });
-  const upload = multer({ storage: tmpStorage });
+  const upload = multer({ storage: uploadStorage, limits: { fileSize: MAX_UPLOAD_BYTES } });
   const inboxUpload = multer({
-    storage: tmpStorage,
+    storage: uploadStorage,
     limits: { fileSize: 50 * 1024 * 1024 },
   });
 
@@ -82,6 +169,25 @@ export function createFilesRouter(db: Database.Database): Router {
     const relative = path.relative(root, resolved);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
     return resolved;
+  }
+
+  /**
+   * True when the real location of `resolved`'s parent folder is inside the real project folder.
+   * resolveSafe compares text only, so a symlinked folder inside the project could lead outside it.
+   * The item itself may be a symlink (delete and rename act on the link, not its target).
+   */
+  function parentInsideRealRoot(workingDir: string, resolved: string): boolean {
+    try {
+      const root = fs.realpathSync(path.resolve(workingDir));
+      const parent = fs.realpathSync(path.dirname(resolved));
+      const rel = path.relative(root, parent);
+      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    } catch { return false; }
+  }
+
+  /** True when `resolved` is the working directory itself (delete and rename refuse it). */
+  function isRoot(workingDir: string, resolved: string): boolean {
+    return resolved === path.resolve(workingDir);
   }
 
   /**
@@ -117,7 +223,8 @@ export function createFilesRouter(db: Database.Database): Router {
   // GET /api/sessions/:id/files?path=. — list directory
   router.get('/', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = (req.query.path as string) || '.';
+    const requestedPath = queryPath(req.query.path) || '.';
+    if (req.query.path !== undefined && queryPath(req.query.path) === undefined) return res.status(400).json({ error: 'invalid path parameter' });
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
@@ -192,17 +299,33 @@ export function createFilesRouter(db: Database.Database): Router {
   });
 
   // GET /api/sessions/:id/files/read?path=file.txt — read file
-  router.get('/read', (req, res) => {
+  router.get('/read', async (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveRead(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      const content = fs.readFileSync(resolved, 'utf-8');
-      res.json({ content, path: requestedPath });
+      // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
+      // then check the OPEN descriptor (not the path), so a swap after the check changes nothing, and
+      // read at most the cap plus one byte so a file that grows meanwhile is still bounded.
+      const fh = await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        const st = await fh.stat();
+        if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
+        if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
+        const buf = Buffer.alloc(MAX_READ_BYTES + 1);
+        let n = 0;
+        for (;;) {
+          const { bytesRead } = await fh.read(buf, n, buf.length - n, null);
+          if (bytesRead === 0) break;
+          n += bytesRead;
+          if (n > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
+        }
+        res.json({ content: buf.toString('utf-8', 0, n), path: requestedPath });
+      } finally { await fh.close(); }
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -226,7 +349,7 @@ export function createFilesRouter(db: Database.Database): Router {
   };
   router.get('/image', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -258,7 +381,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // STRICT resolveSafe sandbox — same guard as the directory listing this is triggered from.
   router.get('/download', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -332,7 +455,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // PUT /api/sessions/:id/files/write?path=file.txt — write file
   router.put('/write', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -347,34 +470,49 @@ export function createFilesRouter(db: Database.Database): Router {
   });
 
   // POST /api/sessions/:id/files/upload — upload file
-  router.post('/upload', upload.single('file'), (req, res) => {
-    const session = (req as any).session;
-    const requestedPath = (req.query.path as string) || '.';
-    const resolved = resolveSafe(session.workingDir, requestedPath);
-    if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+  router.post('/upload', (req, res) => {
+    cleanupOnAbort(req, res);
+    upload.single('file')(req, res, (uploadErr: any) => {
+      if (uploadErr instanceof multer.MulterError && uploadErr.code === 'LIMIT_FILE_SIZE') {
+        unlinkQuiet((req as any).uploadTmpPath);
+        return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB` });
+      }
+      if (uploadErr) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: uploadErr.message }); }
 
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+      const session = (req as any).session;
+      const tmpFile = req.file?.path;
+      if ((req as any).uploadCancelled) { unlinkQuiet(tmpFile); return; }
+      const requestedPath = queryPath(req.query.path) || '.';
+      const resolved = resolveSafe(session.workingDir, requestedPath);
+      if (!resolved) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
 
-    try {
-      const dest = path.join(resolved, req.file.originalname);
-      if (!dest.startsWith(session.workingDir)) return res.status(403).json({ error: 'Path traversal not allowed' });
-      fs.copyFileSync(req.file.path, dest);
-      fs.unlinkSync(req.file.path);
-      res.json({ ok: true, path: path.relative(session.workingDir, dest) });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message });
-    }
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+      try {
+        const dest = path.join(resolved, req.file.originalname);
+        if (!dest.startsWith(session.workingDir)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
+        fs.copyFileSync(req.file.path, dest);
+        fs.unlinkSync(req.file.path);
+        res.json({ ok: true, path: path.relative(session.workingDir, dest) });
+      } catch (err: any) {
+        unlinkQuiet(tmpFile);
+        res.status(400).json({ error: err.message });
+      }
+    });
   });
 
   // POST /api/sessions/:id/files/inbox — upload file into .dispatch/inbox
   router.post('/inbox', (req, res) => {
+    cleanupOnAbort(req, res);
     inboxUpload.single('file')(req, res, (err: any) => {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+        unlinkQuiet((req as any).uploadTmpPath);
         return res.status(413).json({ error: 'File is larger than 50 MB' });
       }
-      if (err) return res.status(400).json({ error: err.message });
+      if (err) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: err.message }); }
 
       const session = (req as any).session;
+      if ((req as any).uploadCancelled) { unlinkQuiet(req.file?.path); return; }
       if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
       try {
@@ -402,7 +540,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // POST /api/sessions/:id/files/mkdir?path=dir — create directory
   router.post('/mkdir', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
@@ -419,13 +557,19 @@ export function createFilesRouter(db: Database.Database): Router {
   // POST /api/sessions/:id/files/rename — rename a file or directory
   router.post('/rename', (req, res) => {
     const session = (req as any).session;
-    const fromPath = req.body.from as string;
-    const toPath = req.body.to as string;
+    const fromPath = req.body?.from as string;
+    const toPath = req.body?.to as string;
     if (!fromPath || !toPath) return res.status(400).json({ error: 'Missing from or to path' });
 
     const from = resolveSafe(session.workingDir, fromPath);
     const to = resolveSafe(session.workingDir, toPath);
     if (!from || !to) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (isRoot(session.workingDir, from) || isRoot(session.workingDir, to)) {
+      return res.status(400).json({ error: 'Cannot rename the project folder' });
+    }
+    if (!parentInsideRealRoot(session.workingDir, from) || !parentInsideRealRoot(session.workingDir, to)) {
+      return res.status(403).json({ error: 'Path traversal not allowed' });
+    }
 
     try {
       fs.renameSync(from, to);
@@ -438,11 +582,13 @@ export function createFilesRouter(db: Database.Database): Router {
   // DELETE /api/sessions/:id/files?path=file.txt — delete file or directory
   router.delete('/', (req, res) => {
     const session = (req as any).session;
-    const requestedPath = req.query.path as string;
+    const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (isRoot(session.workingDir, resolved)) return res.status(400).json({ error: 'Cannot delete the project folder' });
+    if (!parentInsideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       fs.rmSync(resolved, { recursive: true });

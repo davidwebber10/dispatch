@@ -38,12 +38,29 @@ export function makeGitExec(repoDir: string): GitExec {
 }
 
 /**
- * Confirms it's safe to run `bin/dispatch update` (which does `git pull --ff-only`):
- * a clean working tree and a local branch that can fast-forward to origin. Injectable
+ * The newest plain release tag (vX.Y.Z) among the tags ORIGIN advertises: the output of
+ * `git ls-remote --tags --refs origin`, lines of `sha<TAB>refs/tags/NAME`. Reading origin's list, not
+ * the local one, keeps a local-only tag from standing in for a release. Prerelease and other tag shapes
+ * are ignored; versions compare as numbers. Keep in step with the same function in packages/cli/src/index.ts.
+ */
+export function latestReleaseTag(lsRemote: string): string | null {
+  let best: { tag: string; v: number[] } | null = null;
+  for (const line of lsRemote.split('\n')) {
+    const m = /refs\/tags\/(v(\d+)\.(\d+)\.(\d+))\s*$/.exec(line.trim());
+    if (!m) continue;
+    const v = [Number(m[2]), Number(m[3]), Number(m[4])];
+    if (!best || v[0] > best.v[0] || (v[0] === best.v[0] && (v[1] > best.v[1] || (v[1] === best.v[1] && v[2] > best.v[2])))) best = { tag: m[1], v };
+  }
+  return best?.tag ?? null;
+}
+
+/**
+ * Confirms it's safe to run `bin/dispatch update` (which fast-forwards to the newest release tag):
+ * a clean working tree and a checkout that can fast-forward to that tag. Injectable
  * `gitExec` lets tests simulate dirty trees / diverged branches without touching real git.
  *
  * `opts.force` skips ONLY the dirty-tree gate below — fetch, branch resolution, and
- * the fast-forward/ancestor check always run and can still fail the preflight (a
+ * the tag and fast-forward/ancestor checks always run and can still fail the preflight (a
  * diverged branch is never forceable; `git pull --ff-only` has the final say).
  */
 export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { force?: boolean }): PreflightResult {
@@ -67,47 +84,39 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
   }
 
   try {
-    git(['fetch', 'origin']);
+    // Tags are what a release is: update follows the newest one, not the tip of main.
+    // No --force: a tag that moved upstream is refused, not silently followed.
+    git(['fetch', 'origin', '--tags']);
   } catch (err: any) {
     return { ok: false, reason: `git fetch failed: ${err.message}` };
   }
 
-  let branch: string;
+  let tag: string | null;
   try {
-    branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+    tag = latestReleaseTag(git(['ls-remote', '--tags', '--refs', 'origin']));
   } catch (err: any) {
-    return { ok: false, reason: `could not determine current branch: ${err.message}` };
+    return { ok: false, reason: `could not list release tags: ${err.message}` };
   }
-
-  // Resolve the branch's configured upstream (@{u}) rather than assuming origin/<branch> exists.
-  // A checkout sitting on a local-only feature branch — never pushed, so there is no
-  // origin/<branch> — has no upstream and cannot be fast-forwarded. Say so actionably instead of
-  // failing on the cryptic `could not resolve origin/<branch>` a bare `rev-parse origin/<branch>`
-  // produced. (The manual fallback `dispatch update` runs `git pull --ff-only`, which also fails
-  // on such a branch — "no tracking information" — so pointing at it would be dead advice.)
-  let upstream: string;
-  try {
-    upstream = git(['rev-parse', '--abbrev-ref', '@{u}']).trim();
-  } catch {
-    return {
-      ok: false,
-      reason: `This checkout is on '${branch}', which has no upstream branch to update from — the daemon only auto-updates a branch that tracks a remote (normally main). Switch to the release branch with \`git checkout main\` and update, or if you're developing on '${branch}', bring in the latest with \`git fetch origin && git merge origin/main\` and rebuild.`,
-    };
+  if (!tag) {
+    return { ok: false, reason: 'No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.' };
   }
 
   let localHead: string;
-  let remoteHead: string;
+  let tagHead: string;
   try {
     localHead = git(['rev-parse', 'HEAD']).trim();
-    remoteHead = git(['rev-parse', upstream]).trim();
+    tagHead = git(['rev-parse', `${tag}^{commit}`]).trim();
   } catch (err: any) {
-    return { ok: false, reason: `could not resolve ${upstream}: ${err.message}` };
+    return { ok: false, reason: `could not resolve ${tag}: ${err.message}` };
   }
 
-  try {
-    git(['merge-base', '--is-ancestor', localHead, remoteHead]);
-  } catch {
-    return { ok: false, reason: `Local ${branch} has diverged from ${upstream} — cannot fast-forward. Run 'dispatch update' manually after resolving.` };
+  // Either way round is fine: HEAD behind the tag fast-forwards to it, and HEAD already containing
+  // the tag (a checkout that is ahead of the newest release) has nothing to take.
+  const isAncestor = (a: string, b: string): boolean => {
+    try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; }
+  };
+  if (!isAncestor(localHead, tagHead) && !isAncestor(tagHead, localHead)) {
+    return { ok: false, reason: `This checkout has diverged from release ${tag} — cannot fast-forward. Run 'dispatch update' manually after resolving.` };
   }
 
   return { ok: true };

@@ -35,7 +35,10 @@ export function composeInjection(
       };
     }
     fs.mkdirSync(path.dirname(opts.configPath), { recursive: true });
-    fs.writeFileSync(opts.configPath, JSON.stringify({ mcpServers }, null, 2));
+    // Owner-only: the file can hold literal integration values. writeFileSync's mode applies only
+    // when it creates the file, so tighten an older 0644 file too.
+    fs.writeFileSync(opts.configPath, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(opts.configPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
     claudeConfigPath = opts.configPath;
   }
 
