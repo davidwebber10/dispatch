@@ -26,6 +26,8 @@ export interface GateRequest {
   tailscaleUserLogin: string | undefined;
   tailscaleFunnel: string | undefined;
   /** Path starts with /api (after the base-path strip). */
+  /** x-forwarded-for, forwarded, cf-connecting-ip or x-real-ip present: a proxy on this machine relayed the request. */
+  proxied: boolean;
   isApi: boolean;
   isUpgrade: boolean;
 }
@@ -52,13 +54,16 @@ function hasCredential(req: GateRequest, token: string): boolean {
 }
 
 async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps): Promise<boolean> {
-  if (isLoopbackName(host)) return true;
+  // A loopback name does not prove the caller is local when a proxy relayed the request: some
+  // tunnels rewrite Host to `localhost`. Such a request needs a name the owner vouched for.
+  if (!req.proxied && isLoopbackName(host)) return true;
   if (deps.config.allowedHosts().includes(host)) return true;
   // A Tailscale name counts for a loopback peer only when `tailscale serve` vouched for the
   // caller. Funnel traffic (public internet) carries no identity header, so it falls through.
+  // The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
   if (req.tailscaleUserLogin && !req.tailscaleFunnel) {
     const me = await deps.tailscale.self();
-    if (me && (me.names.includes(host) || me.ips.includes(host))) return true;
+    if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) return true;
   }
   return false;
 }
@@ -77,7 +82,7 @@ export function originAllowed(req: GateRequest, config: AccessConfig): boolean {
     const crossish = site === 'cross-site' || site === 'same-site';
     return !(crossish && (req.isApi || req.isUpgrade));
   }
-  if (config.allowedOrigins().includes(req.origin.trim())) return true;
+  if (config.allowedOrigins().includes(req.origin.trim().toLowerCase())) return true;
   const o = originHostPort(req.origin);
   if (!o) return false; // `null` and junk
   const host = normalizeHostHeader(req.host);
@@ -126,6 +131,7 @@ function factsFrom(
     cookie: one(h.cookie),
     tailscaleUserLogin: one(h['tailscale-user-login']),
     tailscaleFunnel: one(h['tailscale-funnel-request']),
+    proxied: !!(h['x-forwarded-for'] || h['forwarded'] || h['cf-connecting-ip'] || h['x-real-ip']),
     isApi,
     isUpgrade,
   };
@@ -156,7 +162,9 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
   const failures = new Map<string, { n: number; start: number }>();
 
   const middleware: express.RequestHandler = (req, res, next) => {
-    const isApi = req.path === '/api' || req.path.startsWith('/api/');
+    // Express routes case-insensitively, so /API/x reaches the same handlers as /api/x.
+    const lower = req.path.toLowerCase();
+    const isApi = lower === '/api' || lower.startsWith('/api/');
     decide(factsFrom(req, isApi, false), opts).then((d) => {
       if (d.ok) return next();
       res.setHeader('Cache-Control', 'no-store');
@@ -170,22 +178,26 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
   const login: express.RequestHandler = (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const peer = req.socket.remoteAddress ?? '?';
+    // Behind a same-machine proxy every client has the same peer address, so a visitor's failed
+    // tries must not lock the owner out: also key on the proxy's view of the client.
+    const proxied = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
+    const bucket = proxied ? `${peer}|${(one(req.headers['x-forwarded-for']) ?? '').split(',')[0].trim()}` : peer;
     // Login needs no credential, but the Origin rule still applies: a web page cannot post to it.
     if (!originAllowed(factsFrom(req, true, false), opts.config)) {
       return void res.status(403).json({ error: 'origin_refused' });
     }
-    let rec = failures.get(peer);
-    if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(peer); rec = undefined; }
+    let rec = failures.get(bucket);
+    if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(bucket); rec = undefined; }
     if (rec && rec.n >= LOGIN_MAX_FAILURES) return void res.status(429).json({ error: 'too_many_tries' });
 
     const given = (req.body as { token?: unknown } | undefined)?.token;
     const token = opts.getToken();
     if (typeof given !== 'string' || !tokenMatches(token, given)) {
       if (failures.size > 1000) failures.clear();
-      failures.set(peer, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
+      failures.set(bucket, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
       return void res.status(401).json({ error: 'bad_token' });
     }
-    failures.delete(peer);
+    failures.delete(bucket);
     const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
     const https = (req.socket as { encrypted?: boolean }).encrypted === true ||
       (viaProxy && one(req.headers['x-forwarded-proto']) === 'https');
@@ -198,6 +210,6 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     middleware,
     loginRoute: [express.json({ limit: '4kb' }), login],
     upgradeDecision: (req, strippedUrl) =>
-      decide(factsFrom(req, strippedUrl.startsWith('/api/'), true), opts),
+      decide(factsFrom(req, strippedUrl.toLowerCase().startsWith('/api/'), true), opts),
   };
 }

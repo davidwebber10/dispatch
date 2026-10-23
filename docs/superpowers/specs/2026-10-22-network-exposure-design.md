@@ -397,6 +397,11 @@ the existing box-token check, the gate decides in this order:
    - The `Host` header names a known host (section 7.3). The WSL gateway peer uses
      the same list, because Windows-side `tailscale serve` arrives that way with the
      `ts.net` name (section 6.1).
+   - Built after review round 1: if the request carries a proxy header
+     (`X-Forwarded-For`, `Forwarded`, `CF-Connecting-IP`, `X-Real-IP`), a loopback
+     Host name no longer counts, because some tunnels rewrite `Host` to `localhost`.
+     Only an `allow-host` name or the `tailscale serve` rule (below) can admit it.
+     `tailscale serve` itself sets `X-Forwarded-For`, so it keeps working.
 3. **Owner's Tailscale device.** No credential is needed when all are true:
    - The peer address is a Tailscale address (`100.64.0.0/10` or
      `fd7a:115c:a1e0::/48`).
@@ -434,7 +439,9 @@ A host is known when its name (port removed) is one of:
   `tailscale status --json` through `platform.tailscaleStatus`, cached; on WSL
   that falls back to `tailscale.exe`, which gives the Windows host's name). The
   `ts.net` name counts for a loopback or gateway peer only when the request also has
-  `Tailscale-User-Login` and no `Tailscale-Funnel-Request` (section 4.3). For a
+  `Tailscale-User-Login` **equal to this machine's owner login** (NE-3) and no
+  `Tailscale-Funnel-Request` (section 4.3). The short name is the first label of the
+  MagicDNS name, which can differ from the OS host name. For a
   tailnet peer (rule 3) the name counts on its own.
 - An entry in `~/.dispatch/access.json` (`allowedHosts`), written by
   `dispatch access allow-host NAME`. Read by modification time, so no restart is

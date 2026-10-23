@@ -148,7 +148,8 @@ async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
       return;
     case '--link':
       if (!arg) throw new Error('usage: dispatch access --link <host>');
-      console.log(`http://${arg}:${ctx.port}/#access=${lib.ensureAccessToken(dataDir)}`);
+      // A full URL (for example https://MACHINE.ts.net for tailscale serve) is used as given.
+      console.log(`${/^https?:\/\//.test(arg) ? arg.replace(/\/+$/, '') : `http://${arg}:${ctx.port}`}/#access=${lib.ensureAccessToken(dataDir)}`);
       return;
     case 'rotate':
       lib.rotateAccessToken(dataDir);

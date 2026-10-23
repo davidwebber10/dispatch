@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { WebSocket } from 'ws';
 
 // A real daemon on a random port with its own HOME, driven over loopback and, where the
@@ -79,6 +80,24 @@ afterAll(async () => {
 });
 
 const EVIL = { Origin: 'http://evil.example' };
+
+describe('upgrade handling', () => {
+  test('a peer that resets while the gate is deciding does not crash the daemon', async () => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise<void>((resolve) => {
+        const sock = net.connect(port, '127.0.0.1', () => {
+          sock.write(`GET /api/events HTTP/1.1\r\nHost: sy.example.ts.net\r\nTailscale-User-Login: a@b.c\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+          sock.resetAndDestroy();
+          resolve();
+        });
+        sock.on('error', () => resolve());
+      });
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    expect(child.exitCode).toBeNull();
+    expect((await call({ path: '/api/sessions' })).status).toBe(200);
+  });
+});
 
 describe('this machine', () => {
   test('loopback with a loopback Host needs no credential', async () => {

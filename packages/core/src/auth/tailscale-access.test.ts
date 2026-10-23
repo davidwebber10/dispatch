@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { createTailscaleAccess, isTailscaleAddress } from './tailscale-access.js';
 
 const STATUS = JSON.stringify({
+  User: { '7': { LoginName: 'Me@Example.com' } },
   Self: { UserID: 7, DNSName: 'mac.tail1234.ts.net.', HostName: 'Mac', TailscaleIPs: ['100.64.0.9', 'fd7a:115c:a1e0::9'] },
 });
 const whois = (user: number, tags?: string[]) => JSON.stringify({ Node: { User: user, Tags: tags } });
@@ -29,12 +30,29 @@ describe('self', () => {
   test('names and ips are lowercase, without trailing dot', async () => {
     const { ts } = harness();
     expect(await ts.self()).toEqual({
-      userId: 7, names: ['mac.tail1234.ts.net', 'mac'], ips: ['100.64.0.9', 'fd7a:115c:a1e0::9'],
+      userId: 7, login: 'me@example.com', names: ['mac.tail1234.ts.net', 'mac'], ips: ['100.64.0.9', 'fd7a:115c:a1e0::9'],
     });
   });
   test('null when the CLI is missing', async () => {
     const { ts } = harness({ status: new Error('ENOENT') });
     expect(await ts.self()).toBeNull();
+  });
+});
+
+describe('MagicDNS label', () => {
+  test('the first label of DNSName counts even when the OS host name differs', async () => {
+    const status = JSON.stringify({ Self: { UserID: 7, DNSName: 'jasons-macbook-pro.t.ts.net.', HostName: "Jason's MacBook Pro", TailscaleIPs: [] } });
+    const me = await harness({ status }).ts.self();
+    expect(me?.names).toContain('jasons-macbook-pro');
+  });
+});
+
+describe('concurrency', () => {
+  test('simultaneous lookups for one peer run the CLI once', async () => {
+    const h = harness();
+    await Promise.all([1, 2, 3, 4].map(() => h.ts.isOwnerPeer('100.64.0.2')));
+    expect(h.calls.filter((c) => c[0] === 'whois').length).toBe(1);
+    expect(h.calls.filter((c) => c[0] === 'status').length).toBe(1);
   });
 });
 

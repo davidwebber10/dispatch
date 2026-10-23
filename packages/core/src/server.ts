@@ -466,8 +466,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Strip the mount prefix ONCE, before anything routes. Everything downstream —
   // all 18 route mounts, the static handler, the SPA fallback — keeps its existing
   // root-relative paths and is unaware the app is served under a prefix.
-  if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
   app.use(securityHeaders);
+  if (BASE_PATH) app.use(stripBasePath(BASE_PATH));
   const boxGate = requireBoxToken(BOX_TOKEN);
   if (boxGate) app.use(boxGate);
   // The request gate (network exposure spec, section 7). On a hosted box the box token above is
@@ -778,6 +778,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     void handleUpgrade(request, socket, head).catch(() => socket.destroy());
   });
   const handleUpgrade = async (request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
+    // Node removes its own error listener before 'upgrade' fires, and ws adds one only inside
+    // handleUpgrade. The gate below awaits (it may run the tailscale CLI), so without this a
+    // peer reset in that window is an uncaught ECONNRESET that kills the daemon.
+    socket.on('error', () => socket.destroy());
     // The WS handler needs the same prefix strip as the HTTP side. Easy to overlook:
     // the two terminal regexes are unanchored so they'd still match a prefixed URL,
     // but the `url === '/api/events'` equality below would silently stop matching and
@@ -797,6 +801,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     const url = stripped;
     if (accessGate) {
       const d = await accessGate.upgradeDecision(request, url);
+      if (socket.destroyed) return;
       if (!d.ok) {
         socket.end(`HTTP/1.1 ${d.status} ${d.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;

@@ -76,6 +76,30 @@ describe('refusals', () => {
   });
 });
 
+describe('hardening', () => {
+  test('/API/x with a cross-site label is treated as the API and refused', async () => {
+    peer = '127.0.0.1';
+    const { app } = build();
+    app.get('/API/x', (_req, res) => { res.json({ ok: true }); });
+    const r = await request(app).get('/API/x').set('Host', 'localhost:3456').set('Sec-Fetch-Site', 'cross-site');
+    expect(r.status).toBe(403);
+  });
+  test('the base path cannot break out of the sign-in script', async () => {
+    const { app } = build('/x</script><script>alert(1)');
+    const r = await request(app).get('/page').set('Host', '192.168.1.5:3456');
+    expect(r.text).not.toContain('</script><script>alert(1)');
+  });
+  test('behind a same-machine proxy, one visitor failing does not lock out another', async () => {
+    peer = '127.0.0.1';
+    const { app, getToken } = build();
+    const login = (xff: string, token: string) => request(app).post('/api/access/login')
+      .set('Host', 'localhost:3456').set('X-Forwarded-For', xff).send({ token });
+    for (let i = 0; i < 10; i++) await login('203.0.113.9', 'nope');
+    expect((await login('203.0.113.9', 'nope')).status).toBe(429);
+    expect((await login('198.51.100.2', getToken())).status).toBe(200);
+  });
+});
+
 describe('login', () => {
   const login = (app: express.Express, token: string, extra: Record<string, string> = {}) =>
     request(app).post('/api/access/login').set('Host', '192.168.1.5:3456').set(extra).send({ token });

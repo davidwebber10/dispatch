@@ -71,7 +71,7 @@ export function createAccessConfig(dataDir: string): AccessConfig {
 
   return {
     allowedHosts: () => strings(load().allowedHosts).map((h) => normalizeHostHeader(h)).filter((h): h is string => !!h),
-    allowedOrigins: () => strings(load().allowedOrigins),
+    allowedOrigins: () => strings(load().allowedOrigins).map((o) => o.trim().toLowerCase().replace(/\/+$/, '')),
     addHost(name) {
       const n = normalizeHostHeader(name);
       if (!n) throw new Error(`not a host name: ${name}`);

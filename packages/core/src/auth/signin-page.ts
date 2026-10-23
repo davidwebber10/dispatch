@@ -1,6 +1,6 @@
 /** The sign-in page (network exposure spec, 7.6): inline, no assets, served with status 401. */
 export function signInPage(basePath: string): string {
-  const base = JSON.stringify(basePath);
+  const base = JSON.stringify(basePath).replace(/</g, '\\u003c');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

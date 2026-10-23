@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
  * tailnet have a different owner, so they do not count (decision NE-3, option A).
  */
 
-export interface TsSelf { userId: number; names: string[]; ips: string[] }
+export interface TsSelf { userId: number; login: string | null; names: string[]; ips: string[] }
 
 export interface TailscaleAccess {
   self(): Promise<TsSelf | null>;
@@ -55,8 +55,13 @@ export function createTailscaleAccess(opts: { exec?: TsExec; now?: () => number 
   }
 
   let selfCache: { at: number; value: TsSelf | null } | null = null;
-  async function self(): Promise<TsSelf | null> {
-    if (selfCache && now() - selfCache.at < SELF_TTL_MS) return selfCache.value;
+  let selfInflight: Promise<TsSelf | null> | null = null;
+  function self(): Promise<TsSelf | null> {
+    if (selfCache && now() - selfCache.at < SELF_TTL_MS) return Promise.resolve(selfCache.value);
+    // Concurrent callers share one CLI run.
+    return (selfInflight ??= loadSelf().finally(() => { selfInflight = null; }));
+  }
+  async function loadSelf(): Promise<TsSelf | null> {
     let value: TsSelf | null = null;
     const out = await run(['status', '--json']);
     if (out) {
@@ -65,10 +70,11 @@ export function createTailscaleAccess(opts: { exec?: TsExec; now?: () => number 
         if (s && typeof s.UserID === 'number') {
           const names: string[] = [];
           const dns = typeof s.DNSName === 'string' ? s.DNSName.replace(/\.$/, '').toLowerCase() : '';
-          if (dns) names.push(dns);
+          if (dns) { names.push(dns); names.push(dns.split('.')[0]); } // MagicDNS label, not the OS host name
           if (typeof s.HostName === 'string' && s.HostName) names.push(s.HostName.toLowerCase());
           const ips = Array.isArray(s.TailscaleIPs) ? s.TailscaleIPs.filter((i: unknown): i is string => typeof i === 'string') : [];
-          value = { userId: s.UserID, names, ips };
+          const login = JSON.parse(out)?.User?.[String(s.UserID)]?.LoginName;
+          value = { userId: s.UserID, login: typeof login === 'string' ? login.toLowerCase() : null, names: [...new Set(names)], ips };
         }
       } catch { /* leave null */ }
     }
@@ -77,11 +83,17 @@ export function createTailscaleAccess(opts: { exec?: TsExec; now?: () => number 
   }
 
   const peerCache = new Map<string, { at: number; ok: boolean }>();
-  async function isOwnerPeer(addr: string | undefined): Promise<boolean> {
-    if (!addr || !isTailscaleAddress(addr)) return false;
+  const peerInflight = new Map<string, Promise<boolean>>();
+  function isOwnerPeer(addr: string | undefined): Promise<boolean> {
+    if (!addr || !isTailscaleAddress(addr)) return Promise.resolve(false);
     const key = stripMapped(addr);
     const hit = peerCache.get(key);
-    if (hit && now() - hit.at < (hit.ok ? ALLOW_TTL_MS : REFUSE_TTL_MS)) return hit.ok;
+    if (hit && now() - hit.at < (hit.ok ? ALLOW_TTL_MS : REFUSE_TTL_MS)) return Promise.resolve(hit.ok);
+    let p = peerInflight.get(key);
+    if (!p) { p = lookupPeer(key).finally(() => peerInflight.delete(key)); peerInflight.set(key, p); }
+    return p;
+  }
+  async function lookupPeer(key: string): Promise<boolean> {
 
     let ok = false;
     const me = await self();
