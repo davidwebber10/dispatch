@@ -43,6 +43,18 @@ describe('redactKeysDeep', () => {
     expect(input).toEqual(copy);
     expect(out).not.toBe(input);
   });
+  it('redacts property names and keeps both values when names collide', () => {
+    const input = { [T]: 'one', plain: { [S]: 2 } };
+    const out = redactKeysDeep(input) as Record<string, any>;
+    expect(JSON.stringify(out)).not.toContain(T);
+    expect(JSON.stringify(out)).not.toContain(S);
+    expect(out['dtk_[redacted]']).toBe('one');
+    expect(out.plain['dsk_[redacted]']).toBe(2);
+    const t2 = 'dtk_' + 'B'.repeat(43);
+    const two = redactKeysDeep({ [T]: 'a', [t2]: 'b' }) as Record<string, unknown>;
+    expect(Object.values(two).sort()).toEqual(['a', 'b']);
+    expect(Object.keys(two)).toHaveLength(2);
+  });
   it('leaves null and numbers unchanged', () => {
     expect(redactKeysDeep(null)).toBeNull();
     expect(redactKeysDeep(7)).toBe(7);

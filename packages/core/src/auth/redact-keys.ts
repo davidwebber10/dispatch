@@ -13,7 +13,13 @@ export function redactKeysDeep<T>(value: T): T {
     const proto = Object.getPrototypeOf(value);
     if (proto === Object.prototype || proto === null) {
       const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactKeysDeep(v);
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        // A key used as a property name is redacted too. Two names that become the same keep both values.
+        const base = redactKeys(k);
+        let name = base;
+        for (let n = 2; Object.prototype.hasOwnProperty.call(out, name); n++) name = `${base}#${n}`;
+        Object.defineProperty(out, name, { value: redactKeysDeep(v), enumerable: true, writable: true, configurable: true });
+      }
       return out as T;
     }
   }

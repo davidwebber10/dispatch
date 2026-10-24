@@ -102,6 +102,16 @@ describe('role-run keys', () => {
     expect(r.body.questions[0].question).toBe('use dtk_[redacted]?');
   });
 
+  it('redacts a live key used as a property name in the pending permission input', async () => {
+    const live = as('wA').Authorization.replace('Bearer ', '');
+    vi.spyOn(app._sessionService, 'getPendingPermission').mockReturnValue({
+      requestId: 'r2', toolName: 'Bash', input: { mapping: { [live]: 'value' }, list: [{ [live]: 1 }] },
+    });
+    const r = await request(app).get('/api/terminals/wA/permission').set(as('rr')).expect(200);
+    expect(JSON.stringify(r.body)).not.toContain(live);
+    expect(Object.values(r.body.input.mapping)).toEqual(['value']);
+  });
+
   it('keeps the same identity rules as a thread key', async () => {
     const key = as('rr');
     expect((await request(app).post('/api/terminals/wA/report-status').set(key).send({ state: 'done', summary: 's' })).body.error).toBe('out_of_scope');
