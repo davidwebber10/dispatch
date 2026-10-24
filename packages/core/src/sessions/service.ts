@@ -132,8 +132,9 @@ export class SessionService {
   }
   /** Anyone else sending to a thread, or the owner typing in it, ends its pause. */
   private noteThreadTouched(terminalId: string, source?: string, logAs?: string): void {
-    // A coordinator or daemon send is not the owner: the pause stays.
-    if (this.resuming !== terminalId && source !== 'coordinator' && logAs !== 'daemon') this.usageLimits?.onUserMessage(terminalId);
+    // Only the owner's own message (tagged source 'user') takes over; notices, recaps, watches and
+    // coordinator sends leave the pause alone.
+    if (this.resuming !== terminalId && source === 'user') this.usageLimits?.onUserMessage(terminalId);
   }
   private onUserPrompt?: (terminalId: string, text: string) => void;
   private promptInputs = new Map<string, PromptInput>();
@@ -143,7 +144,8 @@ export class SessionService {
     try { this.onUserPrompt?.(terminalId, text); } catch { /* naming must never prevent sending */ }
   }
   noteUserInput(terminalId: string, data: string): void {
-    this.noteThreadTouched(terminalId);
+    // Typing counts; a bare focus-in/out report from the terminal does not.
+    if (/[\x20-\x7e\r]/.test(data.replace(/\x1b\[[IO]/g, ''))) this.usageLimits?.onUserMessage(terminalId);
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal || terminal.label_source !== 'default' || !isAgentType(terminal.type)) { this.promptInputs.delete(terminalId); return; }
     const input = this.promptInputs.get(terminalId) ?? new PromptInput();

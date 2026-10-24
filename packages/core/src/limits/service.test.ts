@@ -176,16 +176,20 @@ describe('guards', () => {
     svc.onStopped('a');
     expect(parksDb.get(db, 'a')).toBeNull();
   });
-  it('a finished turn clears a woken park but not a waiting one', () => {
-    thread('a'); thread('b');
+  it('a normal turn end clears a woken, waiting or capped park; a failure clears only a woken one', () => {
+    thread('a'); thread('b'); thread('c');
     svc.park('a', 'claude-code', session);
     svc.park('b', 'claude-code', session);
-    clock = RESET + 2 * MIN; svc.tick();
-    const woken = wakes[0].id;
-    const other = woken === 'a' ? 'b' : 'a';
-    svc.onTurnSettled(woken); svc.onTurnSettled(other);
-    expect(parksDb.get(db, woken)).toBeNull();
-    expect(parksDb.get(db, other)).not.toBeNull();
+    parksDb.upsert(db, { terminal_id: 'c', provider: 'claude-code', kind: 'session', resets_at: RESET, wake_at: RESET, message: 'x', parsed: 1, attempts: 5, state: 'capped', parked_at: T0 }, T0);
+    svc.onTurnEnded('a'); svc.onTurnEnded('c');
+    expect(parksDb.get(db, 'a')).not.toBeNull();   // waiting: a failure does not clear it
+    expect(parksDb.get(db, 'c')).not.toBeNull();
+    svc.onTurnSettled('a'); svc.onTurnSettled('c');
+    expect(parksDb.get(db, 'a')).toBeNull();
+    expect(parksDb.get(db, 'c')).toBeNull();
+    clock = RESET + 2 * MIN; svc.tick();            // b wakes
+    svc.onTurnEnded('b');
+    expect(parksDb.get(db, 'b')).toBeNull();
   });
 });
 

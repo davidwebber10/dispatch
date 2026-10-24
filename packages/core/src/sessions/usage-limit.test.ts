@@ -133,6 +133,8 @@ describe('usage-limit wiring', () => {
     expect(parksDb.get(db, 't1')).toBeNull();
     seed('t2');
     lim.park('t2', 'claude-code', { kind: 'session', resetsAt: RESET, message: 'm' });
+    svc.noteUserInput('t2', '\x1b[I');
+    expect(parksDb.get(db, 't2')).not.toBeNull();
     svc.noteUserInput('t2', 'hello\r');
     expect(parksDb.get(db, 't2')).toBeNull();
   });
@@ -141,6 +143,7 @@ describe('usage-limit wiring', () => {
     svc.sendStructuredMessage('t1', 'status ping', 'coordinator');
     expect(parksDb.get(db, 't1')).not.toBeNull();
     svc.sendStructuredMessage('t1', 'daemon note', undefined, 'daemon');
+    svc.sendStructuredMessage('t1', 'agent finished notice');
     expect(parksDb.get(db, 't1')).not.toBeNull();
     svc.interrupt('t1');
     expect(parksDb.get(db, 't1')).toBeNull();

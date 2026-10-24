@@ -140,13 +140,13 @@ export class UsageLimitService {
   onUserMessage(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
   onStopped(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
-  /** A turn ended (finished, or failed for another reason): a resumed thread is done with its pause. */
-  onTurnEnded(terminalId: string): void { this.onTurnSettled(terminalId); }
-  /** A turn finished normally: a resumed thread is done with its pause. */
-  onTurnSettled(terminalId: string): void {
+  /** A turn ended in a failure: a resumed thread is done with its chain; a waiting one stays parked. */
+  onTurnEnded(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);
     if (row && row.state === 'woken') parksDb.remove(this.d.db, terminalId);
   }
+  /** A turn finished normally: the thread moved on, so any pause (woken, waiting or capped) is over. */
+  onTurnSettled(terminalId: string): void { parksDb.remove(this.d.db, terminalId); }
 
   /** At boot: the status of every thread was reset, so show the parked ones as paused again. */
   restore(): void {
