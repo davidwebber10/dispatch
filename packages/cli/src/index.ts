@@ -219,6 +219,10 @@ async function daemonUrl(ctx: Ctx, apiPath: string): Promise<string> {
   } catch {
     throw new Error('DISPATCH_API is missing or not a valid URL, so a thread cannot reach the daemon with its key.');
   }
+  const apiPort = Number(base.port || (base.protocol === 'https:' ? 443 : 80));
+  if (env.PORT && Number(env.PORT) !== apiPort) {
+    throw new Error('PORT names another daemon; this thread key goes only to DISPATCH_API.');
+  }
   return `${base.origin}${base.pathname.replace(/\/+$/, '')}${apiPath}`;
 }
 

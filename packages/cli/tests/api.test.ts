@@ -173,6 +173,24 @@ describe('dispatch api', () => {
     }
   });
 
+  test('in a thread a PORT that names another daemon is refused; the same port or none is fine', async () => {
+    const env = { DISPATCH_AUTH: THREAD_KEY, DISPATCH_API: API };
+    const other = ctxOf({ processEnv: { ...env, PORT: '4000' } });
+    await expect(runCommand(['api', 'GET', '/api/whoami'], other.ctx)).rejects.toThrow(/PORT names another daemon; this thread key goes only to DISPATCH_API/);
+    expect(other.apiFetch).not.toHaveBeenCalled();
+    for (const processEnv of [{ ...env, PORT: '3456' }, env]) {
+      const ok = ctxOf({ processEnv });
+      await runCommand(['api', 'GET', '/api/whoami'], ok.ctx);
+      expect(ok.apiFetch.mock.calls[0][0]).toBe('http://127.0.0.1:3456/api/whoami');
+    }
+  });
+
+  test('outside a thread the owner goes to ctx.port, whatever PORT says', async () => {
+    const { ctx, apiFetch } = ctxOf({ processEnv: { PORT: '4000' } });
+    await runCommand(['api', 'GET', '/api/x'], ctx);
+    expect(apiFetch.mock.calls[0][0]).toBe('http://localhost:3456/api/x');
+  });
+
   test('an unreadable key file fails before any request', async () => {
     const { ctx, apiFetch, readOwnerToken } = ctxOf({ processEnv: { DISPATCH_AUTH_FILE: path.join(tmp, 'nope'), DISPATCH_API: API } });
     await expect(runCommand(['api', 'GET', '/api/x'], ctx)).rejects.toThrow(/no Dispatch key/);
