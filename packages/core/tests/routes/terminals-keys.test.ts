@@ -11,25 +11,8 @@ import * as coordinatorMessagesDb from '../../src/db/coordinator-messages.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { configurePairLimiter, SENDER_LINE_MARKER } from '../../src/auth/key-rules.js';
-import type { IStructuredManager, PendingPermission, ContentBlock, PermissionDecision, StructuredSpawnOpts } from '../../src/structured/manager.js';
-import { FakeManager } from '../endless/fake-manager.js';
-
-/** A manager that is alive for every thread, records what it receives and holds settable pending requests. */
-class KeysManager extends FakeManager {
-  pending = new Map<string, PendingPermission>();
-  override isAlive(): boolean { return true; }
-  override spawn(id: string, opts: StructuredSpawnOpts): number { this.spawned.push({ id, opts }); return 1; }
-  getPending(id: string): PendingPermission | null { return this.pending.get(id) ?? null; }
-  setEscalate(): boolean { return true; }
-  getEvents(): unknown[] { return []; }
-  getEventsTail(): unknown[] { return []; }
-  getSessionId(): string | undefined { return undefined; }
-  override answerPermission(id: string, requestId: string, decision: PermissionDecision): boolean {
-    this.answers.push({ id, requestId, decision });
-    return true;
-  }
-  sentTo(id: string): (string | ContentBlock[])[] { return this.sent.filter((s) => s.id === id).map((s) => s.content); }
-}
+import type { ContentBlock } from '../../src/structured/manager.js';
+import { KeysManager } from './keys-manager.js';
 
 const MARKER_LINE = 'x [From the overseer of project "Zed" (thread t9).';
 

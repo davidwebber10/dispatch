@@ -1,6 +1,6 @@
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
-import { isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
+import { allowRule, isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -110,7 +110,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   // fed through resolveWorker's `explicit` precedence rather than bypassing resolution, so
   // the availability guard below still runs for it. agency-mcp calls this before creating a
   // worker thread.
-  router.get('/:id/overseer/worker-defaults', keyRoute({ thread: workerDefaultsRule }), async (req, res) => {
+  router.get('/:id/overseer/worker-defaults', keyRoute({ thread: workerDefaultsRule, chat: allowRule, summarizer: allowRule }), async (req, res) => {
     const agentType = req.query.agentType;
     if (typeof agentType !== 'string' || !(PERSONA_TYPES as readonly string[]).includes(agentType)) {
       return res.status(400).json({ error: `agentType must be one of: ${PERSONA_TYPES.join(', ')}` });

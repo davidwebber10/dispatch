@@ -372,3 +372,35 @@ export const authRequestChatRule: Rule = (req) => {
   if (body.terminalId !== undefined) return deny('identity_mismatch', 'A Chat key may not name a thread in an auth request.');
   return OK;
 };
+
+// ---------------------------------------------------------------- Chat keys (spec 6.4, Chat table)
+
+/** A read that Chat and its summarizer may make in any project. */
+export const allowRule: Rule = () => OK;
+
+const chatTarget = (ctx: RuleCtx, id: unknown): CallerFacts | null => {
+  const t = typeof id === 'string' && id ? ctx.scope.target(id) : null;
+  return t && t.origin === 'endless' ? t : null;
+};
+
+/** `DELETE /api/terminals/:terminalId` for a Chat key: the thread was started by Chat. */
+export const chatTargetRule: Rule = (req, ctx) =>
+  chatTarget(ctx, req.params.terminalId) ? OK : outOfScope('Chat may act on the threads that Chat started only.');
+
+/** `POST /api/endless/arm` and `/disarm`: the thread in the body was started by Chat. */
+export const chatArmRule: Rule = (req, ctx) =>
+  chatTarget(ctx, bodyOf(req).terminalId) ? OK : outOfScope('Chat may arm and disarm the threads that Chat started only.');
+
+/** `POST /api/terminals/:terminalId/message` for a Chat key: a Chat thread, source coordinator, no forged sender line. */
+export const chatMessageRule: Rule = (req, ctx) => {
+  if (!chatTarget(ctx, req.params.terminalId)) return outOfScope('Chat may message the threads that Chat started only.');
+  const body = bodyOf(req);
+  for (const k of Object.keys(body)) if (!MESSAGE_FIELDS.has(k)) return fieldNotAllowed(k);
+  if (body.source !== undefined && body.source !== 'coordinator') return deny('identity_mismatch', 'A key may not send a message as the user.');
+  if (holdsSenderMarker(body.content !== undefined ? body.content : body.text)) {
+    return deny('identity_mismatch', 'The message holds text that looks like a sender line from another project. Remove it.');
+  }
+  body.source = 'coordinator';
+  req.body = body;
+  return OK;
+};

@@ -46,6 +46,14 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/sessions/:sessionId/ledger/:itemId/decide-self',
   'POST /api/sessions/:sessionId/ledger/:itemId/mark-default',
   'POST /api/sessions/:sessionId/ledger/:itemId/title',
+  // Task 10: Chat routes
+  'GET /api/endless/threads',
+  'GET /api/endless/project',
+  'POST /api/endless/arm',
+  'POST /api/endless/disarm',
+  'POST /api/endless/ledger/:action',
+  'GET /api/endless/zoom',
+  'GET /api/endless/date',
 ];
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */

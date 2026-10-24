@@ -1,7 +1,7 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
-import { answerRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
+import { allowRule, answerRule, chatMessageRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
@@ -28,7 +28,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/sessions/:id/terminals — create a new tab. When `queued:true` (with
   // `task`), the structured thread is persisted as status='queued' WITHOUT spawning
   // its process — POST /api/terminals/:id/start promotes it later.
-  router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread') }), async (req, res) => {
+  router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread'), chat: createBodyRule('chat') }), async (req, res) => {
     try {
       const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
       // Pin the tool-support verdict for a picked OpenCode model HERE, where awaiting a
@@ -82,7 +82,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId — get a single terminal
-  router.get('/terminals/:terminalId', keyRoute({ thread: readRule }), (req, res) => {
+  router.get('/terminals/:terminalId', keyRoute({ thread: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
     res.json(terminal);
@@ -104,7 +104,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
   // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
   // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
-  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule }), (req, res) => {
+  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     res.json(sessionService.getConversation(req.params.terminalId, {
@@ -137,7 +137,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Optional `canned: true` marks fixed text that a card click sent (the need-card
   // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
   // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
-  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule }), (req, res) => {
+  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), (req, res) => {
     const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
@@ -489,7 +489,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // DELETE /api/terminals/:terminalId
-  router.delete('/terminals/:terminalId', keyRoute({ thread: archiveRule }), (req, res) => {
+  router.delete('/terminals/:terminalId', keyRoute({ thread: archiveRule, chat: chatTargetRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     sessionService.removeTerminal(req.params.terminalId);
     if (terminal) {
