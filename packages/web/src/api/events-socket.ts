@@ -51,12 +51,18 @@ export function createEventsSocket(opts: Opts): { close(): void; reconnect(): vo
     // Force an immediate fresh connection — used when the app returns from the
     // background. iOS silently kills sockets without always firing onclose, so
     // the status can read "open" over a dead pipe. We null the old onclose so
-    // its backoff timer doesn't race a second connect().
+    // its backoff timer doesn't race a second connect(), and report 'closed' ourselves.
     reconnect() {
       if (stopped) return;
       if (timer) { clearTimeout(timer); timer = undefined; }
       backoff = 500;
-      if (ws) { ws.onclose = null; try { ws.close(); } catch { /* ignore */ } }
+      if (ws) {
+        ws.onclose = null; try { ws.close(); } catch { /* ignore */ }
+        // The detached onclose will never report this loss. Report it here so a closed -> open
+        // pair still reaches the app, which resyncs events missed while the pipe was dead
+        // (a CLI/Pretty switch made on another device was never applied on this phone).
+        opts.onStatus('closed');
+      }
       connect();
     },
   };

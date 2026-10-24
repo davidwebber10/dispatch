@@ -34,7 +34,8 @@ import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
-import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
+import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
+import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, readSessionSettings, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
@@ -2258,16 +2259,18 @@ export class SessionService {
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
         // just structured ones — the New Thread modal offers the picker in both modes.
         // modelFor returns config.model for a plain user thread (no role/agentType).
+        this.adoptTranscriptSettings(terminal, config, workDir);
         const model = modelFor(config);
+        const effort = effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
         // stored once the process is alive. Without it a relaunch after a daemon restart
         // had no id to resume into and silently began a new conversation.
         if (!terminal.external_id && !branchFrom && provider.assignsSessionId) assignedSessionId = randomUUID();
         cmd = terminal.external_id
-          ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model })
+          ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model, effort })
           : (branchFrom && provider.buildBranchCommand)
             ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
-            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, sessionId: assignedSessionId });
+            : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, effort, sessionId: assignedSessionId });
       }
       command = cmd.command;
       args = cmd.args;
@@ -2396,8 +2399,22 @@ export class SessionService {
     }
   }
 
+  /**
+   * A model or effort the owner changed INSIDE a thread (`/model`, `/effort`) lives only in the
+   * running process. Fold what the transcript shows the thread last ran with into its saved
+   * config before a command is built, so every relaunch (CLI <-> Pretty, daemon restart,
+   * update) keeps it. Plain Claude user threads with a session to resume only.
+   */
+  private adoptTranscriptSettings(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    if (terminal.type !== 'claude-code' || !terminal.external_id) return;
+    if (config.runner) return; // a headless run is never resumed
+    if (!adoptTranscriptSettingsInto(config, readSessionSettings(workDir, terminal.external_id))) return;
+    try { terminalsDb.updateConfig(this.db, terminal.id, config); } catch { /* best effort */ }
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
     this.assertCoordinatorGoverned(terminal, config);
+    this.adoptTranscriptSettings(terminal, config, workDir);
     const manager = this.structuredManagerFor(terminal.type);
     if (!manager) throw new Error('structured transport not supported for this provider');
     if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
@@ -2491,7 +2508,7 @@ export class SessionService {
       // toolset is the enforcement; the policy deny remains as a backstop.
       // A Claude overseer loads only its own memory folder (overseer memory scope spec, Unit 1).
       const autoMemoryDirectory = this.overseerMemoryFor(terminal, config, workDir, coordinatorFolders);
-      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
+      const built = provider.buildStructuredCommand?.({ workDir, secretsMcp: structuredMcp, appendSystemPrompt: persona, resumeSessionId, model: resolvedModel, effort: terminal.type === 'claude-code' ? effortFor(config) : undefined, grokPluginDir, disallowedTools: disallowedToolsFor(config), autoMemoryDirectory });
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
