@@ -125,3 +125,42 @@ describe('pauseLabel', () => {
     expect(pauseLabel('usage', null, NOW, ZONE, 30 * 60_000)).toBe('Paused: usage limit, reset time unknown, retrying in 30 minutes');
   });
 });
+
+describe('named limits: Fable, Opus, Sonnet', () => {
+  const FRI = Date.UTC(2026, 9, 30, 17, 41); // Fri 1:41 PM Indianapolis (EDT)
+  const frame = (type: string, text: string) => ({
+    type: 'assistant', apiError: 'usage_limit_reached', isApiErrorMessage: true,
+    quotaLimits: { status: 'rejected', resetsAt: FRI / 1000, rateLimitType: type },
+    message: { model: '<synthetic>', content: [{ type: 'text', text }] },
+  });
+  it('structured rateLimitType picks the kind', () => {
+    expect(detectClaudeLimit(frame('seven_day_overage_included', "You've hit your Fable limit · resets Fri 1:41 PM"), NOW)).toMatchObject({ kind: 'fable', resetsAt: FRI });
+    expect(detectClaudeLimit(frame('seven_day_opus', "You've hit your Opus limit"), NOW)?.kind).toBe('opus');
+    expect(detectClaudeLimit(frame('seven_day_sonnet', "You've hit your Sonnet limit"), NOW)?.kind).toBe('sonnet');
+    expect(detectClaudeLimit(frame('seven_day', "You've hit your weekly limit"), NOW)?.kind).toBe('weekly');
+    expect(detectClaudeLimit(frame('overage', "You've hit your usage credit limit"), NOW)?.kind).toBe('usage');
+  });
+  it('a rejected rate_limit_event of seven_day_overage_included is fable', () => {
+    expect(detectClaudeLimit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: FRI / 1000, rateLimitType: 'seven_day_overage_included' } }, NOW)).toMatchObject({ kind: 'fable', resetsAt: FRI });
+  });
+  it('an error result with only the text', () => {
+    expect(detectClaudeLimit({ type: 'result', is_error: true, result: "You've hit your Fable limit · resets Oct 30, 1:41pm (America/Indianapolis)" }, NOW)).toMatchObject({ kind: 'fable', resetsAt: Date.UTC(2026, 9, 30, 17, 41) });
+    expect(detectClaudeLimit({ type: 'result', is_error: true, result: "You've reached your Fable limit. Fable 5 requires usage credits. Switch to another model to continue." }, NOW)).toMatchObject({ kind: 'fable', resetsAt: null });
+    expect(detectClaudeLimit({ type: 'result', is_error: true, result: 'Fable limit reached' }, NOW)?.kind).toBe('fable');
+    expect(detectClaudeLimit({ type: 'result', is_error: true, result: 'Sonnet limit reached' }, NOW)?.kind).toBe('sonnet');
+  });
+  it('the label names the model', () => {
+    expect(pauseLabel('fable', FRI, FRI - 3 * 86_400_000, ZONE)).toBe('Paused: Fable limit, resumes Fri 1:41 PM');
+    expect(pauseLabel('opus', null, NOW, ZONE, 6 * 3_600_000)).toBe('Paused: Opus limit, reset time unknown, retrying in 6 hours');
+  });
+  it('the CLI banner: hit or reached, with or without a time', () => {
+    expect(detectBannerLimit("  ⎿  You've hit your Fable limit · resets Fri 1:41 PM\r\n", NOW)).toMatchObject({ kind: 'fable' });
+    expect(detectBannerLimit("You've reached your Fable limit. Switch to another model to continue.\r\n", NOW)).toMatchObject({ kind: 'fable', resetsAt: null });
+    expect(detectBannerLimit("You've hit your session limit\r\n", NOW)).toMatchObject({ kind: 'session', resetsAt: null });
+  });
+  it('the CLI banner reads a year and "Mon at 9am" resets', () => {
+    expect(detectBannerLimit("You've hit your weekly limit · resets Oct 30, 2026 9am (America/Indianapolis)\r\n", NOW)?.resetsAt).toBe(Date.UTC(2026, 9, 30, 13, 0));
+    expect(detectBannerLimit("You've hit your weekly limit · resets Mon at 9am (America/Indianapolis)\r\n", NOW)?.resetsAt).toBe(Date.UTC(2026, 9, 26, 13, 0));
+  });
+});
+

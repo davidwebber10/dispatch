@@ -104,5 +104,21 @@ describe('PtyLimitWatcher', () => {
     quiet(10000);
     expect(hits).toEqual([]);
   });
+  it('a Fable banner parks once the terminal is quiet', () => {
+    w.feed('t1', "  ⎿  You've hit your Fable limit · resets Fri 1:41 PM\r\n");
+    quiet(5000);
+    expect(hits).toEqual([{ id: 't1', kind: 'fable' }]);
+  });
+  it('a timeless "reached your Fable limit" screen parks only when quiet', () => {
+    w.feed('t1', "You've reached your Fable limit. Switch to another model to continue.\r\n");
+    quiet(5000);
+    expect(hits).toEqual([{ id: 't1', kind: 'fable' }]);
+  });
+  it('quoted Fable text in prose never parks', () => {
+    w.feed('t1', "The CLI shows You've hit your Fable limit · resets Fri 1:41 PM when the quota ends, and Dispatch then pauses the thread until the reset so nothing is lost overnight.\r\n");
+    w.feed('t1', "You've reached your Fable limit is the other wording, used when credits are needed.\r\n");
+    quiet(10000);
+    expect(hits).toEqual([]);
+  });
 });
 

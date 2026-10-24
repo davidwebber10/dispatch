@@ -3,10 +3,13 @@
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
-import { pauseLabel, type UsageLimit } from './detect.js';
+import { limitName, pauseLabel, type LimitKind, type UsageLimit } from './detect.js';
 
 /** The park key of Endless Chat's own turn: Chat has no thread row, so it wakes through `deps.chat`. */
 export const CHAT_ID = 'endless-chat';
+
+/** Weekly windows, including the per-model ones, use the long fallback. */
+const isWeeklyKind = (k: LimitKind): boolean => k === 'weekly' || k === 'fable' || k === 'opus' || k === 'sonnet';
 
 /** Chat's manager also runs its compaction processes. Only a Chat turn (not a compaction) may park or clear Chat. */
 export const isChatTurnId = (id: string): boolean => id.startsWith('endless-turn-');
@@ -86,7 +89,7 @@ export class UsageLimitService {
     const prior = parksDb.get(this.d.db, terminalId);
     const attempts = prior?.attempts ?? 0;
     const parsed = limit.resetsAt !== null;
-    const fallbackMs = limit.kind === 'weekly' ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
+    const fallbackMs = isWeeklyKind(limit.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
     const wakeAt = parsed ? Math.max(limit.resetsAt!, now) + this.o.bufferMs : now + fallbackMs;
     const capped = attempts >= this.o.maxAttempts;
     parksDb.upsert(this.d.db, {
@@ -96,10 +99,10 @@ export class UsageLimitService {
     }, now);
     const label = pauseLabel(limit.kind, limit.resetsAt, now, this.d.zone, fallbackMs);
     if (capped) {
-      this.safe(() => this.d.markPaused(terminalId, `Stopped: ${limit.kind} limit, auto-resume gave up after ${attempts} tries`));
+      this.safe(() => this.d.markPaused(terminalId, `Stopped: ${limitName(limit.kind)}, auto-resume gave up after ${attempts} tries`));
       if (prior?.state === 'capped') return;
       // Never deliver it to Chat when Chat is the one stopped: the note would hit the limit again and loop.
-      this.d.note(terminalId, `[${this.threadName(terminalId)}] still hits the ${limit.kind} limit after ${attempts} automatic resumes. It stays stopped. Send it a message to continue.`, { deliver: terminalId !== CHAT_ID });
+      this.d.note(terminalId, `[${this.threadName(terminalId)}] still hits the ${limitName(limit.kind)} after ${attempts} automatic resumes. It stays stopped. Send it a message to continue.`, { deliver: terminalId !== CHAT_ID });
       return;
     }
     this.safe(() => this.d.markPaused(terminalId, label));
@@ -125,12 +128,12 @@ export class UsageLimitService {
       try {
         if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
-        this.d.note(row.terminal_id, `[${name}] resumed after the ${row.kind} limit (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
+        this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
         if (attempts >= this.o.maxAttempts) {
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
-          this.safe(() => this.d.markPaused(row.terminal_id, `Stopped: ${row.kind} limit, auto-resume gave up after ${attempts} tries`));
+          this.safe(() => this.d.markPaused(row.terminal_id, `Stopped: ${limitName(row.kind)}, auto-resume gave up after ${attempts} tries`));
           this.d.note(row.terminal_id, `[${name}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
         } else {
           parksDb.setState(this.d.db, row.terminal_id, 'parked', attempts, now + this.o.sendRetryMs, now);
@@ -158,7 +161,7 @@ export class UsageLimitService {
       if (row.terminal_id === CHAT_ID) { if (!this.d.chat) parksDb.remove(this.d.db, CHAT_ID); continue; }
       const t = terminalsDb.getById(this.d.db, row.terminal_id);
       if (!t || t.archived_at) { parksDb.remove(this.d.db, row.terminal_id); continue; }
-      const fallback = row.kind === 'weekly' ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
+      const fallback = isWeeklyKind(row.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
       this.safe(() => this.d.markPaused(row.terminal_id, pauseLabel(row.kind, row.resets_at, now, this.d.zone, fallback)));
     }
   }

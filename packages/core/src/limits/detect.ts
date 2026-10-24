@@ -2,7 +2,8 @@
 // Reads the agent CLIs' usage-limit stops: which kind, and when the limit resets. Pure.
 
 /** `session` = the 5-hour window, `weekly` = the 7-day window (incl. per-model), `usage` = any other. */
-export type LimitKind = 'session' | 'weekly' | 'usage';
+/** `fable`, `opus`, `sonnet` = a per-model weekly limit, named so the label says which. */
+export type LimitKind = 'session' | 'weekly' | 'fable' | 'opus' | 'sonnet' | 'usage';
 
 export interface UsageLimit {
   kind: LimitKind;
@@ -91,18 +92,24 @@ export function parseResetTime(text: string, now: number): { at: number; zone?: 
 function kindFromType(t: unknown): LimitKind | null {
   if (typeof t !== 'string') return null;
   if (t === 'five_hour') return 'session';
+  if (t === 'seven_day_overage_included') return 'fable';
+  if (t === 'seven_day_opus') return 'opus';
+  if (t === 'seven_day_sonnet') return 'sonnet';
   if (t.startsWith('seven_day')) return 'weekly';
   return 'usage';
 }
 
 function kindFromText(text: string): LimitKind {
-  if (/weekly|7[- ]day|seven[- ]day|opus limit|sonnet limit/i.test(text)) return 'weekly';
+  if (/weekly|7[- ]day|seven[- ]day/i.test(text)) return 'weekly';
+  if (/fable/i.test(text)) return 'fable';
+  if (/\bopus\b/i.test(text)) return 'opus';
+  if (/\bsonnet\b/i.test(text)) return 'sonnet';
   if (/session|5[- ]hour|five[- ]hour/i.test(text)) return 'session';
   return 'usage';
 }
 
 /** Claude Code's limit wording, with or without the "You've hit your" lead. */
-const CLAUDE_LIMIT_TEXT = /(?:you['’]ve hit your|you have hit your)\s+[\w\s.-]*?limit|(?:session|weekly|usage|5-hour|opus)\s+limit reached|claude usage limit reached/i;
+const CLAUDE_LIMIT_TEXT = /(?:you['’]ve|you have)\s+(?:hit|reached)\s+your\s+[\w\s.-]*?limit|(?:session|weekly|usage|5-hour|opus|sonnet|fable)\s+limit reached|claude usage limit reached/i;
 
 const frameText = (frame: any): string => {
   const parts = frame?.message?.content;
@@ -149,8 +156,9 @@ export function detectCodexLimit(err: { message?: string; codexErrorInfo?: unkno
 
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\([A-Za-z]/g;
 /** The exact banner Claude Code's screen shows: "You've hit your <kind> limit · resets <time>". */
-const BANNER_RESET = String.raw`resets(?:\s+(?:at\s+)?(?:(?:${DAYS.join('|')})[a-z]*\.?,?\s+)?(?:(?:${MONTHS.join('|')})[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)(?:\s*\([A-Za-z_]+(?:/[A-Za-z_+\-0-9]+)*\))?)?`;
-const BANNER = new RegExp(String.raw`you['’]ve hit your\s+[\w\s.-]*?limit\s*[·∙•|-]\s*${BANNER_RESET}`, 'i');
+const BANNER_RESET = String.raw`resets(?:\s+(?:at\s+)?(?:(?:${DAYS.join('|')})[a-z]*\.?,?\s+(?:at\s+)?)?(?:(?:${MONTHS.join('|')})[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*(?:\d{4},?\s*)?)?\d{1,2}(?::\d{2})?\s*(?:am|pm)(?:\s*\([A-Za-z_]+(?:/[A-Za-z_+\-0-9]+)*\))?)?`;
+/** "You've hit|reached your <label> limit", then optionally "· resets <time>". Fable's credits screen has no time: it must end the line or go straight to its own advice, so a sentence that merely quotes it never matches. */
+const BANNER = new RegExp(String.raw`you['’]ve (?:hit|reached) your\s+[\w\s.-]{0,30}?limit(?:\s*[·∙•|-]\s*${BANNER_RESET}|(?=\s*[.!]?\s*(?:[\r\n]|$)|[.!]\s+(?:Switch|Run|Buy|Set|\/)))`, 'i');
 
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
 export function detectBannerLimit(output: string, now: number): UsageLimit | null {
@@ -176,7 +184,10 @@ export function textAfterBanner(output: string): number {
   return letters(clean.slice(end)) + (letters(lead) > 3 ? 1000 : 0);
 }
 
-const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', usage: 'usage limit' };
+const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', fable: 'Fable limit', opus: 'Opus limit', sonnet: 'Sonnet limit', usage: 'usage limit' };
+
+/** "session limit", "Fable limit": the kind as a phrase. */
+export const limitName = (kind: LimitKind): string => KIND_NAME[kind];
 
 /** "Paused: session limit, resumes 1:10 AM" (a later day names the weekday). */
 export function pauseLabel(kind: LimitKind, resetsAt: number | null, now: number, zone?: string, fallbackMs?: number): string {

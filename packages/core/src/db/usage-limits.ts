@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
+import type { LimitKind } from '../limits/detect.js';
 
 export type ParkState = 'parked' | 'woken' | 'capped';
 
 export interface ParkRow {
   terminal_id: string;
   provider: string;
-  kind: 'session' | 'weekly' | 'usage';
+  kind: LimitKind;
   resets_at: number | null;
   wake_at: number;
   message: string;

@@ -70,6 +70,11 @@ owner typed "continue". A weekly limit has the same effect, but the wait can be 
   fixture, not a captured real screen. Only messages tagged as the owner's, and typed keys, end a pause.
 - Chat compaction shares Chat's manager; only turn ids (`endless-turn-`) park or clear Chat. A capped
   thread keeps the dormant state (project rollup shows working) until the owner acts.
+- Named limits: the Claude CLI 2.1.309 binary maps `seven_day_overage_included` to "Fable limit",
+  `seven_day_opus` to "Opus limit", `seven_day_sonnet` to "Sonnet limit". They are kinds `fable`, `opus`,
+  `sonnet` (label "Paused: Fable limit, resumes Fri 1:41 PM") and use the weekly fallback. The stop text is
+  "You've hit your Fable limit · resets <time>"; "You've reached your Fable limit." is the credits screen
+  (no time), parked with the weekly fallback only when it ends its line or goes straight to its own advice.
 - Chat wakes with a fixed "usage limit has reset" work line, not a replay of the owner's last message.
 
 ## Owner decisions (build uses the recommendation)

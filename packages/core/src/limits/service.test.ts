@@ -293,3 +293,20 @@ it('only a Chat turn id counts for Chat, never a compaction', () => {
   expect(isChatTurnId('some-thread-id')).toBe(false);
 });
 
+describe('named limits in the service', () => {
+  it('a Fable park labels and notes Fable, and an unknown reset uses the weekly fallback', () => {
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'fable', resetsAt: null, message: "You've reached your Fable limit." });
+    expect(parksDb.get(db, 'a')).toMatchObject({ kind: 'fable', parsed: 0, wake_at: T0 + 6 * 60 * MIN });
+    expect(labels[0].label).toBe('Paused: Fable limit, reset time unknown, retrying in 6 hours');
+    expect(notes[0].text).toContain('Fable limit');
+    expect(notes[0].text).toContain('6 hours');
+  });
+  it('restore relabels a Fable park with the weekly fallback', () => {
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'opus', resetsAt: null, message: 'x' });
+    labels.length = 0; svc.restore();
+    expect(labels[0].label).toBe('Paused: Opus limit, reset time unknown, retrying in 6 hours');
+  });
+});
+
