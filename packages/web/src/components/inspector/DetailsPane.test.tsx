@@ -60,3 +60,13 @@ it('switching threads drops the old thread\'s figures and pause, even if the new
   await waitFor(() => expect(screen.queryByText('Session (5h)')).toBeNull());
   expect(screen.queryByText(/^Paused:/)).toBeNull();
 });
+
+it('a refresh from new turn numbers keeps the rows on screen while it loads (no flicker)', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValueOnce(claude).mockImplementation(() => new Promise(() => {}));
+  const { useActivity } = await import('../../stores/activity');
+  const { act } = await import('@testing-library/react');
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByText('Session (5h)')).toBeTruthy();
+  act(() => { useActivity.setState({ byTerminal: { t1: { tokens: '12k', cost: '$1' } as any } }); });
+  expect(screen.getByText('Session (5h)')).toBeTruthy();
+});

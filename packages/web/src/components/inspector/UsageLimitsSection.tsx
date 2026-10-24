@@ -9,8 +9,10 @@ import { limitRows, type LimitRows } from './usageLimits';
  */
 export function useUsageLimits(terminalId: string | null | undefined, refreshKey = ''): LimitRows | null {
   const [rows, setRows] = useState<LimitRows | null>(null);
+  // Never keep the previous thread's figures while (or if) the new fetch fails. Only a thread
+  // change clears: a refresh (new turn numbers) keeps the rows on screen until the answer lands.
+  useEffect(() => { setRows(null); }, [terminalId]);
   useEffect(() => {
-    setRows(null); // never keep the previous thread's figures while (or if) the new fetch fails
     if (!terminalId) return;
     let live = true;
     const load = () => api.getUsageLimits(terminalId).then((l) => { if (live) setRows(limitRows(l, Date.now())); }).catch(() => {});

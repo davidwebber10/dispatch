@@ -41,7 +41,7 @@ other types only when reported, raw names for unknown types, the "As of" line, p
 and the pause line. The popup fetches only while open. Checked at 375 px wide: no horizontal
 overflow, rows wrap beside their labels.
 
-Known gap: a phone thread in CLI (terminal) mode has no context ring, so it still shows no usage.
+Known gaps: a phone thread in CLI (terminal) mode has no context ring, so it still shows no usage; the ring also stays hidden until a thread's first assistant turn, so a brand-new thread has no popup yet; Chat's own context popup has no Usage limits section (Chat has no terminal row).
 
 ## Not covered
 
