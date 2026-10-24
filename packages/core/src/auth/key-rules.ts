@@ -14,7 +14,7 @@ import { isAgentType } from '../providers/agent-types.js';
 
 const OK: RuleResult = { ok: true };
 
-function deny(error: KeyErrorCode, message: string, status: 403 | 429 = 403): RuleResult {
+function deny(error: KeyErrorCode, message: string, status: 403 | 404 | 429 = 403): RuleResult {
   return { ok: false, status, error, message };
 }
 const outOfScope = (what: string): RuleResult => deny('out_of_scope', what);
@@ -278,7 +278,8 @@ export function answerRule(getPending: PendingLookup): Rule {
     const pending = getPending(req.params.terminalId);
     if (pending) {
       if (!pending.questions?.length) return deny('not_a_question', 'The pending request is a held tool call, not a question. Only the owner may allow it.');
-      if (body.requestId !== pending.requestId) return deny('identity_mismatch', 'The requestId does not match the pending question.');
+      if (body.requestId === undefined) return deny('identity_mismatch', 'The requestId of the pending question is required.');
+      if (body.requestId !== pending.requestId) return deny('no pending permission', 'That question is gone: the requestId does not match the pending question.', 404);
     }
     if (req.res) req.res.locals.answerLogAs = 'coordinator';
     return OK;

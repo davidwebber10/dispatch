@@ -9,10 +9,12 @@ import type { CallerFacts, KeyScope } from './key-scope.js';
  * or `publicRoute`); `policyRouter()` adds `ownerOnly` for a route that has none.
  */
 export type KeyErrorCode = 'owner_only' | 'field_not_allowed' | 'identity_mismatch' | 'out_of_scope'
-  | 'depth_exceeded' | 'not_a_question' | 'rate_limited';
+  | 'depth_exceeded' | 'not_a_question' | 'rate_limited'
+  /** A stale requestId on an answer: the same 404 body as before keys, so clients tell "gone" from "refused". */
+  | 'no pending permission';
 export type RuleResult =
   | { ok: true }
-  | { ok: false; status: 403 | 429; error: KeyErrorCode; message: string };
+  | { ok: false; status: 403 | 404 | 429; error: KeyErrorCode; message: string };
 
 /** What a rule knows about the caller. `caller` is set for thread and shell keys only. */
 export interface RuleCtx {

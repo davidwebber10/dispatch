@@ -319,8 +319,11 @@ describe('thread key rules on the terminal and session routes', () => {
       res = await request(app).post('/api/terminals/kid/permission').set(as('wA')).send({ decision: 'allow', answers: { 'Q?': 'yes' } });
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('identity_mismatch');
+      // A stale requestId is 404 "no pending permission", as before keys (a client tells "gone" from "refused").
       res = await request(app).post('/api/terminals/kid/permission').set(as('wA')).send({ decision: 'allow', requestId: 'stale', answers: { 'Q?': 'yes' } });
-      expect(res.body.error).toBe('identity_mismatch');
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('no pending permission');
+      expect(mgr.answers).toHaveLength(0);
 
       for (const extra of [{ reply: 'x' }, { canned: 'dismiss' }, { message: 'x' }, { decision: 'deny' }]) {
         res = await request(app).post('/api/terminals/kid/permission').set(as('wA'))
