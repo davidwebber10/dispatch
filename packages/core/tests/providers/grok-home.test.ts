@@ -147,4 +147,13 @@ describe('the per-thread home shares everything except plugins', () => {
       dir, realHome: path.join(realHome, 'nope'), eventsUrl: 'http://x/e', hookHelperPath: '/opt/h.mjs',
     })).not.toThrow();
   });
+
+  it('writes hooks.json and .mcp.json owner-only, an older looser file tightened too', () => {
+    const hooks = path.join(dir, 'plugins', 'dispatch', 'hooks', 'hooks.json');
+    fs.mkdirSync(path.dirname(hooks), { recursive: true });
+    fs.writeFileSync(hooks, '{}', { mode: 0o644 });
+    writeGrokHome({ dir, realHome, eventsUrl: 'http://x/e', hookHelperPath: '/opt/h.mjs', mcpServers: { s: { command: 'node', args: [] } } });
+    expect(fs.statSync(hooks).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.join(dir, 'plugins', 'dispatch', '.mcp.json')).mode & 0o777).toBe(0o600);
+  });
 });

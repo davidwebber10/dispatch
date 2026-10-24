@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { allowRule, chatArmRule } from '../auth/key-rules.js';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
 import { DocTimeoutError } from '../docs/service.js';
@@ -11,7 +13,8 @@ const int = (v: unknown, fallback: number, min: number, max: number): number => 
 
 /** Endless Chat HTTP surface (spec 2026-10-13, section 2). Live events ride the events socket. */
 export function createEndlessRouter(svc: EndlessService): Router {
-  const router = Router();
+  const router = policyRouter();
+  const readKey = keyRoute({ chat: allowRule, summarizer: allowRule });
   router.use((_req, res, next) => {
     if (svc.available) next();
     else res.status(503).json({ error: 'Chat is unavailable' });
@@ -84,18 +87,18 @@ export function createEndlessRouter(svc: EndlessService): Router {
       res.json({ counts: await svc.docs.counts(ids) });
     } catch (err) { fail(res, err); }
   });
-  router.get('/threads', (_req, res) => { res.json(svc.threads()); });
-  router.get('/project', (req, res) => {
+  router.get('/threads', readKey, (_req, res) => { res.json(svc.threads()); });
+  router.get('/project', readKey, (req, res) => {
     try { res.json(svc.project(String(req.query.ref ?? ''))); } catch (err) { fail(res, err); }
   });
-  router.post('/arm', (req, res) => {
+  router.post('/arm', keyRoute({ chat: chatArmRule }), (req, res) => {
     try { res.json(svc.arm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
   });
-  router.post('/disarm', (req, res) => {
+  router.post('/disarm', keyRoute({ chat: chatArmRule }), (req, res) => {
     try { res.json(svc.disarm(String(req.body?.terminalId ?? ''))); } catch (err) { fail(res, err); }
   });
 
-  router.post('/ledger/:action', (req, res) => {
+  router.post('/ledger/:action', keyRoute({ chat: allowRule }), (req, res) => {
     try { res.json(svc.ledger(req.params.action, req.body ?? {})); }
     catch (err) {
       if (err instanceof LedgerError) res.status(err.status).json({ error: err.message, ...err.body });
@@ -103,11 +106,11 @@ export function createEndlessRouter(svc: EndlessService): Router {
     }
   });
 
-  router.get('/zoom', (req, res) => {
+  router.get('/zoom', readKey, (req, res) => {
     try { res.json(svc.zoom(Number(req.query.id), Number(req.query.n))); } catch (err) { fail(res, err); }
   });
 
-  router.get('/date', (req, res) => {
+  router.get('/date', readKey, (req, res) => {
     try { res.json({ text: svc.date(Number(req.query.id)) }); } catch (err) { fail(res, err); }
   });
 

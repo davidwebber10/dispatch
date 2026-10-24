@@ -55,7 +55,10 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
 
   const rulesPath = path.join(spec.dir, 'rules.md');
   if (spec.systemPrompt) {
-    fs.writeFileSync(rulesPath, spec.systemPrompt);
+    // Owner-only: the config and the rules sit beside a thread's key reference. Mode applies on
+    // create, so tighten an older 0644 file too.
+    fs.writeFileSync(rulesPath, spec.systemPrompt, { mode: 0o600 });
+    try { fs.chmodSync(rulesPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
     cfg.instructions = [rulesPath];
   } else if (fs.existsSync(rulesPath)) {
     // Stale rules from a previous spawn must not keep instructing this one.
@@ -76,6 +79,7 @@ export function writeOpencodeConfig(spec: OpencodeConfigSpec): string {
   }
 
   const cfgPath = path.join(spec.dir, 'opencode.json');
-  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  try { fs.chmodSync(cfgPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
   return cfgPath;
 }

@@ -9,8 +9,9 @@ import { TurnRunner, type EndlessEvent } from '../../src/endless/turn-runner.js'
 import { PLACEHOLDER } from '../../src/endless/view.js';
 import { FakeSummarizer, settle } from './fake-summarizer.js';
 import { FakeManager, texts } from './fake-manager.js';
+import { KeyRegistry } from '../../src/auth/principals.js';
 
-function setup(opts: { waitMs?: number; failLogOn?: string; readImage?: () => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
+function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: () => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
   const db = new Database(':memory:');
   initSchema(db);
   const store = new EndlessStore(db);
@@ -27,7 +28,7 @@ function setup(opts: { waitMs?: number; failLogOn?: string; readImage?: () => { 
     store, views, compactor, manager: fake.asManager(), chatDir: '/chat', mcpConfigPath: '/chat/memory.mcp.json',
     systemPrompt: () => 'SYS', statusBlock: (p) => `<status>\nnow: X; project ${p ?? 'none'}\n</status>`,
     projectName: (id) => (id ? `name-${id}` : null), log, emit: (e) => { events.push(e); opts.onEmit?.(e); },
-    readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10,
+    readImage: opts.readImage ?? (() => ({ mimeType: 'image/png', data: 'AAAA' })), waitMs: opts.waitMs ?? 50, graceMs: 10, keys: opts.keys ? () => opts.keys : undefined,
   });
   return { store, views, compactor, summarizer, fake, events, log, runner };
 }
@@ -493,4 +494,48 @@ describe('TurnRunner', () => {
     expect(t.events.at(-1)).toEqual({ type: 'endless:turn', status: 'failed', error: 'Failed to authenticate: OAuth session expired' });
   });
 
+
+  describe('chat keys', () => {
+    it('a typed message spawns with a dck_ key started by user, kept out of argv, revoked at the end', async () => {
+      const keys = new KeyRegistry();
+      const t = setup({ keys });
+      t.runner.send({ text: 'hi', project: null, media: [] });
+      await settle();
+      const spawn = t.fake.spawned[0].opts;
+      const key = spawn.env!.DISPATCH_AUTH;
+      expect(key).toMatch(/^dck_[A-Za-z0-9_-]{43}$/);
+      expect(keys.resolve(key)).toMatchObject({ kind: 'chat', startedBy: 'user' });
+      expect(spawn.args.join(' ')).not.toContain(key);
+      expect(spawn.command ?? '').not.toContain(key);
+      await finish(t);
+      expect(keys.resolve(key)).toBeNull();
+      expect(keys.size()).toBe(0);
+    });
+    it('a delivered report spawns with startedBy report', async () => {
+      const keys = new KeyRegistry();
+      const t = setup({ keys });
+      const rows = t.log({ kind: 'work', text: 'done', project: null });
+      t.runner.deliver({ i: rows[0].i, kind: 'work', text: 'done', project: null });
+      await settle();
+      expect(keys.resolve(t.fake.spawned[0].opts.env!.DISPATCH_AUTH)).toMatchObject({ kind: 'chat', startedBy: 'report' });
+      await finish(t);
+      expect(keys.size()).toBe(0);
+    });
+    it('revokes when the process exits on its own', async () => {
+      const keys = new KeyRegistry();
+      const t = setup({ keys });
+      t.runner.send({ text: 'hi', project: null, media: [] });
+      await settle();
+      t.fake.emitExit(1);
+      await t.runner.whenIdle();
+      expect(keys.size()).toBe(0);
+    });
+    it('without a registry the env has no DISPATCH_AUTH', async () => {
+      const t = setup();
+      t.runner.send({ text: 'hi', project: null, media: [] });
+      await settle();
+      expect(t.fake.spawned[0].opts.env).not.toHaveProperty('DISPATCH_AUTH');
+      await finish(t);
+    });
+  });
 });

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import multer from 'multer';
 import type { TranscriptionService } from '../transcription/service.js';
 
@@ -6,7 +7,7 @@ import type { TranscriptionService } from '../transcription/service.js';
 const DEFAULT_PROMPT = 'Technical dictation; may include file paths, camelCase identifiers, and CLI flags.';
 
 export function createTranscribeRouter(svc: TranscriptionService): Router {
-  const router = Router();
+  const router = policyRouter();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
   // POST /api/transcribe — multipart: file + provider/model/secretName/mimeType/language

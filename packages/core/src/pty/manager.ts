@@ -54,7 +54,7 @@ export class PTYManager extends EventEmitter {
 
     proc.onExit(({ exitCode }) => {
       this.ptys.delete(sessionId);
-      this.emit('exit', sessionId, exitCode);
+      this.emit('exit', sessionId, exitCode, proc.pid); // the pid lets a key revoke only this process's handle
     });
 
     return proc.pid;

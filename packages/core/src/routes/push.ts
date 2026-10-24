@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { PushService } from '../push/service.js';
 
 export function createPushRouter(push: PushService): Router {
-  const router = Router();
+  const router = policyRouter();
   router.get('/key', (_req, res) => res.json({ publicKey: push.getPublicKey() }));
   router.post('/subscribe', (req, res) => {
     const { deviceId, subscription } = req.body ?? {};

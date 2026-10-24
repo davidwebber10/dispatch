@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { SecretsService } from '../secrets/service.js';
 
 /** Maps a thrown error to 400 (caller/config problem) or 502 (Doppler upstream). */
@@ -9,7 +10,7 @@ function fail(res: import('express').Response, e: unknown): void {
 }
 
 export function createSecretsRouter(secrets: SecretsService, onWrite?: () => void): Router {
-  const router = Router();
+  const router = policyRouter();
 
   // Status never includes the token.
   router.get('/status', (_req, res) => res.json(secrets.status()));

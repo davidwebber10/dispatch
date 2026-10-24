@@ -8,6 +8,7 @@
 import type { IStructuredManager } from '../structured/manager.js';
 import type { Summarizer, SummarizerOpenOptions, SummarizerSession, Usage } from './summarizer.js';
 import { usageOf } from './summarizer.js';
+import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 import { endlessClaudeArgs, COMPACTION_ENV, SUMMARY_EFFORT, SUMMARY_MODEL } from './claude-args.js';
 
 export interface ClaudeSummarizerOptions {
@@ -21,6 +22,8 @@ export interface ClaudeSummarizerOptions {
   /** Tests run a fake CLI: `command` + `commandArgs` go before the real arguments. */
   command?: string;
   commandArgs?: string[];
+  /** The daemon's key registry, read at each open (it can be set after construction). */
+  keys?: () => KeyRegistry | undefined;
 }
 
 export class ClaudeSummarizer implements Summarizer {
@@ -34,6 +37,10 @@ export class ClaudeSummarizer implements Summarizer {
     let text = '';
     let failed: string | null = null;
     let waiting: { resolve: (s: string) => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | null = null;
+
+    const keys = this.o.keys?.();
+    const minted = keys?.mint({ kind: 'chat', startedBy: 'summarizer' });
+    const revoke = () => { if (minted) keys!.revoke(minted.handle); };
 
     const fail = (msg: string) => {
       failed = msg;
@@ -65,19 +72,28 @@ export class ClaudeSummarizer implements Summarizer {
     const onExit = (tid: string, code: number) => {
       // Mark the session dead even between asks, so the next ask rejects at once.
       if (tid !== id) return;
+      revoke();
       const msg = `the compaction process exited (${code})`;
       if (waiting) fail(msg);
       else failed ??= msg;
     };
     manager.on('event', onEvent);
     manager.on('exit', onExit);
-    manager.spawn(id, {
-      command: this.o.command ?? 'claude',
-      args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
-      workDir: this.o.chatDir,
-      env: COMPACTION_ENV,
-      toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
-    });
+    try {
+      manager.spawn(id, {
+        command: this.o.command ?? 'claude',
+        args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
+        workDir: this.o.chatDir,
+        env: minted ? { ...COMPACTION_ENV, DISPATCH_AUTH: minted.key } : COMPACTION_ENV,
+        toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
+      });
+    } catch (err) {
+      // The process never started: nothing else will revoke this key or detach these listeners.
+      manager.off('event', onEvent);
+      manager.off('exit', onExit);
+      revoke();
+      throw err;
+    }
 
     return {
       ask: (msg: string) => new Promise<string>((resolve, reject) => {
@@ -90,6 +106,7 @@ export class ClaudeSummarizer implements Summarizer {
         manager.off('event', onEvent);
         manager.off('exit', onExit);
         if (manager.isAlive(id)) manager.kill(id);
+        revoke();
       },
     };
   }

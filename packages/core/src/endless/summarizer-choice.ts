@@ -5,6 +5,7 @@
  */
 import type { IStructuredManager } from '../structured/manager.js';
 import type { Summarizer, Usage } from './summarizer.js';
+import type { KeyRegistry } from '../auth/principals.js';
 import { ClaudeSummarizer } from './summarizer-claude.js';
 import { OpenRouterSummarizer } from './summarizer-openrouter.js';
 
@@ -17,8 +18,9 @@ export function createSummarizer(d: {
   mcpConfigPath: string;
   openRouterKey: () => Promise<string | null>;
   onUsage?: (u: Usage) => void;
+  keys?: () => KeyRegistry | undefined;
 }): Summarizer {
   return SUMMARY_ENGINE === 'openrouter'
     ? new OpenRouterSummarizer({ apiKey: d.openRouterKey })
-    : new ClaudeSummarizer({ manager: d.manager, chatDir: d.chatDir, mcpConfigPath: d.mcpConfigPath, onUsage: d.onUsage });
+    : new ClaudeSummarizer({ manager: d.manager, chatDir: d.chatDir, mcpConfigPath: d.mcpConfigPath, onUsage: d.onUsage, keys: d.keys });
 }

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { ClaudeLoginService } from '../auth/claude-login.js';
 
 /**
@@ -11,7 +12,7 @@ import type { ClaudeLoginService } from '../auth/claude-login.js';
  *   DELETE /api/claude-auth            → sign out
  */
 export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.get('/', (_req, res) => {
     res.json({ authenticated: service.isAuthenticated(), session: service.status() });

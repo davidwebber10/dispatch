@@ -1,9 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 export interface BrowserShimOptions {
   dataDir: string;
   serverUrl: string;
+  /** The relay script that the shims run. Default: shim-relay.js beside this module. Tests override it. */
+  relayPath?: string;
+}
+
+/** The compiled relay (dist/auth/shim-relay.js) that sits beside this module. */
+export function defaultRelayPath(): string {
+  return fileURLToPath(new URL('./shim-relay.js', import.meta.url));
 }
 
 export type BrowserShimEnv = Record<'BROWSER' | 'GH_BROWSER' | 'DISPATCH_SERVER_URL' | 'PATH', string>;
@@ -45,7 +53,8 @@ export function installBrowserShim(options: BrowserShimOptions): BrowserShimEnv 
   const shimPath = path.join(binDir, 'dispatch-open');
 
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(shimPath, buildShimScript(), { mode: 0o755 });
+  const relayPath = options.relayPath ?? defaultRelayPath();
+  fs.writeFileSync(shimPath, buildShimScript(relayPath), { mode: 0o755 });
   fs.chmodSync(shimPath, 0o755);
 
   // Setting $BROWSER is not enough on its own: plenty of CLIs ignore it and exec the
@@ -57,7 +66,7 @@ export function installBrowserShim(options: BrowserShimOptions): BrowserShimEnv 
     // shadowing it would break any local script of that name.
     if (opener.real && !fs.existsSync(opener.real)) continue;
     const p = path.join(binDir, opener.name);
-    fs.writeFileSync(p, buildOpenerShimScript(opener.name, opener.real, binDir), { mode: 0o755 });
+    fs.writeFileSync(p, buildOpenerShimScript(opener.name, opener.real, binDir, relayPath), { mode: 0o755 });
     fs.chmodSync(p, 0o755);
   }
 
@@ -76,7 +85,7 @@ export function installBrowserShim(options: BrowserShimOptions): BrowserShimEnv 
  * anything that is not an http(s) URL (a path, a flag like `-a`) falls through to the real
  * binary with the original argv intact.
  */
-function buildOpenerShimScript(name: string, realPath: string | null, binDir: string): string {
+function buildOpenerShimScript(name: string, realPath: string | null, binDir: string, relayPath: string): string {
   // Linux has no fixed path for xdg-open, so find the next one on PATH that is not ours.
   const resolveReal = realPath
     ? `real=${shellQuote(realPath)}`
@@ -94,7 +103,7 @@ ${resolveReal}
 case "$1" in
   http://*|https://*)
     if [ -n "$DISPATCH_SERVER_URL" ]; then
-      ${relayCommand('"$1"', 'system-opener')}
+      ${relayCommand('"$1"', 'system-opener', relayPath)}
       exit 0
     fi
     ;;
@@ -108,17 +117,15 @@ exit 0
 `;
 }
 
-/** The POST both shims make. Shared so the payload shape cannot drift between them. */
-function relayCommand(urlExpr: string, source: string): string {
-  const nodePath = shellQuote(process.execPath);
-  const terminalIdRef = `"$${TERMINAL_ID_ENV_VAR}"`;
-  return `payload="$(${nodePath} -e 'const [url, cwd, terminalId, source] = process.argv.slice(1); const body = { url, source, cwd }; if (terminalId) body.terminalId = terminalId; process.stdout.write(JSON.stringify(body));' ${urlExpr} "$(pwd)" ${terminalIdRef} ${shellQuote(source)} 2>/dev/null)"
-      if [ -n "$payload" ]; then
-        curl -fsS -X POST -H 'Content-Type: application/json' --data "$payload" "\${DISPATCH_SERVER_URL}/api/auth-requests" >/dev/null 2>&1 || true
-      fi`;
+/**
+ * The call both shims make. Shared so the payload shape cannot drift between them. The relay builds the
+ * body and sends the key itself: the URL to open and the source label are its only arguments.
+ */
+function relayCommand(urlExpr: string, source: string, relayPath: string): string {
+  return `${shellQuote(process.execPath)} ${shellQuote(relayPath)} ${urlExpr} ${shellQuote(source)} >/dev/null 2>&1 || true`;
 }
 
-function buildShimScript(): string {
+function buildShimScript(relayPath: string): string {
   return `#!/bin/sh
 url="$1"
 
@@ -126,7 +133,7 @@ if [ -z "$url" ] || [ -z "$DISPATCH_SERVER_URL" ]; then
   exit 0
 fi
 
-${relayCommand('"$url"', 'browser-env')}
+${relayCommand('"$url"', 'browser-env', relayPath)}
 
 exit 0
 `;

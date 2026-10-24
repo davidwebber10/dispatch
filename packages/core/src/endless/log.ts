@@ -8,13 +8,14 @@ import type { EndlessKind, EndlessMessage, EndlessStore } from './store.js';
 import type { ViewKeeper, StagedViews } from './view-keeper.js';
 import type { Compactor } from './compactor.js';
 import { splitLongText } from './text.js';
+import { redactKeys } from '../auth/redact-keys.js';
 
 export interface LogInput { kind: EndlessKind; text: string; project?: string | null; ref?: string | null; media?: string[] }
 /** `claim` runs first inside the transaction; false logs nothing (a report already logged). */
 export interface LogOptions { claim?: () => boolean }
 
 export function appendLogged(t: { store: EndlessStore; views: ViewKeeper; compactor: Compactor }, input: LogInput, opts: LogOptions = {}): EndlessMessage[] {
-  const pieces = splitLongText(input.text);
+  const pieces = splitLongText(redactKeys(input.text));
   const done = t.store.transaction((): { written: EndlessMessage[]; staged: StagedViews } | null => {
     if (opts.claim && !opts.claim()) return null;
     const written = pieces.map((text, k) =>

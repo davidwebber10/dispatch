@@ -57,4 +57,16 @@ describe('writeOpencodeConfig', () => {
     expect(cfg.instructions).toBeUndefined();
     expect(fs.existsSync(path.join(dir, 'rules.md'))).toBe(false);
   });
+
+  it('writes opencode.json and rules.md owner-only, an older looser file tightened too', () => {
+    const dir = path.join(tmpDir, 't4');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'opencode.json'), '{}', { mode: 0o644 });
+    fs.writeFileSync(path.join(dir, 'rules.md'), 'old', { mode: 0o644 });
+    const p = writeOpencodeConfig({ dir, systemPrompt: 'rules', mcpServers: { dispatch: { command: 'node', args: [], env: { DISPATCH_AUTH: '{env:DISPATCH_AUTH}' } } } });
+    expect(fs.statSync(p).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(path.join(dir, 'rules.md')).mode & 0o777).toBe(0o600);
+    // the reference stays a reference
+    expect(JSON.parse(fs.readFileSync(p, 'utf-8')).mcp.dispatch.environment.DISPATCH_AUTH).toBe('{env:DISPATCH_AUTH}');
+  });
 });

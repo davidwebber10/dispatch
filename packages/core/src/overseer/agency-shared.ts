@@ -6,6 +6,7 @@
  * arguments. Nothing here reads DISPATCH_SESSION.
  */
 import { buildWorkerCreateBody } from './worker-payload.js';
+import { resolveCredential, keyAllowedFor } from '../auth/credential.js';
 
 export const AGENT_TYPES = ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'] as const;
 export type AgentType = (typeof AGENT_TYPES)[number];
@@ -62,15 +63,52 @@ export const CARD_FIELDS_SCHEMA = {
   note: { type: 'string', description: 'Optional: your own note, shown as "Overseer\'s note".' },
 } as const;
 
+/**
+ * The Authorization header for a call to the daemon (spec 6.3, 6.7). A thread key is sent only when
+ * DISPATCH_API is set and the URL is under it. A shell key is refused. No key: no header (stage 1).
+ */
+export function authHeaders(url: string, base?: Record<string, string>): Record<string, string> | undefined {
+  const cred = resolveCredential({ env: process.env, purpose: 'mcp', readOwnerToken: () => null });
+  if (cred.mode === 'refuse') throw new Error(cred.reason);
+  if (cred.mode === 'thread' && keyAllowedFor(url, process.env)) return { ...(base ?? {}), Authorization: cred.header };
+  return base;
+}
+
+/** True when this process holds a key that it may send to `url` (so a whoami call can work). */
+export function sendsKeyTo(url: string): boolean {
+  const cred = resolveCredential({ env: process.env, purpose: 'mcp', readOwnerToken: () => null });
+  return cred.mode === 'thread' && keyAllowedFor(url, process.env);
+}
+
+/** A daemon answer that names a key rule. `code` is the daemon's error code (spec 6.4). */
+export class KeyError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string) { super(message); }
+}
+const KEY_CODES = new Set(['auth_required', 'owner_only', 'field_not_allowed', 'identity_mismatch', 'out_of_scope', 'depth_exceeded', 'not_a_question', 'rate_limited']);
+
+/** Turn a 401, 403 or 429 body with a key error code into a readable KeyError; else null. */
+export function keyErrorFrom(status: number, bodyText: string): KeyError | null {
+  if (status !== 401 && status !== 403 && status !== 429) return null;
+  let data: any = null;
+  try { data = bodyText ? JSON.parse(bodyText) : null; } catch { return null; }
+  const code = typeof data?.error === 'string' ? data.error : '';
+  if (!KEY_CODES.has(code)) return null;
+  if (code === 'owner_only') return new KeyError('only the owner can do this. Ask the owner to do it in the browser.', status, code);
+  if (code === 'auth_required') return new KeyError("this thread's Dispatch key is not valid. Ask the owner to relaunch the thread.", status, code);
+  return new KeyError(typeof data?.message === 'string' && data.message ? data.message : code, status, code);
+}
+
 export async function httpJson(method: string, url: string, body?: unknown): Promise<any> {
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: authHeaders(url, body !== undefined ? { 'content-type': 'application/json' } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
     let detail = '';
     try { detail = await res.text(); } catch { /* ignore */ }
+    const keyErr = keyErrorFrom(res.status, detail);
+    if (keyErr) throw keyErr;
     throw new Error(`${method} ${url} -> ${res.status} ${res.statusText}${detail ? `: ${detail}` : ''}`);
   }
   const text = await res.text().catch(() => '');

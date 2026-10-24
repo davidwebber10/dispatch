@@ -17,6 +17,7 @@ import { Compactor } from './compactor.js';
 import { TurnRunner, type EndlessEvent, type TurnStatus } from './turn-runner.js';
 import { appendLogged, type LogInput, type LogOptions } from './log.js';
 import { reportText, threadOrigin, recoveryOutcome, pendingQuestionText, type PendingPrompt } from './reports.js';
+import type { KeyRegistry } from '../auth/principals.js';
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
@@ -26,6 +27,7 @@ import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.j
 import { importOnce } from './import.js';
 import { DEFAULT_LIMITS, type ViewLimits } from './view.js';
 import { nodeName } from './tree.js';
+import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
 import { DocsService } from '../docs/service.js';
@@ -51,6 +53,7 @@ export interface EndlessServiceOptions {
   chatDir: string;
   home: string;
   summarizer?: Summarizer;
+  keys?: KeyRegistry;
   limits?: ViewLimits;
   timeZone?: string;
   now?: () => number;
@@ -95,7 +98,10 @@ export class EndlessService {
    */
   private readonly bootReported = new Set<string>();
 
+  private keys: KeyRegistry | undefined;
+
   constructor(private readonly o: EndlessServiceOptions) {
+    this.keys = o.keys;
     this.store = new EndlessStore(o.db);
     this.views = new ViewKeeper(this.store, o.limits, { defer: true });
     this.mediaDir = path.join(o.chatDir, 'media');
@@ -106,6 +112,7 @@ export class EndlessService {
     const summarizer = o.summarizer ?? createSummarizer({
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),
+      keys: () => this.keys,
     });
     this.compactor = new Compactor({
       store: this.store, views: this.views, summarizer,
@@ -122,6 +129,7 @@ export class EndlessService {
       emit: (e) => this.emit(e),
       readImage,
       onUsage: (u) => this.note('turns', u),
+      keys: () => this.keys,
       ...o.turn,
     });
   }
@@ -142,6 +150,9 @@ export class EndlessService {
     }
   }
 
+  /** The daemon's key registry: Chat turns and compactions get a Chat key from it. */
+  setKeyRegistry(keys: KeyRegistry): void { this.keys = keys; }
+
   /** True after a successful start(); the routes refuse every request until then. */
   get available(): boolean { return this.phase === 'ready'; }
 
@@ -157,7 +168,8 @@ export class EndlessService {
     this.views.load();
     fs.mkdirSync(this.mediaDir, { recursive: true });
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
-    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port) } } } }, null, 2));
+    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } } } }, null, 2), { mode: 0o600 });
+    fs.chmodSync(this.mcpConfigPath, 0o600); // an older file keeps its mode on overwrite
     const last = this.store.getState('turn_status');
     if (last === 'running' || last === 'waiting') this.store.setState('turn_status', 'interrupted');
     this.compactor.recover();
@@ -311,7 +323,7 @@ export class EndlessService {
     const interim = !gone && outcome === 'needs_input';
     if (interim && owed && !live && this.store.waitingReported(terminalId)) return [];
     const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
-    const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
+    const text = redactKeys(reportText(t?.label || terminalId, gone ? 'gone' : outcome, output));
     // The same question or ending twice in a row is one report; a new question always reports.
     // The same text again with no 'working' edge between is one ending seen twice (a hook edge
     // plus the exit edge). A new turn clears the note (onThreadStatus), so a re-asked question or
@@ -439,32 +451,32 @@ export class EndlessService {
   }
 
   private wirePage(p: Page): { messages: WireMessage[]; hasMore: boolean; hasMoreAfter: boolean } {
-    return { messages: p.messages.map((m) => this.toWire(m)), hasMore: p.hasMore, hasMoreAfter: p.hasMoreAfter };
+    return { messages: p.messages.map((m) => redactKeysDeep(this.toWire(m))), hasMore: p.hasMore, hasMoreAfter: p.hasMoreAfter };
   }
 
   page(opts: { before?: number; limit: number; project: string | null }) { return this.wirePage(this.store.page(opts)); }
   around(i: number, limit: number, project: string | null) { return this.wirePage(this.store.around(i, limit, project)); }
 
   search(q: string, project: string | null, limit: number) {
-    return this.store.search(q, { project, limit }).map((h) => ({ ...h, projectName: this.projectName(h.project) }));
+    return this.store.search(q, { project, limit }).map((h) => redactKeysDeep({ ...h, projectName: this.projectName(h.project) }));
   }
 
   viewLines(): { lines: { name: string; l: number; i: number; text: string | null }[]; bytes: number; rendered: string } {
-    return { lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() };
+    return redactKeysDeep({ lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() });
   }
 
   projects(): { projects: ProjectStatus[]; threads: PaneThread[]; truncated: boolean } {
     const pane = collectPaneThreads(this.o.db, { now: this.now(), timeZone: this.timeZone, question: (id) => this.waitingText(id) });
-    return { projects: collectProjects(this.o.db, this.store), ...pane };
+    return redactKeysDeep({ projects: collectProjects(this.o.db, this.store), ...pane });
   }
 
   zoom(id: number, n: number): { text: string; images: ZoomImage[] } {
-    try { return zoom(this.store, (pid) => this.projectName(pid), id, n); }
+    try { return redactKeysDeep(zoom(this.store, (pid) => this.projectName(pid), id, n)); }
     catch (err) { if (err instanceof RecallError) throw new UserError(err.message); throw err; }
   }
 
   date(id: number): string {
-    try { return dateOf(this.store, id, this.timeZone); }
+    try { return redactKeys(dateOf(this.store, id, this.timeZone)); }
     catch (err) { if (err instanceof RecallError) throw new UserError(err.message); throw err; }
   }
 

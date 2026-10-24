@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { watchCreateRule, watchDeleteRule, watchListRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as watchesDb from '../db/watches.js';
@@ -14,9 +16,9 @@ const VALID_CRITERIA: ReadonlySet<WatchRow['criteria']> = new Set(['idle', 'need
  * thread can never learn about or subscribe to a terminal outside its project.
  */
 export function createWatchesRouter(db: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
-  router.post('/', (req, res) => {
+  router.post('/', keyRoute({ thread: watchCreateRule, roleRun: watchCreateRule }), (req, res) => {
     const { watcherTerminalId, targetTerminalId, criteria, note, once } = req.body ?? {};
 
     if (!watcherTerminalId || !targetTerminalId || !criteria) {
@@ -57,7 +59,7 @@ export function createWatchesRouter(db: Database.Database): Router {
     res.status(201).json({ id });
   });
 
-  router.get('/', (req, res) => {
+  router.get('/', keyRoute({ thread: watchListRule, roleRun: watchListRule }), (req, res) => {
     const watcher = typeof req.query.watcher === 'string' ? req.query.watcher : undefined;
     const target = typeof req.query.target === 'string' ? req.query.target : undefined;
     res.json({
@@ -66,7 +68,7 @@ export function createWatchesRouter(db: Database.Database): Router {
     });
   });
 
-  router.delete('/:id', (req, res) => {
+  router.delete('/:id', keyRoute({ thread: watchDeleteRule, roleRun: watchDeleteRule }), (req, res) => {
     const watcher = typeof req.query.watcher === 'string' ? req.query.watcher : undefined;
     if (!watcher) {
       res.status(400).json({ error: 'watcher is required' });

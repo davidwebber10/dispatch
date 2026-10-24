@@ -7,6 +7,8 @@
 // We forward the payload to the events route, which normalizes it and captures
 // the thread-id. Best-effort and silent — a failed notify must never disrupt Codex.
 
+import { authHeaders } from './key-header.mjs';
+
 const url = process.argv[2];
 const payload = process.argv[process.argv.length - 1];
 
@@ -21,7 +23,8 @@ const timer = setTimeout(() => ac.abort(), 4000);
 
 fetch(url, {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  // The thread key from DISPATCH_AUTH or DISPATCH_AUTH_FILE, only to the daemon's own URL (never argv).
+  headers: { 'content-type': 'application/json', ...authHeaders(url) },
   body,
   signal: ac.signal,
 })

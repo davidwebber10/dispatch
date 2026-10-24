@@ -1,4 +1,5 @@
 import { PromptInput } from './prompt-input.js';
+import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -23,6 +24,11 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
+import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
+import { ThreadKeys } from './thread-keys.js';
+
+/** The key minted for one process start. `keyFile` is set for the Codex CLI view only. */
+export interface SpawnKey { key: string; handle: KeyHandle; keyFile?: string }
 import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
@@ -38,6 +44,7 @@ import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, find
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
+import { effectiveSpawnDepth, findLiveCoordinator } from '../auth/key-scope.js';
 import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
@@ -48,6 +55,7 @@ import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
+import { senderLine } from '../auth/key-rules.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -106,6 +114,16 @@ export function pickRecoverableSession(
 ): string | null {
   if (files.length !== 1) return null;
   return files[0].birth >= terminalCreatedAtMs - 60_000 ? files[0].id : null;
+}
+
+/**
+ * A new root thread (no parent, no depth) is written with `spawnDepth: 0`, so the field is
+ * never missing on a new record (spec 6.1). A thread with a parent or its own depth is kept.
+ */
+function withRootSpawnDepth(config: Record<string, any> | undefined): Record<string, any> {
+  const c = config ?? {};
+  if (c.spawnedBy || typeof c.spawnDepth === 'number') return c;
+  return { ...c, spawnDepth: 0 };
 }
 
 export class SessionService {
@@ -172,6 +190,71 @@ export class SessionService {
   private daemonPort: number | null = null;
   setDaemonPort(port: number): void { this.daemonPort = port; }
 
+  /**
+   * The daemon's own address for first-party callers (loopback, bound port, base path). It goes
+   * into the agency MCP env as DISPATCH_API: the only place a thread key may be sent to. Not a secret.
+   */
+  private daemonApi: string | null = null;
+  setDaemonApi(url: string): void { this.daemonApi = url.replace(/\/+$/, ''); }
+  private apiUrl(): string | null {
+    if (this.daemonApi) return this.daemonApi;
+    if (this.statusContext?.serverUrl) return this.statusContext.serverUrl.replace(/\/+$/, '');
+    return this.daemonPort ? `http://127.0.0.1:${this.daemonPort}` : null;
+  }
+
+  /**
+   * Per-thread keys (stage 1). Unset until the daemon (or a test) hands in the registry; an unset
+   * service mints nothing and every spawn runs as before. The exits of the PTY manager and of
+   * every structured manager reach `ThreadKeys` from here, so a test service needs no extra wiring.
+   */
+  private threadKeys: ThreadKeys | null = null;
+  setKeyRegistry(registry: KeyRegistry, opts: { keyDir?: string; codexSticky?: boolean } = {}): void {
+    if (this.threadKeys) return;
+    const tk = new ThreadKeys(registry, opts);
+    this.threadKeys = tk;
+    if (typeof this.ptyManager.on === 'function') {
+      this.ptyManager.on('exit', (id: string, _code: number, pid?: number) => {
+        if (typeof pid === 'number') tk.onPtyExit(id, pid);
+      });
+    }
+    for (const manager of this.structuredManagers.values()) this.revokeKeysOnExit(manager);
+  }
+  private keyedManagers = new WeakSet<object>();
+  private revokeKeysOnExit(manager: import('../structured/manager.js').IStructuredManager): void {
+    if (this.keyedManagers.has(manager)) return;
+    this.keyedManagers.add(manager);
+    manager.on('exit', (terminalId: string) => this.threadKeys?.onStructuredExit(terminalId));
+  }
+
+  /** The daemon's own stop: every key, the sticky Codex Pretty keys too. */
+  revokeEveryKey(): void { this.threadKeys?.revokeAll(); }
+
+  /** Stop, stop-all: the current key of a terminal (the sticky Codex Pretty key stays). */
+  private revokeLiveKey(terminalId: string): void { this.threadKeys?.revokeLive(terminalId); }
+  /** Archive, delete, switch to the CLI view: every key of a terminal, the sticky one too. */
+  private revokeAllKeys(terminalId: string): void {
+    this.threadKeys?.revokeLive(terminalId);
+    this.threadKeys?.revokeSticky(terminalId);
+  }
+
+  /**
+   * Mint the key of a process that is about to start. Task 13 puts `key` into the environment or
+   * the harness config and `keyFile` (Codex CLI view only) into DISPATCH_AUTH_FILE. null when no
+   * registry is set.
+   */
+  private mintSpawnKey(terminalId: string, kind: 'thread' | 'shell', opts: { codexPretty?: boolean; keyFile?: boolean } = {}): SpawnKey | null {
+    const tk = this.threadKeys;
+    if (!tk) return null;
+    const minted = opts.codexPretty ? tk.codexKey(terminalId) : tk.mintForSpawn(terminalId, kind);
+    if (!opts.keyFile) return minted;
+    try {
+      return { ...minted, keyFile: tk.writeKeyFile(terminalId, minted.key, minted.handle) };
+    } catch (err) {
+      tk.spawnFailed(minted.handle);
+      throw err;
+    }
+  }
+
   setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
     this.secretsServerSpec = fn;
   }
@@ -190,6 +273,7 @@ export class SessionService {
     if (existing && existing !== manager) throw new Error(`Structured manager already registered: ${type}`);
     if (existing) return;
     this.structuredManagers.set(type, manager);
+    if (this.threadKeys) this.revokeKeysOnExit(manager);
     this.persistStructuredSessionIds(manager, type);
     if (type === 'claude-code') {
       this.persistMessageSources(manager);
@@ -327,6 +411,19 @@ export class SessionService {
   }
 
   /**
+   * The MCP servers in the shape that Grok and OpenCode read. A server with authEnv gets the key as a
+   * reference to the variable (`ref`, in that harness's own syntax), never as a literal.
+   */
+  private mcpEntries(specs: McpServerSpec[], ref: string): Record<string, McpServerEntry> {
+    const out: Record<string, McpServerEntry> = {};
+    for (const spec of specs) {
+      const env = spec.authEnv ? { ...(spec.env ?? {}), DISPATCH_AUTH: ref } : spec.env;
+      out[spec.name] = { command: spec.command, args: spec.args, ...(env ? { env } : {}) };
+    }
+    return out;
+  }
+
+  /**
    * Resolve the per-terminal status-hooks injection: ask the provider to shape
    * the plan, then do the IO (write the Claude settings file) so the build*
    * commands receive ready-to-use args. No-op until the server sets the context.
@@ -336,23 +433,21 @@ export class SessionService {
    * artifact — Grok, whose plugin directory carries both. Claude writes a settings file and
    * Codex passes argv, so for them the specs are already handled by composeInjection.
    */
-  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = []): StatusHooksInjection | undefined {
+  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = [], keyed = false): StatusHooksInjection | undefined {
     const ctx = this.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
     const plan = provider.buildStatusHooks?.({
       serverUrl: ctx.serverUrl,
       terminalId,
+      keyed,
       codexHelperPath: ctx.codexHelperPath,
       grokHelperPath: ctx.grokHelperPath,
     });
     if (!plan) return undefined;
     if (plan.grokHooks) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of mcpSpecs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(mcpSpecs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
           dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
           realHome: path.join(os.homedir(), '.grok'),
@@ -369,7 +464,9 @@ export class SessionService {
       try {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
         const file = path.join(ctx.hooksDir, `${terminalId}.json`);
-        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2));
+        // Owner-only like the other per-thread files; mode applies on create, so tighten an older file too.
+        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2), { mode: 0o600 });
+        try { fs.chmodSync(file, 0o600); } catch { /* best effort on FS that lacks chmod */ }
         return { claudeSettingsPath: file };
       } catch {
         return undefined; // hooks are best-effort; never block a spawn
@@ -463,6 +560,7 @@ export class SessionService {
     // Stop all terminals for this session
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.revokeLiveKey(terminal.id);
       this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
@@ -478,6 +576,7 @@ export class SessionService {
     // Kill all terminals
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.revokeAllKeys(terminal.id);
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
     }
@@ -542,7 +641,7 @@ export class SessionService {
       skipPermissions,
       workingDir: resolvedDir,
       externalId,
-      config,
+      config: withRootSpawnDepth(config),
     });
 
     try {
@@ -581,7 +680,7 @@ export class SessionService {
       label: displayLabel,
       labelSource,
       workingDir: session.working_dir,
-      config: { ...(config ?? {}), queued: true, queuedTask: task },
+      config: withRootSpawnDepth({ ...(config ?? {}), queued: true, queuedTask: task }),
     });
     this.setTerminalStatus(terminalId, 'queued');
 
@@ -659,7 +758,7 @@ export class SessionService {
       labelSource,
       skipPermissions: true,
       workingDir: resolvedDir,
-      config: { runner: true, runnerPrompt: prompt },
+      config: withRootSpawnDepth({ runner: true, runnerPrompt: prompt }),
     });
 
     try {
@@ -1047,6 +1146,7 @@ export class SessionService {
   stopTerminal(terminalId: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
+    this.revokeLiveKey(terminalId);
     this.ptyManager.kill(terminalId);
     this.structuredManagerFor(terminal.type)?.kill(terminalId);
     terminalsDb.updatePid(this.db, terminalId, null);
@@ -1090,7 +1190,7 @@ export class SessionService {
       coordinatorMessagesDb.append(this.db, {
         terminalId,
         source,
-        text: coordinatorMessagesDb.messageText(content),
+        text: redactKeys(coordinatorMessagesDb.messageText(content)),
         sentAt: new Date(this.clock()).toISOString(),
       });
     } catch (err) {
@@ -1125,7 +1225,14 @@ export class SessionService {
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
+    fromProject?: { name: string; terminalId: string },
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
+    // A cross-project message from another project's overseer (owner decision PK-4): the daemon puts
+    // one line before the text so the receiver, and the owner who reads the thread, see where it came from.
+    if (fromProject) {
+      const line = senderLine(fromProject);
+      content = typeof content === 'string' ? `${line}\n\n${content}` : [{ type: 'text', text: line }, ...content];
+    }
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Thread not found');
     // A shell tab has no agent to read a message: text typed into it RUNS AS A COMMAND, with the
@@ -1250,7 +1357,7 @@ export class SessionService {
     const exampleAnswers = headers.length
       ? `{ ${headers.map((h) => `"${h}": "<chosen option>"`).join(', ')} }`
       : '{ "<header>": "<chosen option>" }';
-    return (
+    return redactKeys(
       `🔔 Your agent "${label}"${mission ? ` (mission "${mission}")` : ''} is PAUSED waiting on you to ` +
       `answer a question (it cannot proceed until you do):\n${lines.join('\n')}\n\n` +
       `Decide based on the mission and answer it now by calling:\n` +
@@ -1373,7 +1480,7 @@ export class SessionService {
       const e = events[i];
       if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
         const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-        if (text) return text.length > max ? text.slice(0, max) + '…' : text;
+        if (text) { const safe = redactKeys(text); return safe.length > max ? safe.slice(0, max) + '…' : safe; }
       }
     }
     return '';
@@ -1510,7 +1617,7 @@ export class SessionService {
    * in full, joined by blank lines. '' when it wrote none.
    */
   finalOutput(terminalId: string): string {
-    return [...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim();
+    return redactKeys([...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim());
   }
 
   /** Read the owner-decisions block of the agent's last turn into the ledger; returns the notice lines. Never throws. */
@@ -1540,6 +1647,7 @@ export class SessionService {
    * thread (or one with no coordinator), exactly like noteAgentCompletion.
    */
   noteAgentNeedsHelp(agentTerminalId: string, ask: string): void {
+    ask = redactKeys(ask);
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};
@@ -1599,11 +1707,11 @@ export class SessionService {
     // which reads the same field) is how a role-run terminal is identified here.
     const cap = typeof cfg.roleRun === 'string' && cfg.roleRun ? 4000 : 400;
     cfg.lastOutcome = {
-      summary: detail.summary.slice(0, cap),
+      summary: redactKeys(detail.summary).slice(0, cap),
       needsHelp: detail.needsHelp,
       inferred: detail.inferred,
       ...(detail.state ? { declaredState: detail.state } : {}),
-      ...(detail.state === 'blocked' && detail.blocker ? { blocker: detail.blocker } : {}),
+      ...(detail.state === 'blocked' && detail.blocker ? { blocker: redactKeys(detail.blocker) } : {}),
       at: new Date().toISOString(),
     };
     try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
@@ -1724,7 +1832,7 @@ export class SessionService {
   answerPermission(
     terminalId: string,
     requestId: string,
-    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string; canned?: QuestionCannedAction },
+    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string; canned?: QuestionCannedAction; logAs?: 'user' | 'coordinator' },
   ): boolean {
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager) return false;
@@ -1739,7 +1847,7 @@ export class SessionService {
       };
       const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
       if (delivered && pending.toolName === 'AskUserQuestion' && remappedAnswers) {
-        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers);
+        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers, opts.logAs);
       }
       return delivered;
     }
@@ -1799,13 +1907,13 @@ export class SessionService {
    * free-text "Other" answer is kept verbatim. logCoordinatorMessage skips any thread that is not
    * a coordinator and never throws.
    */
-  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>): void {
+  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>, logAs: 'user' | 'coordinator' = 'user'): void {
     try {
       for (const q of Array.isArray(questions) ? questions : []) {
         const value = typeof q?.question === 'string' ? answers[q.question] : undefined;
         const answer = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'string' ? value : '';
         if (!answer.trim()) continue;
-        this.logCoordinatorMessage(terminalId, answer, 'user');
+        this.logCoordinatorMessage(terminalId, answer, logAs);
       }
     } catch (err) {
       console.error(`coordinator message log: question-card answer not logged for ${terminalId}`, err); // the answer is already delivered
@@ -1854,6 +1962,7 @@ export class SessionService {
    * Returns false only when the terminal itself doesn't exist.
    */
   reportStatus(terminalId: string, decl: import('../structured/manager.js').StatusDeclaration): boolean {
+    decl = redactKeysDeep(decl);
     const manager = this.structuredManagerForTerminal(terminalId);
     if (manager && manager.isAlive(terminalId)) {
       manager.noteDeclaredStatus(terminalId, decl);
@@ -1920,6 +2029,8 @@ export class SessionService {
       }
     }
 
+    // A switch ends the Codex Pretty sticky key (the next spawn mints a fresh one).
+    this.revokeAllKeys(terminalId);
     // Fully tear down the OLD transport (awaiting its exit) BEFORE re-spawning, so its async
     // exit handler can't null the pid / reset the status of the transport we're about to start.
     await this.killCurrentTransport(terminal.type, terminalId, current);
@@ -2017,9 +2128,7 @@ export class SessionService {
    * harness must be FOUND here, not shadowed by a new claude-code one.
    */
   findCoordinator(sessionId: string): terminalsDb.Terminal | null {
-    return terminalsDb.listBySession(this.db, sessionId)
-      .map(terminalsDb.rowToTerminal)
-      .find((t) => isAgentType(t.type) && t.config?.role === 'coordinator') ?? null;
+    return findLiveCoordinator(this.db, sessionId);
   }
 
   /**
@@ -2134,6 +2243,7 @@ export class SessionService {
   }
 
   stopAllTerminals(): void {
+    this.threadKeys?.revokeAllLive(); // PTY keys only: Pretty threads keep running, so their keys stay
     this.ptyManager.killAll();
   }
 
@@ -2147,6 +2257,7 @@ export class SessionService {
   removeTerminal(terminalId: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
+    this.revokeAllKeys(terminalId);
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
@@ -2183,7 +2294,35 @@ export class SessionService {
     return terminalsDb.listArchivedBySession(this.db, sessionId).map(terminalsDb.rowToTerminal);
   }
 
+  /**
+   * Every PTY spawn goes through here: create, start of a queued agent, runner, branch, relaunch,
+   * restart, restore and transport switch. A PTY process gets its key minted right before it
+   * starts; a structured thread mints its own in spawnStructured. A spawn that throws revokes the
+   * key it minted.
+   */
   private spawnTerminal(terminalId: string): void {
+    const row = terminalsDb.getById(this.db, terminalId);
+    let sk: SpawnKey | null = null;
+    if (row && this.threadKeys) {
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+      // A refused coordinator throws in the body before anything starts, so it mints nothing here.
+      const structured = cfg.transport === 'structured' && !!this.structuredManagerFor(row.type);
+      if (!structured && !(cfg.role === 'coordinator')) {
+        // The Codex CLI view writes its environment to a snapshot file, so its key travels as a
+        // 0600 key file and only the path goes into the environment (probe results, Finding 1).
+        sk = this.mintSpawnKey(terminalId, row.type === 'shell' ? 'shell' : 'thread', { keyFile: row.type === 'codex' });
+      }
+    }
+    try {
+      this.spawnTerminalKeyed(terminalId, sk);
+    } catch (err) {
+      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      throw err;
+    }
+  }
+
+  private spawnTerminalKeyed(terminalId: string, sk: SpawnKey | null): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Terminal not found');
 
@@ -2234,11 +2373,15 @@ export class SessionService {
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
       if (this.isPeerEligible(terminal.type)) {
-        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk));
         prompts.push(this.peerPromptFor(terminal));
       }
       const developerNote = this.toolsAwareness?.() ?? null;
-      const secretsMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote });
+      const secretsMcp = composeInjection(specs, {
+        configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote,
+        // The Codex CLI view passes the key-file path through; every other harness the key variable.
+        authVar: sk?.keyFile ? 'DISPATCH_AUTH_FILE' : 'DISPATCH_AUTH',
+      });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
         // Spawn (or, when an external_id is already known, RESUME) the structured
         // thread via the right manager for this harness (claude stream-json / codex
@@ -2252,7 +2395,7 @@ export class SessionService {
         // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
-        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs, !!sk);
         grokHomeDir = statusHooks?.grokHomeDir;
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
@@ -2277,7 +2420,15 @@ export class SessionService {
     // them for the top-level command. Everything but `plugins` links back to the real home.
     const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
+    // The key travels in the environment of this one process, never in argv and never in the shared
+    // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
+    // of a 0600 key file instead (probe results, Finding 1).
+    if (sk) {
+      if (sk.keyFile) spawnEnv.DISPATCH_AUTH_FILE = sk.keyFile;
+      else spawnEnv.DISPATCH_AUTH = sk.key;
+    }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
+    if (sk) this.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
     // send the next relaunch chasing a conversation that never existed.
@@ -2402,6 +2553,24 @@ export class SessionService {
     if (!manager) throw new Error('structured transport not supported for this provider');
     if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
 
+    // Mint right before the process starts (this also covers the revive path, ensureStructuredAlive).
+    // A Codex Pretty thread keeps one sticky key for its life on this daemon (probe results, Finding 3).
+    const sk = this.mintSpawnKey(terminal.id, 'thread', { codexPretty: terminal.type === 'codex' });
+    try {
+      this.spawnStructuredKeyed(terminal, config, workDir, manager, sk);
+    } catch (err) {
+      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      throw err;
+    }
+  }
+
+  private spawnStructuredKeyed(
+    terminal: terminalsDb.TerminalRow,
+    config: Record<string, any>,
+    workDir: string,
+    manager: import('../structured/manager.js').IStructuredManager,
+    sk: SpawnKey | null,
+  ): void {
     const provider = getProvider(terminal.type);
     // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
     const specs: McpServerSpec[] = [];
@@ -2411,11 +2580,15 @@ export class SessionService {
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
     if (this.isPeerEligible(terminal.type)) {
-      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, typeof config.spawnDepth === 'number' ? config.spawnDepth : 0));
+      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk));
       prompts.push(this.peerPromptFor(terminal));
     }
     const developerNote = this.toolsAwareness?.() ?? null;
-    const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
+    const structuredMcp = composeInjection(specs, {
+      configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote,
+      // Codex Pretty: the thread config (a pipe to the app-server) holds the literal key.
+      ...(terminal.type === 'codex' && sk ? { codexAuthLiteral: sk.key } : {}),
+    });
 
     // Grok's MCP servers ride a per-thread plugin passed as `--plugin-dir` — the `grok
     // agent` subcommand's TRUSTED plugin scope. NOT via GROK_HOME like the PTY flow: a
@@ -2426,10 +2599,7 @@ export class SessionService {
     let grokPluginDir: string | undefined;
     if (terminal.type === 'grok' && this.statusContext) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of specs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(specs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
           dir: path.join(this.statusContext.hooksDir, 'grok-homes', terminal.id),
           realHome: path.join(os.homedir(), '.grok'),
@@ -2555,10 +2725,7 @@ export class SessionService {
     let opencodeEnv: Record<string, string> | undefined;
     if (terminal.type === 'opencode' && this.statusContext) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of specs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}');
         // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
         // chat-only: every tool off, no MCP, and no peer-tools block in the prompt (it
         // would describe tools the model cannot call). The verdict is pinned in
@@ -2625,10 +2792,22 @@ export class SessionService {
       // MCP servers (its `dispatch` identity) and its terminal id for shell commands (the
       // browser-auth shim) ride its thread/start + thread/resume `config` instead.
       ...(terminal.type === 'codex'
-        ? { threadConfig: { ...(structuredMcp?.codexThreadConfig ?? {}), [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id } }
+        ? {
+            threadConfig: {
+              ...(structuredMcp?.codexThreadConfig ?? {}),
+              [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id,
+              // The thread's shell commands (the browser-auth shim) carry its own key (probe results).
+              ...(sk ? { 'shell_environment_policy.set.DISPATCH_AUTH': sk.key } : {}),
+            },
+          }
         : {}),
-      env: terminal.type === 'codex' ? {} : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
+      // Codex keeps {} (the shared app-server env must hold nothing per thread); every other
+      // harness gets its own key in the env of its own process.
+      env: terminal.type === 'codex'
+        ? {}
+        : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
     });
+    if (sk) this.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
 
@@ -2665,7 +2844,7 @@ export class SessionService {
       this.lastSpawnError.delete(terminalId);
       return manager.isAlive(terminalId);
     } catch (err) {
-      const cause = err instanceof Error ? err.message : String(err);
+      const cause = redactKeys(err instanceof Error ? err.message : String(err));
       this.lastSpawnError.set(terminalId, cause);
       console.error(`[structured] thread ${terminalId} could not start: ${cause}`);
       return false;
@@ -2860,8 +3039,9 @@ export class SessionService {
    * written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the
    * shared daemon-wide one.
    */
-  private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
+  private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number, authEnv = false): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
+    const api = this.apiUrl();
     return {
       name: AGENCY_MCP_SERVER,
       command: 'node',
@@ -2871,7 +3051,9 @@ export class SessionService {
         DISPATCH_PORT: String(this.daemonPort ?? process.env.PORT ?? 3456),
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
+        ...(api ? { DISPATCH_API: api } : {}),
       },
+      ...(authEnv ? { authEnv: true } : {}),
     };
   }
 

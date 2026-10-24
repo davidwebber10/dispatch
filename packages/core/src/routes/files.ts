@@ -2,7 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import multer from 'multer';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
@@ -151,7 +152,7 @@ export const uploadStorage: multer.StorageEngine = {
 };
 
 export function createFilesRouter(db: Database.Database): Router {
-  const router = Router({ mergeParams: true });
+  const router = policyRouter({ mergeParams: true });
   // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
