@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { authRequestChatRule, authRequestRule } from '../auth/key-rules.js';
 import type { AuthRequestService } from '../auth/service.js';
 
 export function createAuthRouter(service: AuthRequestService): Router {
@@ -9,7 +10,7 @@ export function createAuthRouter(service: AuthRequestService): Router {
     res.json(service.list());
   });
 
-  router.post('/', (req, res) => {
+  router.post('/', keyRoute({ thread: authRequestRule, shell: authRequestRule, chat: authRequestChatRule }), (req, res) => {
     try {
       const record = service.create({
         url: String(req.body.url || ''),

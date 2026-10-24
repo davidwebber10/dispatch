@@ -287,3 +287,88 @@ export function answerRule(getPending: PendingLookup): Rule {
 /** `POST /api/terminals/:terminalId/report-status`: the caller itself. */
 export const selfRule: Rule = (req, ctx) =>
   req.params.terminalId === must(ctx).id ? OK : outOfScope('A thread may report its own status only.');
+
+// ---------------------------------------------------------------- watches
+
+/** `POST /api/watches`: the watcher is the caller (filled in or checked); the target is in the caller's project. */
+export const watchCreateRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  const body = bodyOf(req);
+  if (body.watcherTerminalId !== undefined && body.watcherTerminalId !== caller.id) {
+    return deny('identity_mismatch', 'A thread may create watches for itself only.');
+  }
+  if (body.targetTerminalId !== undefined) {
+    const target = typeof body.targetTerminalId === 'string' ? ctx.scope.target(body.targetTerminalId) : null;
+    if (!target || target.sessionId !== caller.sessionId) return outOfScope('A thread may watch threads in its own project only.');
+  }
+  body.watcherTerminalId = caller.id;
+  req.body = body;
+  return OK;
+};
+
+/** `GET /api/watches`: the `watcher` and `target` values are the caller when present, and the caller when absent. */
+export const watchListRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  for (const k of ['watcher', 'target'] as const) {
+    const v = req.query[k];
+    if (v !== undefined && v !== caller.id) return deny('identity_mismatch', `A thread may list its own watches only (${k}).`);
+    req.query[k] = caller.id;
+  }
+  return OK;
+};
+
+/** `DELETE /api/watches/:id`: the `watcher` value is the caller; the route's ownership check then runs. */
+export const watchDeleteRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  const v = req.query.watcher;
+  if (v !== undefined && v !== caller.id) return deny('identity_mismatch', 'A thread may remove its own watches only.');
+  req.query.watcher = caller.id;
+  return OK;
+};
+
+// ---------------------------------------------------------------- ledger
+
+/**
+ * The 12 ledger `POST` routes: the project is the caller's own, for an overseer key too (no
+ * cross-project writes), and `caller` in the body is the key's thread. The service's own overseer
+ * check then runs on the real caller.
+ */
+export const ledgerRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  if (req.params.sessionId !== caller.sessionId) return outOfScope('The ledger of another project cannot be changed from here.');
+  const body = bodyOf(req);
+  if (body.caller !== undefined && body.caller !== caller.id) return deny('identity_mismatch', 'The caller must be the thread that holds the key.');
+  body.caller = caller.id;
+  req.body = body;
+  return OK;
+};
+
+// ---------------------------------------------------------------- events, auth requests
+
+const EVENT_PROVIDER: Record<string, string> = { 'claude-code': 'claude', codex: 'codex', grok: 'grok' };
+
+/** `POST /api/events/:provider/:terminalId`: the caller, with the provider of its own type. */
+export const eventsRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  if (req.params.terminalId !== caller.id || EVENT_PROVIDER[caller.type] !== req.params.provider) {
+    return outOfScope('A thread may report its own events, with its own provider.');
+  }
+  return OK;
+};
+
+/** `POST /api/auth-requests` for thread and shell keys: `terminalId` comes from the key. */
+export const authRequestRule: Rule = (req, ctx) => {
+  const caller = must(ctx);
+  const body = bodyOf(req);
+  if (body.terminalId !== undefined && body.terminalId !== caller.id) return deny('identity_mismatch', 'An auth request may name the calling thread only.');
+  body.terminalId = caller.id;
+  req.body = body;
+  return OK;
+};
+
+/** `POST /api/auth-requests` for Chat keys: Chat has no thread, so `terminalId` must be absent. */
+export const authRequestChatRule: Rule = (req) => {
+  const body = bodyOf(req);
+  if (body.terminalId !== undefined) return deny('identity_mismatch', 'A Chat key may not name a thread in an auth request.');
+  return OK;
+};

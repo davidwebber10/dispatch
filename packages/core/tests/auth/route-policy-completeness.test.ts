@@ -28,6 +28,24 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/terminals/:terminalId/report-status',
   'POST /api/terminals/:terminalId/start',
   'DELETE /api/terminals/:terminalId',
+  // Task 9: watches, ledger, events, auth requests
+  'POST /api/watches',
+  'GET /api/watches',
+  'DELETE /api/watches/:id',
+  'POST /api/events/:provider/:terminalId',
+  'POST /api/auth-requests',
+  'POST /api/sessions/:sessionId/ledger',
+  'POST /api/sessions/:sessionId/ledger/list',
+  'POST /api/sessions/:sessionId/ledger/note',
+  'POST /api/sessions/:sessionId/ledger/import',
+  'POST /api/sessions/:sessionId/ledger/handoff',
+  'POST /api/sessions/:sessionId/ledger/:itemId/resolve',
+  'POST /api/sessions/:sessionId/ledger/show',
+  'POST /api/sessions/:sessionId/ledger/decide-self',
+  'POST /api/sessions/:sessionId/ledger/:itemId/add-from-agent',
+  'POST /api/sessions/:sessionId/ledger/:itemId/decide-self',
+  'POST /api/sessions/:sessionId/ledger/:itemId/mark-default',
+  'POST /api/sessions/:sessionId/ledger/:itemId/title',
 ];
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */
