@@ -153,6 +153,7 @@ function writeIdentity(req: Request, written: Written): void {
   const body = bodyOf(req);
   const cfg: Record<string, any> = body.config && typeof body.config === 'object' ? body.config : {};
   cfg.role = 'agent';
+  cfg.transport = 'structured'; // a key never makes a CLI (PTY) thread, even when the body names no transport
   cfg.spawnDepth = written.spawnDepth;
   if (written.spawnedBy) cfg.spawnedBy = written.spawnedBy; else delete cfg.spawnedBy;
   if (written.origin) cfg.origin = written.origin; else delete cfg.origin;

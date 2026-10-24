@@ -62,6 +62,14 @@ describe('Chat key rules', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
+  it('stores structured when the body names no transport', async () => {
+    for (const type of ['claude-code', 'codex']) {
+      const res = await request(app).post('/api/sessions/A/terminals').set(chatKey()).send({ type, label: 'w' });
+      expect(res.status, type).toBe(201);
+      expect(terminalsDb.rowToTerminal(terminalsDb.getById(db, res.body.id)!).config!.transport).toBe('structured');
+    }
+  });
+
   it('spawns in any project and the daemon writes the four identity fields', async () => {
     for (const project of ['A', 'B']) {
       for (const startedBy of ['user', 'report'] as const) {

@@ -137,6 +137,16 @@ describe('thread key rules on the terminal and session routes', () => {
       expect(terminalsDb.rowToTerminal(terminalsDb.getById(db, res.body.id)!).config).toMatchObject({ role: 'agent', spawnDepth: 2, spawnedBy: 'wA' });
     });
 
+    it('stores structured when the body names no transport (claude-code and codex)', async () => {
+      for (const type of ['claude-code', 'codex']) {
+        for (const config of [undefined, {}, { agentType: 'implementer' }]) {
+          const res = await request(app).post('/api/sessions/A/terminals').set(as('wA')).send({ type, label: 'w', ...(config ? { config } : {}) });
+          expect(res.status, `${type} ${JSON.stringify(config)}`).toBe(201);
+          expect(terminalsDb.rowToTerminal(terminalsDb.getById(db, res.body.id)!).config!.transport).toBe('structured');
+        }
+      }
+    });
+
     it('accepts dependsOn for a thread in the same project', async () => {
       const res = await request(app).post('/api/sessions/A/terminals').set(as('wA')).send(createBody(1, 'wA', {}, { dependsOn: 'wA2' }));
       expect(res.status).toBe(201);
