@@ -436,9 +436,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Private to the user before anything else is written (network exposure spec 7.14).
   lockDownDataDir(dataDir, [platform.logDir()]);
 
+  // The daemon's own address for first-party callers (hooks, the shim, MCP helpers): loopback, the
+  // bound port and the base path. It is also the only destination that a thread key may be sent to.
+  let daemonApi = `http://127.0.0.1:${preferredPort}${BASE_PATH}`;
   const browserShimEnv = platform.installBrowserShim({
     dataDir,
-    serverUrl: `http://127.0.0.1:${preferredPort}`,
+    serverUrl: daemonApi,
   });
 
   // Create database
@@ -628,8 +631,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // the user's own Claude credential, and the MCP tools OS brokers per spawn. Both
     // are no-ops on a local daemon (no OS_BASE_URL, no login session), so one
     // composition serves both deployments rather than forking the spawn path.
-    const spawnEnv = {
+    const spawnEnv: Record<string, string> = {
       ...effectiveShimEnv,
+      // Not a secret: the address that a thread key may be sent to. The key itself is never here.
+      DISPATCH_API: daemonApi,
       ...claudeLogin.getSpawnEnv(),
       ...osConnections.getSpawnEnv(),
       ...secretsService.getSpawnEnv(),
@@ -848,6 +853,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // (platform/loopback-guard.ts).
   const loopbackGuards = await guardLoopback(server, port);
   sessionService.setDaemonPort(port);
+  sessionService.setDaemonApi(`http://127.0.0.1:${port}${BASE_PATH}`);
 
   // Record our own pid so daemon controllers (e.g. WSL's restart()) can find and signal this
   // process without an OS service manager. Only now that the port is bound: a duplicate launch
@@ -855,9 +861,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   writeOwnPid(dataDir);
 
   if (port !== preferredPort) {
+    daemonApi = `http://127.0.0.1:${port}${BASE_PATH}`;
     effectiveShimEnv = platform.installBrowserShim({
       dataDir,
-      serverUrl: `http://127.0.0.1:${port}`,
+      serverUrl: daemonApi,
     });
     refreshPtyEnv();
   }
@@ -871,7 +878,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Status hooks: tell SessionService how to make spawned agents phone home with
   // lifecycle events (Claude hooks settings file + Codex notify helper).
   sessionService.setStatusContext({
-    serverUrl: `http://127.0.0.1:${port}`,
+    serverUrl: `http://127.0.0.1:${port}${BASE_PATH}`,
     hooksDir: path.join(dataDir, 'hooks'),
     codexHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/codex-notify.mjs'),
     grokHelperPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/grok-hook.mjs'),

@@ -190,6 +190,18 @@ export class SessionService {
   setDaemonPort(port: number): void { this.daemonPort = port; }
 
   /**
+   * The daemon's own address for first-party callers (loopback, bound port, base path). It goes
+   * into the agency MCP env as DISPATCH_API: the only place a thread key may be sent to. Not a secret.
+   */
+  private daemonApi: string | null = null;
+  setDaemonApi(url: string): void { this.daemonApi = url.replace(/\/+$/, ''); }
+  private apiUrl(): string | null {
+    if (this.daemonApi) return this.daemonApi;
+    if (this.statusContext?.serverUrl) return this.statusContext.serverUrl.replace(/\/+$/, '');
+    return this.daemonPort ? `http://127.0.0.1:${this.daemonPort}` : null;
+  }
+
+  /**
    * Per-thread keys (stage 1). Unset until the daemon (or a test) hands in the registry; an unset
    * service mints nothing and every spawn runs as before. The exits of the PTY manager and of
    * every structured manager reach `ThreadKeys` from here, so a test service needs no extra wiring.
@@ -2388,6 +2400,13 @@ export class SessionService {
     // them for the top-level command. Everything but `plugins` links back to the real home.
     const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
+    // The key travels in the environment of this one process, never in argv and never in the shared
+    // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
+    // of a 0600 key file instead (probe results, Finding 1).
+    if (sk) {
+      if (sk.keyFile) spawnEnv.DISPATCH_AUTH_FILE = sk.keyFile;
+      else spawnEnv.DISPATCH_AUTH = sk.key;
+    }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
     if (sk) this.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
@@ -2757,7 +2776,11 @@ export class SessionService {
       ...(terminal.type === 'codex'
         ? { threadConfig: { ...(structuredMcp?.codexThreadConfig ?? {}), [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id } }
         : {}),
-      env: terminal.type === 'codex' ? {} : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
+      // Codex keeps {} (the shared app-server env must hold nothing per thread); every other
+      // harness gets its own key in the env of its own process.
+      env: terminal.type === 'codex'
+        ? {}
+        : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
     });
     if (sk) this.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
@@ -2993,6 +3016,7 @@ export class SessionService {
    */
   private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
+    const api = this.apiUrl();
     return {
       name: AGENCY_MCP_SERVER,
       command: 'node',
@@ -3002,6 +3026,7 @@ export class SessionService {
         DISPATCH_PORT: String(this.daemonPort ?? process.env.PORT ?? 3456),
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
+        ...(api ? { DISPATCH_API: api } : {}),
       },
     };
   }
