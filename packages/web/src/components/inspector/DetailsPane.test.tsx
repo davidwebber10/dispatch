@@ -50,3 +50,13 @@ it('a failed fetch shows no limits section and nothing breaks', async () => {
   await screen.findByText('THREAD');
   expect(screen.queryByTestId('usage-limits')).toBeNull();
 });
+
+it('switching threads drops the old thread\'s figures and pause, even if the new fetch fails', async () => {
+  const spy = vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false } });
+  const { rerender } = render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByText(/^Paused: session limit/)).toBeTruthy();
+  spy.mockRejectedValue(new Error('404'));
+  rerender(<DetailsPane projectId="p1" terminalId="t2" />);
+  await waitFor(() => expect(screen.queryByText('Session (5h)')).toBeNull());
+  expect(screen.queryByText(/^Paused:/)).toBeNull();
+});

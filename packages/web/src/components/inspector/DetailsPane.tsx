@@ -3,8 +3,8 @@ import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useActivity } from '../../stores/activity';
 import { useTabs, findTerminal } from '../../stores/tabs';
-import type { Terminal, ThreadUsageLimits } from '../../api/types';
-import { limitRows } from './usageLimits';
+import type { Terminal } from '../../api/types';
+import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -28,8 +28,8 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : null));
   const [term, setTerm] = useState<Terminal | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
-  const [limits, setLimits] = useState<ThreadUsageLimits | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // Limits belong to the account: refetch when a turn updates the thread's numbers.
+  const limitsRows = useUsageLimits(terminalId, `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`);
 
   // The terminal's own working dir + pid — the data that used to live in the
   // bottom bar below the terminal, now surfaced here in the right column.
@@ -38,18 +38,6 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
     if (terminalId) api.getTerminal(terminalId).then((t) => { if (live) setTerm(t); }).catch(() => {});
     return () => { live = false; };
   }, [terminalId]);
-
-  // Usage limits belong to the account: refetch when the thread changes, when a turn updates its
-  // numbers, and once a minute so "resets" and "as of" never sit stale.
-  const turnMark = `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`;
-  useEffect(() => {
-    if (!terminalId) { setLimits(null); return; }
-    let live = true;
-    const load = () => api.getUsageLimits(terminalId).then((l) => { if (live) { setLimits(l); setNow(Date.now()); } }).catch(() => {});
-    load();
-    const timer = setInterval(load, 60_000);
-    return () => { live = false; clearInterval(timer); };
-  }, [terminalId, turnMark]);
 
   useEffect(() => {
     let live = true; setBranch(null);
@@ -60,7 +48,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   if (!project) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
 
   const hasActivity = !!(activity?.model || activity?.tokens || activity?.cost);
-  const lim = limits && terminalId ? limitRows(limits, now) : null;
+  const lim = limitsRows;
   const showDetails = hasActivity || !!lim;
   const status = tab?.status ?? term?.status;
   return (
@@ -72,13 +60,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
           {activity?.context && <Row label="Context" value={activity.context} />}
           {activity?.tokens && <Row label="Tokens" value={activity.tokens} />}
           {activity?.cost && <Row label="Cost" value={activity.cost} />}
-          {lim && (
-            <div data-testid="usage-limits" style={{ marginTop: hasActivity ? 6 : 0 }}>
-              {lim.paused && <div style={{ padding: '3px 0', color: 'var(--color-text-primary)' }}>{lim.paused}</div>}
-              {lim.rows.map((r) => <Row key={r.label} label={r.label} value={r.value} />)}
-              {lim.asOf && <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', textAlign: 'right' }}>{lim.asOf}</div>}
-            </div>
-          )}
+          {lim && <div style={{ marginTop: hasActivity ? 6 : 0 }}><UsageLimitsRows lim={lim} row={(l, v) => <Row label={l} value={v} />} /></div>}
         </>
       )}
       {terminalId && (

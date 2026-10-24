@@ -30,6 +30,9 @@ describe('limitRows', () => {
     expect(limitRows({ ...base, paused: { kind: 'session', resetsAt: null, capped: false } }, NOW, Z).paused).toBe('Paused: session limit, reset time unknown');
     expect(limitRows({ ...base, paused: { kind: 'session', resetsAt: 1, capped: true } }, NOW, Z).paused).toBe('Stopped: session limit, auto-resume gave up');
   });
+  it('a pause whose reset time has passed says resuming now, not a past time', () => {
+    expect(limitRows({ provider: 'claude-code', supported: true, snapshot: null, paused: { kind: 'session', resetsAt: NOW - 120_000, capped: false } }, NOW, Z).paused).toBe('Paused: session limit, resuming now');
+  });
   it('grok and opencode are Not reported; no figure yet says so', () => {
     expect(limitRows({ provider: 'grok', supported: false, snapshot: null, paused: null }, NOW, Z).rows).toEqual([{ label: 'Usage limits', value: 'Not reported' }]);
     expect(limitRows({ provider: 'claude-code', supported: true, snapshot: null, paused: null }, NOW, Z).rows[0].value).toBe('Not reported yet');

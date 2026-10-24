@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { claudeAccountId, codexAccountId } from './account.js';
+import { claudeAccountId, codexAccountId, tokenAccountId, codexLoginChangedAt } from './account.js';
 
 describe('account ids', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'acct-'));
@@ -20,5 +20,17 @@ describe('account ids', () => {
     fs.mkdirSync(path.join(home, 'cx')); fs.writeFileSync(path.join(home, 'cx', 'auth.json'), JSON.stringify({ tokens: { account_id: 'cx-1' } }));
     expect(codexAccountId({ CODEX_HOME: path.join(home, 'cx') }, home)).toBe('cx-1');
     expect(codexAccountId({}, path.join(home, 'none'))).toBe('');
+  });
+  it('a headless token is the account (hashed, never raw), and a new token is a new account', () => {
+    const a = tokenAccountId('secret-token-1');
+    expect(a).toMatch(/^token:[0-9a-f]{16}$/);
+    expect(a).not.toContain('secret');
+    expect(tokenAccountId('secret-token-2')).not.toBe(a);
+    expect(tokenAccountId(null)).toBe('');
+  });
+  it('reports when the Codex login file last changed, 0 when it is missing', () => {
+    fs.mkdirSync(path.join(home, 'cx2'), { recursive: true }); fs.writeFileSync(path.join(home, 'cx2', 'auth.json'), '{}');
+    expect(codexLoginChangedAt({ CODEX_HOME: path.join(home, 'cx2') }, home)).toBeGreaterThan(0);
+    expect(codexLoginChangedAt({}, path.join(home, 'none'))).toBe(0);
   });
 });

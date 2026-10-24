@@ -32,11 +32,26 @@ Codex maps its 300-minute window to Session (5h) and its 10080-minute window to 
   (256 KiB, no widening), at most once per 30 s per thread. Null windows (unlimited plans) show nothing.
 - No usage API is polled.
 
+## Phone and the Context window popup
+
+The phone has no Details pane, so the same section also shows in the Context window popup (tap the
+context ring under the composer; the Mac gets it too). It uses the same hook (`useUsageLimits`) and
+the same rows and rules as the Details pane (`UsageLimitsRows`, `limitRows`): Session (5h), Weekly,
+other types only when reported, raw names for unknown types, the "As of" line, per-account data,
+and the pause line. The popup fetches only while open. Checked at 375 px wide: no horizontal
+overflow, rows wrap beside their labels.
+
+Known gap: a phone thread in CLI (terminal) mode has no context ring, so it still shows no usage.
+
 ## Not covered
 
 - Claude threads in the CLI (PTY) view do not stream; they show the last figure another Claude
   thread reported, or "Not reported yet".
 - Claude utilization below 90% is not reported by the CLI.
+- Provenance: figures are tagged with the account at the time they are read. Codex figures written
+  before its login file last changed are skipped; a report older than the stored one is ignored; an
+  unknown account id is an account of its own; a headless box's injected Claude token is the account.
+  A Claude process still running across a login switch can report under the old account (not verified).
 - After a restart with no new turn, the figure is the persisted one with its "As of" time.
 
 Retarget this PR to main after #106 merges.

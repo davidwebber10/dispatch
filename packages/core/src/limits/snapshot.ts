@@ -58,24 +58,29 @@ export class LimitSnapshots {
     try { this.byProvider = JSON.parse(appState.get(db, KEY) ?? '{}') ?? {}; } catch { this.byProvider = {}; }
   }
 
-  /** The provider's snapshot, only if it came from `account` (an unknown id on either side matches). */
+  /** The provider's snapshot, only if it came from exactly `account` (an unknown id '' is an account of its own). */
   get(provider: string, account: string): ProviderLimits | null {
     const s = this.byProvider[provider];
-    if (!s) return null;
-    return s.account === account || !s.account || !account ? s : null;
+    return s && s.account === account ? s : null;
   }
 
-  /** Merge newly reported windows. A different account starts a fresh snapshot. */
-  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string): void {
-    if (Object.keys(windows).length === 0) return;
+  /**
+   * Merge newly reported windows. A different account starts a fresh snapshot, and a report older
+   * than the stored one is ignored (an idle thread's old figures must not undo newer ones).
+   * `replace`: the report lists every window the account has (Codex), so windows it omits are gone.
+   * Merged windows more than an hour past their reset are dropped, so a type reported once does not linger.
+   */
+  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false): void {
+    if (!replace && Object.keys(windows).length === 0) return;
     const prior = this.get(provider, account);
-    const merged: LimitWindows = { ...(prior?.windows ?? {}) };
+    if (prior && now < prior.asOf) return;
+    const merged: LimitWindows = replace ? {} : { ...(prior?.windows ?? {}) };
     for (const [type, w] of Object.entries(windows)) {
-      const old = merged[type];
+      const old = prior?.windows[type];
       merged[type] = w.usedPercent === null && old && old.resetsAt === w.resetsAt ? old : w;
     }
-    const next: ProviderLimits = { account: account || prior?.account || '', asOf: now, plan: plan ?? prior?.plan, windows: merged };
-    this.byProvider[provider] = next;
+    for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) delete merged[type];
+    this.byProvider[provider] = { account, asOf: now, plan: plan ?? prior?.plan, windows: merged };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
   }
 }

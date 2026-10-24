@@ -21,7 +21,7 @@ const KIND = { session: 'session limit', weekly: 'weekly limit', usage: 'usage l
 /** "Paused: session limit, resumes 1:10 AM", the same words the pause itself shows. */
 export function pausedLabel(p: NonNullable<ThreadUsageLimits['paused']>, now: number, zone?: string): string {
   if (p.capped) return `Stopped: ${KIND[p.kind]}, auto-resume gave up`;
-  return `Paused: ${KIND[p.kind]}, ${p.resetsAt === null ? 'reset time unknown' : `resumes ${whenLabel(p.resetsAt, now, zone)}`}`;
+  return `Paused: ${KIND[p.kind]}, ${p.resetsAt === null ? 'reset time unknown' : p.resetsAt <= now ? 'resuming now' : `resumes ${whenLabel(p.resetsAt, now, zone)}`}`;
 }
 
 /** Row labels by limit type, matching Claude Code's own names (CLI 2.1.309). Codex uses the first two. */

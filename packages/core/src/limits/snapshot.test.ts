@@ -71,16 +71,39 @@ describe('LimitSnapshots', () => {
     expect(s.get('claude-code', 'old')).toBeNull();
     expect(s.get('claude-code', 'new')!.windows.five_hour?.usedPercent).toBe(3);
   });
+  it("an unknown account ('') is an account of its own: it never matches a known one", () => {
+    const { s } = fresh();
+    s.record('claude-code', '', { seven_day: { usedPercent: 95, resetsAt: NOW + 1000 } }, NOW);
+    expect(s.get('claude-code', 'acct-b')).toBeNull();
+    s.record('claude-code', 'acct-b', { five_hour: { usedPercent: 1, resetsAt: NOW + 1000 } }, NOW + 1);
+    expect(s.get('claude-code', 'acct-b')!.windows.seven_day).toBeUndefined(); // nothing carried across
+    expect(s.get('claude-code', '')).toBeNull();
+  });
+  it('a report older than the stored one is ignored (an idle thread must not undo newer figures)', () => {
+    const { s } = fresh();
+    s.record('codex', 'a', { five_hour: { usedPercent: 80, resetsAt: NOW + 1000 } }, NOW, undefined, true);
+    s.record('codex', 'a', { five_hour: { usedPercent: 20, resetsAt: NOW + 1000 } }, NOW - 7200_000, undefined, true);
+    expect(s.get('codex', 'a')!.windows.five_hour?.usedPercent).toBe(80);
+    expect(s.get('codex', 'a')!.asOf).toBe(NOW);
+  });
+  it('replace (Codex): a newer report with fewer windows, or none (unlimited plan), clears the old ones', () => {
+    const { s } = fresh();
+    s.record('codex', 'a', { five_hour: { usedPercent: 80, resetsAt: NOW + 1000 }, seven_day: { usedPercent: 50, resetsAt: NOW + 1000 } }, NOW, 'plus', true);
+    s.record('codex', 'a', { five_hour: { usedPercent: 10, resetsAt: NOW + 5000 } }, NOW + 10, undefined, true);
+    expect(Object.keys(s.get('codex', 'a')!.windows)).toEqual(['five_hour']);
+    s.record('codex', 'a', {}, NOW + 20, 'business', true);
+    expect(s.get('codex', 'a')!.windows).toEqual({});
+  });
+  it('a window type reported once does not linger more than an hour past its reset', () => {
+    const { s } = fresh();
+    s.record('claude-code', 'a', { overage: { usedPercent: 3, resetsAt: NOW + 1000 } }, NOW);
+    s.record('claude-code', 'a', { five_hour: { usedPercent: 4, resetsAt: NOW + 5 * 3600_000 } }, NOW + 2 * 3600_000);
+    expect(Object.keys(s.get('claude-code', 'a')!.windows)).toEqual(['five_hour']);
+  });
   it('providers are separate, and the snapshot survives a restart', () => {
     const { db, s } = fresh();
     s.record('codex', 'x', { seven_day: { usedPercent: 7, resetsAt: NOW + 1 } }, NOW, 'plus');
     expect(s.get('claude-code', 'x')).toBeNull();
-    const again = new LimitSnapshots(db);
-    expect(again.get('codex', 'x')).toMatchObject({ plan: 'plus', windows: { seven_day: { usedPercent: 7 } } });
-  });
-  it('an unknown account id matches whatever is stored', () => {
-    const { s } = fresh();
-    s.record('codex', '', { seven_day: { usedPercent: 7, resetsAt: NOW + 1 } }, NOW);
-    expect(s.get('codex', '')).not.toBeNull();
+    expect(new LimitSnapshots(db).get('codex', 'x')).toMatchObject({ plan: 'plus', windows: { seven_day: { usedPercent: 7 } } });
   });
 });
