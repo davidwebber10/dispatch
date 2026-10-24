@@ -1,5 +1,5 @@
 // packages/core/tests/structured/manager.test.ts
-import { it, expect, beforeEach, afterEach } from 'vitest';
+import { it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StructuredSessionManager } from '../../src/structured/manager.js';
@@ -761,4 +761,51 @@ it("compact() streams system frames only and opens no turn", async () => {
   m.compact('t1');
   await waitForEvent(m, 't1', (e) => e.type === 'system' && e.compact_result === 'success');
   expect(order).toEqual([]);
+});
+
+// --- usage limits (limits/detect.ts): a pause, never a failure ---
+
+it("a usage-limit stop emits 'usage-limit' (kind, structured reset) and 'scheduled', never 'failed'", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const failed = vi.fn();
+  m.on('failed', failed);
+  const limitP = waitForManagerEvent(m, 'usage-limit', 't1');
+  const scheduledP = waitForManagerEvent(m, 'scheduled', 't1');
+  m.sendMessage('t1', 'TRIGGER_LIMIT:five_hour:1792818600');
+  const [limit] = await limitP;
+  expect(limit).toMatchObject({ kind: 'session', resetsAt: 1792818600 * 1000 });
+  const [activity] = await scheduledP;
+  expect(activity).toMatch(/^Paused: session limit/);
+  await new Promise((r) => setTimeout(r, 100));
+  expect(failed).not.toHaveBeenCalled();
+});
+
+it('a weekly limit is kind weekly', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const limitP = waitForManagerEvent(m, 'usage-limit', 't1');
+  m.sendMessage('t1', 'TRIGGER_LIMIT:seven_day:1793000000');
+  expect((await limitP)[0]).toMatchObject({ kind: 'weekly', resetsAt: 1793000000 * 1000 });
+});
+
+it('a limit with only the words (no structured reset) is read from the text', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const limitP = waitForManagerEvent(m, 'usage-limit', 't1');
+  m.sendMessage('t1', 'TRIGGER_LIMIT_TEXT');
+  const [limit] = await limitP;
+  expect(limit.kind).toBe('session');
+  expect(limit.resetsAt).toBeGreaterThan(Date.now() - 1000);
+});
+
+it('an ordinary error result is still failed, not a limit', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const limit = vi.fn();
+  m.on('usage-limit', limit);
+  const failedP = waitForManagerEvent(m, 'failed', 't1');
+  m.sendMessage('t1', 'TRIGGER_ERROR_PLAIN');
+  await failedP;
+  expect(limit).not.toHaveBeenCalled();
 });
