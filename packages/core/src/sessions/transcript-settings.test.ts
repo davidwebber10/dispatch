@@ -59,6 +59,14 @@ describe('readSessionSettings', () => {
     expect(readSessionSettings(workDir, 's2')?.effortChanged).toBe(false);
   });
 
+  it('treats an /effort command in the window as an explicit choice even when the effort never moved', () => {
+    write('s1', [
+      { type: 'user', message: { content: '<local-command-stdout>Set effort level to low (saved as your default for new sessions): x</local-command-stdout>' } },
+      turn({ effort: 'low' }),
+    ]);
+    expect(readSessionSettings(workDir, 's1')).toMatchObject({ effort: 'low', effortChanged: true });
+  });
+
   it('accepts 1M-context model ids', () => {
     write('s1', [turn({ requestedModel: 'claude-opus-4-8[1m]' })]);
     expect(readSessionSettings(workDir, 's1')?.model).toBe('claude-opus-4-8[1m]');

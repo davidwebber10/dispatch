@@ -340,11 +340,15 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
     if (start > 0) lines.shift();
     let out: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null = null;
     const efforts = new Set<string>();
+    let explicitEffort = false;
     for (let i = lines.length - 1; i >= 0; i--) {
       const trimmed = lines[i].trim();
       if (!trimmed) continue;
       let o: any;
       try { o = JSON.parse(trimmed); } catch { continue; }
+      // `/effort` prints "Set effort level to X" into the transcript: direct evidence the owner
+      // chose it, even when every later turn shows the same value.
+      if (o?.type === 'user' && !o.isSidechain && /<local-command-stdout>Set effort level to /.test(JSON.stringify(o.message?.content ?? ''))) explicitEffort = true;
       if (!o || o.type !== 'assistant' || o.isSidechain || o.isMeta) continue;
       if (o.message?.model === SYNTHETIC_MODEL) continue;
       const effort = (CLAUDE_EFFORT_LEVELS as readonly string[]).includes(o.effort) ? (o.effort as ClaudeEffort) : undefined;
@@ -355,11 +359,10 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
         if (effort) out.effort = effort;
       }
     }
-    // The effort moved within the window we can see: someone ran /effort (or /model, which carries
-    // its own effort). Without a change, the effort is just the model's default, not a choice.
-    if (out) out.effortChanged = efforts.size > 1;
+    // The effort moved within the window we can see, or an /effort command is in it (or /model, which
+    // carries its own effort). Without a change, the effort is just the model's default, not a choice.
+    if (out) out.effortChanged = efforts.size > 1 || explicitEffort;
     return out;
-    return null;
   } catch {
     return null;
   }
