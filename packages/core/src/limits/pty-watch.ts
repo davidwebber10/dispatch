@@ -1,11 +1,15 @@
 // packages/core/src/limits/pty-watch.ts
 // Finds a usage-limit banner in a CLI (PTY) thread's output. A TUI repaints the screen, and an
-// agent can quote the banner in prose, so a match counts only when the terminal is quiet after it.
+// agent can quote the banner in prose, so a match counts only after the terminal stays quiet:
+// any new output that is not the banner itself restarts the wait.
 import { detectBannerLimit, type UsageLimit } from './detect.js';
 
 const WINDOW = 2048;
-/** Distinct banners one terminal may report per window of time: a repaint is the same banner. */
-const SAME_BANNER_MS = 60_000;
+/** A reported banner is ignored again until its reset has passed by this much (repaints). */
+const REPAINT_GRACE_MS = 10 * 60_000;
+/** The same, when the banner gave no readable reset. */
+const UNKNOWN_RESET_MS = 35 * 60_000;
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\([A-Za-z]/g;
 
 export interface PtyLimitWatcherDeps {
   isIdle(terminalId: string): boolean;
@@ -16,32 +20,47 @@ export interface PtyLimitWatcherDeps {
 export class PtyLimitWatcher {
   private tails = new Map<string, string>();
   private pending = new Map<string, NodeJS.Timeout>();
-  private lastReported = new Map<string, { message: string; at: number }>();
+  private reported = new Map<string, { message: string; until: number }>();
 
   constructor(private readonly d: PtyLimitWatcherDeps) {}
 
   feed(terminalId: string, chunk: string): void {
     const tail = ((this.tails.get(terminalId) ?? '') + chunk).slice(-WINDOW);
     this.tails.set(terminalId, tail);
-    if (this.pending.has(terminalId)) return;
+    if (this.pending.has(terminalId)) {
+      // The banner painted again, or blank screen codes: still quiet. Anything else: not quiet.
+      if (!detectBannerLimit(chunk, Date.now()) && chunk.replace(ANSI, '').trim()) this.arm(terminalId);
+      return;
+    }
     const limit = detectBannerLimit(tail, Date.now());
-    if (!limit) return;
-    const last = this.lastReported.get(terminalId);
-    if (last && last.message === limit.message && Date.now() - last.at < SAME_BANNER_MS) return;
+    if (limit && !this.isRepaint(terminalId, limit)) this.arm(terminalId);
+  }
+
+  private isRepaint(terminalId: string, limit: UsageLimit): boolean {
+    const last = this.reported.get(terminalId);
+    return !!last && last.message === limit.message && Date.now() < last.until;
+  }
+
+  private arm(terminalId: string): void {
+    const old = this.pending.get(terminalId);
+    if (old) clearTimeout(old);
     this.pending.set(terminalId, setTimeout(() => {
       this.pending.delete(terminalId);
+      // Read the whole banner now: chunks may have split it, so the first look can lack the time.
+      const limit = detectBannerLimit(this.tails.get(terminalId) ?? '', Date.now());
       this.tails.delete(terminalId);
-      if (!this.d.isIdle(terminalId)) return;
-      this.lastReported.set(terminalId, { message: limit.message, at: Date.now() });
+      if (!limit || this.isRepaint(terminalId, limit) || !this.d.isIdle(terminalId)) return;
+      this.reported.set(terminalId, { message: limit.message, until: (limit.resetsAt ?? Date.now() + UNKNOWN_RESET_MS) + REPAINT_GRACE_MS });
       this.d.onLimit(terminalId, limit);
     }, this.d.confirmMs ?? 5000));
   }
 
+  /** The terminal ended, or the owner took over: drop any pending detection. */
   forget(terminalId: string): void {
     const t = this.pending.get(terminalId);
     if (t) clearTimeout(t);
     this.pending.delete(terminalId);
     this.tails.delete(terminalId);
-    this.lastReported.delete(terminalId);
+    this.reported.delete(terminalId);
   }
 }

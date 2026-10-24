@@ -228,3 +228,29 @@ describe('Chat\'s own turn', () => {
     chat.stop();
   });
 });
+
+describe('review fixes', () => {
+  it('a capped thread says it stopped trying, and a repeat of the cap posts no second note', () => {
+    thread('a');
+    parksDb.upsert(db, { terminal_id: 'a', provider: 'claude-code', kind: 'session', resets_at: RESET, wake_at: RESET, message: 'x', parsed: 1, attempts: 5, state: 'woken', parked_at: T0 }, T0);
+    svc.park('a', 'claude-code', session);
+    expect(parksDb.get(db, 'a')!.state).toBe('capped');
+    expect(labels.at(-1)!.label).toMatch(/^Stopped: session limit, auto-resume gave up after 5/);
+    const n = notes.length;
+    svc.park('a', 'claude-code', session);
+    expect(notes).toHaveLength(n);
+  });
+  it('restore keeps Chat\'s park', () => {
+    const chat = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: () => {}, markPaused: () => {}, note: () => {}, chat: { isBusy: () => false, wake: () => true } });
+    chat.park(CHAT_ID, 'claude-code', session);
+    chat.restore();
+    expect(parksDb.get(db, CHAT_ID)).not.toBeNull();
+    chat.stop();
+  });
+  it('touch listeners hear an owner message or a stop', () => {
+    const heard: string[] = [];
+    svc.addTouchListener((id) => heard.push(id));
+    svc.onUserMessage('a'); svc.onStopped('b');
+    expect(heard).toEqual(['a', 'b']);
+  });
+});

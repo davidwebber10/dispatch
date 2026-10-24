@@ -47,3 +47,14 @@ describe('noteLimit', () => {
     expect(works()).toEqual([{ text: '[Chat] paused.', project: null, ref: null }]);
   });
 });
+
+describe('owner actions on Chat', () => {
+  it('send, retry and stop tell the limit service the owner took over', () => {
+    let n = 0;
+    svc.onOwnerAction = () => { n += 1; };
+    svc.send({ text: 'hello', project: null, images: [] });
+    svc.retry();
+    svc.stopTurn();
+    expect(n).toBe(3);
+  });
+});

@@ -427,6 +427,7 @@ export class EndlessService {
       if (!EXT[(img as any).media_type]) throw new UserError(`unsupported image type: ${(img as any).media_type}`);
     }
     const media = body.images.map((img, k) => this.saveImage(img, k));
+    this.onOwnerAction?.();
     this.turns.send({ text: body.text, project: body.project, media });
   }
 
@@ -441,8 +442,10 @@ export class EndlessService {
     return file;
   }
 
-  retry(): boolean { return this.turns.retry(); }
-  stopTurn(): boolean { return this.turns.stop(); }
+  /** Set by the daemon: the owner acted on Chat (send, retry, stop), which ends a usage-limit pause. */
+  onOwnerAction?: () => void;
+  retry(): boolean { this.onOwnerAction?.(); return this.turns.retry(); }
+  stopTurn(): boolean { this.onOwnerAction?.(); return this.turns.stop(); }
   /** A Claude login just changed: summaries that failed on the old login run again now. */
   retryCompaction(): void { if (!this.closed) this.compactor.retryFailed(); }
 

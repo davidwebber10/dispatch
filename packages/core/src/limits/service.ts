@@ -48,6 +48,13 @@ export class UsageLimitService {
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
   private lastWake = new Map<string, number>();
+  private touchListeners: ((terminalId: string) => void)[] = [];
+
+  /** Told whenever the owner messages or stops a thread (the CLI watcher drops pending detection). */
+  addTouchListener(fn: (terminalId: string) => void): void { this.touchListeners.push(fn); }
+  private touched(terminalId: string): void {
+    for (const fn of this.touchListeners) this.safe(() => fn(terminalId));
+  }
 
   constructor(private readonly d: UsageLimitDeps) {
     this.o = { ...DEFAULTS, ...d.options };
@@ -86,6 +93,8 @@ export class UsageLimitService {
     }, now);
     const label = pauseLabel(limit.kind, limit.resetsAt, now, this.d.zone, fallbackMs);
     if (capped) {
+      this.safe(() => this.d.markPaused(terminalId, `Stopped: ${limit.kind} limit, auto-resume gave up after ${attempts} tries`));
+      if (prior?.state === 'capped') return;
       this.d.note(terminalId, `[${this.threadName(terminalId)}] still hits the ${limit.kind} limit after ${attempts} automatic resumes. It stays stopped. Send it a message to continue.`, { deliver: true });
       return;
     }
@@ -126,9 +135,9 @@ export class UsageLimitService {
   }
 
   /** The owner sent the thread a message or typed in it: they took over, so no auto-resume. */
-  onUserMessage(terminalId: string): void { parksDb.remove(this.d.db, terminalId); }
+  onUserMessage(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
-  onStopped(terminalId: string): void { parksDb.remove(this.d.db, terminalId); }
+  onStopped(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
   /** A turn finished normally: a resumed thread is done with its pause. */
   onTurnSettled(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);
@@ -139,6 +148,7 @@ export class UsageLimitService {
   restore(): void {
     const now = this.now();
     for (const row of parksDb.listActive(this.d.db)) {
+      if (row.terminal_id === CHAT_ID) { if (!this.d.chat) parksDb.remove(this.d.db, CHAT_ID); continue; }
       const t = terminalsDb.getById(this.d.db, row.terminal_id);
       if (!t || t.archived_at) { parksDb.remove(this.d.db, row.terminal_id); continue; }
       const fallback = row.kind === 'weekly' ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
