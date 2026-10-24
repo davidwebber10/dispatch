@@ -592,6 +592,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
   endlessManager.on('idle', () => usageLimits.onTurnSettled(CHAT_ID));
   endlessManager.on('failed', () => usageLimits.onTurnEnded(CHAT_ID));
+  endlessManager.on('needs-help', () => usageLimits.onTurnEnded(CHAT_ID));
   endless.onOwnerAction = () => usageLimits.onUserMessage(CHAT_ID);
   endlessManager.on('usage-limit', (_id: string, limit: import('./limits/detect.js').UsageLimit) => {
     if (endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);

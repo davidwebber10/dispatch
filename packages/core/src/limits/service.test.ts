@@ -272,3 +272,14 @@ describe('review fixes, round 2', () => {
   });
 });
 
+describe('review fixes, round 3', () => {
+  it('five failed sends cap the thread and the label stops promising a resume', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    wakeError = new Error('nope');
+    for (let i = 0; i < 5; i++) { clock += 10 * MIN + RESET; svc.tick(); }
+    expect(parksDb.get(db, 'a')!.state).toBe('capped');
+    expect(labels.at(-1)!.label).toMatch(/^Stopped: session limit, auto-resume gave up/);
+  });
+});
+

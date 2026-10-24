@@ -83,4 +83,20 @@ describe('PtyLimitWatcher', () => {
     w.feed('t1', banner); quiet(5000);
     expect(hits).toHaveLength(1);
   });
+  it('a quoted banner followed by a page of prose never parks, even when the terminal goes quiet', () => {
+    w.feed('t1', banner);
+    w.feed('t1', 'So that is what the banner looks like. When the CLI hits its limit it prints that line and waits. ' + 'The daemon notices the reset time and schedules the wake. '.repeat(4) + '\r\n');
+    quiet(10000);
+    expect(hits).toEqual([]);
+  });
+  it('a repaint that keeps the terminal busy at confirm time delays the park, it does not drop it', () => {
+    let busyFor = 1;
+    const w3 = new PtyLimitWatcher({ isIdle: () => busyFor-- <= 0, onLimit: (id, l) => hits.push({ id, kind: l.kind }), confirmMs: 5000 });
+    w3.feed('t3', banner);
+    quiet(5000);
+    expect(hits).toEqual([]);
+    quiet(5000);
+    expect(hits).toEqual([{ id: 't3', kind: 'session' }]);
+    w3.forget('t3');
+  });
 });

@@ -159,6 +159,16 @@ export function detectBannerLimit(output: string, now: number): UsageLimit | nul
   return { kind: kindFromText(message), resetsAt: parseResetTime(message, now)?.at ?? null, message };
 }
 
+/** How many letters and digits the screen shows after the last limit banner. A real stop leaves
+ *  only the prompt box there; an agent that quoted the banner and went on talking leaves prose. */
+export function textAfterBanner(output: string): number {
+  const clean = output.replace(ANSI, '');
+  let end = -1;
+  const re = new RegExp(BANNER.source, 'gi');
+  for (let m = re.exec(clean); m; m = re.exec(clean)) end = m.index + m[0].length;
+  return end < 0 ? 0 : (clean.slice(end).match(/[A-Za-z0-9]/g) ?? []).length;
+}
+
 const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', usage: 'usage limit' };
 
 /** "Paused: session limit, resumes 1:10 AM" (a later day names the weekday). */

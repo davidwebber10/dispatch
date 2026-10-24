@@ -127,6 +127,7 @@ export class UsageLimitService {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
         if (attempts >= this.o.maxAttempts) {
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
+          this.safe(() => this.d.markPaused(row.terminal_id, `Stopped: ${row.kind} limit, auto-resume gave up after ${attempts} tries`));
           this.d.note(row.terminal_id, `[${name}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
         } else {
           parksDb.setState(this.d.db, row.terminal_id, 'parked', attempts, now + this.o.sendRetryMs, now);
