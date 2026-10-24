@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -37,9 +38,13 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   });
 
   // GET /api/sessions — list sessions
-  router.get('/', (req, res) => {
+  router.get('/', keyRoute({ thread: projectListRule }), (req, res) => {
     const status = req.query.status as string | undefined;
     const sessions = sessionService.list(status);
+    // A key (an overseer, by the rule) sees only the project list it needs to find other overseers.
+    if (isKeyRequest(req)) {
+      return res.json(sessions.map((p) => ({ id: p.id, name: p.name, coordinatorId: sessionService.findCoordinator(p.id)?.id ?? null })));
+    }
     res.json(sessions);
   });
 
@@ -105,7 +110,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   // fed through resolveWorker's `explicit` precedence rather than bypassing resolution, so
   // the availability guard below still runs for it. agency-mcp calls this before creating a
   // worker thread.
-  router.get('/:id/overseer/worker-defaults', async (req, res) => {
+  router.get('/:id/overseer/worker-defaults', keyRoute({ thread: workerDefaultsRule }), async (req, res) => {
     const agentType = req.query.agentType;
     if (typeof agentType !== 'string' || !(PERSONA_TYPES as readonly string[]).includes(agentType)) {
       return res.status(400).json({ error: `agentType must be one of: ${PERSONA_TYPES.join(', ')}` });

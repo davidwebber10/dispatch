@@ -49,6 +49,7 @@ import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
+import { senderLine } from '../auth/key-rules.js';
 
 interface StatusContext {
   serverUrl: string;
@@ -1136,7 +1137,14 @@ export class SessionService {
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
+    fromProject?: { name: string; terminalId: string },
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
+    // A cross-project message from another project's overseer (owner decision PK-4): the daemon puts
+    // one line before the text so the receiver, and the owner who reads the thread, see where it came from.
+    if (fromProject) {
+      const line = senderLine(fromProject);
+      content = typeof content === 'string' ? `${line}\n\n${content}` : [{ type: 'text', text: line }, ...content];
+    }
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Thread not found');
     // A shell tab has no agent to read a message: text typed into it RUNS AS A COMMAND, with the
@@ -1735,7 +1743,7 @@ export class SessionService {
   answerPermission(
     terminalId: string,
     requestId: string,
-    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string; canned?: QuestionCannedAction },
+    opts: { decision: 'allow' | 'deny'; answers?: Record<string, string>; message?: string; canned?: QuestionCannedAction; logAs?: 'user' | 'coordinator' },
   ): boolean {
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager) return false;
@@ -1750,7 +1758,7 @@ export class SessionService {
       };
       const delivered = manager.answerPermission(terminalId, requestId || pending.requestId, { behavior: 'allow', updatedInput });
       if (delivered && pending.toolName === 'AskUserQuestion' && remappedAnswers) {
-        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers);
+        this.logQuestionCardAnswer(terminalId, pending.questions, remappedAnswers, opts.logAs);
       }
       return delivered;
     }
@@ -1810,13 +1818,13 @@ export class SessionService {
    * free-text "Other" answer is kept verbatim. logCoordinatorMessage skips any thread that is not
    * a coordinator and never throws.
    */
-  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>): void {
+  private logQuestionCardAnswer(terminalId: string, questions: any[] | undefined, answers: Record<string, unknown>, logAs: 'user' | 'coordinator' = 'user'): void {
     try {
       for (const q of Array.isArray(questions) ? questions : []) {
         const value = typeof q?.question === 'string' ? answers[q.question] : undefined;
         const answer = Array.isArray(value) ? value.map(String).join(', ') : typeof value === 'string' ? value : '';
         if (!answer.trim()) continue;
-        this.logCoordinatorMessage(terminalId, answer, 'user');
+        this.logCoordinatorMessage(terminalId, answer, logAs);
       }
     } catch (err) {
       console.error(`coordinator message log: question-card answer not logged for ${terminalId}`, err); // the answer is already delivered

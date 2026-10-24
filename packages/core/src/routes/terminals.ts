@@ -1,6 +1,7 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { answerRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
@@ -12,6 +13,7 @@ const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = policyRouter();
+  const answerPermissionRule = answerRule((id) => sessionService.getPendingPermission(id));
 
   // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route
   router.get('/sessions/:id/terminals/archived', (req, res) => {
@@ -26,7 +28,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/sessions/:id/terminals — create a new tab. When `queued:true` (with
   // `task`), the structured thread is persisted as status='queued' WITHOUT spawning
   // its process — POST /api/terminals/:id/start promotes it later.
-  router.post('/sessions/:id/terminals', async (req, res) => {
+  router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread') }), async (req, res) => {
     try {
       const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
       // Pin the tool-support verdict for a picked OpenCode model HERE, where awaiting a
@@ -70,7 +72,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/sessions/:id/terminals — list all active tabs for a session
-  router.get('/sessions/:id/terminals', (req, res) => {
+  router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule }), (req, res) => {
     try {
       const terminals = sessionService.listTerminals(req.params.id);
       res.json(terminals);
@@ -80,7 +82,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId — get a single terminal
-  router.get('/terminals/:terminalId', (req, res) => {
+  router.get('/terminals/:terminalId', keyRoute({ thread: readRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
     res.json(terminal);
@@ -102,7 +104,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
   // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
   // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
-  router.get('/terminals/:terminalId/conversation', (req, res) => {
+  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule }), (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     res.json(sessionService.getConversation(req.params.terminalId, {
@@ -135,7 +137,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Optional `canned: true` marks fixed text that a card click sent (the need-card
   // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
   // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
-  router.post('/terminals/:terminalId/message', (req, res) => {
+  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule }), (req, res) => {
     const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
@@ -144,7 +146,15 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
-      const sent = sessionService.sendThreadMessage(req.params.terminalId, payload, source, canned === true ? 'canned' : undefined);
+      // A cross-project message from an overseer key: the rule names the sender, the daemon looks up
+      // the project name and puts the sender line before the text.
+      const from = res.locals.fromProject as { sessionId: string; terminalId: string } | undefined;
+      const logAs = canned === true ? 'canned' : undefined;
+      const sent = from
+        ? sessionService.sendThreadMessage(req.params.terminalId, payload, source, logAs, {
+          name: sessionService.get(from.sessionId)?.name ?? from.sessionId, terminalId: from.terminalId,
+        })
+        : sessionService.sendThreadMessage(req.params.terminalId, payload, source, logAs);
       if (source === 'user') sessionService.noteUserPrompt(req.params.terminalId, payload);
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
       // A structured send flips to working off its own stream events; a PTY write has no such
@@ -156,7 +166,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
   // is blocked on (the membrane), or null when nothing is pending.
-  router.get('/terminals/:terminalId/permission', (req, res) => {
+  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule }), (req, res) => {
     res.json(sessionService.getPendingPermission(req.params.terminalId));
   });
 
@@ -167,7 +177,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // next as their own turn): deny only, `requestId` required. 404 = that question is gone, 409 =
   // this harness can't take a reply. Either way the client sends the text as a normal turn.
   // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
-  router.post('/terminals/:terminalId/permission', (req, res) => {
+  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule }), (req, res) => {
     const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
     if (decision !== 'allow' && decision !== 'deny') {
       return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
@@ -192,7 +202,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       return res.status(404).json({ error: 'no pending question' });
     }
     try {
-      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message, canned });
+      const logAs = res.locals.answerLogAs === 'coordinator' ? 'coordinator' : undefined;
+      const ok = sessionService.answerPermission(req.params.terminalId, requestId, { decision, answers, message, canned, ...(logAs ? { logAs } : {}) });
       if (!ok) return res.status(404).json({ error: 'no pending permission' });
       statusService?.markWorking(req.params.terminalId, 'Working…');
       res.status(204).end();
@@ -248,7 +259,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   //                         different process and cannot see an in-memory session)
   // The tool is taught to every claude-code/codex thread by TYPE, so both paths must work
   // or the threads on the unsupported one get a 409 on every single turn.
-  router.post('/terminals/:terminalId/report-status', (req, res) => {
+  router.post('/terminals/:terminalId/report-status', keyRoute({ thread: selfRule }), (req, res) => {
     const { state, summary, ask, blocker } = req.body ?? {};
     if (state !== 'done' && state !== 'needs_you' && state !== 'blocked') {
       return res.status(400).json({ error: "state must be 'done', 'needs_you' or 'blocked'" });
@@ -335,7 +346,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // POST /api/terminals/:terminalId/start — promote a queued terminal to a live
   // one: strip the queued markers, spawn the process, deliver the parked task.
-  router.post('/terminals/:terminalId/start', (req, res) => {
+  router.post('/terminals/:terminalId/start', keyRoute({ thread: directRule }), (req, res) => {
     try {
       const terminal = sessionService.startQueuedTerminal(req.params.terminalId);
       if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
@@ -478,7 +489,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // DELETE /api/terminals/:terminalId
-  router.delete('/terminals/:terminalId', (req, res) => {
+  router.delete('/terminals/:terminalId', keyRoute({ thread: archiveRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     sessionService.removeTerminal(req.params.terminalId);
     if (terminal) {

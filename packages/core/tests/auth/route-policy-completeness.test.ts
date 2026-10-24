@@ -14,7 +14,21 @@ import type { EndlessService } from '../../src/endless/service.js';
  * Tasks 8 to 11 add their rows when they declare a key rule; a route that gains or loses a
  * key rule without a matching edit here fails the second test below.
  */
-const EXPECTED_KEY_ROUTES: string[] = [];
+const EXPECTED_KEY_ROUTES: string[] = [
+  // Task 8: terminal and session routes
+  'GET /api/sessions',
+  'GET /api/sessions/:id/terminals',
+  'POST /api/sessions/:id/terminals',
+  'GET /api/sessions/:id/overseer/worker-defaults',
+  'GET /api/terminals/:terminalId',
+  'GET /api/terminals/:terminalId/conversation',
+  'GET /api/terminals/:terminalId/permission',
+  'POST /api/terminals/:terminalId/message',
+  'POST /api/terminals/:terminalId/permission',
+  'POST /api/terminals/:terminalId/report-status',
+  'POST /api/terminals/:terminalId/start',
+  'DELETE /api/terminals/:terminalId',
+];
 
 /** Routes under `/api` that any principal may call (`publicRoute`). */
 const EXPECTED_PUBLIC_API_ROUTES: string[] = ['GET /api/whoami'];
