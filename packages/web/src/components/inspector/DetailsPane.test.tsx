@@ -8,7 +8,7 @@ import type { ThreadUsageLimits } from '../../api/types';
 const FUTURE = Date.now() + 3 * 3600_000;
 const claude: ThreadUsageLimits = {
   provider: 'claude-code', supported: true, paused: null,
-  snapshot: { asOf: Date.now() - 60_000, session: { usedPercent: 62, resetsAt: FUTURE }, weekly: { usedPercent: 24, resetsAt: Date.now() + 3 * 24 * 3600_000 } },
+  snapshot: { asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 62, resetsAt: FUTURE }, seven_day: { usedPercent: 24, resetsAt: Date.now() + 3 * 24 * 3600_000 } } },
 };
 
 beforeEach(() => {
@@ -26,14 +26,15 @@ it('shows session, weekly, and the as-of line under THREAD DETAILS', async () =>
   expect(screen.getByText('Weekly')).toBeTruthy();
   expect(screen.getByText(/^24% used, resets /)).toBeTruthy();
   expect(screen.getByText(/^As of /)).toBeTruthy();
-  expect(screen.queryByText('Weekly (Opus)')).toBeNull();
+  expect(screen.queryByText('Fable')).toBeNull();
+  expect(screen.queryByText('Opus')).toBeNull();
   expect(screen.getByText('THREAD DETAILS')).toBeTruthy();
 });
 
-it('shows the Opus weekly row only when reported, and the pause line', async () => {
-  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false }, snapshot: { ...claude.snapshot!, weeklyOpus: { usedPercent: 5, resetsAt: FUTURE } } });
+it('shows the Fable row only when reported, and the pause line', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false }, snapshot: { ...claude.snapshot!, windows: { ...claude.snapshot!.windows, seven_day_overage_included: { usedPercent: 5, resetsAt: FUTURE } } } });
   render(<DetailsPane projectId="p1" terminalId="t1" />);
-  expect(await screen.findByText('Weekly (Opus)')).toBeTruthy();
+  expect(await screen.findByText('Fable')).toBeTruthy();
   expect(screen.getByText(/^Paused: session limit, resumes /)).toBeTruthy();
 });
 

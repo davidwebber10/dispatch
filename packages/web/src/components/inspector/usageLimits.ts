@@ -24,6 +24,16 @@ export function pausedLabel(p: NonNullable<ThreadUsageLimits['paused']>, now: nu
   return `Paused: ${KIND[p.kind]}, ${p.resetsAt === null ? 'reset time unknown' : `resumes ${whenLabel(p.resetsAt, now, zone)}`}`;
 }
 
+/** Row labels by limit type, matching Claude Code's own names (CLI 2.1.309). Codex uses the first two. */
+export const TYPE_LABEL: Record<string, string> = {
+  five_hour: 'Session (5h)',
+  seven_day: 'Weekly',
+  seven_day_opus: 'Opus',
+  seven_day_sonnet: 'Sonnet',
+  seven_day_overage_included: 'Fable',
+  overage: 'Usage credit',
+};
+
 export interface LimitRows { rows: { label: string; value: string }[]; asOf: string | null; paused: string | null }
 
 export function limitRows(d: ThreadUsageLimits, now: number, zone?: string): LimitRows {
@@ -32,9 +42,10 @@ export function limitRows(d: ThreadUsageLimits, now: number, zone?: string): Lim
   const s = d.snapshot;
   if (!s) return { rows: [{ label: 'Usage limits', value: 'Not reported yet' }], asOf: null, paused };
   const rows: { label: string; value: string }[] = [];
-  if (s.session) rows.push({ label: 'Session (5h)', value: windowLabel(s.session, now, zone) });
-  if (s.weekly) rows.push({ label: 'Weekly', value: windowLabel(s.weekly, now, zone) });
-  if (s.weeklyOpus) rows.push({ label: 'Weekly (Opus)', value: windowLabel(s.weeklyOpus, now, zone) });
+  // Known types in the CLI's own order, then any other type under its raw name (never a guess).
+  const known = Object.keys(TYPE_LABEL).filter((t) => s.windows[t]);
+  const unknown = Object.keys(s.windows).filter((t) => !(t in TYPE_LABEL)).sort();
+  for (const t of [...known, ...unknown]) rows.push({ label: TYPE_LABEL[t] ?? t, value: windowLabel(s.windows[t], now, zone) });
   if (rows.length === 0) rows.push({ label: 'Usage limits', value: 'Not reported yet' });
   return { rows, asOf: `As of ${whenLabel(s.asOf, now, zone)}`, paused };
 }

@@ -476,6 +476,7 @@ export interface LimitWindow { usedPercent: number | null; resetsAt: number | nu
 export interface ThreadUsageLimits {
   provider: string;
   supported: boolean;
-  snapshot: { asOf: number; plan?: string; session?: LimitWindow; weekly?: LimitWindow; weeklyOpus?: LimitWindow } | null;
+  /** `windows` is keyed by the provider's limit type (`five_hour`, `seven_day`, `seven_day_overage_included`, ...). */
+  snapshot: { asOf: number; plan?: string; windows: Record<string, LimitWindow> } | null;
   paused: { kind: 'session' | 'weekly' | 'usage'; resetsAt: number | null; capped: boolean } | null;
 }

@@ -31,10 +31,10 @@ describe('GET /api/usage-limits', () => {
   });
   it('a Claude thread gets the shared snapshot; grok and opencode are unsupported', async () => {
     term('c1', 'claude-code'); term('g1', 'grok'); term('o1', 'opencode');
-    snaps.record('claude-code', '', { session: { usedPercent: 62, resetsAt: NOW + 1000 } }, NOW);
+    snaps.record('claude-code', '', { five_hour: { usedPercent: 62, resetsAt: NOW + 1000 } }, NOW);
     const c = (await request(app()).get('/api/usage-limits?terminalId=c1')).body;
     expect(c.supported).toBe(true);
-    expect(c.snapshot.session.usedPercent).toBe(62);
+    expect(c.snapshot.windows.five_hour.usedPercent).toBe(62);
     for (const id of ['g1', 'o1']) {
       const b = (await request(app()).get(`/api/usage-limits?terminalId=${id}`)).body;
       expect(b).toMatchObject({ supported: false, snapshot: null });
