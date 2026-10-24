@@ -1,4 +1,5 @@
 import { PromptInput } from './prompt-input.js';
+import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -1189,7 +1190,7 @@ export class SessionService {
       coordinatorMessagesDb.append(this.db, {
         terminalId,
         source,
-        text: coordinatorMessagesDb.messageText(content),
+        text: redactKeys(coordinatorMessagesDb.messageText(content)),
         sentAt: new Date(this.clock()).toISOString(),
       });
     } catch (err) {
@@ -1356,7 +1357,7 @@ export class SessionService {
     const exampleAnswers = headers.length
       ? `{ ${headers.map((h) => `"${h}": "<chosen option>"`).join(', ')} }`
       : '{ "<header>": "<chosen option>" }';
-    return (
+    return redactKeys(
       `🔔 Your agent "${label}"${mission ? ` (mission "${mission}")` : ''} is PAUSED waiting on you to ` +
       `answer a question (it cannot proceed until you do):\n${lines.join('\n')}\n\n` +
       `Decide based on the mission and answer it now by calling:\n` +
@@ -1479,7 +1480,7 @@ export class SessionService {
       const e = events[i];
       if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
         const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-        if (text) return text.length > max ? text.slice(0, max) + '…' : text;
+        if (text) { const safe = redactKeys(text); return safe.length > max ? safe.slice(0, max) + '…' : safe; }
       }
     }
     return '';
@@ -1616,7 +1617,7 @@ export class SessionService {
    * in full, joined by blank lines. '' when it wrote none.
    */
   finalOutput(terminalId: string): string {
-    return [...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim();
+    return redactKeys([...this.lastTurnTexts(terminalId)].reverse().join('\n\n').trim());
   }
 
   /** Read the owner-decisions block of the agent's last turn into the ledger; returns the notice lines. Never throws. */
@@ -1646,6 +1647,7 @@ export class SessionService {
    * thread (or one with no coordinator), exactly like noteAgentCompletion.
    */
   noteAgentNeedsHelp(agentTerminalId: string, ask: string): void {
+    ask = redactKeys(ask);
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return;
     let cfg: Record<string, any> = {};
@@ -1705,11 +1707,11 @@ export class SessionService {
     // which reads the same field) is how a role-run terminal is identified here.
     const cap = typeof cfg.roleRun === 'string' && cfg.roleRun ? 4000 : 400;
     cfg.lastOutcome = {
-      summary: detail.summary.slice(0, cap),
+      summary: redactKeys(detail.summary).slice(0, cap),
       needsHelp: detail.needsHelp,
       inferred: detail.inferred,
       ...(detail.state ? { declaredState: detail.state } : {}),
-      ...(detail.state === 'blocked' && detail.blocker ? { blocker: detail.blocker } : {}),
+      ...(detail.state === 'blocked' && detail.blocker ? { blocker: redactKeys(detail.blocker) } : {}),
       at: new Date().toISOString(),
     };
     try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
@@ -1960,6 +1962,7 @@ export class SessionService {
    * Returns false only when the terminal itself doesn't exist.
    */
   reportStatus(terminalId: string, decl: import('../structured/manager.js').StatusDeclaration): boolean {
+    decl = redactKeysDeep(decl);
     const manager = this.structuredManagerForTerminal(terminalId);
     if (manager && manager.isAlive(terminalId)) {
       manager.noteDeclaredStatus(terminalId, decl);

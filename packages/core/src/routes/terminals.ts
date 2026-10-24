@@ -7,6 +7,7 @@ import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
+import { redactKeysDeep } from '../auth/redact-keys.js';
 import { modelSupportsTools } from '../settings/model-capabilities.js';
 
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
@@ -19,7 +20,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.get('/sessions/:id/terminals/archived', (req, res) => {
     try {
       const terminals = sessionService.listArchivedTerminals(req.params.id);
-      res.json(terminals);
+      res.json(redactKeysDeep(terminals));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -75,7 +76,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule, roleRun: readSessionRule }), (req, res) => {
     try {
       const terminals = sessionService.listTerminals(req.params.id);
-      res.json(terminals);
+      res.json(redactKeysDeep(terminals));
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -85,7 +86,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.get('/terminals/:terminalId', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
-    res.json(terminal);
+    res.json(redactKeysDeep(terminal));
   });
 
   // GET /api/terminals/:terminalId/scrollback — the ring's true byte count, so a client
@@ -107,17 +108,17 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
-    res.json(sessionService.getConversation(req.params.terminalId, {
+    res.json(redactKeysDeep(sessionService.getConversation(req.params.terminalId, {
       since: num(req.query.since),
       before: num(req.query.before),
       beforeUuid: str(req.query.beforeUuid),
       limit: num(req.query.limit),
-    }));
+    })));
   });
 
   // GET /api/terminals/:terminalId/conversation/search?q=... — full-history search.
   router.get('/terminals/:terminalId/conversation/search', (req, res) => {
-    res.json(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? '')));
+    res.json(redactKeysDeep(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? ''))));
   });
 
   router.get('/terminals/:terminalId/diagnostics', (req, res) => {

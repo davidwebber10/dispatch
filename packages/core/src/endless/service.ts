@@ -27,6 +27,7 @@ import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.j
 import { importOnce } from './import.js';
 import { DEFAULT_LIMITS, type ViewLimits } from './view.js';
 import { nodeName } from './tree.js';
+import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
 import { DocsService } from '../docs/service.js';
@@ -322,7 +323,7 @@ export class EndlessService {
     const interim = !gone && outcome === 'needs_input';
     if (interim && owed && !live && this.store.waitingReported(terminalId)) return [];
     const output = gone ? '' : interim ? this.waitingText(terminalId) : this.o.finalOutput?.(terminalId) ?? '';
-    const text = reportText(t?.label || terminalId, gone ? 'gone' : outcome, output);
+    const text = redactKeys(reportText(t?.label || terminalId, gone ? 'gone' : outcome, output));
     // The same question or ending twice in a row is one report; a new question always reports.
     // The same text again with no 'working' edge between is one ending seen twice (a hook edge
     // plus the exit edge). A new turn clears the note (onThreadStatus), so a re-asked question or
@@ -450,32 +451,32 @@ export class EndlessService {
   }
 
   private wirePage(p: Page): { messages: WireMessage[]; hasMore: boolean; hasMoreAfter: boolean } {
-    return { messages: p.messages.map((m) => this.toWire(m)), hasMore: p.hasMore, hasMoreAfter: p.hasMoreAfter };
+    return { messages: p.messages.map((m) => redactKeysDeep(this.toWire(m))), hasMore: p.hasMore, hasMoreAfter: p.hasMoreAfter };
   }
 
   page(opts: { before?: number; limit: number; project: string | null }) { return this.wirePage(this.store.page(opts)); }
   around(i: number, limit: number, project: string | null) { return this.wirePage(this.store.around(i, limit, project)); }
 
   search(q: string, project: string | null, limit: number) {
-    return this.store.search(q, { project, limit }).map((h) => ({ ...h, projectName: this.projectName(h.project) }));
+    return this.store.search(q, { project, limit }).map((h) => redactKeysDeep({ ...h, projectName: this.projectName(h.project) }));
   }
 
   viewLines(): { lines: { name: string; l: number; i: number; text: string | null }[]; bytes: number; rendered: string } {
-    return { lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() };
+    return redactKeysDeep({ lines: this.views.lines(), bytes: this.views.bytes(), rendered: this.views.rendered() });
   }
 
   projects(): { projects: ProjectStatus[]; threads: PaneThread[]; truncated: boolean } {
     const pane = collectPaneThreads(this.o.db, { now: this.now(), timeZone: this.timeZone, question: (id) => this.waitingText(id) });
-    return { projects: collectProjects(this.o.db, this.store), ...pane };
+    return redactKeysDeep({ projects: collectProjects(this.o.db, this.store), ...pane });
   }
 
   zoom(id: number, n: number): { text: string; images: ZoomImage[] } {
-    try { return zoom(this.store, (pid) => this.projectName(pid), id, n); }
+    try { return redactKeysDeep(zoom(this.store, (pid) => this.projectName(pid), id, n)); }
     catch (err) { if (err instanceof RecallError) throw new UserError(err.message); throw err; }
   }
 
   date(id: number): string {
-    try { return dateOf(this.store, id, this.timeZone); }
+    try { return redactKeys(dateOf(this.store, id, this.timeZone)); }
     catch (err) { if (err instanceof RecallError) throw new UserError(err.message); throw err; }
   }
 
