@@ -9,6 +9,15 @@ import { PTYManager } from '../../src/pty/manager.js';
  * (the `.on('data')`/`.on('exit')` → `.onData`/`.onExit` API change).
  */
 describe('PTYManager (real PTY)', () => {
+  it('carries the pid of the exiting process in its exit event', async () => {
+    const manager = new PTYManager();
+    const exited = new Promise<number>((resolve) => {
+      manager.on('exit', (_id: string, _code: number, pid: number) => resolve(pid));
+    });
+    const pid = manager.spawn('sess-pid', '/bin/sh', ['-c', 'exit 0'], os.tmpdir());
+    expect(await exited).toBe(pid);
+  });
+
   it('streams process output and reports the exit code', async () => {
     const manager = new PTYManager();
     const chunks: string[] = [];

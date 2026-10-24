@@ -352,6 +352,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const dispatchDir = options.secretsDir ?? platform.dataDir();
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
+  sessionService.setKeyRegistry(keys, { keyDir: path.join(dispatchDir, 'keys') });
   const agentService = new AgentService(db, sessionService, broadcaster);
   // Built ahead of rolesService (moved up from below) so it can be handed in as
   // RolesService's optional push dep — backs the 2-consecutive-failed-nights
@@ -515,6 +516,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
+  sessionService.setKeyRegistry(keys, { keyDir: path.join(dataDir, 'keys') });
   sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
   sessionService.setDaemonPort(preferredPort); // corrected below if the daemon falls back to another port
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope
@@ -962,6 +964,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('Shutting down Dispatch server...');
+    sessionService.revokeEveryKey(); // the sticky Codex Pretty keys end with the daemon
     clearInterval(ptyTimingInterval);
     clearInterval(updateCheckInterval);
     for (const g of loopbackGuards) g.close();

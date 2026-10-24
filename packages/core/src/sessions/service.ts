@@ -23,6 +23,11 @@ import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
 import { rowToSession } from '../types.js';
 import type { TerminalType } from '../db/terminals.js';
+import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
+import { ThreadKeys } from './thread-keys.js';
+
+/** The key minted for one process start. `keyFile` is set for the Codex CLI view only. */
+export interface SpawnKey { key: string; handle: KeyHandle; keyFile?: string }
 import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
@@ -184,6 +189,59 @@ export class SessionService {
   private daemonPort: number | null = null;
   setDaemonPort(port: number): void { this.daemonPort = port; }
 
+  /**
+   * Per-thread keys (stage 1). Unset until the daemon (or a test) hands in the registry; an unset
+   * service mints nothing and every spawn runs as before. The exits of the PTY manager and of
+   * every structured manager reach `ThreadKeys` from here, so a test service needs no extra wiring.
+   */
+  private threadKeys: ThreadKeys | null = null;
+  setKeyRegistry(registry: KeyRegistry, opts: { keyDir?: string; codexSticky?: boolean } = {}): void {
+    if (this.threadKeys) return;
+    const tk = new ThreadKeys(registry, opts);
+    this.threadKeys = tk;
+    if (typeof this.ptyManager.on === 'function') {
+      this.ptyManager.on('exit', (id: string, _code: number, pid?: number) => {
+        if (typeof pid === 'number') tk.onPtyExit(id, pid);
+      });
+    }
+    for (const manager of this.structuredManagers.values()) this.revokeKeysOnExit(manager);
+  }
+  private keyedManagers = new WeakSet<object>();
+  private revokeKeysOnExit(manager: import('../structured/manager.js').IStructuredManager): void {
+    if (this.keyedManagers.has(manager)) return;
+    this.keyedManagers.add(manager);
+    manager.on('exit', (terminalId: string) => this.threadKeys?.onStructuredExit(terminalId));
+  }
+
+  /** The daemon's own stop: every key, the sticky Codex Pretty keys too. */
+  revokeEveryKey(): void { this.threadKeys?.revokeAll(); }
+
+  /** Stop, stop-all: the current key of a terminal (the sticky Codex Pretty key stays). */
+  private revokeLiveKey(terminalId: string): void { this.threadKeys?.revokeLive(terminalId); }
+  /** Archive, delete, switch to the CLI view: every key of a terminal, the sticky one too. */
+  private revokeAllKeys(terminalId: string): void {
+    this.threadKeys?.revokeLive(terminalId);
+    this.threadKeys?.revokeSticky(terminalId);
+  }
+
+  /**
+   * Mint the key of a process that is about to start. Task 13 puts `key` into the environment or
+   * the harness config and `keyFile` (Codex CLI view only) into DISPATCH_AUTH_FILE. null when no
+   * registry is set.
+   */
+  private mintSpawnKey(terminalId: string, kind: 'thread' | 'shell', opts: { codexPretty?: boolean; keyFile?: boolean } = {}): SpawnKey | null {
+    const tk = this.threadKeys;
+    if (!tk) return null;
+    const minted = opts.codexPretty ? tk.codexKey(terminalId) : tk.mintForSpawn(terminalId, kind);
+    if (!opts.keyFile) return minted;
+    try {
+      return { ...minted, keyFile: tk.writeKeyFile(terminalId, minted.key, minted.handle) };
+    } catch (err) {
+      tk.spawnFailed(minted.handle);
+      throw err;
+    }
+  }
+
   setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
     this.secretsServerSpec = fn;
   }
@@ -202,6 +260,7 @@ export class SessionService {
     if (existing && existing !== manager) throw new Error(`Structured manager already registered: ${type}`);
     if (existing) return;
     this.structuredManagers.set(type, manager);
+    if (this.threadKeys) this.revokeKeysOnExit(manager);
     this.persistStructuredSessionIds(manager, type);
     if (type === 'claude-code') {
       this.persistMessageSources(manager);
@@ -475,6 +534,7 @@ export class SessionService {
     // Stop all terminals for this session
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.revokeLiveKey(terminal.id);
       this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
@@ -490,6 +550,7 @@ export class SessionService {
     // Kill all terminals
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.revokeAllKeys(terminal.id);
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
     }
@@ -1059,6 +1120,7 @@ export class SessionService {
   stopTerminal(terminalId: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
+    this.revokeLiveKey(terminalId);
     this.ptyManager.kill(terminalId);
     this.structuredManagerFor(terminal.type)?.kill(terminalId);
     terminalsDb.updatePid(this.db, terminalId, null);
@@ -1939,6 +2001,8 @@ export class SessionService {
       }
     }
 
+    // A switch ends the Codex Pretty sticky key (the next spawn mints a fresh one).
+    this.revokeAllKeys(terminalId);
     // Fully tear down the OLD transport (awaiting its exit) BEFORE re-spawning, so its async
     // exit handler can't null the pid / reset the status of the transport we're about to start.
     await this.killCurrentTransport(terminal.type, terminalId, current);
@@ -2151,6 +2215,7 @@ export class SessionService {
   }
 
   stopAllTerminals(): void {
+    this.threadKeys?.revokeAllLive(); // the sticky Codex Pretty keys stay (an owner stop)
     this.ptyManager.killAll();
   }
 
@@ -2164,6 +2229,7 @@ export class SessionService {
   removeTerminal(terminalId: string): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
+    this.revokeAllKeys(terminalId);
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
@@ -2200,7 +2266,35 @@ export class SessionService {
     return terminalsDb.listArchivedBySession(this.db, sessionId).map(terminalsDb.rowToTerminal);
   }
 
+  /**
+   * Every PTY spawn goes through here: create, start of a queued agent, runner, branch, relaunch,
+   * restart, restore and transport switch. A PTY process gets its key minted right before it
+   * starts; a structured thread mints its own in spawnStructured. A spawn that throws revokes the
+   * key it minted.
+   */
   private spawnTerminal(terminalId: string): void {
+    const row = terminalsDb.getById(this.db, terminalId);
+    let sk: SpawnKey | null = null;
+    if (row && this.threadKeys) {
+      let cfg: Record<string, any> = {};
+      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+      // A refused coordinator throws in the body before anything starts, so it mints nothing here.
+      const structured = cfg.transport === 'structured' && !!this.structuredManagerFor(row.type);
+      if (!structured && !(cfg.role === 'coordinator')) {
+        // The Codex CLI view writes its environment to a snapshot file, so its key travels as a
+        // 0600 key file and only the path goes into the environment (probe results, Finding 1).
+        sk = this.mintSpawnKey(terminalId, row.type === 'shell' ? 'shell' : 'thread', { keyFile: row.type === 'codex' });
+      }
+    }
+    try {
+      this.spawnTerminalKeyed(terminalId, sk);
+    } catch (err) {
+      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      throw err;
+    }
+  }
+
+  private spawnTerminalKeyed(terminalId: string, sk: SpawnKey | null): void {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw new Error('Terminal not found');
 
@@ -2295,6 +2389,7 @@ export class SessionService {
     const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
+    if (sk) this.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
     // send the next relaunch chasing a conversation that never existed.
@@ -2419,6 +2514,24 @@ export class SessionService {
     if (!manager) throw new Error('structured transport not supported for this provider');
     if (manager.isAlive(terminal.id)) return; // already running — don't double-spawn
 
+    // Mint right before the process starts (this also covers the revive path, ensureStructuredAlive).
+    // A Codex Pretty thread keeps one sticky key for its life on this daemon (probe results, Finding 3).
+    const sk = this.mintSpawnKey(terminal.id, 'thread', { codexPretty: terminal.type === 'codex' });
+    try {
+      this.spawnStructuredKeyed(terminal, config, workDir, manager, sk);
+    } catch (err) {
+      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      throw err;
+    }
+  }
+
+  private spawnStructuredKeyed(
+    terminal: terminalsDb.TerminalRow,
+    config: Record<string, any>,
+    workDir: string,
+    manager: import('../structured/manager.js').IStructuredManager,
+    sk: SpawnKey | null,
+  ): void {
     const provider = getProvider(terminal.type);
     // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
     const specs: McpServerSpec[] = [];
@@ -2646,6 +2759,7 @@ export class SessionService {
         : {}),
       env: terminal.type === 'codex' ? {} : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(opencodeEnv ?? {}) },
     });
+    if (sk) this.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
 
