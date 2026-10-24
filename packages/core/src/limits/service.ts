@@ -8,6 +8,9 @@ import { pauseLabel, type UsageLimit } from './detect.js';
 /** The park key of Endless Chat's own turn: Chat has no thread row, so it wakes through `deps.chat`. */
 export const CHAT_ID = 'endless-chat';
 
+/** Chat's manager also runs its compaction processes. Only a Chat turn (not a compaction) may park or clear Chat. */
+export const isChatTurnId = (id: string): boolean => id.startsWith('endless-turn-');
+
 /** The message a parked thread gets when its limit has reset. */
 export const RESUME_TEXT = 'Your usage limit has reset. Continue where you left off.';
 

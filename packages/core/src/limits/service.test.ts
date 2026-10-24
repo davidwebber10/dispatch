@@ -4,7 +4,7 @@ import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
-import { UsageLimitService, RESUME_TEXT, CHAT_ID } from './service.js';
+import { UsageLimitService, RESUME_TEXT, CHAT_ID, isChatTurnId } from './service.js';
 
 const ZONE = 'America/Indianapolis';
 const T0 = Date.UTC(2026, 9, 24, 4, 31); // 00:31 local
@@ -285,5 +285,11 @@ describe('review fixes, round 3', () => {
     expect(parksDb.get(db, 'a')!.state).toBe('capped');
     expect(labels.at(-1)!.label).toMatch(/^Stopped: session limit, auto-resume gave up/);
   });
+});
+
+it('only a Chat turn id counts for Chat, never a compaction', () => {
+  expect(isChatTurnId('endless-turn-3-1792800000000')).toBe(true);
+  expect(isChatTurnId('endless-compaction-3-1792800000000')).toBe(false);
+  expect(isChatTurnId('some-thread-id')).toBe(false);
 });
 

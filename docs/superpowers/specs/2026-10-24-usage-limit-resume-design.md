@@ -68,9 +68,8 @@ owner typed "continue". A weekly limit has the same effect, but the wait can be 
   clocks go back can wake a day late. Pretty Claude threads use the exact reset and are not affected.
 - The CLI banner rule (a real stop leaves under 120 letters after the banner) is checked with a
   fixture, not a captured real screen. Only messages tagged as the owner's, and typed keys, end a pause.
-- Chat compaction shares Chat's manager, so a compaction end can clear Chat's retry count and a
-  compaction that hits the limit during a Chat turn can park Chat. A capped thread keeps the
-  dormant state (project rollup shows working) until the owner acts.
+- Chat compaction shares Chat's manager; only turn ids (`endless-turn-`) park or clear Chat. A capped
+  thread keeps the dormant state (project rollup shows working) until the owner acts.
 - Chat wakes with a fixed "usage limit has reset" work line, not a replay of the owner's last message.
 
 ## Owner decisions (build uses the recommendation)

@@ -78,7 +78,7 @@ import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { startInterimRecapLoop } from './sessions/interim-recap.js';
-import { UsageLimitService, CHAT_ID } from './limits/service.js';
+import { UsageLimitService, CHAT_ID, isChatTurnId } from './limits/service.js';
 import { PtyLimitWatcher } from './limits/pty-watch.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
@@ -590,12 +590,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
   // Chat through its own manager. An owner action on Chat ends its pause.
   statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
-  endlessManager.on('idle', () => usageLimits.onTurnSettled(CHAT_ID));
-  endlessManager.on('failed', () => usageLimits.onTurnEnded(CHAT_ID));
-  endlessManager.on('needs-help', () => usageLimits.onTurnEnded(CHAT_ID));
+  endlessManager.on('idle', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnSettled(CHAT_ID); });
+  endlessManager.on('failed', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnEnded(CHAT_ID); });
+  endlessManager.on('needs-help', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnSettled(CHAT_ID); });
   endless.onOwnerAction = () => usageLimits.onUserMessage(CHAT_ID);
-  endlessManager.on('usage-limit', (_id: string, limit: import('./limits/detect.js').UsageLimit) => {
-    if (endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);
+  endlessManager.on('usage-limit', (id: string, limit: import('./limits/detect.js').UsageLimit) => {
+    if (isChatTurnId(id) && endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);
   });
 
   // Fleet totals are a read-only projection of the canonical analytics ledger.
