@@ -50,7 +50,7 @@ import { withShimPath } from './auth/shim.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { ToolAuthProber } from './tools/auth-probe.js';
 import { SecretsService } from './secrets/service.js';
-import { sweepThreadMcpConfigs } from './sessions/mcp-config-sweep.js';
+import { sweepThreadMcpConfigs, sweepThreadKeyFiles } from './sessions/mcp-config-sweep.js';
 import { IntegrationsService, type IntegrationLauncher } from './integrations/service.js';
 import { PushService } from './push/service.js';
 import { wireThreadSettledPush } from './push/notify.js';
@@ -936,6 +936,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         // Old per-thread MCP files: removed once the threads that will run again have rewritten theirs.
         const swept = sweepThreadMcpConfigs(dataDir, alive);
         if (swept) console.log(`Removed ${swept} stale thread MCP config file(s)`);
+        // Key files and key-related config of threads that are gone (named files only).
+        const sweptKeys = sweepThreadKeyFiles(dataDir, alive);
+        if (sweptKeys) console.log(`Removed ${sweptKeys} stale thread key file(s)`);
       }
       finally { setTimeout(() => endless.endBoot(), 1000).unref(); }
     });

@@ -295,3 +295,67 @@ describe('13c: hooks', () => {
     scanArgv(pty.calls);
   });
 });
+
+describe('13d: Grok and OpenCode', () => {
+  let hooksDir: string;
+  beforeEach(() => {
+    hooksDir = path.join(root, 'hooks');
+    svc.setStatusContext({ serverUrl: API, hooksDir, codexHelperPath: '/opt/codex-notify.mjs', grokHelperPath: '/opt/grok-hook.mjs' });
+  });
+  const modeOf = (f: string) => fs.statSync(f).mode & 0o777;
+
+  it('Grok CLI view: .mcp.json holds ${DISPATCH_AUTH}, hooks.json and .mcp.json are 0600, the key is in the env', () => {
+    const t = svc.createTerminal('s1', 'grok', 'G');
+    const plugin = path.join(hooksDir, 'grok-homes', t.id, 'plugins', 'dispatch');
+    const mcpRaw = fs.readFileSync(path.join(plugin, '.mcp.json'), 'utf8');
+    expect(mcpRaw).not.toMatch(KEY_RE);
+    expect(JSON.parse(mcpRaw).mcpServers.dispatch.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+    expect(modeOf(path.join(plugin, '.mcp.json'))).toBe(0o600);
+    expect(modeOf(path.join(plugin, 'hooks', 'hooks.json'))).toBe(0o600);
+    expect(fs.readFileSync(path.join(plugin, 'hooks', 'hooks.json'), 'utf8')).not.toMatch(KEY_RE);
+    expect(keyKindOf(pty.calls[0].env!.DISPATCH_AUTH)).toBe('thread');
+    scanArgv(pty.calls);
+  });
+
+  it('Grok Pretty: the plugin .mcp.json holds the reference; the key is in the process env only', () => {
+    const m = new CapturingClaude();
+    svc.registerStructuredManager('grok', m);
+    svc.setStructuredCommandOverride({ command: 'true', args: [] });
+    const t = svc.createTerminal('s1', 'grok', 'G', false, undefined, undefined, structuredCfg);
+    const file = path.join(hooksDir, 'grok-homes', t.id, 'plugins', 'dispatch', '.mcp.json');
+    const raw = fs.readFileSync(file, 'utf8');
+    expect(raw).not.toMatch(KEY_RE);
+    expect(JSON.parse(raw).mcpServers.dispatch.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+    expect(modeOf(file)).toBe(0o600);
+    expect(keyKindOf(m.calls[0].env!.DISPATCH_AUTH)).toBe('thread');
+    scanArgv(m.calls);
+  });
+
+  it('OpenCode: opencode.json holds {env:DISPATCH_AUTH}, is 0600; the key is in the process env only', () => {
+    const m = new CapturingClaude();
+    svc.registerStructuredManager('opencode', m);
+    svc.setStructuredCommandOverride({ command: 'true', args: [] });
+    const t = svc.createTerminal('s1', 'opencode', 'O', false, undefined, undefined, structuredCfg);
+    const file = path.join(hooksDir, 'opencode-homes', t.id, 'opencode.json');
+    const raw = fs.readFileSync(file, 'utf8');
+    expect(raw).not.toMatch(KEY_RE);
+    expect(JSON.parse(raw).mcp.dispatch.environment.DISPATCH_AUTH).toBe('{env:DISPATCH_AUTH}');
+    expect(modeOf(file)).toBe(0o600);
+    const rules = path.join(hooksDir, 'opencode-homes', t.id, 'rules.md');
+    if (fs.existsSync(rules)) expect(modeOf(rules)).toBe(0o600);
+    expect(m.calls[0].env!.OPENCODE_CONFIG).toBe(file);
+    expect(keyKindOf(m.calls[0].env!.DISPATCH_AUTH)).toBe('thread');
+    scanArgv(m.calls);
+  });
+
+  it('a Grok or OpenCode thread of a service with no registry gets no reference', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 't', workingDir: path.join(root, 'proj') });
+    const plain = new SessionService(db, pty, path.join(root, 'mcp4.json'));
+    plain.setStatusContext({ serverUrl: API, hooksDir, codexHelperPath: '/x', grokHelperPath: '/y' });
+    const t = plain.createTerminal('s1', 'grok', 'G');
+    const raw = fs.readFileSync(path.join(hooksDir, 'grok-homes', t.id, 'plugins', 'dispatch', '.mcp.json'), 'utf8');
+    expect(raw).not.toContain('DISPATCH_AUTH');
+  });
+});
