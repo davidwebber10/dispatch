@@ -33,6 +33,14 @@ export interface Ctx {
   rolesFetch?: typeof fetch;
   /** Optional injectable access-token module (test seam). Defaults to `dispatch-server/access`. */
   accessLib?: AccessLib;
+  /** Test seam: the process environment that decides thread mode and the key. Defaults to `process.env`. */
+  processEnv?: NodeJS.ProcessEnv;
+  /** Test seam: read the owner token without creating it. Defaults to the access module on `dataDir`. */
+  readOwnerToken?: () => string | null;
+  /** Test seam: HTTP client for `dispatch api` and the `status` counts. Defaults to the global `fetch`. */
+  apiFetch?: typeof fetch;
+  /** Test seam: read all of stdin for `dispatch api --body -`. */
+  readStdin?: () => string;
 }
 
 type AccessLib = typeof import('dispatch-server/access');
@@ -71,6 +79,9 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       console.log(s.loaded ? `loaded yes${s.pid ? ` (pid ${s.pid})` : ''}` : 'loaded no');
       console.log(probeHttp(ctx.port, ctx.probe));
       console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
+      // Stage 1 counts need a request. A test that injects a probe and no HTTP client makes none.
+      const reachable = probeHttp(ctx.port, ctx.probe).startsWith('HTTP: reachable');
+      if (reachable && (ctx.apiFetch !== undefined || ctx.probe === undefined)) return printNoCredentialCounts(ctx);
       return;
     }
     case 'build':
@@ -98,9 +109,11 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       return;
     case 'access':
       return cmdAccess(ctx, rest);
+    case 'api':
+      return cmdApi(ctx, rest);
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|release>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|api|release>`,
       );
   }
 }
@@ -145,7 +158,112 @@ export function linkBase(rawArg: string, port: number): string {
   return /:\d+$/.test(host) ? `http://${host}` : `http://${host}:${port}`;                                          // host or host:port
 }
 
+// --- credential for calls to the daemon (spec 6.7) ---------------------------------------------
+
+type CredentialLib = typeof import('dispatch-server/credential');
+
+/** The owner token, read without creating it. Null when there is none. */
+function makeOwnerTokenReader(ctx: Ctx, access: AccessLib | null): () => string | null {
+  return () => {
+    if (ctx.readOwnerToken) return ctx.readOwnerToken();
+    if (!access || !ctx.dataDir) return null;
+    try { return access.readAccessToken(ctx.dataDir); } catch { return null; }
+  };
+}
+
+async function loadCredential(ctx: Ctx): Promise<{ lib: CredentialLib; env: NodeJS.ProcessEnv; readOwnerToken: () => string | null }> {
+  const lib = await import('dispatch-server/credential');
+  const access = ctx.readOwnerToken ? null : (ctx.accessLib ?? (await import('dispatch-server/access')));
+  return { lib, env: ctx.processEnv ?? process.env, readOwnerToken: makeOwnerTokenReader(ctx, access) };
+}
+
+/** True inside a Dispatch thread: a thread key, a key file, or a thread marker with no usable key. A shell key is the owner. */
+async function inThreadMode(ctx: Ctx): Promise<boolean> {
+  const { lib, env } = await loadCredential(ctx);
+  const cred = lib.resolveCredential({ env, purpose: 'cli', readOwnerToken: () => 'owner' });
+  return cred.mode === 'thread' || cred.mode === 'refuse';
+}
+
+/**
+ * The Authorization header for a call to `url`, or none. Owner token outside a thread; the thread key
+ * inside one, and only to DISPATCH_API; a thread with no usable key is refused and never falls back
+ * to the owner token. The value goes in a header, never in argv.
+ */
+async function credentialHeaders(ctx: Ctx, url: string): Promise<Record<string, string>> {
+  const { lib, env, readOwnerToken } = await loadCredential(ctx);
+  const cred = lib.resolveCredential({ env, purpose: 'cli', readOwnerToken });
+  switch (cred.mode) {
+    case 'refuse': throw new Error(cred.reason);
+    case 'owner': return { Authorization: cred.header };
+    case 'thread': return lib.keyAllowedFor(url, env) ? { Authorization: cred.header } : {};
+    default: return {};
+  }
+}
+
+/** Fetch from the daemon, with the credential; a refused connection becomes the one message an operator needs. */
+async function daemonFetch(ctx: Ctx, fetchFn: typeof fetch, url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = await credentialHeaders(ctx, url);
+  const merged: RequestInit | undefined = Object.keys(headers).length > 0
+    ? { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...headers } }
+    : (Object.keys(init).length > 0 ? init : undefined);
+  try {
+    return (await fetchFn(url, merged)) as Response;
+  } catch (err: unknown) {
+    const code = (err as { code?: string; cause?: { code?: string } } | undefined)?.code
+      ?? (err as { cause?: { code?: string } } | undefined)?.cause?.code;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (code === 'ECONNREFUSED' || /ECONNREFUSED/.test(msg)) throw new Error('daemon not running (dispatch start)');
+    throw err;
+  }
+}
+
+/** Stage 1: how many requests reached the daemon with no credential. Owner only; any failure is silent. */
+async function printNoCredentialCounts(ctx: Ctx): Promise<void> {
+  try {
+    if (await inThreadMode(ctx)) return;
+    const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, `http://localhost:${ctx.port}/api/access/no-credential-stats`);
+    if (!res.ok) return;
+    const s = (await res.json()) as { browser?: { total: number; top: { pattern: string; count: number }[] }; program?: { total: number; top: { pattern: string; count: number }[] } };
+    if (!s?.browser || !s?.program) return;
+    console.log(`No-credential requests since the daemon started: browser ${s.browser.total}, program ${s.program.total}.`);
+    for (const row of s.program.top.slice(0, 3)) console.log(`  program: ${row.pattern} (${row.count})`);
+  } catch { /* status never fails on a counts problem */ }
+}
+
+const API_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const API_USAGE = 'usage: dispatch api METHOD PATH [--body FILE | --body -]  (PATH starts with /, for example /api/sessions)';
+
+/**
+ * `dispatch api METHOD PATH`: one call to this computer's daemon with the right credential, so an
+ * agent never needs curl. Prints the JSON answer; a non-2xx status prints the answer and fails.
+ */
+async function cmdApi(ctx: Ctx, args: string[]): Promise<void> {
+  const [methodRaw, apiPath, ...flags] = args;
+  const method = (methodRaw ?? '').toUpperCase();
+  if (!API_METHODS.has(method) || !apiPath || !apiPath.startsWith('/') || apiPath.startsWith('//')) throw new Error(API_USAGE);
+  let bodySource: string | undefined;
+  if (flags.length > 0) {
+    if (flags[0] !== '--body' || flags.length !== 2) throw new Error(API_USAGE);
+    bodySource = flags[1];
+  }
+  let body: string | undefined;
+  if (bodySource !== undefined) {
+    body = bodySource === '-' ? (ctx.readStdin ? ctx.readStdin() : fs.readFileSync(0, 'utf8')) : fs.readFileSync(bodySource, 'utf8');
+  }
+  const url = `http://localhost:${ctx.port}${apiPath}`;
+  const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, url, {
+    method,
+    ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+  });
+  const text = await res.text();
+  if (text) {
+    try { console.log(JSON.stringify(JSON.parse(text), null, 2)); } catch { console.log(text); }
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
 async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
+  if (await inThreadMode(ctx)) throw new Error('Run this in your own terminal, not in a Dispatch thread.');
   if (!ctx.dataDir) throw new Error('cannot find the Dispatch data directory');
   const lib = ctx.accessLib ?? (await import('dispatch-server/access'));
   const dataDir = ctx.dataDir;
@@ -277,7 +395,7 @@ function cmdTools(ctx: Ctx, args: string[]): void {
 
 /** Wire shape of `RoleStatusEntry` (packages/core/src/roles/service.ts) once the route
  *  strips `def.brief` — see packages/core/src/routes/roles.ts `serialize`. Declared
- *  locally rather than imported since dispatch-server only exports "." and "./platform". */
+ *  locally rather than imported since dispatch-server exports only a few subpaths ("." , "./platform", "./access", "./credential"). */
 interface RoleListEntry {
   def: {
     name: string;
@@ -324,18 +442,7 @@ async function cmdRoles(ctx: Ctx, args: string[]): Promise<void> {
 async function rolesRequest(ctx: Ctx, path: string, init?: RequestInit): Promise<unknown> {
   const fetchFn = ctx.rolesFetch ?? fetch;
   const url = `http://localhost:${ctx.port}/api/roles${path}`;
-  let res: Response;
-  try {
-    res = (await fetchFn(url, init)) as Response;
-  } catch (err: unknown) {
-    const code = (err as { code?: string; cause?: { code?: string } } | undefined)?.code
-      ?? (err as { cause?: { code?: string } } | undefined)?.cause?.code;
-    const msg = err instanceof Error ? err.message : String(err);
-    if (code === 'ECONNREFUSED' || /ECONNREFUSED/.test(msg)) {
-      throw new Error('daemon not running (dispatch start)');
-    }
-    throw err;
-  }
+  const res = await daemonFetch(ctx, fetchFn, url, init);
   const body = (await res.json()) as { error?: string };
   if (!res.ok) {
     throw new Error(body?.error ?? `roles request failed (HTTP ${res.status})`);

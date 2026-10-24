@@ -23,10 +23,12 @@ let out: string[];
 let dataDir: string;
 beforeEach(() => {
   out = [];
+  // The test may run inside a Dispatch thread: start from a clean thread environment.
+  for (const n of ['DISPATCH_AUTH', 'DISPATCH_AUTH_FILE', 'DISPATCH_TERMINAL_ID', 'DISPATCH_TERMINAL', 'DISPATCH_API']) vi.stubEnv(n, '');
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-access-'));
   vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { out.push(a.join(' ')); });
 });
-afterEach(() => { vi.restoreAllMocks(); fs.rmSync(dataDir, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(dataDir, { recursive: true, force: true }); });
 
 const run = (args: string[], access = fakeAccess()) =>
   Promise.resolve(runCommand(['access', ...args], { daemon: {} as any, port: 3456, dataDir, accessLib: access } as any)).then(() => access);
