@@ -168,7 +168,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
   // is blocked on (the membrane), or null when nothing is pending.
   router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule }), (req, res) => {
-    res.json(sessionService.getPendingPermission(req.params.terminalId));
+    res.json(redactKeysDeep(sessionService.getPendingPermission(req.params.terminalId)));
   });
 
   // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }

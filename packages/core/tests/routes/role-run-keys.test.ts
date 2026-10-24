@@ -91,6 +91,17 @@ describe('role-run keys', () => {
     expect(auth.body.terminalId).toBe('rr');
   });
 
+  it('redacts a key inside the pending permission answer (input and questions)', async () => {
+    const leak = `dtk_${'Q'.repeat(43)}`;
+    vi.spyOn(app._sessionService, 'getPendingPermission').mockReturnValue({
+      requestId: 'r1', toolName: 'Bash', input: { command: `echo ${leak}`, nested: [leak] }, questions: [{ question: `use ${leak}?`, options: [{ label: leak }] }],
+    });
+    const r = await request(app).get('/api/terminals/wA/permission').set(as('rr')).expect(200);
+    expect(JSON.stringify(r.body)).not.toContain(leak);
+    expect(r.body.input.command).toBe('echo dtk_[redacted]');
+    expect(r.body.questions[0].question).toBe('use dtk_[redacted]?');
+  });
+
   it('keeps the same identity rules as a thread key', async () => {
     const key = as('rr');
     expect((await request(app).post('/api/terminals/wA/report-status').set(key).send({ state: 'done', summary: 's' })).body.error).toBe('out_of_scope');
