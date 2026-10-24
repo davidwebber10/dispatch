@@ -1,4 +1,4 @@
-const KEY_RE = /\b(dtk|dck|dsk)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g;
+const KEY_RE = /(dtk|dck|dsk)_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g;
 
 /** Replace each per-thread key literal with its prefix and "[redacted]". */
 export function redactKeys(text: string): string {

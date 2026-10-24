@@ -19,7 +19,14 @@ describe('redactKeys', () => {
   it('redacts inside JSON text', () => {
     expect(redactKeys(JSON.stringify({ k: T }))).toBe('{"k":"dtk_[redacted]"}');
   });
+  it('redacts a key after a tab, a newline, a JSON escape or a %20 escape', () => {
+    expect(redactKeys(`line1\n${T}`)).toBe('line1\ndtk_[redacted]');
+    expect(redactKeys(`a\t${T}`)).toBe('a\tdtk_[redacted]');
+    expect(redactKeys(`{"t":"line1\\n${T}"}`)).toBe('{"t":"line1\\ndtk_[redacted]"}');
+    expect(redactKeys(`Authorization:%20Bearer%20${T}`)).toBe('Authorization:%20Bearer%20dtk_[redacted]');
+  });
   it('leaves a non-key alone', () => {
+    expect(redactKeys('xdtk_abc and Bearer%20dtk_short')).toBe('xdtk_abc and Bearer%20dtk_short');
     expect(redactKeys('dtk_abc and dck_')).toBe('dtk_abc and dck_');
   });
   it('does not leave a tail when the body is too long', () => {
