@@ -57,6 +57,26 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-bash', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: text.slice('TRIGGER_BASH:'.length) }, tool_use_id: 'tu-1' } });
       return;
     }
+    // Usage-limit stops, shaped like Claude Code 2.1.309's real transcript: a synthetic assistant
+    // frame (apiError + quotaLimits), then the error result. `resetsAt` is epoch seconds.
+    if (typeof text === 'string' && text.startsWith('TRIGGER_LIMIT:')) {
+      const [, type, resetsAt, ...rest] = text.split(':');
+      const words = rest.join(':') || `You've hit your ${type === 'seven_day' ? 'weekly' : 'session'} limit · resets 1:10am (America/Indianapolis)`;
+      send({ type: 'assistant', apiError: 'usage_limit_reached', isApiErrorMessage: true, error: 'rate_limit', apiErrorStatus: 429,
+        quotaLimits: { status: 'rejected', resetsAt: Number(resetsAt), rateLimitType: type },
+        message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: words }] } });
+      send({ type: 'result', subtype: 'success', is_error: true, result: words, api_error_status: 429 });
+      return;
+    }
+    if (text === 'TRIGGER_ERROR_PLAIN') {
+      send({ type: 'result', subtype: 'success', is_error: true, result: 'Tests failed' });
+      return;
+    }
+    // The text-only variant: no structured reset, the time only in the words.
+    if (text === 'TRIGGER_LIMIT_TEXT') {
+      send({ type: 'result', subtype: 'success', is_error: true, result: "You've hit your session limit · resets 1:10am (America/Indianapolis)" });
+      return;
+    }
     if (text === 'TRIGGER_STALE_QUESTION') {
       // A question, then a turn end without an answer: a stale pending the manager must clear.
       send({ type: 'control_request', request_id: 'req-5', request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input: { questions: [{ question: 'Pick one', header: 'Choice', options: ['A', 'B'], multiSelect: false }] }, tool_use_id: 'tu-5' } });
@@ -117,6 +137,14 @@ rl.on('line', (line) => {
         send({ type: 'assistant', message: { content: [{ type: 'text', text: 'woken' }] } });
         send({ type: 'result', subtype: 'success', is_error: false });
       }, 100);
+      return;
+    }
+    // FAKE_LIMIT_ON_RESUME=<n>: the first n resume messages hit the limit again (reset 1 s ahead).
+    if (typeof text === 'string' && text.startsWith('Your usage limit has reset') && Number(process.env.FAKE_LIMIT_ON_RESUME ?? 0) > (globalThis.__limitHits ??= 0)) {
+      globalThis.__limitHits += 1;
+      const words = "You've hit your session limit · resets 1:10am (America/Indianapolis)";
+      send({ type: 'assistant', apiError: 'usage_limit_reached', isApiErrorMessage: true, quotaLimits: { status: 'rejected', resetsAt: Math.ceil(Date.now() / 1000) + 1, rateLimitType: 'five_hour' }, message: { model: '<synthetic>', content: [{ type: 'text', text: words }] } });
+      send({ type: 'result', subtype: 'success', is_error: true, result: words });
       return;
     }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });

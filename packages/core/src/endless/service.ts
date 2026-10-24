@@ -329,6 +329,22 @@ export class EndlessService {
     return written;
   }
 
+  /**
+   * One line about a usage-limit pause (limits/service.ts) for any thread, or for Chat itself
+   * (`terminalId` null). Logged as a work line. `deliver` also wakes Chat to read it (the cap
+   * notice); a pause or a resume does not, so Chat's own budget is not spent on it. Never throws.
+   */
+  noteLimit(terminalId: string | null, text: string, deliver: boolean): void {
+    if (this.phase !== 'ready' || this.closed) return;
+    try {
+      const t = terminalId ? terminalsDb.getById(this.o.db, terminalId) : null;
+      const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: t ? terminalId : null });
+      if (deliver && written.length) this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
+    } catch (err) {
+      console.warn('[endless] the usage-limit note failed:', err);
+    }
+  }
+
   /** What a waiting thread asks: its pending question or gated tool, else its last output. */
   private waitingText(terminalId: string): string {
     let asked = '';
@@ -411,6 +427,7 @@ export class EndlessService {
       if (!EXT[(img as any).media_type]) throw new UserError(`unsupported image type: ${(img as any).media_type}`);
     }
     const media = body.images.map((img, k) => this.saveImage(img, k));
+    this.onOwnerAction?.();
     this.turns.send({ text: body.text, project: body.project, media });
   }
 
@@ -425,8 +442,21 @@ export class EndlessService {
     return file;
   }
 
-  retry(): boolean { return this.turns.retry(); }
-  stopTurn(): boolean { return this.turns.stop(); }
+  /**
+   * Wake Chat after its own usage-limit pause: a work line and a turn on it. Not `retry()`, which
+   * would run the owner's last message again even if Chat already answered it. False when Chat is busy.
+   */
+  wakeAfterLimit(): boolean {
+    if (this.phase !== 'ready' || this.closed || this.turns.status !== 'idle') return false;
+    const written = this.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', project: null, ref: null });
+    if (!written.length) return false;
+    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null });
+    return true;
+  }
+  /** Set by the daemon: the owner acted on Chat (send, retry, stop), which ends a usage-limit pause. */
+  onOwnerAction?: () => void;
+  retry(): boolean { this.onOwnerAction?.(); return this.turns.retry(); }
+  stopTurn(): boolean { this.onOwnerAction?.(); return this.turns.stop(); }
   /** A Claude login just changed: summaries that failed on the old login run again now. */
   retryCompaction(): void { if (!this.closed) this.compactor.retryFailed(); }
 

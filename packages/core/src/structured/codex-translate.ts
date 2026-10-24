@@ -19,6 +19,7 @@
 // whole `assistant` tool_use + `user` tool_result pairs (the streaming reducer appends any
 // tool it never saw start), and each turn ends with a synthetic `result` footer + 'idle'.
 
+import { detectCodexLimit, type UsageLimit } from '../limits/detect.js';
 import type { PendingPermission, PermissionDecision } from './manager.js';
 import { looksLikeQuestion } from '../status/question.js';
 
@@ -55,6 +56,7 @@ export type TranslatedAction =
   | { kind: 'session'; sessionId: string } // emit 'session' (persist as terminal.external_id)
   | { kind: 'busy' }
   | { kind: 'failed' } // emit 'busy' (a turn started)
+  | { kind: 'usage-limit'; limit: UsageLimit } // a usage/rate limit ended the turn: a pause, not a failure
   | { kind: 'idle'; summary?: string } // emit 'idle' (turn boundary). `summary`, when present, is
   // the last completed agentMessage's own text — see CodexTranslator.lastAgentText — so the
   // manager/server can persist a REAL outcome line instead of walking the Claude-shaped event
@@ -157,6 +159,8 @@ export class CodexTranslator {
   private itemDetails = new Map<string, any>();
   private model: string | undefined;
   private usageActive = false;
+  /** A usage limit already ended this turn; the failed `turn/completed` after it adds no failure. */
+  private limitThisTurn = false;
   private usageTotal: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null = null;
   private lastUsage: any = null; // most recent thread/tokenUsage/updated → result footer
   /**
@@ -231,6 +235,7 @@ export class CodexTranslator {
     this.msgBlock.clear();
     this.reasoningBlock.clear();
     this.turnTexts = [];
+    this.limitThisTurn = false;
     return [{ kind: 'busy' }];
   }
 
@@ -257,10 +262,12 @@ export class CodexTranslator {
     // truthiness, is what tells server.ts's listener "Codex answered for this turn" (possibly
     // with nothing) vs. "no summary at all" (the Claude path, which never sets this field).
     // See the server.ts listener's comment for the fallback this distinction guards against.
-    const boundary: TranslatedAction = turn.status === 'failed' ? { kind: 'failed' } : looksLikeQuestion(text)
+    const limited = this.limitThisTurn && turn.status === 'failed';
+    this.limitThisTurn = false;
+    const boundary: TranslatedAction | null = limited ? null : turn.status === 'failed' ? { kind: 'failed' } : looksLikeQuestion(text)
       ? { kind: 'needs-help', ask: text, summary: text }
       : { kind: 'idle', summary: text };
-    return [{ kind: 'event', event: result }, boundary];
+    return boundary ? [{ kind: 'event', event: result }, boundary] : [{ kind: 'event', event: result }];
   }
 
   /** Emit message_start once per turn (bumps the reducer's turn counter → fresh block keys). */
@@ -421,11 +428,15 @@ export class CodexTranslator {
   }
 
   private errorNotif(params: any): TranslatedAction[] {
-    const message = typeof params?.message === 'string' ? params.message : (typeof params === 'string' ? params : 'Codex error');
-    return [
-      { kind: 'event', event: { type: 'result', subtype: 'error', is_error: true, result: message } },
-      { kind: 'failed' },
-    ];
+    const err = params?.error ?? params;
+    const message = typeof err?.message === 'string' ? err.message : (typeof params === 'string' ? params : 'Codex error');
+    const event = { kind: 'event' as const, event: { type: 'result', subtype: 'error', is_error: true, result: message } };
+    const limit = params?.willRetry === true ? null : detectCodexLimit({ message, codexErrorInfo: err?.codexErrorInfo }, Date.now());
+    if (limit) {
+      this.limitThisTurn = true;
+      return [event, { kind: 'usage-limit', limit }];
+    }
+    return [event, { kind: 'failed' }];
   }
 
   private approval(method: ApprovalMethod, requestId: string | number, params: any): TranslatedAction[] {

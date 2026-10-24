@@ -1,3 +1,4 @@
+import type { UsageLimitService } from '../limits/service.js';
 import { PromptInput } from './prompt-input.js';
 import fs from 'fs';
 import os from 'os';
@@ -121,6 +122,21 @@ export class SessionService {
     if (this.terminalStatusWriter) this.terminalStatusWriter(id, status);
     else terminalsDb.updateStatus(this.db, id, status); // isolated service/test compatibility
   }
+  private usageLimits?: UsageLimitService;
+  /** The thread an auto-resume is being sent to: that send is not the owner taking over. */
+  private resuming: string | null = null;
+  setUsageLimitService(svc: UsageLimitService): void { this.usageLimits = svc; }
+  /** Send the usage-limit auto-resume text. Unlike every other send it keeps the park's attempt count. */
+  resumeAfterUsageLimit(terminalId: string, text: string): void {
+    this.resuming = terminalId;
+    try { this.sendThreadMessage(terminalId, text, undefined, 'daemon'); } finally { this.resuming = null; }
+  }
+  /** Anyone else sending to a thread, or the owner typing in it, ends its pause. */
+  private noteThreadTouched(terminalId: string, source?: string, logAs?: string): void {
+    // Only the owner's own message (tagged source 'user') takes over; notices, recaps, watches and
+    // coordinator sends leave the pause alone.
+    if (this.resuming !== terminalId && source === 'user') this.usageLimits?.onUserMessage(terminalId);
+  }
   private onUserPrompt?: (terminalId: string, text: string) => void;
   private promptInputs = new Map<string, PromptInput>();
   setUserPromptListener(listener: (terminalId: string, text: string) => void): void { this.onUserPrompt = listener; }
@@ -129,6 +145,8 @@ export class SessionService {
     try { this.onUserPrompt?.(terminalId, text); } catch { /* naming must never prevent sending */ }
   }
   noteUserInput(terminalId: string, data: string): void {
+    // Typing counts; a bare focus-in/out report from the terminal does not.
+    if (/[\x20-\x7e\r]/.test(data.replace(/\x1b\[[IO]/g, ''))) this.usageLimits?.onUserMessage(terminalId);
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal || terminal.label_source !== 'default' || !isAgentType(terminal.type)) { this.promptInputs.delete(terminalId); return; }
     const input = this.promptInputs.get(terminalId) ?? new PromptInput();
@@ -192,6 +210,10 @@ export class SessionService {
     if (existing) return;
     this.structuredManagers.set(type, manager);
     this.persistStructuredSessionIds(manager, type);
+    manager.on('usage-limit', (terminalId: string, limit: import('../limits/detect.js').UsageLimit) => {
+      try { this.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
+    });
+    for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.usageLimits?.onTurnEnded(terminalId));
     if (type === 'claude-code') {
       this.persistMessageSources(manager);
       this.forgetLostConversations(manager);
@@ -464,6 +486,7 @@ export class SessionService {
     // Stop all terminals for this session
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.usageLimits?.onStopped(terminal.id);
       this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
@@ -479,6 +502,7 @@ export class SessionService {
     // Kill all terminals
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
+      this.usageLimits?.onStopped(terminal.id);
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
     }
@@ -1046,6 +1070,7 @@ export class SessionService {
   }
 
   stopTerminal(terminalId: string): void {
+    this.usageLimits?.onStopped(terminalId);
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.ptyManager.kill(terminalId);
@@ -1059,6 +1084,7 @@ export class SessionService {
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
   ): void {
+    this.noteThreadTouched(terminalId, source, logAs);
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     const manager = this.structuredManagerForTerminal(terminalId);
@@ -1140,6 +1166,7 @@ export class SessionService {
       this.sendStructuredMessage(terminalId, content, source, logAs);
       return { transport: 'structured', droppedNonText: false };
     }
+    this.noteThreadTouched(terminalId, source, logAs);
 
     // PTY: type the message into the CLI's own input box and submit it.
     const { text, droppedNonText } = flattenForPty(content as string | { type?: string; text?: string }[]);
@@ -1833,6 +1860,7 @@ export class SessionService {
 
   /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
   interrupt(terminalId: string): boolean {
+    this.usageLimits?.onStopped(terminalId);
     return this.structuredManagerForTerminal(terminalId)?.interrupt(terminalId) ?? false;
   }
 
