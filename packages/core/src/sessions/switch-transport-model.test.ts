@@ -110,22 +110,22 @@ describe('a model or effort changed inside the thread survives a relaunch', () =
 
     await svc.switchTransport('t1', 'structured');
     const prettyArgs: string[] = structured.opts[0].args;
-    expect(flag(prettyArgs, '--model')).toBe('claude-opus-5-5');
+    expect(flag(prettyArgs, '--model')).toBe('opus');
     expect(flag(prettyArgs, '--effort')).toBe('high');
-    expect(cfg('t1')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high', transport: 'structured' });
+    expect(cfg('t1')).toMatchObject({ model: 'opus', effort: 'high', transport: 'structured' });
 
     structured.live.delete('t1'); // the structured process is gone; PTY respawns on switch back
     await svc.switchTransport('t1', 'pty');
     const cliArgs = pty.argvs[pty.argvs.length - 1];
-    expect(flag(cliArgs, '--model')).toBe('claude-opus-5-5');
+    expect(flag(cliArgs, '--model')).toBe('opus');
     expect(flag(cliArgs, '--effort')).toBe('high');
   });
 
   it('a revived Pretty thread (daemon restart) also reads the transcript', () => {
     seed('t2', { config: { model: 'fable', transport: 'structured' }, status: 'waiting' });
-    writeTranscript('ext-1', [turn('claude-opus-5-5', 'high')]);
+    writeTranscript('ext-1', [turn('claude-fable-5-1', 'xhigh'), turn('claude-opus-5-5', 'high')]);
     expect(svc.ensureStructuredAlive('t2')).toBe(true);
-    expect(flag(structured.opts[0].args, '--model')).toBe('claude-opus-5-5');
+    expect(flag(structured.opts[0].args, '--model')).toBe('opus');
     expect(flag(structured.opts[0].args, '--effort')).toBe('high');
   });
 
@@ -138,6 +138,22 @@ describe('a model or effort changed inside the thread survives a relaunch', () =
     ]);
     await svc.switchTransport('t1', 'structured');
     expect(flag(structured.opts[0].args, '--model')).toBe('claude-opus-5-5');
+  });
+
+  it('a thread nobody changed keeps its saved model and gets no pinned effort', async () => {
+    seed('t1', { config: { model: 'opus', pinned: true }, status: 'waiting' });
+    writeTranscript('ext-1', [turn('claude-opus-5-5', 'high'), turn('claude-opus-5-5', 'high')]);
+    await svc.switchTransport('t1', 'structured');
+    expect(flag(structured.opts[0].args, '--model')).toBe('opus');
+    expect(structured.opts[0].args).not.toContain('--effort');
+    expect(cfg('t1')).toMatchObject({ model: 'opus', pinned: true });
+  });
+
+  it('a thread with no saved model gets the family alias, not a frozen id', async () => {
+    seed('t1', { config: {}, status: 'waiting' });
+    writeTranscript('ext-1', [turn('claude-sonnet-5-5', 'medium')]);
+    await svc.switchTransport('t1', 'structured');
+    expect(flag(structured.opts[0].args, '--model')).toBe('sonnet');
   });
 
   it('leaves a coordinator or agent thread on its policy model', () => {

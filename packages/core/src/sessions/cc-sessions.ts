@@ -312,7 +312,8 @@ function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; la
 
 export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ClaudeEffort = (typeof CLAUDE_EFFORT_LEVELS)[number];
-const MODEL_ID_RE = /^claude-[a-z0-9][a-z0-9.\-]{0,60}$/;
+// Optional [1m]-style suffix: the 1M-context variants.
+const MODEL_ID_RE = /^claude-[a-z0-9][a-z0-9.\-]{0,60}(\[[a-z0-9]{1,8}\])?$/;
 
 /**
  * The model and effort the lead agent of a Claude session ran its LAST turn with, read from the
@@ -325,7 +326,7 @@ const MODEL_ID_RE = /^claude-[a-z0-9][a-z0-9.\-]{0,60}$/;
  * (`isSidechain`) and `<synthetic>` entries are skipped. A value that does not look like a model
  * id or a known effort level is dropped. Returns null when there is no readable lead turn.
  */
-export function readSessionSettings(workDir: string, sessionId: string): { model?: string; effort?: ClaudeEffort } | null {
+export function readSessionSettings(workDir: string, sessionId: string): { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null {
   try {
     const file = resolveTranscriptPath(workDir, sessionId);
     if (!file) return null;
@@ -337,6 +338,8 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
     try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
     const lines = buf.toString('utf-8').split('\n');
     if (start > 0) lines.shift();
+    let out: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null = null;
+    const efforts = new Set<string>();
     for (let i = lines.length - 1; i >= 0; i--) {
       const trimmed = lines[i].trim();
       if (!trimmed) continue;
@@ -344,11 +347,18 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
       try { o = JSON.parse(trimmed); } catch { continue; }
       if (!o || o.type !== 'assistant' || o.isSidechain || o.isMeta) continue;
       if (o.message?.model === SYNTHETIC_MODEL) continue;
-      const out: { model?: string; effort?: ClaudeEffort } = {};
-      if (typeof o.requestedModel === 'string' && MODEL_ID_RE.test(o.requestedModel)) out.model = o.requestedModel;
-      if ((CLAUDE_EFFORT_LEVELS as readonly string[]).includes(o.effort)) out.effort = o.effort;
-      return out;
+      const effort = (CLAUDE_EFFORT_LEVELS as readonly string[]).includes(o.effort) ? (o.effort as ClaudeEffort) : undefined;
+      if (effort) efforts.add(effort);
+      if (!out) {
+        out = {};
+        if (typeof o.requestedModel === 'string' && MODEL_ID_RE.test(o.requestedModel)) out.model = o.requestedModel;
+        if (effort) out.effort = effort;
+      }
     }
+    // The effort moved within the window we can see: someone ran /effort (or /model, which carries
+    // its own effort). Without a change, the effort is just the model's default, not a choice.
+    if (out) out.effortChanged = efforts.size > 1;
+    return out;
     return null;
   } catch {
     return null;

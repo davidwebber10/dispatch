@@ -1,5 +1,6 @@
-import { isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { CLAUDE_EFFORT_LEVELS, type ClaudeEffort } from './cc-sessions.js';
+
+const FAMILY_RE = /^claude-(opus|sonnet|haiku|fable)-[^[]*$/;
 
 /**
  * Fold the model and effort a Claude thread last RAN with (read from its transcript, see
@@ -9,21 +10,31 @@ import { CLAUDE_EFFORT_LEVELS, type ClaudeEffort } from './cc-sessions.js';
  *
  * Only a plain user thread is adopted: a thread with a role or an agent type gets its model from
  * Dispatch policy (coordinator tiers, agent-type tiers), and the transcript must not override it.
- * A saved tier alias ('opus') is kept while the transcript's model is that family
- * ('claude-opus-5-5'), so a thread the owner never changed keeps following the alias.
+ *
+ * Model: saved as the tier alias of its family ('claude-opus-5-5' -> 'opus'), so a thread keeps
+ * its family but still gets new versions; a full id (a 1M variant, an unknown family) is saved as
+ * is. A saved alias is kept while the transcript model is that family. Known limit: an older
+ * version picked inside a family the thread already saved by alias is not kept.
+ *
+ * Effort: the CLI writes `effort` on every turn, so the bare value is just the model's default
+ * and pinning it would freeze threads nobody touched. It is saved only when the transcript shows
+ * it changed (`effortChanged`), or once saved, to follow later changes.
  */
 export function adoptTranscriptSettings(
   config: Record<string, any>,
-  seen: { model?: string; effort?: ClaudeEffort } | null,
+  seen: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null,
 ): boolean {
   if (!seen || config.role || config.agentType) return false;
   let changed = false;
   if (seen.model) {
     const saved = typeof config.model === 'string' ? config.model.trim() : '';
-    const sameFamily = isClaudeTierAlias(saved) && seen.model.startsWith(`claude-${saved}-`);
-    if (saved !== seen.model && !sameFamily) { config.model = seen.model; changed = true; }
+    const family = FAMILY_RE.exec(seen.model)?.[1];
+    const target = family ?? seen.model;
+    if (saved !== target && saved !== seen.model) { config.model = target; changed = true; }
   }
-  if (seen.effort && config.effort !== seen.effort) { config.effort = seen.effort; changed = true; }
+  if (seen.effort && (seen.effortChanged || config.effort !== undefined) && config.effort !== seen.effort) {
+    config.effort = seen.effort; changed = true;
+  }
   return changed;
 }
 

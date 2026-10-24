@@ -34,17 +34,17 @@ describe('readSessionSettings', () => {
 
   it('returns the requested model and effort of the last lead turn', () => {
     write('s1', [turn({ effort: 'xhigh' }, 'claude-fable-5-1'), turn({ effort: 'high' }, 'claude-opus-5-5')]);
-    expect(readSessionSettings(workDir, 's1')).toEqual({ model: 'claude-opus-5-5', effort: 'high' });
+    expect(readSessionSettings(workDir, 's1')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
   });
 
   it('ignores sub-agent (sidechain) turns', () => {
     write('s1', [turn(), turn({ isSidechain: true, effort: 'low' }, 'claude-haiku-5-5')]);
-    expect(readSessionSettings(workDir, 's1')).toEqual({ model: 'claude-opus-5-5', effort: 'high' });
+    expect(readSessionSettings(workDir, 's1')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
   });
 
   it('ignores synthetic entries', () => {
     write('s1', [turn(), { type: 'assistant', requestedModel: null, effort: null, message: { model: '<synthetic>', content: [] } }]);
-    expect(readSessionSettings(workDir, 's1')).toEqual({ model: 'claude-opus-5-5', effort: 'high' });
+    expect(readSessionSettings(workDir, 's1')).toMatchObject({ model: 'claude-opus-5-5', effort: 'high' });
   });
 
   it('uses the REQUESTED model, not a fallback model that answered', () => {
@@ -52,9 +52,21 @@ describe('readSessionSettings', () => {
     expect(readSessionSettings(workDir, 's1')?.model).toBe('claude-fable-5-1');
   });
 
+  it('reports whether the effort changed within the window', () => {
+    write('s1', [turn({ effort: 'xhigh' }, 'claude-fable-5-1'), turn({ effort: 'high' })]);
+    expect(readSessionSettings(workDir, 's1')?.effortChanged).toBe(true);
+    write('s2', [turn(), turn()]);
+    expect(readSessionSettings(workDir, 's2')?.effortChanged).toBe(false);
+  });
+
+  it('accepts 1M-context model ids', () => {
+    write('s1', [turn({ requestedModel: 'claude-opus-4-8[1m]' })]);
+    expect(readSessionSettings(workDir, 's1')?.model).toBe('claude-opus-4-8[1m]');
+  });
+
   it('drops values it does not recognise', () => {
     write('s1', [turn({ effort: 'banana', requestedModel: 'not a model; rm -rf' })]);
-    expect(readSessionSettings(workDir, 's1')).toEqual({});
+    expect(readSessionSettings(workDir, 's1')).toEqual({ effortChanged: false });
   });
 
   it('returns null when there is no transcript or no assistant turn', () => {
