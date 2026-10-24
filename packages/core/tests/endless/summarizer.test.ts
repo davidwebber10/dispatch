@@ -72,6 +72,16 @@ describe('ClaudeSummarizer keys', () => {
     m.emitExit(0);
     expect(keys.size()).toBe(0);
   });
+  it('a spawn that throws revokes the minted key, detaches its listeners and rethrows', () => {
+    const keys = new KeyRegistry();
+    const m = new FakeManager();
+    m.spawn = () => { throw new Error('spawn boom'); };
+    const s = new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', keys: () => keys });
+    expect(() => s.open({ systemPrompt: 'SYS', onFirstToken: () => {} })).toThrow('spawn boom');
+    expect(keys.size()).toBe(0);
+    expect(m.listenerCount('event')).toBe(0);
+    expect(m.listenerCount('exit')).toBe(0);
+  });
   it('adds no key without a registry', () => {
     const m = new FakeManager();
     new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json' }).open({ systemPrompt: 'SYS', onFirstToken: () => {} });

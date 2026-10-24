@@ -79,13 +79,21 @@ export class ClaudeSummarizer implements Summarizer {
     };
     manager.on('event', onEvent);
     manager.on('exit', onExit);
-    manager.spawn(id, {
-      command: this.o.command ?? 'claude',
-      args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
-      workDir: this.o.chatDir,
-      env: minted ? { ...COMPACTION_ENV, DISPATCH_AUTH: minted.key } : COMPACTION_ENV,
-      toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
-    });
+    try {
+      manager.spawn(id, {
+        command: this.o.command ?? 'claude',
+        args: [...(this.o.commandArgs ?? []), ...endlessClaudeArgs({ model: this.o.model ?? SUMMARY_MODEL, effort: this.o.effort ?? SUMMARY_EFFORT, systemPrompt: opts.systemPrompt, mcpConfigPath: this.o.mcpConfigPath, userTools: false })],
+        workDir: this.o.chatDir,
+        env: minted ? { ...COMPACTION_ENV, DISPATCH_AUTH: minted.key } : COMPACTION_ENV,
+        toolPolicy: () => ({ allow: false, message: 'Compaction: call no tools.' }),
+      });
+    } catch (err) {
+      // The process never started: nothing else will revoke this key or detach these listeners.
+      manager.off('event', onEvent);
+      manager.off('exit', onExit);
+      revoke();
+      throw err;
+    }
 
     return {
       ask: (msg: string) => new Promise<string>((resolve, reject) => {
