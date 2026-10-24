@@ -72,7 +72,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/sessions/:id/terminals — list all active tabs for a session
-  router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule }), (req, res) => {
+  router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule, roleRun: readSessionRule }), (req, res) => {
     try {
       const terminals = sessionService.listTerminals(req.params.id);
       res.json(terminals);
@@ -82,7 +82,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId — get a single terminal
-  router.get('/terminals/:terminalId', keyRoute({ thread: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
+  router.get('/terminals/:terminalId', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
     res.json(terminal);
@@ -104,7 +104,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
   // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
   // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
-  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
+  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     res.json(sessionService.getConversation(req.params.terminalId, {
@@ -166,7 +166,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
   // is blocked on (the membrane), or null when nothing is pending.
-  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule }), (req, res) => {
+  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule }), (req, res) => {
     res.json(sessionService.getPendingPermission(req.params.terminalId));
   });
 
@@ -259,7 +259,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   //                         different process and cannot see an in-memory session)
   // The tool is taught to every claude-code/codex thread by TYPE, so both paths must work
   // or the threads on the unsupported one get a 409 on every single turn.
-  router.post('/terminals/:terminalId/report-status', keyRoute({ thread: selfRule }), (req, res) => {
+  router.post('/terminals/:terminalId/report-status', keyRoute({ thread: selfRule, roleRun: selfRule }), (req, res) => {
     const { state, summary, ask, blocker } = req.body ?? {};
     if (state !== 'done' && state !== 'needs_you' && state !== 'blocked') {
       return res.status(400).json({ error: "state must be 'done', 'needs_you' or 'blocked'" });

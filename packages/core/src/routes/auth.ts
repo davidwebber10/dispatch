@@ -10,7 +10,7 @@ export function createAuthRouter(service: AuthRequestService): Router {
     res.json(service.list());
   });
 
-  router.post('/', keyRoute({ thread: authRequestRule, shell: authRequestRule, chat: authRequestChatRule }), (req, res) => {
+  router.post('/', keyRoute({ thread: authRequestRule, roleRun: authRequestRule, shell: authRequestRule, chat: authRequestChatRule }), (req, res) => {
     try {
       const record = service.create({
         url: String(req.body.url || ''),
