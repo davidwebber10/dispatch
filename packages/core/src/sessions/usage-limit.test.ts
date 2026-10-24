@@ -136,4 +136,19 @@ describe('usage-limit wiring', () => {
     svc.noteUserInput('t2', 'hello\r');
     expect(parksDb.get(db, 't2')).toBeNull();
   });
+  it('a coordinator or daemon send is not the owner taking over; an interrupt is', () => {
+    structured.emit('usage-limit', 't1', { kind: 'session', resetsAt: RESET, message: 'm' });
+    svc.sendStructuredMessage('t1', 'status ping', 'coordinator');
+    expect(parksDb.get(db, 't1')).not.toBeNull();
+    svc.sendStructuredMessage('t1', 'daemon note', undefined, 'daemon');
+    expect(parksDb.get(db, 't1')).not.toBeNull();
+    svc.interrupt('t1');
+    expect(parksDb.get(db, 't1')).toBeNull();
+  });
+  it("a failed turn ends a woken chain", () => {
+    structured.emit('usage-limit', 't1', { kind: 'session', resetsAt: RESET, message: 'm' });
+    clock = RESET + 2 * 60_000; lim.tick();
+    structured.emit('failed', 't1');
+    expect(parksDb.get(db, 't1')).toBeNull();
+  });
 });

@@ -254,3 +254,21 @@ describe('review fixes', () => {
     expect(heard).toEqual(['a', 'b']);
   });
 });
+
+describe('review fixes, round 2', () => {
+  it('the cap note about Chat itself is never delivered to Chat (it would loop on the limit)', () => {
+    const chat = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: () => {}, markPaused: () => {}, note: (_i, text, o) => notes.push({ id: _i, text, deliver: o.deliver }), chat: { isBusy: () => false, wake: () => true } });
+    parksDb.upsert(db, { terminal_id: CHAT_ID, provider: 'claude-code', kind: 'session', resets_at: RESET, wake_at: RESET, message: 'x', parsed: 1, attempts: 5, state: 'woken', parked_at: T0 }, T0);
+    chat.park(CHAT_ID, 'claude-code', session);
+    expect(notes.at(-1)).toMatchObject({ deliver: false });
+    chat.stop();
+  });
+  it('a resumed thread whose turn ends in a failure also ends its chain', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    clock = RESET + 2 * MIN; svc.tick();
+    svc.onTurnEnded('a');
+    expect(parksDb.get(db, 'a')).toBeNull();
+  });
+});
+

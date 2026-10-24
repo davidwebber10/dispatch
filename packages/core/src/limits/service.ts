@@ -95,7 +95,8 @@ export class UsageLimitService {
     if (capped) {
       this.safe(() => this.d.markPaused(terminalId, `Stopped: ${limit.kind} limit, auto-resume gave up after ${attempts} tries`));
       if (prior?.state === 'capped') return;
-      this.d.note(terminalId, `[${this.threadName(terminalId)}] still hits the ${limit.kind} limit after ${attempts} automatic resumes. It stays stopped. Send it a message to continue.`, { deliver: true });
+      // Never deliver it to Chat when Chat is the one stopped: the note would hit the limit again and loop.
+      this.d.note(terminalId, `[${this.threadName(terminalId)}] still hits the ${limit.kind} limit after ${attempts} automatic resumes. It stays stopped. Send it a message to continue.`, { deliver: terminalId !== CHAT_ID });
       return;
     }
     this.safe(() => this.d.markPaused(terminalId, label));
@@ -138,6 +139,8 @@ export class UsageLimitService {
   onUserMessage(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
   onStopped(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
+  /** A turn ended (finished, or failed for another reason): a resumed thread is done with its pause. */
+  onTurnEnded(terminalId: string): void { this.onTurnSettled(terminalId); }
   /** A turn finished normally: a resumed thread is done with its pause. */
   onTurnSettled(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);

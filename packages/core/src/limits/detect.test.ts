@@ -74,6 +74,10 @@ describe('detectClaudeLimit', () => {
     const l = detectClaudeLimit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1792818600, rateLimitType: 'five_hour' } }, NOW)!;
     expect(l).toMatchObject({ kind: 'session', resetsAt: 1792818600 * 1000 });
   });
+  it('a rejected rate_limit_event that is using overage, or has a fallback, is not a stop', () => {
+    expect(detectClaudeLimit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1792818600, isUsingOverage: true } }, NOW)).toBeNull();
+    expect(detectClaudeLimit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1792818600, unifiedRateLimitFallbackAvailable: true } }, NOW)).toBeNull();
+  });
   it('an allowed rate_limit_event, a normal result, and ordinary prose are not limits', () => {
     expect(detectClaudeLimit({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: 1792818600 } }, NOW)).toBeNull();
     expect(detectClaudeLimit({ type: 'result', is_error: false, result: 'Done.' }, NOW)).toBeNull();

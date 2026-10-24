@@ -131,8 +131,9 @@ export class SessionService {
     try { this.sendThreadMessage(terminalId, text, undefined, 'daemon'); } finally { this.resuming = null; }
   }
   /** Anyone else sending to a thread, or the owner typing in it, ends its pause. */
-  private noteThreadTouched(terminalId: string): void {
-    if (this.resuming !== terminalId) this.usageLimits?.onUserMessage(terminalId);
+  private noteThreadTouched(terminalId: string, source?: string, logAs?: string): void {
+    // A coordinator or daemon send is not the owner: the pause stays.
+    if (this.resuming !== terminalId && source !== 'coordinator' && logAs !== 'daemon') this.usageLimits?.onUserMessage(terminalId);
   }
   private onUserPrompt?: (terminalId: string, text: string) => void;
   private promptInputs = new Map<string, PromptInput>();
@@ -209,7 +210,7 @@ export class SessionService {
     manager.on('usage-limit', (terminalId: string, limit: import('../limits/detect.js').UsageLimit) => {
       try { this.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
     });
-    for (const edge of ['idle', 'needs-help']) manager.on(edge, (terminalId: string) => this.usageLimits?.onTurnSettled(terminalId));
+    for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.usageLimits?.onTurnEnded(terminalId));
     if (type === 'claude-code') {
       this.persistMessageSources(manager);
       this.forgetLostConversations(manager);
@@ -1080,7 +1081,7 @@ export class SessionService {
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
   ): void {
-    this.noteThreadTouched(terminalId);
+    this.noteThreadTouched(terminalId, source, logAs);
     // Lazily resume a thread that died on a daemon restart (resumes the same claude
     // conversation when an external_id was captured) before delivering the message.
     const manager = this.structuredManagerForTerminal(terminalId);
@@ -1162,7 +1163,7 @@ export class SessionService {
       this.sendStructuredMessage(terminalId, content, source, logAs);
       return { transport: 'structured', droppedNonText: false };
     }
-    this.noteThreadTouched(terminalId);
+    this.noteThreadTouched(terminalId, source, logAs);
 
     // PTY: type the message into the CLI's own input box and submit it.
     const { text, droppedNonText } = flattenForPty(content as string | { type?: string; text?: string }[]);
@@ -1856,6 +1857,7 @@ export class SessionService {
 
   /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
   interrupt(terminalId: string): boolean {
+    this.usageLimits?.onStopped(terminalId);
     return this.structuredManagerForTerminal(terminalId)?.interrupt(terminalId) ?? false;
   }
 

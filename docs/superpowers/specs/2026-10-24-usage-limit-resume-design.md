@@ -60,6 +60,14 @@ owner typed "continue". A weekly limit has the same effect, but the wait can be 
 - Account scope: parks are per thread. Wakes stagger per provider, not per account (Dispatch does
   not know which login a thread used).
 
+- A paused thread counts as working in the project rollup (it uses the existing dormant state), so a
+  weekly pause shows the project as working for days.
+- A CLI thread that repaints an old banner after its dedupe window can park again (not verified that
+  the Claude screen does this).
+- Text-only times (CLI and Codex) read "resets 1:10am" at 1:10:30 as tomorrow, and the repeated hour when
+  clocks go back can wake a day late. Pretty Claude threads use the exact reset and are not affected.
+- Chat wakes with a fixed "usage limit has reset" work line, not a replay of the owner's last message.
+
 ## Owner decisions (build uses the recommendation)
 
 1. Wake buffer after the reset: 90 s. Recommend keep.

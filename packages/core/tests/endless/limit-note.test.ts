@@ -58,3 +58,12 @@ describe('owner actions on Chat', () => {
     expect(n).toBe(3);
   });
 });
+
+describe('wakeAfterLimit', () => {
+  it('logs a work line and starts a turn with it, without replaying the owner\'s last message', () => {
+    expect(svc.wakeAfterLimit()).toBe(true);
+    expect(works().at(-1)!.text).toContain('Your usage limit has reset');
+    expect(svc.turns.status).not.toBe('idle');
+  });
+});
+

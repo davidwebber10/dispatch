@@ -121,7 +121,8 @@ export function detectClaudeLimit(frame: any, now: number): UsageLimit | null {
   const text = frameText(frame);
   if (frame.type === 'rate_limit_event') {
     const info = frame.rate_limit_info ?? frame.rateLimitInfo;
-    if (info?.status !== 'rejected') return null;
+    // Using overage or a fallback model means the CLI keeps going: not a stop.
+    if (info?.status !== 'rejected' || info.isUsingOverage === true || info.unifiedRateLimitFallbackAvailable === true) return null;
     const secs = Number(info.resetsAt ?? info.resets_at);
     return { kind: kindFromType(info.rateLimitType ?? info.rate_limit_type) ?? 'usage', resetsAt: Number.isFinite(secs) && secs > 0 ? secs * 1000 : null, message: 'rate limit rejected' };
   }

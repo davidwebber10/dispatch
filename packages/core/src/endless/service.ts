@@ -442,6 +442,17 @@ export class EndlessService {
     return file;
   }
 
+  /**
+   * Wake Chat after its own usage-limit pause: a work line and a turn on it. Not `retry()`, which
+   * would run the owner's last message again even if Chat already answered it. False when Chat is busy.
+   */
+  wakeAfterLimit(): boolean {
+    if (this.phase !== 'ready' || this.closed || this.turns.status !== 'idle') return false;
+    const written = this.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', project: null, ref: null });
+    if (!written.length) return false;
+    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null });
+    return true;
+  }
   /** Set by the daemon: the owner acted on Chat (send, retry, stop), which ends a usage-limit pause. */
   onOwnerAction?: () => void;
   retry(): boolean { this.onOwnerAction?.(); return this.turns.retry(); }

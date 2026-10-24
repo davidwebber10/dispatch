@@ -584,13 +584,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     markPaused: (id, label) => { if (id !== CHAT_ID) statusService.markScheduled(id, label); },
     wake: (id, text) => sessionService.resumeAfterUsageLimit(id, text),
     note: (id, text, o) => endless.noteLimit(id === CHAT_ID ? null : id, text, o.deliver),
-    chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.turns.retry() },
+    chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.wakeAfterLimit() },
   });
   sessionService.setUsageLimitService(usageLimits);
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
   // Chat through its own manager. An owner action on Chat ends its pause.
   statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
   endlessManager.on('idle', () => usageLimits.onTurnSettled(CHAT_ID));
+  endlessManager.on('failed', () => usageLimits.onTurnEnded(CHAT_ID));
   endless.onOwnerAction = () => usageLimits.onUserMessage(CHAT_ID);
   endlessManager.on('usage-limit', (_id: string, limit: import('./limits/detect.js').UsageLimit) => {
     if (endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);
