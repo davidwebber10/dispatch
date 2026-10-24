@@ -17,6 +17,7 @@ import { Compactor } from './compactor.js';
 import { TurnRunner, type EndlessEvent, type TurnStatus } from './turn-runner.js';
 import { appendLogged, type LogInput, type LogOptions } from './log.js';
 import { reportText, threadOrigin, recoveryOutcome, pendingQuestionText, type PendingPrompt } from './reports.js';
+import type { KeyRegistry } from '../auth/principals.js';
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
@@ -51,6 +52,7 @@ export interface EndlessServiceOptions {
   chatDir: string;
   home: string;
   summarizer?: Summarizer;
+  keys?: KeyRegistry;
   limits?: ViewLimits;
   timeZone?: string;
   now?: () => number;
@@ -95,7 +97,10 @@ export class EndlessService {
    */
   private readonly bootReported = new Set<string>();
 
+  private keys: KeyRegistry | undefined;
+
   constructor(private readonly o: EndlessServiceOptions) {
+    this.keys = o.keys;
     this.store = new EndlessStore(o.db);
     this.views = new ViewKeeper(this.store, o.limits, { defer: true });
     this.mediaDir = path.join(o.chatDir, 'media');
@@ -106,6 +111,7 @@ export class EndlessService {
     const summarizer = o.summarizer ?? createSummarizer({
       manager: o.manager, chatDir: o.chatDir, mcpConfigPath: this.mcpConfigPath,
       openRouterKey: o.openRouterKey ?? (async () => null), onUsage: (u) => this.note('compactions', u),
+      keys: () => this.keys,
     });
     this.compactor = new Compactor({
       store: this.store, views: this.views, summarizer,
@@ -122,6 +128,7 @@ export class EndlessService {
       emit: (e) => this.emit(e),
       readImage,
       onUsage: (u) => this.note('turns', u),
+      keys: () => this.keys,
       ...o.turn,
     });
   }
@@ -142,6 +149,9 @@ export class EndlessService {
     }
   }
 
+  /** The daemon's key registry: Chat turns and compactions get a Chat key from it. */
+  setKeyRegistry(keys: KeyRegistry): void { this.keys = keys; }
+
   /** True after a successful start(); the routes refuse every request until then. */
   get available(): boolean { return this.phase === 'ready'; }
 
@@ -157,7 +167,8 @@ export class EndlessService {
     this.views.load();
     fs.mkdirSync(this.mediaDir, { recursive: true });
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
-    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port) } } } }, null, 2));
+    fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } } } }, null, 2), { mode: 0o600 });
+    fs.chmodSync(this.mcpConfigPath, 0o600); // an older file keeps its mode on overwrite
     const last = this.store.getState('turn_status');
     if (last === 'running' || last === 'waiting') this.store.setState('turn_status', 'interrupted');
     this.compactor.recover();

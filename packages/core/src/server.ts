@@ -567,6 +567,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     pendingPermission: (id) => sessionService.getPendingPermission(id),
   });
   // Stage 2: a thread Chat started reports when it settles (finished or asking) or fails.
+  endless.setKeyRegistry(keys);
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 

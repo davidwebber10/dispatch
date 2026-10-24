@@ -18,6 +18,7 @@ import { Compactor } from '../../src/endless/compactor.js';
 import { EndlessStore } from '../../src/endless/store.js';
 import { claudeMemoryProjectDir, sharedProjectMemoryDir } from '../../src/overseer/memory-scope.js';
 import { callTool } from '../../src/endless/memory-mcp.js';
+import { KeyRegistry } from '../../src/auth/principals.js';
 import type { AddressInfo } from 'node:net';
 
 let root: string;
@@ -58,6 +59,21 @@ describe('endless routes', () => {
     const cfg = JSON.parse(fs.readFileSync(path.join(root, 'chat', 'memory.mcp.json'), 'utf8'));
     expect(cfg.mcpServers.memory.env.DISPATCH_PORT).toBe('3999');
     expect(cfg.mcpServers.memory.args[0]).toMatch(/memory-mcp\.js$/);
+    expect(cfg.mcpServers.memory.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+    const file = path.join(root, 'chat', 'memory.mcp.json');
+    expect(fs.readFileSync(file, 'utf8')).not.toMatch(/dck_/);
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('a turn started after setKeyRegistry carries a Chat key in its env', async () => {
+    const keys = new KeyRegistry();
+    svc.setKeyRegistry(keys);
+    await request(app).post('/api/endless/send').send({ text: 'hello', project: 's1' });
+    await settle();
+    const key = fake.spawned[0].opts.env!.DISPATCH_AUTH;
+    expect(keys.resolve(key)).toMatchObject({ kind: 'chat', startedBy: 'user' });
+    await endTurn();
+    expect(keys.resolve(key)).toBeNull();
   });
 
   it('POST /send logs the message, broadcasts it, and starts one turn', async () => {
