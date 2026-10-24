@@ -2844,7 +2844,7 @@ export class SessionService {
       this.lastSpawnError.delete(terminalId);
       return manager.isAlive(terminalId);
     } catch (err) {
-      const cause = err instanceof Error ? err.message : String(err);
+      const cause = redactKeys(err instanceof Error ? err.message : String(err));
       this.lastSpawnError.set(terminalId, cause);
       console.error(`[structured] thread ${terminalId} could not start: ${cause}`);
       return false;

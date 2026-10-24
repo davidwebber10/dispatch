@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -245,6 +245,25 @@ describe('structured spawn paths', () => {
     try { svc.createTerminal('s1', 'claude-code', 'A', false, undefined, undefined, structuredCfg); } catch { /* surfaced */ }
     expect(reg.minted.length).toBeGreaterThan(0);
     expect(live(reg.last().key)).toBe(false);
+  });
+
+  it('a spawn error that carries the key writes no key to the log or to the error text', () => {
+    const m = structuredSvc();
+    const t = svc.createTerminal('s1', 'claude-code', 'A', false, undefined, undefined, structuredCfg);
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try {
+      m.spawn = (_id: string, opts: { env?: Record<string, string> }) => { throw new Error(`failed with DISPATCH_AUTH=${opts.env?.DISPATCH_AUTH}`); };
+      let thrown = '';
+      try { svc.sendStructuredMessage(t.id, 'wake'); } catch (e) { thrown = String((e as Error).message); }
+      const minted = reg.allFor(t.id).map((k) => k.key);
+      expect(lines.join('\n')).toContain('could not start');
+      expect(thrown).toContain('could not start the thread');
+      for (const k of minted) {
+        expect(lines.join('\n')).not.toContain(k);
+        expect(thrown).not.toContain(k);
+      }
+    } finally { spy.mockRestore(); }
   });
 
   it('stop and remove revoke a structured thread key', () => {
