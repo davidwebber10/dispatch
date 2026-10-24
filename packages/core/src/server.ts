@@ -80,6 +80,9 @@ import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { startInterimRecapLoop } from './sessions/interim-recap.js';
 import { UsageLimitService, CHAT_ID, isChatTurnId } from './limits/service.js';
 import { PtyLimitWatcher } from './limits/pty-watch.js';
+import { LimitSnapshots, parseClaudeRateLimit } from './limits/snapshot.js';
+import { accountIdFor } from './limits/account.js';
+import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
@@ -587,6 +590,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.wakeAfterLimit() },
   });
   sessionService.setUsageLimitService(usageLimits);
+  // The account's limit figures for the Details panel: Claude from its stream, Codex from its session file (routes/usage-limits.ts).
+  const limitSnapshots = new LimitSnapshots(db);
+  for (const m of [structuredManager, endlessManager]) {
+    m.on('rate-limit', (_id: string, info: unknown) => limitSnapshots.record('claude-code', accountIdFor('claude-code'), parseClaudeRateLimit(info), Date.now()));
+  }
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
   // Chat through its own manager. An owner action on Chat ends its pause.
   statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
@@ -788,6 +796,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use('/api/appearance', createAppearanceRouter(dataDir));
   app.use('/api/watches', createWatchesRouter(db));
   app.use('/api/analytics', createAnalyticsRouter(db));
+  app.use('/api', createUsageLimitsRouter(db, limitSnapshots));
   app.use('/api/endless', createEndlessRouter(endless));
 
   // Serve the built web client (single-origin) when a build is present.

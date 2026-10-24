@@ -424,6 +424,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // finished, or is waiting on the human, not filed as done).
       // A usage limit shows in its own frame before the error `result` (the synthetic assistant
       // frame carries the structured reset time); remember it for the boundary below.
+      // The account's current limit figures (Details panel); sent on every turn.
+      if (event?.type === 'rate_limit_event') this.emit('rate-limit', terminalId, event.rate_limit_info ?? event.rateLimitInfo);
       if (event?.parent_tool_use_id == null && event?.type !== 'result') {
         const hit = detectClaudeLimit(event, Date.now());
         if (hit) session.limit = hit;

@@ -1,0 +1,51 @@
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { vi, beforeEach, afterEach, it, expect } from 'vitest';
+import { DetailsPane } from './DetailsPane';
+import { api } from '../../api/client';
+import { useProjects } from '../../stores/projects';
+import type { ThreadUsageLimits } from '../../api/types';
+
+const FUTURE = Date.now() + 3 * 3600_000;
+const claude: ThreadUsageLimits = {
+  provider: 'claude-code', supported: true, paused: null,
+  snapshot: { asOf: Date.now() - 60_000, session: { usedPercent: 62, resetsAt: FUTURE }, weekly: { usedPercent: 24, resetsAt: Date.now() + 3 * 24 * 3600_000 } },
+};
+
+beforeEach(() => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Proj', workingDir: '/tmp/x', provider: 'claude-code', status: 'waiting' } as any] });
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', workingDir: '/tmp/x', pid: 1, status: 'idle' } as any);
+  vi.spyOn(api, 'getGitInfo').mockResolvedValue({ branch: 'main' } as any);
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it('shows session, weekly, and the as-of line under THREAD DETAILS', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude);
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByText('Session (5h)')).toBeTruthy();
+  expect(screen.getByText(/^62% used, resets /)).toBeTruthy();
+  expect(screen.getByText('Weekly')).toBeTruthy();
+  expect(screen.getByText(/^24% used, resets /)).toBeTruthy();
+  expect(screen.getByText(/^As of /)).toBeTruthy();
+  expect(screen.queryByText('Weekly (Opus)')).toBeNull();
+  expect(screen.getByText('THREAD DETAILS')).toBeTruthy();
+});
+
+it('shows the Opus weekly row only when reported, and the pause line', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false }, snapshot: { ...claude.snapshot!, weeklyOpus: { usedPercent: 5, resetsAt: FUTURE } } });
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByText('Weekly (Opus)')).toBeTruthy();
+  expect(screen.getByText(/^Paused: session limit, resumes /)).toBeTruthy();
+});
+
+it('a grok or opencode thread says Not reported', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ provider: 'grok', supported: false, snapshot: null, paused: null });
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  await waitFor(() => expect(screen.getByText('Not reported')).toBeTruthy());
+});
+
+it('a failed fetch shows no limits section and nothing breaks', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockRejectedValue(new Error('down'));
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  await screen.findByText('THREAD');
+  expect(screen.queryByTestId('usage-limits')).toBeNull();
+});

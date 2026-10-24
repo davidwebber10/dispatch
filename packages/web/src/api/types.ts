@@ -470,3 +470,12 @@ export interface UpdateProgress {
 }
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
 export interface ClaudeLoginSession { id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string }
+/** One usage-limit window; `usedPercent` is null when the provider gave a reset time but no figure. */
+export interface LimitWindow { usedPercent: number | null; resetsAt: number | null }
+/** GET /api/usage-limits — the account's limit figures for a thread's provider, plus its pause. */
+export interface ThreadUsageLimits {
+  provider: string;
+  supported: boolean;
+  snapshot: { asOf: number; plan?: string; session?: LimitWindow; weekly?: LimitWindow; weeklyOpus?: LimitWindow } | null;
+  paused: { kind: 'session' | 'weekly' | 'usage'; resetsAt: number | null; capped: boolean } | null;
+}

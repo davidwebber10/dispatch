@@ -117,3 +117,32 @@ export function readCodexTail(
   }
   return out;
 }
+
+/**
+ * The newest `rate_limits` a Codex transcript holds (on its `token_count` events), with the time it
+ * was written. One bounded tail read and no widening: the status path must stay fast, and a quiet
+ * transcript just reports nothing.
+ */
+export function readCodexRateLimits(file: string, tailBytes: number = DEFAULT_TAIL_BYTES): { rateLimits: unknown; at: number } | null {
+  let raw: string;
+  try {
+    const size = fs.statSync(file).size;
+    const from = Math.max(0, size - tailBytes);
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      raw = buf.toString('utf-8');
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  let found: { rateLimits: unknown; at: number } | null = null;
+  for (const ln of raw.split('\n')) {
+    if (!ln.includes('rate_limits')) continue;
+    try {
+      const rec = JSON.parse(ln) as { timestamp?: string; payload?: { type?: string; rate_limits?: { primary?: unknown; secondary?: unknown } } };
+      const rl = rec.payload?.type === 'token_count' ? rec.payload.rate_limits : undefined;
+      if (rl && (rl.primary || rl.secondary)) found = { rateLimits: rl, at: Date.parse(rec.timestamp ?? '') || 0 };
+    } catch { /* a cut first line or a partial write */ }
+  }
+  return found;
+}
