@@ -2243,7 +2243,7 @@ export class SessionService {
   }
 
   stopAllTerminals(): void {
-    this.threadKeys?.revokeAllLive(); // the sticky Codex Pretty keys stay (an owner stop)
+    this.threadKeys?.revokeAllLive(); // PTY keys only: Pretty threads keep running, so their keys stay
     this.ptyManager.killAll();
   }
 

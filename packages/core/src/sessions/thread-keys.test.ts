@@ -237,13 +237,16 @@ describe('key files', () => {
 });
 
 describe('revokeAllLive', () => {
-  it('revokes tracked non-sticky keys and keeps the sticky Codex Pretty key', () => {
+  it('revokes PTY keys only: structured keys and the sticky Codex Pretty key stay', () => {
     const a = tk.mintForSpawn('t1', 'thread');
     tk.bindPty('t1', 1, a.handle);
     const c = tk.codexKey('c1');
     tk.bindStructured('c1', c.handle);
+    const s = tk.mintForSpawn('s1', 'thread');
+    tk.bindStructured('s1', s.handle);
     tk.revokeAllLive();
     expect(live(a.key)).toBe(false);
     expect(live(c.key)).toBe(true);
+    expect(live(s.key)).toBe(true);
   });
 });

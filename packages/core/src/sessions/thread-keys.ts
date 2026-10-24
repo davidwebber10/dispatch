@@ -84,11 +84,10 @@ export class ThreadKeys {
     if (live && !this.isSticky(live)) this.revokeHandle(live);
   }
 
-  /** Stop-all: every tracked key except the sticky Codex Pretty keys. */
+  /** Stop-all: the PTY keys only, because stop-all kills PTYs only. Pretty (structured) keys stay. */
   revokeAllLive(): void {
     const handles = new Set<KeyHandle>();
     for (const m of this.pty.values()) for (const h of m.values()) handles.add(h);
-    for (const h of this.structured.values()) handles.add(h);
     for (const h of handles) if (!this.isSticky(h)) this.revokeHandle(h);
   }
 

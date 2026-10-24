@@ -266,6 +266,14 @@ describe('structured spawn paths', () => {
     } finally { spy.mockRestore(); }
   });
 
+  it('stopAllTerminals keeps a Pretty (structured) thread key, because stop-all only kills PTYs', () => {
+    structuredSvc();
+    svc.createTerminal('s1', 'claude-code', 'A', false, undefined, undefined, structuredCfg);
+    const k = reg.last();
+    svc.stopAllTerminals();
+    expect(live(k.key)).toBe(true);
+  });
+
   it('stop and remove revoke a structured thread key', () => {
     structuredSvc();
     const t = svc.createTerminal('s1', 'claude-code', 'A', false, undefined, undefined, structuredCfg);
