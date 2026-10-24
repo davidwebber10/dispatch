@@ -247,3 +247,51 @@ describe('13b: MCP injection', () => {
     expect(written.mcpServers.dispatch.env.DISPATCH_AUTH).toBeUndefined();
   });
 });
+
+describe('13c: hooks', () => {
+  function withHooks() {
+    const hooksDir = path.join(root, 'hooks');
+    svc.setStatusContext({
+      serverUrl: API, hooksDir,
+      codexHelperPath: '/opt/codex-notify.mjs', grokHelperPath: '/opt/grok-hook.mjs',
+    });
+    return hooksDir;
+  }
+
+  it('a Claude PTY thread: the hooks file is 0600, holds the header reference, and targets DISPATCH_API', () => {
+    const hooksDir = withHooks();
+    const t = svc.createTerminal('s1', 'claude-code', 'A');
+    const file = path.join(hooksDir, `${t.id}.json`);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    const raw = fs.readFileSync(file, 'utf8');
+    expect(raw).not.toMatch(KEY_RE);
+    const hook = JSON.parse(raw).hooks.Stop[0].hooks[0];
+    expect(hook.headers).toEqual({ Authorization: 'Bearer ${DISPATCH_AUTH}' });
+    expect(hook.allowedEnvVars).toEqual(['DISPATCH_AUTH']);
+    // destination rule by construction: the hook URL is under the same address as DISPATCH_API
+    const api = JSON.parse(fs.readFileSync(cfgOf(t.id), 'utf8')).mcpServers.dispatch.env.DISPATCH_API as string;
+    expect(hook.url.startsWith(api + '/')).toBe(true);
+    expect(pty.calls[0].env!.DISPATCH_AUTH).toMatch(/^dtk_/);
+  });
+
+  it('a service with no registry writes the hooks as before, with no header', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 't', workingDir: path.join(root, 'proj') });
+    const plain = new SessionService(db, pty, path.join(root, 'mcp3.json'));
+    const hooksDir = path.join(root, 'hooks3');
+    plain.setStatusContext({ serverUrl: API, hooksDir, codexHelperPath: '/x' });
+    const t = plain.createTerminal('s1', 'claude-code', 'A');
+    const raw = fs.readFileSync(path.join(hooksDir, `${t.id}.json`), 'utf8');
+    expect(raw).not.toContain('headers');
+  });
+
+  it('a Codex CLI thread: the notify argv holds the URL only; the helper reads DISPATCH_AUTH_FILE', () => {
+    withHooks();
+    const t = svc.createTerminal('s1', 'codex', 'C');
+    const notify = pty.calls[0].args.find((a) => a.startsWith('notify='))!;
+    expect(JSON.parse(notify.slice('notify='.length))).toEqual(['node', '/opt/codex-notify.mjs', `${API}/api/events/codex/${t.id}`]);
+    expect(pty.calls[0].env!.DISPATCH_AUTH_FILE).toBeTruthy();
+    scanArgv(pty.calls);
+  });
+});

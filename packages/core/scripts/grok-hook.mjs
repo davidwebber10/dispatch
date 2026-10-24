@@ -11,6 +11,8 @@
 //
 // Best-effort and silent: a failed hook must never disrupt the agent.
 
+import { authHeaders } from './key-header.mjs';
+
 const url = process.argv[2];
 if (!url) process.exit(0);
 
@@ -29,7 +31,8 @@ process.stdin.on('end', () => {
 
   fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    // The thread key from DISPATCH_AUTH or DISPATCH_AUTH_FILE, only to the daemon's own URL (never argv).
+    headers: { 'content-type': 'application/json', ...authHeaders(url) },
     body,
     signal: ac.signal,
   })

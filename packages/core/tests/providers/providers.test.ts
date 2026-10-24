@@ -75,6 +75,24 @@ describe('claude-code provider', () => {
     expect(JSON.stringify(hooks)).toContain('http://localhost:3456/api/events/claude/term-1');
   });
 
+  it('adds the key header and the env allow-list to the HTTP hooks only when the thread has a key', () => {
+    const keyed = claudeCodeProvider.buildStatusHooks!({ serverUrl: 'http://127.0.0.1:3456', terminalId: 'term-1', codexHelperPath: '/x', keyed: true });
+    const hooks = (keyed!.claudeSettings as any).hooks;
+    for (const groups of Object.values(hooks) as any[]) {
+      for (const g of groups) {
+        for (const h of g.hooks) {
+          expect(h.headers).toEqual({ Authorization: 'Bearer ${DISPATCH_AUTH}' });
+          expect(h.allowedEnvVars).toEqual(['DISPATCH_AUTH']);
+        }
+      }
+    }
+    // the settings file holds a reference, never a key
+    expect(JSON.stringify(keyed!.claudeSettings)).not.toMatch(/dtk_/);
+    const plain = claudeCodeProvider.buildStatusHooks!({ serverUrl: 'http://127.0.0.1:3456', terminalId: 'term-1', codexHelperPath: '/x' });
+    expect(JSON.stringify(plain!.claudeSettings)).not.toContain('headers');
+    expect(JSON.stringify(plain!.claudeSettings)).not.toContain('allowedEnvVars');
+  });
+
   it('injects --settings when status hooks are provided', () => {
     const cmd = claudeCodeProvider.buildNewCommand({ workDir: '/tmp', statusHooks: { claudeSettingsPath: '/tmp/h.json' } });
     expect(cmd.args).toContain('--settings');

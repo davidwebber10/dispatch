@@ -432,13 +432,14 @@ export class SessionService {
    * artifact — Grok, whose plugin directory carries both. Claude writes a settings file and
    * Codex passes argv, so for them the specs are already handled by composeInjection.
    */
-  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = []): StatusHooksInjection | undefined {
+  private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = [], keyed = false): StatusHooksInjection | undefined {
     const ctx = this.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
     const plan = provider.buildStatusHooks?.({
       serverUrl: ctx.serverUrl,
       terminalId,
+      keyed,
       codexHelperPath: ctx.codexHelperPath,
       grokHelperPath: ctx.grokHelperPath,
     });
@@ -462,7 +463,9 @@ export class SessionService {
       try {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
         const file = path.join(ctx.hooksDir, `${terminalId}.json`);
-        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2));
+        // Owner-only like the other per-thread files; mode applies on create, so tighten an older file too.
+        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2), { mode: 0o600 });
+        try { fs.chmodSync(file, 0o600); } catch { /* best effort on FS that lacks chmod */ }
         return { claudeSettingsPath: file };
       } catch {
         return undefined; // hooks are best-effort; never block a spawn
@@ -2389,7 +2392,7 @@ export class SessionService {
         // Runner launches emit their own structured stream-json; no hooks needed.
         cmd = provider.buildRunnerCommand({ workDir, prompt: runnerPrompt, secretsMcp });
       } else {
-        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs);
+        const statusHooks = this.buildStatusHooks(terminalId, terminal.type, specs, !!sk);
         grokHomeDir = statusHooks?.grokHomeDir;
         const branchFrom: string | undefined = typeof config.branchFrom === 'string' ? config.branchFrom : undefined;
         // Honor a per-thread model pick (config.model) for CLI (PTY) threads too, not
