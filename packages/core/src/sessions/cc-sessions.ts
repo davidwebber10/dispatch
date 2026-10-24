@@ -310,6 +310,64 @@ function readLastTurn(workDir: string, sessionId: string): { mtimeMs: number; la
   }
 }
 
+export const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ClaudeEffort = (typeof CLAUDE_EFFORT_LEVELS)[number];
+// Optional [1m]-style suffix: the 1M-context variants.
+const MODEL_ID_RE = /^claude-[a-z0-9][a-z0-9.\-]{0,60}(\[[a-z0-9]{1,8}\])?$/;
+
+/**
+ * The model and effort the lead agent of a Claude session ran its LAST turn with, read from the
+ * transcript tail. The transcript is the one record that is right for both transports: a `/model`
+ * or `/effort` typed in the CLI (PTY) changes only that process, and Dispatch never sees it, but
+ * the next assistant entry carries `requestedModel` and `effort`.
+ *
+ * `requestedModel` (what the lead asked for), NOT `message.model` (what answered): a fallback
+ * model that answers a turn must not become the thread's saved model. Sub-agent entries
+ * (`isSidechain`) and `<synthetic>` entries are skipped. A value that does not look like a model
+ * id or a known effort level is dropped. Returns null when there is no readable lead turn.
+ */
+export function readSessionSettings(workDir: string, sessionId: string): { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null {
+  try {
+    const file = resolveTranscriptPath(workDir, sessionId);
+    if (!file) return null;
+    const stat = fs.statSync(file);
+    const start = Math.max(0, stat.size - TAIL_BYTES);
+    const len = stat.size - start;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf-8').split('\n');
+    if (start > 0) lines.shift();
+    let out: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null = null;
+    const efforts = new Set<string>();
+    let explicitEffort = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const trimmed = lines[i].trim();
+      if (!trimmed) continue;
+      let o: any;
+      try { o = JSON.parse(trimmed); } catch { continue; }
+      // `/effort` prints "Set effort level to X" into the transcript: direct evidence the owner
+      // chose it, even when every later turn shows the same value.
+      if (o?.type === 'user' && !o.isSidechain && /<local-command-stdout>Set effort level to /.test(JSON.stringify(o.message?.content ?? ''))) explicitEffort = true;
+      if (!o || o.type !== 'assistant' || o.isSidechain || o.isMeta) continue;
+      if (o.message?.model === SYNTHETIC_MODEL) continue;
+      const effort = (CLAUDE_EFFORT_LEVELS as readonly string[]).includes(o.effort) ? (o.effort as ClaudeEffort) : undefined;
+      if (effort) efforts.add(effort);
+      if (!out) {
+        out = {};
+        if (typeof o.requestedModel === 'string' && MODEL_ID_RE.test(o.requestedModel)) out.model = o.requestedModel;
+        if (effort) out.effort = effort;
+      }
+    }
+    // The effort moved within the window we can see, or an /effort command is in it (or /model, which
+    // carries its own effort). Without a change, the effort is just the model's default, not a choice.
+    if (out) out.effortChanged = efforts.size > 1 || explicitEffort;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Classify the tail of a claude session's transcript for the boot kickstart's
  * idempotency: is the last turn complete, and when did the file last change?

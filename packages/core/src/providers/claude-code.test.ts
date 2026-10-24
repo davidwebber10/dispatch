@@ -34,3 +34,16 @@ describe('claudeCodeProvider.buildStructuredCommand', () => {
     expect(claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', autoMemoryDirectory: '' }).args).not.toContain('--settings');
   });
 });
+
+describe('claudeCodeProvider --effort', () => {
+  const secrets = undefined;
+  it('passes --effort on new, resume and structured commands, and omits it when unset', () => {
+    const base = { workDir: '/w', secretsMcp: secrets };
+    expect(claudeCodeProvider.buildNewCommand({ ...base, effort: 'high' }).args).toEqual(expect.arrayContaining(['--effort', 'high']));
+    expect(claudeCodeProvider.buildResumeCommand({ ...base, externalSessionId: 's', effort: 'xhigh' }).args).toEqual(expect.arrayContaining(['--effort', 'xhigh']));
+    expect(claudeCodeProvider.buildStructuredCommand!({ workDir: '/w', effort: 'max' }).args).toEqual(expect.arrayContaining(['--effort', 'max']));
+    expect(claudeCodeProvider.buildNewCommand(base).args).not.toContain('--effort');
+    expect(claudeCodeProvider.buildResumeCommand({ ...base, externalSessionId: 's' }).args).not.toContain('--effort');
+    expect(claudeCodeProvider.buildStructuredCommand!({ workDir: '/w' }).args).not.toContain('--effort');
+  });
+});
