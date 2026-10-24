@@ -6,7 +6,7 @@ import { runCommand } from '../src/index.js';
 
 const THREAD_KEY = `dtk_${'T'.repeat(43)}`;
 const SHELL_KEY = `dsk_${'S'.repeat(43)}`;
-const API = 'http://localhost:3456';
+const API = 'http://127.0.0.1:3456';
 
 let out: string[];
 let tmp: string;
@@ -54,12 +54,19 @@ describe('dispatch roles sends a credential', () => {
     expect(readOwnerToken).not.toHaveBeenCalled();
   });
 
-  test('a thread key is not sent when DISPATCH_API is unset (destination rule)', async () => {
+  test('a thread key with no DISPATCH_API is refused before any request (destination rule)', async () => {
     const readOwnerToken = vi.fn(() => 'owner-tok');
     const rolesFetch = vi.fn(async () => res(200, { roles: [] }));
-    await runCommand(['roles', 'list'], { daemon: {} as any, port: 3456, readOwnerToken, rolesFetch, processEnv: { DISPATCH_AUTH: THREAD_KEY } } as any);
-    expect(headerOf(rolesFetch as any).Authorization).toBeUndefined();
+    await expect(runCommand(['roles', 'list'], { daemon: {} as any, port: 3456, readOwnerToken, rolesFetch, processEnv: { DISPATCH_AUTH: THREAD_KEY } } as any)).rejects.toThrow(/DISPATCH_API/);
+    expect(rolesFetch).not.toHaveBeenCalled();
     expect(readOwnerToken).not.toHaveBeenCalled();
+  });
+
+  test('roles in a thread use the DISPATCH_API origin and base path', async () => {
+    const rolesFetch = vi.fn(async (_u: string, _i?: RequestInit) => res(200, { roles: [] }));
+    await runCommand(['roles', 'list'], { daemon: {} as any, port: 3456, readOwnerToken: () => 'o', rolesFetch, processEnv: { DISPATCH_AUTH: THREAD_KEY, DISPATCH_API: `${API}/base` } } as any);
+    expect(rolesFetch.mock.calls[0][0]).toBe(`${API}/base/api/roles`);
+    expect(headerOf(rolesFetch as any).Authorization).toBe(`Bearer ${THREAD_KEY}`);
   });
 
   test('an unreadable key file never falls back to the owner token', async () => {
@@ -145,6 +152,25 @@ describe('dispatch api', () => {
     const { ctx, apiFetch } = ctxOf({ processEnv: { DISPATCH_AUTH: THREAD_KEY, DISPATCH_API: API } });
     await runCommand(['api', 'GET', '/api/whoami'], ctx);
     expect(headerOf(apiFetch as any).Authorization).toBe(`Bearer ${THREAD_KEY}`);
+  });
+
+  test('in a thread the URL comes from DISPATCH_API (127.0.0.1, with a base path)', async () => {
+    const a = ctxOf({ processEnv: { DISPATCH_AUTH: THREAD_KEY, DISPATCH_API: API } });
+    await runCommand(['api', 'GET', '/api/whoami'], a.ctx);
+    expect(a.apiFetch.mock.calls[0][0]).toBe('http://127.0.0.1:3456/api/whoami');
+    expect(headerOf(a.apiFetch as any).Authorization).toBe(`Bearer ${THREAD_KEY}`);
+    const b = ctxOf({ processEnv: { DISPATCH_AUTH: THREAD_KEY, DISPATCH_API: `${API}/base/` } });
+    await runCommand(['api', 'GET', '/api/whoami'], b.ctx);
+    expect(b.apiFetch.mock.calls[0][0]).toBe('http://127.0.0.1:3456/base/api/whoami');
+    expect(headerOf(b.apiFetch as any).Authorization).toBe(`Bearer ${THREAD_KEY}`);
+  });
+
+  test('in a thread with no usable DISPATCH_API it refuses and sends nothing', async () => {
+    for (const api of [undefined, 'not a url']) {
+      const { ctx, apiFetch } = ctxOf({ processEnv: { DISPATCH_AUTH: THREAD_KEY, ...(api ? { DISPATCH_API: api } : {}) } });
+      await expect(runCommand(['api', 'GET', '/api/whoami'], ctx)).rejects.toThrow(/DISPATCH_API/);
+      expect(apiFetch).not.toHaveBeenCalled();
+    }
   });
 
   test('an unreadable key file fails before any request', async () => {

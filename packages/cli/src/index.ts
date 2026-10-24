@@ -195,9 +195,31 @@ async function credentialHeaders(ctx: Ctx, url: string): Promise<Record<string, 
   switch (cred.mode) {
     case 'refuse': throw new Error(cred.reason);
     case 'owner': return { Authorization: cred.header };
-    case 'thread': return lib.keyAllowedFor(url, env) ? { Authorization: cred.header } : {};
+    case 'thread':
+      if (!lib.keyAllowedFor(url, env)) throw new Error('This thread key is only for the daemon at DISPATCH_API. Refusing to send it to another address.');
+      return { Authorization: cred.header };
     default: return {};
   }
+}
+
+/**
+ * The full URL for a daemon path. In a thread it is built from DISPATCH_API (host, port and base
+ * path), the only place the key may go; a missing or invalid DISPATCH_API is refused with no request.
+ * Outside a thread it is this computer's daemon on ctx.port.
+ */
+async function daemonUrl(ctx: Ctx, apiPath: string): Promise<string> {
+  const { lib, env, readOwnerToken } = await loadCredential(ctx);
+  const cred = lib.resolveCredential({ env, purpose: 'cli', readOwnerToken });
+  if (cred.mode !== 'thread') return `http://localhost:${ctx.port}${apiPath}`;
+  const api = env.DISPATCH_API;
+  let base: URL;
+  try {
+    if (!api) throw new Error('unset');
+    base = new URL(api);
+  } catch {
+    throw new Error('DISPATCH_API is missing or not a valid URL, so a thread cannot reach the daemon with its key.');
+  }
+  return `${base.origin}${base.pathname.replace(/\/+$/, '')}${apiPath}`;
 }
 
 /** Fetch from the daemon, with the credential; a refused connection becomes the one message an operator needs. */
@@ -250,7 +272,7 @@ async function cmdApi(ctx: Ctx, args: string[]): Promise<void> {
   if (bodySource !== undefined) {
     body = bodySource === '-' ? (ctx.readStdin ? ctx.readStdin() : fs.readFileSync(0, 'utf8')) : fs.readFileSync(bodySource, 'utf8');
   }
-  const url = `http://localhost:${ctx.port}${apiPath}`;
+  const url = await daemonUrl(ctx, apiPath);
   const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, url, {
     method,
     ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
@@ -441,7 +463,7 @@ async function cmdRoles(ctx: Ctx, args: string[]): Promise<void> {
  *  into the one message an operator actually needs: start the daemon. */
 async function rolesRequest(ctx: Ctx, path: string, init?: RequestInit): Promise<unknown> {
   const fetchFn = ctx.rolesFetch ?? fetch;
-  const url = `http://localhost:${ctx.port}/api/roles${path}`;
+  const url = await daemonUrl(ctx, `/api/roles${path}`);
   const res = await daemonFetch(ctx, fetchFn, url, init);
   const body = (await res.json()) as { error?: string };
   if (!res.ok) {
