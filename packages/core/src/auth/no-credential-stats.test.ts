@@ -12,6 +12,24 @@ describe('pathPattern', () => {
   });
 });
 
+describe('a key in the request', () => {
+  const key = 'dtk_' + 'AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQ'.slice(0, 43); // no digit
+  test('pathPattern hides a key segment, with or without a digit', () => {
+    expect(pathPattern(`/api/terminals/${key}/ws`)).toBe('/api/terminals/:id/ws');
+    expect(pathPattern(`/api/x/dck_${'a1'.repeat(21)}b`)).toBe('/api/x/:id');
+  });
+  test('no log line or count holds a key from the path or the user agent', () => {
+    const lines: string[] = [];
+    let t = 0;
+    const s = createNoCredentialStats({ log: (l) => lines.push(l), now: () => t });
+    s.record(req('GET', `/api/terminals/${key}`, { 'user-agent': `curl ${key}` }));
+    t += 61 * 60_000;
+    s.record(req('GET', `/api/other/${key}`));
+    expect(lines.join('\n')).not.toContain(key);
+    expect(JSON.stringify(s.snapshot())).not.toContain(key);
+  });
+});
+
 describe('createNoCredentialStats', () => {
   test('counts per category and pattern, logs first sight only', () => {
     let t = 0;

@@ -203,6 +203,21 @@ describe('refusal log', () => {
   });
 });
 
+describe('refusal log with a key in the path', () => {
+  test('the line holds neither the header key nor a key written into the URL', async () => {
+    const { app, registry } = build();
+    const a = registry.mint({ kind: 'thread', terminalId: 't1' });
+    const b = registry.mint({ kind: 'thread', terminalId: 't2' });
+    registry.revoke(a.handle);
+    await request(app).get(`/api/terminals/${b.key}`).set(H).set('Authorization', `Bearer ${a.key}`);
+    await request(app).post(`/api/access/login`).set(H).set('Authorization', `Bearer ${a.key}`).send({});
+    const refusals = lines.filter((l) => l.includes('refused'));
+    expect(refusals.length).toBeGreaterThan(0);
+    expect(lines.join('\n')).not.toContain(a.key);
+    expect(lines.join('\n')).not.toContain(b.key);
+  });
+});
+
 describe('stats', () => {
   test('Sec-Fetch-Mode counts as browser, none as program', async () => {
     const { app, stats } = build();

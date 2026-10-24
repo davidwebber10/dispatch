@@ -6,6 +6,7 @@ import { BOX_TOKEN_HEADER, tokenMatches } from './box-token.js';
 import { bearerKey, type KeyPrincipal, type KeyRegistry } from './principals.js';
 import type { KeyScope } from './key-scope.js';
 import type { NoCredentialStats } from './no-credential-stats.js';
+import { redactKeys } from './redact-keys.js';
 
 export { bearerKey } from './principals.js';
 
@@ -40,7 +41,8 @@ const REFUSAL_WINDOW_MS = 60_000;
 /** Rate-limited refusal lines: the first per key hash, then one per minute with a count. Never the key. */
 function createRefusalLog(log: (line: string) => void, now: () => number) {
   const seen = new Map<string, { last: number; suppressed: number }>();
-  return (key: string, method: string, p: string) => {
+  return (key: string, method: string, rawPath: string) => {
+    const p = redactKeys(rawPath); // a caller can write a key into the URL
     const id = crypto.createHash('sha256').update(key).digest('hex').slice(0, 8);
     const t = now();
     const e = seen.get(id);

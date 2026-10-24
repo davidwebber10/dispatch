@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import { redactKeys } from './redact-keys.js';
 
 /**
  * Stage 1 counts of requests that carry no credential (spec 6.9). In stage 1 the owner's browser
@@ -9,14 +10,15 @@ import type { Request } from 'express';
 export type NoCredentialCategory = 'browser' | 'program';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const KEY_SEGMENT = /^(dtk|dck|dsk)_[A-Za-z0-9_-]{43}$/;
 const LONG_ID = /^(?=.*\d)[A-Za-z0-9_-]{20,}$/;
 const HOUR_MS = 60 * 60_000;
 const MAX_PATTERNS = 500;
 const TOP = 20;
 
-/** Replace each UUID-like segment, and each id-like segment of 20 or more characters with a digit, by :id. */
+/** Replace each UUID-like segment, each id-like segment of 20 or more characters with a digit, and each key by :id. */
 export function pathPattern(p: string): string {
-  return p.split('/').map((seg) => (UUID.test(seg) || LONG_ID.test(seg) ? ':id' : seg)).join('/');
+  return p.split('/').map((seg) => (UUID.test(seg) || LONG_ID.test(seg) || KEY_SEGMENT.test(seg) ? ':id' : seg)).join('/');
 }
 
 export interface CategoryCounts { total: number; top: { pattern: string; count: number }[] }
@@ -47,7 +49,7 @@ export function createNoCredentialStats(opts: { log?: (line: string) => void; no
       totals[category]++;
       sinceSummary[category]++;
       if (first) {
-        const ua = String(req.headers['user-agent'] ?? '').replace(/[\r\n]+/g, ' ').slice(0, 80);
+        const ua = redactKeys(String(req.headers['user-agent'] ?? '')).replace(/[\r\n]+/g, ' ').slice(0, 80);
         log(`[keys] no-credential ${category} ${pattern} UA=${ua}`);
       }
       const t = now();
