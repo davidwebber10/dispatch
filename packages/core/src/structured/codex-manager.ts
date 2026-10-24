@@ -14,6 +14,7 @@
 // ALL Codex↔Claude payload mapping lives in codex-translate.ts. This file is JSON-RPC plumbing
 // + the escalate/auto-allow permission membrane (identical policy to the Claude manager).
 
+import { pauseLabel } from '../limits/detect.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
 import * as readline from 'readline';
@@ -500,6 +501,11 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
         case 'failed':
           session.turnActive = false;
           this.emit('failed', session.terminalId);
+          break;
+        case 'usage-limit':
+          session.turnActive = false;
+          this.emit('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.emit('usage-limit', session.terminalId, action.limit);
           break;
         case 'busy':
           this.emit('busy', session.terminalId, { turnId: session.currentTurnId });
