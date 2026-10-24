@@ -410,6 +410,19 @@ export class SessionService {
   }
 
   /**
+   * The MCP servers in the shape that Grok and OpenCode read. A server with authEnv gets the key as a
+   * reference to the variable (`ref`, in that harness's own syntax), never as a literal.
+   */
+  private mcpEntries(specs: McpServerSpec[], ref: string): Record<string, McpServerEntry> {
+    const out: Record<string, McpServerEntry> = {};
+    for (const spec of specs) {
+      const env = spec.authEnv ? { ...(spec.env ?? {}), DISPATCH_AUTH: ref } : spec.env;
+      out[spec.name] = { command: spec.command, args: spec.args, ...(env ? { env } : {}) };
+    }
+    return out;
+  }
+
+  /**
    * Resolve the per-terminal status-hooks injection: ask the provider to shape
    * the plan, then do the IO (write the Claude settings file) so the build*
    * commands receive ready-to-use args. No-op until the server sets the context.
@@ -432,10 +445,7 @@ export class SessionService {
     if (!plan) return undefined;
     if (plan.grokHooks) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of mcpSpecs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(mcpSpecs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
           dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
           realHome: path.join(os.homedir(), '.grok'),
@@ -2357,11 +2367,15 @@ export class SessionService {
       const intgSpecs = this.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
       if (this.isPeerEligible(terminal.type)) {
-        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config)));
+        specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk));
         prompts.push(this.peerPromptFor(terminal));
       }
       const developerNote = this.toolsAwareness?.() ?? null;
-      const secretsMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote });
+      const secretsMcp = composeInjection(specs, {
+        configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote,
+        // The Codex CLI view passes the key-file path through; every other harness the key variable.
+        authVar: sk?.keyFile ? 'DISPATCH_AUTH_FILE' : 'DISPATCH_AUTH',
+      });
       if (config.transport === 'structured' && this.structuredManagerFor(terminal.type)) {
         // Spawn (or, when an external_id is already known, RESUME) the structured
         // thread via the right manager for this harness (claude stream-json / codex
@@ -2560,11 +2574,15 @@ export class SessionService {
     const intgSpecs = this.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
     if (this.isPeerEligible(terminal.type)) {
-      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config)));
+      specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk));
       prompts.push(this.peerPromptFor(terminal));
     }
     const developerNote = this.toolsAwareness?.() ?? null;
-    const structuredMcp = composeInjection(specs, { configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote });
+    const structuredMcp = composeInjection(specs, {
+      configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote,
+      // Codex Pretty: the thread config (a pipe to the app-server) holds the literal key.
+      ...(terminal.type === 'codex' && sk ? { codexAuthLiteral: sk.key } : {}),
+    });
 
     // Grok's MCP servers ride a per-thread plugin passed as `--plugin-dir` — the `grok
     // agent` subcommand's TRUSTED plugin scope. NOT via GROK_HOME like the PTY flow: a
@@ -2575,10 +2593,7 @@ export class SessionService {
     let grokPluginDir: string | undefined;
     if (terminal.type === 'grok' && this.statusContext) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of specs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(specs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
           dir: path.join(this.statusContext.hooksDir, 'grok-homes', terminal.id),
           realHome: path.join(os.homedir(), '.grok'),
@@ -2704,10 +2719,7 @@ export class SessionService {
     let opencodeEnv: Record<string, string> | undefined;
     if (terminal.type === 'opencode' && this.statusContext) {
       try {
-        const mcpServers: Record<string, McpServerEntry> = {};
-        for (const spec of specs) {
-          mcpServers[spec.name] = { command: spec.command, args: spec.args, ...(spec.env ? { env: spec.env } : {}) };
-        }
+        const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}');
         // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
         // chat-only: every tool off, no MCP, and no peer-tools block in the prompt (it
         // would describe tools the model cannot call). The verdict is pinned in
@@ -2774,7 +2786,14 @@ export class SessionService {
       // MCP servers (its `dispatch` identity) and its terminal id for shell commands (the
       // browser-auth shim) ride its thread/start + thread/resume `config` instead.
       ...(terminal.type === 'codex'
-        ? { threadConfig: { ...(structuredMcp?.codexThreadConfig ?? {}), [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id } }
+        ? {
+            threadConfig: {
+              ...(structuredMcp?.codexThreadConfig ?? {}),
+              [`shell_environment_policy.set.${TERMINAL_ID_ENV_VAR}`]: terminal.id,
+              // The thread's shell commands (the browser-auth shim) carry its own key (probe results).
+              ...(sk ? { 'shell_environment_policy.set.DISPATCH_AUTH': sk.key } : {}),
+            },
+          }
         : {}),
       // Codex keeps {} (the shared app-server env must hold nothing per thread); every other
       // harness gets its own key in the env of its own process.
@@ -3014,7 +3033,7 @@ export class SessionService {
    * written to a PER-TERMINAL path (see `perTerminalMcpConfigPath`), never the
    * shared daemon-wide one.
    */
-  private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number): McpServerSpec {
+  private agencyServerSpec(terminalId: string, sessionId: string, spawnDepth: number, authEnv = false): McpServerSpec {
     const agencyPath = fileURLToPath(new URL('../overseer/agency-mcp.js', import.meta.url));
     const api = this.apiUrl();
     return {
@@ -3028,6 +3047,7 @@ export class SessionService {
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
         ...(api ? { DISPATCH_API: api } : {}),
       },
+      ...(authEnv ? { authEnv: true } : {}),
     };
   }
 

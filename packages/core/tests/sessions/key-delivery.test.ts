@@ -171,3 +171,79 @@ describe('13a: environment', () => {
     expect(written.mcpServers.dispatch.env.DISPATCH_API).toBe(API);
   });
 });
+
+describe('13b: MCP injection', () => {
+  it('a Claude PTY thread: the config file holds a reference to the variable, never the key', () => {
+    const t = svc.createTerminal('s1', 'claude-code', 'A');
+    const raw = fs.readFileSync(cfgOf(t.id), 'utf8');
+    expect(raw).not.toMatch(KEY_RE);
+    expect(JSON.parse(raw).mcpServers.dispatch.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+    expect(fs.statSync(cfgOf(t.id)).mode & 0o777).toBe(0o600);
+    scanArgv(pty.calls);
+  });
+
+  it('a Claude structured thread: same reference, key only in the spawn env', () => {
+    const m = new CapturingClaude();
+    svc.registerStructuredManager('claude-code', m);
+    svc.setStructuredCommandOverride({ command: 'true', args: [] });
+    const t = svc.createTerminal('s1', 'claude-code', 'A', false, undefined, undefined, structuredCfg);
+    const raw = fs.readFileSync(cfgOf(t.id), 'utf8');
+    expect(raw).not.toMatch(KEY_RE);
+    expect(JSON.parse(raw).mcpServers.dispatch.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+    scanArgv(m.calls);
+  });
+
+  it('a Codex CLI thread: env_vars passes the key-file path through; no key in argv', () => {
+    const t = svc.createTerminal('s1', 'codex', 'C');
+    const call = pty.calls[0];
+    expect(call.args).toContain('mcp_servers.dispatch.env_vars=["DISPATCH_AUTH_FILE"]');
+    expect(call.args).toContain(`mcp_servers.dispatch.env.DISPATCH_TERMINAL=${JSON.stringify(t.id)}`);
+    expect(call.args).toContain(`mcp_servers.dispatch.env.DISPATCH_API=${JSON.stringify(API)}`);
+    expect(call.args.join(' ')).not.toMatch(KEY_RE);
+    scanArgv(pty.calls);
+  });
+
+  it('a Codex Pretty thread: thread config holds the literal key for the MCP server and the shell', () => {
+    const m = new CapturingCodex();
+    svc.registerStructuredManager('codex', m);
+    svc.setStructuredCommandOverride({ command: 'true', args: [] });
+    const t = svc.createTerminal('s1', 'codex', 'C', false, undefined, undefined, structuredCfg);
+    const cfg = m.calls[0].threadConfig!;
+    const key = cfg['shell_environment_policy.set.DISPATCH_AUTH'] as string;
+    expect(reg.resolve(key)).toMatchObject({ kind: 'thread', terminalId: t.id });
+    expect(cfg['mcp_servers.dispatch'].env.DISPATCH_AUTH).toBe(key);
+    expect(cfg['mcp_servers.dispatch'].env_vars).toBeUndefined();
+    expect(cfg['mcp_servers.dispatch'].env.DISPATCH_API).toBe(API);
+    expect(cfg['shell_environment_policy.set.' + TERMINAL_ID_ENV_VAR]).toBe(t.id);
+    // the app-server argv and env hold nothing
+    expect(m.calls[0].env).toEqual({});
+    scanArgv(m.calls);
+    // the per-thread config file (Claude-style) never holds the literal
+    expect(fs.readFileSync(cfgOf(t.id), 'utf8')).not.toContain(key);
+    // a resume carries the same sticky key
+    svc.stopTerminal(t.id);
+    svc.ensureStructuredAlive(t.id);
+    expect(m.calls[1].threadConfig!['shell_environment_policy.set.DISPATCH_AUTH']).toBe(key);
+    expect(m.calls[1].threadConfig!['mcp_servers.dispatch'].env.DISPATCH_AUTH).toBe(key);
+  });
+
+  it('the other servers (secrets, integrations) never receive the key', () => {
+    svc.setSecretsServerSpec(() => ({ spec: { name: 'doppler', command: 'node', args: ['d.js'], envVars: ['DOPPLER_TOKEN'] }, prompt: null }));
+    svc.setIntegrationsSpecs(() => [{ name: 'fs', command: 'npx', args: [], env: { ROOT: '/tmp' } }]);
+    const t = svc.createTerminal('s1', 'claude-code', 'A');
+    const written = JSON.parse(fs.readFileSync(cfgOf(t.id), 'utf8'));
+    expect(written.mcpServers.doppler.env).toBeUndefined();
+    expect(written.mcpServers.fs.env).toEqual({ ROOT: '/tmp' });
+    expect(written.mcpServers.dispatch.env.DISPATCH_AUTH).toBe('${DISPATCH_AUTH}');
+  });
+
+  it('a service with no registry writes no key reference', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 't', workingDir: path.join(root, 'proj') });
+    const plain = new SessionService(db, pty, path.join(root, 'mcp2.json'));
+    const t = plain.createTerminal('s1', 'claude-code', 'A');
+    const written = JSON.parse(fs.readFileSync(path.join(root, `thread-${t.id}.mcp.json`), 'utf8'));
+    expect(written.mcpServers.dispatch.env.DISPATCH_AUTH).toBeUndefined();
+  });
+});
