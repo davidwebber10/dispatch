@@ -99,4 +99,10 @@ describe('PtyLimitWatcher', () => {
     expect(hits).toEqual([{ id: 't3', kind: 'session' }]);
     w3.forget('t3');
   });
+  it('a quote followed by prose on the same line never parks', () => {
+    w.feed('t1', "As an example the CLI prints: You've hit your session limit · resets 1:10am (America/Indianapolis) and then it waits for the reset, which is why the daemon has to wake the thread by itself later on.\r\n");
+    quiet(10000);
+    expect(hits).toEqual([]);
+  });
 });
+

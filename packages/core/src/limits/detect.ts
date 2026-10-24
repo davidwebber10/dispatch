@@ -149,7 +149,8 @@ export function detectCodexLimit(err: { message?: string; codexErrorInfo?: unkno
 
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\([A-Za-z]/g;
 /** The exact banner Claude Code's screen shows: "You've hit your <kind> limit · resets <time>". */
-const BANNER = /you['’]ve hit your\s+[\w\s.-]*?limit\s*[·∙•|-]\s*resets[^\r\n]*/i;
+const BANNER_RESET = String.raw`resets(?:\s+(?:at\s+)?(?:(?:${DAYS.join('|')})[a-z]*\.?,?\s+)?(?:(?:${MONTHS.join('|')})[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s*)?\d{1,2}(?::\d{2})?\s*(?:am|pm)(?:\s*\([A-Za-z_]+(?:/[A-Za-z_+\-0-9]+)*\))?)?`;
+const BANNER = new RegExp(String.raw`you['’]ve hit your\s+[\w\s.-]*?limit\s*[·∙•|-]\s*${BANNER_RESET}`, 'i');
 
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
 export function detectBannerLimit(output: string, now: number): UsageLimit | null {
@@ -159,14 +160,20 @@ export function detectBannerLimit(output: string, now: number): UsageLimit | nul
   return { kind: kindFromText(message), resetsAt: parseResetTime(message, now)?.at ?? null, message };
 }
 
-/** How many letters and digits the screen shows after the last limit banner. A real stop leaves
+/** How many letters and digits the screen shows around the last limit banner (after it, plus a
+ *  penalty when words lead its line). A real stop leaves
  *  only the prompt box there; an agent that quoted the banner and went on talking leaves prose. */
 export function textAfterBanner(output: string): number {
   const clean = output.replace(ANSI, '');
+  let start = -1;
   let end = -1;
   const re = new RegExp(BANNER.source, 'gi');
-  for (let m = re.exec(clean); m; m = re.exec(clean)) end = m.index + m[0].length;
-  return end < 0 ? 0 : (clean.slice(end).match(/[A-Za-z0-9]/g) ?? []).length;
+  for (let m = re.exec(clean); m; m = re.exec(clean)) { start = m.index; end = m.index + m[0].length; }
+  if (end < 0) return 0;
+  const letters = (t: string) => (t.match(/[A-Za-z0-9]/g) ?? []).length;
+  // Words before the banner on its own line also mean a quote: a real stop line is only the banner.
+  const lead = clean.slice(clean.lastIndexOf('\n', start) + 1, start);
+  return letters(clean.slice(end)) + (letters(lead) > 3 ? 1000 : 0);
 }
 
 const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', usage: 'usage limit' };
