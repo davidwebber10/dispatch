@@ -76,6 +76,13 @@ interface Session {
    */
   pendingSource?: MessageSource;
   /**
+   * A turn is in flight: set by sendMessage (and by an unprompted assistant frame), cleared at
+   * `result`. The CLI also starts turns ITSELF (a background sub-agent or task finishing wakes
+   * it) with no message on stdin; without this flag such a turn never emitted 'busy', so its
+   * `result` was rejected as turn-already-closed and the thread never settled or reported.
+   */
+  turnOpen?: boolean;
+  /**
    * The agent's own declaration for the CURRENT turn, set by report_status and consumed
    * at the `result` boundary. Same lifecycle as lastToolUse: written mid-turn, read once
    * at turn end, then cleared. It must NOT be applied when the tool fires — `result`
@@ -391,6 +398,16 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (event?.type === 'control_cancel_request' && session.pending && event.request_id === session.pending.requestId) {
         this.clearPending(terminalId, session);
       }
+      // A turn the CLI began on its own (no sendMessage): open it here, before its frames and
+      // its `result` are delivered, so the status edge and the thread's report fire at its end.
+      // Only the parent's own output starts a turn: a sub-agent's frames carry parent_tool_use_id,
+      // and a stream_event other than message_start (a trailing stop) is never a start.
+      const startsTurn = event?.parent_tool_use_id == null
+        && (event?.type === 'assistant' || (event?.type === 'stream_event' && event?.event?.type === 'message_start'));
+      if (!session.turnOpen && startsTurn) {
+        session.turnOpen = true;
+        this.emit('busy', terminalId);
+      }
       // Deliver the final frame before settle listeners close analytics or start another turn.
       this.emit('event', terminalId, { ...event, telemetry: { counterScope } });
       // Turn boundary: a `result` event ends the current turn. Three things can have
@@ -403,6 +420,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // its coordinator — 'scheduled' and 'needs-help' must NOT do either (the agent hasn't
       // finished, or is waiting on the human, not filed as done).
       if (event?.type === 'result') {
+        session.turnOpen = false;
         // Backstop: a CLI blocked on a request cannot end a turn, so a pending still set here is
         // stale. Cleared before the settle emits below, so the status sees it while the turn is open.
         if (session.pending) this.clearPending(terminalId, session);
@@ -536,6 +554,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     }
     this.emit('event', terminalId, ev);
     // Turn start: delivering a message kicks off work → the thread is busy.
+    if (s) s.turnOpen = true;
     this.emit('busy', terminalId);
   }
 

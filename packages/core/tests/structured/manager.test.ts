@@ -720,3 +720,45 @@ it('still auto-allows a kill by PID', async () => {
   const ev = await waitForEvent(m, 't1', (e) => e.type === 'user' && /WROTE|DENIED/.test(JSON.stringify(e)));
   expect(ev.message.content[0].content).toBe('WROTE');
 });
+
+it("emits 'busy' for a turn the CLI starts itself, so its end settles (thread reports reached Chat once)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('busy', (id: string) => { if (id === 't1') order.push('busy'); });
+  m.on('idle', (id: string) => { if (id === 't1') order.push('idle'); });
+  m.sendMessage('t1', 'TRIGGER_SELF_TURN');
+  await waitFor(() => order.length >= 4, 3000);
+  expect(order).toEqual(['busy', 'idle', 'busy', 'idle']);
+});
+
+it("does not open a turn for sub-agent frames or a trailing stream stop after a result", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('busy', (id: string) => { if (id === 't1') order.push('busy'); });
+  m.on('idle', (id: string) => { if (id === 't1') order.push('idle'); });
+  m.sendMessage('t1', 'TRIGGER_STRAY_FRAMES');
+  await waitForEvent(m, 't1', (e) => e.type === 'stream_event' && e.event?.type === 'content_block_stop');
+  expect(order).toEqual(['busy', 'idle']);
+});
+
+it("opens a turn for a streamed message_start the CLI sends itself", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('busy', (id: string) => { if (id === 't1') order.push('busy'); });
+  m.sendMessage('t1', 'TRIGGER_STREAM_SELF_TURN');
+  await waitFor(() => order.length >= 2, 3000);
+  expect(order).toEqual(['busy', 'busy']);
+});
+
+it("compact() streams system frames only and opens no turn", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('busy', (id: string) => { if (id === 't1') order.push('busy'); });
+  m.compact('t1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.compact_result === 'success');
+  expect(order).toEqual([]);
+});

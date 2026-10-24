@@ -80,6 +80,45 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-4', request: { subtype: 'can_use_tool', tool_name: 'CronCreate', input: { cron: '*/5 * * * *', prompt: 'poll' }, tool_use_id: 'tu-4' } });
       return;
     }
+    if (text === 'TRIGGER_STRAY_FRAMES') {
+      // A turn, then frames that are NOT the parent starting a turn: a sub-agent's assistant frame
+      // and a trailing stream stop. Neither may open a turn.
+      send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:first' }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      setTimeout(() => {
+        send({ type: 'assistant', parent_tool_use_id: 'tu-sub', message: { content: [{ type: 'text', text: 'sub' }] } });
+        send({ type: 'stream_event', event: { type: 'message_stop' } });
+        send({ type: 'stream_event', event: { type: 'content_block_stop' } });
+      }, 100);
+      return;
+    }
+    if (text === '/compact') {
+      // Compaction streams system frames only (no assistant turn).
+      send({ type: 'system', subtype: 'status', status: 'compacting' });
+      send({ type: 'system', subtype: 'status', status: null, compact_result: 'success' });
+      return;
+    }
+    if (text === 'TRIGGER_STREAM_SELF_TURN') {
+      // A turn, then a self-started one whose first frame is a streamed message_start.
+      send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:first' }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      setTimeout(() => {
+        send({ type: 'stream_event', event: { type: 'message_start' } });
+        send({ type: 'result', subtype: 'success', is_error: false });
+      }, 100);
+      return;
+    }
+    if (text === 'TRIGGER_SELF_TURN') {
+      // A turn, then a second turn the CLI starts ITSELF (a background sub-agent finished and
+      // woke it): assistant + result frames with no user message sent to stdin.
+      send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:first' }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      setTimeout(() => {
+        send({ type: 'assistant', message: { content: [{ type: 'text', text: 'woken' }] } });
+        send({ type: 'result', subtype: 'success', is_error: false });
+      }, 100);
+      return;
+    }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   } else if (msg.type === 'control_request') {
