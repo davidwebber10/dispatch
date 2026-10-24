@@ -809,3 +809,16 @@ it('an ordinary error result is still failed, not a limit', async () => {
   await failedP;
   expect(limit).not.toHaveBeenCalled();
 });
+
+it("a rate_limit_event is emitted as 'rate-limit' with its info, and is not a pause", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const usageLimit = vi.fn();
+  m.on('usage-limit', usageLimit);
+  const p = waitForManagerEvent(m, 'rate-limit', 't1');
+  m.sendMessage('t1', 'TRIGGER_RATE_EVENT');
+  const [info] = await p;
+  expect(info).toMatchObject({ rateLimitType: 'five_hour', utilization: 0.62 });
+  await new Promise((r) => setTimeout(r, 100));
+  expect(usageLimit).not.toHaveBeenCalled();
+});

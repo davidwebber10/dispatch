@@ -68,6 +68,13 @@ rl.on('line', (line) => {
       send({ type: 'result', subtype: 'success', is_error: true, result: words, api_error_status: 429 });
       return;
     }
+    // A rate_limit_event as the CLI sends it every turn (here past the warning level, with unifiedWindows).
+    if (text === 'TRIGGER_RATE_EVENT') {
+      send({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: 1792861200, utilization: 0.62,
+        unifiedWindows: { five_hour: { utilization: 0.62, resetsAt: 1792861200 }, seven_day: { utilization: 0.24, resetsAt: 1793062800 } } } });
+      send({ type: 'result', subtype: 'success', is_error: false, result: 'ok' });
+      return;
+    }
     if (text === 'TRIGGER_ERROR_PLAIN') {
       send({ type: 'result', subtype: 'success', is_error: true, result: 'Tests failed' });
       return;
