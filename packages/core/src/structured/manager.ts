@@ -400,7 +400,11 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       }
       // A turn the CLI began on its own (no sendMessage): open it here, before its frames and
       // its `result` are delivered, so the status edge and the thread's report fire at its end.
-      if (!session.turnOpen && (event?.type === 'assistant' || event?.type === 'stream_event')) {
+      // Only the parent's own output starts a turn: a sub-agent's frames carry parent_tool_use_id,
+      // and a stream_event other than message_start (a trailing stop) is never a start.
+      const startsTurn = event?.parent_tool_use_id == null
+        && (event?.type === 'assistant' || (event?.type === 'stream_event' && event?.event?.type === 'message_start'));
+      if (!session.turnOpen && startsTurn) {
         session.turnOpen = true;
         this.emit('busy', terminalId);
       }
