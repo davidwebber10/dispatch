@@ -720,3 +720,14 @@ it('still auto-allows a kill by PID', async () => {
   const ev = await waitForEvent(m, 't1', (e) => e.type === 'user' && /WROTE|DENIED/.test(JSON.stringify(e)));
   expect(ev.message.content[0].content).toBe('WROTE');
 });
+
+it("emits 'busy' for a turn the CLI starts itself, so its end settles (thread reports reached Chat once)", async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system');
+  const order: string[] = [];
+  m.on('busy', (id: string) => { if (id === 't1') order.push('busy'); });
+  m.on('idle', (id: string) => { if (id === 't1') order.push('idle'); });
+  m.sendMessage('t1', 'TRIGGER_SELF_TURN');
+  await waitFor(() => order.length >= 4, 3000);
+  expect(order).toEqual(['busy', 'idle', 'busy', 'idle']);
+});

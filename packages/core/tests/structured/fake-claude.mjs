@@ -80,6 +80,17 @@ rl.on('line', (line) => {
       send({ type: 'control_request', request_id: 'req-4', request: { subtype: 'can_use_tool', tool_name: 'CronCreate', input: { cron: '*/5 * * * *', prompt: 'poll' }, tool_use_id: 'tu-4' } });
       return;
     }
+    if (text === 'TRIGGER_SELF_TURN') {
+      // A turn, then a second turn the CLI starts ITSELF (a background sub-agent finished and
+      // woke it): assistant + result frames with no user message sent to stdin.
+      send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:first' }] } });
+      send({ type: 'result', subtype: 'success', is_error: false });
+      setTimeout(() => {
+        send({ type: 'assistant', message: { content: [{ type: 'text', text: 'woken' }] } });
+        send({ type: 'result', subtype: 'success', is_error: false });
+      }, 100);
+      return;
+    }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   } else if (msg.type === 'control_request') {
