@@ -78,6 +78,8 @@ import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { startInterimRecapLoop } from './sessions/interim-recap.js';
+import { UsageLimitService, CHAT_ID } from './limits/service.js';
+import { PtyLimitWatcher } from './limits/pty-watch.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
@@ -574,6 +576,21 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
+  // Usage-limit auto-resume: a thread an agent CLI stopped for its quota is parked in the db and
+  // woken after the reset (limits/service.ts). The managers emit 'usage-limit'; SessionService
+  // routes it here. Chat's own turn parks under CHAT_ID and wakes through Chat's retry.
+  const usageLimits = new UsageLimitService({
+    db,
+    markPaused: (id, label) => { if (id !== CHAT_ID) statusService.markScheduled(id, label); },
+    wake: (id, text) => sessionService.resumeAfterUsageLimit(id, text),
+    note: (id, text, o) => endless.noteLimit(id === CHAT_ID ? null : id, text, o.deliver),
+    chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.retry() },
+  });
+  sessionService.setUsageLimitService(usageLimits);
+  endlessManager.on('usage-limit', (_id: string, limit: import('./limits/detect.js').UsageLimit) => {
+    if (endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);
+  });
+
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
 
@@ -688,10 +705,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
   // (live steps + transcript capture + outcome telemetry).
+  // CLI (PTY) Claude threads: the usage-limit banner, once the terminal has gone quiet.
+  const ptyLimits = new PtyLimitWatcher({
+    isIdle: (id) => terminalMonitor.getStatus(id)?.activity !== 'busy',
+    onLimit: (id, limit) => {
+      const t = terminalsDb.getById(db, id);
+      if (t && !t.archived_at && t.type === 'claude-code') usageLimits.park(id, t.type, limit);
+    },
+  });
   ptyManager.on('data', (id: string, data: Buffer) => {
     terminalMonitor.onOutput(id, data);
     agentService.onRunnerData(id, data);
+    ptyLimits.feed(id, data.toString('utf8'));
   });
+  ptyManager.on('exit', (id: string) => ptyLimits.forget(id));
 
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
@@ -935,6 +962,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Boot recovery: auto-resume overseer threads (coordinator + typed agents) that
   // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
   // settle delay before reading status, so it must not block startup.
+  usageLimits.restore();
+  usageLimits.start();
   void sessionService.kickstartInterruptedAgents()
     .then(({ kicked, skipped, completed }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
@@ -993,6 +1022,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
     clearInterval(heartbeat);
+    usageLimits.stop();
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
     endless.stop();

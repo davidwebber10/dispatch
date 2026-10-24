@@ -139,6 +139,14 @@ rl.on('line', (line) => {
       }, 100);
       return;
     }
+    // FAKE_LIMIT_ON_RESUME=<n>: the first n resume messages hit the limit again (reset 1 s ahead).
+    if (typeof text === 'string' && text.startsWith('Your usage limit has reset') && Number(process.env.FAKE_LIMIT_ON_RESUME ?? 0) > (globalThis.__limitHits ??= 0)) {
+      globalThis.__limitHits += 1;
+      const words = "You've hit your session limit · resets 1:10am (America/Indianapolis)";
+      send({ type: 'assistant', apiError: 'usage_limit_reached', isApiErrorMessage: true, quotaLimits: { status: 'rejected', resetsAt: Math.ceil(Date.now() / 1000) + 1, rateLimitType: 'five_hour' }, message: { model: '<synthetic>', content: [{ type: 'text', text: words }] } });
+      send({ type: 'result', subtype: 'success', is_error: true, result: words });
+      return;
+    }
     send({ type: 'assistant', message: { content: [{ type: 'text', text: 'echo:' + text }] } });
     send({ type: 'result', subtype: 'success', is_error: false });
   } else if (msg.type === 'control_request') {

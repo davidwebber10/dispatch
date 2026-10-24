@@ -4,7 +4,7 @@ import { initSchema } from '../db/schema.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
-import { UsageLimitService, RESUME_TEXT } from './service.js';
+import { UsageLimitService, RESUME_TEXT, CHAT_ID } from './service.js';
 
 const ZONE = 'America/Indianapolis';
 const T0 = Date.UTC(2026, 9, 24, 4, 31); // 00:31 local
@@ -210,5 +210,21 @@ describe('restart', () => {
     clock = monday + 2 * MIN; again.tick();
     expect(wakes).toHaveLength(1);
     again.stop();
+  });
+});
+
+describe('Chat\'s own turn', () => {
+  it('wakes through the chat hook, and is dropped when Chat is busy again', () => {
+    let busy = false; const woke: number[] = [];
+    const chat = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: () => {}, markPaused: () => {}, note: (_i, text) => notes.push({ id: _i, text, deliver: false }), chat: { isBusy: () => busy, wake: () => { woke.push(clock); return true; } } });
+    chat.park(CHAT_ID, 'claude-code', session);
+    expect(notes[0].text).toContain('[Chat]');
+    clock = RESET + 2 * MIN; chat.tick();
+    expect(woke).toHaveLength(1);
+    chat.park(CHAT_ID, 'claude-code', { kind: 'session', resetsAt: clock + MIN, message: 'again' });
+    busy = true; clock += 5 * MIN; chat.tick();
+    expect(woke).toHaveLength(1);
+    expect(parksDb.get(db, CHAT_ID)).toBeNull();
+    chat.stop();
   });
 });

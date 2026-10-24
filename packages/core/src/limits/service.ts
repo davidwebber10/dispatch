@@ -5,6 +5,9 @@ import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
 import { pauseLabel, type UsageLimit } from './detect.js';
 
+/** The park key of Endless Chat's own turn: Chat has no thread row, so it wakes through `deps.chat`. */
+export const CHAT_ID = 'endless-chat';
+
 /** The message a parked thread gets when its limit has reset. */
 export const RESUME_TEXT = 'Your usage limit has reset. Continue where you left off.';
 
@@ -32,6 +35,8 @@ export interface UsageLimitDeps {
   wake(terminalId: string, text: string): void;
   /** One line for Chat. `deliver` also wakes Chat to read it. */
   note(terminalId: string, text: string, opts: { deliver: boolean }): void;
+  /** How to wake Chat's own paused turn (park key CHAT_ID). Without it a Chat park is dropped. */
+  chat?: { isBusy(): boolean; wake(): boolean };
   now?: () => number;
   /** The zone the pause label is shown in. Default: this machine. */
   zone?: string;
@@ -61,6 +66,7 @@ export class UsageLimitService {
   }
 
   private threadName(terminalId: string): string {
+    if (terminalId === CHAT_ID) return 'Chat';
     return terminalsDb.getById(this.d.db, terminalId)?.label || terminalId;
   }
 
@@ -94,21 +100,24 @@ export class UsageLimitService {
   tick(): void {
     const now = this.now();
     for (const row of parksDb.listDue(this.d.db, now)) {
-      const t = terminalsDb.getById(this.d.db, row.terminal_id);
-      if (!t || t.archived_at || t.status === 'working') { parksDb.remove(this.d.db, row.terminal_id); continue; }
+      const isChat = row.terminal_id === CHAT_ID;
+      const t = isChat ? null : terminalsDb.getById(this.d.db, row.terminal_id);
+      const gone = isChat ? !this.d.chat || this.d.chat.isBusy() : !t || !!t.archived_at || t.status === 'working';
+      if (gone) { parksDb.remove(this.d.db, row.terminal_id); continue; }
+      const name = isChat ? 'Chat' : (t!.label || row.terminal_id);
       const last = this.lastWake.get(row.provider);
       if (last !== undefined && now - last < this.o.staggerMs) continue;
       this.lastWake.set(row.provider, now);
       const attempts = row.attempts + 1;
       try {
-        this.d.wake(row.terminal_id, RESUME_TEXT);
+        if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
-        this.d.note(row.terminal_id, `[${t.label || row.terminal_id}] resumed after the ${row.kind} limit (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
+        this.d.note(row.terminal_id, `[${name}] resumed after the ${row.kind} limit (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
         if (attempts >= this.o.maxAttempts) {
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
-          this.d.note(row.terminal_id, `[${t.label || row.terminal_id}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
+          this.d.note(row.terminal_id, `[${name}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
         } else {
           parksDb.setState(this.d.db, row.terminal_id, 'parked', attempts, now + this.o.sendRetryMs, now);
         }

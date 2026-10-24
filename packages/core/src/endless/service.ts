@@ -329,6 +329,22 @@ export class EndlessService {
     return written;
   }
 
+  /**
+   * One line about a usage-limit pause (limits/service.ts) for any thread, or for Chat itself
+   * (`terminalId` null). Logged as a work line. `deliver` also wakes Chat to read it (the cap
+   * notice); a pause or a resume does not, so Chat's own budget is not spent on it. Never throws.
+   */
+  noteLimit(terminalId: string | null, text: string, deliver: boolean): void {
+    if (this.phase !== 'ready' || this.closed) return;
+    try {
+      const t = terminalId ? terminalsDb.getById(this.o.db, terminalId) : null;
+      const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: t ? terminalId : null });
+      if (deliver && written.length) this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
+    } catch (err) {
+      console.warn('[endless] the usage-limit note failed:', err);
+    }
+  }
+
   /** What a waiting thread asks: its pending question or gated tool, else its last output. */
   private waitingText(terminalId: string): string {
     let asked = '';
