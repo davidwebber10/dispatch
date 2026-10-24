@@ -202,4 +202,59 @@ describe('memory MCP server', () => {
     expect((CARD_FIELDS_SCHEMA.source.properties.kind.enum as readonly string[])).toContain('user');
     expect(TOOLS.map((t) => t.name)).not.toContain('watch_thread');
   });
+  describe('the Chat key', () => {
+    const KEY = `dck_${'C'.repeat(43)}`;
+    const saved = { api: process.env.DISPATCH_API, auth: process.env.DISPATCH_AUTH };
+    afterEach(() => {
+      if (saved.api === undefined) delete process.env.DISPATCH_API; else process.env.DISPATCH_API = saved.api;
+      if (saved.auth === undefined) delete process.env.DISPATCH_AUTH; else process.env.DISPATCH_AUTH = saved.auth;
+    });
+    const hdr = (m: ReturnType<typeof vi.fn>, k: number) => ((m.mock.calls[k][1] as RequestInit | undefined)?.headers ?? {}) as Record<string, string>;
+
+    it('every route sends Authorization: Bearer KEY to the daemon URL', async () => {
+      process.env.DISPATCH_API = 'http://localhost:9977';
+      process.env.DISPATCH_AUTH = KEY;
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { id: 's1', name: 'salsify', folder: '/w/salsify' }))
+        .mockResolvedValueOnce(json(200, { harness: 'claude-code', available: true }))
+        .mockResolvedValueOnce(json(201, { id: 't9', label: 'Fix login' }))
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      await callTool('spawn_agent', { project: 'salsify', agentType: 'implementer', task: 'x' });
+      expect(fetchMock).toHaveBeenCalledTimes(5);
+      for (let k = 0; k < 5; k++) expect(hdr(fetchMock, k).Authorization).toBe(`Bearer ${KEY}`);
+      const z = vi.fn(async () => json(200, { text: 't', images: [] }));
+      vi.stubGlobal('fetch', z);
+      await callTool('zoom', { id: 0, n: 1 });
+      expect(hdr(z, 0).Authorization).toBe(`Bearer ${KEY}`);
+      const l = vi.fn(async () => json(200, { text: 'x', rules: [] }));
+      vi.stubGlobal('fetch', l);
+      await callTool('ledger_list', { project: 'p' });
+      expect(hdr(l, 0).Authorization).toBe(`Bearer ${KEY}`);
+    });
+
+    it('sends nothing without DISPATCH_API, and nothing without a key', async () => {
+      process.env.DISPATCH_AUTH = KEY;
+      delete process.env.DISPATCH_API;
+      const a = vi.fn(async () => json(200, { text: 't', images: [] }));
+      vi.stubGlobal('fetch', a);
+      await callTool('zoom', { id: 0, n: 1 });
+      expect(hdr(a, 0).Authorization).toBeUndefined();
+      process.env.DISPATCH_API = 'http://localhost:9977';
+      delete process.env.DISPATCH_AUTH;
+      const b = vi.fn(async () => json(200, { text: 't', images: [] }));
+      vi.stubGlobal('fetch', b);
+      await callTool('zoom', { id: 0, n: 1 });
+      expect(hdr(b, 0).Authorization).toBeUndefined();
+    });
+
+    it('shows a key refusal with the fixed texts', async () => {
+      process.env.DISPATCH_API = 'http://localhost:9977';
+      process.env.DISPATCH_AUTH = KEY;
+      vi.stubGlobal('fetch', vi.fn(async () => json(403, { error: 'owner_only', message: 'raw' })));
+      const r = await callTool('zoom', { id: 0, n: 1 });
+      expect((r.content[0] as any).text).toBe('Error: only the owner can do this. Ask the owner to do it in the browser.');
+    });
+  });
 });

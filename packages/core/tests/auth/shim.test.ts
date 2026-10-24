@@ -1,7 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import http from 'http';
+import { execFile, execFileSync } from 'child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { installBrowserShim, withShimPath, TERMINAL_ID_ENV_VAR } from '../../src/auth/shim.js';
 
@@ -30,127 +31,98 @@ describe('installBrowserShim', () => {
       DISPATCH_SERVER_URL: 'http://127.0.0.1:3456',
       PATH: `${binDir}:/usr/local/bin:/usr/bin`,
     });
-    expect(script).toContain('${DISPATCH_SERVER_URL}/api/auth-requests');
     expect(script).toContain('browser-env');
-    expect(script).toContain('cwd');
-    expect(script).toContain('curl');
+    expect(script).not.toContain('curl');
+    expect(script).toContain('shim-relay.js');
     expect(script).toMatch(/\|\|\s*true/);
   });
 
-  it('posts auth request JSON when executed without node in PATH', () => {
+  it('runs the relay with the URL and the source as the only arguments', () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-'));
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-curl-'));
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cwd-'));
-    const realCwd = fs.realpathSync(cwd);
-    const postedUrlFile = path.join(dataDir, 'posted-url.txt');
-    const postedDataFile = path.join(dataDir, 'posted-data.json');
-    const fakeCurl = path.join(fakeBin, 'curl');
+    const argvFile = path.join(dataDir, 'argv.json');
+    const fakeRelay = path.join(dataDir, 'fake-relay.mjs');
+    fs.writeFileSync(fakeRelay, `import fs from 'node:fs';\nfs.writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));\n`);
 
-    fs.writeFileSync(fakeCurl, `#!/bin/sh
-data=''
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --data)
-      shift
-      data="$1"
-      ;;
-    http://*|https://*)
-      printf '%s' "$1" > '${postedUrlFile}'
-      ;;
-  esac
-  shift
-done
-printf '%s' "$data" > '${postedDataFile}'
-exit 0
-`);
-    fs.chmodSync(fakeCurl, 0o755);
-
-    installBrowserShim({ dataDir, serverUrl: 'http://127.0.0.1:3456' });
-
+    installBrowserShim({ dataDir, serverUrl: 'http://127.0.0.1:3456', relayPath: fakeRelay });
+    // No node and no curl on PATH: the shim must use the absolute node path and never curl.
     execFileSync(path.join(dataDir, 'bin', 'dispatch-open'), ['https://example.com/oauth?client_id=abc'], {
       cwd,
-      env: {
-        PATH: fakeBin,
-        DISPATCH_SERVER_URL: 'http://127.0.0.1:3456',
-      },
+      env: { PATH: '/nonexistent', DISPATCH_SERVER_URL: 'http://127.0.0.1:3456', DISPATCH_AUTH: `dsk_${'K'.repeat(43)}` },
     });
+    expect(JSON.parse(fs.readFileSync(argvFile, 'utf8'))).toEqual(['https://example.com/oauth?client_id=abc', 'browser-env']);
+  });
 
-    expect(fs.readFileSync(postedUrlFile, 'utf8')).toBe('http://127.0.0.1:3456/api/auth-requests');
-    expect(JSON.parse(fs.readFileSync(postedDataFile, 'utf8'))).toEqual({
-      url: 'https://example.com/oauth?client_id=abc',
-      source: 'browser-env',
-      cwd: realCwd,
+  it('never puts the key in the relay argv or in the script', () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-'));
+    installBrowserShim({ dataDir, serverUrl: 'http://127.0.0.1:3456' });
+    for (const f of ['dispatch-open', 'open', 'xdg-open']) {
+      const p = path.join(dataDir, 'bin', f);
+      if (!fs.existsSync(p)) continue;
+      const script = fs.readFileSync(p, 'utf8');
+      expect(script).not.toContain('curl');
+      expect(script).not.toContain('DISPATCH_AUTH');
+      expect(script).toContain('shim-relay.js');
+    }
+  });
+});
+
+describe('shim relay', () => {
+  const root = path.resolve(__dirname, '../..');
+  const relayTs = path.join(root, 'src/auth/shim-relay.ts');
+  const runRelay = (args: string[], env: Record<string, string>, cwd: string) =>
+    new Promise<void>((resolve) => {
+      execFile(process.execPath, ['--import', 'tsx', relayTs, ...args], { cwd: root, env: { PATH: process.env.PATH ?? '', ...env, PWD: cwd } }, () => resolve());
+    });
+  async function withServer<T>(fn: (url: string, got: Array<{ url: string; auth?: string; body: any }>) => Promise<T>): Promise<T> {
+    const got: Array<{ url: string; auth?: string; body: any }> = [];
+    const server = http.createServer((req, res) => {
+      let data = '';
+      req.on('data', (c) => { data += c; });
+      req.on('end', () => {
+        got.push({ url: req.url ?? '', auth: req.headers.authorization, body: data ? JSON.parse(data) : null });
+        res.statusCode = 204; res.end();
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as { port: number }).port;
+    try { return await fn(`http://127.0.0.1:${port}`, got); } finally { server.close(); }
+  }
+  const KEY = `dtk_${'R'.repeat(43)}`;
+
+  it('posts the header from DISPATCH_AUTH and the terminalId to DISPATCH_API', async () => {
+    await withServer(async (base, got) => {
+      await runRelay(['https://example.com/oauth', 'browser-env'], { DISPATCH_API: base, DISPATCH_SERVER_URL: 'http://127.0.0.1:1', DISPATCH_AUTH: KEY, DISPATCH_TERMINAL_ID: 'term-1' }, '/tmp');
+      expect(got).toHaveLength(1);
+      expect(got[0].url).toBe('/api/auth-requests');
+      expect(got[0].auth).toBe(`Bearer ${KEY}`);
+      expect(got[0].body).toMatchObject({ url: 'https://example.com/oauth', source: 'browser-env', terminalId: 'term-1' });
     });
   });
 
-  it('includes terminalId in the posted JSON when DISPATCH_TERMINAL_ID is set', () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-'));
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-curl-'));
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cwd-'));
-    const postedDataFile = path.join(dataDir, 'posted-data.json');
-    const fakeCurl = path.join(fakeBin, 'curl');
-
-    fs.writeFileSync(fakeCurl, `#!/bin/sh
-data=''
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --data)
-      shift
-      data="$1"
-      ;;
-  esac
-  shift
-done
-printf '%s' "$data" > '${postedDataFile}'
-exit 0
-`);
-    fs.chmodSync(fakeCurl, 0o755);
-
-    installBrowserShim({ dataDir, serverUrl: 'http://127.0.0.1:3456' });
-
-    execFileSync(path.join(dataDir, 'bin', 'dispatch-open'), ['https://example.com/oauth'], {
-      cwd,
-      env: {
-        PATH: fakeBin,
-        DISPATCH_SERVER_URL: 'http://127.0.0.1:3456',
-        [TERMINAL_ID_ENV_VAR]: 'term-abc123',
-      },
+  it('falls back to DISPATCH_SERVER_URL with no header when DISPATCH_API is unset', async () => {
+    await withServer(async (base, got) => {
+      await runRelay(['https://example.com/a', 'system-opener'], { DISPATCH_SERVER_URL: base, DISPATCH_AUTH: KEY }, '/tmp');
+      expect(got).toHaveLength(1);
+      expect(got[0].auth).toBeUndefined();
+      expect(got[0].body).not.toHaveProperty('terminalId');
     });
-
-    expect(JSON.parse(fs.readFileSync(postedDataFile, 'utf8')).terminalId).toBe('term-abc123');
   });
 
-  it('omits terminalId when DISPATCH_TERMINAL_ID is unset', () => {
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-'));
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-curl-'));
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cwd-'));
-    const postedDataFile = path.join(dataDir, 'posted-data.json');
-    const fakeCurl = path.join(fakeBin, 'curl');
-
-    fs.writeFileSync(fakeCurl, `#!/bin/sh
-data=''
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --data)
-      shift
-      data="$1"
-      ;;
-  esac
-  shift
-done
-printf '%s' "$data" > '${postedDataFile}'
-exit 0
-`);
-    fs.chmodSync(fakeCurl, 0o755);
-
-    installBrowserShim({ dataDir, serverUrl: 'http://127.0.0.1:3456' });
-
-    execFileSync(path.join(dataDir, 'bin', 'dispatch-open'), ['https://example.com/oauth'], {
-      cwd,
-      env: { PATH: fakeBin, DISPATCH_SERVER_URL: 'http://127.0.0.1:3456' },
+  it('sends no header when DISPATCH_API points elsewhere than the target', async () => {
+    await withServer(async (base, got) => {
+      await runRelay(['https://example.com/a', 'browser-env'], { DISPATCH_SERVER_URL: base, DISPATCH_API: 'http://127.0.0.1:1', DISPATCH_AUTH: KEY }, '/tmp');
+      // The relay posts to DISPATCH_API first (dead), so nothing reaches the other server and no key leaves.
+      expect(got.every((g) => g.auth === undefined)).toBe(true);
     });
+  });
 
-    expect(JSON.parse(fs.readFileSync(postedDataFile, 'utf8'))).not.toHaveProperty('terminalId');
+  it('sends no header without DISPATCH_AUTH', async () => {
+    await withServer(async (base, got) => {
+      await runRelay(['https://example.com/a', 'browser-env'], { DISPATCH_API: base }, '/tmp');
+      expect(got).toHaveLength(1);
+      expect(got[0].auth).toBeUndefined();
+    });
   });
 });
 
@@ -177,20 +149,15 @@ describe('system-opener shims', () => {
     if (!fs.existsSync('/usr/bin/open')) return;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-shim-relay-'));
     const log = path.join(dir, 'posted.txt');
-    installBrowserShim({ dataDir: dir, serverUrl: 'http://127.0.0.1:59999' });
-
-    // Stand in for curl so nothing leaves the machine: a fake curl that records its argv.
-    const fakeBin = path.join(dir, 'fake');
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, 'curl'), `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\n`, { mode: 0o755 });
-    fs.chmodSync(path.join(fakeBin, 'curl'), 0o755);
+    const fakeRelay = path.join(dir, 'fake-relay.mjs');
+    fs.writeFileSync(fakeRelay, `import fs from 'node:fs';\nfs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(' ') + '\\n');\n`);
+    installBrowserShim({ dataDir: dir, serverUrl: 'http://127.0.0.1:59999', relayPath: fakeRelay });
 
     execFileSync(path.join(dir, 'bin', 'open'), ['https://accounts.x.ai/sign-in?code=1'], {
-      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, DISPATCH_SERVER_URL: 'http://127.0.0.1:59999' },
+      env: { ...process.env, DISPATCH_SERVER_URL: 'http://127.0.0.1:59999' },
     });
 
     const posted = fs.readFileSync(log, 'utf-8');
-    expect(posted).toContain('/api/auth-requests');
     expect(posted).toContain('accounts.x.ai/sign-in');
     expect(posted).toContain('system-opener');
     fs.rmSync(dir, { recursive: true, force: true });

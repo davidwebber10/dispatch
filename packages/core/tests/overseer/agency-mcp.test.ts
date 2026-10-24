@@ -38,10 +38,10 @@ describe('agency-mcp', () => {
     expect(names).toEqual([
       'answer_agent', 'complete_agent', 'ledger_add', 'ledger_add_from_agent', 'ledger_decide_self', 'ledger_import',
       'ledger_list', 'ledger_mark_default', 'ledger_note', 'ledger_resolve', 'ledger_set_title', 'ledger_show', 'list_agents', 'list_missions',
-      'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent',
+      'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent',
       'read_thread', 'report_status', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(27);
+    expect(TOOLS).toHaveLength(28);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -111,6 +111,8 @@ describe('agency-mcp', () => {
 
   it('read_agent returns the agent assistant output + tools + status (the read channel)', async () => {
     const fetchMock = vi.fn()
+      // 0) project check
+      .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'agent-1', sessionId: 'sess-1' }) })
       // 1) GET /conversation -> items
       .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ items: [
         { kind: 'user', text: 'investigate the repo' },
@@ -130,7 +132,7 @@ describe('agency-mcp', () => {
       output: 'Found A\n\nRecommend B',
       tools: ['Grep'],
     });
-    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/agent-1/conversation?limit=500');
+    expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/agent-1/conversation?limit=500');
   });
 
   it('spawn_agent forwards a mission into the create body config', async () => {
@@ -361,7 +363,7 @@ describe('agency-mcp', () => {
       if (String(url).endsWith('/terminals/a1/permission')) {
         return ok({ requestId: 'req-9', toolName: 'AskUserQuestion', questions: [{ header: 'Choice', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
       }
-      return ok({ id: 'a1', status: 'working' });
+      return ok({ id: 'a1', sessionId: 'sess-1', status: 'working' });
     }) as any;
     const out = await callTool('read_agent', { agentId: 'a1' });
     expect(JSON.parse(out.content[0].text).pendingQuestion).toEqual({
@@ -375,7 +377,7 @@ describe('agency-mcp', () => {
     global.fetch = vi.fn(async (url: string) => {
       if (String(url).includes('/conversation')) return ok({ items: [] });
       if (String(url).endsWith('/permission')) return ok({ requestId: 'req-1', toolName: 'Bash' });
-      return ok({ id: 'a1', status: 'working' });
+      return ok({ id: 'a1', sessionId: 'sess-1', status: 'working' });
     }) as any;
     const out = await callTool('read_agent', { agentId: 'a1' });
     expect(JSON.parse(out.content[0].text)).not.toHaveProperty('pendingQuestion');
@@ -591,9 +593,9 @@ describe('agency-mcp', () => {
       const out = await callTool('list_threads', {});
       expect(out.isError).toBeUndefined();
       expect(JSON.parse(out.content[0].text)).toEqual([
-        { id: 'self-1', label: 'My Thread', type: 'claude-code', role: null, agentType: null, status: 'working', lastActivityAt: 't1', isSelf: true },
-        { id: 'a1', label: 'researcher agent', type: 'claude-code', role: 'agent', agentType: 'researcher', status: 'idle', lastActivityAt: 't2', isSelf: false },
-        { id: 'c1', label: 'Overseer', type: 'claude-code', role: 'coordinator', agentType: null, status: 'idle', lastActivityAt: 't3', isSelf: false },
+        { id: 'self-1', label: 'My Thread', type: 'claude-code', role: null, agentType: null, status: 'working', projectId: 'sess-1', lastActivityAt: 't1', isSelf: true },
+        { id: 'a1', label: 'researcher agent', type: 'claude-code', role: 'agent', agentType: 'researcher', status: 'idle', projectId: 'sess-1', lastActivityAt: 't2', isSelf: false },
+        { id: 'c1', label: 'Overseer', type: 'claude-code', role: 'coordinator', agentType: null, status: 'idle', projectId: 'sess-1', lastActivityAt: 't3', isSelf: false },
       ]);
       expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/sessions/sess-1/terminals');
     });

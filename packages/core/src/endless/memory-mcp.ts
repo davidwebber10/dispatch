@@ -2,12 +2,13 @@
  * Endless Chat memory MCP server: zoom, date, the thread tools, and the Chat ledger tools.
  * A standalone stdio JSON-RPC 2.0 process (NDJSON), spawned by every turn and every
  * compaction through `--mcp-config`. It answers by calling the daemon's HTTP API:
+ *   DISPATCH_AUTH the Chat key (dck_), sent only to DISPATCH_API
  *   DISPATCH_API  base URL (default http://localhost:${DISPATCH_PORT || 3456})
  * The tool list and descriptions never change: they are part of the cached prefix.
  */
 import * as readline from 'readline';
 import {
-  createWorker, sendTask, readAgentOutput, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
+  createWorker, sendTask, readAgentOutput, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
 } from '../overseer/agency-shared.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -188,12 +189,13 @@ type McpContent = { type: 'text'; text: string } | { type: 'image'; data: string
 async function requestJson(method: string, url: string, body?: unknown): Promise<any> {
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: authHeaders(url, body !== undefined ? { 'content-type': 'application/json' } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text().catch(() => '');
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) { const keyErr = keyErrorFrom(res.status, text); if (keyErr) throw keyErr; }
   if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : `${method} ${url} -> ${res.status}`);
   return data;
 }
