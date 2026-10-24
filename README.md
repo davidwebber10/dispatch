@@ -87,6 +87,8 @@ behind a **Cloudflare Tunnel** gated with **Cloudflare Access** so only you can 
 > therefore answers only this computer and your own Tailscale devices without a sign-in. Every
 > other device must sign in once with the token from `dispatch access`. Details:
 > **[docs/network-access.md](docs/network-access.md)**.
+>
+> Agent threads carry their own keys, and `dispatch api` makes scripted calls without a token on the command line: see **Thread keys** in the same doc.
 
 (For private, tailnet-only access without a public domain, Tailscale also works — see the note at the end of that doc.)
 
