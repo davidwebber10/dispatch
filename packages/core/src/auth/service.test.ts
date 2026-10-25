@@ -36,3 +36,16 @@ describe('forwardLoopbackCallback', () => {
     await expect(service.forwardLoopbackCallback(req.id, 'evil.example.com/cb?code=x')).rejects.toThrow(/loopback/);
   });
 });
+
+describe('create', () => {
+  test('a fresh sign-in supersedes an older pending one from the same terminal and endpoint', () => {
+    const service = new AuthRequestService({ broadcast: vi.fn() } as any);
+    const old = service.create({ url: 'https://api.example.com/oauth/authorize?state=a', terminalId: 't1' });
+    const other = service.create({ url: 'https://other.example.com/oauth/authorize?state=b', terminalId: 't1' });
+    const elsewhere = service.create({ url: 'https://api.example.com/oauth/authorize?state=c', terminalId: 't2' });
+    service.create({ url: 'https://api.example.com/oauth/authorize?state=d', terminalId: 't1' });
+    expect(service.get(old.id)?.status).toBe('completed');
+    expect(service.get(other.id)?.status).toBe('pending');
+    expect(service.get(elsewhere.id)?.status).toBe('pending');
+  });
+});

@@ -48,6 +48,18 @@ export class AuthRequestService {
       updatedAt: timestamp,
     };
 
+    // A CLI that restarts mid-sign-in (an MCP reconnect, a startup timeout) opens a fresh
+    // authorize URL with a new state, and its old callback listener is gone. The older banner
+    // can then only fail, so retire it: same terminal + same authorize endpoint = superseded.
+    if (record.terminalId) {
+      const endpoint = parsed.origin + parsed.pathname;
+      for (const r of this.requests.values()) {
+        if (r.terminalId !== record.terminalId || (r.status !== 'pending' && r.status !== 'opened')) continue;
+        const prev = new URL(r.url);
+        if (prev.origin + prev.pathname === endpoint) this.markComplete(r.id);
+      }
+    }
+
     this.requests.set(record.id, record);
     this.pruneOldestIfNeeded();
     this.broadcast('auth:request', record);
