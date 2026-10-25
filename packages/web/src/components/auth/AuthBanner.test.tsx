@@ -2,12 +2,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { test, expect, beforeEach, vi } from 'vitest';
 
 const dismissAllAuth = vi.fn().mockResolvedValue({ completed: 3 });
+const forwardAuthCallback = vi.fn();
 vi.mock('../../api/client', () => ({
   api: {
     dismissAllAuth: () => dismissAllAuth(),
     completeAuth: vi.fn(),
     markAuthOpened: vi.fn(),
-    forwardAuthCallback: vi.fn(),
+    forwardAuthCallback: (...a: unknown[]) => forwardAuthCallback(...a),
   },
 }));
 
@@ -96,4 +97,24 @@ test('a single request still reads as a plain Dismiss', () => {
   render(<AuthBanner />);
   expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
   expect(screen.queryByText(/1 of/)).not.toBeInTheDocument();
+});
+
+test('pasting a callback URL forwards it at once, with no Forward tap', async () => {
+  forwardAuthCallback.mockReset().mockResolvedValue({});
+  useAuth.setState({ requests: [{ id: 'a1', url: 'https://example.com/oauth', status: 'pending' } as any] });
+  render(<AuthBanner />);
+  const input = screen.getByPlaceholderText(/localhost/);
+  fireEvent.paste(input, { clipboardData: { getData: () => ' localhost:39461/oauth/callback?code=x ' } });
+  await waitFor(() => expect(forwardAuthCallback).toHaveBeenCalledWith('a1', 'http://localhost:39461/oauth/callback?code=x'));
+});
+
+test('a failed forward shows why and keeps the pasted URL for a retry', async () => {
+  forwardAuthCallback.mockReset().mockRejectedValue(new Error('POST /api/auth-requests/a1/callback failed: 400 — That sign-in is no longer waiting'));
+  useAuth.setState({ requests: [{ id: 'a1', url: 'https://example.com/oauth', status: 'pending' } as any] });
+  render(<AuthBanner />);
+  const input = screen.getByPlaceholderText(/localhost/) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: 'localhost:1/cb?code=x' } });
+  fireEvent.click(screen.getByText('Forward'));
+  expect(await screen.findByText(/That sign-in is no longer waiting/)).toBeInTheDocument();
+  expect(input.value).toBe('localhost:1/cb?code=x');
 });
