@@ -49,11 +49,13 @@ describe('watch routes', () => {
 
     it('fires at once when the target already went idle during the watcher\'s turn', async () => {
       db.prepare("UPDATE terminals SET status = 'working' WHERE id = 'watcher-1'").run();
-      db.prepare("INSERT OR REPLACE INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES ('watcher-1','working','authoritative','2026-10-26T15:53:28.117Z')").run();
-      db.prepare("UPDATE terminals SET status = 'waiting', last_activity_at = '2026-10-26T15:59:39.642Z' WHERE id = 'target-1'").run();
+      db.prepare("INSERT INTO usage_turns(id,terminal_id,project_id,provider,started_at) VALUES ('u1','watcher-1',?,'claude-code','2026-10-26T15:53:28.117Z')").run(sessionA);
+      db.prepare("UPDATE terminals SET status = 'waiting' WHERE id = 'target-1'").run();
+      db.prepare("INSERT INTO lifecycle_events(terminal_id,event_type,observed_at,disposition) VALUES ('target-1','turn.completed','2026-10-26T15:59:39.642Z','applied')").run();
       const res = await request(app).post('/api/watches').send({ watcherTerminalId: 'watcher-1', targetTerminalId: 'target-1', criteria: 'idle' });
       expect(res.status).toBe(201);
       expect(res.body.firedNow).toBe(true);
+      expect(res.body.wake).toContain('finished its turn');
       expect(watchesDb.listByWatcher(db, 'watcher-1')).toHaveLength(0); // one-shot, spent
     });
 

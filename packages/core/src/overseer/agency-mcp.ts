@@ -354,7 +354,7 @@ export const TOOLS = [
       "cost, and the daemon wakes you with a message when the target hits `when`. Prefer this whenever " +
       'you are waiting on a peer. `note` is your own reminder of why you are watching — it is echoed ' +
       'back in the wake message. One-shot by default (fires once, then stops). If the target already settled ' +
-      'during your current turn, the wake is delivered at once (the result says firedNow).',
+      'during your current turn, the watch fires at once: the result has firedNow and the wake text, and no separate message follows.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -929,7 +929,7 @@ async function watchesRequest(method: string, url: string, body?: unknown): Prom
 }
 
 /** Register a push subscription: the daemon wakes this thread when the target hits `when`. */
-async function watchThread(args: { id: string; when: string; note?: string; once?: boolean }): Promise<{ watchId: string; firedNow?: true; note?: string }> {
+async function watchThread(args: { id: string; when: string; note?: string; once?: boolean }): Promise<{ watchId: string; firedNow?: true; wake?: string }> {
   if (!args?.id) throw new Error('id is required');
   if (!args?.when) throw new Error('when is required');
   const watcher = requireSelf('watch a thread');
@@ -941,7 +941,7 @@ async function watchThread(args: { id: string; when: string; note?: string; once
   if (args.once !== undefined) body.once = args.once;
   const data = await watchesRequest('POST', `${apiBase()}/api/watches`, body);
   if (data?.firedNow) {
-    return { watchId: data?.id, firedNow: true, note: 'The target had already settled during your turn, so the wake message is being delivered now.' };
+    return { watchId: data?.id, firedNow: true, wake: data.wake };
   }
   return { watchId: data?.id };
 }

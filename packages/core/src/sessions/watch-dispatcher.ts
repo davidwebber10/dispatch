@@ -58,33 +58,55 @@ export class WatchDispatcher {
    * registered after the target already settled would wait forever (2026-10-26: a worker
    * blocked ~6 min in a foreground command, its reviewer went idle meanwhile, and the
    * watch_thread call that followed never fired). If the target is now sitting in a state
-   * the watch matches AND got there during the watcher's current turn, fire at once.
-   * A target that settled before the watcher's turn began is NOT fired for: that is the
-   * old turn's result, and the watcher is waiting for the next one (message_thread, then
-   * watch_thread). Returns true when the watch fired.
+   * the watch matches AND settled during the watcher's current turn, the watch is spent
+   * here and the wake text is RETURNED (not delivered): the caller is mid-turn inside the
+   * very tool call that created the watch, so a second queued delivery would make it act
+   * twice. A target that settled before the watcher's turn began does not count: that is
+   * the old turn's result, and the watcher is waiting for the next one (message_thread,
+   * then watch_thread). Returns the wake text, or null when nothing fired.
    */
-  catchUp(watchId: string): boolean {
+  catchUp(watchId: string): string | null {
     try {
       const watch = watchesDb.getById(this.db, watchId);
-      if (!watch) return false;
+      if (!watch) return null;
       const target = terminalsDb.getById(this.db, watch.target_terminal_id);
       const watcher = terminalsDb.getById(this.db, watch.watcher_terminal_id);
-      if (!target || !watcher || watcher.archived_at) return false;
-      // The watcher is in a turn when it calls watch_thread; its turn-start time is the cutoff.
-      if (watcher.status !== 'working') return false;
-      const lifecycle = this.db.prepare('SELECT observed_at FROM thread_lifecycle WHERE terminal_id = ?')
-        .get(watcher.id) as { observed_at: string } | undefined;
-      const turnStart = lifecycle?.observed_at ?? watcher.last_activity_at;
-      const settledAt = target.last_activity_at;
-      if (!turnStart || !settledAt || settledAt < turnStart) return false;
+      if (!target || !watcher || watcher.archived_at) return null;
       const status = SETTLED_STATUS[target.status];
-      if (!status || (watch.criteria !== 'any' && watch.criteria !== status)) return false;
-      this.fire(watch, target, status);
-      return true;
+      if (!status || (watch.criteria !== 'any' && watch.criteria !== status)) return null;
+      const turnStart = this.currentTurnStart(watcher);
+      const settledAt = this.settledAt(target.id);
+      if (!turnStart || !settledAt || settledAt < turnStart) return null;
+      const text = composeWakeMessage({ id: target.id, label: target.label }, status, watch.note);
+      watchesDb.markFired(this.db, watch.id);
+      return text;
     } catch (err) {
       console.debug('[watch-dispatcher] catch-up failed', watchId, err);
-      return false;
+      return null;
     }
+  }
+
+  /** When the watcher's open turn began. The open usage_turns row is stable for the whole turn;
+   *  thread_lifecycle.observed_at is not (every tool hook and mid-turn message moves it), so it
+   *  is only the fallback for a thread with no open turn row. null when the watcher is not working. */
+  private currentTurnStart(watcher: terminalsDb.TerminalRow): string | null {
+    if (watcher.status !== 'working') return null;
+    const turn = this.db.prepare('SELECT started_at FROM usage_turns WHERE terminal_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1')
+      .get(watcher.id) as { started_at: string } | undefined;
+    if (turn) return turn.started_at;
+    const lifecycle = this.db.prepare('SELECT observed_at FROM thread_lifecycle WHERE terminal_id = ?')
+      .get(watcher.id) as { observed_at: string } | undefined;
+    return lifecycle?.observed_at ?? watcher.last_activity_at;
+  }
+
+  /** When the target last entered a settled state: the latest settling lifecycle event. NOT
+   *  last_activity_at, which the PTY monitor also stamps after an output burst with no status change. */
+  private settledAt(targetId: string): string | null {
+    const row = this.db.prepare(`SELECT MAX(observed_at) AS at FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred')
+        AND event_type IN ('turn.completed','turn.failed','permission.requested','status.idle','status.needs_input','status.error','status.waiting')`)
+      .get(targetId) as { at: string | null } | undefined;
+    return row?.at ?? null;
   }
 
   private fire(watch: watchesDb.WatchRow, target: terminalsDb.TerminalRow, status: string): void {
