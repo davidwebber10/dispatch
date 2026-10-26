@@ -352,7 +352,8 @@ export function buildPeerPrompt(ctx: {
     '- watch_thread({ id, when, note?, once? }) — a PUSH subscription: register interest (when: ' +
     '"idle" | "needs_input" | "error" | "any") and go idle at zero token cost — the daemon wakes you ' +
     'with a message the instant that peer hits it. PREFER watch_thread over polling read_thread in a ' +
-    'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires.\n' +
+    'loop: polling burns tokens for no benefit, while a watch costs nothing until it fires. If the peer ' +
+    'already settled during your turn, the result has firedNow and a wake text: act on it now, no message follows.\n' +
     '- unwatch_thread({ watchId }) / list_watches() — cancel or inspect your own subscriptions.\n' +
     '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
     'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +

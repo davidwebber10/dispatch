@@ -15,7 +15,7 @@ const VALID_CRITERIA: ReadonlySet<WatchRow['criteria']> = new Set(['idle', 'need
  * the caller's project — watcher and target must share a session — so a
  * thread can never learn about or subscribe to a terminal outside its project.
  */
-export function createWatchesRouter(db: Database.Database): Router {
+export function createWatchesRouter(db: Database.Database, catchUp?: (watchId: string) => string | null): Router {
   const router = policyRouter();
 
   router.post('/', keyRoute({ thread: watchCreateRule, roleRun: watchCreateRule }), (req, res) => {
@@ -56,7 +56,9 @@ export function createWatchesRouter(db: Database.Database): Router {
     }
 
     const id = watchesDb.create(db, { watcherTerminalId, targetTerminalId, criteria, note, once });
-    res.status(201).json({ id });
+    // The target may have settled before this call (the watch only sees later edges).
+    const wake = catchUp?.(id) ?? null;
+    res.status(201).json(wake ? { id, firedNow: true, wake } : { id, firedNow: false });
   });
 
   router.get('/', keyRoute({ thread: watchListRule, roleRun: watchListRule }), (req, res) => {

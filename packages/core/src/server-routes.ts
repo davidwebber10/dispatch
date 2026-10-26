@@ -74,6 +74,8 @@ export interface ApiRouteDeps {
   /** Absent in `createApp` unless a test passes a stub: `/api/endless` then answers 503. */
   endless?: EndlessService;
   /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
+  /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
+  watchCatchUp?: (watchId: string) => string | null;
   usageLimits?: { snapshots: LimitSnapshots; accountFor: (provider: string) => string };
 }
 
@@ -109,7 +111,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/tools', createToolsRouter({ base: d.toolsBase, prober: d.toolsAuth }));
   app.use('/api/update', createUpdateRouter(d.broadcaster, d.repoRoot, d.db));
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
-  app.use('/api/watches', createWatchesRouter(d.db));
+  app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
   if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));

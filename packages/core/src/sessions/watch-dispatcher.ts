@@ -10,6 +10,20 @@ export type DeliverFn = (terminalId: string, text: string) => void;
  *  would burn a one-shot watch at turn START, before there's anything to see. */
 export const WATCHABLE_STATUSES = ['idle', 'needs_input', 'error'] as const;
 
+/** Terminal row status -> the watchable status it was entered through ('waiting' covers idle/done). */
+const SETTLED_STATUS: Record<string, (typeof WATCHABLE_STATUSES)[number]> = {
+  waiting: 'idle',
+  needs_input: 'needs_input',
+  error: 'error',
+};
+
+/** lifecycle_events types that settle a thread / change its state otherwise (see StatusService). */
+const SETTLING = ['turn.completed', 'turn.failed', 'permission.requested', 'status.idle', 'status.needs_input', 'status.error', 'status.waiting'];
+const OTHER_STATE = ['turn.started', 'permission.resolved', 'process.started', 'process.exited', 'status.working', 'status.starting', 'status.done', 'status.scheduled', 'status.queued'];
+const quoted = (xs: string[]) => xs.map((x) => `'${x}'`).join(',');
+const SETTLING_SQL = quoted(SETTLING);
+const OTHER_STATE_SQL = quoted(OTHER_STATE);
+
 /**
  * Fires `thread_watches` subscriptions off the status machine. Wired into StatusService as
  * an optional injected dependency (see status/service.ts's `onWatchStatus`, which mirrors the
@@ -44,6 +58,80 @@ export class WatchDispatcher {
     for (const watch of matches) {
       this.fire(watch, target, status);
     }
+  }
+
+  /**
+   * Called right after a watch is created. A watch only reacts to status EDGES, so one
+   * registered after the target already settled would wait forever (2026-10-26: a worker
+   * blocked ~6 min in a foreground command, its reviewer went idle meanwhile, and the
+   * watch_thread call that followed never fired). If the target is now sitting in a state
+   * the watch matches AND settled during the watcher's current turn, the watch is spent
+   * here and the wake text is RETURNED (not delivered): the caller is mid-turn inside the
+   * very tool call that created the watch, so a second queued delivery would make it act
+   * twice. A target that settled before the watcher's turn began does not count: that is
+   * the old turn's result, and the watcher is waiting for the next one (message_thread,
+   * then watch_thread). Returns the wake text, or null when nothing fired.
+   */
+  catchUp(watchId: string): string | null {
+    try {
+      const watch = watchesDb.getById(this.db, watchId);
+      if (!watch) return null;
+      const target = terminalsDb.getById(this.db, watch.target_terminal_id);
+      const watcher = terminalsDb.getById(this.db, watch.watcher_terminal_id);
+      if (!target || !watcher || watcher.archived_at) return null;
+      const status = SETTLED_STATUS[target.status];
+      if (!status || (watch.criteria !== 'any' && watch.criteria !== status)) return null;
+      const turnStart = this.currentTurnStart(watcher);
+      const settledAt = this.settledAt(target.id);
+      if (!turnStart || !settledAt || settledAt < turnStart) return null;
+      const text = composeWakeMessage({ id: target.id, label: target.label }, status, watch.note);
+      watchesDb.markFired(this.db, watch.id);
+      return text;
+    } catch (err) {
+      console.debug('[watch-dispatcher] catch-up failed', watchId, err);
+      return null;
+    }
+  }
+
+  /** When the watcher's current turn began: the open usage_turns row (stable for the whole turn;
+   *  thread_lifecycle.observed_at is not: every tool hook and mid-turn message moves it, so it is
+   *  only the fallback for a thread with no open row), pushed forward to the first working event after the
+   *  watcher's own last settle, because an interrupted CLI turn (Esc sends no Stop) leaves its old row open.
+   *  null when the watcher is not working. */
+  private currentTurnStart(watcher: terminalsDb.TerminalRow): string | null {
+    if (watcher.status !== 'working') return null;
+    const turn = this.db.prepare('SELECT started_at FROM usage_turns WHERE terminal_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1')
+      .get(watcher.id) as { started_at: string } | undefined;
+    let start: string | null = turn?.started_at ?? null;
+    if (!start) {
+      const lifecycle = this.db.prepare('SELECT observed_at FROM thread_lifecycle WHERE terminal_id = ?')
+        .get(watcher.id) as { observed_at: string } | undefined;
+      start = lifecycle?.observed_at ?? watcher.last_activity_at;
+    }
+    // A stale open row (interrupted turn): the real turn began at the first working event after the watcher's last settle.
+    const lastSettle = this.db.prepare(`SELECT MAX(id) AS id FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred') AND event_type IN (${SETTLING_SQL})`)
+      .get(watcher.id) as { id: number | null };
+    if (lastSettle.id === null) return start;
+    const began = this.db.prepare(`SELECT MIN(observed_at) AS at FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred') AND event_type IN ('turn.started','status.working') AND id > ?`)
+      .get(watcher.id, lastSettle.id) as { at: string | null };
+    return began.at && (!start || began.at > start) ? began.at : start;
+  }
+
+  /** When the target entered the settled state it is in now: the FIRST settling event after the
+   *  last non-settling state event (a working/resume/exit/start). null if the latest state event is
+   *  not a settle (e.g. permission, resume, then a clean exit). NOT last_activity_at, which the PTY
+   *  monitor also stamps after an output burst with no status change; the first event, not the
+   *  latest, because Claude sends a second idle notification ~60 s after Stop. */
+  private settledAt(targetId: string): string | null {
+    const lastOther = this.db.prepare(`SELECT MAX(id) AS id FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred') AND event_type IN (${OTHER_STATE_SQL})`)
+      .get(targetId) as { id: number | null };
+    const row = this.db.prepare(`SELECT MIN(observed_at) AS at FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred') AND event_type IN (${SETTLING_SQL}) AND id > ?`)
+      .get(targetId, lastOther.id ?? 0) as { at: string | null };
+    return row.at;
   }
 
   private fire(watch: watchesDb.WatchRow, target: terminalsDb.TerminalRow, status: string): void {

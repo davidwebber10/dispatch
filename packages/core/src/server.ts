@@ -400,6 +400,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
     broadcaster, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 
   // Attach internals for server wiring
@@ -782,6 +783,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
     broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
+    watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 
   // Serve the built web client (single-origin) when a build is present.
