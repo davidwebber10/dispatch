@@ -230,3 +230,163 @@ describe('composeWakeMessage control characters', () => {
     expect(msg).toContain('n1 run this');
   });
 });
+
+// A watch registered AFTER the peer already settled never sees an edge. 2026-10-26: a worker
+// ran `gh pr checks --watch` for ~6 minutes after spawning a reviewer, the reviewer went idle
+// meanwhile, and the watch_thread call that followed never fired.
+describe('WatchDispatcher.catchUp', () => {
+  const TURN = '2026-10-26T15:53:28.117Z';
+  const SETTLED = '2026-10-26T15:59:39.642Z';
+
+  function setup(opts: { targetStatus: string; settle?: { type: string; at: string } | null; watcherStatus?: string; turnAt?: string | null }) {
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target', 'Reviewer');
+    terminalsDb.updateStatus(db, 'target', opts.targetStatus);
+    if (opts.settle !== null) addEvent(db, 'target', opts.settle?.type ?? 'turn.completed', opts.settle?.at ?? SETTLED);
+    terminalsDb.updateStatus(db, 'watcher', opts.watcherStatus ?? 'working');
+    if (opts.turnAt !== null) {
+      db.prepare("INSERT INTO usage_turns(id,terminal_id,project_id,provider,started_at) VALUES ('u1','watcher','s1','claude-code',?)").run(opts.turnAt ?? TURN);
+    }
+    return { db, dispatcher: new WatchDispatcher(db, vi.fn()) };
+  }
+  function addEvent(db: Database.Database, id: string, type: string, at: string) {
+    db.prepare("INSERT INTO lifecycle_events(terminal_id,event_type,observed_at,disposition) VALUES (?,?,?,'applied')").run(id, type, at);
+  }
+  const watch = (db: Database.Database, criteria: any = 'idle', once = true, target = 'target') =>
+    watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: target, criteria, once });
+
+  it('fires at once when the target went idle during the watcher\'s current turn, returning the wake text', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting' });
+    const id = watch(db);
+    const text = dispatcher.catchUp(id);
+    expect(text).toContain('finished its turn');
+    expect(text).toContain('Reviewer');
+    expect(watchRow(db, id).fired_at).toBeTruthy();
+  });
+
+  it('delivers nothing itself: the text is returned so the caller does not act twice', () => {
+    const { db } = setup({ targetStatus: 'waiting' });
+    const deliver = vi.fn();
+    new WatchDispatcher(db, deliver).catchUp(watch(db));
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('does not fire when the target settled before the watcher\'s turn began', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'turn.completed', at: '2026-10-26T15:00:00.000Z' } });
+    const id = watch(db);
+    expect(dispatcher.catchUp(id)).toBeNull();
+    expect(watchRow(db, id).fired_at).toBeNull();
+  });
+
+  it('is not fooled by a later last_activity_at stamp that came with no status change', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'turn.completed', at: '2026-10-26T15:00:00.000Z' } });
+    db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(SETTLED, 'target');
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('uses the stable turn start: a tool hook moving thread_lifecycle.observed_at does not hide an earlier settle', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting' });
+    db.prepare("INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES ('watcher','working','authoritative','2026-10-26T16:03:15.000Z')").run();
+    expect(dispatcher.catchUp(watch(db))).toContain('finished its turn');
+  });
+
+  it('two targets that settled in the same turn both catch up', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting' });
+    makeTerminal(db, 'target2', 'Reviewer 2');
+    terminalsDb.updateStatus(db, 'target2', 'waiting');
+    addEvent(db, 'target2', 'turn.completed', '2026-10-26T16:00:10.000Z');
+    expect(dispatcher.catchUp(watch(db))).toContain('Reviewer');
+    expect(dispatcher.catchUp(watch(db, 'idle', true, 'target2'))).toContain('Reviewer 2');
+  });
+
+  it('falls back to thread_lifecycle.observed_at when the watcher has no open turn row', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', turnAt: null });
+    db.prepare("INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES ('watcher','working','authoritative',?)").run(TURN);
+    expect(dispatcher.catchUp(watch(db))).toContain('finished its turn');
+  });
+
+  it('does not fire while the target is working', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'working' });
+    expect(dispatcher.catchUp(watch(db, 'any'))).toBeNull();
+  });
+
+  it('respects the criteria: an idle target does not satisfy an error watch', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting' });
+    expect(dispatcher.catchUp(watch(db, 'error'))).toBeNull();
+  });
+
+  it('maps needs_input and error terminal states, and "any" matches them', () => {
+    for (const [state, event, phrase] of [['needs_input', 'permission.requested', 'waiting on a question'], ['error', 'turn.failed', 'hit an error']] as const) {
+      const { db, dispatcher } = setup({ targetStatus: state, settle: { type: event, at: SETTLED } });
+      expect(dispatcher.catchUp(watch(db, 'any'))).toContain(phrase);
+    }
+  });
+
+  it('a process exit or revive is not a settle: no settling event, no fire', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'process.exited', at: SETTLED } });
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('permission, resume, then a clean exit is not a settle (the exit excludes it)', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'permission.requested', at: '2026-10-26T15:58:00.000Z' } });
+    addEvent(db, 'target', 'permission.resolved', '2026-10-26T15:58:30.000Z');
+    addEvent(db, 'target', 'process.exited', SETTLED);
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('a second idle event after the first does not make an old settle look new', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'status.idle', at: '2026-10-26T15:50:00.000Z' } });
+    addEvent(db, 'target', 'status.idle', '2026-10-26T15:51:00.000Z'); // idle_prompt notification
+    expect(dispatcher.catchUp(watch(db))).toBeNull(); // watcher turn began 15:53
+  });
+
+  it('an interrupted watcher turn leaves a stale open row: the real turn start is the first working event after its last settle', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', turnAt: '2026-10-26T09:00:00.000Z' });
+    addEvent(db, 'watcher', 'status.idle', '2026-10-26T15:55:00.000Z');
+    addEvent(db, 'watcher', 'turn.started', '2026-10-26T16:20:00.000Z'); // new turn; target settled 15:59, before it
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('the same stale row still catches up when the target settled after the real turn start', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', turnAt: '2026-10-26T09:00:00.000Z' });
+    addEvent(db, 'watcher', 'status.idle', '2026-10-26T15:30:00.000Z');
+    addEvent(db, 'watcher', 'turn.started', '2026-10-26T15:50:00.000Z');
+    expect(dispatcher.catchUp(watch(db))).toContain('finished its turn'); // target settled 15:59:39
+  });
+
+  it('does nothing when the watcher is not in a turn', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', watcherStatus: 'waiting' });
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('a repeating watch is kept live after a catch-up fire', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting' });
+    expect(dispatcher.catchUp(watch(db, 'idle', false))).not.toBeNull();
+    expect(watchesDb.liveForTarget(db, 'target', 'idle')).toHaveLength(1);
+  });
+});
+
+// Drives the real StatusService with Claude CLI hook payloads, so the cutoff is whatever the
+// status machine really writes (a PreToolUse hook fires before watch_thread itself runs).
+describe('WatchDispatcher.catchUp through StatusService', () => {
+  it('catches up for a Claude CLI watcher whose tool hooks fire after the target settled', async () => {
+    const { StatusService } = await import('../../src/status/service.js');
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target', 'Reviewer');
+    const { attachPtyCapture } = await import('../../src/analytics/pty-capture.js');
+    const status = new StatusService(db, { broadcast: () => {} } as any);
+    status.addTurnBoundaryListener(attachPtyCapture({ db, isStructured: () => false })); // same wiring as server.ts
+    const hook = (id: string, name: string, extra: object = {}) => status.ingest('claude-code', id, { hook_event_name: name, session_id: `sid-${id}`, ...extra });
+    hook('watcher', 'UserPromptSubmit', { prompt: 'go' });
+    await new Promise((r) => setTimeout(r, 15));
+    hook('target', 'UserPromptSubmit', { prompt: 'review' });
+    await new Promise((r) => setTimeout(r, 15));
+    hook('target', 'Stop');
+    await new Promise((r) => setTimeout(r, 15));
+    hook('watcher', 'PreToolUse', { tool_name: 'mcp__dispatch__watch_thread', tool_input: {} });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    expect(new WatchDispatcher(db, vi.fn()).catchUp(id)).toContain('finished its turn');
+  });
+});
