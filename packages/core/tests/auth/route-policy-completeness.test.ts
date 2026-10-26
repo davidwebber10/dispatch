@@ -7,6 +7,7 @@ import { initSchema } from '../../src/db/schema.js';
 import { createApp } from '../../src/server.js';
 import { policyKindOf, type PolicyKind } from '../../src/auth/route-policy.js';
 import type { EndlessService } from '../../src/endless/service.js';
+import { LimitSnapshots } from '../../src/limits/snapshot.js';
 
 /**
  * EXTEND HERE. Every route whose first handler is a `keyRoute(...)` must be listed, as
@@ -89,7 +90,8 @@ function buildRoutes(): Found[] {
   const db = new Database(':memory:');
   initSchema(db);
   const endless = { available: true } as unknown as EndlessService;
-  const app = createApp({ db, skipPty: true, endless });
+  const usageLimits = { snapshots: new LimitSnapshots(db), accountFor: () => 'acct' };
+  const app = createApp({ db, skipPty: true, endless, usageLimits });
   const out: Found[] = [];
   walk((app as any)._router.stack, '', out);
   return out;
@@ -122,6 +124,10 @@ describe('route policy completeness', () => {
   test('the public routes under /api are exactly the expected list', () => {
     const pub = routes.filter((r) => r.kind === 'public' && r.id.split(' ')[1].startsWith('/api/')).map((r) => r.id).sort();
     expect(pub).toEqual([...EXPECTED_PUBLIC_API_ROUTES].sort());
+  });
+
+  test('the usage-limits route is mounted and owner only', () => {
+    expect(routes.find((r) => r.id === 'GET /api/usage-limits')?.kind).toBe('owner');
   });
 
   test('the stats route is owner only', () => {

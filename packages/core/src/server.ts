@@ -30,6 +30,7 @@ import {
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { mountApiRoutes } from './server-routes.js';
+import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
@@ -236,6 +237,8 @@ interface CreateAppOptions {
   keys?: KeyRegistry;
   /** Chat service (a stub in tests). Without it `/api/endless` answers 503. */
   endless?: EndlessService;
+  /** Test seam: mounts `/api/usage-limits` (the daemon always does). */
+  usageLimits?: ApiRouteDeps['usageLimits'];
   /**
    * Structured managers by provider name, in place of the real Claude, Codex, Grok and opencode
    * managers (test seam: no CLI runs). Must include `claude-code`.
@@ -396,7 +399,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     claudeLogin: new ClaudeLoginService(dispatchDir), secretsService, integrationsService, pushService,
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
-    broadcaster, noCredentialStats, endless: options.endless,
+    broadcaster, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
   });
 
   // Attach internals for server wiring
