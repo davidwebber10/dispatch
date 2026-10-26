@@ -328,6 +328,33 @@ describe('WatchDispatcher.catchUp', () => {
     expect(dispatcher.catchUp(watch(db))).toBeNull();
   });
 
+  it('permission, resume, then a clean exit is not a settle (the exit excludes it)', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'permission.requested', at: '2026-10-26T15:58:00.000Z' } });
+    addEvent(db, 'target', 'permission.resolved', '2026-10-26T15:58:30.000Z');
+    addEvent(db, 'target', 'process.exited', SETTLED);
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('a second idle event after the first does not make an old settle look new', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', settle: { type: 'status.idle', at: '2026-10-26T15:50:00.000Z' } });
+    addEvent(db, 'target', 'status.idle', '2026-10-26T15:51:00.000Z'); // idle_prompt notification
+    expect(dispatcher.catchUp(watch(db))).toBeNull(); // watcher turn began 15:53
+  });
+
+  it('an interrupted watcher turn leaves a stale open row: the real turn start is the first working event after its last settle', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', turnAt: '2026-10-26T09:00:00.000Z' });
+    addEvent(db, 'watcher', 'status.idle', '2026-10-26T15:55:00.000Z');
+    addEvent(db, 'watcher', 'turn.started', '2026-10-26T16:20:00.000Z'); // new turn; target settled 15:59, before it
+    expect(dispatcher.catchUp(watch(db))).toBeNull();
+  });
+
+  it('the same stale row still catches up when the target settled after the real turn start', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', turnAt: '2026-10-26T09:00:00.000Z' });
+    addEvent(db, 'watcher', 'status.idle', '2026-10-26T15:30:00.000Z');
+    addEvent(db, 'watcher', 'turn.started', '2026-10-26T15:50:00.000Z');
+    expect(dispatcher.catchUp(watch(db))).toContain('finished its turn'); // target settled 15:59:39
+  });
+
   it('does nothing when the watcher is not in a turn', () => {
     const { db, dispatcher } = setup({ targetStatus: 'waiting', watcherStatus: 'waiting' });
     expect(dispatcher.catchUp(watch(db))).toBeNull();
