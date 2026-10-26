@@ -10,6 +10,13 @@ export type DeliverFn = (terminalId: string, text: string) => void;
  *  would burn a one-shot watch at turn START, before there's anything to see. */
 export const WATCHABLE_STATUSES = ['idle', 'needs_input', 'error'] as const;
 
+/** Terminal row status -> the watchable status it was entered through ('waiting' covers idle/done). */
+const SETTLED_STATUS: Record<string, (typeof WATCHABLE_STATUSES)[number]> = {
+  waiting: 'idle',
+  needs_input: 'needs_input',
+  error: 'error',
+};
+
 /**
  * Fires `thread_watches` subscriptions off the status machine. Wired into StatusService as
  * an optional injected dependency (see status/service.ts's `onWatchStatus`, which mirrors the
@@ -43,6 +50,40 @@ export class WatchDispatcher {
     const matches = watchesDb.liveForTarget(this.db, targetTerminalId, status);
     for (const watch of matches) {
       this.fire(watch, target, status);
+    }
+  }
+
+  /**
+   * Called right after a watch is created. A watch only reacts to status EDGES, so one
+   * registered after the target already settled would wait forever (2026-10-26: a worker
+   * blocked ~6 min in a foreground command, its reviewer went idle meanwhile, and the
+   * watch_thread call that followed never fired). If the target is now sitting in a state
+   * the watch matches AND got there during the watcher's current turn, fire at once.
+   * A target that settled before the watcher's turn began is NOT fired for: that is the
+   * old turn's result, and the watcher is waiting for the next one (message_thread, then
+   * watch_thread). Returns true when the watch fired.
+   */
+  catchUp(watchId: string): boolean {
+    try {
+      const watch = watchesDb.getById(this.db, watchId);
+      if (!watch) return false;
+      const target = terminalsDb.getById(this.db, watch.target_terminal_id);
+      const watcher = terminalsDb.getById(this.db, watch.watcher_terminal_id);
+      if (!target || !watcher || watcher.archived_at) return false;
+      // The watcher is in a turn when it calls watch_thread; its turn-start time is the cutoff.
+      if (watcher.status !== 'working') return false;
+      const lifecycle = this.db.prepare('SELECT observed_at FROM thread_lifecycle WHERE terminal_id = ?')
+        .get(watcher.id) as { observed_at: string } | undefined;
+      const turnStart = lifecycle?.observed_at ?? watcher.last_activity_at;
+      const settledAt = target.last_activity_at;
+      if (!turnStart || !settledAt || settledAt < turnStart) return false;
+      const status = SETTLED_STATUS[target.status];
+      if (!status || (watch.criteria !== 'any' && watch.criteria !== status)) return false;
+      this.fire(watch, target, status);
+      return true;
+    } catch (err) {
+      console.debug('[watch-dispatcher] catch-up failed', watchId, err);
+      return false;
     }
   }
 

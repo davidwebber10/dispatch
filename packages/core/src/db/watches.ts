@@ -88,3 +88,7 @@ export function countByWatcher(db: Database.Database, watcherTerminalId: string)
     .get(watcherTerminalId) as { count: number };
   return row.count;
 }
+
+export function getById(db: Database.Database, id: string): WatchRow | undefined {
+  return db.prepare('SELECT * FROM thread_watches WHERE id = ?').get(id) as WatchRow | undefined;
+}

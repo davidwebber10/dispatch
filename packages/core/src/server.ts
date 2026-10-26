@@ -408,7 +408,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.use('/api/tools', createToolsRouter({ base: toolsBase, prober: toolsAuth }));
   app.use('/api/update', createUpdateRouter(broadcaster, resolveRepoRoot(), db));
   app.use('/api/appearance', createAppearanceRouter(dispatchDir));
-  app.use('/api/watches', createWatchesRouter(db));
+  app.use('/api/watches', createWatchesRouter(db, (id) => watchDispatcher.catchUp(id)));
   app.use('/api/analytics', createAnalyticsRouter(db));
 
   // Attach internals for server wiring
@@ -796,7 +796,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const repoRoot = resolveRepoRoot();
   app.use('/api/update', createUpdateRouter(broadcaster, repoRoot, db));
   app.use('/api/appearance', createAppearanceRouter(dataDir));
-  app.use('/api/watches', createWatchesRouter(db));
+  app.use('/api/watches', createWatchesRouter(db, (id) => watchDispatcher.catchUp(id)));
   app.use('/api/analytics', createAnalyticsRouter(db));
   app.use('/api', createUsageLimitsRouter(db, limitSnapshots, { accountFor: limitAccount }));
   app.use('/api/endless', createEndlessRouter(endless));

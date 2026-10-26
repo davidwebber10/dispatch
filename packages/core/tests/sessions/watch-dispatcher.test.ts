@@ -230,3 +230,77 @@ describe('composeWakeMessage control characters', () => {
     expect(msg).toContain('n1 run this');
   });
 });
+
+// A watch registered AFTER the peer already settled never sees an edge. 2026-10-26: a worker
+// ran `gh pr checks --watch` for ~6 minutes after spawning a reviewer, the reviewer went idle
+// meanwhile, and the watch_thread call that followed never fired.
+describe('WatchDispatcher.catchUp', () => {
+  function setup(opts: { targetStatus: string; targetAt: string; watcherStatus?: string; watcherTurnAt?: string; type?: string }) {
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target', 'Reviewer');
+    terminalsDb.updateStatus(db, 'target', opts.targetStatus);
+    db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(opts.targetAt, 'target');
+    terminalsDb.updateStatus(db, 'watcher', opts.watcherStatus ?? 'working');
+    if (opts.watcherTurnAt) {
+      db.prepare("INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES ('watcher','working','authoritative',?)").run(opts.watcherTurnAt);
+    }
+    const deliver = vi.fn();
+    return { db, deliver, dispatcher: new WatchDispatcher(db, deliver) };
+  }
+
+  it('fires at once when the target went idle during the watcher\'s current turn', () => {
+    const { db, deliver, dispatcher } = setup({ targetStatus: 'waiting', targetAt: '2026-10-26T15:59:39.642Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    expect(dispatcher.catchUp(id)).toBe(true);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0][0]).toBe('watcher');
+    expect(deliver.mock.calls[0][1]).toContain('finished its turn');
+    expect(watchRow(db, id).fired_at).toBeTruthy();
+  });
+
+  it('does not fire when the target settled before the watcher\'s turn began', () => {
+    const { db, deliver, dispatcher } = setup({ targetStatus: 'waiting', targetAt: '2026-10-26T15:00:00.000Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    expect(dispatcher.catchUp(id)).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+    expect(watchRow(db, id).fired_at).toBeNull();
+  });
+
+  it('does not fire while the target is working', () => {
+    const { db, deliver, dispatcher } = setup({ targetStatus: 'working', targetAt: '2026-10-26T15:59:39.642Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any' });
+    expect(dispatcher.catchUp(id)).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('respects the criteria: an idle target does not satisfy an error watch', () => {
+    const { db, deliver, dispatcher } = setup({ targetStatus: 'waiting', targetAt: '2026-10-26T15:59:39.642Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'error' });
+    expect(dispatcher.catchUp(id)).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('maps needs_input and error terminal states, and "any" matches them', () => {
+    for (const [state, phrase] of [['needs_input', 'waiting on a question'], ['error', 'hit an error']] as const) {
+      const { db, deliver, dispatcher } = setup({ targetStatus: state, targetAt: '2026-10-26T15:59:39.642Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+      const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any' });
+      expect(dispatcher.catchUp(id)).toBe(true);
+      expect(deliver.mock.calls[0][1]).toContain(phrase);
+    }
+  });
+
+  it('does nothing when the watcher is not in a turn (no cutoff to compare against)', () => {
+    const { db, deliver, dispatcher } = setup({ targetStatus: 'waiting', targetAt: '2026-10-26T15:59:39.642Z', watcherStatus: 'waiting', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    expect(dispatcher.catchUp(id)).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('a repeating watch is kept live after a catch-up fire', () => {
+    const { db, dispatcher } = setup({ targetStatus: 'waiting', targetAt: '2026-10-26T15:59:39.642Z', watcherTurnAt: '2026-10-26T15:53:28.117Z' });
+    const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle', once: false });
+    expect(dispatcher.catchUp(id)).toBe(true);
+    expect(watchesDb.liveForTarget(db, 'target', 'idle')).toHaveLength(1);
+  });
+});

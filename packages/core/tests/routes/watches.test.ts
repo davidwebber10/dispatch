@@ -47,6 +47,16 @@ describe('watch routes', () => {
       expect(row.note).toBe('ping me');
     });
 
+    it('fires at once when the target already went idle during the watcher\'s turn', async () => {
+      db.prepare("UPDATE terminals SET status = 'working' WHERE id = 'watcher-1'").run();
+      db.prepare("INSERT OR REPLACE INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES ('watcher-1','working','authoritative','2026-10-26T15:53:28.117Z')").run();
+      db.prepare("UPDATE terminals SET status = 'waiting', last_activity_at = '2026-10-26T15:59:39.642Z' WHERE id = 'target-1'").run();
+      const res = await request(app).post('/api/watches').send({ watcherTerminalId: 'watcher-1', targetTerminalId: 'target-1', criteria: 'idle' });
+      expect(res.status).toBe(201);
+      expect(res.body.firedNow).toBe(true);
+      expect(watchesDb.listByWatcher(db, 'watcher-1')).toHaveLength(0); // one-shot, spent
+    });
+
     it('refuses a shell tab as the watcher, because its wake text would run as a command', async () => {
       terminalsDb.create(db, { id: 'shell-1', sessionId: sessionA, type: 'shell', label: 'sh' });
       const res = await request(app).post('/api/watches').send({
