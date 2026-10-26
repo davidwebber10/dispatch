@@ -344,3 +344,31 @@ describe('Codex usage accounting', () => {
     expect(billed(t, update(30, 0, 3))[0].message.usage.input_tokens).toBe(10);
   });
 });
+
+describe('CodexTranslator — usage limits', () => {
+  const limitErr = { method: 'error', params: { threadId: 'th', turnId: 'tu', willRetry: false, error: { message: "You've hit your usage limit. Try again in 2 hours 5 minutes.", codexErrorInfo: 'usageLimitExceeded', additionalDetails: null } } };
+  const failedTurn = { method: 'turn/completed', params: { threadId: 'th', turn: { id: 'tu', status: 'failed' } } };
+
+  it('a usageLimitExceeded error becomes a usage-limit action, and the failed turn that follows adds no second failure', () => {
+    const t = new CodexTranslator();
+    t.translate(fx.turnStarted as any);
+    const out = t.translate(limitErr as any);
+    expect(kinds(out)).toEqual(['event', 'usage-limit']);
+    expect(out.find((a) => a.kind === 'usage-limit')).toMatchObject({ limit: { kind: 'usage' } });
+    expect((out.find((a) => a.kind === 'usage-limit') as any).limit.resetsAt).toBeGreaterThan(Date.now());
+    const done = t.translate(failedTurn as any);
+    expect(kinds(done)).toEqual(['event']);
+  });
+  it('another error is still failed (and reads the v2 error.message)', () => {
+    const t = new CodexTranslator();
+    const out = t.translate({ method: 'error', params: { threadId: 'th', error: { message: 'boom', codexErrorInfo: 'other' }, willRetry: false } } as any);
+    expect(kinds(out)).toEqual(['event', 'failed']);
+    expect(events(out)[0].result).toBe('boom');
+  });
+  it('the flag does not leak into the next turn: a later failed turn is failed', () => {
+    const t = new CodexTranslator();
+    t.translate(limitErr as any); t.translate(failedTurn as any);
+    t.translate(fx.turnStarted as any);
+    expect(kinds(t.translate(failedTurn as any))).toEqual(['event', 'failed']);
+  });
+});

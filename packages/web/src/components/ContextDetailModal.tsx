@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Modal } from './common/Modal';
 import { Spinner } from './common/Spinner';
+import { useUsageLimits, UsageLimitsRows } from './inspector/UsageLimitsSection';
 import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredChat';
 
 export interface ContextDetailModalProps {
@@ -9,6 +10,8 @@ export interface ContextDetailModalProps {
   /** Wire-reported window size (ACP usage_update); beats the contextWindowFor table. */
   contextWindow?: number;
   model?: string;
+  /** The thread, for its usage limits. Without it the popup has no Usage limits section. */
+  terminalId?: string;
   compacting: boolean;
   compactResult: CompactResult | null;
   compact: () => void;
@@ -18,7 +21,8 @@ export interface ContextDetailModalProps {
 const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--color-border)', fontSize: 13 };
 
 /** Utility modal for the <ContextIndicator> pill: tokens/window/model detail + a Compact button. */
-export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, model, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
+export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, model, terminalId, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
+  const limits = useUsageLimits(terminalId);
   const contextWindow = wireWindow ?? contextWindowFor(model);
   const pct = Math.min(100, Math.round(((contextTokens ?? 0) / contextWindow) * 100));
   return (
@@ -41,6 +45,21 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
           <span style={{ fontFamily: 'var(--font-mono)' }}>{model ?? '—'}</span>
         </div>
       </div>
+
+      {limits && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', marginBottom: 4 }}>USAGE LIMITS</div>
+          <UsageLimitsRows
+            lim={limits}
+            row={(label, value) => (
+              <div style={{ ...row, gap: 12 }}>
+                <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', textAlign: 'right' }}>{value}</span>
+              </div>
+            )}
+          />
+        </div>
+      )}
 
       {compactResult && !compacting && (
         <div

@@ -65,6 +65,11 @@ import { GrokStructuredSessionManager } from './structured/grok-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { startInterimRecapLoop } from './sessions/interim-recap.js';
+import { UsageLimitService, CHAT_ID, isChatTurnId } from './limits/service.js';
+import { PtyLimitWatcher } from './limits/pty-watch.js';
+import { LimitSnapshots, parseClaudeRateLimit } from './limits/snapshot.js';
+import { accountIdFor, tokenAccountId } from './limits/account.js';
+import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
@@ -574,6 +579,35 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.addThreadSettledListener(({ terminalId, threadStatus }) => endless.onThreadSettled({ terminalId, threadStatus }));
   onEndlessStatus = (terminalId, status) => endless.onThreadStatus(terminalId, status);
 
+  // Usage-limit auto-resume: a thread an agent CLI stopped for its quota is parked in the db and
+  // woken after the reset (limits/service.ts). The managers emit 'usage-limit'; SessionService
+  // routes it here. Chat's own turn parks under CHAT_ID and wakes through Chat's retry.
+  const usageLimits = new UsageLimitService({
+    db,
+    markPaused: (id, label) => { if (id !== CHAT_ID) statusService.markScheduled(id, label); },
+    wake: (id, text) => sessionService.resumeAfterUsageLimit(id, text),
+    note: (id, text, o) => endless.noteLimit(id === CHAT_ID ? null : id, text, o.deliver),
+    chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.wakeAfterLimit() },
+  });
+  sessionService.setUsageLimitService(usageLimits);
+  // The account's limit figures for the Details panel: Claude from its stream, Codex from its session file (routes/usage-limits.ts).
+  const limitSnapshots = new LimitSnapshots(db);
+  // A headless box signs in with an injected token (the CLI's own file does not change), so that token is the account.
+  const limitAccount = (provider: string): string => (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
+  for (const m of [structuredManager, endlessManager]) {
+    m.on('rate-limit', (_id: string, info: unknown) => limitSnapshots.record('claude-code', limitAccount('claude-code'), parseClaudeRateLimit(info), Date.now()));
+  }
+  // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
+  // Chat through its own manager. An owner action on Chat ends its pause.
+  statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
+  endlessManager.on('idle', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnSettled(CHAT_ID); });
+  endlessManager.on('failed', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnEnded(CHAT_ID); });
+  endlessManager.on('needs-help', (id: string) => { if (isChatTurnId(id)) usageLimits.onTurnSettled(CHAT_ID); });
+  endless.onOwnerAction = () => usageLimits.onUserMessage(CHAT_ID);
+  endlessManager.on('usage-limit', (id: string, limit: import('./limits/detect.js').UsageLimit) => {
+    if (isChatTurnId(id) && endless.turns.status !== 'idle') usageLimits.park(CHAT_ID, 'claude-code', limit);
+  });
+
   // Fleet totals are a read-only projection of the canonical analytics ledger.
   const usage = new UsageRecorder(db);
 
@@ -690,10 +724,21 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
   // (live steps + transcript capture + outcome telemetry).
+  // CLI (PTY) Claude threads: the usage-limit banner, once the terminal has gone quiet.
+  const ptyLimits = new PtyLimitWatcher({
+    isIdle: (id) => terminalMonitor.getStatus(id)?.activity !== 'busy',
+    onLimit: (id, limit) => {
+      const t = terminalsDb.getById(db, id);
+      if (t && !t.archived_at && t.type === 'claude-code') usageLimits.park(id, t.type, limit);
+    },
+  });
   ptyManager.on('data', (id: string, data: Buffer) => {
     terminalMonitor.onOutput(id, data);
     agentService.onRunnerData(id, data);
+    ptyLimits.feed(id, data.toString('utf8'));
   });
+  ptyManager.on('exit', (id: string) => ptyLimits.forget(id));
+  usageLimits.addTouchListener((id) => ptyLimits.forget(id));
 
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
@@ -733,6 +778,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     claudeLogin, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
     broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, refreshPtyEnv, endless,
+    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
   });
 
   // Serve the built web client (single-origin) when a build is present.
@@ -922,6 +968,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Boot recovery: auto-resume overseer threads (coordinator + typed agents) that
   // the previous shutdown interrupted mid-turn. Fire-and-forget — it waits a short
   // settle delay before reading status, so it must not block startup.
+  usageLimits.restore();
+  usageLimits.start();
   void sessionService.kickstartInterruptedAgents()
     .then(({ kicked, skipped, completed }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
@@ -984,6 +1032,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
     clearInterval(heartbeat);
+    usageLimits.stop();
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
     endless.stop();

@@ -48,6 +48,18 @@ export class AuthRequestService {
       updatedAt: timestamp,
     };
 
+    // A CLI that restarts mid-sign-in (an MCP reconnect, a startup timeout) opens a fresh
+    // authorize URL with a new state, and its old callback listener is gone. The older banner
+    // can then only fail, so retire it: same terminal + same authorize endpoint = superseded.
+    if (record.terminalId) {
+      const endpoint = parsed.origin + parsed.pathname;
+      for (const r of this.requests.values()) {
+        if (r.terminalId !== record.terminalId || (r.status !== 'pending' && r.status !== 'opened')) continue;
+        const prev = new URL(r.url);
+        if (prev.origin + prev.pathname === endpoint) this.markComplete(r.id);
+      }
+    }
+
     this.requests.set(record.id, record);
     this.pruneOldestIfNeeded();
     this.broadcast('auth:request', record);
@@ -90,21 +102,31 @@ export class AuthRequestService {
     const record = this.requests.get(id);
     if (!record) return null;
 
-    const parsed = this.parseHttpUrl(callbackUrl);
+    // Safari's address bar copies `localhost:39461/callback?…` with no scheme, which URL reads
+    // as scheme "localhost:". A loopback callback is always plain http, so supply it.
+    const trimmed = callbackUrl.trim();
+    const parsed = this.parseHttpUrl(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
     if (!this.isLoopbackHost(parsed.hostname)) {
       throw new Error('Callback forwarding only supports loopback URLs');
     }
 
+    // A failure throws rather than marking the request 'error': that status hid the banner,
+    // so a bad paste just made it vanish. Left open, the banner shows why and takes a retry.
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
+    let res: Response;
     try {
-      await this.fetchImpl(parsed.toString(), { method: 'GET', redirect: 'manual', signal: controller.signal });
-      return this.updateStatus(id, 'callback_forwarded');
-    } catch (err: any) {
-      return this.updateStatus(id, 'error', err?.message || 'Callback forwarding failed');
+      res = await this.fetchImpl(parsed.toString(), { method: 'GET', redirect: 'manual', signal: controller.signal });
+    } catch {
+      throw new Error('That sign-in is no longer waiting on this Mac (the CLI restarted). Open the newest sign-in link and try again.');
     } finally {
       clearTimeout(timeout);
     }
+    if (res.status >= 400) {
+      const detail = (await res.text().catch(() => '')).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
+      throw new Error(`The CLI rejected the callback (${res.status})${detail ? `: ${detail}` : ''}`);
+    }
+    return this.updateStatus(id, 'callback_forwarded');
   }
 
   private updateStatus(id: string, status: AuthRequestStatus, error: string | null = null): AuthRequestRecord | null {

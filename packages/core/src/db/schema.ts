@@ -200,6 +200,24 @@ function initializeSchema(db: Database.Database): void {
     -- Both bootstrap from the CURRENT end state at first sight, never from zero.
     -- Starting at zero would attribute a thread's whole history to one turn and
     -- duplicate what the history importer already covers.
+    -- A thread stopped by an agent CLI usage limit, waiting for the limit to reset. One row per
+    -- thread. wake_at is epoch ms; a weekly pause can be days out, so nothing sleeps on a timer:
+    -- a tick compares wake_at to the clock. state: parked (waiting), woken (resume sent, no
+    -- finished turn yet; attempts counts these), capped (gave up, told Chat).
+    CREATE TABLE IF NOT EXISTS usage_limit_parks (
+      terminal_id TEXT PRIMARY KEY,
+      provider    TEXT NOT NULL,
+      kind        TEXT NOT NULL,
+      resets_at   INTEGER,
+      wake_at     INTEGER NOT NULL,
+      message     TEXT NOT NULL,
+      parsed      INTEGER NOT NULL DEFAULT 1,
+      attempts    INTEGER NOT NULL DEFAULT 0,
+      state       TEXT NOT NULL DEFAULT 'parked',
+      parked_at   INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS usage_pty_state (
       terminal_id       TEXT PRIMARY KEY,
       transcript_path   TEXT NOT NULL,

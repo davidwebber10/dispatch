@@ -488,7 +488,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
           )}
           <span style={{ marginLeft: 'auto' }} />
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} />
         </div>
       </div>
       <DocViewer owner={terminalId} />

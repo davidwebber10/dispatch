@@ -35,9 +35,29 @@ export function AuthBanner() {
   // terminal's project tabs haven't been loaded, or this request predates terminalId).
   const agentLabel = useTabs((s) => (req?.terminalId ? findTerminal(s.byProject, req.terminalId)?.label : undefined));
   const [cb, setCb] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   if (!req) return null;
 
-  const submit = async () => { if (cb.trim()) { await api.forwardAuthCallback(req.id, cb.trim()); setCb(''); } };
+  // On success the request leaves 'pending' and the banner closes by itself. On failure it
+  // stays, so say why (the route's { error } text) instead of the old silent `void` drop.
+  const submit = async (raw = cb) => {
+    // Safari's address bar copies `localhost:39461/…` without its scheme. The daemon adds it
+    // too, but doing it here works against a daemon that predates that fix.
+    const trimmed = raw.trim();
+    if (!trimmed || busy) return;
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.forwardAuthCallback(req.id, url);
+      setCb('');
+    } catch (e: any) {
+      setErr(String(e?.message ?? e).replace(/^.*? failed: \d+ — /, ''));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // A plain link has no OAuth callback to relay back, so the paste field would only confuse.
   const signIn = isSignIn(req);
@@ -74,9 +94,20 @@ export function AuthBanner() {
         <>
           <div style={{ marginTop: 10, fontSize: 11, color: 'var(--color-text-tertiary)' }}>On this Mac it returns automatically. From another device (e.g. iPhone), copy the <code>localhost</code> URL Safari lands on and paste it here:</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            <input value={cb} onChange={(e) => setCb(e.target.value)} placeholder="http://localhost:…/callback?code=…" style={{ flex: 1, height: 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 11px var(--font-mono)' }} />
-            <button onClick={() => void submit()} style={ghost}>Forward</button>
+            {/* Pasting IS the action: a phone user's only step is paste, so forward on paste
+                rather than making them find and tap Forward as well. */}
+            <input
+              value={cb}
+              onChange={(e) => setCb(e.target.value)}
+              onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t.trim()) { e.preventDefault(); setCb(t.trim()); void submit(t); } }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
+              placeholder="http://localhost:…/callback?code=…"
+              autoCapitalize="off" autoCorrect="off" spellCheck={false} inputMode="url"
+              style={{ flex: 1, minWidth: 0, height: 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 11px var(--font-mono)' }}
+            />
+            <button onClick={() => void submit()} disabled={busy} style={ghost}>{busy ? 'Forwarding…' : 'Forward'}</button>
           </div>
+          {err && <div role="alert" style={{ marginTop: 6, fontSize: 11, color: 'var(--color-status-red)' }}>{err}</div>}
         </>
       )}
     </div>

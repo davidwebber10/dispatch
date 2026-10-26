@@ -11,6 +11,7 @@ import type { IntegrationsService } from './integrations/service.js';
 import type { PushService } from './push/service.js';
 import type { LedgerService } from './overseer/ledger-service.js';
 import type { EndlessService } from './endless/service.js';
+import type { LimitSnapshots } from './limits/snapshot.js';
 import type { ToolAuthProber } from './tools/auth-probe.js';
 import type { EventBroadcaster } from './ws/events.js';
 import type { NoCredentialStats } from './auth/no-credential-stats.js';
@@ -43,6 +44,7 @@ import { createAppearanceRouter } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
+import { createUsageLimitsRouter } from './routes/usage-limits.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -71,6 +73,8 @@ export interface ApiRouteDeps {
   refreshPtyEnv?: () => void;
   /** Absent in `createApp` unless a test passes a stub: `/api/endless` then answers 503. */
   endless?: EndlessService;
+  /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
+  usageLimits?: { snapshots: LimitSnapshots; accountFor: (provider: string) => string };
 }
 
 /**
@@ -107,6 +111,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
   app.use('/api/watches', createWatchesRouter(d.db));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
+  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
 }

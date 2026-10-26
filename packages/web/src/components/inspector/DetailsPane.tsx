@@ -4,6 +4,7 @@ import { useProjects } from '../../stores/projects';
 import { useActivity } from '../../stores/activity';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import type { Terminal } from '../../api/types';
+import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -27,6 +28,8 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : null));
   const [term, setTerm] = useState<Terminal | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
+  // Limits belong to the account: refetch when a turn updates the thread's numbers.
+  const limitsRows = useUsageLimits(terminalId, `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`);
 
   // The terminal's own working dir + pid — the data that used to live in the
   // bottom bar below the terminal, now surfaced here in the right column.
@@ -45,21 +48,24 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   if (!project) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
 
   const hasActivity = !!(activity?.model || activity?.tokens || activity?.cost);
+  const lim = limitsRows;
+  const showDetails = hasActivity || !!lim;
   const status = tab?.status ?? term?.status;
   return (
     <div style={{ padding: 12, fontSize: 13 }}>
-      {hasActivity && (
+      {showDetails && (
         <>
           <div style={{ ...label, marginBottom: 8 }}>THREAD DETAILS</div>
           {activity?.model && <Row label="Model" value={activity.model} />}
           {activity?.context && <Row label="Context" value={activity.context} />}
           {activity?.tokens && <Row label="Tokens" value={activity.tokens} />}
           {activity?.cost && <Row label="Cost" value={activity.cost} />}
+          {lim && <div style={{ marginTop: hasActivity ? 6 : 0 }}><UsageLimitsRows lim={lim} row={(l, v) => <Row label={l} value={v} />} /></div>}
         </>
       )}
       {terminalId && (
         <>
-          <div style={{ ...label, margin: hasActivity ? '14px 0 8px' : '0 0 8px' }}>THREAD</div>
+          <div style={{ ...label, margin: showDetails ? '14px 0 8px' : '0 0 8px' }}>THREAD</div>
           {tab?.label && <Row label="Name" value={tab.label} />}
           {term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
           {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}

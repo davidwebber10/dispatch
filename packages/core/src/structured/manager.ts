@@ -7,6 +7,7 @@ import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
+import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -90,6 +91,8 @@ interface Session {
    * lands afterwards and would overwrite it.
    */
   declared?: StatusDeclaration;
+  /** A usage limit this turn's frames reported (see limits/detect.ts), read at its `result`. */
+  limit?: UsageLimit;
 }
 
 /** Options accepted by a structured manager's `spawn`. For the Claude manager
@@ -421,6 +424,14 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // Consumers use 'idle' to settle status and, for an agent, push a completion notice to
       // its coordinator — 'scheduled' and 'needs-help' must NOT do either (the agent hasn't
       // finished, or is waiting on the human, not filed as done).
+      // A usage limit shows in its own frame before the error `result` (the synthetic assistant
+      // frame carries the structured reset time); remember it for the boundary below.
+      // The account's current limit figures (Details panel); sent on every turn.
+      if (event?.type === 'rate_limit_event') this.emit('rate-limit', terminalId, event.rate_limit_info ?? event.rateLimitInfo);
+      if (event?.parent_tool_use_id == null && event?.type !== 'result') {
+        const hit = detectClaudeLimit(event, Date.now());
+        if (hit) session.limit = hit;
+      }
       if (event?.type === 'result') {
         session.turnOpen = false;
         // Backstop: a CLI blocked on a request cannot end a turn, so a pending still set here is
@@ -433,7 +444,14 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
 
         // needs_you wins over everything — a question blocks the thread regardless of a
         // pending timer, so it's checked first even ahead of a wake-scheduler call.
-        if (event.is_error === true) {
+        const limit = event.is_error === true ? (session.limit ?? detectClaudeLimit(event, Date.now())) : undefined;
+        session.limit = undefined;
+        if (limit) {
+          // A usage limit is a pause, not a failure: the thread shows as dormant until it resets,
+          // and the limit service parks it and wakes it (limits/service.ts).
+          this.emit('scheduled', terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.emit('usage-limit', terminalId, limit);
+        } else if (event.is_error === true) {
           // A resume of a conversation Claude no longer has. Name the id, so the service stops
           // reviving it with the same doomed `-r` (#76).
           const lost = Array.isArray(event.errors)

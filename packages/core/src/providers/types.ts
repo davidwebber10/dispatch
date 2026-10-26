@@ -80,8 +80,8 @@ export interface SessionProvider {
    * it as soon as the process is alive.
    */
   assignsSessionId?: boolean;
-  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string; sessionId?: string }): { command: string; args: string[] };
-  buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string }): { command: string; args: string[] };
+  buildNewCommand(args: { workDir: string; prompt?: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string; effort?: string; sessionId?: string }): { command: string; args: string[] };
+  buildResumeCommand(args: { externalSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string; effort?: string }): { command: string; args: string[] };
   /**
    * Build the command to BRANCH (fork) an existing conversation: resume the
    * source session but fork it into a NEW session id, leaving the original
@@ -122,5 +122,5 @@ export interface SessionProvider {
    * `--settings {"autoMemoryDirectory": …}`: the overseer's own memory folder (overseer
    * memory scope spec 2026-10-07, Unit 1). Omitted → the CLI's per-project memory folder.
    */
-  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; grokPluginDir?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }): { command: string; args: string[] };
+  buildStructuredCommand?(args: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; grokPluginDir?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }): { command: string; args: string[] };
 }

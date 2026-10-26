@@ -34,6 +34,12 @@ function modelArgs(model?: string): string[] {
   return model ? ['--model', model] : [];
 }
 
+// Pins the effort level (low|medium|high|xhigh|max) so a relaunch keeps what `/effort` set in
+// the thread. Omitted → the CLI's own per-model default.
+function effortArgs(effort?: string): string[] {
+  return effort ? ['--effort', effort] : [];
+}
+
 /**
  * The watcher's adoption decision, pure for testability. Exactly one transcript born in
  * the window is attributable to our spawn; two or more means another session (usually the
@@ -59,14 +65,14 @@ export const claudeCodeProvider: SessionProvider = {
   displayName: 'Claude Code',
   statusStrategy: 'hooks',
 
-  buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
-    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
+  buildNewCommand({ prompt, secretsMcp, statusHooks, model, effort }) {
+    const args: string[] = ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), ...effortArgs(effort)];
     if (prompt) args.push(prompt);
     return { command: 'claude', args };
   },
 
-  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
-    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), '-r', externalSessionId] };
+  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model, effort }) {
+    return { command: 'claude', args: ['--dangerously-skip-permissions', ...mcpArgs(secretsMcp), ...systemPromptArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), ...effortArgs(effort), '-r', externalSessionId] };
   },
 
   // Branch = resume the source session but fork it to a NEW session id (the
@@ -94,7 +100,7 @@ export const claudeCodeProvider: SessionProvider = {
     };
   },
 
-  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, disallowedTools, autoMemoryDirectory }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }) {
+  buildStructuredCommand({ workDir, secretsMcp, appendSystemPrompt, resumeSessionId, model, effort, disallowedTools, autoMemoryDirectory }: { workDir: string; secretsMcp?: SecretsMcpInjection; appendSystemPrompt?: string; resumeSessionId?: string; model?: string; effort?: string; disallowedTools?: string[]; autoMemoryDirectory?: string }) {
     // The spike-verified stream-json control protocol. Parity permissions come from
     // the StructuredSessionManager's auto-allow loop, NOT --dangerously-skip-permissions.
     const args: string[] = [
@@ -119,6 +125,7 @@ export const claudeCodeProvider: SessionProvider = {
     // Pin the model tier for this thread (per-agent-type default or explicit override).
     // Omitted → the CLI's own default model.
     if (model) args.push('--model', model);
+    args.push(...effortArgs(effort));
     // Strip tools from the model's toolset entirely (exact-name match; unknown names are
     // ignored by the CLI). Used for coordinator threads, whose native-orchestration tools
     // (Agent/Task/Workflow) are auto-approved by the CLI and thus unreachable by the
