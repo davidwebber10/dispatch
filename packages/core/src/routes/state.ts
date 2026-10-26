@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { platform } from '../platform/index.js';
@@ -11,7 +12,7 @@ import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
 
 export function createStateRouter(db: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
   // GET /api/state/last-directory — return last used working directory
   router.get('/last-directory', (_req, res) => {

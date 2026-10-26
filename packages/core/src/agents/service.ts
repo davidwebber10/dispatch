@@ -7,6 +7,7 @@ import * as terminalsDb from '../db/terminals.js';
 import fs from 'fs';
 import path from 'path';
 import { StringDecoder } from 'string_decoder';
+import { KeyStreamRedactor, redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
@@ -193,6 +194,9 @@ interface RunStreamState {
   terminalId: string;
   parser: RunStreamParser;
   decoder: StringDecoder;
+  /** Separate decoder and key redactor for the transcript file. */
+  transcriptDecoder: StringDecoder;
+  transcriptRedactor: KeyStreamRedactor;
   /** Transcript file path, or null when persistence is disabled (e.g. tests). */
   transcriptPath: string | null;
   lastAssistantText?: string;
@@ -409,7 +413,7 @@ export class AgentService {
       this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(run) });
       return toRun(run);
     } catch (err: any) {
-      run = agentsDb.updateRunStatus(this.db, run.id, 'failed', { error: err.message, unread: true })!;
+      run = agentsDb.updateRunStatus(this.db, run.id, 'failed', { error: redactKeys(err.message), unread: true })!;
       this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(run) });
       return toRun(run);
     }
@@ -506,6 +510,8 @@ export class AgentService {
         this.telemetry.emit('event', terminalId, { ...normalized, telemetry: { ...normalized?.telemetry, runner: true, counterScope: runId } });
       }),
       decoder: new StringDecoder('utf8'),
+      transcriptDecoder: new StringDecoder('utf8'),
+      transcriptRedactor: new KeyStreamRedactor(),
       transcriptPath,
       finalized: false,
     });
@@ -521,7 +527,8 @@ export class AgentService {
     if (!state) return;
     if (state.transcriptPath) {
       try {
-        fs.appendFileSync(state.transcriptPath, data);
+        const safe = state.transcriptRedactor.push(typeof data === 'string' ? data : state.transcriptDecoder.write(data));
+        if (safe) fs.appendFileSync(state.transcriptPath, safe);
       } catch { /* best effort */ }
     }
     const text = typeof data === 'string' ? data : state.decoder.write(data);
@@ -544,7 +551,7 @@ export class AgentService {
       type: 'agent:run-step',
       runId: state.runId,
       terminalId: state.terminalId,
-      step: { ...step, ts: new Date().toISOString() },
+      step: redactKeysDeep({ ...step, ts: new Date().toISOString() }),
     });
 
     if (ev.kind === 'result') this.finalizeFromResult(state, ev);
@@ -556,14 +563,14 @@ export class AgentService {
     this.telemetry.emit(ev.isError ? 'failed' : 'idle', state.terminalId);
     const row = agentsDb.finalizeRun(this.db, state.runId, {
       status: ev.isError ? 'failed' : 'succeeded',
-      error: ev.isError ? (ev.result ?? 'Agent reported an error') : null,
+      error: ev.isError ? redactKeys(ev.result ?? 'Agent reported an error') : null,
       costUsd: ev.costUsd ?? null,
       totalTokens: ev.totalTokens ?? null,
       inputTokens: ev.inputTokens ?? null,
       outputTokens: ev.outputTokens ?? null,
       model: state.model ?? ev.model ?? null,
       numTurns: ev.numTurns ?? null,
-      resultText: ev.result ?? state.lastAssistantText ?? null,
+      resultText: redactKeys(ev.result ?? state.lastAssistantText ?? '') || null,
       unread: true,
     });
     if (row) this.broadcaster.broadcast({ type: 'agent:run-updated', run: toRun(row) });
@@ -577,6 +584,12 @@ export class AgentService {
     try {
       for (const ev of state.parser.flush()) this.handleRunEvent(state, ev);
     } catch { /* best effort */ }
+    if (state.transcriptPath) {
+      try {
+        const tail = state.transcriptRedactor.push(state.transcriptDecoder.end()) + state.transcriptRedactor.end();
+        if (tail) fs.appendFileSync(state.transcriptPath, tail);
+      } catch { /* best effort */ }
+    }
     this.telemetry.emit('exit', terminalId, exitCode);
   }
 

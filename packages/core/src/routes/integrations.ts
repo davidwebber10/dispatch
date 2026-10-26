@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { IntegrationsService, AddIntegrationInput, IntegrationsExport } from '../integrations/service.js';
 
 export function createIntegrationsRouter(integrations: IntegrationsService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   router.get('/', (_req, res) => res.json({ integrations: integrations.list() }));
 

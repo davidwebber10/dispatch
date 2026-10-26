@@ -3,7 +3,11 @@ import express from 'express';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { AddressInfo } from 'node:net';
-import { BOX_TOKEN_HEADER, tokenMatches, requireBoxToken, upgradeAllowed } from './box-token.js';
+import { BOX_TOKEN_HEADER, tokenMatches, requireBoxToken, upgradeAllowed, createBoxGate } from './box-token.js';
+import { KeyRegistry } from './principals.js';
+import { createPrincipalMiddleware, principalOf } from './request-principal.js';
+import { nullKeyScope } from './key-scope.js';
+import request from 'supertest';
 
 describe('tokenMatches', () => {
   test('accepts the exact token', () => {
@@ -91,5 +95,50 @@ describe('upgradeAllowed — the easy-to-miss half', () => {
     expect(await attempt({})).toBe('refused');
     expect(await attempt({ [BOX_TOKEN_HEADER]: 's3cret' })).toBe('upgraded');
     server.close(); wss.close();
+  });
+});
+
+describe('createBoxGate', () => {
+  function build() {
+    const registry = new KeyRegistry();
+    const getToken = () => 'access-token-value';
+    const app = express();
+    app.use(createBoxGate({ boxToken: 's3cret', registry, getToken }));
+    app.use(createPrincipalMiddleware({ registry, scope: nullKeyScope, getToken, boxToken: 's3cret' }));
+    app.get('/api/p', (req, res) => { res.json(principalOf(req)); });
+    return { app, registry };
+  }
+  test('box header passes as owner', async () => {
+    const r = await request(build().app).get('/api/p').set(BOX_TOKEN_HEADER, 's3cret');
+    expect(r.body).toEqual({ kind: 'owner', via: 'box' });
+  });
+  test('the access token passes as owner', async () => {
+    const r = await request(build().app).get('/api/p').set('Authorization', 'Bearer access-token-value');
+    expect(r.body).toEqual({ kind: 'owner', via: 'token' });
+  });
+  test('a live key passes as the key', async () => {
+    const { app, registry } = build();
+    const { key } = registry.mint({ kind: 'thread', terminalId: 't1' });
+    const r = await request(app).get('/api/p').set('Authorization', `Bearer ${key}`);
+    expect(r.body.kind).toBe('thread');
+  });
+  test('a revoked key and no credential get 401', async () => {
+    const { app, registry } = build();
+    const { key, handle } = registry.mint({ kind: 'thread', terminalId: 't1' });
+    registry.revoke(handle);
+    expect((await request(app).get('/api/p').set('Authorization', `Bearer ${key}`)).status).toBe(401);
+    const none = await request(app).get('/api/p');
+    expect(none.status).toBe(401);
+    expect(none.body).toEqual({ error: 'unauthorized' });
+  });
+  test('a key plus the box header is judged as the key', async () => {
+    const { app, registry } = build();
+    const { key } = registry.mint({ kind: 'thread', terminalId: 't1' });
+    const r = await request(app).get('/api/p').set(BOX_TOKEN_HEADER, 's3cret').set('Authorization', `Bearer ${key}`);
+    expect(r.body.kind).toBe('thread');
+    const { key: k2, handle } = registry.mint({ kind: 'thread', terminalId: 't2' });
+    registry.revoke(handle);
+    const bad = await request(app).get('/api/p').set(BOX_TOKEN_HEADER, 's3cret').set('Authorization', `Bearer ${k2}`);
+    expect(bad.status).toBe(401);
   });
 });

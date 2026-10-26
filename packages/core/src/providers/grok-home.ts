@@ -130,7 +130,8 @@ export function writeGrokHome(spec: GrokHomeSpec): string | null {
   if (hasHooks) {
     fs.mkdirSync(hooksDir, { recursive: true });
     const json = buildHooksJson(spec.eventsUrl!, spec.hookHelperPath!, spec.nodePath ?? process.execPath);
-    fs.writeFileSync(hooksPath, JSON.stringify(json, null, 2));
+    fs.writeFileSync(hooksPath, JSON.stringify(json, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(hooksPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
   } else if (fs.existsSync(hooksPath)) {
     fs.rmSync(hooksPath, { force: true });
   }

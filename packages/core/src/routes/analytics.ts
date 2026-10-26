@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { summary, series, top, records } from '../analytics/queries.js';
@@ -32,7 +33,7 @@ export function trackingStartedAt(db: Database.Database): string {
 }
 
 export function createAnalyticsRouter(db: Database.Database): Router {
-  const router = Router();
+  const router = policyRouter();
 
   const range = (q: Record<string, any>) => ({
     from: typeof q.from === 'string' ? q.from : undefined,

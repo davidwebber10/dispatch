@@ -7,4 +7,9 @@ describe('inheritedEnv', () => {
     expect(inheritedEnv(src)).toEqual({ PATH: '/bin', HOME: '/h' });
     expect(src.PORT).toBe('3456');
   });
+
+  it('drops the box tokens and the thread key variables', () => {
+    const src = { PATH: '/bin', DISPATCH_BOX_TOKEN: 'a', OS_BOX_TOKEN: 'b', DISPATCH_AUTH: 'c', DISPATCH_AUTH_FILE: '/f', DISPATCH_API: 'http://127.0.0.1:1' };
+    expect(inheritedEnv(src)).toEqual({ PATH: '/bin', DISPATCH_API: 'http://127.0.0.1:1' });
+  });
 });

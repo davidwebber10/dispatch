@@ -6,6 +6,7 @@ import * as readline from 'readline';
 import { looksLikeQuestion } from '../status/question.js';
 import { broadKillDenial } from './broad-kill-guard.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
+import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 
 /**
@@ -331,7 +332,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     }
     this.sessions.set(terminalId, session);
     child.stderr.on('data', (chunk: Buffer) => {
-      session.stderrTail = ((session.stderrTail ?? '') + chunk.toString()).slice(-STDERR_TAIL);
+      // Redact the whole joined text, so a key split across two chunks is still found.
+      session.stderrTail = redactKeys((session.stderrTail ?? '') + chunk.toString()).slice(-STDERR_TAIL);
     });
     rl.on('line', (line) => {
       if (this.sessions.get(terminalId) !== session) return;
@@ -513,7 +515,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (this.sessions.get(terminalId)?.child !== child) return;
       session.pending = null; // drop any unanswered permission — the process is gone
       this.sessions.delete(terminalId);
-      const detail = session.stderrTail?.trim() || undefined;
+      const detail = redactKeys(session.stderrTail?.trim() ?? '') || undefined;
       // The daemon log is the only place this reaches when no browser is watching.
       if (exitCode && detail) console.error(`[structured] thread ${terminalId} exited (${exitCode}): ${detail}`);
       this.emit('exit', terminalId, exitCode, detail);
@@ -529,7 +531,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     });
     child.on('error', (err) => {
       if (this.sessions.get(terminalId)?.child !== child) return;
-      this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: redactKeys(String(err)) });
       this.emit('failed', terminalId);
     });
 
@@ -693,7 +695,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     try { s.child.kill(); } catch { /* already gone */ }
     // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
-    this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? s.stderrTail?.trim() || undefined : undefined);
+    this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? redactKeys(s.stderrTail?.trim() ?? '') || undefined : undefined);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }

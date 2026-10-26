@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
@@ -18,7 +19,7 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   const now = opts.now ?? Date.now;
   const accountFor = opts.accountFor ?? accountIdFor;
   const loginChangedAt = opts.codexLoginChangedAt ?? codexLoginChangedAt;
-  const router = Router();
+  const router = policyRouter();
   const lastRead = new Map<string, number>();
 
   /** Codex writes its limits into the session file; read the newest at most every 30 s per thread. */

@@ -24,6 +24,12 @@ export interface SecretsMcpInjection {
 export interface StatusHooksContext {
   serverUrl: string;
   terminalId: string;
+  /**
+   * The thread has a key in its environment (DISPATCH_AUTH). Claude's HTTP hooks then send it as
+   * an `Authorization` header that names the variable: the settings file holds a reference, never
+   * the key.
+   */
+  keyed?: boolean;
   /** Absolute path to the Codex notify helper script (POSTs the notify payload). */
   codexHelperPath: string;
   /** Absolute path to the Grok hook helper script (POSTs the hook payload from stdin). */

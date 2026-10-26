@@ -15,6 +15,7 @@ import type { ZoomImage } from './recall.js';
 import { endlessClaudeArgs, FIXED_CONTEXT_ENV, TURN_MODEL } from './claude-args.js';
 import { clipToolOutput, messageLine } from './text.js';
 import { usageOf, type Usage } from './summarizer.js';
+import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
 
 export const TURN_WAIT_MS = 30_000;
 /** After a `result`, wait this long for more events (a queued message starts a second turn). */
@@ -50,6 +51,8 @@ export interface TurnDeps {
   handoffCeilingMs?: number;
   command?: string;
   commandArgs?: string[];
+  /** The daemon's key registry, read at each turn (it can be set after construction). */
+  keys?: () => KeyRegistry | undefined;
 }
 
 function toolResultText(content: unknown): string {
@@ -158,6 +161,7 @@ export class TurnRunner {
     let error: string | undefined;
     let cancel: (() => void) | null = null;
     let stopped = false;
+    let keyHandle: KeyHandle | null = null;
     let onStop!: () => void;
     const stopSignal = new Promise<void>((r) => { onStop = r; });
     this.stopTurn = () => { stopped = true; onStop(); };
@@ -189,11 +193,14 @@ export class TurnRunner {
       this.turnId = id;
       const w = this.watch(id);
       cancel = w.cancel;
+      const keys = d.keys?.();
+      const minted = keys?.mint({ kind: 'chat', startedBy: first.logged ? 'report' : 'user' });
+      if (minted) keyHandle = minted.handle;
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
         args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true })],
         workDir: d.chatDir,
-        env: FIXED_CONTEXT_ENV,
+        env: minted ? { ...FIXED_CONTEXT_ENV, DISPATCH_AUTH: minted.key } : FIXED_CONTEXT_ENV,
       });
       this.state = 'running';
       d.emit({ type: 'endless:turn', status: 'running' });
@@ -210,6 +217,7 @@ export class TurnRunner {
       try {
         if (id && d.manager.isAlive(id)) d.manager.kill(id);
       } catch { /* the process is gone or unkillable; the turn still ends */ }
+      if (keyHandle) d.keys?.()?.revoke(keyHandle);
       try {
         // User messages that never reached the log are logged so that they are not lost.
         // Reports are already in the log; the next turn sees them in its view (no auto-retry).

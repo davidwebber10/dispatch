@@ -763,6 +763,63 @@ it("compact() streams system frames only and opens no turn", async () => {
   expect(order).toEqual([]);
 });
 
+it('a key a failing child writes to stderr never reaches the log or the exit event', async () => {
+  const key = `dtk_${'Z'.repeat(43)}`;
+  const m = new StructuredSessionManager();
+  const logged: string[] = [];
+  const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { logged.push(a.join(' ')); });
+  try {
+    const exited = new Promise<any[]>((resolve) => m.on('exit', (...a: any[]) => resolve(a)));
+    m.spawn('keyed', {
+      command: process.execPath,
+      args: ['-e', 'process.stderr.write("boom " + process.env.DISPATCH_AUTH + "\\n"); process.exit(1)'],
+      workDir: process.cwd(),
+      env: { DISPATCH_AUTH: key },
+    });
+    const [, code, detail] = await exited;
+    expect(code).toBe(1);
+    expect(String(detail)).toContain('boom');
+    expect(String(detail)).not.toContain(key);
+    expect(logged.join('\n')).toContain('boom');
+    expect(logged.join('\n')).not.toContain(key);
+  } finally {
+    spy.mockRestore();
+    m.killAll();
+  }
+});
+
+it('a key split across two stderr writes never reaches the log or the exit event', async () => {
+  const key = `dtk_${'W'.repeat(43)}`;
+  const m = new StructuredSessionManager();
+  const logged: string[] = [];
+  const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { logged.push(a.join(' ')); });
+  try {
+    const exited = new Promise<any[]>((resolve) => m.on('exit', (...a: any[]) => resolve(a)));
+    const script = 'const k = process.env.DISPATCH_AUTH; process.stderr.write("boom " + k.slice(0, 24));'
+      + ' setTimeout(() => { process.stderr.write(k.slice(24) + "\\n"); process.exit(1); }, 150)';
+    m.spawn('split', { command: process.execPath, args: ['-e', script], workDir: process.cwd(), env: { DISPATCH_AUTH: key } });
+    const [, code, detail] = await exited;
+    expect(code).toBe(1);
+    expect(String(detail)).toContain('boom');
+    expect(String(detail)).not.toContain(key);
+    expect(String(detail)).not.toContain('W'.repeat(20));
+    expect(logged.join('\n')).not.toContain('W'.repeat(20));
+  } finally {
+    spy.mockRestore();
+    m.killAll();
+  }
+});
+
+it('a key in a spawn error never reaches the event ring', async () => {
+  const key = `dtk_${'Y'.repeat(43)}`;
+  const m = new StructuredSessionManager();
+  try {
+    m.spawn('keyed2', { command: `/nonexistent/${key}`, args: [], workDir: process.cwd() });
+    const e = await waitForEvent(m, 'keyed2', (x) => x.subtype === 'spawn_error');
+    expect(JSON.stringify(e)).not.toContain(key);
+  } finally { m.killAll(); }
+});
+
 // --- usage limits (limits/detect.ts): a pause, never a failure ---
 
 it("a usage-limit stop emits 'usage-limit' (kind, structured reset) and 'scheduled', never 'failed'", async () => {

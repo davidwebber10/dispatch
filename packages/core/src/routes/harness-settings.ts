@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels } from '../settings/harness-settings.js';
 import { readOverseerWorkers, updateOverseerWorkers } from '../settings/overseer-workers.js';
@@ -28,7 +29,7 @@ export interface HarnessSettingsRouterOptions {
  *      rather than show an empty result.
  */
 export function createHarnessSettingsRouter(db: Database.Database, secrets?: SecretsLike, onChanged?: () => void, opts: HarnessSettingsRouterOptions = {}): Router {
-  const router = Router();
+  const router = policyRouter();
 
   const keyStatus = async () => {
     const secret = opencodeKeySecretName(db);

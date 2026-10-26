@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type { AgentService } from '../agents/service.js';
 
 export function createAgentsRouter(agentService: AgentService): Router {
-  const router = Router();
+  const router = policyRouter();
 
   // Cross-project agent overview (status + all-time spend) for the Agents tab.
   router.get('/overview', (_req, res) => {

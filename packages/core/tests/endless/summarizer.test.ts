@@ -6,6 +6,7 @@ import { ClaudeSummarizer } from '../../src/endless/summarizer-claude.js';
 import { OpenRouterSummarizer } from '../../src/endless/summarizer-openrouter.js';
 import { usageOf } from '../../src/endless/summarizer.js';
 import { FakeManager } from './fake-manager.js';
+import { KeyRegistry } from '../../src/auth/principals.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FAKE = path.join(here, '../structured/fake-claude.mjs');
@@ -47,6 +48,44 @@ describe('ClaudeSummarizer', () => {
     expect(Date.now() - t0).toBeLessThan(1000);
     expect(m.sent).toHaveLength(1);
     s.close();
+  });
+});
+
+describe('ClaudeSummarizer keys', () => {
+  it('spawns with a summarizer chat key, revoked on close', () => {
+    const keys = new KeyRegistry();
+    const m = new FakeManager();
+    const s = new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', keys: () => keys })
+      .open({ systemPrompt: 'SYS', onFirstToken: () => {} });
+    const key = m.spawned[0].opts.env!.DISPATCH_AUTH;
+    expect(key).toMatch(/^dck_/);
+    expect(keys.resolve(key)).toMatchObject({ kind: 'chat', startedBy: 'summarizer' });
+    expect(m.spawned[0].opts.args.join(' ')).not.toContain(key);
+    s.close();
+    expect(keys.resolve(key)).toBeNull();
+  });
+  it('revokes when the process exits', () => {
+    const keys = new KeyRegistry();
+    const m = new FakeManager();
+    new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', keys: () => keys })
+      .open({ systemPrompt: 'SYS', onFirstToken: () => {} });
+    m.emitExit(0);
+    expect(keys.size()).toBe(0);
+  });
+  it('a spawn that throws revokes the minted key, detaches its listeners and rethrows', () => {
+    const keys = new KeyRegistry();
+    const m = new FakeManager();
+    m.spawn = () => { throw new Error('spawn boom'); };
+    const s = new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json', keys: () => keys });
+    expect(() => s.open({ systemPrompt: 'SYS', onFirstToken: () => {} })).toThrow('spawn boom');
+    expect(keys.size()).toBe(0);
+    expect(m.listenerCount('event')).toBe(0);
+    expect(m.listenerCount('exit')).toBe(0);
+  });
+  it('adds no key without a registry', () => {
+    const m = new FakeManager();
+    new ClaudeSummarizer({ manager: m.asManager(), chatDir: here, mcpConfigPath: '/nowhere.json' }).open({ systemPrompt: 'SYS', onFirstToken: () => {} });
+    expect(m.spawned[0].opts.env).not.toHaveProperty('DISPATCH_AUTH');
   });
 });
 

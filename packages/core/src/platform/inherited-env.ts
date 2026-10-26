@@ -8,5 +8,8 @@
 export function inheritedEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out = { ...env } as Record<string, string>;
   delete out.PORT;
+  // A thread key or a box token that reached the daemon's own environment must never ride into a
+  // thread, a probe or a tool that the daemon starts (per-thread keys, spec 6.3).
+  for (const name of ['DISPATCH_BOX_TOKEN', 'OS_BOX_TOKEN', 'DISPATCH_AUTH', 'DISPATCH_AUTH_FILE']) delete out[name];
   return out;
 }

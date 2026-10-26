@@ -33,7 +33,7 @@ import {
 } from './guards.js';
 import { buildWorkerCreateBody } from './worker-payload.js';
 import {
-  httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput,
+  httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput, authHeaders, sendsKeyTo, keyErrorFrom, KeyError,
   HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
 } from './agency-shared.js';
 
@@ -45,8 +45,32 @@ export type { AgentType };
 function apiBase(): string {
   return process.env.DISPATCH_API || `http://localhost:${process.env.DISPATCH_PORT || 3456}`;
 }
+/**
+ * Who the daemon says this thread is (GET /api/whoami), fetched lazily on the first tool call that
+ * carries a key. The project id comes from here, so a thread that the owner moves keeps its tools.
+ * Without a key, or when the call fails, the env ids are the fallback (stage 1).
+ */
+interface Identity { sessionId: string | null; overseer: boolean }
+let identity: Identity | null = null;
+/** Test seam: forget the cached identity. */
+export function resetIdentityCache(): void { identity = null; }
+
+async function ensureIdentity(): Promise<void> {
+  if (identity) return;
+  const url = `${apiBase()}/api/whoami`;
+  if (!sendsKeyTo(url)) return;
+  try {
+    const who = await httpJson('GET', url);
+    if (who?.kind === 'thread') {
+      identity = { sessionId: typeof who.sessionId === 'string' && who.sessionId ? who.sessionId : null, overseer: who.overseer === true };
+    }
+  } catch { /* keep the env ids */ }
+}
 function sessionId(): string {
-  return process.env.DISPATCH_SESSION || '';
+  return identity?.sessionId || process.env.DISPATCH_SESSION || '';
+}
+function isOverseer(): boolean {
+  return identity?.overseer === true;
 }
 /** The calling thread's own terminal id — how a tool knows "who am I" (e.g. to
  *  mark its own row in list_threads, or to register itself as a watcher). */
@@ -80,6 +104,11 @@ const LEDGER_IDS_ARG_DESCRIPTION =
   'Optional ledger item IDs (e.g. ["N7", "N12"]). The daemon appends a block "Owner decisions ' +
   '(verbatim, from the ledger)" with those items\' rendered lines, so the agent gets the question and ' +
   "the user's exact words, not a paraphrase. Overseer only.";
+
+/** The cross-project rule of the peer tools (owner decision on overseer reach, spec 6.4.1). */
+const OVERSEER_REACH =
+  "Overseers (project coordinators) can also use this on other projects: read any thread, and message only another project's overseer. " +
+  "Messages you receive from another project's overseer start with a line that names its project.";
 
 const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
 
@@ -308,20 +337,32 @@ export const TOOLS = [
   },
   // --- peer/thread tools: every non-archived thread in the project, not just typed agents ---
   {
+    name: 'list_projects',
+    description:
+      'List the projects: id, name, coordinatorId, isOwn. Only a project\'s overseer (its coordinator) can use this. ' +
+      'The other tools take a project id or a thread id from this list.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'list_threads',
     description:
       'List every thread in this project — plain threads, typed agents, and the coordinator alike — ' +
-      'with id, label, type, role, agentType, status, and lastActivityAt. Unlike list_agents (typed ' +
+      'with id, label, type, role, agentType, status, projectId, and lastActivityAt. Unlike list_agents (typed ' +
       'agents only), this is the full peer roster, including plain threads the user is working in ' +
-      'directly. Your own row is tagged isSelf so you can spot yourself in the list.',
-    inputSchema: { type: 'object', properties: {} },
+      'directly. Your own row is tagged isSelf so you can spot yourself in the list. ' + OVERSEER_REACH,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Optional: another project\'s id (from list_projects). Default: your own project. Overseers only.' },
+      },
+    },
   },
   {
     name: 'read_thread',
     description:
       "Read any thread's transcript in this project — its assistant output and the tools it ran " +
       '(generalizes read_agent beyond typed agents to every peer). Returns { id, status, output, tools }. ' +
-      'Pass `tail` to cap how many recent conversation items are pulled (default 500).',
+      'Pass `tail` to cap how many recent conversation items are pulled (default 500). ' + OVERSEER_REACH,
     inputSchema: {
       type: 'object',
       properties: {
@@ -337,7 +378,7 @@ export const TOOLS = [
       'Send a message to any thread in this project — a peer, a typed agent, or a plain thread the ' +
       'user is working in (generalizes message_agent beyond typed agents to every peer). Works on ' +
       'either transport: a Pretty thread receives it on its structured channel, a CLI/PTY thread ' +
-      'has it typed into its terminal. The target must be running.',
+      'has it typed into its terminal. The target must be running. ' + OVERSEER_REACH,
     inputSchema: {
       type: 'object',
       properties: {
@@ -764,7 +805,7 @@ async function completeAgent(args: { agentId: string; force?: boolean }): Promis
   const terminal = await httpJson('GET', `${apiBase()}/api/terminals/${args.agentId}`);
   const archiveCheck = checkArchiveAllowed({ role: terminal?.config?.role ?? null }, !!args.force);
   if (!archiveCheck.ok) throw new Error(archiveCheck.reason);
-  await httpJson('DELETE', `${apiBase()}/api/terminals/${args.agentId}`);
+  await httpJson('DELETE', `${apiBase()}/api/terminals/${args.agentId}${args.force === true ? '?force=1' : ''}`);
   return { ok: true, agentId: args.agentId };
 }
 
@@ -776,6 +817,7 @@ async function completeAgent(args: { agentId: string; force?: boolean }): Promis
  */
 async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[]; pendingQuestion?: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> } }> {
   if (!args?.agentId) throw new Error('agentId is required');
+  await assertReadable(args.agentId);
   const out = await readAgentOutput(apiBase(), args.agentId);
   // The PAUSED notice is the only other place the requestId appears, and a compacted coordinator no longer has it.
   const pendingQuestion = await pendingQuestionOf(args.agentId);
@@ -826,13 +868,30 @@ async function answerAgent(args: { agentId: string; requestId?: string; answers?
  * object instead of fetching it twice.
  */
 async function assertInProject(id: string): Promise<any> {
-  let terminal: any = null;
-  try {
-    terminal = await httpJson('GET', `${apiBase()}/api/terminals/${id}`);
-  } catch {
-    terminal = null; // unknown id (404) is indistinguishable from foreign-project, by design
-  }
+  const terminal = await fetchTerminal(id);
   if (!terminal || terminal.sessionId !== sessionId()) {
+    throw new Error(`${id} is not a thread in this project`);
+  }
+  return terminal;
+}
+
+/** GET the terminal row. A key refusal (401, 403) shows as itself; any other failure reads as "not found". */
+async function fetchTerminal(id: string): Promise<any> {
+  try {
+    return await httpJson('GET', `${apiBase()}/api/terminals/${encodeURIComponent(id)}`);
+  } catch (err) {
+    if (err instanceof KeyError) throw err;
+    return null; // unknown id (404) is indistinguishable from foreign-project, by design
+  }
+}
+
+/**
+ * Like assertInProject, but an overseer may also read a thread of another project. The daemon is the
+ * authority; this only gives a clean error first. A worker gets the same error as for an unknown id.
+ */
+async function assertReadable(id: string): Promise<any> {
+  const terminal = await fetchTerminal(id);
+  if (!terminal || (terminal.sessionId !== sessionId() && !isOverseer())) {
     throw new Error(`${id} is not a thread in this project`);
   }
   return terminal;
@@ -859,15 +918,25 @@ function requireSelf(action: string): string {
  * excludes archived and runner tabs) — plain threads and typed agents alike, unlike
  * list_agents which stays filtered to typed agents only.
  */
-async function listThreads(): Promise<Array<{
+async function listProjects(): Promise<Array<{ id: string; name: string; coordinatorId: string | null; isOwn: boolean }>> {
+  const rows = await httpJson('GET', `${apiBase()}/api/sessions`);
+  const own = sessionId();
+  return (Array.isArray(rows) ? rows : []).map((p: any) => ({
+    id: p.id, name: p.name, coordinatorId: p.coordinatorId ?? null, isOwn: p.id === own,
+  }));
+}
+
+async function listThreads(args: { projectId?: string }): Promise<Array<{
   id: string; label: string; type: string; role: string | null; agentType: string | null;
-  status: string; lastActivityAt: string; isSelf: boolean;
+  status: string; projectId: string; lastActivityAt: string; isSelf: boolean;
 }>> {
-  const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${sessionId()}/terminals`);
+  const project = typeof args?.projectId === 'string' && args.projectId.trim() ? args.projectId.trim() : sessionId();
+  const terminals = await httpJson('GET', `${apiBase()}/api/sessions/${encodeURIComponent(project)}/terminals`);
   const list = Array.isArray(terminals) ? terminals : [];
   const self = selfTerminalId();
   return list.map((t: any) => ({
     id: t.id,
+    projectId: t.sessionId ?? project,
     label: t.label,
     type: t.type,
     role: t?.config?.role ?? null,
@@ -881,7 +950,7 @@ async function listThreads(): Promise<Array<{
 /** Generalizes read_agent to any thread in the project (after a project-scope check). */
 async function readThread(args: { id: string; tail?: number }): Promise<{ id: string; status: string | null; output: string; tools: string[] }> {
   if (!args?.id) throw new Error('id is required');
-  const terminal = await assertInProject(args.id);
+  const terminal = await assertReadable(args.id);
   const limit = typeof args.tail === 'number' && args.tail > 0 ? Math.floor(args.tail) : 500;
   const conv = await httpJson('GET', `${apiBase()}/api/terminals/${args.id}/conversation?limit=${limit}`);
   const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
@@ -899,7 +968,10 @@ async function messageThread(args: { id: string; text: string }): Promise<{ ok: 
   if (!selfCheck.ok) throw new Error(selfCheck.reason);
   const rateCheck = pairRateLimiter.check(self, args.id);
   if (!rateCheck.ok) throw new Error(rateCheck.reason);
-  await assertInProject(args.id);
+  const target = await assertReadable(args.id);
+  if (target.sessionId !== sessionId() && target?.config?.role !== 'coordinator') {
+    throw new Error("outside your project you can only message another project's overseer.");
+  }
   await httpJson('POST', `${apiBase()}/api/terminals/${args.id}/message`, { text: args.text, source: 'coordinator' });
   return { ok: true, id: args.id };
 }
@@ -913,12 +985,13 @@ async function messageThread(args: { id: string; text: string }): Promise<{ ok: 
 async function watchesRequest(method: string, url: string, body?: unknown): Promise<any> {
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: authHeaders(url, body !== undefined ? { 'content-type': 'application/json' } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text().catch(() => '');
   let data: any = null;
   if (text) { try { data = JSON.parse(text); } catch { data = null; } }
+  if (!res.ok) { const keyErr = keyErrorFrom(res.status, text); if (keyErr) throw keyErr; }
   if (res.status === 429) {
     throw new Error(`watch limit reached: ${data?.error || 'this watcher already has the maximum number of live watches'}`);
   }
@@ -988,10 +1061,11 @@ async function reportStatus(args: { state: string; summary: string; ask?: string
  */
 async function ledgerRequest(suffix: string, body: Record<string, unknown>): Promise<any> {
   const url = `${apiBase()}/api/sessions/${sessionId()}/ledger${suffix}`;
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await fetch(url, { method: 'POST', headers: authHeaders(url, { 'content-type': 'application/json' }), body: JSON.stringify(body) });
   const text = await res.text().catch(() => '');
   let data: any = null;
   if (text) { try { data = JSON.parse(text); } catch { data = null; } }
+  if (!res.ok) { const keyErr = keyErrorFrom(res.status, text); if (keyErr) throw keyErr; }
   if (!res.ok) throw new Error(data?.error || `POST ${url} -> ${res.status} ${res.statusText}`);
   return data;
 }
@@ -1158,6 +1232,7 @@ export async function callTool(
 ): Promise<{ content: McpContent[]; isError?: boolean }> {
   try {
     let result: unknown;
+    if (name !== 'post_image') await ensureIdentity();
     switch (name) {
       case 'spawn_agent': result = await spawnAgent(args ?? {}); break;
       case 'queue_agent': result = await queueAgent(args ?? {}); break;
@@ -1168,7 +1243,8 @@ export async function callTool(
       case 'answer_agent': result = await answerAgent(args ?? {}); break;
       case 'read_agent': result = await readAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
-      case 'list_threads': result = await listThreads(); break;
+      case 'list_projects': result = await listProjects(); break;
+      case 'list_threads': result = await listThreads(args ?? {}); break;
       case 'read_thread': result = await readThread(args ?? {}); break;
       case 'message_thread': result = await messageThread(args ?? {}); break;
       case 'watch_thread': result = await watchThread(args ?? {}); break;
@@ -1194,6 +1270,8 @@ export async function callTool(
     }
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   } catch (err: any) {
+    // The project may have changed under this thread: forget who we are, so the next call asks again.
+    if (err instanceof KeyError && err.code === 'out_of_scope') identity = null;
     return { content: [{ type: 'text', text: `Error: ${err?.message ?? String(err)}` }], isError: true };
   }
 }

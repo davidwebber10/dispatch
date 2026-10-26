@@ -138,11 +138,19 @@ export const claudeCodeProvider: SessionProvider = {
     return { command: 'claude', args };
   },
 
-  buildStatusHooks({ serverUrl, terminalId }) {
+  buildStatusHooks({ serverUrl, terminalId, keyed }) {
     // HTTP hooks POST each lifecycle event's payload to the events route, which
     // normalizes it (status + activity) and captures session_id on the first hit.
     // `*` matchers fire for every tool; the un-matched events fire once each.
-    const hook = { type: 'http', url: `${serverUrl}/api/events/claude/${terminalId}` };
+    // A keyed thread sends its key from its own environment: Claude expands ${DISPATCH_AUTH} in the
+    // header, and only for the variables in allowedEnvVars (verified by the delivery probe). The
+    // daemon writes this URL and DISPATCH_API from the same bound address, so the key only ever goes
+    // to the daemon's own URL.
+    const hook = {
+      type: 'http',
+      url: `${serverUrl}/api/events/claude/${terminalId}`,
+      ...(keyed ? { headers: { Authorization: 'Bearer ${DISPATCH_AUTH}' }, allowedEnvVars: ['DISPATCH_AUTH'] } : {}),
+    };
     const always = [{ hooks: [hook] }];
     const everyTool = [{ matcher: '*', hooks: [hook] }];
     return {

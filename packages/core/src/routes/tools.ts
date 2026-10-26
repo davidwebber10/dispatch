@@ -1,9 +1,10 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import { toolStatuses } from '../tools/status.js';
 import type { ToolAuthProber } from '../tools/auth-probe.js';
 
 export function createToolsRouter(opts?: { base?: string; prober?: ToolAuthProber }): Router {
-  const router = Router();
+  const router = policyRouter();
   // Waits for the auth checks when the cache is stale or the caller asks (?refresh=1, the
   // page's "Check again"); the prober dedupes, so concurrent loads share one run.
   router.get('/', async (req, res) => {

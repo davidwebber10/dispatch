@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -24,8 +24,14 @@ function resetChildProcessMocks(): void {
 }
 resetChildProcessMocks();
 
+beforeEach(() => {
+  // The suite may run inside a Dispatch thread: start from a clean thread environment.
+  for (const n of ['DISPATCH_AUTH', 'DISPATCH_AUTH_FILE', 'DISPATCH_TERMINAL_ID', 'DISPATCH_TERMINAL', 'DISPATCH_API']) vi.stubEnv(n, '');
+});
+
 afterEach(() => {
   resetChildProcessMocks();
+  vi.unstubAllEnvs();
 });
 
 describe('dispatch CLI routing', () => {
@@ -77,6 +83,12 @@ describe('status HTTP probe', () => {
     runCommand(['status'], { daemon, port: 3456, probe } as any);
     expect(logged.some(l => l.includes('not responding'))).toBe(true);
     vi.restoreAllMocks();
+  });
+
+  test('the reachability probe sends no credential', () => {
+    probeHttp(3456);
+    const call = vi.mocked(spawnSync).mock.calls.at(-1)!;
+    expect(String(call[1])).not.toMatch(/authorization|bearer|dtk_|access-token/i);
   });
 
   test('probeHttp returns reachable string when probe returns true', () => {
@@ -310,10 +322,10 @@ describe('dispatch roles', () => {
     }));
     const { logs, restore } = logged();
 
-    await runCommand(['roles', 'list'], { port: 3456, rolesFetch } as any);
+    await runCommand(['roles', 'list'], { port: 3456, rolesFetch, readOwnerToken: () => 'tok', processEnv: {} } as any);
     restore();
 
-    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles', undefined);
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles', { headers: { Authorization: 'Bearer tok' } });
     const out = logs.join('\n');
     expect(out).toContain('nightly-planner');
     expect(out).toContain('dispatch');
@@ -353,10 +365,10 @@ describe('dispatch roles', () => {
     }));
     const { logs, restore } = logged();
 
-    await runCommand(['roles', 'enable', 'nightly-planner'], { port: 3456, rolesFetch } as any);
+    await runCommand(['roles', 'enable', 'nightly-planner'], { port: 3456, rolesFetch, readOwnerToken: () => 'tok', processEnv: {} } as any);
     restore();
 
-    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/enable', { method: 'POST' });
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/enable', { method: 'POST', headers: { Authorization: 'Bearer tok' } });
     const out = logs.join('\n');
     expect(out).toContain('nightly-planner');
     expect(out).toMatch(/enabled/i);
@@ -370,10 +382,10 @@ describe('dispatch roles', () => {
     }));
     const { logs, restore } = logged();
 
-    await runCommand(['roles', 'disable', 'nightly-planner'], { port: 3456, rolesFetch } as any);
+    await runCommand(['roles', 'disable', 'nightly-planner'], { port: 3456, rolesFetch, readOwnerToken: () => 'tok', processEnv: {} } as any);
     restore();
 
-    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/disable', { method: 'POST' });
+    expect(rolesFetch).toHaveBeenCalledWith('http://localhost:3456/api/roles/nightly-planner/disable', { method: 'POST', headers: { Authorization: 'Bearer tok' } });
     const out = logs.join('\n');
     expect(out).toContain('nightly-planner');
     expect(out).toMatch(/disabled/i);

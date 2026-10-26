@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { type Request, type Response, type NextFunction, type Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 
 /**
  * Accent-tinted PWA icons. The stock icons in the web bundle are green; the
@@ -15,7 +16,7 @@ const PNG_MAGIC = 0x89504e47;
 
 export function createAppearanceRouter(dataDir: string): Router {
   const dir = path.join(dataDir, 'icons');
-  const router = Router();
+  const router = policyRouter();
 
   // PUT /api/appearance/icons — { icons: { "<name>.png": "<base64>" } }
   router.put('/icons', (req, res) => {

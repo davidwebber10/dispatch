@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import type { Router } from 'express';
+import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -39,7 +40,7 @@ export interface CreateUpdateRouterOptions {
 }
 
 export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: string, db: Database.Database, opts?: CreateUpdateRouterOptions): Router {
-  const router = Router();
+  const router = policyRouter();
   const apply = opts?.applyFn ?? ((dir: string) => applyUpdate(dir, reason => broadcaster.broadcast({ type: 'update:failed', reason })));
   const check = opts?.checkFn ?? checkForUpdateOnce;
   // Resolved once at construction: a box does not become un-hosted at runtime.
