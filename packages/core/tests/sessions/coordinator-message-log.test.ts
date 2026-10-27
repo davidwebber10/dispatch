@@ -221,6 +221,19 @@ describe('a chat reply to a pending question', () => {
     expect(ledger.resolve('s1', 'coord', { id: 'N1', status: 'answered', quote: 'Start with the outlet store.' }).status).toBe('answered');
   });
 
+  it('a reply from Chat is worded as Chat\'s, logs no user row, and tells no coordinator that the user answered', () => {
+    ask('agent');
+    expect(svc.answerQuestionInChat('agent', 'r1', 'Yes, deploy.', 0, 'chat')).toBe('delivered');
+    expect(structured.answered).toEqual([{ id: 'agent', decision: { behavior: 'deny', message: questionReplyMessage('Yes, deploy.', 0, 'chat') } }]);
+    const message = (structured.answered[0].decision as any).message as string;
+    expect(message).toContain('Chat, the assistant that works for the user, replied: Yes, deploy.');
+    expect(message).not.toContain('They replied');
+    expect(structured.sent.filter((m) => m.id === 'coord')).toEqual([]); // the coordinator is not told "the user answered"
+    ask('coord');
+    expect(svc.answerQuestionInChat('coord', 'r1', 'Yes, deploy.', 0, 'chat')).toBe('delivered');
+    expect(log()).toEqual([{ source: 'coordinator', text: 'Yes, deploy.' }]); // never a user row: a ledger quote cannot be Chat's words
+  });
+
   it('requires the pending requestId: a missing or stale id is not-found and logs nothing', () => {
     ask('coord', 'r2');
     expect(svc.answerQuestionInChat('coord', '', 'hi')).toBe('not-found');

@@ -99,7 +99,7 @@ export const TOOLS = [
   },
   {
     name: 'message_thread',
-    description: 'Send a message to a thread you started with spawn_agent, in any project, to steer it or answer it. It reports again when it next finishes. Other threads are refused.',
+    description: 'Send a message to a thread you started with spawn_agent, in any project, to steer it or answer it. If the thread is waiting on a question card, the text answers the card (use the user\'s own words or a clear earlier instruction of the user; otherwise ask the user first). It reports again when it next finishes. Other threads are refused.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -219,7 +219,9 @@ const rowOf = (id: string): Promise<any> => getJson(`${apiBase()}/api/terminals/
 
 const WAITING_NOTE =
   'This thread is waiting on a question card: it is blocked until the question is answered. ' +
-  'message_thread with the answer as the text answers the card; the thread then continues.';
+  'message_thread with the answer as the text answers the card; the thread then continues. ' +
+  "Answer with the user's own words or a clear earlier instruction of the user; if you do not have one, ask the user. " +
+  'If the thread runs on a harness that cannot take a reply to a card (Codex), the text queues behind the card and the card must be answered in the browser.';
 
 /**
  * A thread parked on an AskUserQuestion card still reads "working" with stale text. When a question
@@ -243,7 +245,12 @@ async function deliverMessage(id: string, text: string): Promise<Record<string, 
       return { ok: true, id, path: 'question-answer', note: 'The thread was waiting on a question card. Your text answered the question card; the thread is working again.' };
     } catch (err: any) {
       if (err?.status === 409) fellBack = 'The thread was waiting on a question card, but its harness cannot take a reply to a question. The text was sent as a normal turn, which may stay queued until the card is answered in the browser.';
-      else if (err?.status === 404) fellBack = 'The question card was already gone. The text was sent as a normal turn.';
+      else if (err?.status === 404) {
+        // The card may be gone, or replaced by a new question: the text was for the old one, so do not send it behind the new one.
+        const now = await pendingQuestionOf(apiBase(), id);
+        if (now) throw new Error(`The question changed while you were answering: a new question card is pending (requestId ${now.requestId}). Nothing was sent. Read it with read_agent and answer again.`);
+        fellBack = 'The question card was already gone. The text was sent as a normal turn.';
+      }
       else throw err;
     }
   }

@@ -151,16 +151,32 @@ describe('memory MCP server', () => {
       expect(out.note).toMatch(/cannot take a reply/i);
     });
 
-    it('falls back to a normal turn when the question is gone (404)', async () => {
+    it('falls back to a normal turn when the question is gone (404) and no new question is pending', async () => {
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(json(200, { armed: true }))
         .mockResolvedValueOnce(json(200, PENDING))
         .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(200, null))
         .mockResolvedValueOnce(new Response(null, { status: 204 }));
       vi.stubGlobal('fetch', fetchMock);
       const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
       expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ ok: true, path: 'turn' });
-      expect(calls(fetchMock)[3]).toEqual(['/api/terminals/t9/message', 'POST']);
+      expect(calls(fetchMock)[4]).toEqual(['/api/terminals/t9/message', 'POST']);
+    });
+
+    it('a 404 because a NEW question replaced the old one sends nothing, disarms, and tells Chat to read the new card', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(200, { ...PENDING, requestId: 'req-8' }))
+        .mockResolvedValueOnce(json(200, { disarmed: true }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toMatch(/new question card is pending \(requestId req-8\)\. Nothing was sent/);
+      expect(calls(fetchMock).map((c) => c[0])).not.toContain('/api/terminals/t9/message');
+      expect(calls(fetchMock)[4]).toEqual(['/api/endless/disarm', 'POST']);
     });
 
     it('a held tool call (no questions) is not a question: the text goes as a normal turn', async () => {

@@ -265,7 +265,7 @@ export const archiveRule: Rule = (req, ctx) => {
 const ANSWER_FIELDS = new Set(['decision', 'answers', 'requestId']);
 
 /** The pending request of a thread, as the session service reads it from its manager. */
-export type PendingLookup = (terminalId: string) => { requestId: string; questions?: unknown[] } | null;
+export type PendingLookup = (terminalId: string) => { requestId: string; toolName?: string; questions?: unknown[] } | null;
 
 /** `POST /api/terminals/:terminalId/permission` (answer a question). */
 export function answerRule(getPending: PendingLookup): Rule {
@@ -407,18 +407,24 @@ const CHAT_ANSWER_FIELDS = new Set(['decision', 'requestId', 'reply']);
  * that carries the text, pinned to the question's requestId. Chat may not pick an option, allow a
  * held tool call, use a canned action, send images, or forge a sender line.
  */
-export const chatAnswerRule: Rule = (req, ctx) => {
-  if (!chatTarget(ctx, req.params.terminalId)) return outOfScope('Chat may answer the questions of the threads that Chat started only.');
-  const body = bodyOf(req);
-  for (const k of Object.keys(body)) if (!CHAT_ANSWER_FIELDS.has(k)) return fieldNotAllowed(k);
-  if (body.decision !== 'deny') return fieldNotAllowed('decision', 'Chat may reply to a question only (decision "deny" with a reply).');
-  if (typeof body.reply !== 'string' || !body.reply.trim()) return fieldNotAllowed('reply', 'It must be a non-empty string.');
-  if (typeof body.requestId !== 'string' || !body.requestId) return fieldNotAllowed('requestId', 'The requestId of the pending question is required.');
-  if (holdsSenderMarker(body.reply)) {
-    return deny('identity_mismatch', 'The reply holds text that looks like a sender line from another project. Remove it.');
-  }
-  return OK;
-};
+export function chatAnswerRule(getPending: PendingLookup): Rule {
+  return (req, ctx) => {
+    if (!chatTarget(ctx, req.params.terminalId)) return outOfScope('Chat may answer the questions of the threads that Chat started only.');
+    const body = bodyOf(req);
+    for (const k of Object.keys(body)) if (!CHAT_ANSWER_FIELDS.has(k)) return fieldNotAllowed(k);
+    if (body.decision !== 'deny') return fieldNotAllowed('decision', 'Chat may reply to a question only (decision "deny" with a reply).');
+    if (typeof body.reply !== 'string' || !body.reply.trim()) return fieldNotAllowed('reply', 'It must be a non-empty string.');
+    if (typeof body.requestId !== 'string' || !body.requestId) return fieldNotAllowed('requestId', 'The requestId of the pending question is required.');
+    if (holdsSenderMarker(body.reply)) {
+      return deny('identity_mismatch', 'The reply holds text that looks like a sender line from another project. Remove it.');
+    }
+    // Only an AskUserQuestion card: another tool whose input has a `questions` array is a held tool call.
+    const pending = getPending(req.params.terminalId);
+    if (pending && pending.toolName !== 'AskUserQuestion') return deny('not_a_question', 'The pending request is not a question card. Only the owner may answer it.');
+    if (req.res) req.res.locals.answerFromChat = true; // the daemon words it as Chat's, never as the user's
+    return OK;
+  };
+}
 
 /** `POST /api/endless/arm` and `/disarm`: the thread in the body was started by Chat. */
 export const chatArmRule: Rule = (req, ctx) =>

@@ -239,12 +239,39 @@ describe('Chat key rules', () => {
       expect(res.body).toBeNull();
     });
 
+    it('a non-AskUserQuestion tool whose input has a questions array is a held tool call: Chat cannot read or answer it', async () => {
+      mgr.pending.set('eA', { requestId: 'r1', toolName: 'mcp__x__ask', input: { secret: 'token-123', questions: QUESTIONS }, questions: QUESTIONS } as any);
+      const read = await request(app).get('/api/terminals/eA/permission').set(chatKey()).expect(200);
+      expect(read.body).toBeNull();
+      const res = await reply('eA', chatKey());
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('not_a_question');
+      expect(mgr.answers).toEqual([]);
+    });
+
+    it('Chat sees the requestId and the questions of a card, not the tool input', async () => {
+      mgr.pending.set('eA', { requestId: 'r1', toolName: 'AskUserQuestion', input: { questions: QUESTIONS, extra: 'x' }, questions: QUESTIONS } as any);
+      const res = await request(app).get('/api/terminals/eA/permission').set(chatKey()).expect(200);
+      expect(Object.keys(res.body).sort()).toEqual(['questions', 'requestId', 'toolName']);
+    });
+
     it('Chat answers it with a reply (deny + requestId): the question resolves with the reply text', async () => {
       ask('eB');
       await reply('eB', chatKey()).expect(204);
       expect(mgr.answers).toHaveLength(1);
       expect(mgr.answers[0]).toMatchObject({ id: 'eB', requestId: 'r1', decision: { behavior: 'deny' } });
       expect((mgr.answers[0].decision as any).message).toContain('Outlet first.');
+    });
+
+    it('a Chat reply is worded as Chat\'s, never as the user\'s; the owner\'s reply keeps its wording', async () => {
+      ask('eB');
+      await reply('eB', chatKey()).expect(204);
+      const chatMsg = (mgr.answers[0].decision as any).message as string;
+      expect(chatMsg).toContain('Chat, the assistant that works for the user, replied: Outlet first.');
+      expect(chatMsg).not.toContain('They replied');
+      ask('eB');
+      await request(app).post('/api/terminals/eB/permission').send({ decision: 'deny', requestId: 'r1', reply: 'Outlet first.' }).expect(204);
+      expect((mgr.answers[1].decision as any).message).toContain('They replied: Outlet first.');
     });
 
     it('a stale requestId is 404 and a harness that cannot take a reply is 409; nothing is answered', async () => {
