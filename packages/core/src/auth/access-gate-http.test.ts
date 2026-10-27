@@ -8,16 +8,17 @@ import { createAccessGate } from './access-gate.js';
 import { createAccessConfig } from './known-hosts.js';
 import { COOKIE_NAME, cookieValue, createTokenSource, rotateAccessToken } from './access-token.js';
 import { securityHeaders } from './security-headers.js';
+import { createPairCodes } from './pair-code.js';
 
 let dir: string;
 let peer: string;
 
-function build(basePath = '') {
+function build(basePath = '', pairCodes?: ReturnType<typeof createPairCodes>) {
   const getToken = createTokenSource(dir);
   const gate = createAccessGate({
     getToken, isGatewayPeer: () => false, config: createAccessConfig(dir),
     tailscale: { self: async () => null, isOwnerPeer: async () => false },
-    basePath,
+    basePath, pairCodes,
   });
   const app = express();
   app.use((req, _res, next) => { Object.defineProperty(req.socket, 'remoteAddress', { value: peer, configurable: true }); next(); });
@@ -221,5 +222,45 @@ describe('rotation', () => {
     await new Promise((r) => setTimeout(r, 15)); // distinct mtime
     rotateAccessToken(dir);
     expect((await call()).status).toBe(401);
+  });
+});
+
+describe('login with a pairing code', () => {
+  const login = (app: express.Express, body: Record<string, string>) =>
+    request(app).post('/api/access/login').set('Host', '192.168.1.5:3456').send(body);
+
+  test('a live code signs in once and sets the same cookie as the token', async () => {
+    const pc = createPairCodes();
+    const { app, getToken } = build('', pc);
+    const { code } = pc.issue();
+    const r = await login(app, { code: code.toLowerCase() });
+    expect(r.status).toBe(200);
+    expect(r.headers['set-cookie']?.[0]).toContain(`${COOKIE_NAME}=${cookieValue(getToken())}`);
+    // Consumed: the same code is refused with bad_code.
+    const again = await login(app, { code });
+    expect(again.status).toBe(401);
+    expect(again.body).toEqual({ error: 'bad_code' });
+  });
+
+  test('a wrong code is bad_code and spends the same failure budget as a bad token', async () => {
+    const pc = createPairCodes();
+    const { app, getToken } = build('', pc);
+    pc.issue();
+    for (let i = 0; i < 10; i++) expect((await login(app, { code: 'AAAA-AAAA' })).status).toBe(401);
+    expect((await login(app, { token: getToken() })).status).toBe(429);
+  });
+
+  test('without a pair-code source, a code is just refused', async () => {
+    const { app } = build();
+    const r = await login(app, { code: 'ABCD-EFGH' });
+    expect(r.status).toBe(401);
+    expect(r.body).toEqual({ error: 'bad_code' });
+  });
+
+  test('the sign-in page names the code and handles a #code= link', async () => {
+    const { app } = build();
+    const r = await request(app).get('/page').set('Host', '192.168.1.5:3456').set('Accept', 'text/html');
+    expect(r.text).toContain('Sign-in code or access token');
+    expect(r.text).toContain('#(access|code)=');
   });
 });

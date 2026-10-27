@@ -29,6 +29,7 @@ import {
 } from './auth/request-principal.js';
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
+import { createPairCodes } from './auth/pair-code.js';
 import { mountApiRoutes } from './server-routes.js';
 import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
@@ -478,6 +479,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   if (BOX_TOKEN) app.use(createBoxGate({ boxToken: BOX_TOKEN, registry: keys, getToken: getAccessToken }));
   // The request gate (network exposure spec, section 7). On a hosted box the box token above is
   // the credential and the router is the only caller, so the gate stays out of the way there.
+  // One-time sign-in codes (Settings → Access) that stand in for the token on the login route.
+  const pairCodes = createPairCodes();
   const accessGate = BOX_TOKEN
     ? undefined
     : createAccessGate({
@@ -486,6 +489,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         config: createAccessConfig(dataDir),
         tailscale: createTailscaleAccess(),
         basePath: BASE_PATH,
+        pairCodes,
       });
   if (accessGate) {
     // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
@@ -496,7 +500,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
   }));
   app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
-
   // Create HTTP server
   const server = http.createServer(app);
 
@@ -781,7 +784,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, refreshPtyEnv, endless,
+    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });

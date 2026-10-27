@@ -20,9 +20,30 @@ are refused.
 
 ## Sign in another device
 
+A device that must sign in sees a splash page: the Dispatch mark, two steps, and an **Enter a
+code** button. There are two ways through it.
+
+**With a sign-in code (a phone):**
+
+1. On a device that is already signed in, open **Settings → Access** and tap **Make a code**.
+   You get a code like `ABCD-EFGH` and a QR code. The code works once and lasts 5 minutes.
+2. Scan the QR code with the phone's camera and open the link. The phone signs in and the app
+   opens. Or open Dispatch on the phone, tap **Enter a code**, and type the code.
+
+The QR code carries the address in the **Address the phone will use** field plus the code,
+as `ADDRESS/#code=ABCD-EFGH`. Browsers never send the part after `#` to a server. Set the
+field to the address the phone can reach (a tunnel hostname or a Tailscale name). The daemon
+keeps one live code at a time; a new code replaces the old one. The token itself is never
+sent to the browser.
+
+**With the token:**
+
 1. On the computer that runs Dispatch, run `dispatch access`. It prints the access token.
-2. Open Dispatch on the other device. It shows a sign-in page.
-3. Paste the token. The browser keeps a cookie for 400 days.
+   (The command refuses to run inside a Dispatch thread. If `dispatch` is not on your `PATH`,
+   run `./bin/dispatch access` from the repository folder.)
+2. Open Dispatch on the other device, tap **Enter a code**, and paste the token.
+
+Either way the browser keeps a cookie for 400 days.
 
 `dispatch access --link HOST` (a port in HOST is kept as given; or `--link https://MACHINE.ts.net` for `tailscale serve`) prints a link for a phone: the token is in the part after `#`, which
 browsers never send to a server.

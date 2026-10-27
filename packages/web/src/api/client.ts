@@ -315,6 +315,9 @@ export const api = {
     const qs = params.toString();
     return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
   },
+  // A one-time sign-in code for another device (Settings → Access). 404 on a hosted box, where
+  // there is no sign-in page to type it on.
+  makePairCode: () => req<{ code: string; expiresAt: number }>('/api/access/pair-code', { method: 'POST' }),
   // One value, only on an explicit reveal or copy; the listing carries names only.
   getSecretValue: async (name: string) =>
     (await req<{ value: string }>(`/api/secrets/${encodeURIComponent(name)}/value`, { headers: { 'X-Dispatch-Reveal': '1' } })).value,

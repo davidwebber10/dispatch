@@ -205,7 +205,7 @@ describe.skipIf(!lanIp)('another device (own LAN address)', () => {
     expect((await call({ path: '/api/sessions', ...lan() })).status).toBe(401);
     const page = await call({ path: '/', ...lan() });
     expect(page.status).toBe(401);
-    expect(page.body).toContain('Access token');
+    expect(page.body).toContain('Sign-in code or access token');
   });
   test('the WebSocket is refused with 401', async () => {
     expect(await wsOutcome(`ws://${lanIp}:${port}/api/events`)).toBe('401');

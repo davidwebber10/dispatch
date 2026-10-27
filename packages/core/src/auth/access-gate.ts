@@ -4,6 +4,7 @@ import { isLoopbackAddress } from '../files/reveal.js';
 import { tokenMatches } from './box-token.js';
 import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, parseCookies } from './access-token.js';
 import { signInPage, signInPageCsp } from './signin-page.js';
+import type { PairCodes } from './pair-code.js';
 import {
   isLoopbackName, normalizeHostHeader, originHostPort, type AccessConfig,
 } from './known-hosts.js';
@@ -184,6 +185,8 @@ const LOGIN_MAX_FAILURES = 10;
 export interface AccessGateOptions extends GateDeps {
   /** Mount prefix (already stripped from req.url upstream). Used for the cookie Path and the sign-in page. */
   basePath: string;
+  /** One-time pairing codes from Settings → Access; the login route takes `{ code }` as well as `{ token }`. */
+  pairCodes?: PairCodes;
   now?: () => number;
 }
 
@@ -231,15 +234,19 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(bucket); rec = undefined; }
     if (rec && rec.n >= LOGIN_MAX_FAILURES) return void res.status(429).json({ error: 'too_many_tries' });
 
-    const given = (req.body as { token?: unknown } | undefined)?.token;
+    const given = (req.body as { token?: unknown; code?: unknown } | undefined) ?? {};
     const token = opts.getToken();
-    if (typeof given !== 'string' || !tokenMatches(token, given)) {
+    // `{ code }` is a one-time pairing code (pair-code.ts); `{ token }` the long-lived token. A
+    // failed code counts against the same per-caller budget as a failed token.
+    const codeOk = typeof given.code === 'string' && !!opts.pairCodes && opts.pairCodes.redeem(given.code);
+    const tokenOk = typeof given.token === 'string' && tokenMatches(token, given.token);
+    if (!codeOk && !tokenOk) {
       if (failures.size > 1000) {
         for (const [k, v] of failures) if (now() - v.start >= LOGIN_WINDOW_MS) failures.delete(k);
         if (failures.size > 1000) failures.clear();
       }
       failures.set(bucket, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
-      return void res.status(401).json({ error: 'bad_token' });
+      return void res.status(401).json({ error: typeof given.code === 'string' ? 'bad_code' : 'bad_token' });
     }
     failures.delete(bucket);
     const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);

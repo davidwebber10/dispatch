@@ -15,6 +15,7 @@ import type { LimitSnapshots } from './limits/snapshot.js';
 import type { ToolAuthProber } from './tools/auth-probe.js';
 import type { EventBroadcaster } from './ws/events.js';
 import type { NoCredentialStats } from './auth/no-credential-stats.js';
+import type { PairCodes } from './auth/pair-code.js';
 import { noCredentialStatsHandler, whoamiHandler } from './auth/request-principal.js';
 import { ownerOnly, publicRoute } from './auth/route-policy.js';
 import { TranscriptionService } from './transcription/service.js';
@@ -69,6 +70,9 @@ export interface ApiRouteDeps {
   /** For the terminals router. `createApp` leaves it unset, as it always has. */
   terminalsBroadcaster?: EventBroadcaster;
   noCredentialStats: NoCredentialStats;
+  /** One-time sign-in codes (Settings → Access). Absent in `createApp` and on a hosted box, where
+   *  there is no sign-in page to type one on: `POST /api/access/pair-code` then answers 404. */
+  pairCodes?: PairCodes;
   /** Re-reads the spawn env after a secrets or harness-settings write (daemon only). */
   refreshPtyEnv?: () => void;
   /** Absent in `createApp` unless a test passes a stub: `/api/endless` then answers 503. */
@@ -87,6 +91,13 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   const d = deps;
   app.get('/api/whoami', publicRoute, whoamiHandler);
   app.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
+  // The owner (a signed-in or local browser) makes a code; a thread key gets owner_only. The code
+  // is the only secret that leaves the daemon: the token itself is never served.
+  app.post('/api/access/pair-code', ownerOnly, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!d.pairCodes) return void res.status(404).json({ error: 'not_available' });
+    res.json(d.pairCodes.issue());
+  });
 
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
