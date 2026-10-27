@@ -33,7 +33,7 @@ import {
 } from './guards.js';
 import { buildWorkerCreateBody } from './worker-payload.js';
 import {
-  httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput, authHeaders, sendsKeyTo, keyErrorFrom, KeyError,
+  httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput, pendingQuestionOf as sharedPendingQuestionOf, type PendingQuestion, authHeaders, sendsKeyTo, keyErrorFrom, KeyError,
   HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
 } from './agency-shared.js';
 
@@ -743,20 +743,7 @@ async function listAgents(): Promise<Array<{ id: string; label: string; agentTyp
 }
 
 /** The AskUserQuestion this agent is parked on (with the requestId answer_agent needs), or null. */
-async function pendingQuestionOf(agentId: string): Promise<{ requestId: string; questions: Array<{ header: string; question: string; options: string[] }> } | null> {
-  try {
-    const p = await httpJson('GET', `${apiBase()}/api/terminals/${encodeURIComponent(agentId)}/permission`);
-    if (!p?.questions?.length || typeof p.requestId !== 'string' || !p.requestId) return null;
-    return {
-      requestId: p.requestId,
-      questions: p.questions.map((q: any) => ({
-        header: String(q?.header ?? ''),
-        question: String(q?.question ?? ''),
-        options: Array.isArray(q?.options) ? q.options.map((o: any) => (typeof o === 'string' ? o : String(o?.label ?? o?.name ?? ''))).filter(Boolean) : [],
-      })),
-    };
-  } catch { return null; }
-}
+const pendingQuestionOf = (agentId: string): Promise<PendingQuestion | null> => sharedPendingQuestionOf(apiBase(), agentId);
 
 /**
  * Distinct mission names the spawned agents are grouped under, with counts. Mirrors the
@@ -815,7 +802,7 @@ async function completeAgent(args: { agentId: string; force?: boolean }): Promis
  * the tools it ran and its current status. This is what closes the orchestration loop —
  * list_agents gives status, read_agent gives content.
  */
-async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[]; pendingQuestion?: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> } }> {
+async function readAgent(args: { agentId: string }): Promise<{ agentId: string; status: string | null; output: string; tools: string[]; pendingQuestion?: PendingQuestion }> {
   if (!args?.agentId) throw new Error('agentId is required');
   await assertReadable(args.agentId);
   const out = await readAgentOutput(apiBase(), args.agentId);

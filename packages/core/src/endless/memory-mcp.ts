@@ -8,7 +8,7 @@
  */
 import * as readline from 'readline';
 import {
-  createWorker, sendTask, readAgentOutput, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
+  createWorker, sendTask, readAgentOutput, pendingQuestionOf, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
 } from '../overseer/agency-shared.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -196,7 +196,7 @@ async function requestJson(method: string, url: string, body?: unknown): Promise
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) { const keyErr = keyErrorFrom(res.status, text); if (keyErr) throw keyErr; }
-  if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : `${method} ${url} -> ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(typeof data?.error === 'string' ? data.error : `${method} ${url} -> ${res.status}`), { status: res.status });
   return data;
 }
 const getJson = (url: string): Promise<any> => requestJson('GET', url);
@@ -206,6 +206,50 @@ const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 const disarm = (terminalId: string): Promise<unknown> =>
   requestJson('POST', `${apiBase()}/api/endless/disarm`, { terminalId }).catch(() => null);
 
+/**
+ * The pending question of a thread that Chat started. Chat's key may read nothing else of this route
+ * (a thread of the owner's gives 403), so the row's origin is checked first and no refused request is made.
+ */
+async function pendingQuestionOfChatThread(row: any, id: string): Promise<Awaited<ReturnType<typeof pendingQuestionOf>>> {
+  return row?.config?.origin === 'endless' ? pendingQuestionOf(apiBase(), id) : null;
+}
+
+/** The thread row, or null when it cannot be read. */
+const rowOf = (id: string): Promise<any> => getJson(`${apiBase()}/api/terminals/${encodeURIComponent(id)}`).catch(() => null);
+
+const WAITING_NOTE =
+  'This thread is waiting on a question card: it is blocked until the question is answered. ' +
+  'message_thread with the answer as the text answers the card; the thread then continues.';
+
+/**
+ * A thread parked on an AskUserQuestion card still reads "working" with stale text. When a question
+ * is pending, say so: status needs_input, the question with its options, and what to do about it.
+ */
+function withPendingQuestion(out: object, pending: Awaited<ReturnType<typeof pendingQuestionOf>>): object {
+  return pending ? { ...out, status: 'needs_input', pendingQuestion: pending, note: WAITING_NOTE } : out;
+}
+
+/**
+ * Send Chat's text to a thread. A thread parked on a question card takes a normal turn only after
+ * the card resolves, so the text answers the card (the same reply as the thread's own chat box).
+ * When the card is gone (404) or the harness cannot take a reply (409), the text goes as a normal turn.
+ */
+async function deliverMessage(id: string, text: string): Promise<Record<string, unknown>> {
+  const pending = await pendingQuestionOf(apiBase(), id);
+  let fellBack = '';
+  if (pending) {
+    try {
+      await requestJson('POST', `${apiBase()}/api/terminals/${encodeURIComponent(id)}/permission`, { decision: 'deny', reply: text, requestId: pending.requestId });
+      return { ok: true, id, path: 'question-answer', note: 'The thread was waiting on a question card. Your text answered the question card; the thread is working again.' };
+    } catch (err: any) {
+      if (err?.status === 409) fellBack = 'The thread was waiting on a question card, but its harness cannot take a reply to a question. The text was sent as a normal turn, which may stay queued until the card is answered in the browser.';
+      else if (err?.status === 404) fellBack = 'The question card was already gone. The text was sent as a normal turn.';
+      else throw err;
+    }
+  }
+  await sendTask(apiBase(), id, text);
+  return { ok: true, id, path: 'turn', ...(fellBack ? { note: fellBack } : {}) };
+}
 
 export async function callTool(name: string, args: any): Promise<{ content: McpContent[]; isError?: boolean }> {
   try {
@@ -231,7 +275,9 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
         const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
         const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
         const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => String(it.toolName)).slice(-30);
-        return { content: [{ type: 'text', text: JSON.stringify({ id: String(a.id), output: output || '(no assistant output yet)', tools }) }] };
+        const row = await rowOf(String(a.id));
+        const status = typeof row?.status === 'string' ? row.status : null;
+        return asText(withPendingQuestion({ id: String(a.id), ...(status ? { status } : {}), output: output || '(no assistant output yet)', tools }, await pendingQuestionOfChatThread(row, String(a.id))));
       }
       case 'spawn_agent': {
         if (!AGENT_TYPES.includes(a.agentType)) throw new Error(`agentType must be one of: ${AGENT_TYPES.join(', ')}`);
@@ -260,16 +306,16 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
         const id = str(a.id);
         await requestJson('POST', `${apiBase()}/api/endless/arm`, { terminalId: id });
         try {
-          await sendTask(apiBase(), id, String(a.text));
+          return asText(await deliverMessage(id, String(a.text)));
         } catch (err) {
           await disarm(id); // the message never arrived: it owes no report
           throw err;
         }
-        return asText({ ok: true, id });
       }
       case 'read_agent': {
         if (!str(a.agentId)) throw new Error('agentId is required');
-        return asText(await readAgentOutput(apiBase(), str(a.agentId)));
+        const out = await readAgentOutput(apiBase(), str(a.agentId));
+        return asText(withPendingQuestion(out, await pendingQuestionOfChatThread(await rowOf(str(a.agentId)), str(a.agentId))));
       }
       case 'ledger_list': {
         const r = await requestJson('POST', `${apiBase()}/api/endless/ledger/list`, { project: a.project });

@@ -389,6 +389,37 @@ const chatTarget = (ctx: RuleCtx, id: unknown): CallerFacts | null => {
 export const chatTargetRule: Rule = (req, ctx) =>
   chatTarget(ctx, req.params.terminalId) ? OK : outOfScope('Chat may act on the threads that Chat started only.');
 
+/**
+ * `GET /api/terminals/:terminalId/permission` for a Chat key: the thread was started by Chat, and the
+ * handler then shows a pending QUESTION only. A held tool call (its command, its paths) stays owner-only.
+ */
+export const chatQuestionReadRule: Rule = (req, ctx) => {
+  if (!chatTarget(ctx, req.params.terminalId)) return outOfScope('Chat may read the questions of the threads that Chat started only.');
+  if (req.res) req.res.locals.questionsOnly = true;
+  return OK;
+};
+
+const CHAT_ANSWER_FIELDS = new Set(['decision', 'requestId', 'reply']);
+
+/**
+ * `POST /api/terminals/:terminalId/permission` for a Chat key: a text reply to the pending question
+ * of a thread that Chat started. It is the same reply the owner types in the thread's chat: a deny
+ * that carries the text, pinned to the question's requestId. Chat may not pick an option, allow a
+ * held tool call, use a canned action, send images, or forge a sender line.
+ */
+export const chatAnswerRule: Rule = (req, ctx) => {
+  if (!chatTarget(ctx, req.params.terminalId)) return outOfScope('Chat may answer the questions of the threads that Chat started only.');
+  const body = bodyOf(req);
+  for (const k of Object.keys(body)) if (!CHAT_ANSWER_FIELDS.has(k)) return fieldNotAllowed(k);
+  if (body.decision !== 'deny') return fieldNotAllowed('decision', 'Chat may reply to a question only (decision "deny" with a reply).');
+  if (typeof body.reply !== 'string' || !body.reply.trim()) return fieldNotAllowed('reply', 'It must be a non-empty string.');
+  if (typeof body.requestId !== 'string' || !body.requestId) return fieldNotAllowed('requestId', 'The requestId of the pending question is required.');
+  if (holdsSenderMarker(body.reply)) {
+    return deny('identity_mismatch', 'The reply holds text that looks like a sender line from another project. Remove it.');
+  }
+  return OK;
+};
+
 /** `POST /api/endless/arm` and `/disarm`: the thread in the body was started by Chat. */
 export const chatArmRule: Rule = (req, ctx) =>
   chatTarget(ctx, bodyOf(req).terminalId) ? OK : outOfScope('Chat may arm and disarm the threads that Chat started only.');

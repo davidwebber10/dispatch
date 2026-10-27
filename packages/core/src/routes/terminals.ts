@@ -1,7 +1,7 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
-import { allowRule, answerRule, chatMessageRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
+import { allowRule, answerRule, chatAnswerRule, chatMessageRule, chatQuestionReadRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
@@ -167,8 +167,10 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
   // is blocked on (the membrane), or null when nothing is pending.
-  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule }), (req, res) => {
-    res.json(redactKeysDeep(sessionService.getPendingPermission(req.params.terminalId)));
+  // A Chat key reads the pending QUESTION of a thread Chat started; a held tool call shows as null.
+  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule, chat: chatQuestionReadRule }), (req, res) => {
+    const pending = sessionService.getPendingPermission(req.params.terminalId);
+    res.json(redactKeysDeep(res.locals.questionsOnly && !pending?.questions?.length ? null : pending));
   });
 
   // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }
@@ -178,7 +180,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // next as their own turn): deny only, `requestId` required. 404 = that question is gone, 409 =
   // this harness can't take a reply. Either way the client sends the text as a normal turn.
   // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
-  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule }), (req, res) => {
+  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule, chat: chatAnswerRule }), (req, res) => {
     const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
     if (decision !== 'allow' && decision !== 'deny') {
       return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });

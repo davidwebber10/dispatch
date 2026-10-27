@@ -4,6 +4,7 @@ import { FakeManager } from '../endless/fake-manager.js';
 /** A manager that is alive for every thread, records what it receives and holds settable pending requests. */
 export class KeysManager extends FakeManager {
   pending = new Map<string, PendingPermission>();
+  repliesToQuestions = true;
   override isAlive(): boolean { return true; }
   override spawn(id: string, opts: StructuredSpawnOpts): number { this.spawned.push({ id, opts }); return 1; }
   getPending(id: string): PendingPermission | null { return this.pending.get(id) ?? null; }

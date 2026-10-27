@@ -519,6 +519,8 @@ cross-project write. Each would be a separate, reviewed change to the policy tab
 | `POST /api/endless/arm`, `/disarm` | Target has `origin: endless`. |
 | `POST /api/terminals/ID/message` | Target has `origin: endless`. Source `coordinator`, as `sendTask` sends today; never `user`. |
 | `DELETE /api/terminals/ID` | Target has `origin: endless`. |
+| `GET /api/terminals/ID/permission` | Target has `origin: endless`. Shows a pending question only; a held tool call reads as null. |
+| `POST /api/terminals/ID/permission` | Target has `origin: endless`. A text reply to the pending question only: body `decision: deny`, `reply`, `requestId`. No option pick, no allow, no canned action, no images, no sender line. |
 | `POST /api/endless/ledger/ACTION` | Allowed, with today's service rules. |
 | `POST /api/auth-requests` | Allowed. |
 
