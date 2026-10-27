@@ -297,7 +297,7 @@ describe('a failed send owes no report (final review I-2)', () => {
       expect(r.isError).toBe(true);
       expect((r.content[0] as any).text).toMatch(/the thread did not start/);
       expect(svc.store.owedReports('t1')).toBe(0);
-      expect(s.seen).toEqual(['POST /api/endless/arm', 'POST /api/terminals/t1/message', 'POST /api/endless/disarm']);
+      expect(s.seen).toEqual(['POST /api/endless/arm', 'GET /api/terminals/t1/permission', 'POST /api/terminals/t1/message', 'POST /api/endless/disarm']);
     } finally { await s.close(); }
   });
 

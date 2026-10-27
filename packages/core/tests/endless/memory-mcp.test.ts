@@ -45,10 +45,17 @@ describe('memory MCP server', () => {
       { kind: 'assistant', text: 'one' }, { kind: 'tool', toolName: 'Bash' }, { kind: 'assistant', text: 'two' },
     ] })));
     const r = await callTool('read_thread', { id: 't1' });
-    expect(JSON.parse((r.content[0] as any).text)).toEqual({ id: 't1', output: 'one\n\ntwo', tools: ['Bash'] });
+    expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ id: 't1', output: 'one\n\ntwo', tools: ['Bash'] });
   });
   const calls = (m: ReturnType<typeof vi.fn>) =>
     m.mock.calls.map((c) => [String(c[0]).replace(/^http:\/\/localhost:\d+/, ''), (c[1] as RequestInit | undefined)?.method ?? 'GET']);
+  /** A fetch that answers by URL: the first key that the URL ends with (or, for /conversation, includes). */
+  const routes = (table: Record<string, Response>) => vi.fn(async (url: any) => {
+    const u = String(url).replace(/^http:\/\/localhost:\d+/, '').split('?')[0];
+    const hit = Object.keys(table).find((k) => u.endsWith(k));
+    if (!hit) throw new Error(`unrouted ${u}`);
+    return table[hit].clone();
+  });
   const bodyOf = (m: ReturnType<typeof vi.fn>, k: number) => JSON.parse(String((m.mock.calls[k][1] as RequestInit).body));
 
   it('spawn_agent resolves the project, creates a Chat thread there with the Control Plane defaults, arms its report, then sends the task', async () => {
@@ -91,14 +98,15 @@ describe('memory MCP server', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('message_thread arms the report, then sends; an unknown thread sends nothing', async () => {
+  it('message_thread arms the report, looks for a pending question, then sends a normal turn; an unknown thread sends nothing', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json(200, { armed: true }))
+      .mockResolvedValueOnce(json(200, null))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     const r = await callTool('message_thread', { id: 't9', text: 'Also fix the logout.' });
-    expect(JSON.parse((r.content[0] as any).text)).toEqual({ ok: true, id: 't9' });
-    expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/message', 'POST']]);
+    expect(JSON.parse((r.content[0] as any).text)).toEqual({ ok: true, id: 't9', path: 'turn' });
+    expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/permission', 'GET'], ['/api/terminals/t9/message', 'POST']]);
 
     const bad = vi.fn().mockResolvedValueOnce(json(400, { error: 'unknown thread: nope' }));
     vi.stubGlobal('fetch', bad);
@@ -107,12 +115,184 @@ describe('memory MCP server', () => {
     expect(bad).toHaveBeenCalledTimes(1);
   });
 
+  describe('message_thread on a thread parked on an AskUserQuestion card', () => {
+    const PENDING = {
+      requestId: 'req-7', toolName: 'AskUserQuestion', input: {},
+      questions: [{ header: 'Store', question: 'Which store goes first?', options: [{ label: 'Outlet' }, { label: 'Main' }] }],
+    };
+
+    it('answers the card with the text (deny + reply + requestId) and sends no turn', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBeUndefined();
+      expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/permission', 'GET'], ['/api/terminals/t9/permission', 'POST']]);
+      expect(bodyOf(fetchMock, 2)).toEqual({ decision: 'deny', reply: 'Outlet first.', requestId: 'req-7' });
+      const out = JSON.parse((r.content[0] as any).text);
+      expect(out).toMatchObject({ ok: true, id: 't9', path: 'question-answer' });
+      expect(out.note).toMatch(/answered the question card/i);
+    });
+
+    it('falls back to a normal turn when the harness cannot take a reply (409), and says so', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(409, { error: 'this harness cannot take a reply to a question' }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBeUndefined();
+      expect(calls(fetchMock).map((c) => c[0])).toEqual(['/api/endless/arm', '/api/terminals/t9/permission', '/api/terminals/t9/permission', '/api/terminals/t9/message']);
+      const out = JSON.parse((r.content[0] as any).text);
+      expect(out).toMatchObject({ ok: true, id: 't9', path: 'turn' });
+      expect(out.note).toMatch(/cannot take a reply/i);
+    });
+
+    it('falls back to a normal turn when the question is gone (404) and no new question is pending', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(200, null))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ ok: true, path: 'turn' });
+      expect(calls(fetchMock)[4]).toEqual(['/api/terminals/t9/message', 'POST']);
+    });
+
+    it('a 404 because a NEW question replaced the old one sends nothing, disarms, and tells Chat to read the new card', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(200, { ...PENDING, requestId: 'req-8' }))
+        .mockResolvedValueOnce(json(200, { disarmed: true }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toMatch(/new question card is pending \(requestId req-8\)\. Nothing was sent/);
+      expect(calls(fetchMock).map((c) => c[0])).not.toContain('/api/terminals/t9/message');
+      expect(calls(fetchMock)[4]).toEqual(['/api/endless/disarm', 'POST']);
+    });
+
+    it('a 404 followed by a FAILED look at the card sends nothing, disarms, and returns the error', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(500, { error: 'daemon busy' }))
+        .mockResolvedValueOnce(json(200, { disarmed: true }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toBe('Error: daemon busy');
+      expect(calls(fetchMock).map((c) => c[0])).not.toContain('/api/terminals/t9/message');
+      expect(calls(fetchMock)[4]).toEqual(['/api/endless/disarm', 'POST']);
+    });
+
+    it('a held tool call (no questions) is not a question: the text goes as a normal turn', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, { requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'go on' });
+      expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ path: 'turn' });
+      expect(calls(fetchMock).map((c) => c[0])).toEqual(['/api/endless/arm', '/api/terminals/t9/permission', '/api/terminals/t9/message']);
+    });
+
+    it('a failed look at the card (an older daemon refuses it) still sends a normal turn', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(403, { error: 'owner_only' }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'go on' });
+      expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ ok: true, path: 'turn' });
+    });
+
+    it('any other failure of the answer disarms and returns the error', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(500, { error: 'boom' }))
+        .mockResolvedValueOnce(json(200, { disarmed: true }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'x' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toBe('Error: boom');
+      expect(calls(fetchMock).map((c) => c[0])).toEqual(['/api/endless/arm', '/api/terminals/t9/permission', '/api/terminals/t9/permission', '/api/endless/disarm']);
+    });
+  });
+
   it('read_agent returns the status, output and tools', async () => {
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(json(200, { items: [{ kind: 'assistant', text: 'done' }] }))
-      .mockResolvedValueOnce(json(200, { status: 'waiting' })));
+    vi.stubGlobal('fetch', routes({
+      '/conversation': json(200, { items: [{ kind: 'assistant', text: 'done' }] }),
+      '/permission': json(200, null),
+      '/api/terminals/t9': json(200, { status: 'waiting', config: { origin: 'endless' } }),
+    }));
     const r = await callTool('read_agent', { agentId: 't9' });
     expect(JSON.parse((r.content[0] as any).text)).toEqual({ agentId: 't9', status: 'waiting', output: 'done', tools: [] });
+  });
+
+  describe('a thread parked on an AskUserQuestion card', () => {
+    const PENDING = {
+      requestId: 'req-7', toolName: 'AskUserQuestion', input: {},
+      questions: [{ header: 'Store', question: 'Which store goes first?', options: [{ label: 'Outlet', description: 'x' }, 'Main'] }],
+    };
+    const world = () => routes({
+      '/conversation': json(200, { items: [{ kind: 'assistant', text: 'stale text' }, { kind: 'tool', toolName: 'AskUserQuestion' }] }),
+      '/permission': json(200, PENDING),
+      '/api/terminals/t9': json(200, { status: 'working', config: { origin: 'endless' } }),
+    });
+
+    it('read_agent says needs_input, and shows the question, its options and the requestId', async () => {
+      vi.stubGlobal('fetch', world());
+      const out = JSON.parse(((await callTool('read_agent', { agentId: 't9' })).content[0] as any).text);
+      expect(out.status).toBe('needs_input');
+      expect(out.pendingQuestion).toEqual({ requestId: 'req-7', questions: [{ header: 'Store', question: 'Which store goes first?', options: ['Outlet', 'Main'] }] });
+      expect(out.note).toMatch(/waiting on a question/i);
+      expect(out.note).toMatch(/message_thread/);
+      expect(out.output).toBe('stale text');
+    });
+
+    it('read_thread says the same', async () => {
+      vi.stubGlobal('fetch', world());
+      const out = JSON.parse(((await callTool('read_thread', { id: 't9' })).content[0] as any).text);
+      expect(out.status).toBe('needs_input');
+      expect(out.pendingQuestion.questions[0].question).toBe('Which store goes first?');
+      expect(out.note).toMatch(/waiting on a question/i);
+    });
+
+    it('a thread that Chat did not start: no look at its card (the key may not), status as the daemon says', async () => {
+      const f = routes({
+        '/conversation': json(200, { items: [] }),
+        '/permission': json(403, { error: 'out_of_scope' }),
+        '/api/terminals/t9': json(200, { status: 'working', config: { origin: 'user' } }),
+      });
+      vi.stubGlobal('fetch', f);
+      for (const [tool, arg] of [['read_agent', { agentId: 't9' }], ['read_thread', { id: 't9' }]] as const) {
+        const out = JSON.parse(((await callTool(tool, arg)).content[0] as any).text);
+        expect(out.status).toBe('working');
+        expect(out.pendingQuestion).toBeUndefined();
+      }
+      expect(calls(f).map((c) => c[0]).filter((u) => u.endsWith('/permission'))).toEqual([]);
+    });
+
+    it('a held tool call is not a question: the status stays as the daemon says', async () => {
+      vi.stubGlobal('fetch', routes({
+        '/conversation': json(200, { items: [] }),
+        '/permission': json(200, { requestId: 'r1', toolName: 'Bash', input: {} }),
+        '/api/terminals/t9': json(200, { status: 'working', config: { origin: 'endless' } }),
+      }));
+      const out = JSON.parse(((await callTool('read_agent', { agentId: 't9' })).content[0] as any).text);
+      expect(out.status).toBe('working');
+      expect(out.pendingQuestion).toBeUndefined();
+    });
   });
 
   it('the ledger tools post the project and the arguments to the Chat ledger route', async () => {
@@ -153,14 +333,15 @@ describe('memory MCP server', () => {
   it('message_thread: a failed send disarms, then returns the send error', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json(200, { armed: true }))
+      .mockResolvedValueOnce(json(200, null))
       .mockResolvedValueOnce(json(500, { error: 'boom' }))
       .mockResolvedValueOnce(json(200, { disarmed: true }));
     vi.stubGlobal('fetch', fetchMock);
     const r = await callTool('message_thread', { id: 't9', text: 'hi' });
     expect(r.isError).toBe(true);
     expect((r.content[0] as any).text).toMatch(/\/api\/terminals\/t9\/message -> 500/);
-    expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/message', 'POST'], ['/api/endless/disarm', 'POST']]);
-    expect(bodyOf(fetchMock, 2)).toEqual({ terminalId: 't9' });
+    expect(calls(fetchMock)).toEqual([['/api/endless/arm', 'POST'], ['/api/terminals/t9/permission', 'GET'], ['/api/terminals/t9/message', 'POST'], ['/api/endless/disarm', 'POST']]);
+    expect(bodyOf(fetchMock, 3)).toEqual({ terminalId: 't9' });
   });
 
   it('spawn_agent: a failed send disarms, then deletes the thread, and returns the send error even if both fail', async () => {

@@ -1,7 +1,7 @@
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
-import { allowRule, answerRule, chatMessageRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
+import { allowRule, answerRule, chatAnswerRule, chatMessageRule, chatQuestionReadRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
 import { TAB_ONLY_TYPES, THREAD_TYPES } from '../providers/agent-types.js';
@@ -167,8 +167,13 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
   // is blocked on (the membrane), or null when nothing is pending.
-  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule }), (req, res) => {
-    res.json(redactKeysDeep(sessionService.getPendingPermission(req.params.terminalId)));
+  // A Chat key reads the pending QUESTION of a thread Chat started; a held tool call shows as null.
+  router.get('/terminals/:terminalId/permission', keyRoute({ thread: readRule, roleRun: readRule, chat: chatQuestionReadRule }), (req, res) => {
+    const pending = sessionService.getPendingPermission(req.params.terminalId);
+    if (!res.locals.questionsOnly) return void res.json(redactKeysDeep(pending));
+    // A Chat key sees an AskUserQuestion card only, and only its requestId and questions (not the tool input).
+    const isCard = pending?.toolName === 'AskUserQuestion' && pending.questions?.length;
+    res.json(redactKeysDeep(isCard ? { requestId: pending!.requestId, toolName: pending!.toolName, questions: pending!.questions } : null));
   });
 
   // POST /api/terminals/:terminalId/permission { requestId?, decision:'allow'|'deny', answers?, message? }
@@ -176,9 +181,10 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // the tool input; deny sends a message. On success the thread returns to working.
   // A chat reply to a pending question adds `reply` (and `imageCount`, images the client sends
   // next as their own turn): deny only, `requestId` required. 404 = that question is gone, 409 =
-  // this harness can't take a reply. Either way the client sends the text as a normal turn.
+  // this harness can't take a reply. The web client then sends the text as a normal turn. (Chat's message_thread does too,
+  // unless a NEW question is pending: it sends nothing then.)
   // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
-  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule }), (req, res) => {
+  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule, chat: chatAnswerRule((id) => sessionService.getPendingPermission(id)) }), (req, res) => {
     const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
     if (decision !== 'allow' && decision !== 'deny') {
       return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
@@ -192,7 +198,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         return res.status(400).json({ error: "reply must be a non-empty string (or carry imageCount), with decision 'deny'" });
       }
       try {
-        const result = sessionService.answerQuestionInChat(req.params.terminalId, typeof requestId === 'string' ? requestId : '', reply, images);
+        const result = sessionService.answerQuestionInChat(req.params.terminalId, typeof requestId === 'string' ? requestId : '', reply, images, res.locals.answerFromChat ? 'chat' : 'user');
         if (result === 'not-found') return res.status(404).json({ error: 'no pending question with that requestId' });
         if (result === 'unsupported') return res.status(409).json({ error: 'this harness cannot take a reply to a question' });
         statusService?.markWorking(req.params.terminalId, 'Working…');

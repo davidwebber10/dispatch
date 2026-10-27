@@ -1906,22 +1906,24 @@ export class SessionService {
    * whose message carries the reply, so the model reads it as the question's answer. Sent once,
    * never as a separate user turn. `imageCount` images go out afterwards as their own turn, because a deny can only carry text;
    * the caller sends them once this returns 'delivered'.
+   * `from: 'chat'` is a Chat key's reply (never the human's words): other wording, a coordinator-source log row, no "the user answered" notice.
    *   'not-found'   — no question pending, or `requestId` is missing or names another one. No
    *                   fallback to "whatever is pending": that is the race guard.
    *   'unsupported' — this harness drops a deny's message (Codex) or is untested (Grok, OpenCode).
    *                   The caller sends the reply as a normal turn, today's behavior.
-   * Logs the RAW reply as a `user` row (a ledger quote must match the user's own words), and tells
-   * a worker's coordinator the question is answered.
+   * Logs the RAW reply as a `user` row (a ledger quote must match the user's own words; `from: 'chat'` logs `coordinator`
+   * instead), and tells a worker's coordinator the question is answered (not for `from: 'chat'`).
    */
-  answerQuestionInChat(terminalId: string, requestId: string, reply: string, imageCount = 0): 'delivered' | 'not-found' | 'unsupported' {
+  answerQuestionInChat(terminalId: string, requestId: string, reply: string, imageCount = 0, from: 'user' | 'chat' = 'user'): 'delivered' | 'not-found' | 'unsupported' {
     const manager = this.structuredManagerForTerminal(terminalId);
     const pending = manager?.getPending(terminalId);
     if (!manager || !pending?.questions?.length || !requestId || pending.requestId !== requestId) return 'not-found';
     if (!manager.repliesToQuestions) return 'unsupported';
-    const message = questionReplyMessage(reply, imageCount);
+    const message = questionReplyMessage(reply, imageCount, from);
     if (!manager.answerPermission(terminalId, requestId, { behavior: 'deny', message })) return 'not-found';
-    if (reply.trim()) this.logCoordinatorMessage(terminalId, reply, 'user');
-    this.noteQuestionAnsweredInChat(terminalId, reply, imageCount);
+    // A reply from Chat is not the human's: it is logged as a coordinator message, and nobody is told "the user answered".
+    if (reply.trim()) this.logCoordinatorMessage(terminalId, reply, from === 'chat' ? 'coordinator' : 'user');
+    if (from === 'user') this.noteQuestionAnsweredInChat(terminalId, reply, imageCount);
     return 'delivered';
   }
 

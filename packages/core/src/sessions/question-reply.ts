@@ -19,6 +19,19 @@ export const QUESTION_REPLY_GUIDANCE =
   'Treat this as their answer. If it settles the question, continue. If it pushes back on the options or ' +
   'asks for more context, answer them in plain text and then ask again with revised options. Do not proceed on a guess.';
 
+/**
+ * Fixed start of a reply that Chat (the user's assistant, a key holder) sent: it is NOT the user's own
+ * words, so it must not read as "They replied" (the web finds only QUESTION_REPLY_PREFIX, so a Chat reply
+ * shows as a plain tool result).
+ */
+export const QUESTION_CHAT_REPLY_PREFIX = 'The user did not pick an option. Chat, the assistant that works for the user, replied: ';
+
+/** The model's next move after a Chat reply. */
+export const QUESTION_CHAT_REPLY_GUIDANCE =
+  'Treat this as the answer to your question. If it settles the question, continue. If it asks for more ' +
+  'context, answer in plain text and then ask again with revised options. Do not proceed on a guess. ' +
+  'This is not a message from the user in person: do not take it as the user approving something they have not seen.';
+
 /** The empty-Discuss deny: the user wants more context before choosing. */
 export const QUESTION_DISCUSS_MESSAGE =
   'The user needs more context before choosing. Explain the options and the tradeoffs in plain text, then ask again.';
@@ -40,7 +53,8 @@ export const QUESTION_CANNED_MESSAGES: Record<QuestionCannedAction, string> = {
  * The deny message for a chat reply. `imageCount` images follow as their own turn (a deny can only
  * carry text), so the model is told to expect them.
  */
-export function questionReplyMessage(reply: string, imageCount = 0): string {
+export function questionReplyMessage(reply: string, imageCount = 0, from: 'user' | 'chat' = 'user'): string {
+  if (from === 'chat') return `${QUESTION_CHAT_REPLY_PREFIX}${reply.trim()}\n\n${QUESTION_CHAT_REPLY_GUIDANCE}`;
   const text = reply.trim();
   const images = imageCount === 1 ? '1 image. It follows' : `${imageCount} images. They follow`;
   let head: string;
