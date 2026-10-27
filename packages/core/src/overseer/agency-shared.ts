@@ -159,18 +159,22 @@ export async function readAgentOutput(api: string, agentId: string): Promise<{ a
 
 export interface PendingQuestion { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }
 
-/** The AskUserQuestion this thread is parked on (with the requestId that pins an answer to it), or null. */
+/** The pending question in a /permission answer (with the requestId that pins an answer to it), or null. */
+export function questionOfPermission(p: any): PendingQuestion | null {
+  if (!p?.questions?.length || typeof p.requestId !== 'string' || !p.requestId) return null;
+  return {
+    requestId: p.requestId,
+    questions: p.questions.map((q: any) => ({
+      header: String(q?.header ?? ''),
+      question: String(q?.question ?? ''),
+      options: Array.isArray(q?.options) ? q.options.map((o: any) => (typeof o === 'string' ? o : String(o?.label ?? o?.name ?? ''))).filter(Boolean) : [],
+    })),
+  };
+}
+
+/** The AskUserQuestion this thread is parked on, or null. Any read failure also gives null: use it for display. */
 export async function pendingQuestionOf(api: string, agentId: string): Promise<PendingQuestion | null> {
   try {
-    const p = await httpJson('GET', `${api}/api/terminals/${encodeURIComponent(agentId)}/permission`);
-    if (!p?.questions?.length || typeof p.requestId !== 'string' || !p.requestId) return null;
-    return {
-      requestId: p.requestId,
-      questions: p.questions.map((q: any) => ({
-        header: String(q?.header ?? ''),
-        question: String(q?.question ?? ''),
-        options: Array.isArray(q?.options) ? q.options.map((o: any) => (typeof o === 'string' ? o : String(o?.label ?? o?.name ?? ''))).filter(Boolean) : [],
-      })),
-    };
+    return questionOfPermission(await httpJson('GET', `${api}/api/terminals/${encodeURIComponent(agentId)}/permission`));
   } catch { return null; }
 }

@@ -179,6 +179,21 @@ describe('memory MCP server', () => {
       expect(calls(fetchMock)[4]).toEqual(['/api/endless/disarm', 'POST']);
     });
 
+    it('a 404 followed by a FAILED look at the card sends nothing, disarms, and returns the error', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json(200, { armed: true }))
+        .mockResolvedValueOnce(json(200, PENDING))
+        .mockResolvedValueOnce(json(404, { error: 'no pending question with that requestId' }))
+        .mockResolvedValueOnce(json(500, { error: 'daemon busy' }))
+        .mockResolvedValueOnce(json(200, { disarmed: true }));
+      vi.stubGlobal('fetch', fetchMock);
+      const r = await callTool('message_thread', { id: 't9', text: 'Outlet first.' });
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as any).text).toBe('Error: daemon busy');
+      expect(calls(fetchMock).map((c) => c[0])).not.toContain('/api/terminals/t9/message');
+      expect(calls(fetchMock)[4]).toEqual(['/api/endless/disarm', 'POST']);
+    });
+
     it('a held tool call (no questions) is not a question: the text goes as a normal turn', async () => {
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(json(200, { armed: true }))

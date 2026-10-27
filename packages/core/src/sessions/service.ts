@@ -1911,8 +1911,8 @@ export class SessionService {
    *                   fallback to "whatever is pending": that is the race guard.
    *   'unsupported' — this harness drops a deny's message (Codex) or is untested (Grok, OpenCode).
    *                   The caller sends the reply as a normal turn, today's behavior.
-   * Logs the RAW reply as a `user` row (a ledger quote must match the user's own words), and tells
-   * a worker's coordinator the question is answered.
+   * Logs the RAW reply as a `user` row (a ledger quote must match the user's own words; `from: 'chat'` logs `coordinator`
+   * instead), and tells a worker's coordinator the question is answered (not for `from: 'chat'`).
    */
   answerQuestionInChat(terminalId: string, requestId: string, reply: string, imageCount = 0, from: 'user' | 'chat' = 'user'): 'delivered' | 'not-found' | 'unsupported' {
     const manager = this.structuredManagerForTerminal(terminalId);

@@ -8,7 +8,7 @@
  */
 import * as readline from 'readline';
 import {
-  createWorker, sendTask, readAgentOutput, pendingQuestionOf, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
+  createWorker, sendTask, readAgentOutput, pendingQuestionOf, questionOfPermission, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
 } from '../overseer/agency-shared.js';
 
 const PROTOCOL_VERSION = '2024-11-05';
@@ -247,7 +247,8 @@ async function deliverMessage(id: string, text: string): Promise<Record<string, 
       if (err?.status === 409) fellBack = 'The thread was waiting on a question card, but its harness cannot take a reply to a question. The text was sent as a normal turn, which may stay queued until the card is answered in the browser.';
       else if (err?.status === 404) {
         // The card may be gone, or replaced by a new question: the text was for the old one, so do not send it behind the new one.
-        const now = await pendingQuestionOf(apiBase(), id);
+        // A strict read: a failed read must not pass for "no new card" and send the old answer behind a new one.
+        const now = questionOfPermission(await getJson(`${apiBase()}/api/terminals/${encodeURIComponent(id)}/permission`));
         if (now) throw new Error(`The question changed while you were answering: a new question card is pending (requestId ${now.requestId}). Nothing was sent. Read it with read_agent and answer again.`);
         fellBack = 'The question card was already gone. The text was sent as a normal turn.';
       }

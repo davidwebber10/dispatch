@@ -181,7 +181,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // the tool input; deny sends a message. On success the thread returns to working.
   // A chat reply to a pending question adds `reply` (and `imageCount`, images the client sends
   // next as their own turn): deny only, `requestId` required. 404 = that question is gone, 409 =
-  // this harness can't take a reply. Either way the client sends the text as a normal turn.
+  // this harness can't take a reply. The web client then sends the text as a normal turn. (Chat's message_thread does too,
+  // unless a NEW question is pending: it sends nothing then.)
   // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
   router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule, chat: chatAnswerRule((id) => sessionService.getPendingPermission(id)) }), (req, res) => {
     const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
