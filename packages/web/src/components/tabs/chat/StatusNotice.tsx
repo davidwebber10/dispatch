@@ -17,7 +17,8 @@
 //                 another state's meaning.
 
 import type { ReactNode } from 'react';
-import { parseReportStatus } from './reportStatus';
+import { parseReportStatus, reportStatusKey } from './reportStatus';
+import { useDismissedNotices } from '../../../stores/dismissedNotices';
 
 interface StateStyle {
   label: string;
@@ -54,8 +55,12 @@ const STATE_STYLES: Record<'done' | 'needs_you' | 'blocked', StateStyle> = {
   },
 };
 
-/** `renderText` lets a surface draw the summary and the ask its own way (the Control Plane adds ledger chips). */
-export function StatusNotice({ input, renderText }: { input?: string; renderText?: (text: string) => ReactNode }) {
+/** `renderText` lets a surface draw the summary and the ask its own way (the Control Plane adds ledger chips).
+ *  `onDismiss`, when given, puts an × in the header row so the reader can close the card
+ *  (2026-10-27: the cards are tall and a long thread stacks many of them; once read they are
+ *  clutter). The card itself is stateless — the caller decides what "closed" means; see
+ *  <DismissableStatusNotice> for the persisted default every surface uses. */
+export function StatusNotice({ input, renderText, onDismiss }: { input?: string; renderText?: (text: string) => ReactNode; onDismiss?: () => void }) {
   const rs = parseReportStatus(input);
   if (!rs) return null;
 
@@ -103,6 +108,28 @@ export function StatusNotice({ input, renderText }: { input?: string; renderText
         <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: style.accent }}>{style.label}</span>
         <span style={{ flex: 1 }} />
         {style.meta && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{style.meta}</span>}
+        {onDismiss && (
+          // 28px square hit area for a thumb, but margin pulls it back so the header row
+          // keeps its height; padding:0 because the UA button padding + global border-box
+          // otherwise squeezes the SVG to a sliver (same fix as the +/sort icons, v2.8.10).
+          <button
+            type="button"
+            aria-label="Hide this status"
+            title="Hide"
+            data-testid="status-notice-dismiss"
+            onClick={onDismiss}
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              width: 28, height: 28, margin: '-8px -9px -8px 0', padding: 0,
+              border: 'none', background: 'transparent', borderRadius: 6,
+              color: 'var(--color-text-tertiary)', cursor: 'pointer', flexShrink: 0,
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" />
+            </svg>
+          </button>
+        )}
       </div>
       {showSummary && (
         <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(rs.summary!) : rs.summary}</div>
@@ -112,4 +139,20 @@ export function StatusNotice({ input, renderText }: { input?: string; renderText
       )}
     </div>
   );
+}
+
+/**
+ * The <StatusNotice> every surface actually renders: the same card, with an × that hides
+ * it and remembers the choice (stores/dismissedNotices.ts, localStorage). `scope` is the
+ * thread or coordinator the card belongs to, so closing "Done" in one thread never hides an
+ * identically-worded "Done" in another. Renders nothing once dismissed. Used from the plain
+ * render functions (renderTimeline / renderStream) that cannot call hooks themselves.
+ */
+export function DismissableStatusNotice({ scope, input, renderText }: { scope?: string; input?: string; renderText?: (text: string) => ReactNode }) {
+  const key = reportStatusKey(input);
+  const sc = scope ?? 'global';
+  const dismissed = useDismissedNotices((s) => key != null && s.keys.includes(`${sc}:${key}`));
+  const dismiss = useDismissedNotices((s) => s.dismiss);
+  if (dismissed) return null;
+  return <StatusNotice input={input} renderText={renderText} onDismiss={key ? () => dismiss(sc, key) : undefined} />;
 }

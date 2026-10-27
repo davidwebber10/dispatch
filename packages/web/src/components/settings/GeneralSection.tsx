@@ -65,6 +65,7 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
   const sidebarMaxThreads = useSettings((s) => s.sidebarMaxThreads);
   const sidebarMaxFiles = useSettings((s) => s.sidebarMaxFiles);
   const showPinnedFiles = useSettings((s) => s.showPinnedFiles);
+  const showPrettyHint = useSettings((s) => s.showPrettyHint);
   const coordinatorName = useSettings((s) => s.coordinatorName);
   const pushEnabled = useSettings((s) => s.pushEnabled);
   const [pushMsg, setPushMsg] = useState('');
@@ -120,6 +121,8 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
         <span style={sectionLabel}>TERMINAL</span>
         <div style={row}><span style={item}>Font size</span><Stepper value={String(fontSize)} onDec={() => useSettings.getState().setFontSize(fontSize - 1)} onInc={() => useSettings.getState().setFontSize(fontSize + 1)} /></div>
         <div style={row}><span style={item}>Scrollback</span><Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => useSettings.getState().setScrollback(scrollback - 5000)} onInc={() => useSettings.getState().setScrollback(scrollback + 5000)} /></div>
+        <div style={row}><span style={item}>Pretty hint</span><Toggle on={showPrettyHint} onClick={() => useSettings.getState().setShowPrettyHint(!showPrettyHint)} /></div>
+        <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Off hides the “Long responses read best in Pretty” bar above CLI threads. The CLI/Pretty switch still works.</div>
       </div>
       <Divider />
 

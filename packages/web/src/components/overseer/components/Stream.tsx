@@ -25,7 +25,7 @@
 // No prop drilling — reads the store directly.
 // Desktop: flex:1 scroll (in the left conversation column). Mobile: fills the Stream tab.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { Bell, CaretDoubleDown, ChatTeardropText, CheckCircle, Clock, PauseCircle, WarningCircle } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
@@ -37,7 +37,9 @@ import { Spinner } from '../../common/Spinner';
 import { AskQuestionCard, AnsweredQuestionCard } from '../../tabs/chat/AskQuestionCard';
 import { LoadEarlierButton, ResultFooter, TaskNotice, Thinking } from '../../tabs/chat/ChatView';
 import { MachineryStrip } from '../../tabs/chat/MachineryStrip';
-import { StatusNotice } from '../../tabs/chat/StatusNotice';
+import { DismissableStatusNotice } from '../../tabs/chat/StatusNotice';
+import { reportStatusKey } from '../../tabs/chat/reportStatus';
+import { useDismissedNotices, noticeHidden, type NoticeFilter } from '../../../stores/dismissedNotices';
 import { openFileTab } from '../../../lib/openFileTab';
 import { useOverseer, useRenderVals } from '../store';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
@@ -466,7 +468,7 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
 // tracks the previously RENDERED row so a skipped (empty) item doesn't suppress the next
 // real Dispatch header.
 
-function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => void, ledger?: LedgerChips) {
+function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => void, ledger?: LedgerChips, notices?: NoticeFilter) {
   const rows: React.ReactNode[] = [];
   let prevDispatch = false;
 
@@ -504,10 +506,12 @@ function renderStream(stream: StreamMessage[], onViewFile?: (path: string) => vo
     } else if (msg.isStatus) {
       // The coordinator's declared status — the same state card the agent ChatView and
       // the CLI view render, instead of the collapsed (previously: dropped) tool call.
+      // Closed with × → no row at all, so the stream's gap does not keep an empty slot.
+      if (noticeHidden(notices, reportStatusKey(msg.statusInput))) continue;
       rows.push(
         <MessageScroller.Item key={msg.key} messageId={msg.key} style={{ display: 'flex' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <StatusNotice input={msg.statusInput} renderText={(text) => <LedgerChipText text={text} ledger={ledger} />} />
+            <DismissableStatusNotice scope={notices?.scope} input={msg.statusInput} renderText={(text) => <LedgerChipText text={text} ledger={ledger} />} />
           </div>
         </MessageScroller.Item>,
       );
@@ -616,6 +620,12 @@ export function ConversationStream() {
   const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);
   const coordinatorCompacting = useOverseer((s) => s.coordinatorCompacting);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
+  // Status cards the reader closed with ×, scoped to this coordinator (stores/dismissedNotices.ts).
+  const dismissedKeys = useDismissedNotices((s) => s.keys);
+  const noticeFilter = useMemo<NoticeFilter | undefined>(
+    () => (coordinatorId ? { scope: coordinatorId, keys: dismissedKeys } : undefined),
+    [coordinatorId, dismissedKeys],
+  );
   // The shown project's ledger index for the chips — never another project's (see useLedgerChips).
   const ledger = useLedgerChips();
   // "View file" from a machinery row: open (or reuse) the file tab in the project and
@@ -675,7 +685,7 @@ export function ConversationStream() {
                   turns — without a tappable control, hasMore:true history is stranded. Gated on
                   projectMatches like every other coordinator read (the cross-tab bleed fix). */}
               <LoadEarlierButton show={projectMatches && coordinatorHasMore && !coordinatorLoadingOlder} onClick={coordinatorLoadOlder} />
-              {renderStream(stream, onViewFile, ledger)}
+              {renderStream(stream, onViewFile, ledger, noticeFilter)}
               {/* The coordinator's OWN AskUserQuestion, rendered inline (mirrors the agent
                   ChatView). Answering unblocks its CLI, which is parked on stdin — without this
                   the "Open Dispatch" chat silently freezes (the question surfaces nowhere else,

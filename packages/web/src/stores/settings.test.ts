@@ -86,3 +86,13 @@ describe('sidebar list limits', () => {
     expect(formatSidebarLimit(10)).toBe('10');
   });
 });
+
+describe('showPrettyHint setting', () => {
+  it('defaults to shown and persists the setter', () => {
+    useSettings.setState({ showPrettyHint: true });
+    expect(useSettings.getState().showPrettyHint).toBe(true);
+    useSettings.getState().setShowPrettyHint(false);
+    expect(useSettings.getState().showPrettyHint).toBe(false);
+    expect(JSON.parse(localStorage.getItem('dispatch:showPrettyHint')!)).toBe(false);
+  });
+});

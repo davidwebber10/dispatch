@@ -4,9 +4,9 @@ import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useSettings, CLI_PRETTY_HINT_KEY } from '../../stores/settings';
 
-/** One dismissal covers every thread — the hint is a one-time education, not a nag. */
-export const CLI_PRETTY_HINT_KEY = 'dispatch:cliPrettyHint:dismissed';
+export { CLI_PRETTY_HINT_KEY };
 
 /**
  * One-line nudge above a CLI-transport AI thread: long responses read best on the
@@ -18,9 +18,13 @@ export const CLI_PRETTY_HINT_KEY = 'dispatch:cliPrettyHint:dismissed';
  *
  * `reserveRight` keeps that many pixels free on the right (2026-10-12): on desktop the thread's
  * floating bell and CLI/Pretty switch sit over the hint's right end and hid both buttons.
+ *
+ * One dismissal covers every thread — the hint is a one-time education, not a nag. Since
+ * 2026-10-27 the × and Settings → TERMINAL → "Pretty hint" are the same switch
+ * (settings.showPrettyHint), so the hint can be hidden, or brought back, from Settings.
  */
 export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRight?: number }) {
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem(CLI_PRETTY_HINT_KEY) === '1');
+  const dismissed = !useSettings((s) => s.showPrettyHint);
   const [busy, setBusy] = useState(false);
   const threadStatus = useThreadStatus((s) => s.byTerminal[tab.id]?.threadStatus);
 
@@ -77,7 +81,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         type="button"
         aria-label="Dismiss"
         title="Don't show this again"
-        onClick={() => { localStorage.setItem(CLI_PRETTY_HINT_KEY, '1'); setDismissed(true); }}
+        onClick={() => useSettings.getState().setShowPrettyHint(false)}
         style={{
           flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
           width: 20, height: 20, padding: 0, borderRadius: 5, border: 'none',

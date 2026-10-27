@@ -46,3 +46,20 @@ export function parseReportStatus(toolInput?: string): ReportStatusFields | null
   if (!fields.state && !fields.summary && !fields.ask && !fields.blocker) return null;
   return fields;
 }
+
+/** A short stable key for one report_status card, derived from its CONTENT (state + the
+ *  three text fields), not from a transcript id. The same card reaches the UI with
+ *  different ids on different paths — a live tool_use id while streaming, no id at all
+ *  from REST-paged history (conversation/transcript.ts emits none) — and with different
+ *  JSON formatting of the same arguments. Parsing first and hashing the trimmed fields
+ *  makes both paths agree, so a dismissal survives a refresh. Returns null when there is
+ *  nothing to key (the component renders nothing for that input anyway). */
+export function reportStatusKey(toolInput?: string): string | null {
+  const rs = parseReportStatus(toolInput);
+  if (!rs) return null;
+  const text = [rs.state ?? '', rs.summary ?? '', rs.ask ?? '', rs.blocker ?? ''].join('\u0000');
+  // djb2 — tiny, dependency-free, and collisions only hide a card that reads identically.
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `${h.toString(36)}-${text.length.toString(36)}`;
+}

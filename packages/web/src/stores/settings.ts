@@ -86,6 +86,13 @@ interface SettingsState {
    */
   ptyAutocorrect: boolean;
   editor: DocEditor;
+  /**
+   * The one-line "Long responses read best in Pretty" nudge above a CLI thread
+   * (components/tabs/CliPrettyHint.tsx). Off hides it on every thread; the hint's own ×
+   * sets this too, so the two are one switch. Defaults to the older per-device × state so
+   * a dismissal made before this setting existed still holds.
+   */
+  showPrettyHint: boolean;
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -105,6 +112,13 @@ interface SettingsState {
   setMobileViewMode: (m: MobileViewMode) => void;
   setPtyAutocorrect: (b: boolean) => void;
   setEditor: (e: DocEditor) => void;
+  setShowPrettyHint: (b: boolean) => void;
+}
+
+/** The pre-setting per-device dismissal flag the hint's × wrote (kept as the default's source). */
+export const CLI_PRETTY_HINT_KEY = 'dispatch:cliPrettyHint:dismissed';
+function legacyPrettyHintShown(): boolean {
+  try { return localStorage.getItem(CLI_PRETTY_HINT_KEY) !== '1'; } catch { return true; }
 }
 
 function load<T>(key: string, fallback: T): T {
@@ -150,6 +164,7 @@ export const useSettings = create<SettingsState>((set) => ({
   mobileViewMode: load<MobileViewMode>('dispatch:mobileViewMode', 'threads'),
   ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
   editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
+  showPrettyHint: load<boolean>('dispatch:showPrettyHint', legacyPrettyHintShown()),
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -168,6 +183,7 @@ export const useSettings = create<SettingsState>((set) => ({
   setMobileViewMode: (m) => { save('dispatch:mobileViewMode', m); set({ mobileViewMode: m }); },
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
+  setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
   setPushEnabled: async (b) => {
     if (b) {
       const r = await (await import('../lib/push')).enablePush();

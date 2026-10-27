@@ -1,9 +1,10 @@
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
 import { CliPrettyHint, CLI_PRETTY_HINT_KEY } from './CliPrettyHint';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
+import { useSettings } from '../../stores/settings';
 import type { Terminal } from '../../api/types';
 
 vi.mock('../../api/client', () => ({
@@ -20,6 +21,7 @@ function cliTab(over: Partial<Terminal> = {}): Terminal {
 
 beforeEach(() => {
   localStorage.clear();
+  useSettings.setState({ showPrettyHint: true });
   useThreadStatus.setState({ byTerminal: {} } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
@@ -53,10 +55,24 @@ test('dismissal hides the hint and persists across mounts (a one-time education,
   render(<CliPrettyHint tab={cliTab()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
   expect(screen.queryByText(/read best in Pretty/i)).not.toBeInTheDocument();
-  expect(localStorage.getItem(CLI_PRETTY_HINT_KEY)).toBe('1');
+  // The × and the Settings toggle are one switch (2026-10-27): it lands in the settings store.
+  expect(useSettings.getState().showPrettyHint).toBe(false);
+  expect(JSON.parse(localStorage.getItem('dispatch:showPrettyHint')!)).toBe(false);
   cleanup();
   render(<CliPrettyHint tab={cliTab({ id: 't2' })} />);
   expect(screen.queryByText(/read best in Pretty/i)).not.toBeInTheDocument();
+});
+
+test('the Settings toggle brings the hint back after a dismissal', () => {
+  useSettings.setState({ showPrettyHint: false });
+  render(<CliPrettyHint tab={cliTab()} />);
+  expect(screen.queryByText(/read best in Pretty/i)).not.toBeInTheDocument();
+  act(() => useSettings.getState().setShowPrettyHint(true));
+  expect(screen.getByText(/read best in Pretty/i)).toBeInTheDocument();
+});
+
+test('the legacy per-device × flag is still exported for older storage', () => {
+  expect(CLI_PRETTY_HINT_KEY).toBe('dispatch:cliPrettyHint:dismissed');
 });
 
 // 2026-10-12: on desktop the thread's floating bell and CLI/Pretty switch sit over the right end of

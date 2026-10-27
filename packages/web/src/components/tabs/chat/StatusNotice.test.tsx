@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { StatusNotice } from './StatusNotice';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { StatusNotice, DismissableStatusNotice } from './StatusNotice';
+import { useDismissedNotices } from '../../../stores/dismissedNotices';
 
 const j = (o: unknown) => JSON.stringify(o);
 
@@ -47,5 +48,48 @@ describe('<StatusNotice>', () => {
     expect(c2.firstChild).toBeNull();
     const { container: c3 } = render(<StatusNotice input={undefined} />);
     expect(c3.firstChild).toBeNull();
+  });
+});
+
+describe('<StatusNotice> dismiss ×', () => {
+  it('shows no × without onDismiss (the stateless card)', () => {
+    render(<StatusNotice input={j({ state: 'done', summary: 'shipped' })} />);
+    expect(screen.queryByTestId('status-notice-dismiss')).toBeNull();
+  });
+
+  it('calls onDismiss when the × is clicked', () => {
+    const onDismiss = vi.fn();
+    render(<StatusNotice input={j({ state: 'blocked', blocker: 'CI' })} onDismiss={onDismiss} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide this status' }));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('<DismissableStatusNotice>', () => {
+  beforeEach(() => { localStorage.clear(); useDismissedNotices.setState({ keys: [] }); });
+
+  it('hides the card on ×, remembers it per scope, and leaves the same card in another scope', () => {
+    const input = j({ state: 'done', summary: 'shipped v2.9.0' });
+    render(<DismissableStatusNotice scope="thread-a" input={input} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide this status' }));
+    expect(screen.queryByTestId('status-notice')).toBeNull();
+    cleanup();
+    // A remount (refresh) keeps it hidden...
+    render(<DismissableStatusNotice scope="thread-a" input={input} />);
+    expect(screen.queryByTestId('status-notice')).toBeNull();
+    cleanup();
+    // ...while an identically worded card in another thread still shows.
+    render(<DismissableStatusNotice scope="thread-b" input={input} />);
+    expect(screen.getByTestId('status-notice')).toBeTruthy();
+  });
+
+  it('keys by content, so the live (compact, with id) and paged (pretty JSON) shapes agree', () => {
+    const live = JSON.stringify({ state: 'done', summary: 'shipped' });
+    const paged = JSON.stringify({ summary: 'shipped', state: 'done' }, null, 2);
+    render(<DismissableStatusNotice scope="t" input={live} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide this status' }));
+    cleanup();
+    render(<DismissableStatusNotice scope="t" input={paged} />);
+    expect(screen.queryByTestId('status-notice')).toBeNull();
   });
 });

@@ -7,8 +7,9 @@ import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
 import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
 import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
-import { StatusNotice } from './StatusNotice';
-import { isReportStatusTool, parseReportStatus } from './reportStatus';
+import { DismissableStatusNotice } from './StatusNotice';
+import { useDismissedNotices, noticeHidden, type NoticeFilter } from '../../../stores/dismissedNotices';
+import { isReportStatusTool, parseReportStatus, reportStatusKey } from './reportStatus';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useConnection } from '../../../stores/connection';
 import { ThreadAskBanner } from '../ThreadAskBanner';
@@ -127,6 +128,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   prevItemsRef.current = items;
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
+  // Status cards the reader closed with ×, scoped to this thread (stores/dismissedNotices.ts).
+  const dismissedKeys = useDismissedNotices((s) => s.keys);
+  const noticeFilter = useMemo<NoticeFilter>(() => ({ scope: terminalId, keys: dismissedKeys }), [terminalId, dismissedKeys]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Mirror the draft in a ref so the async upload loop appends to the latest value
   // (across awaits / multiple files) without clobbering what's already there.
@@ -285,7 +289,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, relayName, loginItem)
+                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, relayName, loginItem, noticeFilter)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -293,7 +297,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem, noticeFilter)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
@@ -558,7 +562,7 @@ export function loginItemFor(type: string | undefined, items: ConvItem[]): ConvI
   return null;
 }
 
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null) {
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -748,7 +752,11 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         // The `{ ok: true }` result is already consumed by the pairing logic above, so it won't
         // render a stray row beneath. Falls back to the generic ToolCall when there's no usable
         // content to show.
-        node = <StatusNotice input={it.toolInput} />;
+        // A card the reader closed (×) is skipped outright — not rendered empty — so it leaves
+        // no gap in the turn. The wrapper's own null-return is only the safety net for callers
+        // that pass no filter.
+        if (noticeHidden(notices, reportStatusKey(it.toolInput))) continue;
+        node = <DismissableStatusNotice scope={notices?.scope} input={it.toolInput} />;
       } else {
         // Generic machinery — routes through pushMach so consecutive calls share one
         // bordered block, and so the header's Hide-tool-calls toggle can drop it.

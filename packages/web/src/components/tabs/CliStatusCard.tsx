@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useThreadStatus } from '../../stores/threadStatus';
-import { StatusNotice } from './chat/StatusNotice';
+import { DismissableStatusNotice } from './chat/StatusNotice';
+import { reportStatusKey } from './chat/reportStatus';
+import { useDismissedNotices } from '../../stores/dismissedNotices';
 
 /**
  * The latest DECLARED turn outcome (`config.lastOutcome`, stamped by report_status),
@@ -41,7 +43,10 @@ export function CliStatusCard({ tab }: { tab: Terminal }) {
   }, [working, tab.id]);
 
   const input = noticeInput(outcome);
-  if (!input) return null;
+  // Closed with × → drop the whole footer strip (padding included), not just the card.
+  const noticeKey = input ? reportStatusKey(input) : null;
+  const dismissed = useDismissedNotices((s) => noticeKey != null && s.keys.includes(`${tab.id}:${noticeKey}`));
+  if (!input || dismissed) return null;
   // While a turn runs, the card keeps its place, dimmed and marked as the last turn (2026-10-12):
   // hiding it resized the terminal on every submit, and Codex's inline TUI reprints its history
   // on every resize. The new outcome replaces it when the turn settles.
@@ -52,7 +57,7 @@ export function CliStatusCard({ tab }: { tab: Terminal }) {
       title={working ? 'Last turn' : undefined}
       style={{ padding: '6px 12px 8px', flexShrink: 0, opacity: working ? 0.55 : undefined }}
     >
-      <StatusNotice input={input} />
+      <DismissableStatusNotice scope={tab.id} input={input} />
     </div>
   );
 }

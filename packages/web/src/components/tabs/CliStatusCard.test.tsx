@@ -1,7 +1,8 @@
 import { expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, act, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { CliStatusCard } from './CliStatusCard';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useDismissedNotices } from '../../stores/dismissedNotices';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 
@@ -19,6 +20,7 @@ function tab(lastOutcome: Record<string, unknown> | undefined): Terminal {
 
 beforeEach(() => {
   useThreadStatus.setState({ byTerminal: {} } as any);
+  useDismissedNotices.setState({ keys: [] });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); (api.getTerminal as any).mockReset(); });
 
@@ -78,4 +80,15 @@ test('when the turn settles, the card refetches the terminal and shows the NEW o
   expect(await screen.findByText('Fresh result from this turn.')).toBeInTheDocument();
   expect(screen.queryByText('old outcome')).toBeNull();
   expect(screen.getByTestId('cli-status-card')).not.toHaveAttribute('data-last-turn');
+});
+
+test('the × removes the whole footer strip, and a NEW outcome (after the turn settles) shows again', async () => {
+  render(<CliStatusCard tab={tab({ summary: 'Release verified in prod.', needsHelp: false, inferred: false, declaredState: 'done', at: 'x' })} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Hide this status' }));
+  expect(screen.queryByTestId('cli-status-card')).not.toBeInTheDocument();
+  // A new turn runs and settles with a different declared outcome → a fresh, visible card.
+  (api.getTerminal as any).mockResolvedValue(tab({ summary: 'Now blocked on the deploy.', needsHelp: false, inferred: false, declaredState: 'blocked', at: 'y' }));
+  act(() => { useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } } as any); });
+  act(() => { useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'idle' } } } as any); });
+  expect(await screen.findByText('BLOCKED')).toBeInTheDocument();
 });
