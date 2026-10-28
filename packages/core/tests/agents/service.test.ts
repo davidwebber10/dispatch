@@ -89,6 +89,14 @@ describe('AgentService', () => {
     const ok = service.createSchedule({ ...base, recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 30 }) });
     expect(() => service.updateSchedule(ok.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 0.01 }) })).toThrow(/shortest allowed gap/);
     expect(service.updateSchedule(ok.id, { enabled: false })?.enabled).toBe(false); // other changes still work
+    // A stored schedule shorter than a raised minimum can still be renamed (the edit form sends the same rule again).
+    const prevMin = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+    const fast = service.createSchedule({ ...base, name: 'Fast', recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 1 }) });
+    process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
+    try {
+      expect(service.updateSchedule(fast.id, { name: 'Fast 2', recurrenceRule: fast.recurrenceRule })?.name).toBe('Fast 2');
+      expect(() => service.updateSchedule(fast.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 2 }) })).toThrow(/shortest allowed gap/);
+    } finally { if (prevMin === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prevMin; }
   });
 
   it('handleTerminalExit marks the run succeeded on a clean (0) exit', () => {

@@ -127,6 +127,15 @@ describe('GET /ledger/:itemId/source', () => {
     expect(body.kind).toBe('file-only');
     expect(JSON.stringify(body)).not.toContain('hunter2');
   });
+  it('a link into a folder named in DISPATCH_FILE_ROOTS is shown; without it, outside', async () => {
+    fs.symlinkSync(path.join(base, 'outside'), path.join(project, 'docs/shared'));
+    add({ sourceKind: 'doc', sourceRef: 'docs/shared/secret.md' });
+    await get('N1').expect(403);
+    const prev = process.env.DISPATCH_FILE_ROOTS;
+    process.env.DISPATCH_FILE_ROOTS = path.join(base, 'outside');
+    try { expect((await get('N1').expect(200)).body.kind).not.toBe('outside'); }
+    finally { if (prev === undefined) delete process.env.DISPATCH_FILE_ROOTS; else process.env.DISPATCH_FILE_ROOTS = prev; }
+  });
   // Review round 1 (2026-10-09).
   it('a project path that only a worktree has: that copy, with a note', async () => {
     write('project/.claude/worktrees/wt-a/docs/plans/branch-only.md', PLAN);

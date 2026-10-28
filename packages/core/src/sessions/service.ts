@@ -735,8 +735,7 @@ export class SessionService {
     // on an `idle` event that already fired; promote it right away.
     const dependsOn = typeof config?.dependsOn === 'string' ? config.dependsOn : '';
     if (dependsOn && this.isAgentDone(dependsOn)) {
-      // At the live-thread cap it stays queued (Start works once there is room); creating it still succeeds.
-      try { this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task)); } catch { /* stays queued */ }
+      this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task), { enforceCap: false });
     }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -752,13 +751,13 @@ export class SessionService {
    * terminal as-is when it isn't actually queued (idempotent), or null when it
    * doesn't exist.
    */
-  startQueuedTerminal(terminalId: string, taskOverride?: string): terminalsDb.Terminal | null {
+  startQueuedTerminal(terminalId: string, taskOverride?: string, opts: { enforceCap?: boolean } = {}): terminalsDb.Terminal | null {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return null;
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.queued !== true) return terminalsDb.rowToTerminal(terminal); // not queued — nothing to promote
-    this.assertRoomForLiveThread(terminal.session_id); // before the markers are stripped, so a refusal changes nothing
+    if (opts.enforceCap !== false) this.assertRoomForLiveThread(terminal.session_id); // before the markers are stripped, so a refusal changes nothing
 
     const task = typeof taskOverride === 'string' ? taskOverride : (typeof config.queuedTask === 'string' ? config.queuedTask : '');
     // Strip the queued markers BEFORE spawning so the row reads as a normal live
@@ -1599,10 +1598,8 @@ export class SessionService {
       let depConfig: Record<string, any> = {};
       try { depConfig = JSON.parse(dep.config || '{}'); } catch { /* default {} */ }
       const originalTask = typeof depConfig.queuedTask === 'string' ? depConfig.queuedTask : '';
-      // At the live-thread cap a dependent stays queued (the Start button works once there is room); it must not stop the rest.
-      try {
-        if (this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask))) started.push(dep.id);
-      } catch { /* stays queued */ }
+      // A dependent waits on a finished agent, so it is not part of a fan-out: the live-thread cap does not hold it back.
+      if (this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask), { enforceCap: false })) started.push(dep.id);
     }
     // Returned so the Finished notice counts them as working: they still read 'waiting' right now.
     return started;

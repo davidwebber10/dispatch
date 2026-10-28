@@ -263,8 +263,10 @@ export class AgentService {
   }
 
   updateSchedule(id: string, fields: Partial<CreateScheduleRequest>): AgentSchedule | null {
-    // Only a change to the rule is checked: turning a stored schedule off or on, or renaming it, always works.
-    const tooFrequent = fields.recurrenceRule !== undefined && fields.scheduleKind !== 'one-shot' ? scheduleTooFrequent(fields.recurrenceRule) : null;
+    // Only a changed rule is checked: turning a stored schedule off or on, or renaming it (the edit form sends the rule again), always works.
+    const stored = fields.recurrenceRule !== undefined ? agentsDb.getSchedule(this.db, id) : null;
+    const changesRule = fields.recurrenceRule !== undefined && fields.recurrenceRule !== (stored?.recurrence_rule ?? null);
+    const tooFrequent = changesRule && fields.scheduleKind !== 'one-shot' ? scheduleTooFrequent(fields.recurrenceRule) : null;
     if (tooFrequent) throw new Error(tooFrequent);
     const row = agentsDb.updateSchedule(this.db, id, fields);
     if (!row) return null;

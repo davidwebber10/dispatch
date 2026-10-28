@@ -6,7 +6,7 @@ import path from 'node:path';
  * with the OS path delimiter (":" on macOS/Linux). For a project that links to a shared folder or a
  * sibling package outside it. Set it to "/" to allow any link target (the checks off).
  */
-function extraRoots(): string[] {
+export function extraRoots(): string[] {
   const raw = process.env.DISPATCH_FILE_ROOTS;
   if (!raw) return [];
   const out: string[] = [];
@@ -17,7 +17,7 @@ function extraRoots(): string[] {
   return out;
 }
 
-function within(root: string, real: string): boolean {
+export function within(root: string, real: string): boolean {
   const rel = path.relative(root, real);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }

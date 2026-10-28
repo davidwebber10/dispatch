@@ -40,12 +40,12 @@ export function substituteSecretRefs(template: string, values: Record<string, st
 /**
  * A header or env name that holds a credential: Authorization / Cookie, or a name that ends in
  * token, secret, password, credential, apikey, or `_key` / `-key` (`API_KEY`, `x-api-key`, `accessKey`).
- * Suffix match only, so `TOKEN_URL`, `KEYBOARD` and `MONKEY` are not caught.
+ * Singular suffix match only, so `TOKEN_URL`, `KEYBOARD`, `MONKEY`, `MAX_TOKENS` and `GOOGLE_APPLICATION_CREDENTIALS` (a file path) are not caught.
  */
 export function looksSecretName(name: string): boolean {
   const n = name.trim();
   if (/^(proxy-)?authorization$|^(set-)?cookie$/i.test(n)) return true;
-  if (/(token|secret|password|passwd|credentials?|apikey)s?$/i.test(n)) return true;
+  if (/(token|secret|password|passwd|credential|apikey)$/i.test(n)) return true;
   return /(^|[_-])key$/i.test(n) || /[a-z]Key$/.test(n);
 }
 
@@ -59,7 +59,8 @@ export function literalSecretProblem(i: { headers?: unknown; env?: unknown }): s
     if (!bag || typeof bag !== 'object') return null;
     for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
       const value = typeof v === 'string' ? v : v == null ? '' : String(v);
-      if (!value.trim() || !looksSecretName(k) || refsIn(value).length) continue;
+      // A number or a flag (MAX_TOKEN=4096) is a setting, not a credential.
+      if (!value.trim() || !looksSecretName(k) || refsIn(value).length || /^(\d+(\.\d+)?|true|false)$/i.test(value.trim())) continue;
       const example = kind === 'header' && /authorization/i.test(k) ? 'Bearer ${MY_API_TOKEN}' : '${MY_API_TOKEN}';
       return `${kind} "${k}" looks like a secret. Do not type its value here: store the value in Secrets and write a reference such as ${example}`;
     }

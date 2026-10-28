@@ -61,7 +61,8 @@ describe('literalSecretProblem (SEC-17)', () => {
   it('accepts a ${NAME} reference (alone or inside text), an empty value, and names that only look similar', () => {
     expect(literalSecretProblem({ headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: { API_KEY: '${API_KEY}' } })).toBeNull();
     expect(literalSecretProblem({ env: { API_KEY: '' } })).toBeNull();
-    for (const k of ['TOKEN_URL', 'KEYBOARD', 'MONKEY', 'ROOT', 'X-Team', 'Accept', 'PORT', 'LOG_LEVEL', 'KEY_ID']) {
+    expect(literalSecretProblem({ env: { MAX_TOKEN: '4096', SECRET_ENABLED: 'true' } })).toBeNull(); // a number or a flag is a setting
+    for (const k of ['TOKEN_URL', 'KEYBOARD', 'MONKEY', 'ROOT', 'X-Team', 'Accept', 'PORT', 'LOG_LEVEL', 'KEY_ID', 'MAX_TOKENS', 'GOOGLE_APPLICATION_CREDENTIALS']) {
       expect(literalSecretProblem({ env: { [k]: 'literal' }, headers: { [k]: 'literal' } }), k).toBeNull();
     }
   });

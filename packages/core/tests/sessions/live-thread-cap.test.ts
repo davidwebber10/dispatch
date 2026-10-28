@@ -77,4 +77,13 @@ describe('live thread cap', () => {
     expect((svc.getTerminal(q.id) as any).config.queued).toBe(true);
     expect(svc.getTerminal(q.id)!.status).toBe('queued');
   });
+
+  it('a dependent that auto-starts is not held back by the cap', () => {
+    process.env.DISPATCH_MAX_LIVE_THREADS = '1';
+    svc.createTerminal('p1', 'claude-code');
+    const q = svc.createQueuedTerminal('p1', 'claude-code', 'q', { transport: 'structured' }, '');
+    expect(() => svc.startQueuedTerminal(q.id)).toThrow(/live threads/);
+    expect(svc.startQueuedTerminal(q.id, '', { enforceCap: false })).not.toBeNull();
+    expect(svc.liveThreadCount('p1')).toBe(2);
+  });
 });

@@ -179,12 +179,7 @@ export function createFilesRouter(db: Database.Database): Router {
    * The item itself may be a symlink (delete and rename act on the link, not its target).
    */
   function parentInsideRealRoot(workingDir: string, resolved: string): boolean {
-    try {
-      const root = fs.realpathSync(path.resolve(workingDir));
-      const parent = fs.realpathSync(path.dirname(resolved));
-      const rel = path.relative(root, parent);
-      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    } catch { return false; }
+    return insideRealRoot(workingDir, path.dirname(resolved));
   }
 
   /** True when `resolved` is the working directory itself (delete and rename refuse it). */

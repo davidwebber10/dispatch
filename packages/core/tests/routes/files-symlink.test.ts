@@ -130,6 +130,9 @@ describe('file routes refuse symlinks that lead out of the project', () => {
       fs.writeFileSync(path.join(other, 'o.txt'), 'o');
       fs.symlinkSync(other, path.join(project, 'otherlink'));
       expect((await request(app).get('/api/sessions/s1/files/read?path=otherlink/o.txt')).status).toBe(403);
+      // Rename and delete agree with read and write on an allowed root.
+      expect((await request(app).post('/api/sessions/s1/files/rename').send({ from: 'linkdir/secret.txt', to: 'linkdir/renamed.txt' })).status).toBe(200);
+      expect((await request(app).delete('/api/sessions/s1/files?path=linkdir/renamed.txt')).status).toBe(200);
       process.env.DISPATCH_FILE_ROOTS = '/';
       expect((await request(app).get('/api/sessions/s1/files/read?path=otherlink/o.txt')).status).toBe(200);
     } finally {
