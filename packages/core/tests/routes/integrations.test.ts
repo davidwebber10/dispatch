@@ -27,6 +27,22 @@ describe('integrations routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST / rejects a typed-in secret with 400 and says to use a ${NAME} reference when references can resolve (SEC-17)', async () => {
+    const express = (await import('express')).default;
+    const { createIntegrationsRouter } = await import('../../src/routes/integrations.js');
+    const { IntegrationsService } = await import('../../src/integrations/service.js');
+    const d = new Database(':memory:'); initSchema(d);
+    const mini = express();
+    mini.use(express.json());
+    mini.use('/api/integrations', createIntegrationsRouter(new IntegrationsService(d, null, () => true)));
+    const res = await request(mini).post('/api/integrations').send({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer abc' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Authorization.*\$\{MY_API_TOKEN\}/);
+    expect((await request(mini).get('/api/integrations')).body.integrations).toEqual([]);
+    const ok = await request(mini).post('/api/integrations').send({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' } });
+    expect(ok.status).toBe(200);
+  });
+
   it('POST / rejects a duplicate name with 409', async () => {
     await request(app).post('/api/integrations').send({ type: 'stdio', name: 'fs', command: 'x' });
     const res = await request(app).post('/api/integrations').send({ type: 'stdio', name: 'fs', command: 'y' });
@@ -75,6 +91,6 @@ describe('integrations routes', () => {
     expect(exp.body.version).toBe(1);
     const db2 = new Database(':memory:'); initSchema(db2); const app2 = createApp({ db: db2, skipPty: true });
     const imp = await request(app2).post('/api/integrations/import').send(exp.body);
-    expect(imp.body).toEqual({ added: ['linear'], skipped: [] });
+    expect(imp.body).toEqual({ added: ['linear'], skipped: [], reasons: [] });
   });
 });

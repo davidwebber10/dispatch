@@ -193,6 +193,14 @@ describe('terminal routes', () => {
     expect(list.body).toHaveLength(1);
   });
 
+  it('POST /api/sessions/:id/terminals ignores a skipPermissions field (SEC-06): it is accepted, not stored', async () => {
+    const res = await request(app)
+      .post(`/api/sessions/${sessionId}/terminals`)
+      .send({ type: 'shell', skipPermissions: true, workingDir: '/tmp' });
+    expect(res.status).toBe(201);
+    expect(res.body.skipPermissions).toBe(false);
+  });
+
   it('POST /api/sessions/:id/terminals without a label stamps label_source=default', async () => {
     const res = await request(app)
       .post(`/api/sessions/${sessionId}/terminals`)

@@ -62,7 +62,11 @@ export function IntegrationsSection() {
       setName(''); setUrl(''); setHeaders(''); setCommand(''); setArgs(''); setEnv('');
       setSheet(false);
       await reload();
-    } catch { setErr('Could not add — check the name is unique and the inputs are valid.'); }
+    } catch (e) {
+      // A typed-in secret is refused with advice to use a ${NAME} reference: show that text, not the generic line.
+      const detail = e instanceof Error ? e.message.split(' — ').slice(1).join(' — ') : '';
+      setErr(/looks like a secret/.test(detail) ? detail : 'Could not add — check the name is unique and the inputs are valid.');
+    }
     setBusy(false);
   }
   async function toggle(i: Integration) { if (busy) return; setBusy(true); setErr(''); try { await api.setIntegrationEnabled(i.id, !i.enabled); await reload(); } catch { setErr('Could not update.'); } setBusy(false); }
@@ -77,7 +81,7 @@ export function IntegrationsSection() {
   }
   async function doImport(file: File) {
     setErr('');
-    try { const doc = JSON.parse(await file.text()) as IntegrationsExport; const r = await api.importIntegrations(doc); await reload(); setErr(`Imported ${r.added.length}, skipped ${r.skipped.length}.`); }
+    try { const doc = JSON.parse(await file.text()) as IntegrationsExport; const r = await api.importIntegrations(doc); await reload(); setErr(`Imported ${r.added.length}, skipped ${r.skipped.length}.${r.reasons?.[0] ? ` ${r.reasons[0].name}: ${r.reasons[0].reason}` : ""}`); }
     catch { setErr('Import failed — invalid file.'); }
   }
 

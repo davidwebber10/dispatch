@@ -17,6 +17,8 @@ couch, or your phone — including as an installable PWA. Put it behind a
 - **Single-origin** — the daemon serves both the API/WebSocket and the web bundle, so there's no CORS and one URL to expose.
 - **Installable PWA** — add it to your Dock (macOS) or Home Screen (iOS).
 
+Agents run with your full user rights and with approvals off. That is by design: it lets them work unattended. See [Security notes](docs/security.md).
+
 > **Setting this up with an AI agent?** Point it at [`AGENTS.md`](AGENTS.md) — it contains
 > step-by-step, idempotent setup instructions written for a coding agent.
 
@@ -197,9 +199,9 @@ the tip of `main`. The release notes you read in the update prompt describe exac
 
 ## Usage statistics
 
-Dispatch sends a small anonymous usage report (counts and a random install ID, never text,
-paths or names) to `dispatchd.app` about every 6 hours. Turn it off in **Settings**, or start the
-daemon with `DISPATCH_TELEMETRY=0`.
+Usage reporting is on by default. Dispatch sends a small anonymous report (counts only, plus a random
+install ID; never text, paths or names) to `dispatchd.app` about every 6 hours. Turn it off in
+**Settings**, or start the daemon with `DISPATCH_TELEMETRY=0`.
 
 ## Uninstalling
 

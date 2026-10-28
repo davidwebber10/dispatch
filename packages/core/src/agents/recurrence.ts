@@ -1,4 +1,5 @@
 import type { AgentScheduleRow } from '../db/agents.js';
+import { minScheduleMinutes } from '../caps.js';
 
 /**
  * Recurrence engine: turns a schedule's recurrence rule (or one-shot runAt) into
@@ -41,7 +42,8 @@ export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string): st
         ? Number(rule.hours) * 60
         : Number(rule.everyMinutes ?? rule.minutes);
       if (!Number.isFinite(minutes) || minutes <= 0) return null;
-      return new Date(now.getTime() + minutes * 60_000).toISOString();
+      // A schedule already stored with a shorter gap still runs, no more often than the minimum.
+      return new Date(now.getTime() + Math.max(minutes, minScheduleMinutes()) * 60_000).toISOString();
     }
 
     case 'daily': {
@@ -180,4 +182,43 @@ function nextCron(expr: string, now: Date, tz: string): string | null {
 
 function daysInMonth(y: number, mo: number): number {
   return new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+}
+
+
+/**
+ * A message when a recurring rule would run more often than the minimum (DISPATCH_MIN_SCHEDULE_MINUTES,
+ * default 1 minute), else null. Checked when a schedule is created or changed. An interval is compared
+ * as written; a cron rule by the gap between its next two runs.
+ */
+export function scheduleTooFrequent(recurrenceRule: string | null | undefined, nowIso: string = new Date().toISOString()): string | null {
+  const min = minScheduleMinutes();
+  if (!min || !recurrenceRule) return null;
+  let rule: any;
+  try { rule = JSON.parse(recurrenceRule); } catch { return null; }
+  if (!rule || typeof rule !== 'object') return null;
+  const message = (every: number) => `This schedule would run every ${every} minute(s). The shortest allowed gap is ${min} minute(s) (DISPATCH_MIN_SCHEDULE_MINUTES).`;
+  if (rule.type === 'interval' || rule.type === 'interval-minutes' || rule.type === 'interval-hours') {
+    const minutes = rule.type === 'interval-hours' ? Number(rule.hours) * 60 : Number(rule.everyMinutes ?? rule.minutes);
+    if (Number.isFinite(minutes) && minutes > 0 && minutes < min) return message(minutes);
+    return null;
+  }
+  if (rule.type === 'cron') {
+    const now = new Date(nowIso);
+    const first = nextCron(String(rule.expr ?? ''), now, 'UTC');
+    if (!first) return null;
+    const second = nextCron(String(rule.expr ?? ''), new Date(first), 'UTC');
+    if (!second) return null;
+    const gap = (new Date(second).getTime() - new Date(first).getTime()) / 60_000;
+    if (gap < min) return message(gap);
+  }
+  return null;
+}
+
+/** Two stored rules mean the same thing (same JSON, whatever the spacing or key order). */
+export function sameRule(a: string | null, b: string | null): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as object).sort(([x], [y]) => x.localeCompare(y)).map(([k, x]) => [k, canon(x)])) : v;
+  try { return JSON.stringify(canon(JSON.parse(a))) === JSON.stringify(canon(JSON.parse(b))); } catch { return false; }
 }

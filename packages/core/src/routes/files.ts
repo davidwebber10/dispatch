@@ -10,6 +10,7 @@ import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { platform } from '../platform/index.js';
+import { insideRealRoot } from '../files/confine.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -178,12 +179,7 @@ export function createFilesRouter(db: Database.Database): Router {
    * The item itself may be a symlink (delete and rename act on the link, not its target).
    */
   function parentInsideRealRoot(workingDir: string, resolved: string): boolean {
-    try {
-      const root = fs.realpathSync(path.resolve(workingDir));
-      const parent = fs.realpathSync(path.dirname(resolved));
-      const rel = path.relative(root, parent);
-      return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    } catch { return false; }
+    return insideRealRoot(workingDir, path.dirname(resolved));
   }
 
   /** True when `resolved` is the working directory itself (delete and rename refuse it). */
@@ -228,6 +224,7 @@ export function createFilesRouter(db: Database.Database): Router {
     if (req.query.path !== undefined && queryPath(req.query.path) === undefined) return res.status(400).json({ error: 'invalid path parameter' });
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       const entries = fs.readdirSync(resolved, { withFileTypes: true });
@@ -307,6 +304,10 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const resolved = resolveRead(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    // An absolute path is the documented read escape hatch; a relative one stays in the project, symlinks included.
+    if (!path.isAbsolute(requestedPath) && !insideRealRoot(session.workingDir, resolved)) {
+      return res.status(403).json({ error: 'Path traversal not allowed' });
+    }
 
     try {
       // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
@@ -358,6 +359,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const mime = IMAGE_MIME[path.extname(resolved).toLowerCase()];
     if (!mime) return res.status(415).json({ error: 'Unsupported image type' });
+    if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       const stat = fs.statSync(resolved);
@@ -387,6 +389,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       const stat = fs.statSync(resolved);
@@ -461,6 +464,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       fs.writeFileSync(resolved, req.body.content);
@@ -491,7 +495,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
       try {
         const dest = path.join(resolved, req.file.originalname);
-        if (!dest.startsWith(session.workingDir)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
+        if (!dest.startsWith(session.workingDir) || !insideRealRoot(session.workingDir, dest)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
         fs.copyFileSync(req.file.path, dest);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: path.relative(session.workingDir, dest) });
@@ -518,6 +522,7 @@ export function createFilesRouter(db: Database.Database): Router {
 
       try {
         const inboxDir = path.join(session.workingDir, '.dispatch', 'inbox');
+        if (!insideRealRoot(session.workingDir, inboxDir)) { unlinkQuiet(req.file.path); return res.status(403).json({ error: 'Path traversal not allowed' }); }
         fs.mkdirSync(inboxDir, { recursive: true });
 
         const safeFilename = sanitizeFilename(req.file.originalname);
@@ -546,6 +551,8 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
+
+    if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
       fs.mkdirSync(resolved, { recursive: true });

@@ -82,6 +82,25 @@ describe('AgentService', () => {
     expect(broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent:run-created' }));
   });
 
+  it('refuses to create or change a schedule that runs more often than once a minute (SEC-23)', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const base = { projectId: 'proj-1', name: 'Poller', provider: 'codex', workingDir: '/srv/tenex', prompt: 'p', scheduleKind: 'recurring' as const, runAt: null, timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null };
+    expect(() => service.createSchedule({ ...base, recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 0.01 }) })).toThrow(/shortest allowed gap/);
+    const ok = service.createSchedule({ ...base, recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 30 }) });
+    expect(() => service.updateSchedule(ok.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 0.01 }) })).toThrow(/shortest allowed gap/);
+    expect(service.updateSchedule(ok.id, { enabled: false })?.enabled).toBe(false); // other changes still work
+    // A stored schedule shorter than a raised minimum can still be renamed (the edit form sends the same rule again).
+    const prevMin = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+    const fast = service.createSchedule({ ...base, name: 'Fast', recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 1 }) });
+    process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
+    try {
+      expect(service.updateSchedule(fast.id, { name: 'Fast 2', recurrenceRule: fast.recurrenceRule })?.name).toBe('Fast 2');
+      // The same rule written another way (spacing, key order) is still the same rule.
+      expect(service.updateSchedule(fast.id, { name: 'Fast 3', recurrenceRule: '{ "everyMinutes": 1, "type": "interval" }' })?.name).toBe('Fast 3');
+      expect(() => service.updateSchedule(fast.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 2 }) })).toThrow(/shortest allowed gap/);
+    } finally { if (prevMin === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prevMin; }
+  });
+
   it('handleTerminalExit marks the run succeeded on a clean (0) exit', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({

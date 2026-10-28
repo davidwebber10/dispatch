@@ -14,7 +14,7 @@
  * env. Base64 also stops Claude Code from expanding `${...}` in --mcp-config args on its own.
  *
  *   stdio   command + args; env = inherited + the spec's env entries with refs substituted
- *   remote  npx -y mcp-remote <url> --header K:<template>, the template LITERAL in argv.
+ *   remote  npx -y mcp-remote@<pinned> <url> --header K:<template>, the template LITERAL in argv.
  *           mcp-remote substitutes `${NAME}` in header values from its own env (verified in
  *           0.14.3: substituteEnvVars, applied to every --header), so each resolved
  *           NAME=value goes into its env instead.
@@ -41,6 +41,9 @@ import { SecretsService, type DopplerStatus } from '../secrets/service.js';
 import { findSecretRefs, refsIn, substituteSecretRefs } from './secret-refs.js';
 
 /** The integration's templates — `${NAME}` refs unresolved. */
+/** The pinned bridge for remote integrations: `npx -y mcp-remote` with no version ran whatever was newest at every spawn (SEC-16). Raise this on purpose, after a look at the release. */
+export const MCP_REMOTE_PACKAGE = 'mcp-remote@0.14.3';
+
 export interface LaunchSpec {
   /** For the error line only. */
   name?: string;
@@ -103,7 +106,7 @@ export function buildLaunch(spec: LaunchSpec, values: Record<string, string>): L
   for (const [, v] of headers) for (const name of refsIn(String(v))) if (Object.hasOwn(values, name)) env[name] = values[name];
   return {
     command: 'npx',
-    args: ['-y', 'mcp-remote', spec.url ?? '', ...headers.flatMap(([k, v]) => ['--header', `${k}:${v}`])],
+    args: ['-y', MCP_REMOTE_PACKAGE, spec.url ?? '', ...headers.flatMap(([k, v]) => ['--header', `${k}:${v}`])],
     env,
   };
 }

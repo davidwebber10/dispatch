@@ -119,6 +119,23 @@ describe('GET /ledger/:itemId/source', () => {
     add({ sourceKind: 'doc', sourceRef: 'docs/link.md' });
     for (const seq of ['N1', 'N2']) expect((await get(seq).expect(403)).body, seq).toEqual({ error: 'The file is outside the project' });
   });
+  it('SEC-12: a .md name that is a symlink to a non-markdown file inside the project is file-only, not shown', async () => {
+    write('project/.env', 'API_KEY=hunter2');
+    fs.symlinkSync(path.join(project, '.env'), path.join(project, 'docs/looks-like-notes.md'));
+    add({ sourceKind: 'doc', sourceRef: 'docs/looks-like-notes.md' });
+    const body = (await get('N1').expect(200)).body;
+    expect(body.kind).toBe('file-only');
+    expect(JSON.stringify(body)).not.toContain('hunter2');
+  });
+  it('a link into a folder named in DISPATCH_FILE_ROOTS is shown; without it, outside', async () => {
+    fs.symlinkSync(path.join(base, 'outside'), path.join(project, 'docs/shared'));
+    add({ sourceKind: 'doc', sourceRef: 'docs/shared/secret.md' });
+    await get('N1').expect(403);
+    const prev = process.env.DISPATCH_FILE_ROOTS;
+    process.env.DISPATCH_FILE_ROOTS = path.join(base, 'outside');
+    try { expect((await get('N1').expect(200)).body.kind).not.toBe('outside'); }
+    finally { if (prev === undefined) delete process.env.DISPATCH_FILE_ROOTS; else process.env.DISPATCH_FILE_ROOTS = prev; }
+  });
   // Review round 1 (2026-10-09).
   it('a project path that only a worktree has: that copy, with a note', async () => {
     write('project/.claude/worktrees/wt-a/docs/plans/branch-only.md', PLAN);

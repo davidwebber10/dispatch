@@ -1052,4 +1052,26 @@ describe('agency-mcp post_image', () => {
     const out = await callTool('post_image', { path: 'gone.png' });
     expect(out.isError).toBe(true);
   });
+
+  it('refuses an image that is a symlink to a file outside the working dir (SEC-12)', async () => {
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agency-postimg-outside-'));
+    try {
+      fs.writeFileSync(path.join(outsideDir, 'key.png'), 'PRIVATE-KEY-BYTES');
+      fs.symlinkSync(path.join(outsideDir, 'key.png'), path.join(process.cwd(), 'x.png'));
+      fs.symlinkSync(outsideDir, path.join(process.cwd(), 'linkdir'));
+      for (const p of ['x.png', 'linkdir/key.png']) {
+        const out = await callTool('post_image', { path: p });
+        expect(out.isError, p).toBe(true);
+        expect((out.content[0] as any).text).toContain('outside the working directory');
+      }
+    } finally { fs.rmSync(outsideDir, { recursive: true, force: true }); }
+  });
+
+  it('still posts an image reached through a symlink that stays inside the working dir', async () => {
+    fs.writeFileSync(path.join(process.cwd(), 'real.png'), Buffer.from(PNG_BASE64, 'base64'));
+    fs.symlinkSync(path.join(process.cwd(), 'real.png'), path.join(process.cwd(), 'alias.png'));
+    const out = await callTool('post_image', { path: 'alias.png' });
+    expect(out.isError).toBeUndefined();
+    expect((out.content[0] as any).type).toBe('image');
+  });
 });

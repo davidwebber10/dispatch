@@ -6,6 +6,10 @@ import type { SessionService } from '../sessions/service.js';
 import type { TerminalMonitor } from '../terminal-monitor.js';
 import { isPtyType } from '../db/terminals.js';
 
+/** The largest terminal a resize message may ask for (the same bounds the declared size at connect time uses). */
+const MAX_TERMINAL_COLS = 1000;
+const MAX_TERMINAL_ROWS = 500;
+
 function parseReplayBytes(url: string | undefined): number | undefined {
   if (!url) return undefined;
   try {
@@ -164,8 +168,12 @@ export function handleTerminalConnection(
       try {
         const parsed = JSON.parse(str);
         if (parsed.type === 'resize' && typeof parsed.cols === 'number' && typeof parsed.rows === 'number') {
-          monitor?.suppress(targetId!); // the repaint a resize causes is not activity
-          ptyManager.resize(targetId!, parsed.cols, parsed.rows);
+          // A size no terminal has (NaN, 0, negative, a million columns) is dropped, not passed to the pty.
+          if (Number.isInteger(parsed.cols) && Number.isInteger(parsed.rows)
+            && parsed.cols >= 1 && parsed.cols <= MAX_TERMINAL_COLS && parsed.rows >= 1 && parsed.rows <= MAX_TERMINAL_ROWS) {
+            monitor?.suppress(targetId!); // the repaint a resize causes is not activity
+            ptyManager.resize(targetId!, parsed.cols, parsed.rows);
+          }
           return;
         }
       } catch {}

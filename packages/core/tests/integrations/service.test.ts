@@ -24,6 +24,31 @@ describe('IntegrationsService', () => {
     expect(IntegrationsService.validate({ type: 'remote', name: 'ok', url: 'https://x' })).toBeNull();
   });
 
+  it('rejects a typed-in secret in a header or env value; a ${NAME} reference is fine (SEC-17)', () => {
+    expect(() => s.add({ type: 'remote', name: 'a', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' } })).toThrow(/Authorization.*\$\{/);
+    expect(() => s.add({ type: 'stdio', name: 'b', command: 'x', env: { GITHUB_TOKEN: 'ghp_literal' } })).toThrow(/GITHUB_TOKEN/);
+    expect(() => s.add({ type: 'remote', name: 'c', url: 'https://x.example/sse', env: { API_KEY: 'k' } })).toThrow(/API_KEY/);
+    expect(s.list()).toEqual([]);
+    s.add({ type: 'remote', name: 'ok', url: 'https://x.example/sse', headers: { Authorization: 'Bearer ${OK_TOKEN}', 'X-Team': 'eng' }, env: { API_KEY: '${OK_KEY}', REGION: 'us' } });
+    expect(s.list().map((x) => x.name)).toEqual(['ok']);
+  });
+
+  it('without Doppler (no way to resolve a reference) a typed-in value is allowed', () => {
+    const d = new Database(':memory:'); initSchema(d);
+    const noDoppler = new IntegrationsService(d, null, () => false);
+    expect(() => noDoppler.add({ type: 'remote', name: 'k', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' } })).not.toThrow();
+  });
+
+  it('import skips an entry with a typed-in secret and adds the rest', () => {
+    const out = s.import({ version: 1, integrations: [
+      { name: 'bad', type: 'remote', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' }, env: {}, command: null, args: [], enabled: true } as any,
+      { name: 'good', type: 'remote', url: 'https://y.example/sse', headers: { Authorization: 'Bearer ${G_TOKEN}' }, env: {}, command: null, args: [], enabled: true } as any,
+    ] });
+    expect(out.added).toEqual(['good']);
+    expect(out.skipped).toEqual(['bad']);
+    expect(out.reasons).toEqual([{ name: 'bad', reason: expect.stringMatching(/Authorization.*\$\{MY_API_TOKEN\}/) }]);
+  });
+
   it('rejects a duplicate name (case-insensitive)', () => {
     s.add({ type: 'stdio', name: 'fs', command: 'x' });
     expect(() => s.add({ type: 'stdio', name: 'FS', command: 'y' })).toThrow(/exists/);
@@ -36,7 +61,7 @@ describe('IntegrationsService', () => {
 
   it('getServerSpecs wraps remote via mcp-remote with header args (secrets stay as ${VAR})', () => {
     s.add({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: '${LINEAR}' } });
-    expect(s.getServerSpecs()).toEqual([{ name: 'linear', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.linear.app/sse', '--header', 'Authorization:${LINEAR}'] }]);
+    expect(s.getServerSpecs()).toEqual([{ name: 'linear', command: 'npx', args: ['-y', 'mcp-remote@0.14.3', 'https://mcp.linear.app/sse', '--header', 'Authorization:${LINEAR}'] }]);
   });
 
   it('getServerSpecs keeps a ${VAR} stdio env as-is without a launcher', () => {
@@ -81,9 +106,9 @@ describe('IntegrationsService', () => {
 
     it('keeps a literal env value out of argv: it stays on the spec env (today\'s path), only the ref goes into --spec', () => {
       const LITERAL = 'fake-literal-secret-789';
-      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { API_KEY: LITERAL, OTHER: '${X}' } });
+      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { REGION: LITERAL, OTHER: '${X}' } });
       const [spec] = l.getServerSpecs();
-      expect(spec.env).toEqual({ API_KEY: LITERAL });
+      expect(spec.env).toEqual({ REGION: LITERAL });
       const decoded = unwrap(spec);
       expect(decoded.env).toEqual({ OTHER: '${X}' });
       expect(spec.args.join(' ')).not.toContain(LITERAL);
@@ -103,7 +128,7 @@ describe('IntegrationsService', () => {
       l.add({ type: 'remote', name: 'open', url: 'https://mcp.example.com/sse', headers: { 'X-Team': 'eng' } });
       expect(l.getServerSpecs()).toEqual([
         { name: 'fs', command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } },
-        { name: 'open', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.example.com/sse', '--header', 'X-Team:eng'] },
+        { name: 'open', command: 'npx', args: ['-y', 'mcp-remote@0.14.3', 'https://mcp.example.com/sse', '--header', 'X-Team:eng'] },
       ]);
     });
 
@@ -119,8 +144,8 @@ describe('IntegrationsService', () => {
     expect(doc.version).toBe(1);
     expect(doc.integrations[0]).not.toHaveProperty('id');
     const s2 = svc();
-    expect(s2.import(doc)).toEqual({ added: ['linear'], skipped: [] });
+    expect(s2.import(doc)).toEqual({ added: ['linear'], skipped: [], reasons: [] });
     // re-import into the same store skips the existing name
-    expect(s2.import(doc)).toEqual({ added: [], skipped: ['linear'] });
+    expect(s2.import(doc)).toEqual({ added: [], skipped: ['linear'], reasons: [] });
   });
 });

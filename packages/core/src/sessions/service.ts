@@ -36,6 +36,7 @@ import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript
 import { parseCodexRollout } from '../conversation/codex-transcript.js';
 import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
+import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
@@ -627,9 +628,29 @@ export class SessionService {
 
   // --- Terminal-level operations ---
 
+  /** Threads of this project with a live process (a PTY or a structured session): what the live-thread cap counts. */
+  liveThreadCount(sessionId: string): number {
+    let n = 0;
+    for (const t of terminalsDb.listBySession(this.db, sessionId)) {
+      if (this.ptyManager.isAlive(t.id) || this.structuredManagerFor(t.type)?.isAlive(t.id)) n++;
+    }
+    return n;
+  }
+
+  /** Throws when the project is at its cap of live threads (DISPATCH_MAX_LIVE_THREADS; 0 = no cap). */
+  private assertRoomForLiveThread(sessionId: string): void {
+    const cap = maxLiveThreadsPerProject();
+    if (!cap) return;
+    const live = this.liveThreadCount(sessionId);
+    if (live >= cap) {
+      throw new Error(`This project already has ${live} live threads (the limit is ${cap}). Archive or stop some, or raise DISPATCH_MAX_LIVE_THREADS.`);
+    }
+  }
+
   createTerminal(sessionId: string, type: TerminalType, label?: string, skipPermissions?: boolean, workingDir?: string, externalId?: string, config?: Record<string, any>): terminalsDb.Terminal {
     const session = sessionsDb.getById(this.db, sessionId);
     if (!session) throw new Error('Session not found');
+    this.assertRoomForLiveThread(sessionId);
 
     const resolvedDir = workingDir
       ? workingDir.replace(/^~/, os.homedir())
@@ -714,7 +735,7 @@ export class SessionService {
     // on an `idle` event that already fired; promote it right away.
     const dependsOn = typeof config?.dependsOn === 'string' ? config.dependsOn : '';
     if (dependsOn && this.isAgentDone(dependsOn)) {
-      this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task));
+      this.startQueuedTerminal(terminalId, this.composeDependentTask(dependsOn, task), { enforceCap: false });
     }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -730,12 +751,13 @@ export class SessionService {
    * terminal as-is when it isn't actually queued (idempotent), or null when it
    * doesn't exist.
    */
-  startQueuedTerminal(terminalId: string, taskOverride?: string): terminalsDb.Terminal | null {
+  startQueuedTerminal(terminalId: string, taskOverride?: string, opts: { enforceCap?: boolean } = {}): terminalsDb.Terminal | null {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return null;
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.queued !== true) return terminalsDb.rowToTerminal(terminal); // not queued — nothing to promote
+    if (opts.enforceCap !== false) this.assertRoomForLiveThread(terminal.session_id); // before the markers are stripped, so a refusal changes nothing
 
     const task = typeof taskOverride === 'string' ? taskOverride : (typeof config.queuedTask === 'string' ? config.queuedTask : '');
     // Strip the queued markers BEFORE spawning so the row reads as a normal live
@@ -1576,7 +1598,8 @@ export class SessionService {
       let depConfig: Record<string, any> = {};
       try { depConfig = JSON.parse(dep.config || '{}'); } catch { /* default {} */ }
       const originalTask = typeof depConfig.queuedTask === 'string' ? depConfig.queuedTask : '';
-      if (this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask))) started.push(dep.id);
+      // A dependent waits on a finished agent, so it is not part of a fan-out: the live-thread cap does not hold it back.
+      if (this.startQueuedTerminal(dep.id, this.composeDependentTask(finishedTerminalId, originalTask), { enforceCap: false })) started.push(dep.id);
     }
     // Returned so the Finished notice counts them as working: they still read 'waiting' right now.
     return started;
