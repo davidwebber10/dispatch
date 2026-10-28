@@ -69,8 +69,8 @@ export function literalSecretProblem(i: { headers?: unknown; env?: unknown }): s
   return check('header', i.headers) ?? check('env', i.env);
 }
 
-/** A file path, not a token that happens to start with "/" (base64 has "/" in its alphabet): no "+" or "=", and a second "/" or a file extension. */
+/** A file path, not a token that happens to start with "/" (base64 has "/" in its alphabet): no "+" or "=" (spaces are fine: "Application Support"), and a second "/" or a file extension. */
 function looksLikePath(v: string): boolean {
-  if (!/^(\/|~\/)/.test(v) || /[+=\s]/.test(v)) return false;
+  if (!/^(\/|~\/)/.test(v) || /[+=]/.test(v)) return false;
   return v.indexOf('/', 1) > 0 || /\.[A-Za-z0-9]{1,8}$/.test(v);
 }
