@@ -96,8 +96,14 @@ export class ViewKeeper {
    * also covers it stays in the view, so the turn can see a summary of its own message as well as
    * the message itself. This is rare (a merge must land during the turn's wait) and loses nothing.
    */
-  turnBlocks(before?: number): string[] {
-    const lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
+  turnBlocks(before?: number, except: readonly number[] = [], dropCovering = false): string[] {
+    let lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
+    // `except`: the turn's own messages (the reports it answers). Single-message lines for them are left out. With
+    // `dropCovering` (a turn that has the full tool set) a merged line that covers one of them is left out too:
+    // a summary of a deferred report must not reach that turn. This is rare and loses only the lines it merged.
+    if (except.length) {
+      lines = lines.filter(([l, i]) => !(l === 0 ? except.includes(i) : dropCovering && except.some((m) => m >= firstMessage(l, i) && m <= lastMessage(l, i))));
+    }
     return renderChatBlocks(lines, this.text);
   }
 

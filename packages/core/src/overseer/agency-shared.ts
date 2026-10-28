@@ -5,6 +5,7 @@
  * function takes the daemon base URL and, where a project is needed, its session id as
  * arguments. Nothing here reads DISPATCH_SESSION.
  */
+import { untrustedBlock } from '../security/untrusted-text.js';
 import { buildWorkerCreateBody } from './worker-payload.js';
 import { resolveCredential, keyAllowedFor } from '../auth/credential.js';
 
@@ -154,7 +155,8 @@ export async function readAgentOutput(api: string, agentId: string): Promise<{ a
   const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
   let status: string | null = null;
   try { const t = await httpJson('GET', `${api}/api/terminals/${id}`); status = t?.status ?? null; } catch { /* ignore */ }
-  return { agentId, status, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
+  // What the agent wrote is data (it may carry text from a hostile page or pull request).
+  return { agentId, status, output: output ? untrustedBlock(`agent ${agentId}`, output) : '(no assistant output captured yet)', tools: tools.slice(-30) };
 }
 
 export interface PendingQuestion { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }

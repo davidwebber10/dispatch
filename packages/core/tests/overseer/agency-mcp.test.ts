@@ -126,12 +126,10 @@ describe('agency-mcp', () => {
 
     const out = await callTool('read_agent', { agentId: 'agent-1' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({
-      agentId: 'agent-1',
-      status: 'waiting',
-      output: 'Found A\n\nRecommend B',
-      tools: ['Grep'],
-    });
+    const body = JSON.parse(out.content[0].text);
+    expect(body).toEqual({ agentId: 'agent-1', status: 'waiting', output: expect.any(String), tools: ['Grep'] });
+    // The agent's words come back inside a marked data block.
+    expect(body.output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from agent agent-1[^\n]*\n+Found A\n\nRecommend B\n\[\[\[END UNTRUSTED \1\]\]\]$/);
     expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/agent-1/conversation?limit=500');
   });
 
@@ -626,7 +624,7 @@ describe('agency-mcp', () => {
 
       const out = await callTool('read_thread', { id: 'p1' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: 'Did the thing', tools: ['Edit'] });
+      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread p1[^\n]*\n+Did the thing\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Edit'] });
       expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/p1');
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=500');
     });

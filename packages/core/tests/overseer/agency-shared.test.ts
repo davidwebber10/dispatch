@@ -45,7 +45,10 @@ describe('agency-shared', () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(json(200, { items: [{ kind: 'assistant', text: 'one' }, { kind: 'tool', toolName: 'Read' }, { kind: 'assistant', text: 'two' }] }))
       .mockResolvedValueOnce(json(200, { status: 'waiting' })));
-    expect(await readAgentOutput('http://d', 't9')).toEqual({ agentId: 't9', status: 'waiting', output: 'one\n\ntwo', tools: ['Read'] });
+    const r = await readAgentOutput('http://d', 't9');
+    expect(r).toEqual({ agentId: 't9', status: 'waiting', output: expect.any(String), tools: ['Read'] });
+    // The agent's words are data: they come back inside one marked block.
+    expect(r.output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from agent t9[^\n]*\n+one\n\ntwo\n\[\[\[END UNTRUSTED \1\]\]\]$/);
   });
 
   it('readAgentOutput encodes the agent id in both requests', async () => {

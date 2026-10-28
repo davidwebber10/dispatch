@@ -6,6 +6,7 @@
  *   DISPATCH_API  base URL (default http://localhost:${DISPATCH_PORT || 3456})
  * The tool list and descriptions never change: they are part of the cached prefix.
  */
+import { untrustedBlock } from '../security/untrusted-text.js';
 import * as readline from 'readline';
 import {
   createWorker, sendTask, readAgentOutput, pendingQuestionOf, questionOfPermission, authHeaders, keyErrorFrom, AGENT_TYPES, HARNESSES, HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
@@ -285,7 +286,7 @@ export async function callTool(name: string, args: any): Promise<{ content: McpC
         const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => String(it.toolName)).slice(-30);
         const row = await rowOf(String(a.id));
         const status = typeof row?.status === 'string' ? row.status : null;
-        return asText(withPendingQuestion({ id: String(a.id), ...(status ? { status } : {}), output: output || '(no assistant output yet)', tools }, await pendingQuestionOfChatThread(row, String(a.id))));
+        return asText(withPendingQuestion({ id: String(a.id), ...(status ? { status } : {}), output: output ? untrustedBlock(`thread ${String(a.id)}`, output) : '(no assistant output yet)', tools }, await pendingQuestionOfChatThread(row, String(a.id))));
       }
       case 'spawn_agent': {
         if (!AGENT_TYPES.includes(a.agentType)) throw new Error(`agentType must be one of: ${AGENT_TYPES.join(', ')}`);

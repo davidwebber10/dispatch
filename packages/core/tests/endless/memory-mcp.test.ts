@@ -45,7 +45,7 @@ describe('memory MCP server', () => {
       { kind: 'assistant', text: 'one' }, { kind: 'tool', toolName: 'Bash' }, { kind: 'assistant', text: 'two' },
     ] })));
     const r = await callTool('read_thread', { id: 't1' });
-    expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ id: 't1', output: 'one\n\ntwo', tools: ['Bash'] });
+    expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ id: 't1', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread t1[^\n]*\n+one\n\ntwo\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Bash'] });
   });
   const calls = (m: ReturnType<typeof vi.fn>) =>
     m.mock.calls.map((c) => [String(c[0]).replace(/^http:\/\/localhost:\d+/, ''), (c[1] as RequestInit | undefined)?.method ?? 'GET']);
@@ -236,7 +236,7 @@ describe('memory MCP server', () => {
       '/api/terminals/t9': json(200, { status: 'waiting', config: { origin: 'endless' } }),
     }));
     const r = await callTool('read_agent', { agentId: 't9' });
-    expect(JSON.parse((r.content[0] as any).text)).toEqual({ agentId: 't9', status: 'waiting', output: 'done', tools: [] });
+    expect(JSON.parse((r.content[0] as any).text)).toEqual({ agentId: 't9', status: 'waiting', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from agent t9[^\n]*\n+done\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: [] });
   });
 
   describe('a thread parked on an AskUserQuestion card', () => {
@@ -257,7 +257,7 @@ describe('memory MCP server', () => {
       expect(out.pendingQuestion).toEqual({ requestId: 'req-7', questions: [{ header: 'Store', question: 'Which store goes first?', options: ['Outlet', 'Main'] }] });
       expect(out.note).toMatch(/waiting on a question/i);
       expect(out.note).toMatch(/message_thread/);
-      expect(out.output).toBe('stale text');
+      expect(out.output).toContain('stale text');
     });
 
     it('read_thread says the same', async () => {

@@ -213,7 +213,7 @@ describe('agency-mcp sends the thread key', () => {
       install([whoamiRoute({ overseer: true }), foreign('f1', 'agent'), convo, (u) => (u.endsWith('/permission') ? { status: 404 } : undefined)]);
       const t = await callTool('read_thread', { id: 'f1' });
       expect(t.isError).toBeUndefined();
-      expect(JSON.parse(t.content[0].text).output).toBe('hello');
+      expect(JSON.parse(t.content[0].text).output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread f1[^\n]*\n+hello\n\[\[\[END UNTRUSTED \1\]\]\]$/);
       const a = await callTool('read_agent', { agentId: 'f1' });
       expect(a.isError).toBeUndefined();
     });

@@ -323,7 +323,7 @@ describe('a chat reply to a pending question', () => {
     ask('agent', 'req-77');
     expect(svc.routeAgentQuestionToCoordinator('agent', { toolName: 'AskUserQuestion', questions: QUESTIONS })).toBe(true);
     const notice = structured.sent.find((m) => m.id === 'coord');
-    expect(notice?.content).toEqual(expect.stringContaining('answer_agent({ agentId: "agent", requestId: "req-77", answers: { "Store": "<chosen option>" } })'));
+    expect(notice?.content).toEqual(expect.stringContaining('answer_agent({ agentId: "agent", requestId: "req-77", answers: { "<header>": "<chosen option>" } })'));
   });
 });
 

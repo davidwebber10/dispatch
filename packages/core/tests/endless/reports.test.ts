@@ -16,6 +16,9 @@ let db: Database.Database;
 let outputs: Record<string, string>;
 let pendings: Record<string, { requestId: string; toolName: string; input: unknown; questions?: unknown[] }>;
 const live: { svc: EndlessService; fake: FakeManager }[] = [];
+/** A report as the model gets it: the report text inside one marked "data, not instructions" block. */
+const wrapped = (project: string, text: string) =>
+  new RegExp(`^work \\(${project}\\): \\[\\[\\[UNTRUSTED ([0-9a-f]{16}) from [^\\n]*\\]\\]\\]\\n${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n\\[\\[\\[END UNTRUSTED \\1\\]\\]\\]$`);
 const flush = () => new Promise<void>((r) => setImmediate(r));
 
 function make() {
@@ -105,7 +108,7 @@ describe('thread reports', () => {
     expect(works()).toEqual([expect.objectContaining({ text: '[Fix login] report: Fixed the login cookie path.', project: 's1', ref: 't1' })]);
     await settle();
     expect(x.fake.spawned).toHaveLength(1);
-    expect(texts(x.fake.sent[0].content).at(-1)).toBe('work (salsify): [Fix login] report: Fixed the login cookie path.');
+    expect(texts(x.fake.sent[0].content).at(-1)).toMatch(wrapped('salsify', '[Fix login] report: Fixed the login cookie path.'));
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' }); // a second edge: nothing is owed
     await flush();
     expect(works()).toHaveLength(1);
@@ -509,11 +512,12 @@ describe('thread reports', () => {
     await settle();
     expect(works().map((m) => m.text)).toEqual(['[Fix login] report: one', '[Check docs] report: two']);
     expect(x.fake.spawned).toHaveLength(1);
-    expect(texts(x.fake.sent[1].content)).toEqual(['work (salsify): [Check docs] report: two']);
+    expect(texts(x.fake.sent[1].content)).toHaveLength(1);
+    expect(texts(x.fake.sent[1].content)[0]).toMatch(wrapped('salsify', '[Check docs] report: two'));
     await endTurn(x);
   });
 
-  it('a report that races a user send: both are delivered, in log order', async () => {
+  it('a report that races a user send: both are logged; the user turn keeps its tools and the report gets its own turn', async () => {
     const x = make();
     outputs.t1 = 'done';
     x.svc.arm('t1');
@@ -521,13 +525,14 @@ describe('thread reports', () => {
     x.svc.onThreadSettled({ terminalId: 't1', threadStatus: 'idle' });
     await flush();
     await settle();
-    const logged = rows();
-    expect(logged.map((r) => r.kind).sort()).toEqual(['user', 'work']);
+    expect(rows().map((r) => r.kind).sort()).toEqual(['user', 'work']);
     expect(x.fake.spawned).toHaveLength(1);
-    // Each message reaches the turn once, in the order of the log.
-    const line = (r: { kind: string; text: string }) => (r.kind === 'work' ? `work (salsify): ${r.text}` : `user: ${r.text}`);
-    const sent = [texts(x.fake.sent[0].content).at(-1), ...x.fake.sent.slice(1).flatMap((s) => texts(s.content))];
-    expect(sent).toEqual(logged.map(line));
+    expect(texts(x.fake.sent[0].content).at(-1)).toBe('user: hello');
+    expect(x.fake.sent).toHaveLength(1);
+    await endTurn(x);
+    await settle();
+    expect(x.fake.spawned).toHaveLength(2);
+    expect(texts(x.fake.sent[1].content).at(-1)).toMatch(wrapped('salsify', '[Fix login] report: done'));
     await endTurn(x);
   });
 

@@ -82,4 +82,18 @@ describe('turnBlocks(before)', () => {
     expect(keeper.turnBlocks(2).join('')).toContain('1+1|');
     expect(keeper.turnBlocks(0)).toEqual(['<chat>\n</chat>']);
   });
+
+  it('turnBlocks leaves out the turn\'s own single-message lines; a merged line that covers one stays unless dropCovering', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const store = new EndlessStore(db);
+    const keeper = new ViewKeeper(store, limits);
+    for (let k = 0; k < 120; k++) logBuilt(store, keeper, `m${k} ` + 'x'.repeat(50));
+    const last = 119;
+    expect(keeper.turnBlocks(undefined, [last]).join('')).not.toContain(`|user: m${last} `);
+    const covering = keeper.lines().find((x) => x.l > 0 && x.i * 2 ** x.l <= 10 && 10 <= (x.i + 1) * 2 ** x.l - 1);
+    expect(covering).toBeDefined(); // an old row is covered by a merged line
+    expect(keeper.turnBlocks(undefined, [10], false).join('')).toContain(`\n${covering!.name}|`);
+    expect(keeper.turnBlocks(undefined, [10], true).join('')).not.toContain(`\n${covering!.name}|`);
+  });
 });

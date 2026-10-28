@@ -242,6 +242,8 @@ export const messageRule: Rule = (req, ctx) => {
   body.source = 'coordinator';
   req.body = body;
   if (!same && req.res) req.res.locals.fromProject = { sessionId: caller.sessionId, terminalId: caller.id };
+  // A thread that is not the overseer writes to the overseer: the daemon marks the text as that thread's words (SEC-25).
+  if (same && target.overseer && !caller.overseer && req.res) req.res.locals.fromThread = { terminalId: caller.id };
   return OK;
 };
 
