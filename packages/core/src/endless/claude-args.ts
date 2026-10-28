@@ -23,11 +23,19 @@ export const COMPACTION_ENV: Record<string, string> = { ...FIXED_CONTEXT_ENV, CL
 
 export const FIXED_CONTEXT_SETTINGS = JSON.stringify({ autoMemoryEnabled: false, includeGitInstructions: false, disableAllHooks: true });
 
+/**
+ * The shell tools a turn started by a thread report does not get (security review SEC-07). A
+ * thread's report is text that a hostile web page or pull request may have shaped, and it must not
+ * be able to run a command through Chat. Nothing else is taken away: Chat still reads and edits
+ * files, fetches pages, and uses every thread tool.
+ */
+export const REPORT_TURN_DISALLOWED_TOOLS: readonly string[] = ['Bash', 'BashOutput', 'KillShell'];
+
 /** Last on the command line: `--disallowedTools` takes a list and must not swallow other flags. */
-export const FIXED_CONTEXT_ARGS: readonly string[] = [
-  '--no-session-persistence',
-  '--disallowedTools', 'AskUserQuestion',
-];
+export function fixedContextArgs(extraDisallowed: readonly string[] = []): string[] {
+  return ['--no-session-persistence', '--disallowedTools', 'AskUserQuestion', ...extraDisallowed];
+}
+export const FIXED_CONTEXT_ARGS: readonly string[] = fixedContextArgs();
 
 /**
  * User decision (2026-10-13, option B): TURNS load the user's own MCP servers, claude.ai
@@ -42,7 +50,12 @@ export const COMPACTION_ISOLATION_ARGS: readonly string[] = [
   '--disable-slash-commands',
 ];
 
-export function endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string; userTools: boolean }): string[] {
+/**
+ * `reportTurn`: the turn answers a thread report. It has no shell tool and no MCP server but the
+ * Dispatch memory server (`--strict-mcp-config` drops the user's own servers and the claude.ai
+ * connectors). A turn the user started never sets it. Settings, plugins and skills stay as they are.
+ */
+export function endlessClaudeArgs(o: { model: string; effort?: string; systemPrompt: string; mcpConfigPath: string; userTools: boolean; reportTurn?: boolean }): string[] {
   return [
     '-p',
     '--input-format', 'stream-json',
@@ -57,6 +70,7 @@ export function endlessClaudeArgs(o: { model: string; effort?: string; systemPro
     '--mcp-config', o.mcpConfigPath,
     '--settings', FIXED_CONTEXT_SETTINGS,
     ...(o.userTools ? [] : COMPACTION_ISOLATION_ARGS),
-    ...FIXED_CONTEXT_ARGS,
+    ...(o.reportTurn && o.userTools ? ['--strict-mcp-config'] : []),
+    ...fixedContextArgs(o.reportTurn ? REPORT_TURN_DISALLOWED_TOOLS : []),
   ];
 }

@@ -16,6 +16,7 @@ import { endlessClaudeArgs, FIXED_CONTEXT_ENV, TURN_MODEL } from './claude-args.
 import { clipToolOutput, messageLine } from './text.js';
 import { usageOf, type Usage } from './summarizer.js';
 import type { KeyHandle, KeyRegistry } from '../auth/principals.js';
+import { untrustedBlock } from '../security/untrusted-text.js';
 
 export const TURN_WAIT_MS = 30_000;
 /** After a `result`, wait this long for more events (a queued message starts a second turn). */
@@ -67,9 +68,25 @@ function toolResultText(content: unknown): string {
 /** A tool-call id for the `ref` column (pairs a call with its result); null if the CLI gave none. */
 const idOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 
+/**
+ * Said once, to the model, at the top of a turn that a thread report started (outside the marked
+ * block, so the report cannot forge or remove it). The tool set is fixed when the process starts.
+ */
+export const REPORT_TURN_NOTE =
+  'This turn was started by a thread report, not by the user. You have no shell and no tools from ' +
+  "the user's own servers or connectors in this turn; the Dispatch memory, thread and ledger tools " +
+  'and your file tools work as usual. If the report needs a shell or a connector, tell the user ' +
+  'what you need in your reply and end the turn: the next message from the user runs it.';
+
 export class TurnRunner {
   private state: 'idle' | 'waiting' | 'running' = 'idle';
   private queued: Pending[] = [];
+  /**
+   * The running turn was started by a thread report: it has the reduced tool set (REPORT_TURN_NOTE).
+   * A report never joins a turn that has the full set; it waits in `deferred` and starts its own turn.
+   */
+  private turnReduced = false;
+  private deferred: LoggedInput[] = [];
   private turnId: string | null = null;
   private turnProject: string | null = null;
   private n = 0;
@@ -97,6 +114,9 @@ export class TurnRunner {
   deliver(input: LoggedInput): void { this.accept({ logged: true, input }); }
 
   private accept(p: Pending): void {
+    // A report must not reach a process that has the user's shell and connectors. It is already
+    // in the log; it waits here and starts its own (reduced) turn when this one ends.
+    if (this.state !== 'idle' && p.logged && !this.turnReduced) { this.deferred.push(p.input); return; }
     if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
     if (this.state === 'waiting') { this.queued.push(p); return; }
     this.start(p, true);
@@ -124,6 +144,7 @@ export class TurnRunner {
 
   private start(first: Pending, logIt: boolean): void {
     this.state = 'waiting';
+    this.turnReduced = first.logged;
     this.turnProject = first.input.project;
     this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
@@ -133,7 +154,9 @@ export class TurnRunner {
 
   private content(p: Pending, before: string[]): ContentBlock[] {
     const blocks: ContentBlock[] = before.map((text) => ({ type: 'text', text }));
-    blocks.push({ type: 'text', text: messageLine(p.logged ? p.input.kind : 'user', p.input.text, this.d.projectName(p.input.project)) });
+    // A thread's report is text that a hostile page or pull request may have shaped: it goes to the model as data.
+    const text = p.logged ? untrustedBlock('a thread report', p.input.text) : p.input.text;
+    blocks.push({ type: 'text', text: messageLine(p.logged ? p.input.kind : 'user', text, this.d.projectName(p.input.project)) });
     if (!p.logged) {
       for (const file of p.input.media) {
         const img = this.d.readImage(file);
@@ -173,8 +196,8 @@ export class TurnRunner {
         if (logIt && !first.logged) this.logUser(first.input);
         return;
       }
-      // A report logged while this turn waited is a message of this turn, not a view line.
-      const cut = Math.min(first.logged ? first.input.i : d.store.count(), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])));
+      // A report logged while this turn waited is a message of this turn (or of the turn after it), not a view line.
+      const cut = Math.min(first.logged ? first.input.i : d.store.count(), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])), ...this.deferred.map((r) => r.i));
       const view = d.views.turnBlocks(cut);          // render the view first …
       const status = d.statusBlock(first.input.project);
       // … then log every user message of this turn, so that each message has its log index.
@@ -198,13 +221,13 @@ export class TurnRunner {
       if (minted) keyHandle = minted.handle;
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
-        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true })],
+        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true, reportTurn: this.turnReduced })],
         workDir: d.chatDir,
         env: minted ? { ...FIXED_CONTEXT_ENV, DISPATCH_AUTH: minted.key } : FIXED_CONTEXT_ENV,
       });
       this.state = 'running';
       d.emit({ type: 'endless:turn', status: 'running' });
-      d.manager.sendMessage(id, this.content(order[0].p, [...view, status]));
+      d.manager.sendMessage(id, this.content(order[0].p, [...view, status, ...(this.turnReduced ? [REPORT_TURN_NOTE] : [])]));
       for (const o of order.slice(1)) this.handOff(o.p, false);
       const result = await Promise.race([w.ended, stopSignal.then(() => null)]);
       if (result) error = result.error;
@@ -230,6 +253,22 @@ export class TurnRunner {
       this.state = 'idle';
       if (stopped) error = undefined; // a stop is not a failure, even when the kill makes the process fail
       d.emit(error ? { type: 'endless:turn', status: 'failed', error } : { type: 'endless:turn', status: 'idle' });
+      this.startDeferred(stopped);
+    }
+  }
+
+  /**
+   * Reports that came in during a turn with the full tool set start their own turn now. After a
+   * Stop they stay in the log only (the next turn's view shows them): the user said stop.
+   */
+  private startDeferred(stopped: boolean): void {
+    const next = this.deferred.splice(0);
+    if (stopped || !next.length || this.state !== 'idle') return;
+    try {
+      this.start({ logged: true, input: next[0] }, true);
+      for (const input of next.slice(1)) this.queued.push({ logged: true, input });
+    } catch (err) {
+      console.warn('[endless] a report that waited could not start its turn:', err);
     }
   }
 

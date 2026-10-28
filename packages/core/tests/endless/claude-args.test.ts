@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { endlessClaudeArgs, TURN_MODEL, SUMMARY_MODEL, SUMMARY_EFFORT, FIXED_CONTEXT_ARGS, FIXED_CONTEXT_ENV, COMPACTION_ENV, COMPACTION_ISOLATION_ARGS } from '../../src/endless/claude-args.js';
+import { endlessClaudeArgs, TURN_MODEL, SUMMARY_MODEL, SUMMARY_EFFORT, FIXED_CONTEXT_ARGS, FIXED_CONTEXT_ENV, COMPACTION_ENV, COMPACTION_ISOLATION_ARGS, REPORT_TURN_DISALLOWED_TOOLS } from '../../src/endless/claude-args.js';
 
 const withoutModel = (args: string[]) => {
   const out: string[] = [];
@@ -45,5 +45,39 @@ describe('endlessClaudeArgs', () => {
   });
   it('ends with the fixed-context switches', () => {
     expect(turn.slice(-FIXED_CONTEXT_ARGS.length)).toEqual([...FIXED_CONTEXT_ARGS]);
+  });
+
+  describe('a turn that a thread report started', () => {
+    const report = endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: 'SYS', mcpConfigPath: '/c/memory.mcp.json', userTools: true, reportTurn: true });
+    const disallowed = (args: string[]) => {
+      const out: string[] = [];
+      for (let k = args.indexOf('--disallowedTools') + 1; k > 0 && k < args.length && !args[k].startsWith('--'); k++) out.push(args[k]);
+      return out;
+    };
+
+    it('has no shell tool', () => {
+      expect(REPORT_TURN_DISALLOWED_TOOLS).toEqual(['Bash', 'BashOutput', 'KillShell']);
+      for (const t of REPORT_TURN_DISALLOWED_TOOLS) expect(disallowed(report)).toContain(t);
+    });
+    it('loads only the Dispatch memory MCP server: no user server, no connector', () => {
+      expect(report).toContain('--strict-mcp-config');
+      expect(report[report.indexOf('--mcp-config') + 1]).toBe('/c/memory.mcp.json');
+      expect(turn).not.toContain('--strict-mcp-config');
+    });
+    it('a user-started turn keeps the shell and the connectors', () => {
+      for (const t of REPORT_TURN_DISALLOWED_TOOLS) expect(disallowed(turn)).not.toContain(t);
+      expect(disallowed(turn)).toEqual(['AskUserQuestion']);
+    });
+    it('keeps the user settings, plugins and skills, and adds no permission prompt', () => {
+      expect(report).not.toContain('--setting-sources');
+      expect(report).not.toContain('--disable-slash-commands');
+      expect(report[report.indexOf('--permission-mode') + 1]).toBe('default');
+      expect(report).not.toContain('--allowedTools');
+      expect(report).not.toContain('--tools');
+    });
+    it('still ends with the fixed-context switches, and keeps AskUserQuestion off', () => {
+      expect(disallowed(report)).toContain('AskUserQuestion');
+      expect(report[report.length - 1]).not.toMatch(/^--/);
+    });
   });
 });
