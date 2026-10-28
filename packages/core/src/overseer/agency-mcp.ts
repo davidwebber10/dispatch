@@ -32,6 +32,7 @@ import {
   checkArchiveAllowed,
 } from './guards.js';
 import { buildWorkerCreateBody } from './worker-payload.js';
+import { insideRealRoot } from '../files/confine.js';
 import {
   httpJson, resolveWorkerDefaults, createWorker, sendTask, readAgentOutput, pendingQuestionOf as sharedPendingQuestionOf, type PendingQuestion, authHeaders, sendsKeyTo, keyErrorFrom, KeyError,
   HARNESS_ARG_DESCRIPTION, TITLE_RULES, CARD_FIELDS_SCHEMA, type AgentType,
@@ -1204,6 +1205,8 @@ async function postImage(args: { path: string; alt?: string }): Promise<McpImage
   if (!mimeType) throw new Error('unsupported image type (expected png/jpg/jpeg/gif/webp/svg)');
   const stat = fs.statSync(resolved);
   if (!stat.isFile()) throw new Error('not a file');
+  // resolveSafe compares text; a symlink inside the project can still lead to a file outside it.
+  if (!insideRealRoot(process.cwd(), resolved)) throw new Error('path is outside the working directory');
   const data = fs.readFileSync(resolved).toString('base64');
   const alt = typeof args.alt === 'string' && args.alt.trim() ? args.alt : undefined;
   return { type: 'image', data, mimeType, ...(alt ? { alt } : {}) };

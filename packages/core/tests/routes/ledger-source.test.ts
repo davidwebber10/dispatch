@@ -119,6 +119,14 @@ describe('GET /ledger/:itemId/source', () => {
     add({ sourceKind: 'doc', sourceRef: 'docs/link.md' });
     for (const seq of ['N1', 'N2']) expect((await get(seq).expect(403)).body, seq).toEqual({ error: 'The file is outside the project' });
   });
+  it('SEC-12: a .md name that is a symlink to a non-markdown file inside the project is file-only, not shown', async () => {
+    write('project/.env', 'API_KEY=hunter2');
+    fs.symlinkSync(path.join(project, '.env'), path.join(project, 'docs/looks-like-notes.md'));
+    add({ sourceKind: 'doc', sourceRef: 'docs/looks-like-notes.md' });
+    const body = (await get('N1').expect(200)).body;
+    expect(body.kind).toBe('file-only');
+    expect(JSON.stringify(body)).not.toContain('hunter2');
+  });
   // Review round 1 (2026-10-09).
   it('a project path that only a worktree has: that copy, with a note', async () => {
     write('project/.claude/worktrees/wt-a/docs/plans/branch-only.md', PLAN);

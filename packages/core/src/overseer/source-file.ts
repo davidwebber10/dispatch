@@ -112,7 +112,8 @@ function open(real: string, rel: string, fromMainCheckout: boolean, note: string
   try { st = fs.statSync(real); } catch { return { kind: 'gone' }; }
   if (st.isDirectory()) return { kind: 'file-only', ...where, reason: FOLDER_REASON };
   // Never read a pipe or a device: only a regular markdown file.
-  if (!st.isFile() || !/\.(md|markdown)$/i.test(rel)) return { kind: 'file-only', ...where, reason: NOT_MARKDOWN_REASON };
+  // The REAL file must be markdown too, not only the requested name: a note.md symlink to .env is not a note.
+  if (!st.isFile() || !/\.(md|markdown)$/i.test(rel) || !/\.(md|markdown)$/i.test(real)) return { kind: 'file-only', ...where, reason: NOT_MARKDOWN_REASON };
   if (st.size > SOURCE_MAX_BYTES) return { kind: 'file-only', ...where, reason: TOO_LARGE_REASON };
   try {
     return { kind: 'file', ...where, markdown: fs.readFileSync(real, 'utf8') };
