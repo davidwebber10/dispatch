@@ -14,7 +14,7 @@ import { minScheduleMinutes } from '../caps.js';
  *   { "type": "cron", "expr": "m h dom mon dow" }          standard 5-field cron, local time
  * One-shot schedules (schedule_kind === 'one-shot') fire once at run_at.
  */
-export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string): string | null {
+export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string, opts: { fired?: boolean } = {}): string | null {
   const now = new Date(nowIso);
   if (Number.isNaN(now.getTime())) return null;
   const tz = schedule.timezone || 'UTC';
@@ -62,8 +62,11 @@ export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string): st
       return nextLocalTime(now, tz, days, t.h, t.mi);
     }
 
-    case 'cron':
-      return nextCron(String(rule.expr ?? ''), now, tz);
+    case 'cron': {
+      const expr = String(rule.expr ?? '');
+      const next = nextCron(expr, now, tz);
+      return next ? holdCronToMinimum(expr, next, now, tz, !!opts.fired) : null;
+    }
 
     default:
       return null;
@@ -180,6 +183,29 @@ function nextCron(expr: string, now: Date, tz: string): string | null {
   return null;
 }
 
+/**
+ * A stored cron rule that runs more often than the minimum still runs, no more often than the minimum
+ * (the same promise an interval rule gets above). When `fired` is set (the scheduler has just started a
+ * run), the gap is counted from the start of the minute of that run: a late tick is counted from when it
+ * ran, not from when it was due. A rule is held back when that gap or the gap after the next run is below
+ * the minimum. A create or an edit passes no `fired`, so a normal rule is never delayed by an edit.
+ * A daily or hourly cron is never pushed to a later run.
+ */
+function holdCronToMinimum(expr: string, next: string, now: Date, tz: string, fired: boolean): string | null {
+  const min = minScheduleMinutes();
+  if (!min) return next;
+  const limit = min * 60_000;
+  const nextMs = new Date(next).getTime();
+  const minuteStart = Math.floor(now.getTime() / 60_000) * 60_000;
+  const after = nextCron(expr, new Date(next), tz);
+  const denseAfter = !!after && new Date(after).getTime() - nextMs < limit;
+  const denseBefore = fired && nextMs - minuteStart < limit;
+  if (!denseAfter && !denseBefore) return next;
+  const earliest = minuteStart + limit;
+  if (nextMs >= earliest) return next;
+  return nextCron(expr, new Date(earliest - 1), tz);
+}
+
 function daysInMonth(y: number, mo: number): number {
   return new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
 }
@@ -203,12 +229,19 @@ export function scheduleTooFrequent(recurrenceRule: string | null | undefined, n
     return null;
   }
   if (rule.type === 'cron') {
-    const now = new Date(nowIso);
-    const first = nextCron(String(rule.expr ?? ''), now, 'UTC');
-    if (!first) return null;
-    const second = nextCron(String(rule.expr ?? ''), new Date(first), 'UTC');
-    if (!second) return null;
-    const gap = (new Date(second).getTime() - new Date(first).getTime()) / 60_000;
+    // Look at the next three runs (two gaps), so a rule with a short gap inside a cluster of runs is
+    // refused whatever the time of the check (0,1 * * * * is refused at 11:59 and at 12:00 alike).
+    let at = new Date(nowIso);
+    let gap = Infinity;
+    let last: number | null = null;
+    for (let i = 0; i < 3; i++) {
+      const run = nextCron(String(rule.expr ?? ''), at, 'UTC');
+      if (!run) return null;
+      const t = new Date(run).getTime();
+      if (last !== null) gap = Math.min(gap, (t - last) / 60_000);
+      last = t;
+      at = new Date(run);
+    }
     if (gap < min) return message(gap);
   }
   return null;

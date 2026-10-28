@@ -245,7 +245,8 @@ export class AgentService {
   }
 
   createSchedule(input: CreateScheduleRequest): AgentSchedule {
-    const tooFrequent = input.scheduleKind === 'one-shot' ? null : scheduleTooFrequent(input.recurrenceRule);
+    // A rule is held to the floor whatever the kind: a one-shot's rule is not used, but a later kind change would start using it.
+    const tooFrequent = scheduleTooFrequent(input.recurrenceRule);
     if (tooFrequent) throw new Error(tooFrequent);
     const row = this.withComputedNextRun(agentsDb.createSchedule(this.db, { id: uuid(), ...input }));
     const schedule = toSchedule(row);
@@ -263,11 +264,18 @@ export class AgentService {
   }
 
   updateSchedule(id: string, fields: Partial<CreateScheduleRequest>): AgentSchedule | null {
-    // Only a changed rule is checked: turning a stored schedule off or on, or renaming it (the edit form sends the rule again), always works.
-    const stored = fields.recurrenceRule !== undefined ? agentsDb.getSchedule(this.db, id) : null;
-    const changesRule = fields.recurrenceRule !== undefined && !sameRule(fields.recurrenceRule, stored?.recurrence_rule ?? null);
-    const tooFrequent = changesRule && fields.scheduleKind !== 'one-shot' ? scheduleTooFrequent(fields.recurrenceRule) : null;
-    if (tooFrequent) throw new Error(tooFrequent);
+    // The floor is checked when the rule changes, when the schedule becomes recurring, and when a recurring one is switched on.
+    // Renaming, switching off, or sending the same rule again always works (the edit form sends the rule every time).
+    const stored = agentsDb.getSchedule(this.db, id);
+    if (stored) {
+      const rule = fields.recurrenceRule !== undefined ? fields.recurrenceRule : stored.recurrence_rule;
+      const kind = fields.scheduleKind ?? stored.schedule_kind;
+      const changesRule = fields.recurrenceRule !== undefined && !sameRule(fields.recurrenceRule, stored.recurrence_rule);
+      const becomesRecurring = kind === 'recurring' && stored.schedule_kind !== 'recurring';
+      const switchesOn = kind === 'recurring' && !!fields.enabled && stored.enabled !== 1;
+      const tooFrequent = changesRule || becomesRecurring || switchesOn ? scheduleTooFrequent(rule) : null;
+      if (tooFrequent) throw new Error(tooFrequent);
+    }
     const row = agentsDb.updateSchedule(this.db, id, fields);
     if (!row) return null;
     const schedule = toSchedule(this.withComputedNextRun(row));
@@ -440,7 +448,7 @@ export class AgentService {
           this.broadcaster.broadcast({ type: 'agent:schedule-updated', schedule: toSchedule(updated) });
         }
       } else {
-        const nextRunAt = computeNextRunAt(schedule, now);
+        const nextRunAt = computeNextRunAt(schedule, now, { fired: true });
         const updated = agentsDb.updateSchedule(this.db, schedule.id, {
           enabled: nextRunAt != null,
           nextRunAt,

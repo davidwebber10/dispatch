@@ -47,7 +47,7 @@ const toolsOf = (args: string[]): string[] => {
   return out;
 };
 /** What a report-started turn may not use: written out here on purpose, so a silent change to the list fails a test. */
-const NO_SHELL = ['Bash', 'BashOutput', 'KillShell', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow'];
+const NO_SHELL = ['Bash', 'Monitor', 'TaskOutput', 'TaskStop', 'BashOutput', 'KillShell', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow'];
 
 describe('TurnRunner', () => {
   it('renders the view first, then logs the message; input order is view, status, message', async () => {

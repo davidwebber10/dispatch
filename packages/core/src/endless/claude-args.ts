@@ -30,10 +30,11 @@ export const FIXED_CONTEXT_SETTINGS = JSON.stringify({ autoMemoryEnabled: false,
  * is a shell later), no web fetch (a way to send data out), and no tool that reaches other sessions or the
  * cloud (SendMessage, ListAgents, RemoteTrigger, Workflow). Owner decision: the Dispatch thread, memory and
  * ledger tools stay (zoom, read, message and spawn threads), and so do file reads and answering the user.
- * BashOutput and KillShell are older names of the shell helpers; a name the CLI does not know does nothing.
+ * Monitor runs a shell command, so it is cut too. TaskOutput and TaskStop are the current names of the
+ * shell helpers; BashOutput and KillShell are the names older CLIs use. A name the CLI does not know does nothing.
  */
 export const REPORT_TURN_DISALLOWED_TOOLS: readonly string[] = [
-  'Bash', 'BashOutput', 'KillShell',
+  'Bash', 'Monitor', 'TaskOutput', 'TaskStop', 'BashOutput', 'KillShell',
   'Write', 'Edit', 'NotebookEdit', 'WebFetch',
   'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow',
 ];

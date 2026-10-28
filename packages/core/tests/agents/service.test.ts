@@ -101,6 +101,74 @@ describe('AgentService', () => {
     } finally { if (prevMin === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prevMin; }
   });
 
+  describe('the schedule floor cannot be bypassed (SEC-23)', () => {
+    const base = { projectId: 'proj-1', name: 'Poller', provider: 'codex' as const, workingDir: '/srv/tenex', prompt: 'p', runAt: null, timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null };
+    const everyMinute = JSON.stringify({ type: 'cron', expr: '* * * * *' });
+    const withMin = (value: string | undefined, fn: () => void) => {
+      const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+      if (value === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = value;
+      try { fn(); } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
+    };
+
+    it('refuses a one-shot that is created with a rule below the minimum, and still allows a real one-shot', () => {
+      const service = new AgentService(db, sessionService, broadcaster);
+      withMin('5', () => {
+        expect(() => service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2099-01-01T00:00:00.000Z', recurrenceRule: everyMinute })).toThrow(/DISPATCH_MIN_SCHEDULE_MINUTES/);
+        const once = service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2099-01-01T00:00:00.000Z', recurrenceRule: null });
+        expect(once.enabled).toBe(true);
+        expect(once.nextRunAt).toBe('2099-01-01T00:00:00.000Z');
+      });
+    });
+
+    it('refuses to turn a one-shot into a recurring schedule when the stored rule is below the minimum', () => {
+      const service = new AgentService(db, sessionService, broadcaster);
+      // Stored while the floor was off, so the bad rule is on a one-shot (the repro of the bypass).
+      let id = '';
+      withMin('0', () => { id = service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2099-01-01T00:00:00.000Z', recurrenceRule: everyMinute, enabled: false }).id; });
+      withMin('5', () => {
+        expect(() => service.updateSchedule(id, { scheduleKind: 'recurring', enabled: true })).toThrow(/DISPATCH_MIN_SCHEDULE_MINUTES/);
+        expect(() => service.updateSchedule(id, { scheduleKind: 'recurring' })).toThrow(/shortest allowed gap/);
+        expect(service.getSchedule(id)?.scheduleKind).toBe('one-shot');
+        // A sparse rule is fine, and so is a rename of the one-shot.
+        expect(service.updateSchedule(id, { name: 'Renamed' })?.name).toBe('Renamed');
+        const ok = service.updateSchedule(id, { scheduleKind: 'recurring', recurrenceRule: JSON.stringify({ type: 'cron', expr: '*/10 * * * *' }), enabled: true });
+        expect(ok?.scheduleKind).toBe('recurring');
+      });
+    });
+
+    it('refuses a kind change that brings a too-fast rule in the same request', () => {
+      const service = new AgentService(db, sessionService, broadcaster);
+      withMin('5', () => {
+        const once = service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2099-01-01T00:00:00.000Z', recurrenceRule: null });
+        expect(() => service.updateSchedule(once.id, { scheduleKind: 'recurring', recurrenceRule: everyMinute })).toThrow(/shortest allowed gap/);
+        expect(() => service.updateSchedule(once.id, { recurrenceRule: everyMinute })).toThrow(/shortest allowed gap/);
+        expect(service.getSchedule(once.id)?.recurrenceRule).toBeNull();
+      });
+    });
+
+    it('refuses to switch on a stored schedule that is below the minimum, but switching off and renaming still work', () => {
+      const service = new AgentService(db, sessionService, broadcaster);
+      let id = '';
+      withMin('1', () => { id = service.createSchedule({ ...base, scheduleKind: 'recurring', recurrenceRule: everyMinute, enabled: false }).id; });
+      withMin('5', () => {
+        expect(() => service.updateSchedule(id, { enabled: true })).toThrow(/DISPATCH_MIN_SCHEDULE_MINUTES/);
+        expect(service.getSchedule(id)?.enabled).toBe(false);
+        expect(service.updateSchedule(id, { name: 'Renamed' })?.name).toBe('Renamed');
+      });
+      withMin('1', () => { expect(service.updateSchedule(id, { enabled: true })?.enabled).toBe(true); });
+      withMin('5', () => { expect(service.updateSchedule(id, { enabled: false })?.enabled).toBe(false); });
+    });
+
+    it('keeps a genuine one-shot working with no rule at all', () => {
+      const service = new AgentService(db, sessionService, broadcaster);
+      withMin('5', () => {
+        const once = service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2099-01-01T00:00:00.000Z', recurrenceRule: null });
+        expect(service.updateSchedule(once.id, { runAt: '2099-02-01T00:00:00.000Z', enabled: false })?.enabled).toBe(false);
+        expect(service.updateSchedule(once.id, { enabled: true })?.nextRunAt).toBe('2099-02-01T00:00:00.000Z');
+      });
+    });
+  });
+
   it('handleTerminalExit marks the run succeeded on a clean (0) exit', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({
@@ -201,6 +269,23 @@ describe('AgentService', () => {
 
     expect(service.processDueRuns('2026-05-08T12:01:00.000Z')).toHaveLength(1);
     expect(service.processDueRuns('2026-05-08T12:02:00.000Z')).toHaveLength(0);
+  });
+
+  it('processDueRuns holds a stored dense cron to the floor, counted from the run that just fired', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+    try {
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '0';
+      const s = service.createSchedule({
+        projectId: 'proj-1', name: 'Dense', provider: 'codex', workingDir: '/srv/tenex', prompt: 'p',
+        scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'cron', expr: '0,1 * * * *' }),
+        timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null,
+      });
+      agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
+      expect(service.processDueRuns('2026-05-08T12:00:20.000Z')).toHaveLength(1);
+      expect(service.getSchedule(s.id)?.nextRunAt).toBe('2026-05-08T13:00:00.000Z');
+    } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
   });
 
   it('processDueRuns advances recurring schedule nextRunAt', () => {
