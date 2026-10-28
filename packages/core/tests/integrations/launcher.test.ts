@@ -117,7 +117,7 @@ describe('buildLaunch (templates + resolved values → child)', () => {
   it('remote: header templates stay literal in argv; each resolved NAME=value goes to the child env', () => {
     const plan = buildLaunch(REMOTE, { LINEAR_TOKEN: DOPPLER_VALUE });
     expect(plan.command).toBe('npx');
-    expect(plan.args).toEqual(['-y', 'mcp-remote', 'https://mcp.linear.app/sse', '--header', 'Authorization:Bearer ${LINEAR_TOKEN}']);
+    expect(plan.args).toEqual(['-y', 'mcp-remote@0.14.3', 'https://mcp.linear.app/sse', '--header', 'Authorization:Bearer ${LINEAR_TOKEN}']);
     expect(plan.env).toEqual({ NODE_OPTIONS: '--no-warnings', LINEAR_TOKEN: DOPPLER_VALUE });
     expect(JSON.stringify(plan.args)).not.toContain(DOPPLER_VALUE);
   });

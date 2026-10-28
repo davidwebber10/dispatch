@@ -36,7 +36,7 @@ describe('IntegrationsService', () => {
 
   it('getServerSpecs wraps remote via mcp-remote with header args (secrets stay as ${VAR})', () => {
     s.add({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: '${LINEAR}' } });
-    expect(s.getServerSpecs()).toEqual([{ name: 'linear', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.linear.app/sse', '--header', 'Authorization:${LINEAR}'] }]);
+    expect(s.getServerSpecs()).toEqual([{ name: 'linear', command: 'npx', args: ['-y', 'mcp-remote@0.14.3', 'https://mcp.linear.app/sse', '--header', 'Authorization:${LINEAR}'] }]);
   });
 
   it('getServerSpecs keeps a ${VAR} stdio env as-is without a launcher', () => {
@@ -103,7 +103,7 @@ describe('IntegrationsService', () => {
       l.add({ type: 'remote', name: 'open', url: 'https://mcp.example.com/sse', headers: { 'X-Team': 'eng' } });
       expect(l.getServerSpecs()).toEqual([
         { name: 'fs', command: 'npx', args: ['-y', 'server-fs'], env: { ROOT: '/tmp' } },
-        { name: 'open', command: 'npx', args: ['-y', 'mcp-remote', 'https://mcp.example.com/sse', '--header', 'X-Team:eng'] },
+        { name: 'open', command: 'npx', args: ['-y', 'mcp-remote@0.14.3', 'https://mcp.example.com/sse', '--header', 'X-Team:eng'] },
       ]);
     });
 

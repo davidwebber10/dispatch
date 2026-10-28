@@ -96,10 +96,10 @@ RUN HOME=/opt/agents bash -c 'mkdir -p /opt/agents && curl -fsSL https://claude.
     && ln -sf /opt/agents/.local/bin/claude /usr/local/bin/claude \
     && printf '%s\n' 'export PATH="/opt/agents/.local/bin:$PATH"' > /etc/profile.d/agent-clis.sh
 # codex, plus mcp-remote: IntegrationsService spawns REMOTE MCP servers as
-# `npx -y mcp-remote <url>`, which on a box means an npm fetch on every single spawn.
+# `npx -y mcp-remote@0.14.3 <url>`, which on a box means an npm fetch on every single spawn.
 # Baking it in makes spawns faster and removes a network dependency from the path
 # that attaches a user's tools.
-RUN npm install -g @openai/codex mcp-remote
+RUN npm install -g @openai/codex mcp-remote@0.14.3
 
 # Verify the CLIs resolve **on a LOGIN shell's PATH**, not just this build shell.
 # That distinction is the whole point: startServer() replaces process.env.PATH with

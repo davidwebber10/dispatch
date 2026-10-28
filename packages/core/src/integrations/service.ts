@@ -4,7 +4,7 @@ import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { McpServerSpec } from '../mcp/injection.js';
 import { findSecretRefs, refsIn } from './secret-refs.js';
-import { launcherArgs, type LaunchSpec } from './launcher.js';
+import { launcherArgs, MCP_REMOTE_PACKAGE, type LaunchSpec } from './launcher.js';
 
 /** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
 export interface IntegrationLauncher { nodePath: string; launcherPath: string; secretsDir: string }
@@ -77,7 +77,7 @@ export class IntegrationsService {
           } else {
             if (!i.url) continue;
             const headerArgs = Object.entries(i.headers).flatMap(([k, v]) => ['--header', `${k}:${v}`]);
-            specs.push(this.launched(i) ?? { name: i.name, command: 'npx', args: ['-y', 'mcp-remote', i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
+            specs.push(this.launched(i) ?? { name: i.name, command: 'npx', args: ['-y', MCP_REMOTE_PACKAGE, i.url, ...headerArgs], ...(Object.keys(i.env).length ? { env: i.env } : {}) });
           }
         } catch { /* skip a malformed row rather than break a spawn */ }
       }

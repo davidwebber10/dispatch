@@ -3,7 +3,7 @@
 **Settings → Integrations** holds MCP servers you add once and every agent thread gets:
 
 - **Remote** — a URL plus optional headers. Dispatch runs it through
-  `npx -y mcp-remote <url> --header <Name>:<value>`.
+  `npx -y mcp-remote@0.14.3 <url> --header <Name>:<value>` (the version is pinned in `packages/core/src/integrations/launcher.ts`).
 - **Local command** — a command, args and optional env, run as a stdio MCP server.
 
 ## How a thread gets them
