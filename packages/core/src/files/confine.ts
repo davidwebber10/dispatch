@@ -2,8 +2,30 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
+ * Extra folders a link may lead into, besides the project itself: `DISPATCH_FILE_ROOTS`, a list split
+ * with the OS path delimiter (":" on macOS/Linux). For a project that links to a shared folder or a
+ * sibling package outside it. Set it to "/" to allow any link target (the checks off).
+ */
+function extraRoots(): string[] {
+  const raw = process.env.DISPATCH_FILE_ROOTS;
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(path.delimiter)) {
+    if (!part.trim()) continue;
+    try { out.push(fs.realpathSync(path.resolve(part.trim()))); } catch { /* a folder that is gone allows nothing */ }
+  }
+  return out;
+}
+
+function within(root: string, real: string): boolean {
+  const rel = path.relative(root, real);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/**
  * True when `target`, once every symlink on the way is followed, is inside the real project folder
- * `root` (or is the folder itself). The routes compare path text first (a `..` check); text alone cannot
+ * `root` (or is the folder itself), or inside a folder listed in `DISPATCH_FILE_ROOTS`. A link that stays
+ * inside the project (a workspace link, `node_modules/.pnpm`, an alias) always works. The routes compare path text first (a `..` check); text alone cannot
  * see a symlink inside the project that leads out of it.
  *
  * - A path that exists is checked by its own realpath. A dangling or looping symlink does not resolve,
@@ -32,6 +54,6 @@ export function insideRealRoot(root: string, target: string): boolean {
   }
   let real: string;
   try { real = fs.realpathSync(probe); } catch { return false; }
-  const rel = path.relative(realRoot, path.join(real, ...rest));
-  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+  const full = path.join(real, ...rest);
+  return [realRoot, ...extraRoots()].some((r) => within(r, full));
 }

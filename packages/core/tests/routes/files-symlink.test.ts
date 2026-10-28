@@ -105,6 +105,38 @@ describe('file routes refuse symlinks that lead out of the project', () => {
     expect(fs.existsSync(path.join(outside, 'inbox'))).toBe(false);
   });
 
+  it('a link that stays inside the project keeps working (workspace link, alias, nested folder link)', async () => {
+    fs.mkdirSync(path.join(project, 'packages/a'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'packages/a/index.txt'), 'shared');
+    fs.mkdirSync(path.join(project, 'node_modules/@x'), { recursive: true });
+    fs.symlinkSync('../../packages/a', path.join(project, 'node_modules/@x/a'));
+    fs.symlinkSync(path.join(project, 'inside.png'), path.join(project, 'alias.png'));
+    expect((await request(app).get('/api/sessions/s1/files/read?path=node_modules/@x/a/index.txt')).body.content).toBe('shared');
+    expect((await request(app).put('/api/sessions/s1/files/write?path=node_modules/@x/a/new.txt').send({ content: 'ok' })).status).toBe(200);
+    expect(fs.readFileSync(path.join(project, 'packages/a/new.txt'), 'utf8')).toBe('ok');
+    expect((await request(app).get('/api/sessions/s1/files/image?path=alias.png')).status).toBe(200);
+    expect((await request(app).get('/api/sessions/s1/files?path=node_modules/@x/a')).status).toBe(200);
+  });
+
+  it('DISPATCH_FILE_ROOTS lets a link lead into a named folder outside the project; "/" turns the check off', async () => {
+    const prev = process.env.DISPATCH_FILE_ROOTS;
+    try {
+      process.env.DISPATCH_FILE_ROOTS = outside;
+      expect((await request(app).get('/api/sessions/s1/files/read?path=notes.txt')).status).toBe(200);
+      expect((await request(app).get('/api/sessions/s1/files/read?path=linkdir/secret.txt')).status).toBe(200);
+      // A folder that is not listed is still refused.
+      const other = path.join(base, 'other');
+      fs.mkdirSync(other);
+      fs.writeFileSync(path.join(other, 'o.txt'), 'o');
+      fs.symlinkSync(other, path.join(project, 'otherlink'));
+      expect((await request(app).get('/api/sessions/s1/files/read?path=otherlink/o.txt')).status).toBe(403);
+      process.env.DISPATCH_FILE_ROOTS = '/';
+      expect((await request(app).get('/api/sessions/s1/files/read?path=otherlink/o.txt')).status).toBe(200);
+    } finally {
+      if (prev === undefined) delete process.env.DISPATCH_FILE_ROOTS; else process.env.DISPATCH_FILE_ROOTS = prev;
+    }
+  });
+
   it('insideRealRoot: new files check the parent, the root itself passes', () => {
     expect(insideRealRoot(project, path.join(project, 'brand', 'new.txt'))).toBe(true);
     expect(insideRealRoot(project, project)).toBe(true);
