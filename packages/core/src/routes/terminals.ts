@@ -31,7 +31,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // its process — POST /api/terminals/:id/start promotes it later.
   router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread'), chat: createBodyRule('chat') }), async (req, res) => {
     try {
-      const { type, label, skipPermissions, workingDir, externalId, config, queued, task } = req.body;
+      // A `skipPermissions` field in the body is ignored: it was stored and never read. Agents run with approvals off by design.
+      const { type, label, workingDir, externalId, config, queued, task } = req.body;
       // Pin the tool-support verdict for a picked OpenCode model HERE, where awaiting a
       // catalog is possible — the synchronous spawn path can only read caches. A model with
       // no tool-capable endpoint then spawns chat-only instead of failing its first turn
@@ -57,7 +58,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
           broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
           return res.status(201).json(terminal);
         }
-        const terminal = sessionService.createTerminal(req.params.id, type, label, skipPermissions, workingDir, externalId, config);
+        const terminal = sessionService.createTerminal(req.params.id, type, label, undefined, workingDir, externalId, config);
         broadcaster?.broadcast({ type: 'terminal:created', terminal });
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
         res.status(201).json(terminal);

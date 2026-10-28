@@ -104,7 +104,7 @@ export const api = {
   removeServer: (origin: string) => req<{ label: string; origin: string }[]>(`/api/servers?origin=${encodeURIComponent(origin)}`, { method: 'DELETE' }),
   listSessions: () => req<Session[]>('/api/sessions'),
   getSession: (id: string) => req<Session>(`/api/sessions/${id}`),
-  createSession: (input: { provider: string; name?: string; workingDir: string; prompt?: string; skipPermissions?: boolean }) =>
+  createSession: (input: { provider: string; name?: string; workingDir: string; prompt?: string }) =>
     req<Session>('/api/sessions', { method: 'POST', body: body(input) }),
   updateSession: (id: string, fields: { name?: string; notes?: string }) =>
     req<Session>(`/api/sessions/${id}`, { method: 'PATCH', body: body(fields) }),
