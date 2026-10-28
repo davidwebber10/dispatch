@@ -24,7 +24,7 @@ Dispatch has one owner per daemon. It has no user accounts and no per-person per
 ## Limits you can change
 
 These limits stop a runaway agent or a client bug. Normal use does not reach them. Each one reads an
-environment variable when the daemon starts; set it with `dispatch install` like the other settings.
+environment variable when the daemon starts; set it in the daemon's environment.
 
 | What | Default | Setting |
 | --- | --- | --- |
