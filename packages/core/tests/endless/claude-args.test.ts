@@ -55,9 +55,20 @@ describe('endlessClaudeArgs', () => {
       return out;
     };
 
-    it('has no shell tool', () => {
-      expect(REPORT_TURN_DISALLOWED_TOOLS).toEqual(['Bash', 'BashOutput', 'KillShell']);
+    it('has no shell, no file write, no web fetch, and no tool that reaches other sessions or the cloud', () => {
+      expect(REPORT_TURN_DISALLOWED_TOOLS).toEqual([
+        'Bash', 'BashOutput', 'KillShell',
+        'Write', 'Edit', 'NotebookEdit', 'WebFetch',
+        'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow',
+      ]);
       for (const t of REPORT_TURN_DISALLOWED_TOOLS) expect(disallowed(report)).toContain(t);
+    });
+    it('keeps the Dispatch thread, memory and ledger tools, file reads, and the rest', () => {
+      const cut = disallowed(report);
+      for (const keep of ['Read', 'Grep', 'Glob', 'Task', 'ToolSearch', 'zoom', 'date', 'list_threads', 'read_thread', 'read_agent', 'spawn_agent', 'message_thread', 'ledger_list', 'ledger_add']) {
+        expect(cut).not.toContain(keep);
+      }
+      expect(cut.some((t) => t.startsWith('mcp__'))).toBe(false); // the Dispatch memory server is never named in the cut
     });
     it('loads only the Dispatch memory MCP server: no user server, no connector', () => {
       expect(report).toContain('--strict-mcp-config');

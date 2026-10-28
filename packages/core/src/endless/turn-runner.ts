@@ -84,9 +84,10 @@ const idOrNull = (v: unknown): string | null => (typeof v === 'string' && v ? v 
  * block, so the report cannot forge or remove it). The tool set is fixed when the process starts.
  */
 export const REPORT_TURN_NOTE =
-  'This turn was started by a thread report, not by the user. You have no shell and no tools from ' +
-  "the user's own servers or connectors in this turn; the Dispatch memory, thread and ledger tools " +
-  'and your file tools work as usual. If the report needs a shell or a connector, tell the user ' +
+  'This turn was started by a thread report, not by the user. You have no shell, no file writes, no web fetch, ' +
+  "no tools that reach other sessions or the cloud, and no tools from the user's own servers or connectors in " +
+  'this turn; the Dispatch memory, thread and ledger tools and file reads work as usual. If the report needs ' +
+  'one of the missing tools, tell the user ' +
   'what you need in your reply and end the turn: the next message from the user runs it.';
 
 export class TurnRunner {

@@ -24,12 +24,19 @@ export const COMPACTION_ENV: Record<string, string> = { ...FIXED_CONTEXT_ENV, CL
 export const FIXED_CONTEXT_SETTINGS = JSON.stringify({ autoMemoryEnabled: false, includeGitInstructions: false, disableAllHooks: true });
 
 /**
- * The shell tools a turn started by a thread report does not get (security review SEC-07). A
- * thread's report is text that a hostile web page or pull request may have shaped, and it must not
- * be able to run a command through Chat. Nothing else is taken away: Chat still reads and edits
- * files, fetches pages, and uses every thread tool.
+ * The built-in tools a turn started by a thread report does not get (security review SEC-07). A thread's
+ * report is text that a hostile web page or pull request may have shaped, and it must not be able to act
+ * through Chat: no shell (Bash and its helpers), no file writes (a write to a shell startup file or a hook
+ * is a shell later), no web fetch (a way to send data out), and no tool that reaches other sessions or the
+ * cloud (SendMessage, ListAgents, RemoteTrigger, Workflow). Owner decision: the Dispatch thread, memory and
+ * ledger tools stay (zoom, read, message and spawn threads), and so do file reads and answering the user.
+ * BashOutput and KillShell are older names of the shell helpers; a name the CLI does not know does nothing.
  */
-export const REPORT_TURN_DISALLOWED_TOOLS: readonly string[] = ['Bash', 'BashOutput', 'KillShell'];
+export const REPORT_TURN_DISALLOWED_TOOLS: readonly string[] = [
+  'Bash', 'BashOutput', 'KillShell',
+  'Write', 'Edit', 'NotebookEdit', 'WebFetch',
+  'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow',
+];
 
 /** Last on the command line: `--disallowedTools` takes a list and must not swallow other flags. */
 export function fixedContextArgs(extraDisallowed: readonly string[] = []): string[] {

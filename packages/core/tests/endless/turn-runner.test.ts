@@ -46,7 +46,8 @@ const toolsOf = (args: string[]): string[] => {
   for (let k = args.indexOf('--disallowedTools') + 1; k > 0 && k < args.length && !args[k].startsWith('--'); k++) out.push(args[k]);
   return out;
 };
-const NO_SHELL = ['Bash', 'BashOutput', 'KillShell'];
+/** What a report-started turn may not use: written out here on purpose, so a silent change to the list fails a test. */
+const NO_SHELL = ['Bash', 'BashOutput', 'KillShell', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'SendMessage', 'ListAgents', 'RemoteTrigger', 'Workflow'];
 
 describe('TurnRunner', () => {
   it('renders the view first, then logs the message; input order is view, status, message', async () => {
