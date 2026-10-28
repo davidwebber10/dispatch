@@ -31,6 +31,8 @@ import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
 import { mountApiRoutes } from './server-routes.js';
+import { createJsonBody } from './http/json-body.js';
+import { createClientWss } from './ws/client-wss.js';
 import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
@@ -349,7 +351,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   app.locals.keys = keys;
   const noCredentialStats = createNoCredentialStats({});
   app.use(createPrincipalMiddleware({ registry: keys, scope: createKeyScope(db), via: 'test' }));
-  app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
+  app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -499,14 +501,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use(createPrincipalMiddleware({
     registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
   }));
-  app.use(express.json({ limit: '50mb' })); // large enough for Claude PostToolUse hook payloads (full file reads)
+  app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
   // Create HTTP server
   const server = http.createServer(app);
 
   // Create WebSocket servers (noServer mode)
-  const eventsWss = new WebSocketServer({ noServer: true });
-  const terminalWss = new WebSocketServer({ noServer: true });
-  const structuredWss = new WebSocketServer({ noServer: true });
+  // maxPayload: one client message over the cap closes that socket (the default of ws is 100 MiB).
+  const eventsWss = createClientWss();
+  const terminalWss = createClientWss();
+  const structuredWss = createClientWss();
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.

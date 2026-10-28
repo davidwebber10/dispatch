@@ -137,3 +137,25 @@ describe('handleTerminalConnection activity suppression', () => {
     expect(() => connect(pty)).not.toThrow();
   });
 });
+
+describe('handleTerminalConnection resize bounds (SEC-23)', () => {
+  function sendResize(ws: ReturnType<typeof fakeWs>, cols: unknown, rows: unknown) {
+    const handler = ws.on.mock.calls.find((c) => c[0] === 'message')![1] as (m: Buffer, binary: boolean) => void;
+    handler(Buffer.from(JSON.stringify({ type: 'resize', cols, rows })), false);
+  }
+
+  it('passes a normal size to the pty', () => {
+    const pty = fakePtyManager();
+    const ws = connect(pty);
+    sendResize(ws, 120, 40);
+    expect(pty.resize).toHaveBeenCalledWith('t1', 120, 40);
+  });
+
+  it('drops a size no terminal has, and does not type the resize message into the shell', () => {
+    const pty = fakePtyManager();
+    const ws = connect(pty);
+    for (const [c, r] of [[0, 24], [80, 0], [-5, 24], [80.5, 24], [100000, 24], [80, 100000], [1e9, 1e9]]) sendResize(ws, c, r);
+    expect(pty.resize).not.toHaveBeenCalled();
+    expect(pty.write).not.toHaveBeenCalled();
+  });
+});
