@@ -62,8 +62,11 @@ export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string): st
       return nextLocalTime(now, tz, days, t.h, t.mi);
     }
 
-    case 'cron':
-      return nextCron(String(rule.expr ?? ''), now, tz);
+    case 'cron': {
+      const expr = String(rule.expr ?? '');
+      const next = nextCron(expr, now, tz);
+      return next ? holdCronToMinimum(expr, next, now, tz) : null;
+    }
 
     default:
       return null;
@@ -178,6 +181,22 @@ function nextCron(expr: string, now: Date, tz: string): string | null {
     if (++mi > 59) { mi = 0; if (++h > 23) { h = 0; if (++d > daysInMonth(y, mo)) { d = 1; if (++mo > 11) { mo = 0; y++; } } } }
   }
   return null;
+}
+
+/**
+ * A stored cron rule that runs more often than the minimum still runs, no more often than the minimum
+ * (the same promise an interval rule gets above). Only a rule whose next two runs are closer than the
+ * minimum is held back, so a daily or hourly cron is never pushed to a later run.
+ */
+function holdCronToMinimum(expr: string, next: string, now: Date, tz: string): string | null {
+  const min = minScheduleMinutes();
+  if (!min) return next;
+  const after = nextCron(expr, new Date(next), tz);
+  if (!after || new Date(after).getTime() - new Date(next).getTime() >= min * 60_000) return next;
+  const minuteStart = Math.floor(now.getTime() / 60_000) * 60_000;
+  const earliest = minuteStart + min * 60_000;
+  if (new Date(next).getTime() >= earliest) return next;
+  return nextCron(expr, new Date(earliest - 1), tz);
 }
 
 function daysInMonth(y: number, mo: number): number {

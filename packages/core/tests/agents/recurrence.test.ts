@@ -101,4 +101,32 @@ describe('minimum schedule interval (SEC-23)', () => {
     const next = computeNextRunAt(sched({ recurrence_rule: rule({ type: 'interval', everyMinutes: 0.01 }) }), NOW);
     expect(next).toBe('2026-06-19T12:01:00.000Z');
   });
+  describe('a stored cron rule is held to the minimum at run time, like an interval', () => {
+    const withMin = (value: string | undefined, fn: () => void) => {
+      const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+      if (value === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = value;
+      try { fn(); } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
+    };
+    const cron = (expr: string) => sched({ recurrence_rule: rule({ type: 'cron', expr }) });
+    it('an every-minute cron still fires on the next minute at the default minimum', () => {
+      withMin(undefined, () => expect(computeNextRunAt(cron('* * * * *'), NOW)).toBe('2026-06-19T12:01:00.000Z'));
+      withMin(undefined, () => expect(computeNextRunAt(cron('* * * * *'), '2026-06-19T12:00:30.500Z')).toBe('2026-06-19T12:01:00.000Z'));
+    });
+    it('a cron that is denser than a raised minimum waits for the minimum', () => {
+      withMin('5', () => {
+        expect(computeNextRunAt(cron('* * * * *'), NOW)).toBe('2026-06-19T12:05:00.000Z');
+        expect(computeNextRunAt(cron('* * * * *'), '2026-06-19T12:00:30.500Z')).toBe('2026-06-19T12:05:00.000Z');
+        expect(computeNextRunAt(cron('*/2 * * * *'), NOW)).toBe('2026-06-19T12:06:00.000Z');
+      });
+    });
+    it('a cron that is already sparse enough is not delayed', () => {
+      withMin('15', () => {
+        expect(computeNextRunAt(cron('0 9 * * *'), '2026-06-19T08:55:00.000Z')).toBe('2026-06-19T09:00:00.000Z');
+        expect(computeNextRunAt(cron('*/15 * * * *'), '2026-06-19T12:01:00.000Z')).toBe('2026-06-19T12:15:00.000Z');
+      });
+    });
+    it('0 turns the clamp off', () => {
+      withMin('0', () => expect(computeNextRunAt(cron('* * * * *'), NOW)).toBe('2026-06-19T12:01:00.000Z'));
+    });
+  });
 });
