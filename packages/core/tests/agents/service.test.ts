@@ -271,6 +271,23 @@ describe('AgentService', () => {
     expect(service.processDueRuns('2026-05-08T12:02:00.000Z')).toHaveLength(0);
   });
 
+  it('processDueRuns holds a stored dense cron to the floor, counted from the run that just fired', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+    try {
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '0';
+      const s = service.createSchedule({
+        projectId: 'proj-1', name: 'Dense', provider: 'codex', workingDir: '/srv/tenex', prompt: 'p',
+        scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'cron', expr: '0,1 * * * *' }),
+        timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null,
+      });
+      agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
+      expect(service.processDueRuns('2026-05-08T12:00:20.000Z')).toHaveLength(1);
+      expect(service.getSchedule(s.id)?.nextRunAt).toBe('2026-05-08T13:00:00.000Z');
+    } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
+  });
+
   it('processDueRuns advances recurring schedule nextRunAt', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({

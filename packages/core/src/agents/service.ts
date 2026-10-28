@@ -448,7 +448,7 @@ export class AgentService {
           this.broadcaster.broadcast({ type: 'agent:schedule-updated', schedule: toSchedule(updated) });
         }
       } else {
-        const nextRunAt = computeNextRunAt(schedule, now);
+        const nextRunAt = computeNextRunAt(schedule, now, { fired: true });
         const updated = agentsDb.updateSchedule(this.db, schedule.id, {
           enabled: nextRunAt != null,
           nextRunAt,

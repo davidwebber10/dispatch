@@ -12,6 +12,7 @@ function sched(overrides: Partial<AgentScheduleRow>): AgentScheduleRow {
 }
 
 const NOW = '2026-06-19T12:00:00.000Z'; // Fri 12:00 UTC
+const FIRED = { fired: true }; // the scheduler has just started a run
 
 describe('computeNextRunAt', () => {
   it('manual / null never fires', () => {
@@ -86,6 +87,19 @@ describe('minimum schedule interval (SEC-23)', () => {
     expect(scheduleTooFrequent(null)).toBeNull();
     expect(scheduleTooFrequent('not json')).toBeNull();
   });
+  it('refuses a cron with a short gap inside a cluster of runs, whatever the time of the check', () => {
+    const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+    try {
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
+      for (const now of ['2026-06-19T11:59:00.000Z', '2026-06-19T12:00:00.000Z', '2026-06-19T12:00:30.000Z', '2026-06-19T12:01:00.000Z']) {
+        expect(scheduleTooFrequent(rule({ type: 'cron', expr: '0,1 * * * *' }), now), now).toMatch(/DISPATCH_MIN_SCHEDULE_MINUTES/);
+        expect(scheduleTooFrequent(rule({ type: 'cron', expr: '0,1 9 * * *' }), now), now).not.toBeNull();
+        for (const ok of ['*/5 * * * *', '0 * * * *', '0,30 * * * *', '0 9 * * *', '0 9 * * 1-5', '15 3 1 * *']) {
+          expect(scheduleTooFrequent(rule({ type: 'cron', expr: ok }), now), `${ok} at ${now}`).toBeNull();
+        }
+      }
+    } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
+  });
   it('DISPATCH_MIN_SCHEDULE_MINUTES raises the floor for intervals and cron; 0 turns it off', () => {
     const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
     try {
@@ -129,15 +143,40 @@ describe('minimum schedule interval (SEC-23)', () => {
       withMin('5', () => {
         // 0,1 * * * *: the run at 12:00 would be followed by 12:01 (a 1 minute gap), so the next run is the next hour.
         const fired = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,1 * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
-        expect(computeNextRunAt(fired, '2026-06-19T12:00:20.000Z')).toBe('2026-06-19T13:00:00.000Z');
+        expect(computeNextRunAt(fired, '2026-06-19T12:00:20.000Z', FIRED)).toBe('2026-06-19T13:00:00.000Z');
         // A late tick is still counted from the run that was due.
-        expect(computeNextRunAt(fired, '2026-06-19T12:03:10.000Z')).toBe('2026-06-19T13:00:00.000Z');
+        expect(computeNextRunAt(fired, '2026-06-19T12:03:10.000Z', FIRED)).toBe('2026-06-19T13:00:00.000Z');
         // The same rule with a gap of five minutes or more is left alone.
         const sparse = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,5 * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
-        expect(computeNextRunAt(sparse, '2026-06-19T12:00:20.000Z')).toBe('2026-06-19T12:05:00.000Z');
+        expect(computeNextRunAt(sparse, '2026-06-19T12:00:20.000Z', FIRED)).toBe('2026-06-19T12:05:00.000Z');
         // A daily cron is never delayed, even when the tick is late.
         const daily = sched({ recurrence_rule: rule({ type: 'cron', expr: '0 9 * * *' }), next_run_at: '2026-06-19T09:00:00.000Z' });
-        expect(computeNextRunAt(daily, '2026-06-19T09:00:45.000Z')).toBe('2026-06-20T09:00:00.000Z');
+        expect(computeNextRunAt(daily, '2026-06-19T09:00:45.000Z', FIRED)).toBe('2026-06-20T09:00:00.000Z');
+      });
+    });
+    it('a late tick of a dense cron is counted from this minute, not from the overdue due time', () => {
+      withMin('5', () => {
+        const late = sched({ recurrence_rule: rule({ type: 'cron', expr: '* * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
+        expect(computeNextRunAt(late, '2026-06-19T12:04:50.000Z', FIRED)).toBe('2026-06-19T12:09:00.000Z');
+        const lateIrregular = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,1,2,3,4,5 * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
+        expect(computeNextRunAt(lateIrregular, '2026-06-19T12:04:50.000Z', FIRED)).toBe('2026-06-19T13:00:00.000Z');
+      });
+    });
+    it('a very late tick (asleep, or a long run) is counted from when it ran', () => {
+      withMin('5', () => {
+        const asleep = sched({ recurrence_rule: rule({ type: 'cron', expr: '* * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
+        expect(computeNextRunAt(asleep, '2026-06-19T12:20:10.000Z', FIRED)).toBe('2026-06-19T12:25:00.000Z');
+        const busy = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,1 * * * *' }), next_run_at: '2026-06-19T11:01:00.000Z' });
+        expect(computeNextRunAt(busy, '2026-06-19T11:59:30.000Z', FIRED)).toBe('2026-06-19T13:00:00.000Z');
+      });
+    });
+    it('an edit or a create while next_run_at is overdue does not delay a normal rule', () => {
+      withMin('5', () => {
+        // Due at 09:00 with its run still active; at 09:01 the rule is changed to 3 * * * *.
+        const edited = sched({ recurrence_rule: rule({ type: 'cron', expr: '3 * * * *' }), next_run_at: '2026-06-19T09:00:00.000Z' });
+        expect(computeNextRunAt(edited, '2026-06-19T09:01:00.000Z')).toBe('2026-06-19T09:03:00.000Z');
+        const daily = sched({ recurrence_rule: rule({ type: 'cron', expr: '3 9 * * *' }), next_run_at: '2026-06-19T09:00:00.000Z' });
+        expect(computeNextRunAt(daily, '2026-06-19T09:01:00.000Z')).toBe('2026-06-19T09:03:00.000Z');
       });
     });
     it('0 turns the clamp off', () => {
