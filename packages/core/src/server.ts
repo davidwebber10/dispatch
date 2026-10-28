@@ -373,7 +373,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const rolesService = new RolesService({ db, agentService, sessionService, pushService });
   agentService.setRoleRunner(rolesService);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
-  const integrationsService = new IntegrationsService(db, integrationLauncher(dispatchDir), () => secretsService.status().connected);
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dispatchDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   // Unlike startServer, no refresh at boot or behind a spawn: tests spawn sessions through this
@@ -629,7 +629,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => secretsService.status().connected);
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   // Terminal-free Claude login (design doc §11.2). Its token is injected below in
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.

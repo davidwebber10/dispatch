@@ -128,6 +128,9 @@ describe('file routes refuse symlinks that lead out of the project', () => {
     fs.symlinkSync(outside, path.join(project, 'node_modules/evil'));
     expect((await request(app).get('/api/sessions/s1/files/read?path=node_modules/react/index.js')).body.content).toBe('module.exports = 1');
     expect((await request(app).get('/api/sessions/s1/files/read?path=node_modules/evil/secret.txt')).status).toBe(403);
+    // A new node_modules folder named at the far end of a link out of the project is not a dependency link.
+    expect((await request(app).put('/api/sessions/s1/files/write?path=node_modules/evil/node_modules/foo/index.js').send({ content: 'x' })).status).toBe(403);
+    expect(fs.existsSync(path.join(outside, 'node_modules'))).toBe(false);
   });
 
   it('DISPATCH_FILE_ROOTS lets a link lead into a named folder outside the project; "/" turns the check off', async () => {

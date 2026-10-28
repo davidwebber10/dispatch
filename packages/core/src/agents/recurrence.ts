@@ -213,3 +213,12 @@ export function scheduleTooFrequent(recurrenceRule: string | null | undefined, n
   }
   return null;
 }
+
+/** Two stored rules mean the same thing (same JSON, whatever the spacing or key order). */
+export function sameRule(a: string | null, b: string | null): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  const canon = (v: unknown): unknown => Array.isArray(v) ? v.map(canon)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as object).sort(([x], [y]) => x.localeCompare(y)).map(([k, x]) => [k, canon(x)])) : v;
+  try { return JSON.stringify(canon(JSON.parse(a))) === JSON.stringify(canon(JSON.parse(b))); } catch { return false; }
+}

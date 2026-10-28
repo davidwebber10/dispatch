@@ -95,6 +95,8 @@ describe('AgentService', () => {
     process.env.DISPATCH_MIN_SCHEDULE_MINUTES = '5';
     try {
       expect(service.updateSchedule(fast.id, { name: 'Fast 2', recurrenceRule: fast.recurrenceRule })?.name).toBe('Fast 2');
+      // The same rule written another way (spacing, key order) is still the same rule.
+      expect(service.updateSchedule(fast.id, { name: 'Fast 3', recurrenceRule: '{ "everyMinutes": 1, "type": "interval" }' })?.name).toBe('Fast 3');
       expect(() => service.updateSchedule(fast.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 2 }) })).toThrow(/shortest allowed gap/);
     } finally { if (prevMin === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prevMin; }
   });

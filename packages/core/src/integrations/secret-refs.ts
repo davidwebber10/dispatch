@@ -60,11 +60,17 @@ export function literalSecretProblem(i: { headers?: unknown; env?: unknown }): s
     for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
       const value = typeof v === 'string' ? v : v == null ? '' : String(v);
       // A number or a flag (MAX_TOKEN=4096) is a setting, and a file path (SSL_KEY=/etc/ssl/key.pem) names a key, not a credential.
-      if (!value.trim() || !looksSecretName(k) || refsIn(value).length || /^(\d+(\.\d+)?|true|false)$/i.test(value.trim()) || /^(\/|~\/)/.test(value.trim())) continue;
+      if (!value.trim() || !looksSecretName(k) || refsIn(value).length || /^(\d+(\.\d+)?|true|false)$/i.test(value.trim()) || looksLikePath(value.trim())) continue;
       const example = kind === 'header' && /authorization/i.test(k) ? 'Bearer ${MY_API_TOKEN}' : '${MY_API_TOKEN}';
       return `${kind} "${k}" looks like a secret. Do not type its value here: store the value in Secrets and write a reference such as ${example}`;
     }
     return null;
   };
   return check('header', i.headers) ?? check('env', i.env);
+}
+
+/** A file path, not a token that happens to start with "/" (base64 has "/" in its alphabet): no "+" or "=", and a second "/" or a file extension. */
+function looksLikePath(v: string): boolean {
+  if (!/^(\/|~\/)/.test(v) || /[+=\s]/.test(v)) return false;
+  return v.indexOf('/', 1) > 0 || /\.[A-Za-z0-9]{1,8}$/.test(v);
 }
