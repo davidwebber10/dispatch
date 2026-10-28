@@ -21,7 +21,9 @@ export function insideRealRoot(root: string, target: string): boolean {
       fs.lstatSync(probe);
       break; // it exists (a symlink counts, even a dangling one)
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+      // ENOTDIR: a parent is a plain file. Nothing leaves the project through it; the real operation fails on its own.
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return false;
     }
     const parent = path.dirname(probe);
     if (parent === probe) return false;
