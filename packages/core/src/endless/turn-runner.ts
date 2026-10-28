@@ -91,6 +91,8 @@ export class TurnRunner {
    */
   private turnReduced = false;
   private deferred: LoggedInput[] = [];
+  /** User messages that came in during a report turn (it has no shell): they start their own full turn after it. */
+  private deferredUsers: UserInput[] = [];
   private turnId: string | null = null;
   private turnProject: string | null = null;
   private n = 0;
@@ -121,6 +123,8 @@ export class TurnRunner {
     // A report must not reach a process that has the user's shell and connectors. It is already
     // in the log; it waits here and starts its own (reduced) turn when this one ends.
     if (this.state !== 'idle' && p.logged && !p.input.trusted && !this.turnReduced) { this.deferred.push(p.input); return; }
+    // The mirror rule: a user message must not run in the reduced turn. It waits for its own full turn.
+    if (this.state !== 'idle' && !p.logged && this.turnReduced) { this.deferredUsers.push(p.input); return; }
     if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
     if (this.state === 'waiting') { this.queued.push(p); return; }
     this.start(p, true);
@@ -200,9 +204,10 @@ export class TurnRunner {
         if (logIt && !first.logged) this.logUser(first.input);
         return;
       }
-      // A report logged while this turn waited is a message of this turn (or of the turn after it), not a view line.
-      const cut = Math.min(first.logged ? first.input.i : d.store.count(), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])), ...this.deferred.map((r) => r.i));
-      const view = d.views.turnBlocks(cut);          // render the view first …
+      // The reports this turn answers (the first, the queued ones, and those that waited behind an earlier turn) are
+      // its messages, not view lines. Every other row is in the view, so a report that waited still sees the turn before it.
+      const own = [...(first.logged ? [first.input.i] : []), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])), ...this.deferred.map((r) => r.i)];
+      const view = d.views.turnBlocks(undefined, own);
       const status = d.statusBlock(first.input.project);
       // … then log every user message of this turn, so that each message has its log index.
       // The model receives the messages in log order: a report logged during the wait comes
@@ -262,17 +267,25 @@ export class TurnRunner {
   }
 
   /**
-   * Reports that came in during a turn with the full tool set start their own turn now. After a
-   * Stop they stay in the log only (the next turn's view shows them): the user said stop.
+   * What waited behind the turn that just ended starts now: user messages sent during a report turn
+   * (a full turn), or reports that came in during a full turn (a reduced turn). After a Stop the reports
+   * stay in the log only (the next turn's view shows them), and the user messages are logged and not run.
    */
   private startDeferred(stopped: boolean): void {
-    const next = this.deferred.splice(0);
-    if (stopped || !next.length || this.state !== 'idle') return;
+    const reports = this.deferred.splice(0);
+    const users = this.deferredUsers.splice(0);
     try {
-      this.start({ logged: true, input: next[0] }, true);
-      for (const input of next.slice(1)) this.queued.push({ logged: true, input });
+      if (stopped) { for (const u of users) this.logUser(u); return; }
+      if (this.state !== 'idle') return;
+      if (users.length) {
+        this.start({ logged: false, input: users[0] }, true);
+        for (const input of users.slice(1)) this.queued.push({ logged: false, input });
+      } else if (reports.length) {
+        this.start({ logged: true, input: reports[0] }, true);
+        for (const input of reports.slice(1)) this.queued.push({ logged: true, input });
+      }
     } catch (err) {
-      console.warn('[endless] a report that waited could not start its turn:', err);
+      console.warn('[endless] a message that waited could not start its turn:', err);
     }
   }
 

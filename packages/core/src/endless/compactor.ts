@@ -4,6 +4,7 @@
  * a merge is ready once both halves are built. Up to 8 run at once. One recovery pass at
  * boot finds what a stopped daemon left; after that the tree is never scanned.
  */
+import { neutralizeMarkers, UNTRUSTED_LINE_NOTE } from '../security/untrusted-text.js';
 import type { EndlessStore } from './store.js';
 import type { ViewKeeper } from './view-keeper.js';
 import type { Summarizer } from './summarizer.js';
@@ -137,7 +138,8 @@ export class Compactor {
     const { store } = this.d;
     if (ref.l === 0) {
       const m = store.get(ref.i)!;
-      return messageLine(m.kind, m.text, this.d.projectName(m.project));
+      // A thread's report is data: its line says so (a fixed text, so the cached view stays stable), and it holds no marker of its own.
+      return messageLine(m.kind, m.kind === 'work' ? `${UNTRUSTED_LINE_NOTE} ${neutralizeMarkers(m.text)}` : m.text, this.d.projectName(m.project));
     }
     const [a, b] = childrenOf(ref.l, ref.i);
     return `${store.nodeText(a.l, a.i)}\n${store.nodeText(b.l, b.i)}`;

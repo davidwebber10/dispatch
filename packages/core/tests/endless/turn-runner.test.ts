@@ -452,15 +452,56 @@ describe('TurnRunner', () => {
     await finish(t);
   });
 
-  it('a user message handed to a running report turn still reaches it', async () => {
+  it('a user message sent during a report turn does not join it: it starts its own full-tool turn after, once', async () => {
     const t = setup();
     const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
     t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
     await settle();
-    t.runner.send({ text: 'and tell me the branch', project: null, media: [] });
+    t.runner.send({ text: 'and run the tests', project: null, media: [] });
+    t.runner.send({ text: 'then tell me', project: null, media: [] });
     expect(t.fake.spawned).toHaveLength(1);
-    expect(texts(t.fake.sent[1].content)).toEqual(['user: and tell me the branch']);
+    expect(t.fake.sent).toHaveLength(1); // the report turn never sees them
+    expect(userRows(t.store)).toEqual([]); // not logged yet: they are logged when their turn starts
     reply(t, 'ok');
+    await finish(t);
+    await settle();
+    expect(t.fake.spawned).toHaveLength(2);
+    expect(toolsOf(t.fake.spawned[0].opts.args)).toEqual(['AskUserQuestion', ...NO_SHELL]);
+    expect(toolsOf(t.fake.spawned[1].opts.args)).toEqual(['AskUserQuestion']);
+    expect(t.fake.spawned[1].opts.args).not.toContain('--strict-mcp-config');
+    expect(texts(t.fake.sent[1].content).at(-1)).toBe('user: and run the tests');
+    expect(texts(t.fake.sent[2].content)).toEqual(['user: then tell me']);
+    expect(userRows(t.store)).toEqual(['and run the tests', 'then tell me']);
+    reply(t, 'done');
+    await finish(t);
+  });
+
+  it('a user message that waits behind a report turn is logged, not run, when the user presses Stop', async () => {
+    const t = setup();
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
+    await settle();
+    t.runner.send({ text: 'and run the tests', project: null, media: [] });
+    expect(t.runner.stop()).toBe(true);
+    await t.runner.whenIdle();
+    await settle();
+    expect(t.fake.spawned).toHaveLength(1);
+    expect(userRows(t.store)).toEqual(['and run the tests']);
+  });
+
+  it('a report that waited behind a user turn sees that turn\'s rows in its view (only its own report is left out)', async () => {
+    const t = setup();
+    t.runner.send({ text: 'go', project: null, media: [] });
+    await settle();
+    const [w] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: w.i, kind: 'work', text: w.text, project: null });
+    reply(t, 'started a thread for it'); // row after the report
+    await finish(t);
+    await settle();
+    const parts = texts(t.fake.sent[1].content).join('');
+    expect(parts).toContain('user: go');
+    expect(parts).toContain('unii: started a thread for it');
+    expect(parts).not.toContain('|work'); // the report itself is the turn's message, not a view line
     await finish(t);
   });
 
@@ -520,7 +561,7 @@ describe('TurnRunner', () => {
     await finish(t);
   });
 
-  it('reports and user messages queued during the wait reach the model in log order', async () => {
+  it('reports queued during the wait join the report turn in log order; a user message waits for its own full turn', async () => {
     const t = setup();
     const [a] = t.log({ kind: 'work', text: '[A] report: one', ref: 'ta' });
     t.runner.deliver({ i: a.i, kind: 'work', text: a.text, project: null }); // starts a turn; it waits
@@ -529,13 +570,16 @@ describe('TurnRunner', () => {
     t.runner.deliver({ i: c.i, kind: 'work', text: c.text, project: null });
     await settle();
     expect(t.fake.spawned).toHaveLength(1);
-    const rows = Array.from({ length: t.store.count() }, (_, i) => t.store.get(i)!.text);
-    expect(rows).toEqual(['[A] report: one', '[C] report: three', 'user words']);
     const last = t.fake.sent.map((s) => texts(s.content).at(-1));
-    expect([unwrap(last[0]), unwrap(last[1]), last[2]]).toEqual(['[A] report: one', '[C] report: three', 'user: user words']);
+    expect([unwrap(last[0]), unwrap(last[1])]).toEqual(['[A] report: one', '[C] report: three']);
+    expect(t.fake.sent).toHaveLength(2);
     expect(toolsOf(t.fake.spawned[0].opts.args)).toEqual(['AskUserQuestion', ...NO_SHELL]);
-    expect(texts(t.fake.sent[0].content).join('')).not.toContain('[C] report');
-    reply(t, 'all seen');
+    reply(t, 'both seen');
+    await finish(t);
+    await settle();
+    expect(t.fake.spawned).toHaveLength(2);
+    expect(toolsOf(t.fake.spawned[1].opts.args)).toEqual(['AskUserQuestion']);
+    expect(texts(t.fake.sent[2].content).at(-1)).toBe('user: user words');
     await finish(t);
   });
 

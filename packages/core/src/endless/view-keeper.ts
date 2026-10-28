@@ -96,8 +96,10 @@ export class ViewKeeper {
    * also covers it stays in the view, so the turn can see a summary of its own message as well as
    * the message itself. This is rare (a merge must land during the turn's wait) and loses nothing.
    */
-  turnBlocks(before?: number): string[] {
-    const lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
+  turnBlocks(before?: number, except: readonly number[] = []): string[] {
+    let lines = before === undefined ? this.chat.lines : this.chat.lines.filter(([l, i]) => firstMessage(l, i) < before);
+    // `except`: single-message lines that are the turn's own messages (the reports it answers).
+    if (except.length) lines = lines.filter(([l, i]) => !(l === 0 && except.includes(i)));
     return renderChatBlocks(lines, this.text);
   }
 
