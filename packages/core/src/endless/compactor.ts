@@ -167,7 +167,10 @@ export class Compactor {
     try {
       let text = needsModel ? await this.summarize(ref, key, source) : source;
       // A report's line says it is data whether it is the report itself or a summary of it (a fixed text; the cache stays stable).
-      if (needsModel && ref.l === 0 && this.d.store.get(ref.i)?.kind === 'work' && !text.startsWith(UNTRUSTED_LINE_NOTE)) text = `${UNTRUSTED_LINE_NOTE} ${neutralizeMarkers(text)}`;
+      if (needsModel && ref.l === 0 && this.d.store.get(ref.i)?.kind === 'work') {
+        text = neutralizeMarkers(text); // always: a summary that echoes the note can still hold a forged marker
+        if (!text.startsWith(UNTRUSTED_LINE_NOTE)) text = `${UNTRUSTED_LINE_NOTE} ${text}`;
+      }
       if (this.stopped) return;
       this.d.store.appendNode(ref.l, ref.i, text);
       this.failures.delete(key);

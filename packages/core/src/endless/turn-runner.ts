@@ -97,7 +97,7 @@ export class TurnRunner {
    * A report never joins a turn that has the full set; it waits in `deferred` and starts its own turn.
    */
   private turnReduced = false;
-  private lastReduced = false;
+  private lastReduced: boolean | null = null;
   private deferred: LoggedInput[] = [];
   /** User messages that came in during a report turn (it has no shell): logged at once, they start their own full turn after it. */
   private deferredUsers: { input: UserInput; at: number[] }[] = [];
@@ -117,7 +117,10 @@ export class TurnRunner {
   get status(): 'idle' | 'waiting' | 'running' { return this.state; }
 
   /** The latest turn to start was a report turn (a usage-limit wake-up resumes it with the same tools). */
-  get lastTurnReduced(): boolean { return this.lastReduced; }
+  get lastTurnReduced(): boolean {
+    // Saved with the log, so a daemon restart during a usage-limit pause keeps it. Unknown counts as reduced: the safe value.
+    return this.lastReduced ?? this.d.store.getState('last_turn_reduced') !== '0';
+  }
 
   whenIdle(): Promise<void> { return this.done ?? Promise.resolve(); }
 
@@ -165,6 +168,7 @@ export class TurnRunner {
     this.state = 'waiting';
     this.turnReduced = first.logged && isReduced(first.input);
     this.lastReduced = this.turnReduced;
+    try { this.d.store.setState('last_turn_reduced', this.turnReduced ? '1' : '0'); } catch { /* the flag is a safety net; the turn goes on */ }
     this.turnProject = first.input.project;
     this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
@@ -230,7 +234,7 @@ export class TurnRunner {
         ...this.deferred.flatMap(rowsOf),
         ...this.deferredUsers.flatMap((u) => u.at),
       ];
-      const view = d.views.turnBlocks(undefined, own);
+      const view = d.views.turnBlocks(undefined, own, !this.turnReduced);
       const status = d.statusBlock(first.input.project);
       // … then log every user message of this turn, so that each message has its log index.
       // The model receives the messages in log order: a report logged during the wait comes

@@ -66,16 +66,32 @@ describe('wakeAfterLimit', () => {
     expect(svc.turns.status).not.toBe('idle');
   });
 
-  it('is the daemon\'s own line: the turn keeps the full tool set and the line is not marked as thread data', async () => {
+  const wakeParts = async () => {
     expect(svc.wakeAfterLimit()).toBe(true);
     await new Promise((r) => setTimeout(r, 120));
-    expect(fake.spawned).toHaveLength(1);
-    const args = fake.spawned[0].opts.args;
+    const sent = fake.sent.at(-1)!.content;
+    return { args: fake.spawned.at(-1)!.opts.args, parts: typeof sent === 'string' ? [sent] : sent.map((b: any) => b.text ?? '') };
+  };
+  const endTurn = async () => {
+    fake.emitEvent({ type: 'result', subtype: 'success', is_error: false });
+    await svc.turns.whenIdle();
+  };
+
+  it('after a turn the user started: the wake-up keeps the full tool set, and the line is not marked as thread data', async () => {
+    svc.send({ text: 'run the tests', project: null, images: [] });
+    await new Promise((r) => setTimeout(r, 120));
+    await endTurn();
+    const { args, parts } = await wakeParts();
     expect(args).not.toContain('--strict-mcp-config');
     expect(args[args.indexOf('--disallowedTools') + 1]).toBe('AskUserQuestion');
     expect(args).not.toContain('Bash');
-    const sent = fake.sent[0].content;
-    const parts = typeof sent === 'string' ? [sent] : sent.map((b: any) => b.text ?? '');
     expect(parts.at(-1)).toBe('work: Your usage limit has reset. Continue where you left off.');
+  });
+
+  it('after a turn a thread report started (or when it is not known): the wake-up keeps the reduced tool set', async () => {
+    const { args, parts } = await wakeParts(); // no turn has run: unknown counts as reduced
+    expect(args).toContain('--strict-mcp-config');
+    expect(args).toContain('Bash');
+    expect(parts.at(-1)).toBe('work: Your usage limit has reset. Continue where you left off.'); // still not marked as thread data
   });
 });
