@@ -336,7 +336,7 @@ export class EndlessService {
       : () => { const ok = this.store.claimAllReports(terminalId); if (ok) note(); return ok; };
     const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: terminalId }, { claim });
     if (written.length) {
-      this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
+      this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project, rows: written.length });
     }
     return written;
   }
@@ -351,7 +351,7 @@ export class EndlessService {
     try {
       const t = terminalId ? terminalsDb.getById(this.o.db, terminalId) : null;
       const written = this.log({ kind: 'work', text, project: t?.session_id ?? null, ref: t ? terminalId : null });
-      if (deliver && written.length) this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project });
+      if (deliver && written.length) this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: written[0].project, rows: written.length });
     } catch (err) {
       console.warn('[endless] the usage-limit note failed:', err);
     }
@@ -463,7 +463,7 @@ export class EndlessService {
     const written = this.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', project: null, ref: null });
     if (!written.length) return false;
     // The daemon's own line, not a thread's: the turn keeps the full tool set, so the task it resumes can finish.
-    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null, trusted: true });
+    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null, rows: written.length, trusted: true, reduced: this.turns.lastTurnReduced });
     return true;
   }
   /** Set by the daemon: the owner acted on Chat (send, retry, stop), which ends a usage-limit pause. */

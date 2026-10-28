@@ -165,7 +165,9 @@ export class Compactor {
   private async build(ref: NodeRef, key: string, source: string, needsModel: boolean): Promise<void> {
     await Promise.resolve(); // never recurse through pump() synchronously
     try {
-      const text = needsModel ? await this.summarize(ref, key, source) : source;
+      let text = needsModel ? await this.summarize(ref, key, source) : source;
+      // A report's line says it is data whether it is the report itself or a summary of it (a fixed text; the cache stays stable).
+      if (needsModel && ref.l === 0 && this.d.store.get(ref.i)?.kind === 'work' && !text.startsWith(UNTRUSTED_LINE_NOTE)) text = `${UNTRUSTED_LINE_NOTE} ${neutralizeMarkers(text)}`;
       if (this.stopped) return;
       this.d.store.appendNode(ref.l, ref.i, text);
       this.failures.delete(key);

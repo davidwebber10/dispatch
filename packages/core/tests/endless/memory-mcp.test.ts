@@ -45,7 +45,7 @@ describe('memory MCP server', () => {
       { kind: 'assistant', text: 'one' }, { kind: 'tool', toolName: 'Bash' }, { kind: 'assistant', text: 'two' },
     ] })));
     const r = await callTool('read_thread', { id: 't1' });
-    expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ id: 't1', output: 'one\n\ntwo', tools: ['Bash'] });
+    expect(JSON.parse((r.content[0] as any).text)).toMatchObject({ id: 't1', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread t1[^\n]*\n+one\n\ntwo\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Bash'] });
   });
   const calls = (m: ReturnType<typeof vi.fn>) =>
     m.mock.calls.map((c) => [String(c[0]).replace(/^http:\/\/localhost:\d+/, ''), (c[1] as RequestInit | undefined)?.method ?? 'GET']);

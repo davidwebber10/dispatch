@@ -461,7 +461,7 @@ describe('TurnRunner', () => {
     t.runner.send({ text: 'then tell me', project: null, media: [] });
     expect(t.fake.spawned).toHaveLength(1);
     expect(t.fake.sent).toHaveLength(1); // the report turn never sees them
-    expect(userRows(t.store)).toEqual([]); // not logged yet: they are logged when their turn starts
+    expect(userRows(t.store)).toEqual(['and run the tests', 'then tell me']); // logged at once: the web client keeps them on screen
     reply(t, 'ok');
     await finish(t);
     await settle();
@@ -502,6 +502,46 @@ describe('TurnRunner', () => {
     expect(parts).toContain('user: go');
     expect(parts).toContain('unii: started a thread for it');
     expect(parts).not.toContain('|work'); // the report itself is the turn's message, not a view line
+    await finish(t);
+  });
+
+  it('a report that is split over several log rows leaves all of them out of the view of the turn that waited', async () => {
+    const t = setup();
+    t.runner.send({ text: 'go', project: null, media: [] });
+    await settle();
+    const rows = t.log({ kind: 'work', text: '[Big] report: ' + 'x'.repeat(70_000), ref: 't1' });
+    expect(rows.length).toBeGreaterThan(1);
+    t.runner.deliver({ i: rows[0].i, kind: 'work', text: rows.map((r) => r.text).join(''), project: null, rows: rows.length });
+    reply(t, 'ok');
+    await finish(t);
+    await settle();
+    expect(t.fake.spawned).toHaveLength(2);
+    expect(texts(t.fake.sent[1].content).slice(0, -1).join('')).not.toContain('|work');
+    await finish(t);
+  });
+
+  it('a daemon wake-up keeps the tools of the turn it resumes: full after a user turn, reduced after a report turn', async () => {
+    const t = setup();
+    t.runner.send({ text: 'hi', project: null, media: [] });
+    await settle();
+    expect(t.runner.lastTurnReduced).toBe(false);
+    await finish(t);
+    const [w1] = t.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', ref: null });
+    t.runner.deliver({ i: w1.i, kind: 'work', text: w1.text, project: null, trusted: true, reduced: t.runner.lastTurnReduced });
+    await settle();
+    expect(toolsOf(t.fake.spawned[1].opts.args)).toEqual(['AskUserQuestion']);
+    expect(texts(t.fake.sent[1].content).at(-1)).toBe('work: Your usage limit has reset. Continue where you left off.');
+    await finish(t);
+    const [r] = t.log({ kind: 'work', text: '[Fix] report: done', ref: 't1' });
+    t.runner.deliver({ i: r.i, kind: 'work', text: r.text, project: null });
+    await settle();
+    expect(t.runner.lastTurnReduced).toBe(true);
+    await finish(t);
+    const [w2] = t.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', ref: null });
+    t.runner.deliver({ i: w2.i, kind: 'work', text: w2.text, project: null, trusted: true, reduced: t.runner.lastTurnReduced });
+    await settle();
+    expect(toolsOf(t.fake.spawned[3].opts.args)).toEqual(['AskUserQuestion', ...NO_SHELL]);
+    expect(texts(t.fake.sent[3].content).at(-1)).toBe('work: Your usage limit has reset. Continue where you left off.'); // still not marked as thread data
     await finish(t);
   });
 

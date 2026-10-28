@@ -28,10 +28,17 @@ export interface UserInput { text: string; project: string | null; media: string
 /** A message already in the log that a turn must answer: a thread's report (spec section 6.4). */
 export interface LoggedInput {
   i: number; kind: 'work'; text: string; project: string | null;
+  /** How many log rows the message takes (a text over 30,000 characters is split over several rows); default 1. */
+  rows?: number;
   /** The daemon wrote this line itself (the usage-limit wake-up), not a thread: no data block, and the full tool set. */
   trusted?: boolean;
+  /** With `trusted`: the turn it resumes was a report turn, so this one keeps the reduced tool set too. */
+  reduced?: boolean;
 }
-type Pending = { logged: false; input: UserInput } | { logged: true; input: LoggedInput };
+/** A report, or a wake-up of a report turn: the turn it starts or joins has the reduced tool set. */
+const isReduced = (i: LoggedInput): boolean => !i.trusted || !!i.reduced;
+const rowsOf = (i: LoggedInput): number[] => Array.from({ length: Math.max(1, i.rows ?? 1) }, (_, k) => i.i + k);
+type Pending = { logged: false; input: UserInput; at?: number[] } | { logged: true; input: LoggedInput };
 export type TurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
 export type EndlessEvent =
   | { type: 'endless:delta'; kind: 'text' | 'thinking'; text: string }
@@ -90,9 +97,10 @@ export class TurnRunner {
    * A report never joins a turn that has the full set; it waits in `deferred` and starts its own turn.
    */
   private turnReduced = false;
+  private lastReduced = false;
   private deferred: LoggedInput[] = [];
-  /** User messages that came in during a report turn (it has no shell): they start their own full turn after it. */
-  private deferredUsers: UserInput[] = [];
+  /** User messages that came in during a report turn (it has no shell): logged at once, they start their own full turn after it. */
+  private deferredUsers: { input: UserInput; at: number[] }[] = [];
   private turnId: string | null = null;
   private turnProject: string | null = null;
   private n = 0;
@@ -108,6 +116,9 @@ export class TurnRunner {
 
   get status(): 'idle' | 'waiting' | 'running' { return this.state; }
 
+  /** The latest turn to start was a report turn (a usage-limit wake-up resumes it with the same tools). */
+  get lastTurnReduced(): boolean { return this.lastReduced; }
+
   whenIdle(): Promise<void> { return this.done ?? Promise.resolve(); }
 
   send(input: UserInput): void { this.accept({ logged: false, input }); }
@@ -122,9 +133,9 @@ export class TurnRunner {
   private accept(p: Pending): void {
     // A report must not reach a process that has the user's shell and connectors. It is already
     // in the log; it waits here and starts its own (reduced) turn when this one ends.
-    if (this.state !== 'idle' && p.logged && !p.input.trusted && !this.turnReduced) { this.deferred.push(p.input); return; }
+    if (this.state !== 'idle' && p.logged && isReduced(p.input) && !this.turnReduced) { this.deferred.push(p.input); return; }
     // The mirror rule: a user message must not run in the reduced turn. It waits for its own full turn.
-    if (this.state !== 'idle' && !p.logged && this.turnReduced) { this.deferredUsers.push(p.input); return; }
+    if (this.state !== 'idle' && !p.logged && this.turnReduced) { this.deferredUsers.push({ input: p.input, at: this.logUserRows(p.input) }); return; }
     if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
     if (this.state === 'waiting') { this.queued.push(p); return; }
     this.start(p, true);
@@ -152,7 +163,8 @@ export class TurnRunner {
 
   private start(first: Pending, logIt: boolean): void {
     this.state = 'waiting';
-    this.turnReduced = first.logged && !first.input.trusted;
+    this.turnReduced = first.logged && isReduced(first.input);
+    this.lastReduced = this.turnReduced;
     this.turnProject = first.input.project;
     this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
@@ -176,12 +188,18 @@ export class TurnRunner {
 
   /** Log a user message; returns the index of its first row. */
   private logUser(input: UserInput): number {
-    return this.d.log({ kind: 'user', text: input.text, project: input.project, media: input.media })[0]?.i ?? this.d.store.count();
+    return this.logUserRows(input)[0];
+  }
+
+  /** Log a user message; returns the index of every row it takes. */
+  private logUserRows(input: UserInput): number[] {
+    const rows = this.d.log({ kind: 'user', text: input.text, project: input.project, media: input.media }).map((m) => m.i);
+    return rows.length ? rows : [this.d.store.count()];
   }
 
   /** Send a message to the running process. `logIt` false: the caller already logged it. */
   private handOff(p: Pending, logIt = true): void {
-    if (logIt && !p.logged) this.logUser(p.input);
+    if (logIt && !p.logged && !p.at) this.logUser(p.input);
     this.handoffPending = true;
     this.afterHandOff?.();
     this.d.manager.sendMessage(this.turnId!, this.content(p, []));
@@ -206,17 +224,22 @@ export class TurnRunner {
       }
       // The reports this turn answers (the first, the queued ones, and those that waited behind an earlier turn) are
       // its messages, not view lines. Every other row is in the view, so a report that waited still sees the turn before it.
-      const own = [...(first.logged ? [first.input.i] : []), ...this.queued.flatMap((q) => (q.logged ? [q.input.i] : [])), ...this.deferred.map((r) => r.i)];
+      const own = [
+        ...(first.logged ? rowsOf(first.input) : first.at ?? []),
+        ...this.queued.flatMap((q) => (q.logged ? rowsOf(q.input) : q.at ?? [])),
+        ...this.deferred.flatMap(rowsOf),
+        ...this.deferredUsers.flatMap((u) => u.at),
+      ];
       const view = d.views.turnBlocks(undefined, own);
       const status = d.statusBlock(first.input.project);
       // … then log every user message of this turn, so that each message has its log index.
       // The model receives the messages in log order: a report logged during the wait comes
       // before a user message that is logged now. A retried message is already logged (-1: first).
       const order: { p: Pending; at: number }[] = [];
-      order.push({ p: first, at: first.logged ? first.input.i : logIt ? this.logUser(first.input) : -1 });
+      order.push({ p: first, at: first.logged ? first.input.i : first.at ? first.at[0] : logIt ? this.logUser(first.input) : -1 });
       while (this.queued.length) {
         const q = this.queued[0];
-        const at = q.logged ? q.input.i : this.logUser(q.input);
+        const at = q.logged ? q.input.i : q.at ? q.at[0] : this.logUser(q.input);
         this.queued.shift(); // only after it is logged: a failed log leaves it for `finally`
         order.push({ p: q, at });
       }
@@ -253,7 +276,7 @@ export class TurnRunner {
       try {
         // User messages that never reached the log are logged so that they are not lost.
         // Reports are already in the log; the next turn sees them in its view (no auto-retry).
-        for (const q of this.queued.splice(0)) if (!q.logged) this.logUser(q.input);
+        for (const q of this.queued.splice(0)) if (!q.logged && !q.at) this.logUser(q.input);
       } catch (err) {
         error ??= err instanceof Error ? err.message : String(err);
       }
@@ -275,11 +298,11 @@ export class TurnRunner {
     const reports = this.deferred.splice(0);
     const users = this.deferredUsers.splice(0);
     try {
-      if (stopped) { for (const u of users) this.logUser(u); return; }
+      if (stopped) return; // the waiting user messages are already in the log
       if (this.state !== 'idle') return;
       if (users.length) {
-        this.start({ logged: false, input: users[0] }, true);
-        for (const input of users.slice(1)) this.queued.push({ logged: false, input });
+        this.start({ logged: false, input: users[0].input, at: users[0].at }, false);
+        for (const u of users.slice(1)) this.queued.push({ logged: false, input: u.input, at: u.at });
       } else if (reports.length) {
         this.start({ logged: true, input: reports[0] }, true);
         for (const input of reports.slice(1)) this.queued.push({ logged: true, input });

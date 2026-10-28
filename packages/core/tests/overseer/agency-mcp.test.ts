@@ -624,7 +624,7 @@ describe('agency-mcp', () => {
 
       const out = await callTool('read_thread', { id: 'p1' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: 'Did the thing', tools: ['Edit'] });
+      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread p1[^\n]*\n+Did the thing\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Edit'] });
       expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/p1');
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=500');
     });

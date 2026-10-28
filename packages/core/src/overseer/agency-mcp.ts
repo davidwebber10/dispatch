@@ -22,6 +22,7 @@
  * crashes on a bad request.
  */
 
+import { untrustedBlock } from '../security/untrusted-text.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -943,7 +944,7 @@ async function readThread(args: { id: string; tail?: number }): Promise<{ id: st
   const items: any[] = Array.isArray(conv?.items) ? conv.items : [];
   const output = items.filter((it) => it?.kind === 'assistant' && it.text).map((it) => it.text).join('\n\n').trim();
   const tools = items.filter((it) => it?.kind === 'tool' && it.toolName).map((it) => it.toolName as string);
-  return { id: args.id, status: terminal?.status ?? null, output: output || '(no assistant output captured yet)', tools: tools.slice(-30) };
+  return { id: args.id, status: terminal?.status ?? null, output: output ? untrustedBlock(`thread ${args.id}`, output) : '(no assistant output captured yet)', tools: tools.slice(-30) };
 }
 
 /** Generalizes message_agent to any thread in the project (after a project-scope check). */
