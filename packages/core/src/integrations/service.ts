@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { McpServerSpec } from '../mcp/injection.js';
-import { findSecretRefs, refsIn } from './secret-refs.js';
+import { findSecretRefs, refsIn, literalSecretProblem } from './secret-refs.js';
 import { launcherArgs, MCP_REMOTE_PACKAGE, type LaunchSpec } from './launcher.js';
 
 /** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
@@ -27,11 +27,11 @@ export class IntegrationsService {
     if (typeof input.name !== 'string' || !NAME_RE.test(input.name)) return 'name must match ^[a-zA-Z0-9_-]+$ (no spaces)';
     if (input.type === 'remote') {
       if (typeof input.url !== 'string' || !/^https?:\/\//.test(input.url)) return 'remote requires an http(s) url';
-      return null;
+      return literalSecretProblem(input);
     }
     if (input.type === 'stdio') {
       if (typeof input.command !== 'string' || !input.command.trim()) return 'stdio requires a command';
-      return null;
+      return literalSecretProblem({ env: input.env });
     }
     return `unknown integration type: ${String(input.type)}`;
   }

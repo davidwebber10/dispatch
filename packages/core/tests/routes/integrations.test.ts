@@ -27,6 +27,15 @@ describe('integrations routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST / rejects a typed-in secret with 400 and says to use a ${NAME} reference (SEC-17)', async () => {
+    const res = await request(app).post('/api/integrations').send({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer abc' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Authorization.*\$\{MY_API_TOKEN\}/);
+    expect((await request(app).get('/api/integrations')).body.integrations).toEqual([]);
+    const ok = await request(app).post('/api/integrations').send({ type: 'remote', name: 'linear', url: 'https://mcp.linear.app/sse', headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' } });
+    expect(ok.status).toBe(200);
+  });
+
   it('POST / rejects a duplicate name with 409', async () => {
     await request(app).post('/api/integrations').send({ type: 'stdio', name: 'fs', command: 'x' });
     const res = await request(app).post('/api/integrations').send({ type: 'stdio', name: 'fs', command: 'y' });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { refsIn, findSecretRefs, substituteSecretRefs } from '../../src/integrations/secret-refs.js';
+import { refsIn, findSecretRefs, substituteSecretRefs, literalSecretProblem } from '../../src/integrations/secret-refs.js';
 
 describe('refsIn', () => {
   it('finds each ${NAME} once, in order', () => {
@@ -46,5 +46,23 @@ describe('findSecretRefs', () => {
 describe('substituteSecretRefs', () => {
   it('replaces each ref that has a value and leaves the rest literal', () => {
     expect(substituteSecretRefs('${A}:${B}:${A}', { A: 'fake-a' })).toBe('fake-a:${B}:fake-a');
+  });
+});
+
+describe('literalSecretProblem (SEC-17)', () => {
+  it('names the first secret-looking header or env entry that holds a typed-in value', () => {
+    expect(literalSecretProblem({ headers: { Authorization: 'Bearer abc123' } })).toMatch(/header "Authorization".*\$\{MY_API_TOKEN\}/);
+    expect(literalSecretProblem({ headers: { 'x-api-key': 'abc' } })).toMatch(/x-api-key/);
+    expect(literalSecretProblem({ env: { GITHUB_TOKEN: 'ghp_x' } })).toMatch(/env "GITHUB_TOKEN"/);
+    for (const k of ['API_KEY', 'MY_SECRET', 'DB_PASSWORD', 'accessKey', 'client-secret', 'AWS_SECRET_ACCESS_KEY', 'Cookie']) {
+      expect(literalSecretProblem({ env: { [k]: 'literal' } }), k).not.toBeNull();
+    }
+  });
+  it('accepts a ${NAME} reference (alone or inside text), an empty value, and names that only look similar', () => {
+    expect(literalSecretProblem({ headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: { API_KEY: '${API_KEY}' } })).toBeNull();
+    expect(literalSecretProblem({ env: { API_KEY: '' } })).toBeNull();
+    for (const k of ['TOKEN_URL', 'KEYBOARD', 'MONKEY', 'ROOT', 'X-Team', 'Accept', 'PORT', 'LOG_LEVEL', 'KEY_ID']) {
+      expect(literalSecretProblem({ env: { [k]: 'literal' }, headers: { [k]: 'literal' } }), k).toBeNull();
+    }
   });
 });

@@ -24,6 +24,23 @@ describe('IntegrationsService', () => {
     expect(IntegrationsService.validate({ type: 'remote', name: 'ok', url: 'https://x' })).toBeNull();
   });
 
+  it('rejects a typed-in secret in a header or env value; a ${NAME} reference is fine (SEC-17)', () => {
+    expect(() => s.add({ type: 'remote', name: 'a', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' } })).toThrow(/Authorization.*\$\{/);
+    expect(() => s.add({ type: 'stdio', name: 'b', command: 'x', env: { GITHUB_TOKEN: 'ghp_literal' } })).toThrow(/GITHUB_TOKEN/);
+    expect(() => s.add({ type: 'remote', name: 'c', url: 'https://x.example/sse', env: { API_KEY: 'k' } })).toThrow(/API_KEY/);
+    expect(s.list()).toEqual([]);
+    s.add({ type: 'remote', name: 'ok', url: 'https://x.example/sse', headers: { Authorization: 'Bearer ${OK_TOKEN}', 'X-Team': 'eng' }, env: { API_KEY: '${OK_KEY}', REGION: 'us' } });
+    expect(s.list().map((x) => x.name)).toEqual(['ok']);
+  });
+
+  it('import skips an entry with a typed-in secret and adds the rest', () => {
+    const out = s.import({ version: 1, integrations: [
+      { name: 'bad', type: 'remote', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' }, env: {}, command: null, args: [], enabled: true } as any,
+      { name: 'good', type: 'remote', url: 'https://y.example/sse', headers: { Authorization: 'Bearer ${G_TOKEN}' }, env: {}, command: null, args: [], enabled: true } as any,
+    ] });
+    expect(out).toEqual({ added: ['good'], skipped: ['bad'] });
+  });
+
   it('rejects a duplicate name (case-insensitive)', () => {
     s.add({ type: 'stdio', name: 'fs', command: 'x' });
     expect(() => s.add({ type: 'stdio', name: 'FS', command: 'y' })).toThrow(/exists/);
@@ -81,9 +98,9 @@ describe('IntegrationsService', () => {
 
     it('keeps a literal env value out of argv: it stays on the spec env (today\'s path), only the ref goes into --spec', () => {
       const LITERAL = 'fake-literal-secret-789';
-      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { API_KEY: LITERAL, OTHER: '${X}' } });
+      l.add({ type: 'stdio', name: 'mixed', command: 'npx', args: ['-y', 'mixed-mcp'], env: { REGION: LITERAL, OTHER: '${X}' } });
       const [spec] = l.getServerSpecs();
-      expect(spec.env).toEqual({ API_KEY: LITERAL });
+      expect(spec.env).toEqual({ REGION: LITERAL });
       const decoded = unwrap(spec);
       expect(decoded.env).toEqual({ OTHER: '${X}' });
       expect(spec.args.join(' ')).not.toContain(LITERAL);

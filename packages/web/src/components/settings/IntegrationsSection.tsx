@@ -62,7 +62,11 @@ export function IntegrationsSection() {
       setName(''); setUrl(''); setHeaders(''); setCommand(''); setArgs(''); setEnv('');
       setSheet(false);
       await reload();
-    } catch { setErr('Could not add — check the name is unique and the inputs are valid.'); }
+    } catch (e) {
+      // A typed-in secret is refused with advice to use a ${NAME} reference: show that text, not the generic line.
+      const detail = e instanceof Error ? e.message.split(' — ').slice(1).join(' — ') : '';
+      setErr(/looks like a secret/.test(detail) ? detail : 'Could not add — check the name is unique and the inputs are valid.');
+    }
     setBusy(false);
   }
   async function toggle(i: Integration) { if (busy) return; setBusy(true); setErr(''); try { await api.setIntegrationEnabled(i.id, !i.enabled); await reload(); } catch { setErr('Could not update.'); } setBusy(false); }

@@ -36,3 +36,34 @@ export function findSecretRefs(i: RefSource): string[] {
 export function substituteSecretRefs(template: string, values: Record<string, string>): string {
   return template.replace(REF_RE, (whole, name: string) => (Object.hasOwn(values, name) ? values[name] : whole));
 }
+
+/**
+ * A header or env name that holds a credential: Authorization / Cookie, or a name that ends in
+ * token, secret, password, credential, apikey, or `_key` / `-key` (`API_KEY`, `x-api-key`, `accessKey`).
+ * Suffix match only, so `TOKEN_URL`, `KEYBOARD` and `MONKEY` are not caught.
+ */
+export function looksSecretName(name: string): boolean {
+  const n = name.trim();
+  if (/^(proxy-)?authorization$|^(set-)?cookie$/i.test(n)) return true;
+  if (/(token|secret|password|passwd|credentials?|apikey)s?$/i.test(n)) return true;
+  return /(^|[_-])key$/i.test(n) || /[a-z]Key$/.test(n);
+}
+
+/**
+ * The first header or env entry that looks secret but holds a typed-in literal (no `${NAME}` ref),
+ * as a message for the user; null when every such entry is empty or a reference. A literal ends up in
+ * argv (a remote header), in 0644 config files and in the database, so it is refused up front.
+ */
+export function literalSecretProblem(i: { headers?: unknown; env?: unknown }): string | null {
+  const check = (kind: 'header' | 'env', bag: unknown): string | null => {
+    if (!bag || typeof bag !== 'object') return null;
+    for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
+      const value = typeof v === 'string' ? v : v == null ? '' : String(v);
+      if (!value.trim() || !looksSecretName(k) || refsIn(value).length) continue;
+      const example = kind === 'header' && /authorization/i.test(k) ? 'Bearer ${MY_API_TOKEN}' : '${MY_API_TOKEN}';
+      return `${kind} "${k}" looks like a secret. Do not type its value here: store the value in Secrets and write a reference such as ${example}`;
+    }
+    return null;
+  };
+  return check('header', i.headers) ?? check('env', i.env);
+}
