@@ -6,8 +6,8 @@ import { wsMaxPayload } from '../caps.js';
  * (the `ws` default is 100 MiB). `ws` reports that as an 'error' event on the socket, and an 'error'
  * event with no listener throws and takes the daemon down: so every upgraded socket gets a listener here.
  */
-export function createClientWss(): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: wsMaxPayload() });
+export function createClientWss(maxPayload: number = wsMaxPayload()): WebSocketServer {
+  const wss = new WebSocketServer({ noServer: true, maxPayload });
   const upgrade = wss.handleUpgrade.bind(wss);
   wss.handleUpgrade = (req, socket, head, cb) => upgrade(req, socket, head, (ws, r) => {
     ws.on('error', () => { /* the close that follows is the whole story */ });

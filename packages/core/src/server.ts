@@ -33,6 +33,7 @@ import { createPairCodes } from './auth/pair-code.js';
 import { mountApiRoutes } from './server-routes.js';
 import { createJsonBody } from './http/json-body.js';
 import { createClientWss } from './ws/client-wss.js';
+import { wsMaxPayload, wsTerminalMaxPayload } from './caps.js';
 import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
@@ -372,7 +373,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const rolesService = new RolesService({ db, agentService, sessionService, pushService });
   agentService.setRoleRunner(rolesService);
   const secretsService = options.secretsService ?? new SecretsService(dispatchDir);
-  const integrationsService = new IntegrationsService(db, integrationLauncher(dispatchDir));
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dispatchDir), () => secretsService.status().connected);
   sessionService.setSecretsServerSpec(() => ({ spec: secretsService.getServerSpec(), prompt: secretsService.getSystemPrompt() }));
   sessionService.setIntegrationsSpecs(() => integrationsService.getServerSpecs());
   // Unlike startServer, no refresh at boot or behind a spawn: tests spawn sessions through this
@@ -507,9 +508,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create WebSocket servers (noServer mode)
   // maxPayload: one client message over the cap closes that socket (the default of ws is 100 MiB).
-  const eventsWss = createClientWss();
-  const terminalWss = createClientWss();
-  const structuredWss = createClientWss();
+  const eventsWss = createClientWss(wsMaxPayload());
+  const terminalWss = createClientWss(wsTerminalMaxPayload()); // typed and pasted input comes through this one
+  const structuredWss = createClientWss(wsMaxPayload());
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.
@@ -628,7 +629,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Doppler secrets: token-backed connection + per-spawn injection (DOPPLER_* env +
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const secretsService = new SecretsService(dataDir);
-  const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir));
+  const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => secretsService.status().connected);
   // Terminal-free Claude login (design doc §11.2). Its token is injected below in
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.

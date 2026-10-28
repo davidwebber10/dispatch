@@ -55,5 +55,14 @@ export function insideRealRoot(root: string, target: string): boolean {
   let real: string;
   try { real = fs.realpathSync(probe); } catch { return false; }
   const full = path.join(real, ...rest);
-  return [realRoot, ...extraRoots()].some((r) => within(r, full));
+  if ([realRoot, ...extraRoots()].some((r) => within(r, full))) return true;
+  // A project folder inside a workspace (repo/packages/web) has node_modules links to repo/node_modules/.pnpm/...,
+  // outside the project. Dependency folders are not a way to a private file: a path that goes through node_modules and
+  // lands inside another node_modules folder is allowed. A link into /etc or a home folder is still refused.
+  return inNodeModules(path.resolve(target)) && inNodeModules(full);
+}
+
+const NODE_MODULES = `${path.sep}node_modules${path.sep}`;
+function inNodeModules(p: string): boolean {
+  return `${p}${path.sep}`.includes(NODE_MODULES);
 }

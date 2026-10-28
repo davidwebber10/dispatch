@@ -33,12 +33,20 @@ describe('IntegrationsService', () => {
     expect(s.list().map((x) => x.name)).toEqual(['ok']);
   });
 
+  it('without Doppler (no way to resolve a reference) a typed-in value is allowed', () => {
+    const d = new Database(':memory:'); initSchema(d);
+    const noDoppler = new IntegrationsService(d, null, () => false);
+    expect(() => noDoppler.add({ type: 'remote', name: 'k', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' } })).not.toThrow();
+  });
+
   it('import skips an entry with a typed-in secret and adds the rest', () => {
     const out = s.import({ version: 1, integrations: [
       { name: 'bad', type: 'remote', url: 'https://x.example/sse', headers: { Authorization: 'Bearer abc' }, env: {}, command: null, args: [], enabled: true } as any,
       { name: 'good', type: 'remote', url: 'https://y.example/sse', headers: { Authorization: 'Bearer ${G_TOKEN}' }, env: {}, command: null, args: [], enabled: true } as any,
     ] });
-    expect(out).toEqual({ added: ['good'], skipped: ['bad'] });
+    expect(out.added).toEqual(['good']);
+    expect(out.skipped).toEqual(['bad']);
+    expect(out.reasons).toEqual([{ name: 'bad', reason: expect.stringMatching(/Authorization.*\$\{MY_API_TOKEN\}/) }]);
   });
 
   it('rejects a duplicate name (case-insensitive)', () => {
@@ -136,8 +144,8 @@ describe('IntegrationsService', () => {
     expect(doc.version).toBe(1);
     expect(doc.integrations[0]).not.toHaveProperty('id');
     const s2 = svc();
-    expect(s2.import(doc)).toEqual({ added: ['linear'], skipped: [] });
+    expect(s2.import(doc)).toEqual({ added: ['linear'], skipped: [], reasons: [] });
     // re-import into the same store skips the existing name
-    expect(s2.import(doc)).toEqual({ added: [], skipped: ['linear'] });
+    expect(s2.import(doc)).toEqual({ added: [], skipped: ['linear'], reasons: [] });
   });
 });

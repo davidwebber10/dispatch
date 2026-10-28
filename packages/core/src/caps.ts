@@ -24,6 +24,9 @@ export const maxLargeJsonBytes = (): number => fromEnv('DISPATCH_MAX_LARGE_JSON_
 /** One WebSocket message from a client (the terminal socket carries typed and pasted input). DISPATCH_WS_MAX_PAYLOAD (default 1 MiB). */
 export const wsMaxPayload = (): number => fromEnv('DISPATCH_WS_MAX_PAYLOAD', 1 * MiB) || 1 * MiB;
 
+/** One message on the terminal socket, which carries typed and pasted input (a whole paste is one message). DISPATCH_WS_TERMINAL_MAX_PAYLOAD (default 8 MiB). */
+export const wsTerminalMaxPayload = (): number => fromEnv('DISPATCH_WS_TERMINAL_MAX_PAYLOAD', 8 * MiB) || 8 * MiB;
+
 /** Running threads (a live process) in one project before a new one is refused. DISPATCH_MAX_LIVE_THREADS (default 60; 0 = no cap). */
 export const maxLiveThreadsPerProject = (): number => fromEnv('DISPATCH_MAX_LIVE_THREADS', 60);
 

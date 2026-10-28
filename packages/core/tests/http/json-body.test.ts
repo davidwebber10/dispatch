@@ -8,7 +8,7 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { maxJsonBytes, maxLargeJsonBytes, wsMaxPayload } from '../../src/caps.js';
+import { maxJsonBytes, maxLargeJsonBytes, wsMaxPayload, wsTerminalMaxPayload } from '../../src/caps.js';
 
 describe('request body caps', () => {
   let app: any;
@@ -28,6 +28,7 @@ describe('request body caps', () => {
     expect(maxJsonBytes()).toBe(1024 * 1024);
     expect(maxLargeJsonBytes()).toBe(50 * 1024 * 1024);
     expect(wsMaxPayload()).toBe(1024 * 1024);
+    expect(wsTerminalMaxPayload()).toBe(8 * 1024 * 1024); // a whole paste is one message
   });
 
   it('a normal route refuses a body over 1 MiB with 413, and takes a smaller one', async () => {

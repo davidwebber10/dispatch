@@ -8,7 +8,7 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
   router.get('/', (_req, res) => res.json({ integrations: integrations.list() }));
 
   router.post('/', (req, res) => {
-    const err = (integrations.constructor as typeof IntegrationsService).validate(req.body);
+    const err = integrations.validateInput(req.body);
     if (err) return res.status(400).json({ error: err });
     try {
       res.json(integrations.add(req.body as AddIntegrationInput));

@@ -81,7 +81,7 @@ export function IntegrationsSection() {
   }
   async function doImport(file: File) {
     setErr('');
-    try { const doc = JSON.parse(await file.text()) as IntegrationsExport; const r = await api.importIntegrations(doc); await reload(); setErr(`Imported ${r.added.length}, skipped ${r.skipped.length}.`); }
+    try { const doc = JSON.parse(await file.text()) as IntegrationsExport; const r = await api.importIntegrations(doc); await reload(); setErr(`Imported ${r.added.length}, skipped ${r.skipped.length}.${r.reasons?.[0] ? ` ${r.reasons[0].name}: ${r.reasons[0].reason}` : ""}`); }
     catch { setErr('Import failed — invalid file.'); }
   }
 

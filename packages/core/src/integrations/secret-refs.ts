@@ -59,8 +59,8 @@ export function literalSecretProblem(i: { headers?: unknown; env?: unknown }): s
     if (!bag || typeof bag !== 'object') return null;
     for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
       const value = typeof v === 'string' ? v : v == null ? '' : String(v);
-      // A number or a flag (MAX_TOKEN=4096) is a setting, not a credential.
-      if (!value.trim() || !looksSecretName(k) || refsIn(value).length || /^(\d+(\.\d+)?|true|false)$/i.test(value.trim())) continue;
+      // A number or a flag (MAX_TOKEN=4096) is a setting, and a file path (SSL_KEY=/etc/ssl/key.pem) names a key, not a credential.
+      if (!value.trim() || !looksSecretName(k) || refsIn(value).length || /^(\d+(\.\d+)?|true|false)$/i.test(value.trim()) || /^(\/|~\/)/.test(value.trim())) continue;
       const example = kind === 'header' && /authorization/i.test(k) ? 'Bearer ${MY_API_TOKEN}' : '${MY_API_TOKEN}';
       return `${kind} "${k}" looks like a secret. Do not type its value here: store the value in Secrets and write a reference such as ${example}`;
     }

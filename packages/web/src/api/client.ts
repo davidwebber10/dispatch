@@ -333,7 +333,7 @@ export const api = {
   setIntegrationEnabled: (id: string, enabled: boolean) => req<Integration>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ enabled }) }),
   removeIntegration: (id: string) => req<{ removed: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   exportIntegrations: () => req<IntegrationsExport>('/api/integrations/export'),
-  importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
+  importIntegrations: (doc: IntegrationsExport) => req<{ added: string[]; skipped: string[]; reasons?: { name: string; reason: string }[] }>('/api/integrations/import', { method: 'POST', body: body(doc) }),
 
   // Push notifications
   getPushKey: () => req<{ publicKey: string }>('/api/push/key'),

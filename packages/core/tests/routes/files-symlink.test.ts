@@ -118,6 +118,18 @@ describe('file routes refuse symlinks that lead out of the project', () => {
     expect((await request(app).get('/api/sessions/s1/files?path=node_modules/@x/a')).status).toBe(200);
   });
 
+  it('a dependency link out of a workspace package into another node_modules keeps working; a link into a plain folder does not', async () => {
+    // repo/node_modules/.pnpm/react/node_modules/react  <-  project/node_modules/react   (project = repo/packages/web)
+    const dep = path.join(base, 'node_modules/.pnpm/react@1/node_modules/react');
+    fs.mkdirSync(dep, { recursive: true });
+    fs.writeFileSync(path.join(dep, 'index.js'), 'module.exports = 1');
+    fs.mkdirSync(path.join(project, 'node_modules'), { recursive: true });
+    fs.symlinkSync(dep, path.join(project, 'node_modules/react'));
+    fs.symlinkSync(outside, path.join(project, 'node_modules/evil'));
+    expect((await request(app).get('/api/sessions/s1/files/read?path=node_modules/react/index.js')).body.content).toBe('module.exports = 1');
+    expect((await request(app).get('/api/sessions/s1/files/read?path=node_modules/evil/secret.txt')).status).toBe(403);
+  });
+
   it('DISPATCH_FILE_ROOTS lets a link lead into a named folder outside the project; "/" turns the check off', async () => {
     const prev = process.env.DISPATCH_FILE_ROOTS;
     try {

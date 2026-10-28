@@ -19,7 +19,11 @@ export interface IntegrationsExport { version: 1; integrations: ExportedIntegrat
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
 export class IntegrationsService {
-  constructor(private db: Database.Database, private launcher: IntegrationLauncher | null = null) {}
+  /**
+   * `refsAvailable`: true when a `${NAME}` reference can resolve (Doppler is connected). Without it a typed-in value is the only
+   * way to give a server its key, so it is allowed (SEC-17 refuses a literal only where a reference can be used instead).
+   */
+  constructor(private db: Database.Database, private launcher: IntegrationLauncher | null = null, private refsAvailable: () => boolean = () => true) {}
 
   /** Returns an error string if the input is invalid, else null. */
   static validate(input: any): string | null {
@@ -27,19 +31,27 @@ export class IntegrationsService {
     if (typeof input.name !== 'string' || !NAME_RE.test(input.name)) return 'name must match ^[a-zA-Z0-9_-]+$ (no spaces)';
     if (input.type === 'remote') {
       if (typeof input.url !== 'string' || !/^https?:\/\//.test(input.url)) return 'remote requires an http(s) url';
-      return literalSecretProblem(input);
+      return null;
     }
     if (input.type === 'stdio') {
       if (typeof input.command !== 'string' || !input.command.trim()) return 'stdio requires a command';
-      return literalSecretProblem({ env: input.env });
+      return null;
     }
     return `unknown integration type: ${String(input.type)}`;
+  }
+
+  /** The static checks, then the SEC-17 check: no typed-in secret where a `${NAME}` reference can be used. */
+  validateInput(input: any): string | null {
+    const err = IntegrationsService.validate(input);
+    if (err) return err;
+    if (!this.refsAvailable()) return null;
+    return literalSecretProblem(input.type === 'remote' ? input : { env: input.env });
   }
 
   list(): Integration[] { return integrationsDb.list(this.db); }
 
   add(input: AddIntegrationInput): Integration {
-    const err = IntegrationsService.validate(input);
+    const err = this.validateInput(input);
     if (err) throw new Error(err);
     if (this.list().some((i) => i.name.toLowerCase() === input.name.toLowerCase())) {
       throw new Error(`an integration named "${input.name}" already exists`);
@@ -108,17 +120,18 @@ export class IntegrationsService {
     return { version: 1, integrations: this.list().map(({ id, createdAt, updatedAt, ...rest }) => rest) };
   }
 
-  import(doc: IntegrationsExport): { added: string[]; skipped: string[] } {
-    const added: string[] = []; const skipped: string[] = [];
+  import(doc: IntegrationsExport): { added: string[]; skipped: string[]; reasons: { name: string; reason: string }[] } {
+    const added: string[] = []; const skipped: string[] = []; const reasons: { name: string; reason: string }[] = [];
     const existing = new Set(this.list().map((i) => i.name.toLowerCase()));
     for (const e of doc?.integrations ?? []) {
       if (!e || typeof e.name !== 'string' || existing.has(e.name.toLowerCase())) { if (e?.name) skipped.push(e.name); continue; }
       const input: AddIntegrationInput = e.type === 'stdio'
         ? { type: 'stdio', name: e.name, command: e.command ?? '', args: e.args, env: e.env }
         : { type: 'remote', name: e.name, url: e.url ?? '', headers: e.headers, env: e.env };
-      if (IntegrationsService.validate(input)) { skipped.push(e.name); continue; }
+      const problem = this.validateInput(input);
+      if (problem) { skipped.push(e.name); reasons.push({ name: e.name, reason: problem }); continue; }
       this.add(input); existing.add(e.name.toLowerCase()); added.push(e.name);
     }
-    return { added, skipped };
+    return { added, skipped, reasons };
   }
 }

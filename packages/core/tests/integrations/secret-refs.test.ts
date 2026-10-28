@@ -62,6 +62,7 @@ describe('literalSecretProblem (SEC-17)', () => {
     expect(literalSecretProblem({ headers: { Authorization: 'Bearer ${LINEAR_TOKEN}' }, env: { API_KEY: '${API_KEY}' } })).toBeNull();
     expect(literalSecretProblem({ env: { API_KEY: '' } })).toBeNull();
     expect(literalSecretProblem({ env: { MAX_TOKEN: '4096', SECRET_ENABLED: 'true' } })).toBeNull(); // a number or a flag is a setting
+    expect(literalSecretProblem({ env: { SSL_KEY: '/etc/ssl/server.key', SSH_KEY: '~/.ssh/id_ed25519' } })).toBeNull(); // a path names a key
     for (const k of ['TOKEN_URL', 'KEYBOARD', 'MONKEY', 'ROOT', 'X-Team', 'Accept', 'PORT', 'LOG_LEVEL', 'KEY_ID', 'MAX_TOKENS', 'GOOGLE_APPLICATION_CREDENTIALS']) {
       expect(literalSecretProblem({ env: { [k]: 'literal' }, headers: { [k]: 'literal' } }), k).toBeNull();
     }
