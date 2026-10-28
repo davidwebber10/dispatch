@@ -104,6 +104,8 @@ export function formatOwnerDecisionsNotice(outcome: CaptureOutcome): string[] {
       'Triage each now: ledger_add_from_agent sends it to the user; ledger_decide_self records your own choice.',
     );
   }
-  for (const s of outcome.skipped) lines.push(`Skipped owner decision ${s.id}: ${s.reason}`);
+  // The id and the reason can hold text the agent wrote: one short line each, so they cannot add a line of their own.
+  const oneShort = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+  for (const s of outcome.skipped) lines.push(`Skipped owner decision ${oneShort(s.id, 60)}: ${oneShort(s.reason, 300)}`);
   return lines;
 }
