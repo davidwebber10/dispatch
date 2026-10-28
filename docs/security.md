@@ -21,6 +21,24 @@ Dispatch has one owner per daemon. It has no user accounts and no per-person per
   of other threads. Keep that in mind before you point a thread at content you do not trust.
 - Every program on the computer that runs Dispatch can call the daemon. Agents are such programs.
 
+## Limits you can change
+
+These limits stop a runaway agent or a client bug. Normal use does not reach them. Each one reads an
+environment variable when the daemon starts; set it with `dispatch install` like the other settings.
+
+| What | Default | Setting |
+| --- | --- | --- |
+| JSON request body | 1 MiB | `DISPATCH_MAX_JSON_BYTES` |
+| JSON request body on the routes that carry big payloads (agent hook events, thread messages with images, Chat messages, file save, icons) | 50 MiB | `DISPATCH_MAX_LARGE_JSON_BYTES` |
+| One WebSocket message from a client | 1 MiB | `DISPATCH_WS_MAX_PAYLOAD` |
+| Live threads (a running process) in one project | 60 (0 = no cap) | `DISPATCH_MAX_LIVE_THREADS` |
+| Shortest gap between runs of a recurring schedule | 1 minute (0 = no minimum) | `DISPATCH_MIN_SCHEDULE_MINUTES` |
+| Folders outside a project that a link inside it may lead to | none | `DISPATCH_FILE_ROOTS` (a `:`-separated list; `/` allows any) |
+
+The file routes follow symbolic links, so a link inside a project that stays inside the project
+works as before. A link that leads outside the project is refused unless its target is under a
+folder in `DISPATCH_FILE_ROOTS`.
+
 ## Secrets
 
 - The Settings page lists the names of your Doppler secrets. A value is read one at a time,
