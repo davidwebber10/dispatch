@@ -125,6 +125,21 @@ describe('minimum schedule interval (SEC-23)', () => {
         expect(computeNextRunAt(cron('*/15 * * * *'), '2026-06-19T12:01:00.000Z')).toBe('2026-06-19T12:15:00.000Z');
       });
     });
+    it('an irregular cron is held to the minimum after the run that just fired', () => {
+      withMin('5', () => {
+        // 0,1 * * * *: the run at 12:00 would be followed by 12:01 (a 1 minute gap), so the next run is the next hour.
+        const fired = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,1 * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
+        expect(computeNextRunAt(fired, '2026-06-19T12:00:20.000Z')).toBe('2026-06-19T13:00:00.000Z');
+        // A late tick is still counted from the run that was due.
+        expect(computeNextRunAt(fired, '2026-06-19T12:03:10.000Z')).toBe('2026-06-19T13:00:00.000Z');
+        // The same rule with a gap of five minutes or more is left alone.
+        const sparse = sched({ recurrence_rule: rule({ type: 'cron', expr: '0,5 * * * *' }), next_run_at: '2026-06-19T12:00:00.000Z' });
+        expect(computeNextRunAt(sparse, '2026-06-19T12:00:20.000Z')).toBe('2026-06-19T12:05:00.000Z');
+        // A daily cron is never delayed, even when the tick is late.
+        const daily = sched({ recurrence_rule: rule({ type: 'cron', expr: '0 9 * * *' }), next_run_at: '2026-06-19T09:00:00.000Z' });
+        expect(computeNextRunAt(daily, '2026-06-19T09:00:45.000Z')).toBe('2026-06-20T09:00:00.000Z');
+      });
+    });
     it('0 turns the clamp off', () => {
       withMin('0', () => expect(computeNextRunAt(cron('* * * * *'), NOW)).toBe('2026-06-19T12:01:00.000Z'));
     });

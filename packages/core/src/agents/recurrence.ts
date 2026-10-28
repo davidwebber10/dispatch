@@ -65,7 +65,7 @@ export function computeNextRunAt(schedule: AgentScheduleRow, nowIso: string): st
     case 'cron': {
       const expr = String(rule.expr ?? '');
       const next = nextCron(expr, now, tz);
-      return next ? holdCronToMinimum(expr, next, now, tz) : null;
+      return next ? holdCronToMinimum(expr, next, now, tz, schedule.next_run_at) : null;
     }
 
     default:
@@ -185,17 +185,24 @@ function nextCron(expr: string, now: Date, tz: string): string | null {
 
 /**
  * A stored cron rule that runs more often than the minimum still runs, no more often than the minimum
- * (the same promise an interval rule gets above). Only a rule whose next two runs are closer than the
- * minimum is held back, so a daily or hourly cron is never pushed to a later run.
+ * (the same promise an interval rule gets above). A rule is held back when the run before the next one
+ * (the run that just fired, `previousIso`) or the run after it is closer than the minimum, so a daily
+ * or hourly cron is never pushed to a later run.
  */
-function holdCronToMinimum(expr: string, next: string, now: Date, tz: string): string | null {
+function holdCronToMinimum(expr: string, next: string, now: Date, tz: string, previousIso: string | null): string | null {
   const min = minScheduleMinutes();
   if (!min) return next;
+  const limit = min * 60_000;
+  const nextMs = new Date(next).getTime();
+  const previous = previousIso ? new Date(previousIso).getTime() : NaN;
+  const justRan = Number.isFinite(previous) && previous <= now.getTime();
   const after = nextCron(expr, new Date(next), tz);
-  if (!after || new Date(after).getTime() - new Date(next).getTime() >= min * 60_000) return next;
-  const minuteStart = Math.floor(now.getTime() / 60_000) * 60_000;
-  const earliest = minuteStart + min * 60_000;
-  if (new Date(next).getTime() >= earliest) return next;
+  const denseAfter = !!after && new Date(after).getTime() - nextMs < limit;
+  const denseBefore = justRan && nextMs - previous < limit;
+  if (!denseAfter && !denseBefore) return next;
+  // Count the gap from the run that just fired when there is one, else from the start of this minute.
+  const earliest = (justRan ? previous : Math.floor(now.getTime() / 60_000) * 60_000) + limit;
+  if (nextMs >= earliest) return next;
   return nextCron(expr, new Date(earliest - 1), tz);
 }
 
