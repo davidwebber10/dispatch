@@ -81,7 +81,7 @@ describe('owner-decisions block on the Finished notice', () => {
     const { db, svc, sent } = makeService([text(report('```owner-decisions\n[{"id": "LR-6",}]\n```')), result]);
     svc.noteAgentCompletion('a');
     expect(ledgerDb.listBySession(db, 's1')).toEqual([]);
-    expect(String(sent.mock.calls[0][1])).toMatch(/The owner-decisions block could not be read: it is not valid JSON \(.+\)\. Ask the agent to fix it\./);
+    expect(String(sent.mock.calls[0][1])).toMatch(/The owner-decisions block could not be read: it is not valid JSON\. The parser's message quotes the agent's block[^\n]*\n\[\[\[UNTRUSTED [0-9a-f]{16} [^\n]*\n[\s\S]+\n\[\[\[END UNTRUSTED [0-9a-f]{16}\]\]\]\nAsk the agent to fix it\./);
   });
 
   it('no block: no line and no item', () => {

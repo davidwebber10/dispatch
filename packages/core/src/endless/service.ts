@@ -462,7 +462,8 @@ export class EndlessService {
     if (this.phase !== 'ready' || this.closed || this.turns.status !== 'idle') return false;
     const written = this.log({ kind: 'work', text: 'Your usage limit has reset. Continue where you left off.', project: null, ref: null });
     if (!written.length) return false;
-    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null });
+    // The daemon's own line, not a thread's: the turn keeps the full tool set, so the task it resumes can finish.
+    this.turns.deliver({ i: written[0].i, kind: 'work', text: written.map((m) => m.text).join(''), project: null, trusted: true });
     return true;
   }
   /** Set by the daemon: the owner acted on Chat (send, retry, stop), which ends a usage-limit pause. */

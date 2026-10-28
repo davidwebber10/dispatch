@@ -3,6 +3,7 @@
  * zoom(id, n) opens line id+n into the two lines under it; zoom(id, 1) is the message
  * whole, with its images; date(id) is the message's date and time.
  */
+import { untrustedBlock } from '../security/untrusted-text.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { EndlessStore } from './store.js';
@@ -30,7 +31,9 @@ export function zoom(store: EndlessStore, projectName: (id: string | null) => st
   if (n === 1) {
     const m = store.get(id)!;
     const images = m.media.map(readImage).filter((x): x is ZoomImage => x !== null);
-    return { text: `#${id} ${messageLine(m.kind, m.text, projectName(m.project))}`, images };
+    // A thread's report is data (it may carry text from a hostile page): zoom shows it inside the marked block.
+    const body = m.kind === 'work' ? untrustedBlock('a thread report', m.text) : m.text;
+    return { text: `#${id} ${messageLine(m.kind, body, projectName(m.project))}`, images };
   }
   const [a, b] = childrenOf(ref.l, ref.i);
   return { text: [a, b].map((c) => renderLine(c.l, c.i, store.nodeText(c.l, c.i))).join('\n'), images: [] };

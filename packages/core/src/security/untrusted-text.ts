@@ -7,9 +7,12 @@
  */
 import crypto from 'node:crypto';
 
-/** `[[[` and `]]]` open and close the markers; break any run of three in the text. */
+/**
+ * `[[[` and `]]]` open and close the markers. Every run of three or more brackets in the text gets a
+ * space between its brackets, so no three brackets stay in a row, whatever the run length.
+ */
 export function neutralizeMarkers(text: string): string {
-  return text.replace(/\[\[\[/g, '[ [ [').replace(/\]\]\]/g, '] ] ]');
+  return text.replace(/\[{3,}|\]{3,}/g, (run) => run.split('').join(' '));
 }
 
 /** A source label for the opening line: one line, no brackets, no quote tricks, at most 80 characters. */

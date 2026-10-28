@@ -126,12 +126,10 @@ describe('agency-mcp', () => {
 
     const out = await callTool('read_agent', { agentId: 'agent-1' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({
-      agentId: 'agent-1',
-      status: 'waiting',
-      output: 'Found A\n\nRecommend B',
-      tools: ['Grep'],
-    });
+    const body = JSON.parse(out.content[0].text);
+    expect(body).toEqual({ agentId: 'agent-1', status: 'waiting', output: expect.any(String), tools: ['Grep'] });
+    // The agent's words come back inside a marked data block.
+    expect(body.output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from agent agent-1[^\n]*\n+Found A\n\nRecommend B\n\[\[\[END UNTRUSTED \1\]\]\]$/);
     expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/agent-1/conversation?limit=500');
   });
 

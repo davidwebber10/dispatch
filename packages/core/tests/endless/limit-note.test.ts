@@ -65,5 +65,18 @@ describe('wakeAfterLimit', () => {
     expect(works().at(-1)!.text).toContain('Your usage limit has reset');
     expect(svc.turns.status).not.toBe('idle');
   });
+
+  it('is the daemon\'s own line: the turn keeps the full tool set and the line is not marked as thread data', async () => {
+    expect(svc.wakeAfterLimit()).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fake.spawned).toHaveLength(1);
+    const args = fake.spawned[0].opts.args;
+    expect(args).not.toContain('--strict-mcp-config');
+    expect(args[args.indexOf('--disallowedTools') + 1]).toBe('AskUserQuestion');
+    expect(args).not.toContain('Bash');
+    const sent = fake.sent[0].content;
+    const parts = typeof sent === 'string' ? [sent] : sent.map((b: any) => b.text ?? '');
+    expect(parts.at(-1)).toBe('work: Your usage limit has reset. Continue where you left off.');
+  });
 });
 

@@ -26,7 +26,11 @@ export const HANDOFF_RESULT_CEILING_MS = 120_000;
 
 export interface UserInput { text: string; project: string | null; media: string[] }
 /** A message already in the log that a turn must answer: a thread's report (spec section 6.4). */
-export interface LoggedInput { i: number; kind: 'work'; text: string; project: string | null }
+export interface LoggedInput {
+  i: number; kind: 'work'; text: string; project: string | null;
+  /** The daemon wrote this line itself (the usage-limit wake-up), not a thread: no data block, and the full tool set. */
+  trusted?: boolean;
+}
 type Pending = { logged: false; input: UserInput } | { logged: true; input: LoggedInput };
 export type TurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
 export type EndlessEvent =
@@ -116,7 +120,7 @@ export class TurnRunner {
   private accept(p: Pending): void {
     // A report must not reach a process that has the user's shell and connectors. It is already
     // in the log; it waits here and starts its own (reduced) turn when this one ends.
-    if (this.state !== 'idle' && p.logged && !this.turnReduced) { this.deferred.push(p.input); return; }
+    if (this.state !== 'idle' && p.logged && !p.input.trusted && !this.turnReduced) { this.deferred.push(p.input); return; }
     if (this.state === 'running' && this.turnId) { this.handOff(p); return; }
     if (this.state === 'waiting') { this.queued.push(p); return; }
     this.start(p, true);
@@ -144,7 +148,7 @@ export class TurnRunner {
 
   private start(first: Pending, logIt: boolean): void {
     this.state = 'waiting';
-    this.turnReduced = first.logged;
+    this.turnReduced = first.logged && !first.input.trusted;
     this.turnProject = first.input.project;
     this.handoffPending = false;
     this.d.emit({ type: 'endless:turn', status: 'waiting' });
@@ -155,7 +159,7 @@ export class TurnRunner {
   private content(p: Pending, before: string[]): ContentBlock[] {
     const blocks: ContentBlock[] = before.map((text) => ({ type: 'text', text }));
     // A thread's report is text that a hostile page or pull request may have shaped: it goes to the model as data.
-    const text = p.logged ? untrustedBlock('a thread report', p.input.text) : p.input.text;
+    const text = p.logged && !p.input.trusted ? untrustedBlock('a thread report', p.input.text) : p.input.text;
     blocks.push({ type: 'text', text: messageLine(p.logged ? p.input.kind : 'user', text, this.d.projectName(p.input.project)) });
     if (!p.logged) {
       for (const file of p.input.media) {
