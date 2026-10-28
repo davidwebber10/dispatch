@@ -11,7 +11,7 @@ import { KeyStreamRedactor, redactKeys, redactKeysDeep } from '../auth/redact-ke
 import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
-import { computeNextRunAt } from './recurrence.js';
+import { computeNextRunAt, scheduleTooFrequent } from './recurrence.js';
 import { RunStreamParser, runEventToStep, type RunEvent, type RunStep } from './run-stream.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
@@ -245,6 +245,8 @@ export class AgentService {
   }
 
   createSchedule(input: CreateScheduleRequest): AgentSchedule {
+    const tooFrequent = input.scheduleKind === 'one-shot' ? null : scheduleTooFrequent(input.recurrenceRule);
+    if (tooFrequent) throw new Error(tooFrequent);
     const row = this.withComputedNextRun(agentsDb.createSchedule(this.db, { id: uuid(), ...input }));
     const schedule = toSchedule(row);
     this.broadcaster.broadcast({ type: 'agent:schedule-created', schedule });
@@ -261,6 +263,9 @@ export class AgentService {
   }
 
   updateSchedule(id: string, fields: Partial<CreateScheduleRequest>): AgentSchedule | null {
+    // Only a change to the rule is checked: turning a stored schedule off or on, or renaming it, always works.
+    const tooFrequent = fields.recurrenceRule !== undefined && fields.scheduleKind !== 'one-shot' ? scheduleTooFrequent(fields.recurrenceRule) : null;
+    if (tooFrequent) throw new Error(tooFrequent);
     const row = agentsDb.updateSchedule(this.db, id, fields);
     if (!row) return null;
     const schedule = toSchedule(this.withComputedNextRun(row));

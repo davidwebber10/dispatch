@@ -29,9 +29,13 @@ export function createAgentsRouter(agentService: AgentService): Router {
   });
 
   router.patch('/schedules/:id', (req, res) => {
-    const schedule = agentService.updateSchedule(req.params.id, req.body);
-    if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
-    res.json(schedule);
+    try {
+      const schedule = agentService.updateSchedule(req.params.id, req.body);
+      if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+      res.json(schedule);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   router.delete('/schedules/:id', (req, res) => {

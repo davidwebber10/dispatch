@@ -82,6 +82,15 @@ describe('AgentService', () => {
     expect(broadcaster.broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent:run-created' }));
   });
 
+  it('refuses to create or change a schedule that runs more often than once a minute (SEC-23)', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const base = { projectId: 'proj-1', name: 'Poller', provider: 'codex', workingDir: '/srv/tenex', prompt: 'p', scheduleKind: 'recurring' as const, runAt: null, timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null };
+    expect(() => service.createSchedule({ ...base, recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 0.01 }) })).toThrow(/shortest allowed gap/);
+    const ok = service.createSchedule({ ...base, recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 30 }) });
+    expect(() => service.updateSchedule(ok.id, { recurrenceRule: JSON.stringify({ type: 'interval', everyMinutes: 0.01 }) })).toThrow(/shortest allowed gap/);
+    expect(service.updateSchedule(ok.id, { enabled: false })?.enabled).toBe(false); // other changes still work
+  });
+
   it('handleTerminalExit marks the run succeeded on a clean (0) exit', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({
