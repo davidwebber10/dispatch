@@ -2,6 +2,7 @@ import type { harnessCapabilities } from '../../../core/src/providers/capabiliti
 import { apiPath } from '../lib/basePath';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
+import type { Preview } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits } from './types';
 
 /**
@@ -67,6 +68,8 @@ const qs = (o: QueryParams): string => {
 
 /** A saved Endless Chat image (`EndlessMessage.media` holds file names). */
 export const endlessMediaUrl = (name: string): string => apiPath(`/api/endless/media/${encodeURIComponent(name)}`);
+/** The bytes of file k of a preview (same origin, so an <img> and a new tab both work). */
+export const previewFileUrl = (id: string, k: number): string => apiPath(`/api/previews/${encodeURIComponent(id)}/files/${k}`);
 
 export const api = {
   // Endless Chat (spec 2026-10-13).
@@ -314,6 +317,16 @@ export const api = {
     const params = new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][]);
     const qs = params.toString();
     return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
+  },
+  // Previews: what threads handed the user to look at or copy.
+  listPreviews: (sessionId?: string, limit = 200) =>
+    req<{ previews: Preview[]; unseen: number }>(sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/previews?limit=${limit}` : `/api/previews?limit=${limit}`),
+  markPreviewSeen: (id: string) => req<Preview>(`/api/previews/${encodeURIComponent(id)}/seen`, { method: 'POST' }),
+  deletePreview: (id: string) => req<void>(`/api/previews/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  previewFileText: async (id: string, k: number): Promise<string> => {
+    const res = await fetch(previewFileUrl(id, k));
+    if (!res.ok) throw new ApiError(`GET preview file failed: ${res.status}`, res.status);
+    return res.text();
   },
   // A one-time sign-in code for another device (Settings → Access). 404 on a hosted box, where
   // there is no sign-in page to type it on.

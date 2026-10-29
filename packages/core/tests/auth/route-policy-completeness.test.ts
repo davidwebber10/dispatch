@@ -35,6 +35,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'DELETE /api/watches/:id',
   'POST /api/events/:provider/:terminalId',
   'POST /api/auth-requests',
+  'POST /api/sessions/:id/previews',
   'POST /api/sessions/:sessionId/ledger',
   'POST /api/sessions/:sessionId/ledger/list',
   'POST /api/sessions/:sessionId/ledger/note',

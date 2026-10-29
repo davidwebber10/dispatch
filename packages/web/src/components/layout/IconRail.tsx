@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ChartBar, ChatCircleDots, Gear, Rows } from '@phosphor-icons/react';
+import { ChartBar, ChatCircleDots, Eye, Gear, Rows } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
 import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
+import { usePreviews, unseenPreviews } from '../../stores/previews';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -12,8 +13,8 @@ const CONN = {
   closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
 } as const;
 
-function RailItem({ icon: I, label, active, onClick, title }: {
-  icon: Icon; label: string; active: boolean; onClick: () => void; title: string;
+function RailItem({ icon: I, label, active, onClick, title, badge = 0 }: {
+  icon: Icon; label: string; active: boolean; onClick: () => void; title: string; badge?: number;
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -28,6 +29,11 @@ function RailItem({ icon: I, label, active, onClick, title }: {
       }}>
       <I size={18} weight={active ? 'fill' : 'regular'} />
       <span style={{ font: '400 8.5px var(--font-sans)', letterSpacing: '0.01em' }}>{label}</span>
+      {badge > 0 && (
+        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
       {/* Active marker: a short bar hugging the rail's left edge, like an editor activity bar. */}
       <span style={{
         position: 'absolute', left: -6, top: '50%', transform: 'translateY(-50%)',
@@ -41,6 +47,7 @@ const NAV: { view: View; label: string; icon: Icon }[] = [
   { view: 'workspace', label: 'Threads', icon: Rows },
   { view: 'chat', label: 'Chat', icon: ChatCircleDots },
   { view: 'analytics', label: 'Analytics', icon: ChartBar },
+  { view: 'previews', label: 'Previews', icon: Eye },
 ];
 
 /**
@@ -55,6 +62,9 @@ export function IconRail() {
   const servers = useServers((s) => s.servers);
   const conn = CONN[status];
   const serverLabel = currentLabel(servers, window.location.origin);
+  const unseen = usePreviews((s) => unseenPreviews(s.items));
+  // The badge needs the list before the view is ever opened.
+  useEffect(() => { void usePreviews.getState().load(); }, []);
 
   // ⌘, — the platform-standard preferences shortcut, now that Settings is a page.
   useEffect(() => {
@@ -76,7 +86,7 @@ export function IconRail() {
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
       {NAV.map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
-          active={view === n.view} onClick={() => setView(n.view)} />
+          active={view === n.view} onClick={() => setView(n.view)} badge={n.view === 'previews' ? unseen : 0} />
       ))}
       <div style={{ flex: 1 }} />
       <div title={conn.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 2px' }}>

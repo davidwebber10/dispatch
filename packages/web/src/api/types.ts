@@ -482,3 +482,19 @@ export interface ThreadUsageLimits {
   snapshot: { asOf: number; plan?: string; windows: Record<string, LimitWindow> } | null;
   paused: { kind: 'session' | 'weekly' | 'usage'; resetsAt: number | null; capped: boolean } | null;
 }
+
+/** Previews (docs/superpowers/specs/2026-10-28-previews-design.md): what a thread handed the user to look at or copy. */
+export interface PreviewFile { path: string; name: string; mime: string; size: number }
+export interface Preview {
+  id: string;
+  sessionId: string;
+  sessionName: string;
+  terminalId: string | null;
+  terminalLabel: string | null;
+  title: string;
+  note: string | null;
+  text: string | null;
+  files: PreviewFile[];
+  createdAt: string;
+  seenAt: string | null;
+}

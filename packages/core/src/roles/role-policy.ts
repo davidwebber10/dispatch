@@ -29,7 +29,7 @@ const NATIVE_ORCHESTRATION_TOOLS = ['Agent', 'Task', 'Workflow'];
 const DISPATCH_MCP_PREFIX = 'mcp__dispatch__';
 const ROLE_DISPATCH_TOOLS_ALLOWED = new Set([
   'list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions',
-  'report_status', 'post_image', 'watch_thread', 'unwatch_thread', 'list_watches',
+  'report_status', 'post_image', 'preview', 'watch_thread', 'unwatch_thread', 'list_watches',
 ]);
 /** The native orchestration tools and the known Dispatch delegation/steering tools, stripped from
  *  a role run at spawn (--disallowedTools, see sessions/service.ts disallowedToolsFor) so the model

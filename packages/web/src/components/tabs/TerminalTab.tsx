@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, Eye, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
@@ -21,6 +21,8 @@ import { InputActionsMenu } from '../dictation/InputActionsMenu';
 import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
 import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
+import { usePreviews, unseenPreviews } from '../../stores/previews';
+import { PreviewBadge } from '../previews/PreviewSheet';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
 
@@ -168,6 +170,8 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
+  const previewProject = cachedProject ?? meta?.sessionId ?? null;
+  const previewUnseen = usePreviews((s) => unseenPreviews(s.items, previewProject));
   const grokFlush = isMobile && termType === 'grok';
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
@@ -960,6 +964,17 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
               keys onto a phone leaves each one too narrow to hit. Every key keeps its
               own width and overflow scrolls. */}
           <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0, overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
+            {/* Previews, left of esc: what the thread handed the user to look at or copy. The one
+                way to read a string off a terminal thread on a phone (its text cannot be selected). */}
+            {previewProject && (
+              <button type="button" title="Previews" aria-label="Previews"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => usePreviews.getState().openSheet(previewProject)}
+                style={{ ...SOFT_KEY, position: 'relative', color: previewUnseen ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
+                <Eye size={18} weight={previewUnseen ? 'fill' : 'bold'} />
+                <PreviewBadge count={previewUnseen} />
+              </button>
+            )}
             {softActions.map((k) => (
               <button key={k.label} title={k.title}
                 onMouseDown={(e) => e.preventDefault() /* don't steal focus / dismiss the keyboard */}

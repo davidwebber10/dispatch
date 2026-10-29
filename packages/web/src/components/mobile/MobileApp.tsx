@@ -5,6 +5,9 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
+import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
+import { usePreviews, unseenPreviews } from '../../stores/previews';
+import { Eye } from '@phosphor-icons/react';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
@@ -205,12 +208,15 @@ export function MobileApp() {
   const inSettings = bottomTab === 'settings';
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
+  const unseenHere = usePreviews((s) => unseenPreviews(s.items, project?.id ?? null));
+  useEffect(() => { void usePreviews.getState().load(); }, []);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+      <PreviewSheet />
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>
@@ -243,6 +249,15 @@ export function MobileApp() {
           </button>
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Previews: what threads handed the user to look at or copy (spec 2026-10-28). Shown inside
+              a project (its threads list and a thread), for terminal and Pretty threads alike. */}
+          {level >= 1 && !inSettings && project && (
+            <button type="button" aria-label="Previews" title="Previews" onClick={() => usePreviews.getState().openSheet(project.id)}
+              style={{ position: 'relative', width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
+              <Eye size={18} />
+              <PreviewBadge count={unseenHere} />
+            </button>
+          )}
           <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
               desktop control, which mobile never rendered (so a Pretty thread was

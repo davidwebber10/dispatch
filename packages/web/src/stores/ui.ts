@@ -4,7 +4,7 @@ import { create } from 'zustand';
 // board (docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section):
 // 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
 // that bypasses Workspace entirely (see App.tsx).
-export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat';
+export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | 'previews';
 export type InspectorTab = 'details' | 'files';
 
 const LKEY = 'dispatch:left-collapsed';
@@ -13,7 +13,7 @@ const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 // Board is temporarily hidden; restore saved Board selections to Threads.
-const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
+const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat', 'previews'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
 // what regressed originally (the old check recognised only 'board').

@@ -401,4 +401,23 @@ function initializeSchema(db: Database.Database): void {
     const cols = db.prepare('PRAGMA table_info(endless_pending_reports)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'waiting_reported')) db.exec('ALTER TABLE endless_pending_reports ADD COLUMN waiting_reported INTEGER NOT NULL DEFAULT 0');
   });
+  // Previews (docs/superpowers/specs/2026-10-28-previews-design.md): what a thread handed the user
+  // to look at or copy. Project and thread names are snapshots, so the history reads right after a
+  // rename or an archive. `files` is JSON [{ path, name, mime, size }] with absolute paths.
+  migrate(db, '012-previews', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS previews (
+      id             TEXT PRIMARY KEY,
+      session_id     TEXT NOT NULL,
+      session_name   TEXT NOT NULL,
+      terminal_id    TEXT,
+      terminal_label TEXT,
+      title          TEXT NOT NULL,
+      note           TEXT,
+      text           TEXT,
+      files          TEXT NOT NULL,
+      created_at     TEXT NOT NULL,
+      seen_at        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_previews_session ON previews(session_id, created_at);
+  `));
 }
