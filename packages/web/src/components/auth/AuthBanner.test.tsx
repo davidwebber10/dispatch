@@ -209,6 +209,24 @@ describe('minimize', () => {
 });
 
 describe('Dismiss failure', () => {
+  test('the error belongs to the request it failed for, not the next one', async () => {
+    dismissAllAuth.mockReset().mockRejectedValue(new Error('boom'));
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('boom');
+    act(() => { useAuth.setState({ requests: [{ ...awsReq, id: 'a2' }] }); });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  test('a plain-link pill is not announced as a sign-in', () => {
+    useAuth.setState({ requests: [{ id: 'l1', url: 'https://claude.ai/code/artifact/abc', source: 'system-opener', status: 'pending' } as any] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.getByRole('button', { name: /Link to open/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sign-in pending/ })).not.toBeInTheDocument();
+  });
+
   test('shows the server error instead of dropping it', async () => {
     dismissAllAuth.mockReset().mockRejectedValue(new Error('POST /api/auth-requests/complete-all failed: 500 — database is locked'));
     useAuth.setState({ requests: [awsReq] });

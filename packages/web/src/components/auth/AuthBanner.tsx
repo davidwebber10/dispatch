@@ -41,21 +41,25 @@ export function AuthBanner() {
   // Which request the user minimized. Keyed by id so a NEW sign-in re-opens the banner: a
   // pending login the user has never seen must not stay hidden behind an old minimize.
   const [minimizedFor, setMinimizedFor] = useState<string | null>(null);
-  const [dismissErr, setDismissErr] = useState<string | null>(null);
+  // Tagged with the request it failed for, so a later request never shows a stale error.
+  const [dismissFail, setDismissFail] = useState<{ id: string; msg: string } | null>(null);
   const isMobile = useIsMobile();
   if (!req) return null;
   const minimized = minimizedFor === req.id;
+  const dismissErr = dismissFail?.id === req.id ? dismissFail.msg : null;
 
   // Dismiss used to be `void api.dismissAllAuth()`: a failed call changed nothing on screen,
   // so the banner just looked stuck. Show the server's { error } text and let the user retry.
   // Failing from the pill expands the banner, since the message lives in the card.
   const dismissAll = async () => {
-    setDismissErr(null);
+    const id = req.id;
+    setDismissFail(null);
     try {
       await api.dismissAllAuth();
     } catch (e: any) {
-      setDismissErr(String(e?.message ?? e).replace(/^.*? failed: \d+ — /, ''));
-      setMinimizedFor(null);
+      setDismissFail({ id, msg: String(e?.message ?? e).replace(/^.*? failed: \d+ — /, '') });
+      // Only re-open the request that failed; a late rejection must not expand a newer one.
+      setMinimizedFor((m) => (m === id ? null : m));
     }
   };
 
@@ -102,7 +106,7 @@ export function AuthBanner() {
       <div data-testid="auth-banner" style={{ ...frame, ...(isMobile ? { left: 'auto' } : { left: 'auto', right: 16, transform: 'none' }), maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, background: '#1B1B1E', border: '1px solid #4A3D18', borderRadius: 22, padding: 2, boxShadow: '0 8px 24px -8px rgba(0,0,0,.8)' }}>
         <button
           onClick={() => setMinimizedFor(null)}
-          aria-label={`Sign-in pending${agentLabel ? ` — ${agentLabel}` : ''}`}
+          aria-label={`${signIn ? 'Sign-in pending' : 'Link to open'}${agentLabel ? ` — ${agentLabel}` : ''}`}
           style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, minHeight: 44, padding: '0 10px 0 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
         >
           <span>{signIn ? '🔑' : '🔗'}</span>
