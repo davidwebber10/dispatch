@@ -1,5 +1,5 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { test, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { test, expect, beforeEach, afterEach, describe, vi } from 'vitest';
 
 const dismissAllAuth = vi.fn().mockResolvedValue({ completed: 3 });
 const forwardAuthCallback = vi.fn();
@@ -117,4 +117,124 @@ test('a failed forward shows why and keeps the pasted URL for a retry', async ()
   fireEvent.click(screen.getByText('Forward'));
   expect(await screen.findByText(/That sign-in is no longer waiting/)).toBeInTheDocument();
   expect(input.value).toBe('localhost:1/cb?code=x');
+});
+
+// ---- Phone layout (iPhone 17e PWA, 390pt) -------------------------------------------------
+// The banner used to sit at top:48 and ignore the notch, so it covered the mobile header
+// (calc(50px + env(safe-area-inset-top))) and its nav, with Dismiss unreachable.
+const awsReq = { id: 'a1', url: 'https://device.sso.us-east-1.amazonaws.com/?user_code=ABCD-EFGH', source: 'terminal-output', status: 'pending', terminalId: 't1' } as any;
+const bannerEl = () => screen.getByTestId('auth-banner');
+let prevWidth = 0;
+const setWidth = (w: number) => { Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: w }); };
+
+describe('on a phone', () => {
+  beforeEach(() => { prevWidth = window.innerWidth; setWidth(390); dismissAllAuth.mockReset().mockResolvedValue({ completed: 1 }); });
+  afterEach(() => setWidth(prevWidth));
+
+  test('sits below the mobile header, never over it', () => {
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    const top = bannerEl().style.top;
+    // jsdom folds calc(50px + … + 6px) to 56px: header height plus a 6px gap, under the notch.
+    expect(top).toContain('env(safe-area-inset-top)');
+    expect(top).toMatch(/5[0-9]px|6[0-9]px/);
+    expect(top).not.toBe('48px');
+    // Full width minus a gutter, not a centred 560pt box.
+    expect(bannerEl().style.left).toBe('8px');
+    expect(bannerEl().style.right).toBe('8px');
+  });
+
+  test('keeps room for the tab bar: the card is height-capped and its body scrolls', () => {
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    expect(bannerEl().style.maxHeight).toContain('dvh');
+    expect(screen.getByTestId('auth-banner-body').style.overflowY).toBe('auto');
+    // Dismiss lives in the header row, outside the scrolling body.
+    expect(screen.getByTestId('auth-banner-body')).not.toContainElement(screen.getByRole('button', { name: 'Dismiss' }));
+  });
+
+  test('Dismiss and Minimize are at least 44pt tall', () => {
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    for (const name of ['Dismiss', 'Minimize']) {
+      expect(parseInt(screen.getByRole('button', { name }).style.minHeight, 10)).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  test('long URL wraps and the paste row cannot push past the card', () => {
+    useAuth.setState({ requests: [{ ...awsReq, url: 'https://device.sso.us-east-1.amazonaws.com/' + 'x'.repeat(300) }] });
+    render(<AuthBanner />);
+    expect(bannerEl().style.boxSizing).toBe('border-box');
+    expect(bannerEl().style.overflowX).toBe('hidden');
+    const url = screen.getByTestId('auth-banner-url');
+    expect(url.style.wordBreak).toBe('break-all');
+    expect(url.style.overflowWrap).toBe('anywhere');
+    const input = screen.getByPlaceholderText(/localhost/);
+    expect(parseInt(input.style.minWidth, 10)).toBe(0);
+    // 16px stops iOS zooming the page when the field is focused.
+    expect(input.style.fontSize).toBe('16px');
+    expect(screen.getByText('Forward').style.flexShrink).toBe('0');
+  });
+});
+
+describe('minimize', () => {
+  test('collapses to a pill that keeps the pending sign-in visible, and expands again', () => {
+    useAuth.setState({ requests: [awsReq] });
+    useTabs.setState({ byProject: { p: [{ id: 't1', label: 'Overseer' } as any] } });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    expect(screen.queryByPlaceholderText(/localhost/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Open in browser/)).not.toBeInTheDocument();
+    const pill = screen.getByRole('button', { name: /Sign-in pending — Overseer/ });
+    fireEvent.click(pill);
+    expect(screen.getByPlaceholderText(/localhost/)).toBeInTheDocument();
+  });
+
+  test('the pill still offers Dismiss', async () => {
+    dismissAllAuth.mockReset().mockResolvedValue({ completed: 1 });
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(dismissAllAuth).toHaveBeenCalledTimes(1));
+  });
+
+  test('a different request re-opens the banner', () => {
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    act(() => { useAuth.setState({ requests: [{ ...awsReq, id: 'a2' }] }); });
+    expect(screen.getByPlaceholderText(/localhost/)).toBeInTheDocument();
+  });
+});
+
+describe('Dismiss failure', () => {
+  test('shows the server error instead of dropping it', async () => {
+    dismissAllAuth.mockReset().mockRejectedValue(new Error('POST /api/auth-requests/complete-all failed: 500 — database is locked'));
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/database is locked/);
+    expect(screen.getByRole('button', { name: 'Dismiss' })).not.toBeDisabled(); // retryable
+  });
+
+  test('a failure from the minimized pill expands the banner so the error is seen', async () => {
+    dismissAllAuth.mockReset().mockRejectedValue(new Error('network down'));
+    useAuth.setState({ requests: [awsReq] });
+    render(<AuthBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/network down/);
+    expect(screen.getByRole('button', { name: 'Minimize' })).toBeInTheDocument();
+  });
+});
+
+test('desktop keeps the old centred overlay at top 48', () => {
+  const prev = window.innerWidth; setWidth(1280);
+  useAuth.setState({ requests: [awsReq] });
+  render(<AuthBanner />);
+  expect(bannerEl().style.top).toBe('48px');
+  expect(bannerEl().style.left).toBe('50%');
+  expect(bannerEl().style.width).toBe('560px');
+  setWidth(prev);
 });
