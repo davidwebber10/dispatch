@@ -156,7 +156,12 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
           })}
         </div>
       )}
-      {lightbox !== null && <ImageLightbox src={previewFileUrl(preview.id, lightbox)} alt={preview.files[lightbox]?.name} onClose={() => setLightbox(null)} />}
+      {/* The lightbox's own z-index (1000) sits under the sheet (1200): a wrapper raises it above both. */}
+      {lightbox !== null && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1300 }}>
+          <ImageLightbox src={previewFileUrl(preview.id, lightbox)} alt={preview.files[lightbox]?.name} onClose={() => setLightbox(null)} />
+        </div>
+      )}
       {reader !== null && <TextFileOverlay preview={preview} k={reader} onClose={() => setReader(null)} />}
     </div>
   );

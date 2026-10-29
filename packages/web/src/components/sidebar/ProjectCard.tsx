@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
-import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, PushPin, Timer, Bell, Plus } from '@phosphor-icons/react';
+import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, Timer, Bell, Plus } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
 import { projectIndicator } from '../../lib/status';
@@ -142,9 +142,6 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
               : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
       </span>
       <ThreadLabel tab={tab} />
-      {isMobile && (tab.config as { pinned?: boolean })?.pinned && (
-        <PushPin size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
-      )}
       {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
         <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
@@ -525,11 +522,6 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
                 Auto-archive…
               </button>
-            )}
-            {/* "Unpin" on file rows means archive (below) — thread pinning is threads-only,
-                and mobile-only: the Pinned surface is the mobile bottom tab. */}
-            {isMobile && ctxMenu.tab.type !== 'file' && (
-              <button onClick={() => { void useTabs.getState().setPinned(ctxMenu.tab.id, !(ctxMenu.tab.config as { pinned?: boolean })?.pinned); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{(ctxMenu.tab.config as { pinned?: boolean })?.pinned ? 'Unpin thread' : 'Pin thread'}</button>
             )}
             {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex') && canReceiveAlerts() && (
               <button onClick={() => { const t = ctxMenu.tab; setCtxMenu(null); void toggleAlerts(t); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{(ctxMenu.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>

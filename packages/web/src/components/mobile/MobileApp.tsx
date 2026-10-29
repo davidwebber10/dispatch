@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, PushPin, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -11,7 +11,7 @@ import { Eye } from '@phosphor-icons/react';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
-import { PinnedThreadsView } from './PinnedThreadsView';
+import { AllThreadsView } from './AllThreadsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -93,7 +93,11 @@ export function MobileApp() {
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'pinned' | 'agents' | 'analytics' | 'settings'>('projects');
+  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'agents' | 'analytics' | 'settings'>('projects');
+  // The Projects tab shows either the project list or every thread across projects (2026-10-28,
+  // replaced the Pinned tab). Remembered per device.
+  const [projectsView, setProjectsView] = useState<'projects' | 'threads'>(() => { try { return localStorage.getItem('dispatch:mobileProjectsView') === 'threads' ? 'threads' : 'projects'; } catch { return 'projects'; } });
+  useEffect(() => { try { localStorage.setItem('dispatch:mobileProjectsView', projectsView); } catch { /* ignore */ } }, [projectsView]);
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
@@ -123,8 +127,8 @@ export function MobileApp() {
     useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
     history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
   };
-  // Same pattern from the cross-project Pinned tab: seed the project, then jump
-  // straight to the thread (back returns to the root, still on the Pinned tab).
+  // Same pattern from the cross-project Threads view: seed the project, then jump
+  // straight to the thread (back returns to the root, still on the Threads view).
   const openThreadFromList = (pid: string, tabId: string) => {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
@@ -226,19 +230,19 @@ export function MobileApp() {
                 50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
             {bottomTab === 'projects' && (
               <>
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={projectsView === 'threads' ? 'Search threads' : 'Search projects'}
                   style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
-                <SortMenu
+                {projectsView === 'projects' && <SortMenu
                   value={projectSort}
                   options={PROJECT_SORTS}
                   onChange={(v) => setProjectSort(v as ProjectSort)}
                   isMobile
                   iconSize={18}
                   buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
-                />
-                <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
+                />}
+                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
                   <Plus size={18} weight="bold" />
-                </button>
+                </button>}
               </>
             )}
           </>
@@ -285,12 +289,23 @@ export function MobileApp() {
               <MobileSettingsList onOpen={openSettingsSection} />
             ) : bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
-            ) : bottomTab === 'pinned' ? (
-              <PinnedThreadsView onOpenThread={openThreadFromList} />
-
             ) : (
             <>
-            {/* The search/sort/new controls moved up into the header (one-line top bar). */}
+            {/* Projects ⇄ Threads: a segmented switch at the top of the tab. */}
+            <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 12px 2px', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, flexShrink: 0 }}>
+              {([['projects', 'Projects'], ['threads', 'Threads']] as const).map(([key, label]) => {
+                const on = projectsView === key;
+                return (
+                  <button key={key} type="button" role="tab" aria-selected={on} onClick={() => setProjectsView(key)}
+                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px rgba(0,0,0,.35)' : 'none' }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {projectsView === 'threads' ? (
+              <AllThreadsView onOpenThread={openThreadFromList} query={query} />
+            ) : (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
               <SortableList
                 items={sortedProjects}
@@ -316,6 +331,7 @@ export function MobileApp() {
               />
               {!sortedProjects.length && <div style={{ padding: 16, color: 'var(--color-text-tertiary)', fontSize: 13 }}>No projects</div>}
             </div>
+            )}
             </>
             )}
           </div>
@@ -346,13 +362,13 @@ export function MobileApp() {
         </div>
       </div>
 
-      {/* Bottom tab bar — Projects / Chat / Pinned / Analytics / Settings. Automations
+      {/* Bottom tab bar — Projects / Chat / Analytics / Settings. Automations
           is hidden on mobile (desktop only). Visible at the root AND
           inside a project (level 1); only the thread/agent screen (level 2)
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['pinned', 'Pinned', PushPin], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}
