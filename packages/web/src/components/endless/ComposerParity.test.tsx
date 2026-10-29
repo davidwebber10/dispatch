@@ -42,10 +42,10 @@ describe('Chat composer parity with the other composers', () => {
     const { container } = render(<Composer />);
     const zone = container.firstElementChild as HTMLElement;
     fireEvent.dragOver(zone, { dataTransfer: { types: ['Files'], files: [] } });
-    expect(screen.getByText('Drop image to attach')).toBeInTheDocument();
+    expect(screen.getByText('Drop to attach')).toBeInTheDocument();
     fireEvent.drop(zone, { dataTransfer: { types: ['Files'], files: [png()] } });
     expect(await screen.findByRole('button', { name: 'Remove image' })).toBeInTheDocument();
-    expect(screen.queryByText('Drop image to attach')).toBeNull();
+    expect(screen.queryByText('Drop to attach')).toBeNull();
   });
 
   it('sends a pasted screenshot with no caption', async () => {
@@ -54,7 +54,7 @@ describe('Chat composer parity with the other composers', () => {
     fireEvent.paste(box(), { clipboardData: { files: [png()], types: ['Files'] } });
     await screen.findByRole('button', { name: 'Remove image' });
     fireEvent.keyDown(box(), { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('', null, [expect.objectContaining({ media_type: 'image/png' })]));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('', null, [expect.objectContaining({ media_type: 'image/png' })], []));
   });
 
   it('grows with the text up to 200px, then scrolls', () => {
@@ -199,7 +199,7 @@ describe('Chat composer parity with the other composers', () => {
     expect(box().value).toBe('lost?');
   });
 
-  it('tells the user that attached images were not saved when a send fails after the user left Chat', async () => {
+  it('tells the user that attachments were not saved when a send fails after the user left Chat', async () => {
     let fail!: (e: Error) => void;
     vi.spyOn(api, 'endlessSend').mockImplementation(() => new Promise((_, rej) => { fail = rej; }));
     const first = render(<Composer />);
@@ -212,7 +212,7 @@ describe('Chat composer parity with the other composers', () => {
     await act(async () => { fail(new Error('late failure')); });
     expect(localStorage.getItem('dispatch:draft:chat')).toBe('with a picture');
     render(<Composer />);
-    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 attachment .*not saved/i);
   });
 
   const heicFile = (name = 'IMG_0001.HEIC') => new File([new Uint8Array([1, 2, 3])], name, { type: 'image/heic' });
@@ -225,7 +225,7 @@ describe('Chat composer parity with the other composers', () => {
     fireEvent.change(fileInput(container), { target: { files: [heicFile(), blank, png()] } });
     expect(await screen.findByRole('button', { name: 'Remove image' })).toBeInTheDocument(); // the PNG still attaches
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent(/IMG_0001\.HEIC, IMG_0002 not attached: Chat takes PNG, JPEG, GIF or WebP images\./);
+    expect(alert).toHaveTextContent(/IMG_0001\.HEIC, IMG_0002 not attached: Chat takes images \(PNG, JPEG, GIF, WebP\) and documents \(PDF, TXT, MD, CSV, JSON\)\./);
     expect(alert).not.toHaveTextContent(/image\/heic|unknown/);
   });
 
@@ -261,7 +261,7 @@ describe('Chat composer parity with the other composers', () => {
     const { container } = render(<Composer />);
     fireEvent.change(fileInput(container), { target: { files: [heicFile(), failingPng()] } });
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/IMG_0001\.HEIC not attached/));
-    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the image: read failed/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the file: read failed/);
   });
 
   it('still attaches the good files in a batch where one read fails, and reports both problems', async () => {
@@ -269,7 +269,7 @@ describe('Chat composer parity with the other composers', () => {
     fireEvent.change(fileInput(container), { target: { files: [heicFile(), failingPng(), png()] } });
     expect(await screen.findAllByRole('button', { name: 'Remove image' })).toHaveLength(1);
     expect(screen.getByRole('alert')).toHaveTextContent(/IMG_0001\.HEIC not attached/);
-    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the image/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Could not read the file/);
   });
 
   it('clears the attach notice on the next good attach', async () => {
@@ -307,7 +307,7 @@ describe('Chat composer parity with the other composers', () => {
     await act(async () => { slow.fail(); });
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(/B\.HEIC not attached/);
-    expect(alert).toHaveTextContent(/Could not read the image: boom/);
+    expect(alert).toHaveTextContent(/Could not read the file: boom/);
   });
 
   it('does not bring back the skipped files of an older batch when its read fails after a newer pick', async () => {
@@ -317,7 +317,7 @@ describe('Chat composer parity with the other composers', () => {
     fireEvent.change(fileInput(container), { target: { files: [heicFile('new.heic')] } });
     await screen.findByText(/new\.heic not attached/);
     await act(async () => { slow.fail(); });
-    const alert = await screen.findByText(/Could not read the image: boom/);
+    const alert = await screen.findByText(/Could not read the file: boom/);
     expect(alert).toHaveTextContent(/new\.heic not attached/);
     expect(alert).not.toHaveTextContent(/old\.heic/);
   });
@@ -328,7 +328,7 @@ describe('Chat composer parity with the other composers', () => {
     const b = deferredPng();
     fireEvent.change(fileInput(container), { target: { files: [a.file, b.file] } });
     await act(async () => { a.fail('first'); b.fail('second'); });
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not read the image: first');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not read the file: first');
   });
 
   it('clears the attach notice when a message is sent', async () => {
@@ -346,15 +346,15 @@ describe('Chat composer parity with the other composers', () => {
     s.view.unmount();
     await s.fail('late failure');
     const { container } = render(<Composer />);
-    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 attachment .*not saved/i);
     fireEvent.change(fileInput(container), { target: { files: [heicFile()] } });
     await screen.findByText(/IMG_0001\.HEIC not attached/);
-    expect(screen.getByText(/1 image .*not saved/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 attachment .*not saved/i)).toBeInTheDocument();
   });
 
   it('lists JPEG first in the picker, so a Safari that converts HEIC picks JPEG over PNG', () => {
     const { container } = render(<Composer />);
-    expect(fileInput(container).accept).toBe('image/jpeg,image/png,image/gif,image/webp');
+    expect(fileInput(container).accept).toMatch(/^image\/jpeg,image\/png,image\/gif,image\/webp(,|$)/);
   });
 
   it('does not raise an unhandled rejection when reading a pasted image fails', async () => {
@@ -367,7 +367,7 @@ describe('Chat composer parity with the other composers', () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(seen).toEqual([]);
       expect(screen.queryByRole('button', { name: 'Remove image' })).toBeNull();
-      expect(await screen.findByText(/Could not read the image: read failed/)).toBeInTheDocument();
+      expect(await screen.findByText(/Could not read the file: read failed/)).toBeInTheDocument();
     } finally {
       process.off('unhandledRejection', onRej);
     }
@@ -408,7 +408,7 @@ describe('Chat composer parity with the other composers', () => {
     await act(async () => { release(); });
     await screen.findByRole('button', { name: 'Remove image' });
     fireEvent.keyDown(box(), { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('look', null, [expect.objectContaining({ media_type: 'image/png' })]));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('look', null, [expect.objectContaining({ media_type: 'image/png' })], []));
   });
 
   it('recalculates the height when the window resizes', () => {
@@ -442,7 +442,7 @@ describe('Chat composer parity with the other composers', () => {
     s.view.unmount();
     await s.fail('late failure');
     render(<StrictMode><Composer /></StrictMode>);
-    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 attachment .*not saved/i);
   });
 
   it('shows the notice only once: a third mount does not show it again', async () => {
@@ -462,7 +462,7 @@ describe('Chat composer parity with the other composers', () => {
     const later = render(<Composer />);
     expect(screen.queryByRole('alert')).toBeNull();
     await s.fail('late failure');
-    expect(screen.getByRole('alert')).toHaveTextContent(/1 image .*not saved/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 attachment .*not saved/i);
     later.unmount();
     render(<Composer />);
     expect(screen.queryByRole('alert')).toBeNull();
@@ -474,7 +474,7 @@ describe('Chat composer parity with the other composers', () => {
     await s.fail('late failure');
     render(<Composer />);
     const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent(/1 image was not saved/i);
+    expect(alert).toHaveTextContent(/1 attachment was not saved/i);
     expect(alert).not.toHaveTextContent(/text is back/i);
   });
 
@@ -505,7 +505,7 @@ describe('Chat composer parity with the other composers', () => {
     expect(fails.length).toBe(afterFirst + 1);
     await act(async () => { fails.forEach((f) => f(new Error('down'))); });
     render(<Composer />);
-    expect(screen.getByRole('alert')).toHaveTextContent(/3 images were not saved/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/3 attachments were not saved/i);
   });
 
   it('keeps "hello" as it is when an image-only message fails after the user left Chat', async () => {

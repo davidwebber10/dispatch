@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
 import type { ServerEvent } from '../api/events-socket';
-import type { EndlessImage, EndlessMessage, EndlessPaneThread, EndlessProject, EndlessProjectsResponse, EndlessTurnStatus } from '../api/types';
+import type { EndlessImage, EndlessMessage, EndlessPaneThread, EndlessProject, EndlessProjectsResponse, EndlessTurnStatus, EndlessFile } from '../api/types';
 
 const PAGE = 60;
 
 /** A sent message the daemon has not logged yet (a turn logs it after its summary wait). */
-export interface PendingSend { id: number; text: string; projectName: string | null; images: EndlessImage[] }
+export interface PendingSend { id: number; text: string; projectName: string | null; images: EndlessImage[]; files: EndlessFile[] }
 let pendingSeq = 0;
 
 /** The daemon answers 503 on every /api/endless route while Chat is starting or failed to start. */
@@ -39,7 +39,7 @@ interface EndlessStoreState {
   loadOlder: () => Promise<void>;
   openAt: (i: number) => Promise<void>;
   setFilter: (project: string | null) => Promise<void>;
-  send: (text: string, project: string | null, images?: EndlessImage[]) => Promise<void>;
+  send: (text: string, project: string | null, images?: EndlessImage[], files?: EndlessFile[]) => Promise<void>;
   retry: () => Promise<void>;
   stop: () => Promise<void>;
   refreshState: () => Promise<void>;
@@ -186,12 +186,12 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       set({ filter: project, loadingOlder: false });
       await get().loadTail();
     },
-    send: async (text, project, images = []) => {
+    send: async (text, project, images = [], files = []) => {
       if (!get().atTail) await get().loadTail();
-      const item: PendingSend = { id: ++pendingSeq, text, projectName: get().projects.find((p) => p.id === project)?.name ?? null, images };
+      const item: PendingSend = { id: ++pendingSeq, text, projectName: get().projects.find((p) => p.id === project)?.name ?? null, images, files };
       set({ pending: [...get().pending, item], sendCount: get().sendCount + 1 });
       try {
-        await api.endlessSend(text, project, images);
+        await api.endlessSend(text, project, images, files);
       } catch (err) {
         set({ pending: get().pending.filter((p) => p.id !== item.id) });
         throw err;

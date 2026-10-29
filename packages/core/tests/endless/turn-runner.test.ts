@@ -67,6 +67,17 @@ describe('TurnRunner', () => {
     await finish(t);
   });
 
+  it('names a non-image attachment by its path, so the model reads it with the Read tool', async () => {
+    const t = setup({ readImage: (f: string) => (f.endsWith('.png') ? { mimeType: 'image/png', data: 'AAAA' } : null) });
+    t.runner.send({ text: 'read these', project: null, media: ['/chat/media/1-0-abcd1234-shot.png', '/chat/media/1-1-abcd1234-report.pdf'] });
+    await settle();
+    const parts = texts(t.fake.sent[0].content);
+    expect(parts[2]).toBe('user: read these');
+    expect(parts[3]).toBe('[image]');
+    expect(parts[4]).toBe('Attached file (read with the Read tool):\n- /chat/media/1-1-abcd1234-report.pdf');
+    await finish(t);
+  });
+
   it('spawns a fresh opus session in the fixed folder for every project, with the replaced system prompt', async () => {
     const t = setup();
     t.runner.send({ text: 'a', project: 'p1', media: [] });

@@ -2,7 +2,7 @@ import type { harnessCapabilities } from '../../../core/src/providers/capabiliti
 import { apiPath } from '../lib/basePath';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -76,8 +76,8 @@ export const api = {
     const s = q.toString();
     return req<EndlessPage>(`/api/endless/messages${s ? `?${s}` : ''}`);
   },
-  endlessSend: (text: string, project: string | null, images: EndlessImage[] = []) =>
-    req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images }) }),
+  endlessSend: (text: string, project: string | null, images: EndlessImage[] = [], files: EndlessFile[] = []) =>
+    req<{ ok: true }>('/api/endless/send', { method: 'POST', body: body({ text, project, images, files }) }),
   endlessRetry: () => req<{ ok: true }>('/api/endless/retry', { method: 'POST' }),
   endlessStop: () => req<{ ok: true }>('/api/endless/stop', { method: 'POST' }),
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),

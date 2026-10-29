@@ -25,6 +25,11 @@ export const RESULT_GRACE_MS = 1_500;
 export const HANDOFF_RESULT_CEILING_MS = 120_000;
 
 export interface UserInput { text: string; project: string | null; media: string[] }
+
+/** The line that names a message's non-image attachments for the model. */
+export function attachedFilesLine(files: string[]): string {
+  return `Attached file${files.length === 1 ? '' : 's'} (read with the Read tool):\n${files.map((f) => `- ${f}`).join('\n')}`;
+}
 /** A message already in the log that a turn must answer: a thread's report (spec section 6.4). */
 export interface LoggedInput {
   i: number; kind: 'work'; text: string; project: string | null;
@@ -183,10 +188,15 @@ export class TurnRunner {
     const text = p.logged && !p.input.trusted ? untrustedBlock('a thread report', p.input.text) : p.input.text;
     blocks.push({ type: 'text', text: messageLine(p.logged ? p.input.kind : 'user', text, this.d.projectName(p.input.project)) });
     if (!p.logged) {
+      // An image goes to the model as a block it can see. Any other attachment (a PDF, a text
+      // file) is named by its path, and the model reads it with the Read tool.
+      const files: string[] = [];
       for (const file of p.input.media) {
         const img = this.d.readImage(file);
         if (img) blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } });
+        else files.push(file);
       }
+      if (files.length) blocks.push({ type: 'text', text: attachedFilesLine(files) });
     }
     return blocks;
   }

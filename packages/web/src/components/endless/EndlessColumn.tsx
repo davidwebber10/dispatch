@@ -9,11 +9,11 @@ import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { ImageViewerHost } from '../ChatImage';
-import { EndlessRows, PendingUserRow, rowKeyOf } from './EndlessMessageRow';
+import { EndlessRows, PendingUserRow, FileChip, rowKeyOf } from './EndlessMessageRow';
 import { ProjectPicker, iconBtn } from './ProjectPicker';
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
-import type { EndlessImage } from '../../api/types';
-import { MODEL_IMAGE_MIME, fileToBase64 } from '../../lib/image-attach';
+import type { EndlessImage, EndlessFile } from '../../api/types';
+import { MODEL_IMAGE_MIME, fileToBase64, chatDocType, CHAT_ACCEPT, CHAT_DOC_MAX_BYTES } from '../../lib/image-attach';
 
 /** Pages older history in while the first page is too short to scroll (see useBootstrapOlderPages). */
 function BootstrapOlder() {
@@ -72,7 +72,7 @@ const IMAGES_LOST = 'dispatch:chat-images-lost';
 let imagesLostCount = 0; // images dropped by failures that no composer has shown yet
 let imagesLostHadText = false; // whether any of those failures had text that went back to the draft
 const imagesLostText = (n: number, hadText: boolean) => {
-  const images = n === 1 ? '1 image was' : `${n} images were`;
+  const images = n === 1 ? '1 attachment was' : `${n} attachments were`;
   return `A message failed to send after you left Chat. ${hadText ? `Its text is back in the draft, but its ${images} not saved.` : `Its ${images} not saved.`} Attach again to retry.`;
 };
 const pendingImagesLost = () => (imagesLostCount ? imagesLostText(imagesLostCount, imagesLostHadText) : null);
@@ -103,6 +103,9 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [dragActive, setDragActive] = useState(false); // drives the drop-target cue
   const [images, setImages] = useState<EndlessImage[]>([]);
+  // Documents (PDF, TXT, MD, CSV, JSON) ride along as base64 like images; the daemon saves them and
+  // names their paths for the model. 2026-10-28: before this, a PDF could not be attached on a phone.
+  const [files, setFiles] = useState<EndlessFile[]>([]);
   const [project, setProject] = useState<string | null>(null);
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === project)?.name ?? null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -134,7 +137,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
   // The key is Stop only while a turn runs and the draft is empty: a message typed during a
   // turn still goes to the running process.
-  const stopMode = busy && !text.trim() && images.length === 0 && !sendingNow && !reading && !settling;
+  const stopMode = busy && !text.trim() && images.length === 0 && files.length === 0 && !sendingNow && !reading && !settling;
   const stop = () => {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
@@ -150,8 +153,9 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const submit = async () => {
     const raw = text;
     const t = raw.trim();
-    if ((!t && images.length === 0) || sending.current || readsRef.current > 0) return;
+    if ((!t && images.length === 0 && files.length === 0) || sending.current || readsRef.current > 0) return;
     const imgs = images;
+    const docs = files;
     const proj = project;
     sending.current = true;
     setSendingNow(true);
@@ -160,18 +164,21 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     setText('');
     textRef.current = ''; // render has not run yet; a reject before it must not see the old text
     setImages([]);
+    setFiles([]);
     setProject(null);
     try {
-      await useEndless.getState().send(t, proj, imgs);
+      await useEndless.getState().send(t, proj, imgs, docs);
     } catch (err) {
       if (!mounted.current) {
         if (raw.trim()) appendToDraft('chat', raw);
-        if (imgs.length) { imagesLostCount += imgs.length; imagesLostHadText ||= !!raw.trim(); window.dispatchEvent(new Event(IMAGES_LOST)); }
+        const lost = imgs.length + docs.length;
+        if (lost) { imagesLostCount += lost; imagesLostHadText ||= !!raw.trim(); window.dispatchEvent(new Event(IMAGES_LOST)); }
         return;
       }
       const now = textRef.current;
       setText(now.trim() ? `${raw} ${now}` : raw);
       setImages((cur) => [...imgs, ...cur]);
+      setFiles((cur) => [...docs, ...cur]);
       setProject((cur) => cur ?? proj);
       setSendError(`Send failed: ${errorText(err)}`);
     } finally {
@@ -187,33 +194,37 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
   };
-  // Picked and dropped files take this path (pasted ones are filtered to images first). Only the
-  // image types the model can read are kept: Chat has no project inbox to hold other files.
-  const addImages = async (list: Iterable<File> | null | undefined) => {
+  // Picked, dropped and pasted files all take this path. An image the model can see becomes an
+  // image block; a document Chat takes (PDF, TXT, MD, CSV, JSON) is sent as base64 for the daemon
+  // to save and name by path. Anything else is named in a notice, never dropped without a word.
+  const addFiles = async (list: Iterable<File> | null | undefined) => {
     const all = [...(list ?? [])];
-    const files = all.filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    const imgs = all.filter((f) => MODEL_IMAGE_MIME.has(f.type));
+    const docs = all.filter((f) => !MODEL_IMAGE_MIME.has(f.type) && chatDocType(f) !== null && f.size <= CHAT_DOC_MAX_BYTES);
+    const tooBig = all.filter((f) => !MODEL_IMAGE_MIME.has(f.type) && chatDocType(f) !== null && f.size > CHAT_DOC_MAX_BYTES);
+    const other = all.filter((f) => !MODEL_IMAGE_MIME.has(f.type) && chatDocType(f) === null);
     const notes: string[] = [];
-    if (files.length < all.length) {
-      // A file the model cannot read is named, not dropped without a word.
-      const names = all.filter((f) => !MODEL_IMAGE_MIME.has(f.type)).map((f) => f.name || f.type || 'a file');
-      const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3} more` : names.join(', ');
-      notes.push(`${shown} not attached: Chat takes PNG, JPEG, GIF or WebP images.`);
-    }
+    const list3 = (fs: File[]) => { const names = fs.map((f) => f.name || f.type || 'a file'); return names.length > 3 ? `${names.slice(0, 3).join(', ')} +${names.length - 3} more` : names.join(', '); };
+    if (other.length) notes.push(`${list3(other)} not attached: Chat takes images (PNG, JPEG, GIF, WebP) and documents (PDF, TXT, MD, CSV, JSON).`);
+    if (tooBig.length) notes.push(`${list3(tooBig)} not attached: a document can be up to 20 MB.`);
     setAttachNotice(notes.join(' ') || null);
-    if (!files.length) return;
+    if (!imgs.length && !docs.length) return;
     readsRef.current += 1;
     setReading(true);
     try {
-      const read = await Promise.allSettled(files.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
-      const add = read.flatMap((x) => (x.status === 'fulfilled' ? [x.value] : []));
-      const failed = read.flatMap((x) => (x.status === 'rejected' ? [x.reason] : []));
+      const readImgs = await Promise.allSettled(imgs.map(async (f) => ({ media_type: f.type, data: await fileToBase64(f) })));
+      const readDocs = await Promise.allSettled(docs.map(async (f) => ({ name: f.name, media_type: chatDocType(f)!, data: await fileToBase64(f) })));
+      const addImgs = readImgs.flatMap((x) => (x.status === 'fulfilled' ? [x.value] : []));
+      const addDocs = readDocs.flatMap((x) => (x.status === 'fulfilled' ? [x.value] : []));
+      const failed = [...readImgs, ...readDocs].flatMap((x) => (x.status === 'rejected' ? [x.reason] : []));
       if (mounted.current) {
         // Merge into the notice on screen, never replace it: a newer pick may have written its own by now.
         if (failed.length) {
-          const fail = `Could not read the image: ${errorText(failed[0])}`;
+          const fail = `Could not read the file: ${errorText(failed[0])}`;
           setAttachNotice((cur) => (cur?.includes(fail) ? cur : cur ? `${cur} ${fail}` : fail));
         }
-        if (add.length) setImages((prev) => [...prev, ...add]);
+        if (addImgs.length) setImages((prev) => [...prev, ...addImgs]);
+        if (addDocs.length) setFiles((prev) => [...prev, ...addDocs]);
       }
     } finally {
       readsRef.current -= 1;
@@ -222,12 +233,13 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   };
   const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
-    await addImages(input.files);
+    await addFiles(input.files);
     input.value = '';
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = [...(e.clipboardData?.files ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type));
-    if (files.length) { e.preventDefault(); void addImages(files); }
+    // Take over the paste only for files Chat can attach; a text paste, and a file it cannot take, stay a paste.
+    const picked = [...(e.clipboardData?.files ?? [])].filter((f) => MODEL_IMAGE_MIME.has(f.type) || chatDocType(f) !== null);
+    if (picked.length) { e.preventDefault(); void addFiles(picked); }
   };
   // Gate on a FILE drag so the cue does not flash on text drags.
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -242,7 +254,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     // A text drag into the box must drop its text: take over only a file drop.
     if (Array.from(e.dataTransfer.types || []).includes('Files')) e.preventDefault();
     setDragActive(false);
-    if (e.dataTransfer.files?.length) void addImages(e.dataTransfer.files);
+    if (e.dataTransfer.files?.length) void addFiles(e.dataTransfer.files);
   };
   // Grow with the text up to 200px, then scroll. Runs on every text change, so a paste, a
   // draft restore and the clear after a send all resize the box.
@@ -263,8 +275,8 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
       style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)', outline: dragActive ? '1px solid var(--color-accent)' : 'none', outlineOffset: -1, padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
       <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {dragActive && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>Drop image to attach</div>}
-        {(project !== null || images.length > 0) && (
+        {dragActive && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>Drop to attach</div>}
+        {(project !== null || images.length > 0 || files.length > 0) && (
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             {project !== null && (
               <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 999, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13 }}>
@@ -285,14 +297,23 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
                 </button>
               </div>
             ))}
+            {files.map((f, k) => (
+              <div key={`f${k}`} style={{ position: 'relative' }}>
+                <FileChip name={f.name} />
+                <button type="button" aria-label="Remove file" title={`Remove ${f.name}`} onClick={() => setFiles(files.filter((_, j) => j !== k))}
+                  style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, padding: 0, borderRadius: '50%', border: 'none', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                  <X size={11} weight="bold" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
         {attachNotice && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
         <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <ProjectPicker value={project} onChange={setProject} mobile={mobile} />
-          <button type="button" aria-label="Attach image" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
-          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple hidden onChange={(e) => void onFiles(e)} />
+          <button type="button" aria-label="Attach a file" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
+          <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
           <textarea ref={taRef} aria-label="Message" value={text} rows={1} enterKeyHint="send" onPaste={onPaste} placeholder="Message Dispatch…"
             onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
             style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />
@@ -345,7 +366,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               <EndlessRows messages={messages} focus={focus} />
               {atTail && pending.map((p) => (
                 <MessageScroller.Item key={`p${p.id}`} messageId={`p${p.id}`} style={{ display: 'flex', flexDirection: 'column' }}>
-                  <PendingUserRow text={p.text} projectName={p.projectName} images={p.images} />
+                  <PendingUserRow text={p.text} projectName={p.projectName} images={p.images} files={p.files} />
                 </MessageScroller.Item>
               ))}
               {liveThinking && <MessageScroller.Item messageId="__thinking"><Thinking text={liveThinking} /></MessageScroller.Item>}

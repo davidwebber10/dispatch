@@ -33,9 +33,9 @@ export function createEndlessRouter(svc: EndlessService): Router {
   });
 
   router.post('/send', (req, res) => {
-    const { text, project, images } = req.body ?? {};
+    const { text, project, images, files } = req.body ?? {};
     try {
-      svc.send({ text: typeof text === 'string' ? text : '', project: str(project), images: Array.isArray(images) ? images : [] });
+      svc.send({ text: typeof text === 'string' ? text : '', project: str(project), images: Array.isArray(images) ? images : [], files: Array.isArray(files) ? files : [] });
       res.status(202).json({ ok: true });
     } catch (err) { fail(res, err); }
   });

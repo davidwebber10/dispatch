@@ -1,6 +1,6 @@
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState, type CSSProperties } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench } from '@phosphor-icons/react';
+import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench, FileText } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
@@ -210,6 +210,21 @@ function NoteCard({ m }: { m: EndlessMessage }) {
   );
 }
 
+/** A saved media name is `<time>-<k>-<8 hex>-<the user's name>`; an image has no user name part. */
+const isImageMedia = (name: string) => /\.(png|jpe?g|gif|webp)$/i.test(name);
+export const mediaDisplayName = (name: string) => name.replace(/^\d+-\d+-[0-9a-f]{8}-/, '');
+
+/** A non-image attachment (a PDF, a text file): a chip that opens the saved file. */
+export function FileChip({ name, href }: { name: string; href?: string }) {
+  const style: CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 260, height: 30, padding: '0 10px', borderRadius: 8,
+    border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)',
+    fontSize: 12.5, textDecoration: 'none',
+  };
+  const inner = <><FileText size={15} style={{ flexShrink: 0 }} /><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span></>;
+  return href ? <a href={href} target="_blank" rel="noreferrer" title={name} style={style}>{inner}</a> : <span title={name} style={style}>{inner}</span>;
+}
+
 function MessageRow({ m }: { m: EndlessMessage }) {
   if (m.kind === 'user') {
     return (
@@ -218,7 +233,9 @@ function MessageRow({ m }: { m: EndlessMessage }) {
         <UserBubble text={m.text} />
         {m.media.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {m.media.map((name) => <ChatImage key={name} src={endlessMediaUrl(name)} maxHeight={220} />)}
+            {m.media.map((name) => (isImageMedia(name)
+              ? <ChatImage key={name} src={endlessMediaUrl(name)} maxHeight={220} />
+              : <FileChip key={name} name={mediaDisplayName(name)} href={endlessMediaUrl(name)} />))}
           </div>
         )}
       </div>
@@ -231,14 +248,15 @@ function MessageRow({ m }: { m: EndlessMessage }) {
 }
 
 /** A sent message the daemon has not logged yet, drawn like a logged one. */
-export function PendingUserRow({ text, projectName, images }: { text: string; projectName: string | null; images: { media_type: string; data: string }[] }) {
+export function PendingUserRow({ text, projectName, images, files = [] }: { text: string; projectName: string | null; images: { media_type: string; data: string }[]; files?: { name: string }[] }) {
   return (
     <div data-pending="true" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
       {projectName && <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '0.06em', color: 'var(--color-text-tertiary)' }}>{projectName}</span>}
       <UserBubble text={text} />
-      {images.length > 0 && (
+      {(images.length > 0 || files.length > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {images.map((im, k) => <ChatImage key={k} src={`data:${im.media_type};base64,${im.data}`} maxHeight={220} />)}
+          {files.map((f, k) => <FileChip key={`f${k}`} name={f.name} />)}
         </div>
       )}
     </div>

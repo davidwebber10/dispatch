@@ -102,7 +102,7 @@ describe('Composer project picker', () => {
     const box = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(box, { target: { value: 'hi' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('hi', 's2', []));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('hi', 's2', [], []));
     await waitFor(() => expect(screen.queryByTestId('project-pill')).not.toBeInTheDocument());
   });
 

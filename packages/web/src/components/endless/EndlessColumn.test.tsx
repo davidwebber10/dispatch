@@ -96,7 +96,7 @@ describe('EndlessColumn', () => {
     const box = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(box, { target: { value: 'hello there' } });
     fireEvent.keyDown(box, { key: 'Enter' });
-    await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', null, []));
+    await waitFor(() => expect(send).toHaveBeenCalledWith('hello there', null, [], []));
   });
 
   it('keeps the draft and shows the error when the send fails, with no unhandled rejection', async () => {
@@ -255,7 +255,7 @@ describe('EndlessColumn', () => {
     fireEvent.keyDown(box, { key: 'Enter' });
     await screen.findByText(/Send failed/);
     expect(screen.queryAllByText('lost one').filter((el) => el.tagName !== 'TEXTAREA')).toHaveLength(0);
-    act(() => { useEndless.setState({ pending: [{ id: 99, text: 'stale', projectName: null, images: [] }] }); });
+    act(() => { useEndless.setState({ pending: [{ id: 99, text: 'stale', projectName: null, images: [], files: [] }] }); });
     expect(screen.getByText('stale')).toBeInTheDocument();
     act(() => { useEndless.getState().applyEvent({ type: 'endless:turn', status: 'failed', error: 'x' }); });
     expect(screen.queryByText('stale')).toBeNull();

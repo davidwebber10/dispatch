@@ -38,6 +38,23 @@ export type WireMessage = Omit<EndlessMessage, 'media'> & { media: string[]; pro
 
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/**
+ * Documents Chat takes besides images (2026-10-28: a PDF could not be attached on a phone at all).
+ * They are saved to the media folder like images, but the model cannot see them as blocks: the turn
+ * names their paths instead and the model reads them with its Read tool (which reads PDFs).
+ */
+export const FILE_EXT: Record<string, string> = {
+  'application/pdf': 'pdf', 'text/plain': 'txt', 'text/markdown': 'md', 'text/csv': 'csv', 'application/json': 'json',
+};
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+export interface SendFile { name: string; media_type: string; data: string }
+
+/** The saved file keeps the user's name (so the model and the user recognise it), reduced to safe characters, with the type's extension. */
+export function safeFileName(name: string, ext: string): string {
+  const base = path.basename(String(name || '')).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._]+/, '').slice(0, 80);
+  const stem = base.replace(/\.[^.]*$/, '') || 'file';
+  return `${stem}.${ext}`;
+}
 
 /** `DISPATCH_ENDLESS_LIMITS=low,high,compactionLow,compactionHigh` (end-to-end checks only). */
 export function limitsFromEnv(raw?: string): ViewLimits {
@@ -430,17 +447,37 @@ export class EndlessService {
     if (list.length > 200) list.shift();
   }
 
-  send(body: { text: string; project: string | null; images: { media_type: string; data: string }[] }): void {
-    if (!body.text.trim() && body.images.length === 0) throw new UserError('a message needs text or an image');
+  send(body: { text: string; project: string | null; images: { media_type: string; data: string }[]; files?: SendFile[] }): void {
+    const files = body.files ?? [];
+    if (!body.text.trim() && body.images.length === 0 && files.length === 0) throw new UserError('a message needs text or an attachment');
     if (body.project && !sessionsDb.getById(this.o.db, body.project)) throw new UserError(`unknown project: ${body.project}`);
     for (const img of body.images as unknown[]) {
       const ok = !!img && typeof img === 'object' && typeof (img as any).media_type === 'string' && typeof (img as any).data === 'string';
       if (!ok) throw new UserError('each image needs a media_type and base64 data');
       if (!EXT[(img as any).media_type]) throw new UserError(`unsupported image type: ${(img as any).media_type}`);
     }
-    const media = body.images.map((img, k) => this.saveImage(img, k));
+    for (const f of files as unknown[]) {
+      const ok = !!f && typeof f === 'object' && typeof (f as any).media_type === 'string' && typeof (f as any).data === 'string';
+      if (!ok) throw new UserError('each file needs a media_type and base64 data');
+      if (!FILE_EXT[(f as any).media_type]) throw new UserError(`unsupported file type: ${(f as any).media_type} (Chat takes PDF, TXT, MD, CSV and JSON)`);
+    }
+    const media = [
+      ...body.images.map((img, k) => this.saveImage(img, k)),
+      ...files.map((f, k) => this.saveFile(f, body.images.length + k)),
+    ];
     this.onOwnerAction?.();
     this.turns.send({ text: body.text, project: body.project, media });
+  }
+
+  private saveFile(f: SendFile, k: number): string {
+    const ext = FILE_EXT[f.media_type];
+    if (!ext) throw new UserError(`unsupported file type: ${f.media_type}`);
+    const data = Buffer.from(String(f.data ?? ''), 'base64');
+    if (data.length === 0 || data.length > MAX_FILE_BYTES) throw new UserError('a file must be between 1 byte and 20 MB');
+    fs.mkdirSync(this.mediaDir, { recursive: true });
+    const file = path.join(this.mediaDir, `${this.now()}-${k}-${randomUUID().slice(0, 8)}-${safeFileName(f.name, ext)}`);
+    fs.writeFileSync(file, data);
+    return file;
   }
 
   private saveImage(img: { media_type: string; data: string }, k: number): string {
