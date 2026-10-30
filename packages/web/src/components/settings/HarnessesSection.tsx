@@ -3,6 +3,7 @@ import { CheckCircle, WarningCircle, X } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } from '../../api/types';
 import { HARNESSES } from '../../lib/harnesses';
+import { Toggle } from './ui';
 
 /**
  * Per-harness defaults, stored on the DAEMON (not localStorage) because spawn-time
@@ -12,6 +13,8 @@ import { HARNESSES } from '../../lib/harnesses';
  * Doppler secret NAME holding the OpenRouter key — the transcription section's "your key
  * stays in Doppler" pattern, plus a live present/missing check and a replace-key field —
  * and the MODEL LIST the New Thread picker offers, curated from OpenRouter's catalog.
+ * Claude Code also has "Skip agent status summaries" (on unless turned off), which the daemon
+ * applies to the next thread it starts.
  */
 
 const label = { fontSize: 11, fontWeight: 600, letterSpacing: 0.4, color: 'var(--color-text-tertiary)' } as const;
@@ -119,6 +122,24 @@ export function HarnessesSection() {
                   <option value="cli">CLI</option>
                   <option value="pretty">Pretty</option>
                 </select>
+              </div>
+            )}
+
+            {h.type === 'claude-code' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={rowStyle}>
+                  <span style={{ fontSize: 13 }}>Skip agent status summaries</span>
+                  <Toggle
+                    on={s.skipAgentSummaries ?? true}
+                    label="Skip agent status summaries"
+                    onClick={() => void put({ 'claude-code': { skipAgentSummaries: !(s.skipAgentSummaries ?? true) } })}
+                  />
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+                  Claude Code re-sends each background agent's whole transcript about every 30 s for a
+                  3–5 word status line. Skipping it saves those tokens; the status line stops updating.
+                  Applies to threads started after the change.
+                </div>
               </div>
             )}
 

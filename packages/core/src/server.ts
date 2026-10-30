@@ -47,11 +47,12 @@ import { closeInterruptedTurns } from './analytics/recorder.js';
 import { attachPtyCapture } from './analytics/pty-capture.js';
 import * as usageDb from './db/usage.js';
 import { startTelemetryLoop } from './telemetry/sender.js';
-import { opencodeKeySecretName } from './settings/harness-settings.js';
+import { opencodeKeySecretName, skipClaudeAgentSummaries } from './settings/harness-settings.js';
 import { warmModelCapabilities } from './settings/model-capabilities.js';
 import { warmClaudeVersion, prunePromptFiles, setClaudeProbeEnv } from './providers/claude-prompt-file.js';
 import { setProviderProbeEnv } from './setup/detect.js';
 import { withShimPath } from './auth/shim.js';
+import { installAgentSummaryHook, withAgentSummaryPreload } from './providers/claude-agent-summary.js';
 import { getToolsSpawnEnv, toolStatuses, awarenessNote } from './tools/status.js';
 import { ToolAuthProber } from './tools/auth-probe.js';
 import { SecretsService } from './secrets/service.js';
@@ -656,6 +657,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     return awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
   });
   let effectiveShimEnv = browserShimEnv;
+  const agentSummaryHook = installAgentSummaryHook(dataDir);
   // Resolve the OpenCode/OpenRouter key from Doppler BY CONFIGURED NAME (settings/harness-
   // settings.ts) and layer it onto the opencode children's env as OPENROUTER_API_KEY.
   // Async on purpose (Doppler round-trip) atop the sync env refresh; re-fired on boot,
@@ -691,6 +693,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // browser-auth relay silently does nothing. On a hosted box that relay is the ONLY
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
+    // Every Claude Code thread preloads the agent_summary off-switch (claude-agent-summary.ts).
+    // Settings → Harnesses → Claude Code turns it off; the PUT re-runs this refresh.
+    const bunOptions = withAgentSummaryPreload(process.env.BUN_OPTIONS, skipClaudeAgentSummaries(db) ? agentSummaryHook : null);
+    if (bunOptions) spawnEnv.BUN_OPTIONS = bunOptions;
     toolsAuth.setSpawnEnv(spawnEnv);
     // The Claude version check reads the same `claude` the agents will run.
     setClaudeProbeEnv(spawnEnv);

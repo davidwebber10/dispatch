@@ -20,12 +20,16 @@ import { OPENCODE_DEFAULT_MODELS, type OpencodeModel } from '../providers/openco
  *                 ⇒ the curated OPENCODE_DEFAULT_MODELS. Stored whole (a PUT replaces the
  *                 list), because OpenRouter's catalog is hundreds of ids and which handful
  *                 a user wants is a preference, not something to derive.
+ *   skipAgentSummaries  claude-code only — preload the agent_summary off-switch into every
+ *                 Claude Code thread (providers/claude-agent-summary.ts). Absent ⇒ ON: the
+ *                 summaries cost a large share of spend for a status line nobody reads.
  */
 export interface HarnessSettings {
   defaultModel?: string;
   defaultMode?: 'cli' | 'pretty';
   keySecret?: string;
   models?: OpencodeModel[];
+  skipAgentSummaries?: boolean;
 }
 
 export type AllHarnessSettings = Partial<Record<AgentType, HarnessSettings>>;
@@ -68,6 +72,7 @@ function sanitize(raw: unknown): AllHarnessSettings {
     if (secret) entry.keySecret = secret;
     const models = type === 'opencode' ? pickModels(rec.models) : undefined;
     if (models) entry.models = models;
+    if (type === 'claude-code' && typeof rec.skipAgentSummaries === 'boolean') entry.skipAgentSummaries = rec.skipAgentSummaries;
     if (Object.keys(entry).length) out[type] = entry;
   }
   return out;
@@ -89,7 +94,7 @@ export function updateHarnessSettings(db: Database.Database, patch: unknown): Al
       if (p === undefined) continue;
       const merged: Record<string, unknown> = { ...(current[type] ?? {}) };
       if (p && typeof p === 'object') {
-        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models'] as const) {
+        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models', 'skipAgentSummaries'] as const) {
           const v = (p as Record<string, unknown>)[field];
           if (v === undefined) continue;
           if (v === null) delete merged[field];
@@ -112,4 +117,9 @@ export function opencodeModels(db: Database.Database): OpencodeModel[] {
 /** The Doppler secret name for the OpenCode/OpenRouter key. */
 export function opencodeKeySecretName(db: Database.Database): string {
   return readHarnessSettings(db).opencode?.keySecret ?? OPENCODE_DEFAULT_KEY_SECRET;
+}
+
+/** Whether Claude Code threads preload the agent_summary off-switch. On unless turned off. */
+export function skipClaudeAgentSummaries(db: Database.Database): boolean {
+  return readHarnessSettings(db)['claude-code']?.skipAgentSummaries ?? true;
 }

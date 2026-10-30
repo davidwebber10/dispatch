@@ -129,3 +129,19 @@ describe('HarnessesSection — OpenCode model list', () => {
     await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ opencode: { models: null } }));
   });
 });
+
+describe('HarnessesSection — Claude Code agent status summaries', () => {
+  it('shows the skip switch on by default, and turning it off saves false', async () => {
+    render(<HarnessesSection />);
+    const sw = await screen.findByRole('switch', { name: 'Skip agent status summaries' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(sw);
+    await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ 'claude-code': { skipAgentSummaries: false } }));
+  });
+
+  it('reflects a stored off', async () => {
+    (api.getHarnessSettings as any).mockResolvedValue(response({ settings: { 'claude-code': { skipAgentSummaries: false } } }));
+    render(<HarnessesSection />);
+    expect(await screen.findByRole('switch', { name: 'Skip agent status summaries' })).toHaveAttribute('aria-checked', 'false');
+  });
+});

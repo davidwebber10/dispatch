@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
-import { readHarnessSettings, updateHarnessSettings, opencodeModels } from './harness-settings.js';
+import { readHarnessSettings, updateHarnessSettings, opencodeModels, skipClaudeAgentSummaries } from './harness-settings.js';
 import { OPENCODE_DEFAULT_MODELS } from '../providers/opencode.js';
 
 function db() { const d = new Database(':memory:'); initSchema(d); return d; }
@@ -56,5 +56,26 @@ describe('harness settings — opencode model list', () => {
     }
     const ids = OPENCODE_DEFAULT_MODELS.map((m) => m.model);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('harness settings — Claude Code agent status summaries', () => {
+  it('skips them by default', () => {
+    expect(skipClaudeAgentSummaries(db())).toBe(true);
+  });
+
+  it('stores an explicit off, and null clears it back to the default', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { skipAgentSummaries: false } });
+    expect(skipClaudeAgentSummaries(d)).toBe(false);
+    updateHarnessSettings(d, { 'claude-code': { skipAgentSummaries: null } });
+    expect(skipClaudeAgentSummaries(d)).toBe(true);
+  });
+
+  it('ignores a non-boolean and any harness but claude-code', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { skipAgentSummaries: 'no' }, codex: { skipAgentSummaries: false } });
+    expect(skipClaudeAgentSummaries(d)).toBe(true);
+    expect(readHarnessSettings(d).codex).toBeUndefined();
   });
 });
