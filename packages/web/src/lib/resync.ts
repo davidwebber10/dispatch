@@ -22,9 +22,14 @@ import { useLedgerCard } from '../stores/ledgerCard';
  *
  * The pinned decision cards load again too: a `ledger:changed` missed while the socket was down
  * never replays (pinned card spec 2026-10-08, Unit 6).
+ *
+ * The project list loads again first. App mount loads it once, so a page that opened while
+ * the daemon was down (a PC restart, the browser restoring its tabs before WSL is up) kept
+ * an empty list until a hard refresh. A failed reload keeps the old list.
  */
 export async function resyncAfterReconnect(): Promise<void> {
   useThreadStatus.getState().reset();
+  await useProjects.getState().load().catch(() => { /* daemon still starting, keep the old list */ });
   const ids = useProjects.getState().sessions.map((s) => s.id);
   await Promise.all([
     ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),

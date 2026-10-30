@@ -11,6 +11,28 @@ beforeEach(() => {
   useProjects.setState({ sessions: [], activeId: null });
   useTabs.setState({ byProject: {} });
   vi.restoreAllMocks();
+  // By default the list reload returns what the store already holds.
+  vi.spyOn(api, 'listSessions').mockImplementation(async () => useProjects.getState().sessions);
+});
+
+test('loads the project list again: a page opened while the daemon was down had an empty one', async () => {
+  vi.spyOn(api, 'listSessions').mockResolvedValue([{ id: 'p1', name: 'Alpha' } as any]);
+  const listTerminals = vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+
+  await resyncAfterReconnect();
+
+  expect(useProjects.getState().sessions.map((s) => s.id)).toEqual(['p1']);
+  expect(listTerminals).toHaveBeenCalledWith('p1');
+});
+
+test('a failed project list reload keeps the old list and still re-pulls its rows', async () => {
+  useProjects.setState({ sessions: [{ id: 'p1', name: 'Alpha' } as any] });
+  vi.spyOn(api, 'listSessions').mockRejectedValue(new Error('fetch failed'));
+  const listTerminals = vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+
+  await expect(resyncAfterReconnect()).resolves.toBeUndefined();
+  expect(useProjects.getState().sessions.map((s) => s.id)).toEqual(['p1']);
+  expect(listTerminals).toHaveBeenCalledWith('p1');
 });
 
 test('drops the stale live-status overlay so a missed settle no longer pins a card as working', async () => {
