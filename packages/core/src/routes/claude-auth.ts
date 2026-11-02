@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { ClaudeLoginService } from '../auth/claude-login.js';
+import { clientMessage } from '../http/client-message.js';
 
 /**
  * Terminal-free Claude login, for the hosted OS surface (design doc §11.2).
@@ -22,7 +23,7 @@ export function createClaudeAuthRouter(service: ClaudeLoginService): Router {
     try {
       res.json(await service.start());
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'failed to start login' });
+      res.status(500).json({ error: clientMessage(err) });
     }
   });
 

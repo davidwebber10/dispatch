@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { RolesService, RoleStatusEntry } from '../roles/service.js';
+import { clientMessage } from '../http/client-message.js';
 
 /** Strip the role's brief body from the wire payload — the CLI reads role.md directly
  *  when it wants the content; the HTTP surface only needs to stay light. */
@@ -20,7 +21,7 @@ export function createRolesRouter(rolesService: RolesService): Router {
     try {
       res.json(serialize(rolesService.enable(req.params.name)));
     } catch (err: any) {
-      res.status(err.status ?? 400).json({ error: err.message });
+      res.status(err.status ?? 400).json({ error: clientMessage(err) });
     }
   });
 
@@ -28,7 +29,7 @@ export function createRolesRouter(rolesService: RolesService): Router {
     try {
       res.json(serialize(rolesService.disable(req.params.name)));
     } catch (err: any) {
-      res.status(err.status ?? 400).json({ error: err.message });
+      res.status(err.status ?? 400).json({ error: clientMessage(err) });
     }
   });
 

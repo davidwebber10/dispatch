@@ -74,3 +74,15 @@ describe('secrets routes', () => {
     expect(r.body).toEqual([{ id: 'p1', slug: 'dispatch', name: 'Dispatch' }]);
   });
 });
+
+describe('secrets routes: errors name no server path', () => {
+  it('a connection save that fails on the disk answers a plain sentence', async () => {
+    const err = Object.assign(new Error("ENOTDIR: not a directory, mkdir '/Users/someone/.dispatch/secrets'"), { code: 'ENOTDIR' });
+    const db = new Database(':memory:');
+    initSchema(db);
+    const failing = createApp({ db, skipPty: true, secretsService: { setConnection: async () => { throw err; } } as any });
+    const r = await request(failing).put('/api/secrets/connection').send({ token: 'x' });
+    expect(r.status).toBe(400);
+    expect(r.text).not.toContain('/Users/');
+  });
+});

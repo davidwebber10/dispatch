@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
 import { authRequestChatRule, authRequestRule } from '../auth/key-rules.js';
 import type { AuthRequestService } from '../auth/service.js';
+import { clientMessage } from '../http/client-message.js';
 
 export function createAuthRouter(service: AuthRequestService): Router {
   const router = policyRouter();
@@ -20,7 +21,7 @@ export function createAuthRouter(service: AuthRequestService): Router {
       });
       res.status(201).json(record);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -48,7 +49,7 @@ export function createAuthRouter(service: AuthRequestService): Router {
       if (!record) return res.status(404).json({ error: 'Auth request not found' });
       res.json(record);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 

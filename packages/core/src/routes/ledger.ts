@@ -2,6 +2,7 @@ import { type Request, type Response, type Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
 import { ledgerRule } from '../auth/key-rules.js';
 import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
+import { clientMessage } from '../http/client-message.js';
 
 /**
  * The decision ledger routes. Every route names the caller in the body (`caller`, the calling
@@ -20,7 +21,7 @@ export function createLedgerRouter(ledger: LedgerService): Router {
       res.status(status).json(run(req));
     } catch (e: any) {
       if (e instanceof LedgerError) return res.status(e.status).json({ error: e.message, ...e.body });
-      res.status(500).json({ error: e?.message ?? String(e) });
+      res.status(500).json({ error: clientMessage(e) });
     }
   };
 

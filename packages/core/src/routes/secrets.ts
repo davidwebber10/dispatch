@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { SecretsService } from '../secrets/service.js';
+import { clientMessage } from '../http/client-message.js';
 
 /** Maps a thrown error to 400 (caller/config problem) or 502 (Doppler upstream). */
 function fail(res: import('express').Response, e: unknown): void {
@@ -17,7 +18,7 @@ export function createSecretsRouter(secrets: SecretsService, onWrite?: () => voi
 
   router.put('/connection', async (req, res) => {
     try { res.json(await secrets.setConnection(req.body ?? {})); }
-    catch (e) { res.status(400).json({ error: e instanceof Error ? e.message : String(e) }); }
+    catch (e) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // Literal /connection must be declared before the /:name delete route below.

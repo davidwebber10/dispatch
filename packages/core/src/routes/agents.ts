@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { AgentService } from '../agents/service.js';
+import { clientMessage } from '../http/client-message.js';
 
 export function createAgentsRouter(agentService: AgentService): Router {
   const router = policyRouter();
@@ -18,7 +19,7 @@ export function createAgentsRouter(agentService: AgentService): Router {
     try {
       res.status(201).json(agentService.createSchedule(req.body));
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -34,7 +35,7 @@ export function createAgentsRouter(agentService: AgentService): Router {
       if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
       res.json(schedule);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -47,7 +48,7 @@ export function createAgentsRouter(agentService: AgentService): Router {
     try {
       res.json(agentService.runNow(req.params.id));
     } catch (err: any) {
-      res.status(404).json({ error: err.message });
+      res.status(404).json({ error: clientMessage(err) });
     }
   });
 
@@ -80,7 +81,7 @@ export function createAgentsRouter(agentService: AgentService): Router {
     try {
       res.json(agentService.cancelRun(req.params.id));
     } catch (err: any) {
-      res.status(404).json({ error: err.message });
+      res.status(404).json({ error: clientMessage(err) });
     }
   });
 

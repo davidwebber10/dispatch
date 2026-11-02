@@ -1,5 +1,8 @@
 // packages/core/tests/routes/state.test.ts
 import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import request from 'supertest';
 import Database from 'better-sqlite3';
 
@@ -91,5 +94,25 @@ describe('GET /api/state/status-quality', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ declared: 0, inferred: 0, total: 0, needsHelpDeclared: 0, needsHelpInferred: 0 });
+  });
+});
+
+describe('state routes: a failed folder operation names no server path', () => {
+  it('mkdir under a file, and browse of a missing folder, answer a plain sentence', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const app = createApp({ db, skipPty: true });
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'state-err-'));
+    try {
+      const file = path.join(dir, 'f.txt');
+      fs.writeFileSync(file, 'x');
+      const mk = await request(app).post('/api/state/mkdir').query({ path: path.join(file, 'sub') });
+      expect(mk.status).toBe(400);
+      expect(Object.keys(mk.body)).toEqual(['error']);
+      expect(mk.text).not.toContain(dir);
+      const br = await request(app).get('/api/state/browse').query({ path: path.join(dir, 'missing') });
+      expect(br.status).toBe(400);
+      expect(br.text).not.toContain(dir);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

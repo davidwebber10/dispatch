@@ -12,7 +12,8 @@ import * as sessionsDb from '../db/sessions.js';
 // Own upload folder: this file empties and counts it, and must not touch the live daemon's or another test file's.
 vi.hoisted(() => { process.env.DISPATCH_UPLOAD_DIR = `${process.env.TMPDIR || '/tmp'}/dispatch-upload-test-${process.pid}`; });
 import { PassThrough } from 'stream';
-import { createFilesRouter, uploadStorage, clientMessage, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
+import { clientMessage } from '../http/client-message.js';
+import { createFilesRouter, uploadStorage, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
 
 afterAll(() => { fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true }); });
 
@@ -174,8 +175,8 @@ describe('clientMessage', () => {
     expect(clientMessage(Object.assign(new Error("ENOENT: no such file or directory, open '/Users/x/y'"), { code: 'ENOENT' }))).toBe('File or folder not found');
     // execFile fails with a numeric exit code and a message that holds the command line and the path.
     const sub = Object.assign(new Error('Command failed: /usr/bin/open -R /Users/x/y\nThe file /Users/x/y does not exist.'), { code: 1, cmd: '/usr/bin/open -R /Users/x/y' });
-    expect(clientMessage(sub)).toBe('The file operation failed');
-    expect(clientMessage(Object.assign(new Error('spawn open ENOENT /Users/x'), { syscall: 'spawn open', errno: -2 }))).toBe('The file operation failed');
+    expect(clientMessage(sub)).toBe('The operation failed');
+    expect(clientMessage(Object.assign(new Error('spawn open ENOENT /Users/x'), { syscall: 'spawn open', errno: -2 }))).toBe('The operation failed');
   });
 });
 
