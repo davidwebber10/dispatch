@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { clientMessage } from '../http/client-message.js';
 
 export const ROLE_AGENT_TYPES = ['planner', 'implementer', 'researcher', 'reviewer', 'design-reviewer', 'code-reviewer'] as const;
 export const ROLE_AUTHORITIES = ['observe', 'stage', 'stage-deploy'] as const;
@@ -93,7 +94,7 @@ export function listRoles(root: string = rolesRootDir()): { roles: RoleDefinitio
       const raw = fs.readFileSync(path.join(dir, 'role.md'), 'utf8');
       roles.push(parseRoleMd(e.name, dir, raw));
     } catch (err) {
-      errors.push({ name: e.name, error: err instanceof Error ? err.message : String(err) });
+      errors.push({ name: e.name, error: clientMessage(err) }); // a system error would name the server path
     }
   }
   roles.sort((a, b) => a.name.localeCompare(b.name));
