@@ -267,6 +267,9 @@ export class AgentService {
     // The floor is checked when the rule changes, when the schedule becomes recurring, and when a recurring one is switched on.
     // Renaming, switching off, or sending the same rule again always works (the edit form sends the rule every time).
     const stored = agentsDb.getSchedule(this.db, id);
+    // The server alone decides next_run_at; a value in the request is never used.
+    const { nextRunAt: _ignored, ...edit } = fields;
+    fields = edit;
     if (stored) {
       const rule = fields.recurrenceRule !== undefined ? fields.recurrenceRule : stored.recurrence_rule;
       const kind = fields.scheduleKind ?? stored.schedule_kind;
@@ -278,7 +281,14 @@ export class AgentService {
     }
     const row = agentsDb.updateSchedule(this.db, id, fields);
     if (!row) return null;
-    const schedule = toSchedule(this.withComputedNextRun(row));
+    // An edit that leaves the timing alone (a rename, a new prompt, the same rule sent again) keeps the
+    // stored next run. Working it out again from "now" would drop a run that is overdue and not yet started
+    // (a slipped cycle, or a one-shot that never runs), and would pull a run that the floor held back to a
+    // later time forward again (a second run too soon after the last one).
+    const timingKept = !!stored && stored.enabled === 1 && row.enabled === 1 && stored.next_run_at != null
+      && row.schedule_kind === stored.schedule_kind && row.timezone === stored.timezone
+      && row.run_at === stored.run_at && sameRule(row.recurrence_rule, stored.recurrence_rule);
+    const schedule = toSchedule(timingKept ? row : this.withComputedNextRun(row));
     this.broadcaster.broadcast({ type: 'agent:schedule-updated', schedule });
     return schedule;
   }

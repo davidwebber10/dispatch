@@ -180,6 +180,31 @@ describe('upload limits and temp folder', () => {
     expect(fs.statSync(TMP_UPLOAD_DIR).mode & 0o777).toBe(0o700);
   });
 
+  it('the 413 for an upload over the limit is the status and a message, with no stack or path', async () => {
+    for (const route of ['upload', 'inbox']) {
+      const res = await request(makeApp(workDir))
+        .post(`/api/sessions/s1/files/${route}`)
+        .attach('file', Buffer.alloc(101 * 1024 * 1024), { filename: 'big.bin', contentType: 'application/octet-stream' });
+      expect(res.status).toBe(413);
+      expect(Object.keys(res.body)).toEqual(['error']);
+      expect(res.text).not.toMatch(/node_modules|\bat \S+ \(|\.ts:\d+|\/Users\/|\/var\/|\/tmp\/|dispatch-upload/);
+    }
+  });
+
+  it('a failed upload save says what went wrong without the server path', async () => {
+    const app = makeApp(workDir);
+    // The target folder does not exist, so the copy fails: the system message names both paths.
+    const res = await request(app)
+      .post('/api/sessions/s1/files/upload?path=no-such-folder')
+      .attach('file', Buffer.from('hi'), { filename: 'a.txt', contentType: 'text/plain' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body)).toEqual(['error']);
+    expect(res.body.error).not.toContain(workDir);
+    expect(res.body.error).not.toContain(TMP_UPLOAD_DIR);
+    expect(res.body.error).not.toMatch(/ENOENT|copyfile/i);
+    expect(fs.readdirSync(TMP_UPLOAD_DIR)).toEqual([]); // and the temp file is gone
+  });
+
   it('upload over the limit is a 413 and leaves no temp file', async () => {
     const before = fs.existsSync(TMP_UPLOAD_DIR) ? fs.readdirSync(TMP_UPLOAD_DIR).length : 0;
     const res = await request(makeApp(workDir))

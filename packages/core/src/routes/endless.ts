@@ -1,9 +1,11 @@
+import path from 'node:path';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
 import { allowRule, chatArmRule } from '../auth/key-rules.js';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
 import { DocTimeoutError } from '../docs/service.js';
+import { setFileHeaders } from '../http/active-content.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const int = (v: unknown, fallback: number, min: number, max: number): number => {
@@ -123,6 +125,8 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.get('/media/:name', (req, res) => {
     const file = svc.mediaFile(req.params.name);
     if (!file) { res.status(404).end(); return; }
+    res.type(path.extname(file) || 'bin'); // the type sendFile would pick, so the headers can match it
+    setFileHeaders(res, String(res.getHeader('Content-Type') ?? ''));
     res.sendFile(file);
   });
 

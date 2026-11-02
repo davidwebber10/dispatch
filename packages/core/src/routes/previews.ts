@@ -6,6 +6,7 @@ import { keyRoute, policyRouter } from '../auth/route-policy.js';
 import { readSessionRule } from '../auth/key-rules.js';
 import { principalOf } from '../auth/request-principal.js';
 import { insideRealRoot } from '../files/confine.js';
+import { setFileHeaders } from '../http/active-content.js';
 import * as previewsDb from '../db/previews.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
@@ -132,7 +133,8 @@ export function createPreviewsRouter(db: Database.Database, broadcaster: EventBr
     const mime = PREVIEW_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.setHeader('Content-Disposition', `inline; filename="${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}"`);
-    if (mime === 'text/html') res.setHeader('Content-Security-Policy', HTML_SANDBOX_CSP);
+    // HTML runs scripts in an opaque origin; SVG and other markup get the plain sandbox (no scripts at all).
+    setFileHeaders(res, mime, mime === 'text/html' ? HTML_SANDBOX_CSP : 'sandbox');
     res.type(mime);
     res.sendFile(file.path);
   });
