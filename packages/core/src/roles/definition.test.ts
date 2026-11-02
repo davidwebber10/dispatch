@@ -96,3 +96,20 @@ Check last night's runs.`);
     expect(readRoleMemory(dir)).toBe('prior session notes');
   });
 });
+
+describe('listRoles error text', () => {
+  it('a role folder without role.md reports a plain sentence, not the file path', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-err-'));
+    try {
+      fs.mkdirSync(path.join(tmp, 'broken'));
+      fs.mkdirSync(path.join(tmp, 'bad-md'));
+      fs.writeFileSync(path.join(tmp, 'bad-md', 'role.md'), 'no front matter here');
+      const { errors } = listRoles(tmp);
+      const missing = errors.find((e) => e.name === 'broken')!;
+      expect(missing.error).toBe('File or folder not found');
+      expect(missing.error).not.toContain(tmp);
+      // A parse error from our own code keeps its useful text.
+      expect(errors.find((e) => e.name === 'bad-md')!.error).toMatch(/front matter|role\.md|missing/i);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});

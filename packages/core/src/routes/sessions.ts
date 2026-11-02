@@ -11,6 +11,7 @@ import { PERSONA_TYPES, type PersonaType, readOverseerWorkers } from '../setting
 import { resolveWorker } from '../overseer/worker-matrix.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import { detectProvider } from '../setup/detect.js';
+import { clientMessage } from '../http/client-message.js';
 
 export function createSessionsRouter(sessionService: SessionService, broadcaster: EventBroadcaster | undefined, db: Database.Database): Router {
   const router = policyRouter();
@@ -33,7 +34,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
         : undefined;
       res.status(201).json({ ...session, ...(warning ? { warning } : {}) });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -98,7 +99,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
       res.json({ terminalId: terminal.id });
     } catch (err: any) {
-      res.status(err?.message === 'Session not found' ? 404 : 400).json({ error: err.message });
+      res.status(err?.message === 'Session not found' ? 404 : 400).json({ error: clientMessage(err) });
     }
   };
   router.post('/:id/overseer/coordinator', ensureCoordinator);

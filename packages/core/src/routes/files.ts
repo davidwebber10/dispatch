@@ -11,6 +11,7 @@ import { rowToSession } from '../types.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { platform } from '../platform/index.js';
 import { insideRealRoot } from '../files/confine.js';
+import { clientMessage } from '../http/client-message.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -244,7 +245,7 @@ export function createFilesRouter(db: Database.Database): Router {
       });
       res.json(result);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -292,7 +293,7 @@ export function createFilesRouter(db: Database.Database): Router {
       walk(path.resolve(session.workingDir));
       res.json({ files: out, truncated });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -329,7 +330,7 @@ export function createFilesRouter(db: Database.Database): Router {
         res.json({ content: buf.toString('utf-8', 0, n), path: requestedPath });
       } finally { await fh.close(); }
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -374,7 +375,7 @@ export function createFilesRouter(db: Database.Database): Router {
       stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
       stream.pipe(res);
     } catch (err: any) {
-      res.status(404).json({ error: err.message });
+      res.status(404).json({ error: clientMessage(err) });
     }
   });
 
@@ -411,7 +412,7 @@ export function createFilesRouter(db: Database.Database): Router {
       stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
       stream.pipe(res);
     } catch (err: any) {
-      res.status(404).json({ error: err.message });
+      res.status(404).json({ error: clientMessage(err) });
     }
   });
 
@@ -452,7 +453,7 @@ export function createFilesRouter(db: Database.Database): Router {
       await platform.revealInFileManager(resolved);
       res.json({ ok: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: clientMessage(err) });
     }
   });
 
@@ -470,7 +471,7 @@ export function createFilesRouter(db: Database.Database): Router {
       fs.writeFileSync(resolved, req.body.content);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -482,7 +483,7 @@ export function createFilesRouter(db: Database.Database): Router {
         unlinkQuiet((req as any).uploadTmpPath);
         return res.status(413).json({ error: `File is larger than ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB` });
       }
-      if (uploadErr) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: uploadErr.message }); }
+      if (uploadErr) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: clientMessage(uploadErr) }); }
 
       const session = (req as any).session;
       const tmpFile = req.file?.path;
@@ -501,7 +502,7 @@ export function createFilesRouter(db: Database.Database): Router {
         res.json({ ok: true, path: path.relative(session.workingDir, dest) });
       } catch (err: any) {
         unlinkQuiet(tmpFile);
-        res.status(400).json({ error: err.message });
+        res.status(400).json({ error: clientMessage(err) });
       }
     });
   });
@@ -514,7 +515,7 @@ export function createFilesRouter(db: Database.Database): Router {
         unlinkQuiet((req as any).uploadTmpPath);
         return res.status(413).json({ error: 'File is larger than 50 MB' });
       }
-      if (err) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: err.message }); }
+      if (err) { unlinkQuiet((req as any).uploadTmpPath); return res.status(400).json({ error: clientMessage(err) }); }
 
       const session = (req as any).session;
       if ((req as any).uploadCancelled) { unlinkQuiet(req.file?.path); return; }
@@ -538,7 +539,7 @@ export function createFilesRouter(db: Database.Database): Router {
         try {
           if (req.file?.path) fs.unlinkSync(req.file.path);
         } catch {}
-        res.status(400).json({ error: copyErr.message });
+        res.status(400).json({ error: clientMessage(copyErr) });
       }
     });
   });
@@ -558,7 +559,7 @@ export function createFilesRouter(db: Database.Database): Router {
       fs.mkdirSync(resolved, { recursive: true });
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -583,7 +584,7 @@ export function createFilesRouter(db: Database.Database): Router {
       fs.renameSync(from, to);
       res.json({ ok: true, path: path.relative(session.workingDir, to) });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -602,7 +603,7 @@ export function createFilesRouter(db: Database.Database): Router {
       fs.rmSync(resolved, { recursive: true });
       res.json({ ok: true });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 

@@ -78,3 +78,19 @@ describe('POST /api/roles/:name/disable', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('role errors name no server path', () => {
+  const fsError = () => Object.assign(new Error("ENOENT: no such file or directory, open '/Users/someone/roles/x/role.md'"), { code: 'ENOENT' });
+  it('enable and disable answer a plain sentence for a system error, and keep our own messages and status', async () => {
+    const a = app({ enable: () => { throw fsError(); }, disable: () => { throw fsError(); } } as any);
+    for (const action of ['enable', 'disable']) {
+      const r = await request(a).post(`/api/roles/x/${action}`);
+      expect(r.status).toBe(400);
+      expect(r.text).not.toContain('/Users/');
+    }
+    const own = app({ enable: () => { throw statusErr(409, 'role x is already running'); } } as any);
+    const r = await request(own).post('/api/roles/x/enable');
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('role x is already running');
+  });
+});

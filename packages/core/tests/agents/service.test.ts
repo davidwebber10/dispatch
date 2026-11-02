@@ -288,6 +288,98 @@ describe('AgentService', () => {
     } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
   });
 
+  describe('an edit does not move a schedule whose timing it leaves alone', () => {
+    const base = {
+      projectId: 'proj-1', name: 'Nightly', provider: 'codex' as const, workingDir: '/srv/tenex', prompt: 'p',
+      timezone: 'UTC', enabled: true, nextRunAt: null, defaultTerminalLabel: null,
+    };
+    const withMin = (value: string, fn: () => void) => {
+      const prev = process.env.DISPATCH_MIN_SCHEDULE_MINUTES;
+      process.env.DISPATCH_MIN_SCHEDULE_MINUTES = value;
+      try { fn(); } finally { if (prev === undefined) delete process.env.DISPATCH_MIN_SCHEDULE_MINUTES; else process.env.DISPATCH_MIN_SCHEDULE_MINUTES = prev; }
+    };
+
+    it('renaming an overdue recurring schedule keeps the run that is waiting (no slipped cycle)', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-08T07:00:00.000Z'));
+        const service = new AgentService(db, sessionService, broadcaster);
+        const s = service.createSchedule({ ...base, scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'daily', time: '08:00' }) });
+        expect(s.nextRunAt).toBe('2026-05-08T08:00:00.000Z');
+        // The tick has not run yet (daemon busy or asleep): 08:00 is overdue at 08:00:40.
+        vi.setSystemTime(new Date('2026-05-08T08:00:40.000Z'));
+        const renamed = service.updateSchedule(s.id, { name: 'Nightly v2' })!;
+        expect(renamed.nextRunAt).toBe('2026-05-08T08:00:00.000Z');
+        expect(service.processDueRuns('2026-05-08T08:00:45.000Z')).toHaveLength(1);
+        expect(service.getSchedule(s.id)?.nextRunAt).toBe('2026-05-09T08:00:00.000Z');
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('sending the same rule again (the edit form does) keeps an overdue run', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-08T07:00:00.000Z'));
+        const service = new AgentService(db, sessionService, broadcaster);
+        const rule = JSON.stringify({ type: 'daily', time: '08:00' });
+        const s = service.createSchedule({ ...base, scheduleKind: 'recurring', runAt: null, recurrenceRule: rule });
+        vi.setSystemTime(new Date('2026-05-08T08:00:40.000Z'));
+        const edited = service.updateSchedule(s.id, { prompt: 'new prompt', recurrenceRule: ` ${rule}`.trim(), timezone: 'UTC', scheduleKind: 'recurring', nextRunAt: '2030-01-01T00:00:00.000Z' })!;
+        expect(edited.nextRunAt).toBe('2026-05-08T08:00:00.000Z');
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('renaming an overdue one-shot does not cancel its run', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-08T07:00:00.000Z'));
+        const service = new AgentService(db, sessionService, broadcaster);
+        const s = service.createSchedule({ ...base, scheduleKind: 'one-shot', runAt: '2026-05-08T08:00:00.000Z', recurrenceRule: null });
+        expect(s.nextRunAt).toBe('2026-05-08T08:00:00.000Z');
+        vi.setSystemTime(new Date('2026-05-08T08:00:40.000Z'));
+        const renamed = service.updateSchedule(s.id, { name: 'Once v2' })!;
+        expect(renamed.nextRunAt).toBe('2026-05-08T08:00:00.000Z');
+        expect(renamed.enabled).toBe(true);
+        expect(service.processDueRuns('2026-05-08T08:00:45.000Z')).toHaveLength(1);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('renaming right after a run does not pull the held next run back inside the floor', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-08T11:00:00.000Z'));
+        const service = new AgentService(db, sessionService, broadcaster);
+        // A dense rule can only be stored from before the floor was raised.
+        let s!: ReturnType<typeof service.createSchedule>;
+        withMin('0', () => {
+          s = service.createSchedule({ ...base, scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'cron', expr: '0,1 * * * *' }) });
+          agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
+        });
+        withMin('5', () => {
+          vi.setSystemTime(new Date('2026-05-08T12:00:20.000Z'));
+          expect(service.processDueRuns('2026-05-08T12:00:20.000Z')).toHaveLength(1);
+          expect(service.getSchedule(s.id)?.nextRunAt).toBe('2026-05-08T13:00:00.000Z');
+          vi.setSystemTime(new Date('2026-05-08T12:00:40.000Z'));
+          const renamed = service.updateSchedule(s.id, { name: 'Dense v2' })!;
+          expect(renamed.nextRunAt).toBe('2026-05-08T13:00:00.000Z'); // not 12:01, a second run 1 minute after the first
+        });
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('changing the rule, switching on, or changing the zone still works out a fresh next run', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2026-05-08T07:00:00.000Z'));
+        const service = new AgentService(db, sessionService, broadcaster);
+        const s = service.createSchedule({ ...base, scheduleKind: 'recurring', runAt: null, recurrenceRule: JSON.stringify({ type: 'daily', time: '08:00' }) });
+        vi.setSystemTime(new Date('2026-05-08T08:00:40.000Z'));
+        expect(service.updateSchedule(s.id, { recurrenceRule: JSON.stringify({ type: 'daily', time: '09:00' }) })!.nextRunAt).toBe('2026-05-08T09:00:00.000Z');
+        expect(service.updateSchedule(s.id, { enabled: false })!.nextRunAt).toBeNull();
+        expect(service.updateSchedule(s.id, { enabled: true })!.nextRunAt).toBe('2026-05-08T09:00:00.000Z');
+        expect(service.updateSchedule(s.id, { timezone: 'America/New_York' })!.nextRunAt).toBe('2026-05-08T13:00:00.000Z');
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
   it('processDueRuns advances recurring schedule nextRunAt', () => {
     const service = new AgentService(db, sessionService, broadcaster);
     const schedule = service.createSchedule({

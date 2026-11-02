@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import multer from 'multer';
 import type { TranscriptionService } from '../transcription/service.js';
+import { clientMessage } from '../http/client-message.js';
 
 // v1-light priming: bias Whisper-family models toward technical spellings.
 const DEFAULT_PROMPT = 'Technical dictation; may include file paths, camelCase identifiers, and CLI flags.';
@@ -16,7 +17,7 @@ export function createTranscribeRouter(svc: TranscriptionService): Router {
       if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ error: 'Audio too large (max 25MB)' });
       }
-      if (err) return res.status(400).json({ error: err.message });
+      if (err) return res.status(400).json({ error: clientMessage(err) });
       if (!req.file) return res.status(400).json({ error: 'No audio uploaded' });
 
       const b = req.body ?? {};

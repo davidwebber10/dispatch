@@ -10,6 +10,7 @@ import { summary } from '../analytics/queries.js';
 import { getRunningVersion, isNewerVersion } from '../update/version.js';
 import { parseStoredNotes, readLocalReleaseNote } from '../update/notes.js';
 import { revealClientFrom } from '../files/reveal.js';
+import { clientMessage } from '../http/client-message.js';
 
 export function createStateRouter(db: Database.Database): Router {
   const router = policyRouter();
@@ -56,7 +57,7 @@ export function createStateRouter(db: Database.Database): Router {
 
       res.json(entries);
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -70,7 +71,7 @@ export function createStateRouter(db: Database.Database): Router {
       fs.mkdirSync(dirPath, { recursive: true });
       res.json({ ok: true, path: dirPath });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 

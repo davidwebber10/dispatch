@@ -12,6 +12,7 @@ import * as sessionsDb from '../db/sessions.js';
 // Own upload folder: this file empties and counts it, and must not touch the live daemon's or another test file's.
 vi.hoisted(() => { process.env.DISPATCH_UPLOAD_DIR = `${process.env.TMPDIR || '/tmp'}/dispatch-upload-test-${process.pid}`; });
 import { PassThrough } from 'stream';
+import { clientMessage } from '../http/client-message.js';
 import { createFilesRouter, uploadStorage, UPLOAD_TMP_DIR as TMP_UPLOAD_DIR } from './files.js';
 
 afterAll(() => { fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true }); });
@@ -168,6 +169,17 @@ describe('symlinked folders cannot lead delete or rename outside the project', (
   });
 });
 
+describe('clientMessage', () => {
+  it('keeps the text of our own errors, and never passes on a system or subprocess error', () => {
+    expect(clientMessage(new Error('Cannot rename the project folder'))).toBe('Cannot rename the project folder');
+    expect(clientMessage(Object.assign(new Error("ENOENT: no such file or directory, open '/Users/x/y'"), { code: 'ENOENT' }))).toBe('File or folder not found');
+    // execFile fails with a numeric exit code and a message that holds the command line and the path.
+    const sub = Object.assign(new Error('Command failed: /usr/bin/open -R /Users/x/y\nThe file /Users/x/y does not exist.'), { code: 1, cmd: '/usr/bin/open -R /Users/x/y' });
+    expect(clientMessage(sub)).toBe('The operation failed');
+    expect(clientMessage(Object.assign(new Error('spawn open ENOENT /Users/x'), { syscall: 'spawn open', errno: -2 }))).toBe('The operation failed');
+  });
+});
+
 describe('upload limits and temp folder', () => {
   let workDir: string;
   beforeEach(() => { workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-up-')); });
@@ -178,6 +190,31 @@ describe('upload limits and temp folder', () => {
     fs.rmSync(TMP_UPLOAD_DIR, { recursive: true, force: true });
     await request(app).post('/api/sessions/s1/files/upload').attach('file', Buffer.from('a'), { filename: 'a.txt', contentType: 'text/plain' });
     expect(fs.statSync(TMP_UPLOAD_DIR).mode & 0o777).toBe(0o700);
+  });
+
+  it('the 413 for an upload over the limit is the status and a message, with no stack or path', async () => {
+    for (const route of ['upload', 'inbox']) {
+      const res = await request(makeApp(workDir))
+        .post(`/api/sessions/s1/files/${route}`)
+        .attach('file', Buffer.alloc(101 * 1024 * 1024), { filename: 'big.bin', contentType: 'application/octet-stream' });
+      expect(res.status).toBe(413);
+      expect(Object.keys(res.body)).toEqual(['error']);
+      expect(res.text).not.toMatch(/node_modules|\bat \S+ \(|\.ts:\d+|\/Users\/|\/var\/|\/tmp\/|dispatch-upload/);
+    }
+  });
+
+  it('a failed upload save says what went wrong without the server path', async () => {
+    const app = makeApp(workDir);
+    // The target folder does not exist, so the copy fails: the system message names both paths.
+    const res = await request(app)
+      .post('/api/sessions/s1/files/upload?path=no-such-folder')
+      .attach('file', Buffer.from('hi'), { filename: 'a.txt', contentType: 'text/plain' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body)).toEqual(['error']);
+    expect(res.body.error).not.toContain(workDir);
+    expect(res.body.error).not.toContain(TMP_UPLOAD_DIR);
+    expect(res.body.error).not.toMatch(/ENOENT|copyfile/i);
+    expect(fs.readdirSync(TMP_UPLOAD_DIR)).toEqual([]); // and the temp file is gone
   });
 
   it('upload over the limit is a 413 and leaves no temp file', async () => {

@@ -34,6 +34,7 @@ describe('previews routes', () => {
     fs.writeFileSync(path.join(a, '.dispatch', 'inbox', 'shot.png'), Buffer.from([137, 80, 78, 71]));
     fs.writeFileSync(path.join(a, 'page.html'), '<script>alert(1)</script>');
     fs.writeFileSync(path.join(a, 'notes.md'), '# hi');
+    fs.writeFileSync(path.join(a, 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
     fs.writeFileSync(path.join(b, 'secret.txt'), 'nope');
     sessionsDb.create(db, { id: 'A', provider: 'claude-code', name: 'Alpha', workingDir: a });
     sessionsDb.create(db, { id: 'B', provider: 'claude-code', name: 'Beta', workingDir: b });
@@ -82,6 +83,21 @@ describe('previews routes', () => {
     expect((await request(app).get('/api/previews')).body.unseen).toBe(0);
     expect((await request(app).delete(`/api/previews/${r.body.id}`)).status).toBe(204);
     expect((await request(app).get(`/api/previews/${r.body.id}/files/0`)).status).toBe(404);
+  });
+
+  it('an SVG preview is sandboxed like HTML, and every file is served with nosniff', async () => {
+    const r = await request(app).post('/api/sessions/A/previews').set(as('tA')).send({ paths: ['pic.svg', '.dispatch/inbox/shot.png', 'notes.md', 'page.html'] });
+    const svg = await request(app).get(`/api/previews/${r.body.id}/files/0`);
+    expect(svg.status).toBe(200);
+    expect(svg.headers['content-type']).toContain('image/svg+xml');
+    expect(svg.headers['content-security-policy']).toMatch(/^sandbox\b/);
+    expect(svg.headers['content-security-policy']).not.toContain('allow-same-origin');
+    expect(svg.headers['content-disposition']).toContain('inline; filename="pic.svg"'); // still shows in an img tag
+    for (const k of [0, 1, 2, 3]) {
+      expect((await request(app).get(`/api/previews/${r.body.id}/files/${k}`)).headers['x-content-type-options']).toBe('nosniff');
+    }
+    // A plain image keeps its simple headers: no sandbox needed.
+    expect((await request(app).get(`/api/previews/${r.body.id}/files/1`)).headers['content-security-policy']).toBeUndefined();
   });
 
   it('serves a file by index with its type; HTML gets the sandbox policy; a thread key is refused', async () => {

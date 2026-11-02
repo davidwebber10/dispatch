@@ -1,9 +1,11 @@
+import path from 'node:path';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
 import { allowRule, chatArmRule } from '../auth/key-rules.js';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
 import { DocTimeoutError } from '../docs/service.js';
+import { setFileHeaders } from '../http/active-content.js';
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
 const int = (v: unknown, fallback: number, min: number, max: number): number => {
@@ -19,9 +21,14 @@ export function createEndlessRouter(svc: EndlessService): Router {
     if (svc.available) next();
     else res.status(503).json({ error: 'Chat is unavailable' });
   });
+  // An unexpected error: the detail goes to the daemon log; the client gets a fixed message (no path, no stack).
+  const serverError = (res: any, err: unknown) => {
+    console.error('[endless] request failed:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  };
   const fail = (res: any, err: unknown) => {
     if (err instanceof UserError) res.status(400).json({ error: err.message });
-    else res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    else serverError(res, err);
   };
 
   router.get('/messages', (req, res) => {
@@ -70,7 +77,7 @@ export function createEndlessRouter(svc: EndlessService): Router {
       else res.status(404).json({ looked: r.looked });
     } catch (err) {
       if (err instanceof DocTimeoutError) res.status(503).json({ error: err.message });
-      else res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      else serverError(res, err);
     }
   });
   // Read only: the in-progress docs of a project, and their totals for the projects the pane shows.
@@ -123,6 +130,8 @@ export function createEndlessRouter(svc: EndlessService): Router {
   router.get('/media/:name', (req, res) => {
     const file = svc.mediaFile(req.params.name);
     if (!file) { res.status(404).end(); return; }
+    res.type(path.extname(file) || 'bin'); // the type sendFile would pick, so the headers can match it
+    setFileHeaders(res, String(res.getHeader('Content-Type') ?? ''));
     res.sendFile(file);
   });
 

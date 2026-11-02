@@ -31,6 +31,7 @@ import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
 import { mountApiRoutes } from './server-routes.js';
+import { jsonErrorHandler } from './http/error-handler.js';
 import { createJsonBody } from './http/json-body.js';
 import { createClientWss } from './ws/client-wss.js';
 import { wsMaxPayload, wsTerminalMaxPayload } from './caps.js';
@@ -426,6 +427,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     });
   }
 
+  app.use(jsonErrorHandler);
   return app;
 }
 
@@ -818,6 +820,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     app.get(/^\/(?!api\/).*/, publicRoute, sendIndex);
     console.log(`Serving web client from ${webDist}${BASE_PATH ? ` under ${BASE_PATH}` : ''}`);
   }
+  // Last: every error that no route answered becomes a JSON status and message, never a stack trace.
+  app.use(jsonErrorHandler);
 
   // Handle HTTP upgrade for WebSocket connections
   server.on('upgrade', (request, socket, head) => {

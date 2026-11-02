@@ -6,6 +6,7 @@ import * as appState from '../db/app-state.js';
 import type { SecretsService } from '../secrets/service.js';
 import { detectAllProviders, detectTailscale } from '../setup/detect.js';
 import { installProvider, isProviderName, type ShellRunner } from '../setup/install.js';
+import { clientMessage } from '../http/client-message.js';
 
 const SETUP_KEY = 'setup_completed_at';
 const port = () => Number(process.env.PORT) || 3456;
@@ -46,7 +47,7 @@ export function createSetupRouter(db: Database.Database, secrets: SecretsService
     try {
       res.json(await installProvider(name, runInstall));
     } catch (err) {
-      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: clientMessage(err) });
     }
   });
 

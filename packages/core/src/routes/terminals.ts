@@ -10,6 +10,7 @@ import type { EventBroadcaster } from '../ws/events.js';
 import type { StatusService } from '../status/service.js';
 import { redactKeysDeep } from '../auth/redact-keys.js';
 import { modelSupportsTools } from '../settings/model-capabilities.js';
+import { clientMessage } from '../http/client-message.js';
 
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
@@ -33,7 +34,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const terminals = sessionService.listArchivedTerminals(req.params.id);
       res.json(redactKeysDeep(terminals));
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -80,7 +81,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         res.status(201).json(tab);
       }
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -90,7 +91,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const terminals = sessionService.listTerminals(req.params.id);
       res.json(redactKeysDeep(terminals));
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -177,7 +178,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // signal, so mark it here exactly like the /input route does for a submitted line.
       if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
@@ -218,7 +219,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         if (result === 'unsupported') return res.status(409).json({ error: 'this harness cannot take a reply to a question' });
         statusService?.markWorking(req.params.terminalId, 'Working…');
         return res.status(204).end();
-      } catch (e: any) { return res.status(400).json({ error: e?.message ?? String(e) }); }
+      } catch (e: any) { return res.status(400).json({ error: clientMessage(e) }); }
     }
     if (canned !== undefined && !sessionService.getPendingPermission(req.params.terminalId)?.questions?.length) {
       return res.status(404).json({ error: 'no pending question' });
@@ -229,7 +230,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       if (!ok) return res.status(404).json({ error: 'no pending permission' });
       statusService?.markWorking(req.params.terminalId, 'Working…');
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/autonomy { mode:'supervised'|'autonomous' }
@@ -247,7 +248,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const terminal = sessionService.getTerminal(req.params.terminalId);
       if (terminal) broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
       res.json(terminal ?? { ok: true });
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/interrupt — gracefully stop the current turn
@@ -258,7 +259,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       if (!ok) return res.status(409).json({ error: 'No live structured session to interrupt' });
       sessionService.noteAgentLifecycle(req.params.terminalId, 'interrupted'); // tell the coordinator
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/compact — trigger native Claude Code compaction on
@@ -268,7 +269,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const ok = sessionService.compact(req.params.terminalId);
       if (!ok) return res.status(409).json({ error: 'No live structured session to compact' });
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/report-status — an agent's own account of how its
@@ -296,7 +297,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const ok = sessionService.reportStatus(req.params.terminalId, decl);
       if (!ok) return res.status(409).json({ error: 'No live structured session to report on' });
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/board — board-only state: acknowledge a finished thread,
@@ -320,7 +321,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const ok = sessionService.setBoardState(req.params.terminalId, patch);
       if (!ok) return res.status(404).json({ error: 'Terminal not found' });
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // GET /api/terminals/:terminalId/resume-advice — should the Pretty view offer to
@@ -330,7 +331,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     try {
       const advice = sessionService.getResumeAdvice(req.params.terminalId);
       res.json(advice ?? { shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/transport { transport: 'structured' | 'pty' } —
@@ -348,7 +349,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
       res.json(terminal);
     } catch (e: any) {
-      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: e?.message ?? String(e) });
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }
   });
 
@@ -363,7 +364,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // before any hook fires (Codex relies on this; notify only reports completion).
       if (data.includes('\r') && data !== '\x1b') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: e?.message ?? String(e) }); }
+    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // POST /api/terminals/:terminalId/start — promote a queued terminal to a live
@@ -376,7 +377,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
       res.json(terminal);
     } catch (e: any) {
-      res.status(400).json({ error: e?.message ?? String(e) });
+      res.status(400).json({ error: clientMessage(e) });
     }
   });
 
@@ -439,12 +440,12 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       res.json({ ok: true, sentText: result.sentText });
     } catch (err: any) {
       if (err.message === 'Path traversal not allowed') {
-        return res.status(403).json({ error: err.message });
+        return res.status(403).json({ error: clientMessage(err) });
       }
       if (err.message === 'Terminal process is not running') {
-        return res.status(409).json({ error: err.message });
+        return res.status(409).json({ error: clientMessage(err) });
       }
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
@@ -492,7 +493,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: req.params.id });
       res.json({ ok: true });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(400).json({ error: clientMessage(err) });
     }
   });
 
