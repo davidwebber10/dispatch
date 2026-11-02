@@ -80,6 +80,8 @@ const FS_MESSAGES: Record<string, string> = {
 export function clientMessage(err: any): string {
   const code = typeof err?.code === 'string' ? err.code : '';
   if (/^E[A-Z0-9]+$/.test(code)) return FS_MESSAGES[code] ?? 'The file operation failed';
+  // A subprocess failure (a numeric exit code, a command line) or any other system error: its text names paths.
+  if (err?.code !== undefined || err?.errno !== undefined || err?.syscall !== undefined || err?.cmd !== undefined) return 'The file operation failed';
   return typeof err?.message === 'string' && err.message ? err.message : 'The request failed';
 }
 

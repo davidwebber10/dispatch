@@ -141,6 +141,20 @@ describe('endless routes', () => {
     expect(png.headers['content-security-policy']).toBeUndefined();
   });
 
+  it('an unexpected server error answers a fixed message, not the system text with its path', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      fs.rmSync(svc.mediaDir, { recursive: true, force: true });
+      fs.writeFileSync(svc.mediaDir, 'a file where the media folder should be');
+      const data = Buffer.from([137, 80, 78, 71]).toString('base64');
+      const res = await request(app).post('/api/endless/send').send({ text: 'see', images: [{ media_type: 'image/png', data }] });
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Internal server error' });
+      expect(res.text).not.toContain(svc.mediaDir);
+      expect(log).toHaveBeenCalled(); // the detail goes to the daemon log
+    } finally { log.mockRestore(); }
+  });
+
   it('pages history, opens a window around a message, and filters by project', async () => {
     for (let k = 0; k < 6; k++) svc.log({ kind: 'user', text: `m${k}`, project: k % 2 ? 's1' : null });
     const tail = await request(app).get('/api/endless/messages?limit=2');
