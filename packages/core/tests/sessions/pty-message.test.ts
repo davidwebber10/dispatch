@@ -5,10 +5,8 @@ const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 
 describe('ptyMessagePayload', () => {
-  it('sends single-line text as plain text + CR (the proven sendFileReference shape)', () => {
-    expect(ptyMessagePayload('ship it')).toBe('ship it\r');
-    // No bracketed paste for the common case.
-    expect(ptyMessagePayload('ship it')).not.toContain(PASTE_START);
+  it('sends single-line text as a bracketed paste + CR (Codex ignores a CR typed right after plain text)', () => {
+    expect(ptyMessagePayload('ship it')).toBe(`${PASTE_START}ship it${PASTE_END}\r`);
   });
 
   it('wraps multi-line text in bracketed paste so the TUI does not submit on each newline', () => {
@@ -77,13 +75,23 @@ describe('control characters in a PTY payload', () => {
     expect(out).toBe(`${PASTE_START}a[31mbcde\tf\ng${PASTE_END}\r`);
   });
 
-  it('a tab in a single-line message becomes a space (it would be a completion keystroke)', () => {
-    expect(ptyMessagePayload('a\tb')).toBe('a b\r');
+  it('keeps a tab: inside a paste it is text, not a completion keystroke', () => {
+    expect(ptyMessagePayload('a\tb')).toBe(`${PASTE_START}a\tb${PASTE_END}\r`);
     expect(ptyMessagePayload('a\tb\nc')).toBe(`${PASTE_START}a\tb\nc${PASTE_END}\r`);
   });
 
-  it('single-line text with an ESC stays single-line plain text', () => {
-    expect(ptyMessagePayload('hi\x1b[200~there')).toBe('hi[200~there\r');
+  it('single-line text with an ESC loses the ESC and cannot end the paste early', () => {
+    const out = ptyMessagePayload('hi\x1b[201~there');
+    expect(out).toBe(`${PASTE_START}hi[201~there${PASTE_END}\r`);
+    expect(out.split(PASTE_END)).toHaveLength(2);
+  });
+
+  it('exactly one submit CR ends every payload, one-line or many', () => {
+    for (const text of ['one', 'a\nb', 'a\r\nb\rc', 'x\ty']) {
+      const out = ptyMessagePayload(text);
+      expect(out.endsWith('\r')).toBe(true);
+      expect(out.split('\r')).toHaveLength(2);
+    }
   });
 });
 

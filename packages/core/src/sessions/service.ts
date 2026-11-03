@@ -296,6 +296,10 @@ export class SessionService {
     this.structuredManagers.set(type, manager);
     if (this.threadKeys) this.revokeKeysOnExit(manager);
     this.persistStructuredSessionIds(manager, type);
+    // A shared harness process (Codex app-server) that restarts gets a new pid; keep the stored one current.
+    manager.on('process-restarted', (terminalId: string, pid: number) => {
+      try { if (pid > 0 && terminalsDb.getById(this.db, terminalId)) terminalsDb.updatePid(this.db, terminalId, pid); } catch { /* best effort */ }
+    });
     manager.on('usage-limit', (terminalId: string, limit: import('../limits/detect.js').UsageLimit) => {
       try { this.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
     });
@@ -2082,11 +2086,12 @@ export class SessionService {
       }
     }
 
-    // A switch ends the Codex Pretty sticky key (the next spawn mints a fresh one).
-    this.revokeAllKeys(terminalId);
     // Fully tear down the OLD transport (awaiting its exit) BEFORE re-spawning, so its async
     // exit handler can't null the pid / reset the status of the transport we're about to start.
     await this.killCurrentTransport(terminal.type, terminalId, current);
+    // Only now end the keys (the Codex Pretty sticky key too; the next spawn mints a fresh one).
+    // Revoking first made the old CLI's last status call fail with 401 while it shut down.
+    this.revokeAllKeys(terminalId);
 
     // Merge `config.transport` via read-merge-write — NEVER clobber unrelated keys
     // (model, role, pinned, autoArchive, …), exactly like setAutoArchive.

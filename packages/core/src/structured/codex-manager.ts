@@ -454,6 +454,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       // No id at all: a fresh thread/start was lost mid-flight, so start it fresh again.
       if (resumeId) session.resumeId = resumeId;
       session.ready = this.beginThread(session, conn2);
+      // The thread now lives in a new OS process; tell the owner so the stored process number is not stale.
+      this.emit('process-restarted', session.terminalId, conn2.pid);
     }
   }
 
