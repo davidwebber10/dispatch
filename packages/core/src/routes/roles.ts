@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import type { RolesService, RoleStatusEntry } from '../roles/service.js';
 import { clientMessage } from '../http/client-message.js';
@@ -18,7 +19,9 @@ export function createRolesRouter(rolesService: RolesService): Router {
     res.json({ roles: rolesService.list().map(serialize) });
   });
 
-  router.post('/:name/enable', (req, res) => {
+  // SEC-20: a thread with its own key may create this (never blocked); the route records the thread as the creator.
+  // Only `thread` has a rule, so a role run, a shell and Chat stay owner only and a scheduled run cannot add the next schedule.
+  router.post('/:name/enable', keyRoute({ thread: allowRule }), (req, res) => {
     try {
       res.json(serialize(rolesService.enable(req.params.name, creatorOf(req))));
     } catch (err: any) {

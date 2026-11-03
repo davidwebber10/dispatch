@@ -23,7 +23,10 @@ const facts = (over: Partial<CallerFacts> = {}): CallerFacts => ({
   id: 'term-7', sessionId: 'proj-1', type: 'claude-code', role: null, depth: 0, spawnedBy: null,
   origin: null, roleRun: false, archived: false, overseer: false, label: 'Fix the login bug', ...over,
 });
-const scope: KeyScope = { ...nullKeyScope, caller: (id) => (id === 'term-7' ? facts() : null) };
+const scope: KeyScope = {
+  ...nullKeyScope,
+  caller: (id) => (id === 'term-7' ? facts() : id === 'term-run' ? facts({ id: 'term-run', roleRun: true, label: 'Nightly run' }) : null),
+};
 
 let db: Database.Database;
 let registry: KeyRegistry;
@@ -121,10 +124,38 @@ describe('POST /api/integrations records the creator', () => {
     expect(integrationsDb.getById(db, 'old')!.createdBy).toBeNull();
   });
 
-  it('still refuses a thread key on this route (the default owner-only rule is unchanged)', async () => {
+  it('lets a thread with its own key create one, and records the thread name', async () => {
     const { key } = registry.mint({ kind: 'thread', terminalId: 'term-7' });
     const res = await request(appInstance).post('/api/integrations').set('Authorization', `Bearer ${key}`).send(stdio('one'));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+    expect(res.body.createdBy).toEqual({ kind: 'thread', terminalId: 'term-7', name: 'Fix the login bug' });
+    expect(integrationsDb.list(db)[0].createdBy).toEqual({ kind: 'thread', terminalId: 'term-7', name: 'Fix the login bug' });
+  });
+
+  it('keeps the other integration routes owner only for a thread key', async () => {
+    const { key } = registry.mint({ kind: 'thread', terminalId: 'term-7' });
+    const auth = { Authorization: `Bearer ${key}` };
+    const made = await request(appInstance).post('/api/integrations').set(owner).send(stdio('one'));
+    const id = made.body.id;
+    for (const r of [
+      request(appInstance).patch(`/api/integrations/${id}`).set(auth).send({ enabled: false }),
+      request(appInstance).delete(`/api/integrations/${id}`).set(auth),
+      request(appInstance).post('/api/integrations/import').set(auth).send({ version: 1, integrations: [] }),
+      request(appInstance).get('/api/integrations/export').set(auth),
+    ]) expect((await r).status).toBe(403);
+    expect(integrationsDb.list(db)).toHaveLength(1);
+  });
+
+  it('still refuses a role-run key, a shell key and a Chat key', async () => {
+    const keys = [
+      registry.mint({ kind: 'thread', terminalId: 'term-run' }).key,
+      registry.mint({ kind: 'shell', terminalId: 'term-7' }).key,
+      registry.mint({ kind: 'chat', startedBy: 'user' }).key,
+    ];
+    for (const key of keys) {
+      const res = await request(appInstance).post('/api/integrations').set('Authorization', `Bearer ${key}`).send(stdio('x'));
+      expect(res.status).toBe(403);
+    }
     expect(integrationsDb.list(db)).toEqual([]);
   });
 });
@@ -136,6 +167,23 @@ describe('POST /api/agents/schedules records the creator', () => {
     expect(res.body.createdBy).toEqual({ kind: 'owner' });
     const got = await request(appInstance).get(`/api/agents/schedules/${res.body.id}`).set(owner);
     expect(got.body.createdBy).toEqual({ kind: 'owner' });
+  });
+
+  it('lets a thread with its own key create one, and records the thread name', async () => {
+    const { key } = registry.mint({ kind: 'thread', terminalId: 'term-7' });
+    const res = await request(appInstance).post('/api/agents/schedules').set('Authorization', `Bearer ${key}`).send(scheduleBody());
+    expect(res.status).toBe(201);
+    expect(res.body.createdBy).toEqual({ kind: 'thread', terminalId: 'term-7', name: 'Fix the login bug' });
+  });
+
+  it('keeps the other schedule routes owner only for a thread key, and refuses a role-run key', async () => {
+    const { key } = registry.mint({ kind: 'thread', terminalId: 'term-7' });
+    const auth = { Authorization: `Bearer ${key}` };
+    const made = await request(appInstance).post('/api/agents/schedules').set(owner).send(scheduleBody());
+    expect((await request(appInstance).patch(`/api/agents/schedules/${made.body.id}`).set(auth).send({ name: 'x' })).status).toBe(403);
+    expect((await request(appInstance).delete(`/api/agents/schedules/${made.body.id}`).set(auth)).status).toBe(403);
+    const run = registry.mint({ kind: 'thread', terminalId: 'term-run' }).key;
+    expect((await request(appInstance).post('/api/agents/schedules').set('Authorization', `Bearer ${run}`).send(scheduleBody())).status).toBe(403);
   });
 
   it('a schedule edit does not change the creator', async () => {
@@ -157,6 +205,22 @@ describe('POST /api/roles/:name/enable records the creator', () => {
     await request(appInstance).post('/api/roles/x/enable').set(owner);
     await request(appInstance).post('/api/roles/x/enable');
     expect(rolesCalls).toEqual([{ kind: 'owner' }, { kind: 'local' }]);
+  });
+});
+
+describe('thread keys on the roles route', () => {
+  it('lets a thread enable a role (recorded by name), but not disable one', async () => {
+    const { key } = registry.mint({ kind: 'thread', terminalId: 'term-7' });
+    const auth = { Authorization: `Bearer ${key}` };
+    expect((await request(appInstance).post('/api/roles/x/enable').set(auth)).status).toBe(200);
+    expect(rolesCalls).toEqual([{ kind: 'thread', terminalId: 'term-7', name: 'Fix the login bug' }]);
+    expect((await request(appInstance).post('/api/roles/x/disable').set(auth)).status).toBe(403);
+  });
+
+  it('refuses a role-run key', async () => {
+    const run = registry.mint({ kind: 'thread', terminalId: 'term-run' }).key;
+    expect((await request(appInstance).post('/api/roles/x/enable').set('Authorization', `Bearer ${run}`)).status).toBe(403);
+    expect(rolesCalls).toEqual([]);
   });
 });
 

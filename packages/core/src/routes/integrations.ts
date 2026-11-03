@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import type { IntegrationsService, AddIntegrationInput, IntegrationsExport } from '../integrations/service.js';
 
@@ -8,7 +9,9 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
 
   router.get('/', (_req, res) => res.json({ integrations: integrations.list() }));
 
-  router.post('/', (req, res) => {
+  // SEC-20: a thread with its own key may create this (never blocked); the route records the thread as the creator.
+  // Only `thread` has a rule, so a role run, a shell and Chat stay owner only and a scheduled run cannot add the next schedule.
+  router.post('/', keyRoute({ thread: allowRule }), (req, res) => {
     const err = integrations.validateInput(req.body);
     if (err) return res.status(400).json({ error: err });
     try {

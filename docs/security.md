@@ -55,11 +55,13 @@ it cannot be made to send your thread and project names to a server you do not k
 ## Who made an integration or a schedule
 
 Agents may add integrations, enable roles and create schedules. Dispatch does not block this.
-It records who did it. Settings shows "Added by" on each integration, and the Agents screen
-shows "Created by" on each schedule (a role's schedule shows who enabled the role). A row from
-before the record existed shows "Unknown". A call with no sign-in shows as "Local, no sign-in",
-because a browser on this Mac without an access token looks the same as a thread that calls
-Dispatch without its key.
+A thread that sends its own key may do all three, and Dispatch records the thread by name. A
+role run, a shell and Chat cannot, so a scheduled run cannot add the next schedule.
+Settings shows "Added by" on each integration, and the Agents screen shows "Created by" on
+each schedule (a role's schedule shows who enabled the role). A row from before the record
+existed shows "Unknown". A call with no key and no sign-in shows as "Local, no sign-in",
+because a browser on this Mac without an access token looks the same as a call that skips
+its key.
 
 ## Images and links in Markdown
 

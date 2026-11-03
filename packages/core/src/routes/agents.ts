@@ -1,5 +1,6 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import type { AgentService } from '../agents/service.js';
 import { clientMessage } from '../http/client-message.js';
@@ -16,7 +17,9 @@ export function createAgentsRouter(agentService: AgentService): Router {
     res.json(agentService.listSchedules({ projectId: req.query.projectId as string | undefined }));
   });
 
-  router.post('/schedules', (req, res) => {
+  // SEC-20: a thread with its own key may create this (never blocked); the route records the thread as the creator.
+  // Only `thread` has a rule, so a role run, a shell and Chat stay owner only and a scheduled run cannot add the next schedule.
+  router.post('/schedules', keyRoute({ thread: allowRule }), (req, res) => {
     try {
       res.status(201).json(agentService.createSchedule(req.body, creatorOf(req)));
     } catch (err: any) {

@@ -48,6 +48,10 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/sessions/:sessionId/ledger/:itemId/decide-self',
   'POST /api/sessions/:sessionId/ledger/:itemId/mark-default',
   'POST /api/sessions/:sessionId/ledger/:itemId/title',
+  // SEC-20: a thread may create these, and the creator is recorded
+  'POST /api/integrations',
+  'POST /api/roles/:name/enable',
+  'POST /api/agents/schedules',
   // Task 10: Chat routes
   'GET /api/endless/threads',
   'GET /api/endless/project',
