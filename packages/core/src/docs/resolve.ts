@@ -60,7 +60,7 @@ export function statusLine(text: string): string | null {
 
 export const resolveDoc: DocResolver = async (project, ref, opts = {}) => {
   let realRoot: string;
-  try { realRoot = fs.realpathSync.native(project.folder); } catch { return { kind: 'not_found', looked: [project.folder] }; }
+  try { realRoot = fs.realpathSync.native(project.folder); } catch { return { kind: 'not_found', looked: [] }; } // the folder is gone: the client never sees its path
   if (path.sep === '/' && ref.includes('\\')) return OUTSIDE;
   const rel = projectRelative(project.folder, realRoot, ref);
   if (rel === null) return OUTSIDE;

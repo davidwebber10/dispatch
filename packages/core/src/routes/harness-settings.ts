@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { readHarnessSettings, updateHarnessSettings, opencodeKeySecretName, opencodeModels } from '../settings/harness-settings.js';
 import { readOverseerWorkers, updateOverseerWorkers } from '../settings/overseer-workers.js';
 import { loadCatalog, searchCatalog } from '../settings/openrouter-catalog.js';
+import { clientMessage } from '../http/client-message.js';
 
 /** The narrow secrets surface this router needs (SecretsService satisfies it). */
 export interface SecretsLike {
@@ -56,7 +57,7 @@ export function createHarnessSettingsRouter(db: Database.Database, secrets?: Sec
       const entries = await loadCatalog(opts.fetchImpl);
       res.json(searchCatalog(entries, q));
     } catch (err) {
-      res.status(502).json({ error: `Could not reach the OpenRouter catalog: ${err instanceof Error ? err.message : String(err)}` });
+      res.status(502).json({ error: `Could not reach the OpenRouter catalog: ${clientMessage(err)}` });
     }
   });
 

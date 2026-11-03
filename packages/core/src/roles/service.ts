@@ -11,6 +11,7 @@ import { v4 as uuid } from 'uuid';
 import { appendRunLog, listRoles, readRoleMemory, readRunLogTail, rolesRootDir, type RoleDefinition } from './definition.js';
 import { buildSeedMessage } from './seed.js';
 import * as agentsDb from '../db/agents.js';
+import { decodeCreator, encodeCreator, type Creator } from '../auth/creator.js';
 import * as terminalsDb from '../db/terminals.js';
 import type { AgentService, RoleRunner } from '../agents/service.js';
 import type { SessionService } from '../sessions/service.js';
@@ -54,6 +55,8 @@ function extractContract(summary: string | undefined): RunContract | null {
 export interface RoleStatusEntry {
   def: RoleDefinition;
   enabled: boolean;
+  /** Who enabled it last (SEC-20); null when unknown. Absent for a role that was never enabled. */
+  createdBy?: Creator | null;
   scheduleId?: string;
   nextRunAt?: string | null;
   consecutiveFailures?: number;
@@ -144,7 +147,7 @@ export class RolesService implements RoleRunner {
   /** Upsert the agent_schedules row for this role (keyed by role_name) and turn it on.
    *  Throws (404-shaped) if the role directory doesn't exist, (400-shaped) if role.md
    *  fails to parse or its project binding can't be resolved. */
-  enable(name: string): RoleStatusEntry {
+  enable(name: string, createdBy?: Creator | null): RoleStatusEntry {
     const def = this.requireDef(name);
     const project = this.resolveProject(def);
     const recurrenceRule = JSON.stringify(def.schedule);
@@ -152,6 +155,8 @@ export class RolesService implements RoleRunner {
 
     const existing = agentsDb.getScheduleByRoleName(this.db, name);
     if (existing) {
+      // Before the update, so the schedule that the update broadcasts already names the new enabler.
+      if (createdBy) agentsDb.setCreatedBy(this.db, existing.id, encodeCreator(createdBy));
       this.agentService.updateSchedule(existing.id, {
         projectId: project.id,
         name: def.name,
@@ -183,7 +188,7 @@ export class RolesService implements RoleRunner {
         nextRunAt: null,
         defaultTerminalLabel: null,
         roleName: name,
-      });
+      }, createdBy);
     }
 
     return this.entryFor(def);
@@ -267,6 +272,7 @@ export class RolesService implements RoleRunner {
     const entry: RoleStatusEntry = {
       def,
       enabled: !!row && row.enabled === 1,
+      createdBy: row ? decodeCreator(row.created_by) : undefined,
       scheduleId: row?.id,
       nextRunAt: row ? row.next_run_at : undefined,
       consecutiveFailures: row?.consecutive_failures,

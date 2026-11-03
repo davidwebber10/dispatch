@@ -1,3 +1,5 @@
+import type { Creator } from '../lib/creator';
+
 export type TerminalType = 'claude-code' | 'codex' | 'grok' | 'opencode' | 'shell' | 'browser' | 'notes' | 'file';
 export type SessionStatus = 'working' | 'waiting' | 'needs_input' | 'done';
 // The backend genuinely persists AND broadcasts 'scheduled' (a wake-scheduler tool ended the
@@ -155,6 +157,8 @@ export interface AgentSchedule {
   enabled: boolean;
   nextRunAt: string | null;
   defaultTerminalLabel: string | null;
+  /** Who created it; null for a schedule from before the record existed. */
+  createdBy?: Creator | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -365,11 +369,11 @@ export interface ToolStatus { name: string; description: string; kind: 'binary' 
 /** GET /api/tools. `checkedAt` is when the CLI auth checks last ran (null until the first run). */
 export interface ToolsResponse { tools: ToolStatus[]; checkedAt: string | null }
 
-export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string }
+export interface Integration { id: string; name: string; type: 'stdio' | 'remote'; command: string | null; args: string[]; url: string | null; headers: Record<string, string>; env: Record<string, string>; enabled: boolean; createdAt: string; updatedAt: string; createdBy?: Creator | null }
 export type AddIntegrationInput =
   | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
   | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
-export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>[] }
+export interface IntegrationsExport { version: 1; integrations: Omit<Integration, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>[] }
 
 // Analytics (usage, throughput, personal stats) — mirrors core packages/core/src/analytics/queries.ts
 // and packages/core/src/routes/analytics.ts.

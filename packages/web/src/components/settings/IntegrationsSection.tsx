@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { Integration, AddIntegrationInput, IntegrationsExport } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { describeCreator } from '../../lib/creator';
 import { useSecrets } from '../../stores/secrets';
 import { pageLabel, summaryLine, ghostBtn, miniChip, fieldInput, solidBtn, GroupHeader, HoverRow, FilterSegments, Sheet, Divider } from './ui';
 
@@ -94,6 +95,7 @@ export function IntegrationsSection() {
           <span style={miniChip}>{i.type === 'remote' ? 'REMOTE' : 'LOCAL'}</span>
         </span>
         <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.type === 'remote' ? i.url : `${i.command} ${i.args.join(' ')}`}</span>
+        <span data-testid="integration-creator" style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>Added by {describeCreator(i.createdBy)}</span>
       </span>
       <button title={i.enabled ? 'Disable' : 'Enable'} onClick={() => void toggle(i)} style={onBtn(i.enabled)}>{i.enabled ? 'On' : 'Off'}</button>
       <button title="Remove" onClick={() => void remove(i.id)}

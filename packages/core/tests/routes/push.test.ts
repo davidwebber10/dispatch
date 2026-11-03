@@ -17,7 +17,7 @@ describe('push routes', () => {
     expect(res.body.publicKey.length).toBeGreaterThan(0);
   });
   it('subscribe → unsubscribe and presence are accepted', async () => {
-    const sub = { endpoint: 'https://e/1', keys: { p256dh: 'k', auth: 'a' } };
+    const sub = { endpoint: 'https://web.push.apple.com/1', keys: { p256dh: 'k', auth: 'a' } };
     expect((await request(app).post('/api/push/subscribe').send({ deviceId: 'd1', subscription: sub })).status).toBe(200);
     expect((await request(app).post('/api/push/presence').send({ deviceId: 'd1', foreground: true })).status).toBe(200);
     expect((await request(app).post('/api/push/unsubscribe').send({ deviceId: 'd1' })).status).toBe(200);

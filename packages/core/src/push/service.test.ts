@@ -20,8 +20,8 @@ beforeEach(() => {
     vapidDir: dir,
     send: async (sub, payload) => { sent.push({ deviceId: sub.deviceId, payload: JSON.parse(payload) }); },
   });
-  pushDb.upsert(db, { deviceId: 'phone', endpoint: 'https://push/phone', p256dh: 'k', auth: 'a' });
-  pushDb.upsert(db, { deviceId: 'desk', endpoint: 'https://push/desk', p256dh: 'k', auth: 'a' });
+  pushDb.upsert(db, { deviceId: 'phone', endpoint: 'https://fcm.googleapis.com/fcm/send/phone', p256dh: 'k', auth: 'a' });
+  pushDb.upsert(db, { deviceId: 'desk', endpoint: 'https://web.push.apple.com/desk', p256dh: 'k', auth: 'a' });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -66,6 +66,13 @@ describe('PushService presence rule — notify unless viewing it', () => {
   it('includes sessionId and terminalId in the payload (deep link data)', async () => {
     await notify();
     expect(sent[0].payload).toMatchObject({ terminalId: 't1', sessionId: 's1', title: 'Claude Code 37', body: 'Completed its task' });
+  });
+
+  it('keeps but never sends to a stored subscription whose host is not a push service', async () => {
+    pushDb.upsert(db, { deviceId: 'old', endpoint: 'https://attacker.example/collect', p256dh: 'k', auth: 'a' });
+    await notify();
+    expect(sent.map((s) => s.deviceId).sort()).toEqual(['desk', 'phone']);
+    expect(pushDb.list(db).map((s) => s.deviceId)).toContain('old');
   });
 
   it('prunes a subscription when the endpoint returns 410', async () => {

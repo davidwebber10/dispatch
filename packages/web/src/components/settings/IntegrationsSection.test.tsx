@@ -57,3 +57,17 @@ test('renders only non-empty groups', async () => {
   expect(screen.getByText('ACTIVE')).toBeInTheDocument();
   expect(screen.queryByText('OFF')).not.toBeInTheDocument();
 });
+
+test('shows who added each server, and Unknown when there is no record', async () => {
+  vi.spyOn(api, 'listIntegrations').mockResolvedValue({
+    integrations: [
+      { ...INTEGRATIONS[0], createdBy: { kind: 'owner' } },
+      { ...INTEGRATIONS[1], createdBy: { kind: 'thread', terminalId: 'abcdef123456', name: 'Fix login' } },
+      INTEGRATIONS[2],
+    ],
+  });
+  render(<IntegrationsSection />);
+  await waitFor(() => expect(screen.getByText('linear')).toBeInTheDocument());
+  const by = screen.getAllByTestId('integration-creator').map((el) => el.textContent);
+  expect(by).toEqual(['Added by Owner (signed in)', 'Added by Unknown', 'Added by Thread: Fix login']);
+});

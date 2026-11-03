@@ -420,4 +420,12 @@ function initializeSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_previews_session ON previews(session_id, created_at);
   `));
+  // SEC-20: who created an integration or a schedule (a role's schedule row counts as the role's enabler).
+  // JSON from auth/creator.ts. NULL for a row from before this migration; the UI shows "Unknown".
+  migrate(db, '013-created-by', () => {
+    for (const table of ['integrations', 'agent_schedules']) {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!cols.some((c) => c.name === 'created_by')) db.exec(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
+    }
+  });
 }

@@ -353,12 +353,20 @@ describe('every first-party tool passes with its key', () => {
       code(res, 403, 'not_a_question');
       expect(mgr.answers).toEqual([]);
     });
+    it('SEC-20: a thread key may create an integration, enable a role or create a schedule; a role run may not', async () => {
+      const calls: [string, any][] = [['/api/roles/nightly/enable', {}], ['/api/integrations', { name: 'x' }], ['/api/agents/schedules', {}]];
+      for (const who of ['wA', 'coordA']) {
+        for (const [url, body] of calls) {
+          const res = await request(app).post(url).set(as(who)).send(body);
+          expect(res.status, `${who} ${url}`).not.toBe(403); // the route answers (here: not found or a bad body), it does not refuse
+        }
+      }
+      for (const [url, body] of calls) code(await request(app).post(url).set(as('rr')).send(body), 403, 'owner_only');
+    });
     it('the owner-only routes answer owner_only to every thread key', async () => {
       const calls: [string, string, any][] = [
         ['post', '/api/secrets', { name: 'X', value: 'y' }],
-        ['post', '/api/roles/nightly/enable', {}],
         ['post', '/api/claude-auth/login', {}],
-        ['post', '/api/integrations', { name: 'x' }],
         ['post', '/api/terminals/kid/input', { data: 'ls\n' }],
         ['patch', '/api/terminals/kid', { label: 'renamed' }],
       ];

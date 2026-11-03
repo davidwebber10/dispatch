@@ -2,6 +2,7 @@ import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
+import type { Creator } from '../auth/creator.js';
 import type { McpServerSpec } from '../mcp/injection.js';
 import { findSecretRefs, refsIn, literalSecretProblem } from './secret-refs.js';
 import { launcherArgs, MCP_REMOTE_PACKAGE, type LaunchSpec } from './launcher.js';
@@ -13,7 +14,7 @@ export type AddIntegrationInput =
   | { type: 'remote'; name: string; url: string; headers?: Record<string, string>; env?: Record<string, string> }
   | { type: 'stdio'; name: string; command: string; args?: string[]; env?: Record<string, string> };
 
-export type ExportedIntegration = Omit<Integration, 'id' | 'createdAt' | 'updatedAt'>;
+export type ExportedIntegration = Omit<Integration, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'>;
 export interface IntegrationsExport { version: 1; integrations: ExportedIntegration[] }
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -50,7 +51,7 @@ export class IntegrationsService {
 
   list(): Integration[] { return integrationsDb.list(this.db); }
 
-  add(input: AddIntegrationInput): Integration {
+  add(input: AddIntegrationInput, createdBy?: Creator | null): Integration {
     const err = this.validateInput(input);
     if (err) throw new Error(err);
     if (this.list().some((i) => i.name.toLowerCase() === input.name.toLowerCase())) {
@@ -63,6 +64,7 @@ export class IntegrationsService {
       url: input.type === 'remote' ? input.url : null,
       headers: input.type === 'remote' ? (input.headers ?? {}) : {},
       env: input.env ?? {},
+      createdBy: createdBy ?? null,
     });
   }
 
@@ -117,10 +119,10 @@ export class IntegrationsService {
   }
 
   export(): IntegrationsExport {
-    return { version: 1, integrations: this.list().map(({ id, createdAt, updatedAt, ...rest }) => rest) };
+    return { version: 1, integrations: this.list().map(({ id, createdAt, updatedAt, createdBy: _by, ...rest }) => rest) };
   }
 
-  import(doc: IntegrationsExport): { added: string[]; skipped: string[]; reasons: { name: string; reason: string }[] } {
+  import(doc: IntegrationsExport, createdBy?: Creator | null): { added: string[]; skipped: string[]; reasons: { name: string; reason: string }[] } {
     const added: string[] = []; const skipped: string[] = []; const reasons: { name: string; reason: string }[] = [];
     const existing = new Set(this.list().map((i) => i.name.toLowerCase()));
     for (const e of doc?.integrations ?? []) {
@@ -130,7 +132,7 @@ export class IntegrationsService {
         : { type: 'remote', name: e.name, url: e.url ?? '', headers: e.headers, env: e.env };
       const problem = this.validateInput(input);
       if (problem) { skipped.push(e.name); reasons.push({ name: e.name, reason: problem }); continue; }
-      this.add(input); existing.add(e.name.toLowerCase()); added.push(e.name);
+      this.add(input, createdBy); existing.add(e.name.toLowerCase()); added.push(e.name);
     }
     return { added, skipped, reasons };
   }

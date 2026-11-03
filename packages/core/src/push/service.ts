@@ -4,6 +4,7 @@ import path from 'path';
 import webpush from 'web-push';
 import type Database from 'better-sqlite3';
 import * as pushDb from '../db/push.js';
+import { isAllowedPushEndpoint } from './endpoints.js';
 
 export type Sender = (sub: pushDb.PushSub, payload: string) => Promise<void>;
 const PRESENCE_TTL_MS = 90_000;
@@ -66,6 +67,8 @@ export class PushService {
   async notifyThread(input: { terminalId: string; sessionId: string; title: string; body: string }): Promise<void> {
     const payload = JSON.stringify({ title: input.title, body: input.body, terminalId: input.terminalId, sessionId: input.sessionId });
     for (const sub of pushDb.list(this.db)) {
+      // A subscription stored before the host check may point anywhere. Keep it, but never send to it.
+      if (!isAllowedPushEndpoint(sub.endpoint)) continue;
       if (this.isViewing(sub.deviceId, input.terminalId)) continue;
       try { await this.send(sub, payload); }
       catch (e: any) {

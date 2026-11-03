@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveDoc, statusLine, DOC_MAX_BYTES } from '../../src/docs/resolve.js';
@@ -13,6 +14,13 @@ const project = () => ({ id: 's1', folder: r.dir });
 const doc = (res: Awaited<ReturnType<typeof resolveDoc>>) => { if (res.kind !== 'doc') throw new Error(`not a doc: ${JSON.stringify(res)}`); return res.doc; };
 
 describe('resolveDoc', () => {
+  it('a project folder that is gone: not_found, and the answer names no path', async () => {
+    const folder = path.join(fs.realpathSync(os.tmpdir()), 'dispatch-gone-folder-xyz');
+    const res = await resolveDoc({ id: 's1', folder }, SPEC);
+    expect(res).toEqual({ kind: 'not_found', looked: [] });
+    expect(JSON.stringify(res)).not.toContain(folder);
+  });
+
   it('the main checkout copy, same as main, with its status line', async () => {
     r = makeRepo();
     r.write(SPEC, '# A\n\nStatus: draft, awaiting owner review\n');
