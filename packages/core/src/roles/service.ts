@@ -155,6 +155,8 @@ export class RolesService implements RoleRunner {
 
     const existing = agentsDb.getScheduleByRoleName(this.db, name);
     if (existing) {
+      // Before the update, so the schedule that the update broadcasts already names the new enabler.
+      if (createdBy) agentsDb.setCreatedBy(this.db, existing.id, encodeCreator(createdBy));
       this.agentService.updateSchedule(existing.id, {
         projectId: project.id,
         name: def.name,
@@ -171,7 +173,6 @@ export class RolesService implements RoleRunner {
       // nights supervision keeps its counter at 2 until this call zeroes it explicitly; a
       // fresh row (the `else` branch below) is already 0 by the schema default.
       agentsDb.setConsecutiveFailures(this.db, existing.id, 0);
-      if (createdBy) agentsDb.setCreatedBy(this.db, existing.id, encodeCreator(createdBy));
     } else {
       this.agentService.createSchedule({
         projectId: project.id,

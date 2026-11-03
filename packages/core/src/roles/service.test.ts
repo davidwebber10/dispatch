@@ -161,8 +161,14 @@ describe('RolesService', () => {
     expect(agentsDb.getScheduleByRoleName(db, 'x')!.created_by).toBe('{"kind":"owner"}');
     const second = svc.enable('x', { kind: 'thread', terminalId: 't9', name: 'Helper' });
     expect(second.createdBy).toEqual({ kind: 'thread', terminalId: 't9', name: 'Helper' });
+    // The update broadcast carries the new enabler (a dashboard that is open does not refetch).
+    const events: any[] = [];
+    (svc as any).agentService.broadcaster.broadcast = (e: any) => events.push(e);
+    svc.enable('x', { kind: 'owner' });
+    const updated = events.find((e) => e.type === 'agent:schedule-updated');
+    expect(updated?.schedule.createdBy).toEqual({ kind: 'owner' });
     // An enable that names nobody (the scheduler itself) leaves the record alone.
-    expect(svc.enable('x').createdBy).toEqual({ kind: 'thread', terminalId: 't9', name: 'Helper' });
+    expect(svc.enable('x').createdBy).toEqual({ kind: 'owner' });
   });
 
   it('enable() called twice never creates a second row for the same role', () => {
