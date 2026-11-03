@@ -2,6 +2,7 @@ import { Play } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import { useAgents } from '../../stores/agents';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { describeCreator } from '../../lib/creator';
 import { deriveKpis, formatDuration, formatCost, formatTokens, runDurationMs, statusColor } from '../../lib/agentStats';
 import { StatusDot } from '../common/StatusDot';
 import type { AgentSchedule, AgentRun } from '../../api/types';
@@ -167,6 +168,7 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => vo
               <div style={kvRow}><span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Frequency</span><span style={kvVal}>{summarize(schedule)}</span></div>
               <div style={kvRow}><span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Cron</span><span style={kvVal}>{cronExpr(schedule) ?? '—'}</span></div>
               <div style={kvRow}><span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Next run</span><span style={kvVal}>{schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleString() : '—'}</span></div>
+              <div style={kvRow}><span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Created by</span><span style={kvVal} data-testid="schedule-creator">{describeCreator(schedule.createdBy)}</span></div>
               <div style={kvRow}><span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Last run</span>
                 <span style={{ ...kvVal, display: 'inline-flex', alignItems: 'center', gap: 6, color: lastRun ? statusColor(lastRun.status) : 'var(--color-text-secondary)' }}>
                   {lastRun ? `${lastRun.startedAt ? new Date(lastRun.startedAt).toLocaleString() : '—'} · ${lastRun.status}` : '—'}

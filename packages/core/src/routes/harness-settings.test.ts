@@ -32,3 +32,18 @@ describe('overseer workers via harness settings routes', () => {
     expect(after.body.overseerWorkers.byType.implementer).toEqual({ harness: 'codex' });
   });
 });
+
+describe('GET /opencode/catalog when OpenRouter cannot be reached', () => {
+  it('names no server path in the 502 message', async () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const a = express();
+    a.use('/api/settings/harnesses', createHarnessSettingsRouter(db, undefined, undefined, {
+      fetchImpl: (async () => { throw Object.assign(new Error("ENOENT: no such file or directory, open '/Users/someone/.certs/ca.pem'"), { code: 'ENOENT' }); }) as any,
+    }));
+    const res = await request(a).get('/api/settings/harnesses/opencode/catalog?q=x');
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/^Could not reach the OpenRouter catalog: /);
+    expect(res.body.error).not.toContain('/Users/');
+  });
+});

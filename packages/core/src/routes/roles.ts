@@ -1,5 +1,6 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
+import { creatorOf } from '../auth/creator.js';
 import type { RolesService, RoleStatusEntry } from '../roles/service.js';
 import { clientMessage } from '../http/client-message.js';
 
@@ -19,7 +20,7 @@ export function createRolesRouter(rolesService: RolesService): Router {
 
   router.post('/:name/enable', (req, res) => {
     try {
-      res.json(serialize(rolesService.enable(req.params.name)));
+      res.json(serialize(rolesService.enable(req.params.name, creatorOf(req))));
     } catch (err: any) {
       res.status(err.status ?? 400).json({ error: clientMessage(err) });
     }

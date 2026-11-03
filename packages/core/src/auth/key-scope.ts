@@ -12,6 +12,7 @@ export interface CallerFacts {
   spawnedBy: string | null; // null when it names no live thread in the same project
   origin: string | null; roleRun: boolean; archived: boolean;
   overseer: boolean;        // role coordinator, not archived, not a role run (PK-4)
+  label?: string | null;    // the thread's name, for a record of who did something
 }
 
 export interface KeyScope {
@@ -79,7 +80,7 @@ export function createKeyScope(db: Database.Database): KeyScope {
       id: t.id, sessionId: t.sessionId, type: t.type, role,
       depth: effectiveSpawnDepth(cfg), spawnedBy,
       origin: typeof cfg.origin === 'string' ? cfg.origin : null,
-      roleRun, archived, overseer,
+      roleRun, archived, overseer, label: t.label || null,
     };
   }
 

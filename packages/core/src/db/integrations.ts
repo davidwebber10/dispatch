@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3';
+import { decodeCreator, encodeCreator, type Creator } from '../auth/creator.js';
 
 export interface IntegrationRow {
   id: string; name: string; type: string;
   command: string | null; args: string | null;
   url: string | null; headers: string | null; env: string | null;
   enabled: number; created_at: string; updated_at: string;
+  created_by: string | null;
 }
 
 export interface Integration {
@@ -12,6 +14,8 @@ export interface Integration {
   command: string | null; args: string[];
   url: string | null; headers: Record<string, string>; env: Record<string, string>;
   enabled: boolean; createdAt: string; updatedAt: string;
+  /** Who added it (SEC-20); null for a row from before the record existed. */
+  createdBy: Creator | null;
 }
 
 export interface CreateIntegrationInput {
@@ -19,6 +23,7 @@ export interface CreateIntegrationInput {
   command?: string | null; args?: string[];
   url?: string | null; headers?: Record<string, string>; env?: Record<string, string>;
   enabled?: boolean;
+  createdBy?: Creator | null;
 }
 
 function parseObj(s: string | null): Record<string, string> { try { return s ? JSON.parse(s) : {}; } catch { return {}; } }
@@ -30,17 +35,19 @@ export function rowToIntegration(row: IntegrationRow): Integration {
     command: row.command, args: parseArr(row.args),
     url: row.url, headers: parseObj(row.headers), env: parseObj(row.env),
     enabled: !!row.enabled, createdAt: row.created_at, updatedAt: row.updated_at,
+    createdBy: decodeCreator(row.created_by),
   };
 }
 
 export function create(db: Database.Database, input: CreateIntegrationInput): Integration {
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO integrations (id, name, type, command, args, url, headers, env, enabled, created_at, updated_at)
-    VALUES (@id, @name, @type, @command, @args, @url, @headers, @env, @enabled, @created_at, @updated_at)`).run({
+  db.prepare(`INSERT INTO integrations (id, name, type, command, args, url, headers, env, enabled, created_at, updated_at, created_by)
+    VALUES (@id, @name, @type, @command, @args, @url, @headers, @env, @enabled, @created_at, @updated_at, @created_by)`).run({
     id: input.id, name: input.name, type: input.type,
     command: input.command ?? null, args: JSON.stringify(input.args ?? []),
     url: input.url ?? null, headers: JSON.stringify(input.headers ?? {}), env: JSON.stringify(input.env ?? {}),
     enabled: input.enabled === false ? 0 : 1, created_at: now, updated_at: now,
+    created_by: input.createdBy ? encodeCreator(input.createdBy) : null,
   });
   return getById(db, input.id)!;
 }

@@ -1,5 +1,6 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
+import { creatorOf } from '../auth/creator.js';
 import type { AgentService } from '../agents/service.js';
 import { clientMessage } from '../http/client-message.js';
 
@@ -17,7 +18,7 @@ export function createAgentsRouter(agentService: AgentService): Router {
 
   router.post('/schedules', (req, res) => {
     try {
-      res.status(201).json(agentService.createSchedule(req.body));
+      res.status(201).json(agentService.createSchedule(req.body, creatorOf(req)));
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
     }

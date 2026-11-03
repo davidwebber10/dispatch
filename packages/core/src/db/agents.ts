@@ -28,6 +28,8 @@ export interface AgentScheduleRow {
   default_terminal_label: string | null;
   role_name: string | null;
   consecutive_failures: number;
+  /** Who created it (JSON from auth/creator.ts); null for a row from before the record existed. */
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -76,6 +78,8 @@ export interface CreateScheduleInput {
   defaultTerminalLabel: string | null;
   /** Role this schedule was materialized from (role.md name); null = an ordinary, ad-hoc schedule. */
   roleName?: string | null;
+  /** Encoded creator (auth/creator.ts). Set by the server, never read from a request body. */
+  createdBy?: string | null;
 }
 
 export interface CreateRunInput {
@@ -104,8 +108,8 @@ export function createSchedule(db: Database.Database, input: CreateScheduleInput
     INSERT INTO agent_schedules (
       id, project_id, name, provider, working_dir, prompt, schedule_kind,
       run_at, recurrence_rule, timezone, enabled, next_run_at,
-      default_terminal_label, role_name, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      default_terminal_label, role_name, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.projectId,
@@ -121,6 +125,7 @@ export function createSchedule(db: Database.Database, input: CreateScheduleInput
     input.nextRunAt,
     input.defaultTerminalLabel,
     input.roleName ?? null,
+    input.createdBy ?? null,
     now,
     now,
   );
@@ -134,6 +139,11 @@ export function getSchedule(db: Database.Database, id: string): AgentScheduleRow
 /** Look up the schedule materialized from a given role.md definition (role_name), if one exists. */
 export function getScheduleByRoleName(db: Database.Database, roleName: string): AgentScheduleRow | undefined {
   return db.prepare('SELECT * FROM agent_schedules WHERE role_name = ?').get(roleName) as AgentScheduleRow | undefined;
+}
+
+/** Record who created (or re-enabled) a schedule. */
+export function setCreatedBy(db: Database.Database, scheduleId: string, createdBy: string | null): void {
+  db.prepare('UPDATE agent_schedules SET created_by = ? WHERE id = ?').run(createdBy, scheduleId);
 }
 
 /** Set the schedule's consecutive-failed-fires counter (used by the 2-consecutive-failures auto-disable rule). */

@@ -154,6 +154,17 @@ describe('RolesService', () => {
     expect(listed[0].scheduleId).toBe(row!.id);
   });
 
+  it('enable() records who enabled the role, and a later enable records the new person', () => {
+    writeRole(tmp, 'x', roleMd());
+    const first = svc.enable('x', { kind: 'owner' });
+    expect(first.createdBy).toEqual({ kind: 'owner' });
+    expect(agentsDb.getScheduleByRoleName(db, 'x')!.created_by).toBe('{"kind":"owner"}');
+    const second = svc.enable('x', { kind: 'thread', terminalId: 't9', name: 'Helper' });
+    expect(second.createdBy).toEqual({ kind: 'thread', terminalId: 't9', name: 'Helper' });
+    // An enable that names nobody (the scheduler itself) leaves the record alone.
+    expect(svc.enable('x').createdBy).toEqual({ kind: 'thread', terminalId: 't9', name: 'Helper' });
+  });
+
   it('enable() called twice never creates a second row for the same role', () => {
     writeRole(tmp, 'x', roleMd());
     const first = svc.enable('x');

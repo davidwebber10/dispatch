@@ -11,6 +11,7 @@ import { KeyStreamRedactor, redactKeys, redactKeysDeep } from '../auth/redact-ke
 import { v4 as uuid } from 'uuid';
 import type Database from 'better-sqlite3';
 import * as agentsDb from '../db/agents.js';
+import { decodeCreator, encodeCreator, type Creator } from '../auth/creator.js';
 import { computeNextRunAt, scheduleTooFrequent, sameRule } from './recurrence.js';
 import { RunStreamParser, runEventToStep, type RunEvent, type RunStep } from './run-stream.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -29,6 +30,8 @@ export interface AgentSchedule {
   enabled: boolean;
   nextRunAt: string | null;
   defaultTerminalLabel: string | null;
+  /** Who created it (SEC-20); null for a schedule from before the record existed. */
+  createdBy: Creator | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -155,6 +158,7 @@ export function toSchedule(row: agentsDb.AgentScheduleRow): AgentSchedule {
     enabled: row.enabled === 1,
     nextRunAt: row.next_run_at,
     defaultTerminalLabel: row.default_terminal_label,
+    createdBy: decodeCreator(row.created_by),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -244,11 +248,11 @@ export class AgentService {
     return agentsDb.updateSchedule(this.db, row.id, { nextRunAt: next }) ?? row;
   }
 
-  createSchedule(input: CreateScheduleRequest): AgentSchedule {
+  createSchedule(input: CreateScheduleRequest, createdBy?: Creator | null): AgentSchedule {
     // A rule is held to the floor whatever the kind: a one-shot's rule is not used, but a later kind change would start using it.
     const tooFrequent = scheduleTooFrequent(input.recurrenceRule);
     if (tooFrequent) throw new Error(tooFrequent);
-    const row = this.withComputedNextRun(agentsDb.createSchedule(this.db, { id: uuid(), ...input }));
+    const row = this.withComputedNextRun(agentsDb.createSchedule(this.db, { id: uuid(), ...input, createdBy: createdBy ? encodeCreator(createdBy) : null }));
     const schedule = toSchedule(row);
     this.broadcaster.broadcast({ type: 'agent:schedule-created', schedule });
     return schedule;

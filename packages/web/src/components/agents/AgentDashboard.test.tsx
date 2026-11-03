@@ -22,3 +22,17 @@ test('shows the selected agent and KPIs derived from its runs', () => {
   expect(screen.getByText('AVG COST')).toBeInTheDocument();
   expect(screen.getByText('$0.50')).toBeInTheDocument(); // avg cost (0.40 + 0.60) / 2
 });
+
+const sched = (over: Record<string, unknown>) => ({ id: 'a1', name: 'Nightly', provider: 'claude-code', enabled: true, scheduleKind: 'recurring', recurrenceRule: JSON.stringify({ type: 'daily', time: '09:00' }), prompt: 'p', nextRunAt: null, ...over } as any);
+
+test('shows who created the schedule', () => {
+  useAgents.setState({ schedules: [sched({ createdBy: { kind: 'thread', terminalId: 'abcdef123456', name: 'Fix login' } })], selectedId: 'a1', runs: [] });
+  render(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} />);
+  expect(screen.getByTestId('schedule-creator')).toHaveTextContent('Thread: Fix login');
+});
+
+test('shows a schedule with no creator record as Unknown', () => {
+  useAgents.setState({ schedules: [sched({})], selectedId: 'a1', runs: [] });
+  render(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} />);
+  expect(screen.getByTestId('schedule-creator')).toHaveTextContent('Unknown');
+});

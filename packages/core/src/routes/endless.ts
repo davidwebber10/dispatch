@@ -73,7 +73,7 @@ export function createEndlessRouter(svc: EndlessService): Router {
       if (!r) { res.status(400).json({ error: 'unknown project' }); return; }
       if (r.kind === 'doc') res.json(r.doc);
       else if (r.kind === 'refused') res.status(403).json({ reason: r.reason });
-      else if (r.kind === 'too_large') res.status(413).json({ path: r.path, size: r.size });
+      else if (r.kind === 'too_large') res.status(413).json({ error: 'This doc is too large to open here.', path: r.path, size: r.size });
       else res.status(404).json({ looked: r.looked });
     } catch (err) {
       if (err instanceof DocTimeoutError) res.status(503).json({ error: err.message });

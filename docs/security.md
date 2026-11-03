@@ -46,6 +46,21 @@ folder in `DISPATCH_FILE_ROOTS`.
 - Keep literal secret values out of integration settings. Use a `${NAME}` reference to a secret
   instead, so the value stays out of command lines and config files.
 
+## Phone notifications
+
+A phone or browser can subscribe to notifications only through the push service of its browser
+maker: Apple, Google (FCM), Mozilla or Microsoft (WNS). Dispatch refuses any other address, so
+it cannot be made to send your thread and project names to a server you do not know.
+
+## Who made an integration or a schedule
+
+Agents may add integrations, enable roles and create schedules. Dispatch does not block this.
+It records who did it. Settings shows "Added by" on each integration, and the Agents screen
+shows "Created by" on each schedule (a role's schedule shows who enabled the role). A row from
+before the record existed shows "Unknown". A call with no sign-in shows as "Local, no sign-in",
+because a browser on this Mac without an access token looks the same as a thread that calls
+Dispatch without its key.
+
 ## Images and links in Markdown
 
 - A remote image in a reply does not load by itself. The page shows a "Load image" control with

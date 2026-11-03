@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { PushService } from '../push/service.js';
+import { isAllowedPushEndpoint } from '../push/endpoints.js';
 
 export function createPushRouter(push: PushService): Router {
   const router = policyRouter();
@@ -9,6 +10,9 @@ export function createPushRouter(push: PushService): Router {
     const { deviceId, subscription } = req.body ?? {};
     if (typeof deviceId !== 'string' || !subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
       return res.status(400).json({ error: 'deviceId and a full subscription are required' });
+    }
+    if (!isAllowedPushEndpoint(subscription.endpoint)) {
+      return res.status(400).json({ error: 'That push address is not from a supported push service.' });
     }
     push.subscribe(deviceId, subscription);
     res.json({ ok: true });
