@@ -13,6 +13,7 @@ import * as sessionsDb from './db/sessions.js';
 import * as terminalsDb from './db/terminals.js';
 import * as appState from './db/app-state.js';
 import { SessionService } from './sessions/service.js';
+import { ptyMessagePayload } from './sessions/pty-message.js';
 import { PTYManager } from './pty/manager.js';
 import { AgentService } from './agents/service.js';
 import { RolesService } from './roles/service.js';
@@ -328,10 +329,10 @@ function wireHarnesses(sessionService: SessionService, status: StatusService, db
  * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
  * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
  * (lazily resumes a dead one) + `sendStructuredMessage`; everything else (PTY threads —
- * claude-code/codex still on the CLI transport, or shell) gets a raw `writeToTerminal` line,
- * exactly as a user's own typed input would arrive.
+ * claude-code/codex still on the CLI transport, or shell) gets the wake typed in and submitted
+ * (`ptyMessagePayload`), exactly as `sendThreadMessage` delivers a peer message to a CLI thread.
  */
-function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => void {
+export function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => void {
   return (terminalId: string, text: string) => {
     const terminal = sessionService.getTerminal(terminalId);
     if (!terminal) return; // watcher vanished between lookup and delivery — nothing to do
@@ -341,7 +342,9 @@ function buildWatchDeliver(sessionService: SessionService): (terminalId: string,
       sessionService.ensureStructuredAlive(terminalId);
       sessionService.sendStructuredMessage(terminalId, text);
     } else {
-      sessionService.writeToTerminal(terminalId, text + '\n');
+      // Same bytes a peer message to a CLI thread uses: a bare "\n" only types a newline into the
+      // input box, so the parent never woke. Bracketed paste, then one CR, submits it.
+      sessionService.writeToTerminal(terminalId, ptyMessagePayload(text));
     }
   };
 }

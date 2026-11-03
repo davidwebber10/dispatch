@@ -229,3 +229,14 @@ it('the real manager records exactly one turn despite send and turn-start busy s
     expect(rows[0]).toMatchObject({ model: 'gpt-5.6-sol', input_tokens: 60, cache_read_tokens: 20, output_tokens: 20, outcome: 'idle' });
   } finally { db.close(); }
 });
+
+it('announces the new process number when the shared app-server restarts', async () => {
+  const oldPid = spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const restarted = waitForManagerEvent(m, 'process-restarted', 't1');
+  process.kill(oldPid, 'SIGKILL');
+  const [newPid] = await restarted;
+  expect(typeof newPid).toBe('number');
+  expect(newPid).toBeGreaterThan(0);
+  expect(newPid).not.toBe(oldPid);
+});

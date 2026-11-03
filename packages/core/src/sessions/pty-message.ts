@@ -12,9 +12,9 @@
 // is exactly what happens when a human pastes multi-line text into Claude Code or Codex. A
 // single trailing CR then submits the whole thing as one message.
 //
-// Single-line text deliberately does NOT use bracketed paste: plain "text\r" is the already-
-// proven path (sendFileReference ships it today), so the common case keeps byte-for-byte the
-// behaviour that is known to work, and the escape sequences only appear when they buy something.
+// Single-line text is bracketed too. Plain "text\r" is not safe: Codex reads fast keystrokes as a
+// paste burst and treats the CR that follows as a newline, so a one-line message sat in the input box
+// unsent (4 of 4 tries). A real paste block, then the CR, submits in Claude Code, Codex and Grok alike.
 
 /** Bracketed-paste start/end (DECSET 2004) — how a terminal frames pasted text. */
 const PASTE_START = '\x1b[200~';
@@ -48,8 +48,7 @@ export function hasControlChars(text: string): boolean {
  */
 export function ptyMessagePayload(text: string): string {
   const normalized = stripControlChars(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
-  // A tab in a typed (unbracketed) line would be a keystroke (completion), so fold it to a space.
-  if (!normalized.includes('\n')) return normalized.replace(/\t/g, ' ') + SUBMIT;
+  // Always one paste block (a tab inside it is text, not a completion keystroke), then one submit.
   return PASTE_START + normalized + PASTE_END + SUBMIT;
 }
 

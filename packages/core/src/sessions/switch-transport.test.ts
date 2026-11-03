@@ -143,3 +143,55 @@ describe('switchTransport — busy handling', () => {
     expect(t.config).toEqual({});
   });
 });
+
+describe('switchTransport — key revoke order', () => {
+  it('stops the old process BEFORE it revokes the thread key (its last status call must still be accepted)', async () => {
+    seed('t1', { config: { transport: 'structured' }, status: 'idle' });
+    structured.live.add('t1');
+    const order: string[] = [];
+    const origKill = structured.kill.bind(structured);
+    structured.kill = (id: string) => { order.push('kill'); origKill(id); };
+    (svc as any).revokeAllKeys = () => { order.push('revoke'); };
+
+    await svc.switchTransport('t1', 'pty');
+
+    expect(order.indexOf('kill')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('revoke')).toBeGreaterThan(order.indexOf('kill'));
+  });
+
+  it('also stops the old PTY before the revoke when switching to Pretty', async () => {
+    seed('t1', { config: {}, status: 'idle' });
+    pty.aliveOverride = true;
+    pty.alive.add('t1');
+    const order: string[] = [];
+    const origKill = pty.kill.bind(pty);
+    pty.kill = (id: string) => { order.push('kill'); origKill(id); pty.emit('exit', id, 0); };
+    (svc as any).revokeAllKeys = () => { order.push('revoke'); };
+
+    await svc.switchTransport('t1', 'structured');
+
+    expect(order.indexOf('kill')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('revoke')).toBeGreaterThan(order.indexOf('kill'));
+  });
+});
+
+describe('switchTransport — a failed turn does not block the switch', () => {
+  it('switches a PTY thread whose turn ended in error', async () => {
+    seed('t1', { config: {}, status: 'error' });
+    const t = await svc.switchTransport('t1', 'structured');
+    expect(t.config.transport).toBe('structured');
+  });
+});
+
+describe('structured process restart keeps the stored pid current', () => {
+  it('writes the new process number when the manager reports a restart', () => {
+    seed('t1', { config: { transport: 'structured' }, status: 'idle' });
+    terminalsDb.updatePid(db, 't1', 111);
+    structured.emit('process-restarted', 't1', 222);
+    expect(terminalsDb.getById(db, 't1')!.pid).toBe(222);
+  });
+
+  it('ignores a restart for a thread that no longer exists', () => {
+    expect(() => structured.emit('process-restarted', 'gone', 222)).not.toThrow();
+  });
+});

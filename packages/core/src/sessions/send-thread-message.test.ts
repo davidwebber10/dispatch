@@ -85,7 +85,7 @@ describe('sendThreadMessage — transport dispatch', () => {
     const out = svc.sendThreadMessage('t1', 'ping from a peer', 'coordinator');
 
     expect(out).toEqual({ transport: 'pty', droppedNonText: false });
-    expect(pty.writes).toEqual([{ id: 't1', data: 'ping from a peer\r' }]);
+    expect(pty.writes).toEqual([{ id: 't1', data: '\x1b[200~ping from a peer\x1b[201~\r' }]);
     expect(structured.sent).toHaveLength(0); // never went near the structured channel
   });
 
@@ -119,7 +119,7 @@ describe('sendThreadMessage — transport dispatch', () => {
     pty.alive.add('t1');
 
     expect(svc.sendThreadMessage('t1', 'hi').transport).toBe('pty');
-    expect(pty.writes[0].data).toBe('hi\r');
+    expect(pty.writes[0].data).toBe('\x1b[200~hi\x1b[201~\r');
   });
 
   it('fails clearly when the PTY thread is not running (never silently drops the message)', () => {
@@ -138,7 +138,7 @@ describe('sendThreadMessage — transport dispatch', () => {
     ] as any);
 
     expect(out).toEqual({ transport: 'pty', droppedNonText: true });
-    expect(pty.writes[0].data).toBe('see this\r');
+    expect(pty.writes[0].data).toBe('\x1b[200~see this\x1b[201~\r');
   });
 
   it('refuses an image-only payload to a PTY thread with an explanatory error', () => {

@@ -162,6 +162,8 @@ export const claudeCodeProvider: SessionProvider = {
           PostToolUse: everyTool,
           Notification: always,
           Stop: always,
+          // A turn that dies on an API error fires StopFailure, not Stop. Without it the thread stays "working".
+          StopFailure: always,
           SessionEnd: always,
         },
       },

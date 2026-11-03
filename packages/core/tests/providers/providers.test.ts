@@ -72,6 +72,9 @@ describe('claude-code provider', () => {
     const hooks = (plan!.claudeSettings as any).hooks;
     expect(hooks.SessionStart).toBeDefined();
     expect(hooks.Stop).toBeDefined();
+    // A failed turn fires StopFailure instead of Stop; it must reach the events route too.
+    expect(hooks.StopFailure).toBeDefined();
+    expect(JSON.stringify(hooks.StopFailure)).toContain('http://localhost:3456/api/events/claude/term-1');
     expect(JSON.stringify(hooks)).toContain('http://localhost:3456/api/events/claude/term-1');
   });
 
