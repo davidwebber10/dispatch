@@ -308,6 +308,16 @@ reach. The race stays a documented limit. No new action.
   environment, not all of it. Limit: an agent that runs as you can still read
   `~/.dispatch/doppler.json`; only a scoped token limits the damage.
 - **Covered by PR 101:** no.
+- **Owner decision (2026-11-03): accepted as is (SO-3 option C).** Threads run with
+  approvals off and the owner's full access by design (see SEC-06), so a read-only
+  or per-project Doppler token would block real work (threads run `doppler run`
+  across explorer, dispatch and zd-chat-bot configs, and sometimes `secrets set`)
+  without changing what an agent running as the owner can already reach. Remote
+  callers have been refused since v3.4.0 (no credential, 401). Accepted risks: the
+  token can change or delete production secrets (Doppler keeps history, so they can
+  be restored), and an agent could paste an `env` dump into a PR or issue by
+  mistake. Revisit if the network exposure Phase 2 (SEC-05, #94) or a shared
+  install widens who can reach a thread.
 
 #### SEC-05. The daemon trusts every local caller, so its guards are advisory (high)
 
@@ -669,7 +679,8 @@ was removed.
 - **SO-3. Doppler token in threads.** (A) In read-only mode, require a Doppler
   read-only service token, and keep the token out of shell tabs. (B) Keep today's
   behaviour and document it. Recommended: A. Today "read-only" does not stop an
-  agent that uses the `doppler` CLI.
+  agent that uses the `doppler` CLI. **Decided 2026-11-03: (C) accept as is.**
+  Full access for threads is the design choice (approvals off); see SEC-04.
 - **SO-4. What "Update" installs.** (A) The latest release tag. (B) The tip of
   `main` (today). Recommended: A. Users read the release note for a tag, and a tag
   is the unit that a person reviewed.
