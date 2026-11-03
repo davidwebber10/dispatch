@@ -498,6 +498,11 @@ Done well in this area: `doppler.json`, `claude-oauth-token` and `push.json` are
   from a thread key, or turn them into a decision card that a person must accept
   in the browser.
 - **Covered by PR 101:** no.
+- **Owner decision 2026-11-03: accepted, with creator shown (option B).** Threads
+  may still create integrations, roles and schedules, because approvals are off by
+  design. Dispatch records and shows who created each one (the owner in the
+  browser, or which thread), so a stray one is easy to spot and remove. No
+  refusal and no decision card.
 
 ### 4.6 Update and supply chain
 
@@ -623,7 +628,7 @@ socket).
 | SEC-15 | medium | fix soon | No |
 | SEC-16 | medium | fix soon | No |
 | SEC-17 | medium | fix soon | No |
-| SEC-20 | medium | fix soon | No |
+| SEC-20 | medium | accepted 2026-11-03, show creator | No |
 | SEC-21 | medium | fix soon | Remote only; revoke in Phase 2 |
 | SEC-22 | medium | accepted 2026-11-03 | Remote only |
 | SEC-19 | low | fix soon | No |
