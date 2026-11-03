@@ -14,7 +14,7 @@
 //
 // Single-line text is bracketed too. Plain "text\r" is not safe: Codex reads fast keystrokes as a
 // paste burst and treats the CR that follows as a newline, so a one-line message sat in the input box
-// unsent (4 of 4 tries). A real paste block, then the CR, submits in Claude Code, Codex and Grok alike.
+// unsent (4 of 4 tries). A real paste block, then the CR, submits in Codex and Claude Code (checked live).
 
 /** Bracketed-paste start/end (DECSET 2004) — how a terminal frames pasted text. */
 const PASTE_START = '\x1b[200~';
