@@ -175,6 +175,16 @@ spec does not say.
   browser session, not from a thread (needs the thread key from SEC-05). Bind the
   callback to the port of the original request's redirect URI.
 - **Covered by PR 101:** the remote part, yes. Calls from agents, no.
+- **Owner decision 2026-11-03: accepted as is.** Since v3.4.0, callers off the
+  Mac get a 401, and per-thread keys stop a thread from posting a sign-in request
+  as another thread. The only caller left is a thread on the owner's own Mac, which
+  already has full access with approvals off (same reasoning as SO-3 / SEC-04). The
+  phishing banner still needs the owner to click and type a password. Switching
+  the Claude account can be done more simply by overwriting the login files or
+  running `claude login`. Callback forwarding adds nothing over `curl` to
+  localhost. Restricting these routes to a browser session would mostly block
+  legitimate sign-in banners from threads. Caveat: check a banner link's domain
+  before signing in. Revisit if #94 Phase 2 or a shared install widens access.
 
 #### SEC-21. Push subscriptions: any endpoint, no device list (medium)
 
@@ -615,7 +625,7 @@ socket).
 | SEC-17 | medium | fix soon | No |
 | SEC-20 | medium | fix soon | No |
 | SEC-21 | medium | fix soon | Remote only; revoke in Phase 2 |
-| SEC-22 | medium | fix soon | Remote only |
+| SEC-22 | medium | accepted 2026-11-03 | Remote only |
 | SEC-19 | low | fix soon | No |
 | SEC-23 | low | fix soon | Remote only |
 | SEC-24 | low | fix soon | No |
