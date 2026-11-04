@@ -212,6 +212,19 @@ describe.skipIf(!lanIp)('device list over the real daemon', () => {
     expect((await list(a)).legacyOpen).toBe(false);
   });
 
+  test('the addresses a phone could use: owner gets lists of IPv4 strings, a thread key gets 403', async () => {
+    const a = await signIn();
+    const r = await call({ path: '/api/access/addresses', cookie: a });
+    expect(r.status).toBe(200);
+    const body = JSON.parse(r.body) as { tailscale: string[]; lan: string[] };
+    expect(Array.isArray(body.tailscale)).toBe(true);
+    expect(body.lan).toContain(lanIp); // the machine's own LAN address is offered
+    for (const ip of [...body.tailscale, ...body.lan]) expect(ip).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    expect(r.headers['cache-control']).toContain('no-store');
+    expect((await call({ path: '/api/access/addresses', headers: { Authorization: `Bearer ${threadKey}` }, lan: false })).status).toBe(403);
+    expect((await call({ path: '/api/access/addresses', lan: false })).status).toBe(200); // the browser on this computer
+  });
+
   test('no token or cookie value appears in the daemon output', () => {
     expect(output).not.toContain(token);
   });

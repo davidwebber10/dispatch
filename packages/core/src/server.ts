@@ -32,6 +32,7 @@ import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
 import { createDeviceStore } from './auth/devices.js';
+import { reachableAddresses } from './auth/reachable-addresses.js';
 import { mountApiRoutes } from './server-routes.js';
 import { jsonErrorHandler } from './http/error-handler.js';
 import { createJsonBody } from './http/json-body.js';
@@ -494,13 +495,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Signed-in devices: one row per browser or phone that signed in. Not on a hosted box, where
   // the router holds the box token and there is no sign-in page.
   const devices = BOX_TOKEN ? undefined : createDeviceStore(db, { getToken: getAccessToken });
+  const tailscaleAccess = createTailscaleAccess();
   const accessGate = BOX_TOKEN
     ? undefined
     : createAccessGate({
         getToken: getAccessToken,
         isGatewayPeer: (a) => platform.isHostGatewayPeer(a),
         config: createAccessConfig(dataDir),
-        tailscale: createTailscaleAccess(),
+        tailscale: tailscaleAccess,
         basePath: BASE_PATH,
         pairCodes,
         devices,
@@ -804,7 +806,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/', refreshPtyEnv, endless,
+    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
+    reachableAddresses: async () => {
+      const me = await tailscaleAccess.self().catch(() => null);
+      return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
+    }, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });

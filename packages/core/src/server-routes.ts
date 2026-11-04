@@ -17,6 +17,7 @@ import type { EventBroadcaster } from './ws/events.js';
 import type { NoCredentialStats } from './auth/no-credential-stats.js';
 import type { PairCodes } from './auth/pair-code.js';
 import type { DeviceStore } from './auth/devices.js';
+import type { Reachable } from './auth/reachable-addresses.js';
 import { COOKIE_NAME } from './auth/access-token.js';
 import { principalOf } from './auth/request-principal.js';
 import { noCredentialStatsHandler, whoamiHandler } from './auth/request-principal.js';
@@ -79,6 +80,8 @@ export interface ApiRouteDeps {
   pairCodes?: PairCodes;
   /** Signed-in devices (Settings → Access). Absent in `createApp` and on a hosted box: the device routes then answer 404. */
   devices?: DeviceStore;
+  /** Addresses a phone could use to reach this computer (Settings > Access). Absent in `createApp`: the route then answers empty lists. */
+  reachableAddresses?: () => Promise<Reachable>;
   /** Cookie Path, for clearing a device's own cookie when it revokes itself. */
   cookiePath?: string;
   /** Re-reads the spawn env after a secrets or harness-settings write (daemon only). */
@@ -108,6 +111,14 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   });
 
   mountDeviceRoutes(app, d);
+
+  // Owner only: the lists name this computer's network addresses. A browser on this computer only knows `localhost`.
+  app.get('/api/access/addresses', ownerOnly, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    (d.reachableAddresses?.() ?? Promise.resolve({ tailscale: [], lan: [] }))
+      .then((r) => res.json(r))
+      .catch(() => res.json({ tailscale: [], lan: [] }));
+  });
 
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));

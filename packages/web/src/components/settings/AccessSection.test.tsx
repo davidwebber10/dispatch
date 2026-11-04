@@ -1,12 +1,12 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AccessSection, pairLink, PAIR_ADDRESS_KEY } from './AccessSection';
+import { AccessSection, pairLink, PAIR_ADDRESS_KEY, isLoopbackHost, phoneAddress } from './AccessSection';
 import { api, ApiError } from '../../api/client';
 
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn() } }));
 vi.mock('../../api/client', async (orig) => {
   const real = await orig<typeof import('../../api/client')>();
-  return { ...real, api: { ...real.api, makePairCode: vi.fn(), getDevices: vi.fn().mockResolvedValue({ devices: [], currentDeviceId: null, legacyOpen: false }) } };
+  return { ...real, api: { ...real.api, makePairCode: vi.fn(), getAccessAddresses: vi.fn().mockResolvedValue({ tailscale: [], lan: [] }), getDevices: vi.fn().mockResolvedValue({ devices: [], currentDeviceId: null, legacyOpen: false }) } };
 });
 
 beforeEach(async () => {
@@ -66,5 +66,106 @@ describe('<AccessSection> devices', () => {
     render(<AccessSection />);
     expect(await screen.findByText('SIGNED-IN DEVICES')).toBeInTheDocument();
     expect(await screen.findByText(/No device has signed in yet/)).toBeInTheDocument();
+  });
+});
+
+describe('isLoopbackHost', () => {
+  it.each([['localhost', true], ['LOCALHOST', true], ['127.0.0.1', true], ['127.5.6.7', true], ['::1', true], ['[::1]', true],
+    ['192.168.4.60', false], ['mac.tail1.ts.net', false], ['100.96.27.65', false], ['localhost.example.com', false]])('%s -> %s', (h, want) => {
+    expect(isLoopbackHost(h as string)).toBe(want);
+  });
+});
+
+describe('phoneAddress', () => {
+  it('keeps the scheme and port, swaps the host, and keeps the base path', () => {
+    expect(phoneAddress({ protocol: 'http:', port: '3494' }, '100.96.27.65', '')).toBe('http://100.96.27.65:3494');
+    expect(phoneAddress({ protocol: 'https:', port: '' }, '192.168.4.60', '/d')).toBe('https://192.168.4.60/d');
+  });
+});
+
+describe('<AccessSection> address for the phone', () => {
+  const setOrigin = (href: string) => {
+    const u = new URL(href);
+    Object.defineProperty(window, 'location', { configurable: true, value: { origin: u.origin, protocol: u.protocol, hostname: u.hostname, port: u.port, href } });
+  };
+  const realLocation = window.location;
+  afterEach(() => { Object.defineProperty(window, 'location', { configurable: true, value: realLocation }); });
+  const box = () => screen.getByLabelText('Address the phone will use') as HTMLInputElement;
+
+  it('on localhost, fills in the Tailscale address (preferred) with the same scheme and port, and says so', async () => {
+    setOrigin('http://localhost:3494/');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: ['100.96.27.65'], lan: ['192.168.4.60'] });
+    render(<AccessSection />);
+    await waitFor(() => expect(box().value).toBe('http://100.96.27.65:3494'));
+    expect(screen.getByTestId('loopback-note')).toHaveTextContent(/phone cannot open localhost/i);
+    expect(screen.getByTestId('loopback-note')).toHaveTextContent(/filled in/i);
+  });
+
+  it('with no Tailscale, falls back to the Wi-Fi address', async () => {
+    setOrigin('http://127.0.0.1:3494/');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: [], lan: ['192.168.4.60'] });
+    render(<AccessSection />);
+    await waitFor(() => expect(box().value).toBe('http://192.168.4.60:3494'));
+  });
+
+  it('with no reachable address, leaves the box and asks the user to type one', async () => {
+    setOrigin('http://localhost:3494/');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: [], lan: [] });
+    render(<AccessSection />);
+    expect(await screen.findByText(/type the address the phone will use/i)).toBeInTheDocument();
+    expect(box().value).toBe('http://localhost:3494');
+  });
+
+  it('when the lookup fails, behaves as if no address was found', async () => {
+    setOrigin('http://localhost:3494/');
+    (api.getAccessAddresses as any).mockRejectedValue(new ApiError('x', 500));
+    render(<AccessSection />);
+    expect(await screen.findByText(/type the address the phone will use/i)).toBeInTheDocument();
+  });
+
+  it('treats a saved loopback address as unset', async () => {
+    setOrigin('http://localhost:3494/');
+    localStorage.setItem(PAIR_ADDRESS_KEY, 'http://localhost:3494');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: ['100.96.27.65'], lan: [] });
+    render(<AccessSection />);
+    await waitFor(() => expect(box().value).toBe('http://100.96.27.65:3494'));
+  });
+
+  it('a saved address that is not loopback wins, and the lookup does not overwrite it', async () => {
+    setOrigin('http://localhost:3494/');
+    localStorage.setItem(PAIR_ADDRESS_KEY, 'https://d.example.com');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: ['100.96.27.65'], lan: [] });
+    render(<AccessSection />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(box().value).toBe('https://d.example.com');
+    expect(screen.queryByTestId('loopback-note')).not.toBeInTheDocument();
+  });
+
+  it('an address the user types before the lookup returns is not overwritten', async () => {
+    setOrigin('http://localhost:3494/');
+    let resolve!: (v: any) => void;
+    (api.getAccessAddresses as any).mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(<AccessSection />);
+    fireEvent.change(box(), { target: { value: 'https://mine.example.com' } });
+    resolve({ tailscale: ['100.96.27.65'], lan: [] });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(box().value).toBe('https://mine.example.com');
+  });
+
+  it('does not save the filled-in address, so it is looked up again next time', async () => {
+    setOrigin('http://localhost:3494/');
+    (api.getAccessAddresses as any).mockResolvedValue({ tailscale: ['100.96.27.65'], lan: [] });
+    render(<AccessSection />);
+    await waitFor(() => expect(box().value).toBe('http://100.96.27.65:3494'));
+    expect(localStorage.getItem(PAIR_ADDRESS_KEY)).toBeNull();
+  });
+
+  it('on a non-loopback origin, shows no note and does not look anything up', async () => {
+    setOrigin('http://192.168.4.60:3494/');
+    (api.getAccessAddresses as any).mockClear();
+    render(<AccessSection />);
+    expect(box().value).toBe('http://192.168.4.60:3494');
+    expect(screen.queryByTestId('loopback-note')).not.toBeInTheDocument();
+    expect(api.getAccessAddresses).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
@@ -20,12 +20,44 @@ import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider } from
  */
 export const PAIR_ADDRESS_KEY = 'dispatch:pairAddress';
 
+/** localhost, any 127.x.y.z address, or ::1: on a phone these mean the phone itself. */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return h === 'localhost' || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h);
+}
+
+function hostOfAddress(address: string): string | null {
+  try { return new URL(address.includes('://') ? address : `http://${address}`).hostname; } catch { return null; }
+}
+const isLoopbackAddress = (address: string): boolean => {
+  const h = hostOfAddress(address);
+  return h !== null && isLoopbackHost(h);
+};
+
+/** The page's own scheme, port and base path, with the host swapped for one the phone can reach. */
+export function phoneAddress(loc: { protocol: string; port: string }, host: string, base: string): string {
+  return `${loc.protocol}//${host}${loc.port ? `:${loc.port}` : ''}${base}`;
+}
+
+function pageIsLoopback(): boolean {
+  try { return isLoopbackHost(location.hostname); } catch { return false; }
+}
+
 function defaultAddress(): string {
   try {
+    // A saved loopback address is useless on a phone, so it counts as unset.
     const saved = localStorage.getItem(PAIR_ADDRESS_KEY);
-    if (saved) return saved;
+    if (saved && !isLoopbackAddress(saved)) return saved;
   } catch { /* ignore */ }
   try { return `${location.origin}${BASE}`; } catch { return ''; }
+}
+
+/** True when the user already chose an address (a saved one that a phone can use). */
+function hasChosenAddress(): boolean {
+  try {
+    const saved = localStorage.getItem(PAIR_ADDRESS_KEY);
+    return !!saved && !isLoopbackAddress(saved);
+  } catch { return false; }
 }
 
 /** The link the QR code carries: the address plus the code in the fragment, which browsers never send to a server. */
@@ -35,6 +67,11 @@ export function pairLink(address: string, code: string): string {
 
 export function AccessSection() {
   const [address, setAddress] = useState(defaultAddress);
+  // This page is open on localhost, which a phone cannot use. Ask the daemon for an address it can,
+  // unless the user already chose one. 'auto' = filled in for them; 'none' = nothing found.
+  const loopbackPage = useState(pageIsLoopback)[0];
+  const [auto, setAuto] = useState<null | 'tailscale' | 'lan' | 'none'>(null);
+  const typed = useRef(hasChosenAddress());
   const [pair, setPair] = useState<{ code: string; expiresAt: number } | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -58,7 +95,26 @@ export function AccessSection() {
     return () => { on = false; };
   }, [live, address]);
 
+  useEffect(() => {
+    if (!loopbackPage || typed.current) return;
+    let on = true;
+    api.getAccessAddresses()
+      .catch(() => ({ tailscale: [] as string[], lan: [] as string[] }))
+      .then((r) => {
+        if (!on || typed.current) return;
+        const ts = r.tailscale[0];
+        const lan = r.lan[0];
+        const host = ts ?? lan;
+        if (!host) { setAuto('none'); return; }
+        setAddress(phoneAddress(location, host, BASE));
+        setAuto(ts ? 'tailscale' : 'lan');
+      });
+    return () => { on = false; };
+  }, [loopbackPage]);
+
   function saveAddress(v: string) {
+    typed.current = true;
+    setAuto(null);
     setAddress(v);
     try { localStorage.setItem(PAIR_ADDRESS_KEY, v); } catch { /* ignore */ }
   }
@@ -102,6 +158,13 @@ export function AccessSection() {
             style={{ ...fieldInput, flex: '1 1 220px' }}
           />
         </div>
+        {loopbackPage && auto && (
+          <div data-testid="loopback-note" style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            {auto === 'none'
+              ? 'This page is open on localhost, and a phone cannot open localhost. No other address for this computer was found. Type the address the phone will use.'
+              : `This page is open on localhost, and a phone cannot open localhost. Dispatch filled in this computer's ${auto === 'tailscale' ? 'Tailscale' : 'Wi-Fi'} address instead. Change it if the phone should use another.`}
+          </div>
+        )}
         <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
           The address goes into the QR code only. Use the one the phone can reach: a tunnel hostname or a Tailscale name.
         </div>

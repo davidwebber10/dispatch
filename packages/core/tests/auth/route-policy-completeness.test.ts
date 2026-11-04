@@ -140,7 +140,7 @@ describe('route policy completeness', () => {
   });
 
   test('the device routes are owner only', () => {
-    for (const id of ['GET /api/access/devices', 'PATCH /api/access/devices/:id', 'DELETE /api/access/devices/:id', 'POST /api/access/devices/end-legacy', 'POST /api/access/pair-code']) {
+    for (const id of ['GET /api/access/devices', 'PATCH /api/access/devices/:id', 'DELETE /api/access/devices/:id', 'POST /api/access/devices/end-legacy', 'GET /api/access/addresses', 'POST /api/access/pair-code']) {
       expect(routes.find((r) => r.id === id)?.kind, id).toBe('owner');
     }
   });
@@ -162,6 +162,7 @@ describe('default deny in the full app', () => {
     expect((await request(app).get('/api/access/devices').set(auth)).status).toBe(403);
     expect((await request(app).delete('/api/access/devices/abc').set(auth)).status).toBe(403);
     expect((await request(app).get('/api/access/devices')).status).toBe(404);
+    expect((await request(app).get('/api/access/addresses').set(auth)).status).toBe(403);
     expect((await request(app).get('/api/whoami').set(auth)).body).toEqual({ kind: 'chat', startedBy: 'user' });
     expect((await request(app).get('/api/servers')).status).toBe(200);
   });

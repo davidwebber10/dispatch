@@ -30,6 +30,13 @@ code** button. There are two ways through it.
 2. Scan the QR code with the phone's camera and open the link. The phone signs in and the app
    opens. Or open Dispatch on the phone, tap **Enter a code**, and type the code.
 
+If you opened Settings on the computer itself (`localhost`, `127.0.0.1` or `::1`), a phone
+cannot use that address: on a phone, `localhost` means the phone. Dispatch then fills the field
+with an address for this computer that a phone can reach, with the same scheme and port. It
+prefers the Tailscale address when Tailscale is up, and otherwise the Wi-Fi (LAN) address, and a
+note says so. If it finds none, the field keeps the page address and the note asks you to type
+one. An address you type always wins, and a saved `localhost` address is ignored.
+
 The QR code carries the address in the **Address the phone will use** field plus the code,
 as `ADDRESS/#code=ABCD-EFGH`. Browsers never send the part after `#` to a server. Set the
 field to the address the phone can reach (a tunnel hostname or a Tailscale name). The daemon

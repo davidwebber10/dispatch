@@ -352,6 +352,8 @@ export const api = {
   // there is no sign-in page to type it on.
   makePairCode: () => req<{ code: string; expiresAt: number }>('/api/access/pair-code', { method: 'POST' }),
   // Signed-in devices (Settings → Access). 404 on a hosted box.
+  // Addresses a phone could use to reach this computer (a browser on it only knows `localhost`). Owner only.
+  getAccessAddresses: () => req<{ tailscale: string[]; lan: string[] }>('/api/access/addresses'),
   getDevices: () => req<DeviceList>('/api/access/devices'),
   renameDevice: (id: string, name: string) =>
     req<void>(`/api/access/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ name }) }),
