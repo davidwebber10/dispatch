@@ -69,11 +69,14 @@ describe('installProcessGuards', () => {
     Object.defineProperty(bad, 'stack', { get() { throw new Error('getter'); } });
     expect(() => handlers.uncaughtException(bad)).not.toThrow();
     expect(lines).toHaveLength(1);
+    const odd = new Error('odd');
+    Object.defineProperty(odd, 'stack', { value: { toString() { throw new Error('coercion escaped'); } } });
+    expect(() => handlers.uncaughtException(odd)).not.toThrow();
     const evil = { toString() { throw new Error('x'); }, toJSON() { throw new Error('y'); } };
     expect(() => handlers.unhandledRejection(evil)).not.toThrow();
-    expect(lines[1]).toMatch(/could not be described/);
-    // The breaker still counts after a bad error.
-    handlers.uncaughtException(new Error('again'));
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(lines.join('\n')).toMatch(/could not be described/);
+    // The breaker still counts after a bad error (limit 1, so the second one in the minute exits).
     expect(proc.exit).toHaveBeenCalledWith(1);
     // A log that throws does not stop the exit path.
     const handlers2: Record<string, (...a: any[]) => void> = {};

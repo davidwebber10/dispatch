@@ -19,15 +19,17 @@ export function sendOrDrop(ws: WebSocket, data: string | Buffer, label: string):
   ws.send(data);
   const cap = wsMaxBufferedBytes();
   if (cap > 0 && ws.bufferedAmount > cap && !watchers.has(ws)) {
+    const onClose = () => { clearTimeout(timer); watchers.delete(ws); };
     const timer = setTimeout(() => {
       watchers.delete(ws);
+      ws.off?.('close', onClose); // a drained socket must not keep one listener per burst
       if (ws.readyState !== 1 || ws.bufferedAmount <= cap) return;
       console.warn(`[ws] dropped a slow ${label} client: ${ws.bufferedAmount} bytes unread for over ${wsBufferGraceMs()} ms (limit ${cap}). It can reconnect.`);
       ws.terminate();
     }, wsBufferGraceMs());
     timer.unref?.();
     watchers.set(ws, timer);
-    ws.once?.('close', () => { clearTimeout(timer); watchers.delete(ws); });
+    ws.once?.('close', onClose);
   }
   return true;
 }

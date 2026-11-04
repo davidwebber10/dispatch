@@ -2,10 +2,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { WebSocket } from 'ws';
 import { sendOrDrop } from './backpressure.js';
 
-type Fake = WebSocket & { send: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn>; bufferedAmount: number; readyState: number; emit: (e: string) => void };
+type Fake = WebSocket & { send: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn>; listenerCount: (e: string) => number; bufferedAmount: number; readyState: number; emit: (e: string) => void };
 const fake = (bufferedAmount: number, readyState = 1): Fake => {
-  const handlers: Record<string, () => void> = {};
-  return { readyState, bufferedAmount, send: vi.fn(), terminate: vi.fn(), once: (e: string, fn: () => void) => { handlers[e] = fn; }, emit: (e: string) => handlers[e]?.() } as unknown as Fake;
+  const handlers: Record<string, Set<() => void>> = {};
+  return { readyState, bufferedAmount, send: vi.fn(), terminate: vi.fn(),
+    once: (e: string, fn: () => void) => { (handlers[e] ??= new Set()).add(fn); },
+    off: (e: string, fn: () => void) => { handlers[e]?.delete(fn); },
+    listenerCount: (e: string) => handlers[e]?.size ?? 0,
+    emit: (e: string) => { for (const fn of [...(handlers[e] ?? [])]) fn(); } } as unknown as Fake;
 };
 
 beforeEach(() => { vi.useFakeTimers(); process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000'; process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000'; });
@@ -42,6 +46,18 @@ describe('sendOrDrop', () => {
     sendOrDrop(ws, 'small', 'chat');
     ws.bufferedAmount = 0; // the socket drained
     vi.advanceTimersByTime(6000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  it('leaves no close listener behind after repeated bursts that drain', () => {
+    const ws = fake(33 * 1024 * 1024);
+    for (let i = 0; i < 12; i++) {
+      ws.bufferedAmount = 33 * 1024 * 1024;
+      sendOrDrop(ws, 'big', 'chat');
+      ws.bufferedAmount = 0;
+      vi.advanceTimersByTime(6000);
+    }
+    expect(ws.listenerCount('close')).toBe(0);
     expect(ws.terminate).not.toHaveBeenCalled();
   });
 

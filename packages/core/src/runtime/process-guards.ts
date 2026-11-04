@@ -22,7 +22,7 @@ const WINDOW_MS = 60_000;
 /** Never throws: an error object can have a getter that throws, and this runs where a throw ends the process. */
 function describeError(err: unknown): string {
   try {
-    if (err instanceof Error) return err.stack || `${err.name}: ${err.message}`;
+    if (err instanceof Error) return String(err.stack || `${err.name}: ${err.message}`);
     return typeof err === 'string' ? err : JSON.stringify(err) ?? String(err);
   } catch {
     try { return String(err); } catch { return '(an error that could not be described)'; }
