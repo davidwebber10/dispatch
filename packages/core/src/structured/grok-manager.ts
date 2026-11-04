@@ -44,6 +44,7 @@ import type {
 } from './manager.js';
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
+import { killWithGrace } from '../platform/kill-grace.js';
 
 const MAX_EVENTS = 5000;
 
@@ -153,7 +154,7 @@ class GrokConnection extends EventEmitter {
   close(): void {
     this.closed = true;
     try { this.rl.close(); } catch { /* noop */ }
-    try { this.child.kill(); } catch { /* already gone */ }
+    killWithGrace(this.child); // SIGTERM, then SIGKILL if the CLI ignores it
   }
 }
 

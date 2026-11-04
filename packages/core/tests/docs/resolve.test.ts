@@ -399,8 +399,12 @@ describe('resolveDoc: the branch scan is bounded', () => {
 });
 
 describe('git wrapper', () => {
-  it('takes no optional lock: --no-optional-locks comes first, before -C', async () => {
-    expect(gitArgs('/repo', ['status'])).toEqual(['--no-optional-locks', '-C', '/repo', 'status']);
+  it('takes no optional lock: --no-optional-locks comes before -C', async () => {
+    expect(gitArgs('/repo', ['status'])).toEqual(['-c', 'core.fsmonitor=false', '--no-optional-locks', '-C', '/repo', 'status']);
+  });
+
+  it('never runs a repository\'s core.fsmonitor command: it is switched off before everything else', async () => {
+    expect(gitArgs('/repo', ['diff']).slice(0, 2)).toEqual(['-c', 'core.fsmonitor=false']);
   });
 });
 

@@ -8,6 +8,7 @@ import { broadKillDenial } from './broad-kill-guard.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
+import { killWithGrace } from '../platform/kill-grace.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -693,7 +694,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     // which must then find the session gone and stay silent — this is the one 'exit'.
     this.sessions.delete(terminalId);
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
-    try { s.child.kill(); } catch { /* already gone */ }
+    killWithGrace(s.child); // SIGTERM, then SIGKILL if the CLI ignores it
     // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
     this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? redactKeys(s.stderrTail?.trim() ?? '') || undefined : undefined);
   }

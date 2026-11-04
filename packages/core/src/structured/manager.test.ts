@@ -43,3 +43,30 @@ describe('turnTextsFromEvents — the Claude ring', () => {
     expect(new ClaudeStructuredSessionManager().getTurnTexts('nope')).toBeNull();
   });
 });
+
+// SEC sweep SUS-2: stopping a thread must end a CLI that ignores SIGTERM.
+describe('ClaudeStructuredSessionManager.kill — a CLI that ignores SIGTERM', () => {
+  it('is killed outright after the grace period', async () => {
+    const { mkdtempSync, writeFileSync, chmodSync, rmSync } = fs;
+    const dir = mkdtempSync(path.join((await import('node:os')).tmpdir(), 'kill-grace-'));
+    const script = path.join(dir, 'stubborn-cli.js');
+    writeFileSync(script, "#!/usr/bin/env node\nprocess.on('SIGTERM', () => {});\nconsole.log(JSON.stringify({ type: 'system', subtype: 'init' }));\nsetInterval(() => {}, 1000);\n");
+    chmodSync(script, 0o755);
+    const { KILL_GRACE_MS } = await import('../platform/kill-grace.js');
+    const mgr = new ClaudeStructuredSessionManager();
+    const pid = mgr.spawn('stubborn', { command: process.execPath, args: [script], workDir: dir, env: {} } as any);
+    const alive = (): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      await new Promise((r) => setTimeout(r, 400)); // let the child install its handler
+      mgr.kill('stubborn');
+      await new Promise((r) => setTimeout(r, 200));
+      expect(alive()).toBe(true); // SIGTERM alone did not end it
+      const end = Date.now() + KILL_GRACE_MS + 3000;
+      while (alive() && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+      expect(alive()).toBe(false);
+    } finally {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+});

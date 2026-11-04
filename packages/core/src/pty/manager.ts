@@ -2,15 +2,19 @@ import * as pty from 'node-pty';
 import { RingBuffer } from './buffer.js';
 import { EventEmitter } from 'events';
 import { inheritedEnv } from '../platform/inherited-env.js';
+import { KILL_GRACE_MS } from '../platform/kill-grace.js';
 
 interface ManagedPty {
   process: pty.IPty;
   buffer: RingBuffer;
+  exited: boolean; // set by the exit handler; stops the late SIGKILL from reaching a reused pid
   resizeGen: number; // bumped on every client resize — lets nudgeRepaint skip its restore when a real resize interleaves
 }
 
 export class PTYManager extends EventEmitter {
   private ptys = new Map<string, ManagedPty>();
+  /** How long a killed process gets to end after the hang-up before it is killed outright. */
+  killGraceMs = KILL_GRACE_MS;
 
   constructor(private defaultEnv: Record<string, string> = {}) {
     super();
@@ -44,7 +48,7 @@ export class PTYManager extends EventEmitter {
     });
 
     const buffer = new RingBuffer();
-    const managed: ManagedPty = { process: proc, buffer, resizeGen: 0 };
+    const managed: ManagedPty = { process: proc, buffer, exited: false, resizeGen: 0 };
     this.ptys.set(sessionId, managed);
 
     proc.onData((data: string) => {
@@ -53,6 +57,7 @@ export class PTYManager extends EventEmitter {
     });
 
     proc.onExit(({ exitCode }) => {
+      managed.exited = true;
       this.ptys.delete(sessionId);
       this.emit('exit', sessionId, exitCode, proc.pid); // the pid lets a key revoke only this process's handle
     });
@@ -112,6 +117,14 @@ export class PTYManager extends EventEmitter {
     if (!managed) return;
     managed.process.kill();
     this.ptys.delete(sessionId);
+    // A CLI (or a shell) that ignores the hang-up must not outlive its thread: kill it outright
+    // after the grace period. Its own background children are not touched.
+    if (process.platform === 'win32') return;
+    const timer = setTimeout(() => {
+      if (managed.exited) return;
+      try { managed.process.kill('SIGKILL'); } catch { /* already gone */ }
+    }, this.killGraceMs);
+    timer.unref();
   }
 
   getBuffer(sessionId: string, maxBytes?: number): string {

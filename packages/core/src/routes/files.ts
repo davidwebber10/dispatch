@@ -12,6 +12,7 @@ import { revealClientFrom } from '../files/reveal.js';
 import { platform } from '../platform/index.js';
 import { insideRealRoot } from '../files/confine.js';
 import { clientMessage } from '../http/client-message.js';
+import { GIT_NO_FSMONITOR } from '../docs/git.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -98,7 +99,7 @@ function gitLsFiles(workingDir: string, extraArgs: string[]): Promise<string[] |
   return new Promise((resolve) => {
     execFile(
       'git',
-      ['-C', workingDir, 'ls-files', ...extraArgs, '-z'],
+      [...GIT_NO_FSMONITOR, '-C', workingDir, 'ls-files', ...extraArgs, '-z'],
       { timeout: 10_000, maxBuffer: 32 * 1024 * 1024 },
       (err, stdout) => resolve(err ? null : stdout.split('\0').filter(Boolean)),
     );

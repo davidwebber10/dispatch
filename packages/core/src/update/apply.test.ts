@@ -21,6 +21,19 @@ const CLEAN_AND_FF_ABLE = {
   'merge-base --is-ancestor abc123 def456': '',
 };
 
+describe('preflightUpdate: the reason never carries a path (SEC sweep)', () => {
+  // execFileSync's message is "Command failed: git -C <repo> <args>" plus git's stderr: both name folders.
+  const leaky = new Error("Command failed: git -C /Users/someone/dispatch fetch origin --tags\nfatal: '/Users/someone/remote.git' does not appear to be a git repository\n");
+  for (const step of ['status --porcelain', 'fetch origin --tags', 'ls-remote --tags --refs origin', 'rev-parse HEAD']) {
+    it(`a failed "git ${step}" gives a plain reason`, () => {
+      const result = preflightUpdate('/Users/someone/dispatch', fakeGit({ ...CLEAN_AND_FF_ABLE, [step]: leaky }));
+      expect(result.ok).toBe(false);
+      expect(result.reason).toMatch(/failed|could not/i);
+      expect(result.reason).not.toMatch(/\/Users|someone|Command failed/);
+    });
+  }
+});
+
 describe('preflightUpdate', () => {
   it('fails when the working tree is dirty', () => {
     const git = fakeGit({ ...CLEAN_AND_FF_ABLE, 'status --porcelain': ' M packages/core/src/server.ts\n' });
