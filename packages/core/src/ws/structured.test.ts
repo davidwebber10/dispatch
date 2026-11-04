@@ -329,5 +329,24 @@ describe('replay back-pressure', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(ws.send.mock.calls.length).toBe(sentBefore); // nothing more is queued for the dropped client
   });
+
+  it('counts the held live events in bytes: CJK text (3 bytes a character) hits the bound that its character count would miss', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000'; // held bound: 4000 bytes
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '600000';
+    const manager = mkManager([textEvent('h')]);
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 1500, terminate: vi.fn(function (this: any) { this.readyState = 3; }), close: vi.fn(), // replay waits
+      send: vi.fn(),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    const cjk = textEvent('汉'.repeat(300)); // about 960 bytes of JSON, but only about 350 UTF-16 units
+    expect(JSON.stringify(cjk).length).toBeLessThan(400);
+    for (let i = 0; i < 3; i++) manager.emit('event', 't1', cjk); // 3 x 960 = 2.9 KB: under 4000 bytes
+    expect(ws.terminate).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i++) manager.emit('event', 't1', cjk); // 5 x 960 = 4.8 KB: over the bound (1.75 KB by character count)
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+  });
 });
 

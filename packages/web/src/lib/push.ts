@@ -92,13 +92,15 @@ export function pushErrorMessage(code: string): string {
  * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
  * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
  */
-let reconciling: Promise<boolean> | null = null;
+/** How long a push-list read may take before it counts as "could not read" (nothing changes). */
+const LIST_TIMEOUT_MS = 8000;
+// Reconciliations run one after another, each with its OWN list. A newer one is never dropped for an older one that
+// was already running (an old list that still shows this device must not hide a newer list that says it is gone).
+let reconcileQueue: Promise<unknown> = Promise.resolve();
 export function syncEnrollment(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
-  // One reconciliation at a time: a second caller joins the one running, so two cannot both un-enroll (the second
-  // could finish after an enroll that the first one led to, and remove it).
-  if (reconciling) return reconciling;
-  const run = syncEnrollmentOnce(known, startedAt).finally(() => { if (reconciling === run) reconciling = null; });
-  reconciling = run;
+  const asked = startedAt ?? enrollmentGeneration; // the state when the caller asked, not when its turn comes
+  const run = reconcileQueue.then(() => syncEnrollmentOnce(known, asked), () => syncEnrollmentOnce(known, asked));
+  reconcileQueue = run.catch(() => undefined);
   return run;
 }
 async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
@@ -109,7 +111,12 @@ async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: nu
   if (!useSettings.getState().pushEnabled) return false;
   let list = known;
   if (!list) {
-    try { list = (await api.getPushSubscriptions()).subscriptions; } catch { return false; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const read = api.getPushSubscriptions().then((r) => r.subscriptions);
+      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('push list timed out')), LIST_TIMEOUT_MS); });
+      list = await Promise.race([read, timeout]);
+    } catch { return false; } finally { clearTimeout(timer); }
   }
   if (list.some((s) => s.deviceId === deviceId())) return false;
   // An enroll or un-enroll finished (or is running) since this list was read: the answer is out of date.

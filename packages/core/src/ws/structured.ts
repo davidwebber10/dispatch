@@ -149,7 +149,7 @@ export function handleStructuredConnection(
   const emit = (json: string) => {
     if (!replaying) { sendOrDrop(ws, json, 'chat'); return; }
     const cap = wsMaxBufferedBytes() * HARD_CEILING_FACTOR; // the same bound the socket queue itself has
-    heldBytes += json.length;
+    heldBytes += Buffer.byteLength(json); // bytes on the wire, not UTF-16 units: CJK and emoji are 3 to 4 bytes
     if (cap > 0 && heldBytes > cap) {
       console.warn(`[ws] dropped a slow chat client: ${heldBytes} bytes of live output waiting behind its replay (limit ${cap}). It can reconnect.`);
       held.length = 0; heldBytes = 0;
@@ -195,7 +195,7 @@ export function handleStructuredConnection(
       for (;;) {
         let json: string;
         if (i < frames.length) json = JSON.stringify(frames[i++]);
-        else if (held.length > 0) { json = held.shift()!; heldBytes -= json.length; }
+        else if (held.length > 0) { json = held.shift()!; heldBytes -= Buffer.byteLength(json); }
         else break; // nothing left; `replaying` is cleared below in the same tick, so no live event slips between
         if (!hasRoom(ws) && !(await waitForRoom(ws, 'chat'))) return;
         sendOrDrop(ws, json, 'chat');

@@ -89,25 +89,49 @@ describe('a stale list answer must not undo a newer enroll', () => {
   });
 });
 
-describe('reconciliations do not overlap', () => {
-  it('a second syncEnrollment while one is running joins it: the device is un-enrolled once, not twice', async () => {
+describe('reconciliations run one at a time, each with its own list', () => {
+  const flip = () => setPushEnabled.mockImplementation(async (on: boolean) => { useSettings.setState({ pushEnabled: on } as any); });
+
+  it('two reconciliations un-enroll once, not twice', async () => {
     let finishDisable!: () => void;
-    setPushEnabled.mockImplementation(() => new Promise<void>((r) => { finishDisable = () => r(); }));
-    vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [] } as any);
-    const first = syncEnrollment();
-    await vi.waitFor(() => expect(setPushEnabled).toHaveBeenCalledTimes(1)); // the first one is inside its un-enroll
-    const second = syncEnrollment();
+    setPushEnabled.mockImplementation((on: boolean) => new Promise<void>((r) => { finishDisable = () => { useSettings.setState({ pushEnabled: on } as any); r(); }; }));
+    const first = syncEnrollment([]);
+    await vi.waitFor(() => expect(setPushEnabled).toHaveBeenCalledTimes(1)); // the first is inside its un-enroll
+    const second = syncEnrollment([]); // asked meanwhile
     await Promise.resolve();
+    expect(setPushEnabled).toHaveBeenCalledTimes(1); // it waits its turn, it does not run at the same time
     finishDisable();
     expect(await first).toBe(true);
-    expect(await second).toBe(true); // it joined the first
+    expect(await second).toBe(false); // the switch is off now, so there is nothing to do
     expect(setPushEnabled).toHaveBeenCalledTimes(1);
-    expect(api.getPushSubscriptions).toHaveBeenCalledTimes(1);
-    // After it ends, a new reconciliation starts fresh.
-    useSettings.setState({ pushEnabled: true } as any);
-    setPushEnabled.mockResolvedValue(undefined);
-    await syncEnrollment();
-    expect(api.getPushSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it('a newer list is not thrown away for an older one that was still reading: the older says present, the newer says gone', async () => {
+    flip();
+    let olderAnswer!: (v: any) => void;
+    vi.mocked(api.getPushSubscriptions).mockReturnValueOnce(new Promise((r) => { olderAnswer = r; }) as any);
+    const older = syncEnrollment(); // reads the list from the daemon: slow, and it will still show this device
+    await vi.waitFor(() => expect(api.getPushSubscriptions).toHaveBeenCalledTimes(1));
+    const newer = syncEnrollment([{ deviceId: 'other' }]); // a fresh list that does NOT have this device
+    olderAnswer({ subscriptions: [{ deviceId: 'me' }] });
+    expect(await older).toBe(false);
+    expect(await newer).toBe(true); // the newer list still acts
+    expect(setPushEnabled).toHaveBeenCalledWith(false);
+    expect(useSettings.getState().pushEnabled).toBe(false);
+  });
+
+  it('a list read that never answers times out, changes nothing, and does not block the next reconciliation', async () => {
+    vi.useFakeTimers();
+    flip();
+    vi.mocked(api.getPushSubscriptions).mockReturnValueOnce(new Promise(() => {}) as any);
+    const hung = syncEnrollment();
+    await vi.advanceTimersByTimeAsync(7900);
+    expect(setPushEnabled).not.toHaveBeenCalled();
+    const next = syncEnrollment([]); // asked while the read is still hanging; it waits behind it
+    await vi.advanceTimersByTimeAsync(300); // the 8 s limit passes
+    expect(await hung).toBe(false); // could not read: nothing changed
+    expect(await next).toBe(true); // then the queued one ran with its own list (this device is not in it)
+    expect(setPushEnabled).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
   });
 });
-
