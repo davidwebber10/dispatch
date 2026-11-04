@@ -58,6 +58,10 @@ export class PTYManager extends EventEmitter {
 
     proc.onExit(({ exitCode }) => {
       managed.exited = true;
+      // A process that was killed and replaced under the same id (a restart) can end late: its grace timer
+      // may be what ends it. It must not evict, or report an exit for, the replacement.
+      const current = this.ptys.get(sessionId);
+      if (current && current !== managed) return;
       this.ptys.delete(sessionId);
       this.emit('exit', sessionId, exitCode, proc.pid); // the pid lets a key revoke only this process's handle
     });

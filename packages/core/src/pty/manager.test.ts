@@ -36,4 +36,23 @@ describe('PTYManager.kill', () => {
     expect(await waitFor(() => !alive(pid), 5000)).toBe(true);
     expect(() => mgr.kill('quick')).not.toThrow();
   });
+
+  it('a killed process that ends late does not evict or clear a replacement spawned under the same id', async () => {
+    mgr.killGraceMs = 300;
+    const oldPid = mgr.spawn('same-id', '/bin/sh', ['-c', "trap '' HUP TERM; echo ready; while :; do sleep 1; done"], '/tmp');
+    pids.push(oldPid);
+    expect(await waitFor(() => mgr.getBuffer('same-id').includes('ready'), 5000)).toBe(true);
+    mgr.kill('same-id');
+    const newPid = mgr.spawn('same-id', '/bin/sh', ['-c', 'echo second; while :; do sleep 1; done'], '/tmp');
+    pids.push(newPid);
+    const exits: number[] = [];
+    mgr.on('exit', (_id: string, _code: number, pid: number) => exits.push(pid));
+    // The old shell is killed by the grace timer and its exit callback fires.
+    expect(await waitFor(() => !alive(oldPid), 5000)).toBe(true);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(mgr.isAlive('same-id')).toBe(true);        // the replacement is still registered
+    expect(alive(newPid)).toBe(true);
+    expect(exits).not.toContain(newPid);
+    expect(exits.filter((p) => p === oldPid).length).toBeLessThanOrEqual(1);
+  });
 });
