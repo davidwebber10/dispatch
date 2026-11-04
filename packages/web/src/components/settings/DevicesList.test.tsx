@@ -29,7 +29,7 @@ describe('addressLabel', () => {
   it('says what an address means', () => {
     expect(addressLabel('127.0.0.1', 'local')).toBe('This computer');
     expect(addressLabel('172.20.0.1', 'gateway')).toBe('Windows host (WSL)');
-    expect(addressLabel('100.64.0.2', 'forwarded')).toBe('100.64.0.2');
+    expect(addressLabel('100.64.0.2', 'forwarded')).toBe('100.64.0.2 (via proxy)');
     expect(addressLabel('192.168.1.9', 'direct')).toBe('192.168.1.9');
     expect(addressLabel(null, null)).toBe('Unknown address');
   });

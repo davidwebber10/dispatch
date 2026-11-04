@@ -41,8 +41,10 @@ export interface DeviceStore {
   list(): DeviceInfo[];
   rename(id: string, name: string): boolean;
   revoke(id: string): boolean;
-  /** Called after a revoke, so the server can close that device's open sockets. */
+  /** Called for every row that goes away (revoke, cap eviction, stale-token prune), so the server can close that device's open sockets. */
   onRevoke(fn: (id: string) => void): void;
+  /** Called after the owner ends sign-ins made with the shared cookie, so sockets opened with it can close. */
+  onEndLegacy(fn: () => void): void;
   /** True until the owner ends older sign-ins for the current token. */
   legacyAllowed(): boolean;
   endLegacy(): void;
@@ -51,7 +53,7 @@ export interface DeviceStore {
 const NAME_MAX = 60;
 const MAX_DEVICES = 100;
 const TOUCH_EVERY_MS = 60_000;
-const ADOPT_WINDOW_MS = 30_000;
+const ADOPT_WINDOW_MS = 10_000;
 const LEGACY_KEY = 'access.legacy_ended_for';
 
 /** A short device name from a User-Agent string. Best effort; the owner can rename it. */
@@ -114,11 +116,25 @@ export function createDeviceStore(
 ): DeviceStore {
   const now = opts.now ?? Date.now;
   const listeners: ((id: string) => void)[] = [];
+  const legacyListeners: (() => void)[] = [];
   const lastWrite = new Map<string, number>();
   const adopted = new Map<string, { id: string; until: number }>();
   const fp = () => tokenFingerprint(opts.getToken());
 
-  const dropStale = () => { db.prepare('DELETE FROM devices WHERE token_fp != ?').run(fp()); };
+  /** Forget these ids and tell the listeners, so a row that goes away never leaves a socket open. */
+  const forget = (ids: string[]) => {
+    for (const id of ids) {
+      lastWrite.delete(id);
+      for (const [k, v] of adopted) if (v.id === id) adopted.delete(k);
+      for (const fn of listeners) { try { fn(id); } catch { /* a listener must not break a revoke */ } }
+    }
+  };
+  const dropStale = () => {
+    const ids = (db.prepare('SELECT id FROM devices WHERE token_fp != ?').all(fp()) as { id: string }[]).map((r) => r.id);
+    if (!ids.length) return;
+    db.prepare('DELETE FROM devices WHERE token_fp != ?').run(fp());
+    forget(ids);
+  };
   const insert = (userAgent: string | undefined, via: SignInMethod, peer: Peer): DeviceInfo => {
     dropStale();
     const t = now();
@@ -130,7 +146,12 @@ export function createDeviceStore(
     db.prepare(`INSERT INTO devices (id, name, user_agent, signed_in_via, created_at, last_seen_at, last_address, address_kind, token_fp)
       VALUES (@id, @name, @user_agent, @signed_in_via, @created_at, @last_seen_at, @last_address, @address_kind, @token_fp)`).run(row);
     // Keep the table bounded: a signed-in caller can sign in again and again.
-    db.prepare(`DELETE FROM devices WHERE id IN (SELECT id FROM devices ORDER BY last_seen_at DESC, created_at DESC LIMIT -1 OFFSET ?)`).run(MAX_DEVICES);
+    const over = (db.prepare('SELECT id FROM devices ORDER BY last_seen_at DESC, created_at DESC LIMIT -1 OFFSET ?').all(MAX_DEVICES) as { id: string }[]).map((r) => r.id);
+    if (over.length) {
+      const del = db.prepare('DELETE FROM devices WHERE id = ?');
+      for (const id of over) del.run(id);
+      forget(over);
+    }
     lastWrite.set(row.id, t);
     return toInfo(row);
   };
@@ -184,13 +205,12 @@ export function createDeviceStore(
 
     revoke(id) {
       const gone = db.prepare('DELETE FROM devices WHERE id = ?').run(id).changes > 0;
-      lastWrite.delete(id);
-      for (const [k, v] of adopted) if (v.id === id) adopted.delete(k);
-      if (gone) for (const fn of listeners) { try { fn(id); } catch { /* a listener must not break a revoke */ } }
+      if (gone) forget([id]);
       return gone;
     },
 
     onRevoke(fn) { listeners.push(fn); },
+    onEndLegacy(fn) { legacyListeners.push(fn); },
 
     legacyAllowed() {
       const r = db.prepare('SELECT value FROM app_state WHERE key = ?').get(LEGACY_KEY) as { value: string } | undefined;
@@ -199,6 +219,7 @@ export function createDeviceStore(
 
     endLegacy() {
       db.prepare('INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(LEGACY_KEY, fp());
+      for (const fn of legacyListeners) { try { fn(); } catch { /* ignore */ } }
     },
   };
 }

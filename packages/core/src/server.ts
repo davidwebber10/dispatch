@@ -839,6 +839,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
   // Open WebSockets by device id. A revoke destroys them: the cookie is checked only at connect.
   const deviceSockets = new Map<string, Set<import('node:stream').Duplex>>();
+  const legacySockets = new Set<import('node:stream').Duplex>();
+  devices?.onEndLegacy(() => { for (const s of legacySockets) s.destroy(); legacySockets.clear(); });
   devices?.onRevoke((id) => { for (const s of deviceSockets.get(id) ?? []) s.destroy(); deviceSockets.delete(id); });
   const handleUpgrade = async (request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
     // Node removes its own error listener before 'upgrade' fires, and ws adds one only inside
@@ -871,6 +873,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       }
       // Remember which device owns this socket, so revoking the device closes it.
       const deviceId = d.credential?.kind === 'cookie' ? d.credential.deviceId : null;
+      if (d.credential?.kind === 'cookie' && !deviceId && devices) {
+        // The shared cookie from before the device list: no device to tie it to, so "end older sign-ins" closes these.
+        legacySockets.add(socket);
+        socket.once('close', () => legacySockets.delete(socket));
+      }
       if (deviceId) {
         let set = deviceSockets.get(deviceId);
         if (!set) deviceSockets.set(deviceId, set = new Set());

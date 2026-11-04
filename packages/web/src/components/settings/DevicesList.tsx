@@ -15,6 +15,8 @@ export function addressLabel(addr: string | null, kind: DeviceInfo['addressKind'
   if (!addr) return 'Unknown address';
   if (kind === 'local') return 'This computer';
   if (kind === 'gateway') return 'Windows host (WSL)';
+  // A proxy on this computer reported it; Dispatch cannot check it.
+  if (kind === 'forwarded') return `${addr} (via proxy)`;
   return addr;
 }
 

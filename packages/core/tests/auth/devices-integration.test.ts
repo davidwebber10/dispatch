@@ -167,6 +167,16 @@ describe.skipIf(!lanIp)('device list over the real daemon', () => {
     await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('socket stayed open')), 3000))]);
   });
 
+  test('ending older sign-ins closes sockets that were opened with the shared cookie', async () => {
+    const a = await signIn();
+    const old = cookieValue(token);
+    const ws = new WebSocket(`ws://${lanIp}:${port}/api/events`, { headers: { Cookie: `dispatch_access=${old}`, Host: `${lanIp}:${port}` } });
+    await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+    const closed = new Promise<void>((res) => ws.once('close', () => res()));
+    expect((await call({ method: 'POST', path: '/api/access/devices/end-legacy', cookie: a })).status).toBe(200);
+    await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('shared-cookie socket stayed open')), 3000))]);
+  });
+
   test('ending older sign-ins turns the shared cookie off', async () => {
     const a = await signIn();
     const old = cookieValue(token);

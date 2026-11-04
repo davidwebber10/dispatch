@@ -72,7 +72,7 @@ deletes one row. The database holds no cookie secret.
 cookie. After the update, that cookie still works. The first time each phone or browser opens
 Dispatch, Dispatch makes a device for it ("Signed in before the device list") and hands it its
 own cookie in the reply. From then on you can revoke it on its own. Two browsers that open
-Dispatch within 30 seconds, with the same browser name and address, may share one row until the
+Dispatch within 10 seconds, with the same browser name and address, may share one row until the
 next sign-in. A device that never opens Dispatch again never gets a row, and the old shared
 cookie cannot be told apart from it. Once your devices have appeared, press **Sign out devices
 not in this list** to turn the old shared cookie off. Anything still holding it then has to
@@ -83,7 +83,7 @@ the tailnet client that `serve` reports. A request from this computer shows as *
 On WSL2 in the default (NAT) mode, a Windows browser at `localhost` arrives from the Windows host,
 shown as **Windows host (WSL)**. A phone that reaches Dispatch through a Windows `netsh portproxy`
 rule shows the same label, because Dispatch cannot tell the two apart (see the WSL note below).
-"This device" never uses the address: it uses the cookie, so it stays right in every setup. In
+An address marked **(via proxy)** is what a proxy on this computer reported (`tailscale serve` reports the tailnet client). Dispatch cannot check it, and a client behind a portproxy can set it, so treat it as a hint. It never grants access. "This device" never uses the address: it uses the cookie, so it stays right in every setup. In
 WSL2 mirrored mode a Windows browser at `localhost` arrives as `127.0.0.1` and shows as **This
 computer**; a LAN device shows its own address.
 

@@ -115,6 +115,30 @@ describe('list, rename, touch', () => {
   });
 });
 
+describe('listeners hear about every row that goes away (so open sockets close)', () => {
+  test('cap eviction fires the revoke listener', () => {
+    const seen: string[] = [];
+    store.onRevoke((id) => seen.push(id));
+    const first = store.create({ userAgent: 'x', via: 'code', peer: LAN });
+    for (let i = 0; i < 100; i++) { t += 1000; store.create({ userAgent: 'x', via: 'code', peer: LAN }); }
+    expect(seen).toEqual([first.id]);
+  });
+  test('rows made under an old token fire it when they are pruned', () => {
+    const seen: string[] = [];
+    store.onRevoke((id) => seen.push(id));
+    const a = store.create({ userAgent: 'x', via: 'code', peer: LAN });
+    token = 'a-brand-new-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    store.list();
+    expect(seen).toEqual([a.id]);
+  });
+  test('ending older sign-ins fires its own listener', () => {
+    let n = 0;
+    store.onEndLegacy(() => { n++; });
+    store.endLegacy();
+    expect(n).toBe(1);
+  });
+});
+
 describe('older sign-ins (cookie from before the device list)', () => {
   test('allowed by default', () => { expect(store.legacyAllowed()).toBe(true); });
   test('adopt makes one device per browser, even for parallel requests', () => {
@@ -123,7 +147,7 @@ describe('older sign-ins (cookie from before the device list)', () => {
     expect(b.id).toBe(a.id);
     expect(store.list()).toHaveLength(1);
     expect(store.list()[0].signedInVia).toBe('earlier');
-    t += 60_000;
+    t += 11_000;
     const c = store.adoptLegacy(IPHONE, LAN);
     expect(c.id).not.toBe(a.id); // a second browser later with the same look is its own device
   });
