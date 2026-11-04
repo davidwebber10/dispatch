@@ -100,6 +100,9 @@ const DANGEROUS = (): [string, string, string, unknown][] => [
   ['answer a held tool call', 'POST', `/api/terminals/${shellId}/permission`, { decision: 'allow' }],
   ['set a thread to autonomous (releases held calls)', 'POST', `/api/terminals/${shellId}/autonomy`, { mode: 'autonomous' }],
   ['start a thread', 'POST', `/api/sessions/${sessionId}/terminals`, { type: 'shell', label: 'spawned' }],
+  ['start a queued thread', 'POST', `/api/terminals/${shellId}/start`, {}],
+  ['create the coordinator (POST)', 'POST', `/api/sessions/${sessionId}/overseer/coordinator`, {}],
+  ['replace a thread config (PATCH with config)', 'PATCH', `/api/terminals/${shellId}`, { config: { queuedTask: 'swapped' } }],
   ['branch a thread', 'POST', `/api/terminals/${shellId}/branch`, {}],
   ['change an integration', 'PATCH', `/api/integrations/${integrationId}`, { enabled: false }],
   ['delete an integration', 'DELETE', `/api/integrations/${integrationId}`, undefined],
@@ -117,11 +120,38 @@ describe('a call with no credential is refused on the dangerous actions', () => 
     expect(json(r).message).toMatch(/dispatch api/);
   });
 
+  test('a real queued thread cannot be started or re-tasked without a credential; the owner can start it', async () => {
+    const q = await call({ method: 'POST', path: `/api/sessions/${sessionId}/terminals`, headers: OWNER(), body: { type: 'claude-code', label: 'queued-one', queued: true, task: 'original task', config: { transport: 'structured' } } });
+    expect(q.status).toBe(201);
+    const qid = json(q).id;
+    expect((await call({ method: 'PATCH', path: `/api/terminals/${qid}`, body: { config: { queued: true, queuedTask: 'swapped' } } })).status).toBe(401);
+    expect((await call({ method: 'POST', path: `/api/terminals/${qid}/start`, body: {} })).status).toBe(401);
+    const after = json(await call({ path: `/api/terminals/${qid}` }));
+    expect(after.status).toBe('queued');
+    expect(after.config.queuedTask).toBe('original task');
+    // a label-only rename is still open to a credential-free caller
+    expect((await call({ method: 'PATCH', path: `/api/terminals/${qid}`, body: { label: 'renamed-queued' } })).status).toBe(200);
+    // the web page may change the config
+    expect((await call({ method: 'PATCH', path: `/api/terminals/${qid}`, headers: WEB_PAGE(), body: { config: { ...after.config, queuedTask: 'by the page' } } })).status).toBe(200);
+  });
+
+  test('the coordinator: POST (creates and spawns) is refused; GET only looks, answers 404 when there is none and creates nothing', async () => {
+    const p = `/api/sessions/${sessionId}/overseer/coordinator`;
+    const post = await call({ method: 'POST', path: p, body: {} });
+    expect(post.status).toBe(401);
+    expect(json(post).error).toBe('auth_required');
+    const get = await call({ path: p });
+    expect(get.status).toBe(404);
+    const tabs = json(await call({ path: `/api/sessions/${sessionId}/terminals` }));
+    expect(tabs.some((t: any) => t.config?.role === 'coordinator')).toBe(false);
+  });
+
   test('the refusals changed nothing: the integration is still there, and no extra thread exists', async () => {
     const list = json(await call({ path: '/api/integrations' }));
     expect(list.integrations.find((i: any) => i.id === integrationId)?.enabled).toBe(true);
     const tabs = json(await call({ path: `/api/sessions/${sessionId}/terminals` }));
     expect(tabs.some((t: any) => t.label === 'spawned')).toBe(false);
+    expect(tabs.some((t: any) => t.config?.role === 'coordinator')).toBe(false); // the refused coordinator calls made nothing
   });
 
   test('a forged Origin of another site is still refused by the access gate (403)', async () => {
@@ -139,7 +169,7 @@ describe('the same actions still work for the web page, the owner token and a sc
   });
   test('the owner token (the dispatch CLI and scripts) passes every dangerous action', async () => {
     for (const [label, method, p, body] of DANGEROUS()) {
-      if (label === 'delete an integration' || label === 'change an integration' || label === 'branch a thread' || label === 'start a thread' || label === 'Chat message as the user') continue; // side effects, covered below or by the page test
+      if (label.startsWith('replace a thread config') || label === 'start a queued thread' || label.startsWith('create the coordinator') || label === 'delete an integration' || label === 'change an integration' || label === 'branch a thread' || label === 'start a thread' || label === 'Chat message as the user') continue; // side effects, covered below or by the page test
       const r = await call({ method, path: p, headers: OWNER(), body });
       expect(r.status, `${label}: ${r.body}`).not.toBe(401);
       expect(json(r)?.error, `${label}: ${r.body}`).not.toBe('owner_only');

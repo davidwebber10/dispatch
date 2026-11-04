@@ -61,7 +61,7 @@ folder in `DISPATCH_FILE_ROOTS`.
 A call from this computer with no thread key, cookie or token still works for most routes, including
 every read. Dispatch refuses it with `401 auth_required` only for the actions that act as you or start
 work: a message or input as the user, answering or releasing a held tool call, starting or branching a
-thread, and changing, deleting or importing integrations. The web page, your token (the `dispatch` CLI,
+thread (also starting a queued thread, creating a coordinator, and replacing a thread's config), and changing, deleting or importing integrations. The web page, your token (the `dispatch` CLI,
 `dispatch api`, a script that sends the token) and a thread's own key (for the actions its rules allow)
 pass. The full list and the script advice are in `docs/network-access.md`.
 
@@ -71,8 +71,8 @@ given a credential, or a call from an old thread with no key. It does not close 
 that reads `~/.dispatch/access-token` (it runs as you) or sets an `Origin` header by hand. Those
 callers can still act as the owner. A process check on the connection (stage 3 in the per-thread key
 spec) is what would close that. Left open on purpose, so normal use keeps working: all reads, hook
-events, the browser shim, adding an integration, renaming or stopping a tab, restarting a thread, role
-and schedule runs, and the ledger routes (a credential-free caller can still name itself the overseer
+events, the browser shim, adding an integration, renaming, stopping or restarting a tab, role
+and schedule runs (they start inside the daemon), and the ledger routes (a credential-free caller can still name itself the overseer
 in a ledger body).
 
 ## Phone notifications

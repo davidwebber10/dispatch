@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule, isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
@@ -74,7 +74,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
     catch { res.json([]); }
   });
 
-  // GET|POST /api/sessions/:id/overseer/coordinator — find-or-create this project's
+  // POST /api/sessions/:id/overseer/coordinator — find-or-create this project's
   // Overseer coordinator thread (structured, config.role='coordinator'). Idempotent.
   const ensureCoordinator = (req: import('express').Request, res: import('express').Response) => {
     try {
@@ -102,8 +102,18 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
       res.status(err?.message === 'Session not found' ? 404 : 400).json({ error: clientMessage(err) });
     }
   };
-  router.post('/:id/overseer/coordinator', ensureCoordinator);
-  router.get('/:id/overseer/coordinator', ensureCoordinator);
+  // POST creates and spawns a coordinator when the project has none, so it counts as starting a thread (SEC-05 middle).
+  // GET only looks: it answers the live coordinator, or 404, and never creates one.
+  router.post('/:id/overseer/coordinator', ownerOnlyStrict, ensureCoordinator);
+  router.get('/:id/overseer/coordinator', (req, res) => {
+    try {
+      const existing = sessionService.findCoordinator(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'This project has no coordinator yet. POST to create one.' });
+      res.json({ terminalId: existing.id });
+    } catch (err: any) {
+      res.status(400).json({ error: clientMessage(err) });
+    }
+  });
 
   // GET /api/sessions/:id/overseer/worker-defaults?agentType=&harness= — the resolved
   // harness/model a spawned worker of this type would get. `harness`, when present, is the

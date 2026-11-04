@@ -369,7 +369,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // POST /api/terminals/:terminalId/start — promote a queued terminal to a live
   // one: strip the queued markers, spawn the process, deliver the parked task.
-  router.post('/terminals/:terminalId/start', keyRoute({ thread: directRule }), (req, res) => {
+  router.post('/terminals/:terminalId/start', keyRoute({ thread: directRule }), requireOwnerProof, (req, res) => {
     try {
       const terminal = sessionService.startQueuedTerminal(req.params.terminalId);
       if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
@@ -450,7 +450,13 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // PATCH /api/terminals/:terminalId
-  router.patch('/terminals/:terminalId', (req, res) => {
+  // A config in the body replaces the whole config blob (role, queued task, autonomy, runner), so it counts as
+  // changing what a thread will do (SEC-05 middle): a credential-free caller needs the web page or the token.
+  // A label-only rename stays open.
+  router.patch('/terminals/:terminalId', (req, res, next) => {
+    if (req.body?.config === undefined) return next();
+    requireOwnerProof(req, res, next);
+  }, (req, res) => {
     const { label, config } = req.body;
     const terminal = sessionService.updateTab(req.params.terminalId, { label, config });
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });

@@ -590,7 +590,7 @@ shell tabs, hooks, n8n and old threads. The owner chose a middle option. The acc
 read stay as in stage 1. The daemon refuses a credential-free caller (`401 auth_required`) only on:
 a message or input as the user (thread message, terminal input, file reference, Chat send, Chat
 instructions, and input over the terminal WebSocket), answering a held tool call or setting autonomy,
-starting a thread (create a tab, branch), and changing, deleting or importing integrations.
+starting a thread (create a tab, branch, start a queued thread, create the coordinator, replace a thread's config), and changing, deleting or importing integrations.
 A credential-free call passes when it looks like the web page (an `Origin` header, or
 `Sec-Fetch-Site: same-origin`); the owner's cookie, token or box header always passes; a key is judged
 by its own rules as before. The check is a drift check: a program that forges the header, or reads the
