@@ -310,7 +310,8 @@ daemon sees the phone's tailnet address).
 - The gate runs inside WSL and needs no Windows change.
 - Phase 1 treated the gateway peer like a loopback peer (same known-host rule). That left
   portproxy users open (R-2). The WSL sign-in change removed the rule: the gateway peer
-  signs in, except for `tailscale serve` (section 7.12).
+  signs in, except for `tailscale serve`, and a LAN caller that forges those headers is still a
+  residual (section 7.12).
 - Phase 2 no longer needs a `127.0.0.1` listen on WSL for R-2: sign-in closed it (section 7.12).
 
 ### 6.2 macOS
@@ -687,8 +688,8 @@ page, and makes exposure visible. It needs its own implementation plan.
   override `DISPATCH_BIND` that the CLI passes through (`cli/src/index.ts:634-649`).
 - `loopback` listens on `127.0.0.1` and `::1` directly on macOS and Linux; the
   loopback guards are then not needed (`loopback-guard.ts`). On WSL it listens on
-  `127.0.0.1` only, because of the `::1` relay hang (6.1). It is an opt-in on WSL: R-2 is
-  closed by sign-in, so no WSL user is forced to a closed listen address.
+  `127.0.0.1` only, because of the `::1` relay hang (6.1). It is an opt-in on WSL: sign-in
+  mostly closes R-2 (7.12), so no WSL user is forced to a closed listen address.
 - The local callers that use `localhost` (the CLI and both MCP servers, section
   3.2) change to `127.0.0.1`, so they never depend on `localhost` resolving to
   `::1` first.

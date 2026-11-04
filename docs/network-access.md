@@ -136,6 +136,7 @@ other accounts on the same computer cannot read them.
 - Anything running as your own user can read the token file. Agents run as you.
 - Other accounts on the same computer can still reach Dispatch over loopback.
 - WSL2: a caller that reaches Dispatch from the Windows side signs in (see [WSL2](#wsl2)). Dispatch
-  cannot tell your Windows browser from other traffic that Windows forwards, so none of it is trusted.
+  cannot tell your Windows browser from other traffic that Windows forwards, so it does not trust
+  it, except your own `tailscale serve`.
 
 See `docs/superpowers/specs/2026-10-22-network-exposure-design.md` for the full design.
