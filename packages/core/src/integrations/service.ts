@@ -19,6 +19,42 @@ export interface IntegrationsExport { version: 1; integrations: ExportedIntegrat
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
+/** What a key caller sees in place of a literal header or env value. */
+export const HIDDEN_VALUE = '•••• (hidden)';
+/** What stands in for the literal part around a `${NAME}` reference. */
+export const HIDDEN_PART = '••••';
+const REF_SPLIT = /(\$\{[A-Za-z_][A-Za-z0-9_]*\})/;
+const AUTH_SCHEME = /^(Bearer|Basic|Token) $/i;
+
+/**
+ * One header or env value for a caller that is not the owner. A `${NAME}` reference is shown as it is
+ * (it names a secret, it is not one). A value with no reference is hidden. A value that mixes a reference
+ * with literal text keeps the reference and an auth scheme word (`Bearer `), and hides the rest.
+ */
+export function maskValue(value: unknown): string {
+  const v = String(value ?? '');
+  const parts = v.split(REF_SPLIT);
+  if (parts.length === 1) return HIDDEN_VALUE;
+  return parts.map((p, i) => (i % 2 === 1 || p === '' || AUTH_SCHEME.test(p) ? p : HIDDEN_PART)).join('');
+}
+
+function maskUrl(url: string | null): string | null {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    u.username = '';
+    u.password = '';
+    for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, 'hidden');
+    return u.toString();
+  } catch { return HIDDEN_VALUE; }
+}
+
+/** An integration as a thread key may read it: every header and env value masked, the url stripped of secrets. */
+export function maskIntegration(i: Integration): Integration {
+  const mask = (bag: Record<string, string>) => Object.fromEntries(Object.entries(bag).map(([k, v]) => [k, maskValue(v)]));
+  return { ...i, url: maskUrl(i.url), headers: mask(i.headers), env: mask(i.env) };
+}
+
 export class IntegrationsService {
   /**
    * `refsAvailable`: true when a `${NAME}` reference can resolve (Doppler is connected). Without it a typed-in value is the only

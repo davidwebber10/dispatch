@@ -102,7 +102,7 @@ export function createPrincipalMiddleware(opts: PrincipalOptions): RequestHandle
         return void res.status(401).json({ error: 'auth_required', message: INVALID_KEY_MESSAGE });
       }
       if (!isApiPath(req.path) || isLoginPath(req)) {
-        return void res.status(403).json({ error: 'owner_only', message: 'A thread key cannot use this route. Ask the owner.' });
+        return void res.status(403).json({ error: 'owner_only', message: `A key cannot use ${req.method} ${redactKeys(req.path).slice(0, 200)}: keys work on /api routes only. This refusal covers only this route.` });
       }
       return set(principal);
     }
