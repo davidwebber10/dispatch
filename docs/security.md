@@ -64,6 +64,26 @@ folder in `DISPATCH_FILE_ROOTS`.
 - Keep literal secret values out of integration settings. Use a `${NAME}` reference to a secret
   instead, so the value stays out of command lines and config files.
 
+## Calls with no credential (SEC-05, the middle option)
+
+A call from this computer with no thread key, cookie or token still works for most routes, including
+every read. Dispatch refuses it with `401 auth_required` only for the actions that act as you or start
+work: a message or input as the user, answering or releasing a held tool call, starting or branching a
+thread (also starting a queued thread, creating a coordinator, and replacing a thread's config), and changing, deleting or importing integrations. The web page, your token (the `dispatch` CLI,
+`dispatch api`, a script that sends the token) and a thread's own key (for the actions its rules allow)
+pass. The full list and the script advice are in `docs/network-access.md`.
+
+**How much this closes.** It closes the ordinary case: an injected agent that runs a plain
+`curl $DISPATCH_SERVER_URL/api/terminals/ID/message` with `source: "user"`, a script that was never
+given a credential, or a call from an old thread with no key. It does not close the case of a thread
+that reads `~/.dispatch/access-token` (it runs as you) or sets an `Origin` header by hand. Those
+callers can still act as the owner. A process check on the connection (stage 3 in the per-thread key
+spec) is what would close that. Left open on purpose, so normal use keeps working: all reads, hook
+events, the browser shim, adding an integration, renaming, stopping or restarting a tab, schedules (create, edit the prompt, run now: this can run an
+arbitrary task), restart, relaunch and restore of an existing tab (they can reload content a caller wrote
+through the open file routes, provider config or an added integration), and the ledger routes (a credential-free caller can still name itself the overseer
+in a ledger body).
+
 ## Phone notifications
 
 A phone or browser can subscribe to notifications only through the push service of its browser
@@ -86,6 +106,13 @@ clean daemon. The WSL scheduled task does not restart a daemon, so on WSL start 
 Agents may add integrations, enable roles and create schedules. Dispatch does not block this.
 A thread that sends its own key may do all three, and Dispatch records the thread by name. A
 role run, a shell and Chat cannot, so a scheduled run cannot add the next schedule.
+A thread that sends its own key may also list the integrations (`GET /api/integrations`). It sees
+the names, types, commands and which ones are on. Every header and env value is hidden
+(`•••• (hidden)`), except a `${NAME}` reference, which shows as written. A command-line
+argument that can hold a secret (the value after `--header` or `--token`, a long token-like word,
+free text) is hidden too, and a URL shows only its host and common path words (`/mcp`, `/sse`).
+Only the owner can
+export, turn on or off, or delete an integration.
 Settings shows "Added by" on each integration, and the Agents screen shows "Created by" on
 each schedule (a role's schedule shows who enabled the role). A row from before the record
 existed shows "Unknown". A call with no key and no sign-in shows as "Local, no sign-in",

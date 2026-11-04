@@ -29,7 +29,7 @@ import {
   createLoginKeyCheck, createPrincipalMiddleware, refuseKeyUpgrade,
 } from './auth/request-principal.js';
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
-import { publicRoute } from './auth/route-policy.js';
+import { publicRoute, looksLikeBrowser } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
 import { createDeviceStore } from './auth/devices.js';
 import { reachableAddresses } from './auth/reachable-addresses.js';
@@ -880,9 +880,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       return;
     }
     const url = stripped;
+    // SEC-05 middle: the owner's credential, or a browser handshake (which always carries Origin), may type
+    // into a terminal. A credential-free program may watch it. Keys never reach here (refused below).
+    let allowInput = true;
     if (accessGate) {
       const d = await accessGate.upgradeDecision(request, url);
       if (socket.destroyed) return;
+      if (d.ok) allowInput = d.via === 'credential' || looksLikeBrowser(request.headers);
       if (!d.ok) {
         socket.end(`HTTP/1.1 ${d.status} ${d.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;
@@ -927,7 +931,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
       terminalWss.handleUpgrade(request, socket, head, (ws) => {
-        handleTerminalConnection(ws, request, ptyManager, sessionService, terminalMonitor, statusService);
+        handleTerminalConnection(ws, request, ptyManager, sessionService, terminalMonitor, statusService, allowInput);
       });
     } else if (url === '/api/events') {
       eventsWss.handleUpgrade(request, socket, head, (ws) => {

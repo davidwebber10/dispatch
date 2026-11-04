@@ -67,6 +67,11 @@ export function handleTerminalConnection(
   sessionService?: SessionService,
   monitor?: TerminalMonitor,
   status?: StatusService,
+  /**
+   * False for a caller with no credential that does not look like the web page (SEC-05, the middle option):
+   * it may watch the terminal and resize it, but the bytes it sends are dropped, not typed as the owner.
+   */
+  allowInput = true,
 ): void {
   // Support both new URL pattern /api/terminals/:terminalId/ws
   // and legacy /api/sessions/:id/terminal
@@ -179,6 +184,7 @@ export function handleTerminalConnection(
         }
       } catch {}
     }
+    if (!allowInput) return; // a read-only attach: nothing it sends reaches the terminal
     if (str.includes('\r')) status?.markWorking(targetId!, 'Thinking…');
     ptyManager.write(targetId!, str);
     sessionService?.noteUserInput(targetId!, str);

@@ -528,7 +528,12 @@ A `summarizer` chat key gets only the `GET` routes.
 
 **Shell key (`dsk_`)**: `POST /api/auth-requests` only, with `terminalId` from the key.
 
-**Everything else is owner only**, for example: secrets, integrations, roles
+**Integrations** (SEC-20, later change): a thread key may `POST /api/integrations` (the daemon records
+the thread as the creator) and `GET /api/integrations`. The list masks every header and env value:
+a `${NAME}` reference shows as written, a literal shows as `•••• (hidden)`, and a URL loses its
+`user:password` part and its query values. `PATCH`, `DELETE`, `export` and `import` stay owner only.
+
+**Everything else is owner only**, for example: secrets, other integration routes, roles
 enable and disable, schedules and runs, Claude sign-in, auth-request
 complete and callback, update, settings, servers, push, access, setup and install,
 Chat instructions and send, terminal input, autonomy, relaunch, restore, stop,
@@ -550,7 +555,9 @@ creating or changing a project.
 | `429` | `rate_limited` | Per-pair message limit |
 
 An `owner_only` answer from an MCP tool tells the agent, in one sentence, to ask the
-owner to do it in the browser.
+owner to do it in the browser. The daemon's own `owner_only` message names the refused method and
+route and says the refusal covers only that route (a thread that read "owner only" on a list
+call once concluded it could not add integrations at all).
 
 **The owner is not restricted** by this table. The browser keeps sending
 `source: user` with its cookie. Owner-only actions that SEC-20 worries about could
@@ -582,6 +589,19 @@ other projects' overseers (6.4.1).
 | Daemon stop or crash | All keys gone with the process memory. |
 | Chat turn | Mint at spawn, revoke at exit. |
 | Scheduled run | Mint at spawn, revoke at exit or cancel. |
+
+### 6.5.1 Middle option (owner decision 2026-11-04): stage 1 plus a short refusal list
+
+Stage 2 (refuse every credential-free local call) was rejected as too strict: it would break `curl`,
+shell tabs, hooks, n8n and old threads. The owner chose a middle option. The access gate and every
+read stay as in stage 1. The daemon refuses a credential-free caller (`401 auth_required`) only on:
+a message or input as the user (thread message, terminal input, file reference, Chat send, Chat
+instructions, and input over the terminal WebSocket), answering a held tool call or setting autonomy,
+starting a thread (create a tab, branch, start a queued thread, create the coordinator, replace a thread's config), and changing, deleting or importing integrations.
+A credential-free call passes when it looks like the web page (an `Origin` header, or
+`Sec-Fetch-Site: same-origin`); the owner's cookie, token or box header always passes; a key is judged
+by its own rules as before. The check is a drift check: a program that forges the header, or reads the
+token file, still passes. Stage 2 and stage 3 remain the way to close that.
 
 ### 6.6 Stage 2: the gate stops trusting loopback
 

@@ -1,7 +1,7 @@
 import { untrustedBlock } from '../security/untrusted-text.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
-import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter, requireOwnerProof, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule, answerRule, chatAnswerRule, chatMessageRule, chatQuestionReadRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
@@ -41,7 +41,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/sessions/:id/terminals — create a new tab. When `queued:true` (with
   // `task`), the structured thread is persisted as status='queued' WITHOUT spawning
   // its process — POST /api/terminals/:id/start promotes it later.
-  router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread'), chat: createBodyRule('chat') }), async (req, res) => {
+  router.post('/sessions/:id/terminals', keyRoute({ thread: createBodyRule('thread'), chat: createBodyRule('chat') }), requireOwnerProof, async (req, res) => {
     try {
       // A `skipPermissions` field in the body is ignored: it was stored and never read. Agents run with approvals off by design.
       const { type, label, workingDir, externalId, config, queued, task } = req.body;
@@ -151,7 +151,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Optional `canned: true` marks fixed text that a card click sent (the need-card
   // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
   // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
-  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), (req, res) => {
+  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), requireOwnerProof, (req, res) => {
     const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
@@ -200,7 +200,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // this harness can't take a reply. The web client then sends the text as a normal turn. (Chat's message_thread does too,
   // unless a NEW question is pending: it sends nothing then.)
   // `canned: 'discuss' | 'dismiss'` denies with the card's fixed text instead of `message`.
-  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule, chat: chatAnswerRule((id) => sessionService.getPendingPermission(id)) }), (req, res) => {
+  router.post('/terminals/:terminalId/permission', keyRoute({ thread: answerPermissionRule, chat: chatAnswerRule((id) => sessionService.getPendingPermission(id)) }), requireOwnerProof, (req, res) => {
     const { requestId, decision, answers, message, reply, imageCount, canned } = req.body ?? {};
     if (decision !== 'allow' && decision !== 'deny') {
       return res.status(400).json({ error: "decision must be 'allow' or 'deny'" });
@@ -237,7 +237,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // — set the per-agent autonomy dial. Supervised surfaces gated tools as Needs
   // (the membrane); autonomous auto-allows (runs free), resolving any currently
   // pending request. Persisted in config.autonomy so it survives a resume.
-  router.post('/terminals/:terminalId/autonomy', (req, res) => {
+  router.post('/terminals/:terminalId/autonomy', ownerOnlyStrict, (req, res) => {
     const { mode } = req.body ?? {};
     if (mode !== 'supervised' && mode !== 'autonomous') {
       return res.status(400).json({ error: "mode must be 'supervised' or 'autonomous'" });
@@ -354,7 +354,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
-  router.post('/terminals/:terminalId/input', (req, res) => {
+  router.post('/terminals/:terminalId/input', ownerOnlyStrict, (req, res) => {
     const data = req.body?.data;
     if (typeof data !== 'string') return res.status(400).json({ error: 'data (string) is required' });
     try {
@@ -369,7 +369,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // POST /api/terminals/:terminalId/start — promote a queued terminal to a live
   // one: strip the queued markers, spawn the process, deliver the parked task.
-  router.post('/terminals/:terminalId/start', keyRoute({ thread: directRule }), (req, res) => {
+  router.post('/terminals/:terminalId/start', keyRoute({ thread: directRule }), requireOwnerProof, (req, res) => {
     try {
       const terminal = sessionService.startQueuedTerminal(req.params.terminalId);
       if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
@@ -390,7 +390,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // POST /api/terminals/:terminalId/branch — fork a Claude Code thread's conversation
-  router.post('/terminals/:terminalId/branch', (req, res) => {
+  router.post('/terminals/:terminalId/branch', ownerOnlyStrict, (req, res) => {
     try {
       const terminal = sessionService.branchTerminal(req.params.terminalId);
       broadcaster?.broadcast({ type: 'terminal:created', terminal });
@@ -424,7 +424,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // POST /api/terminals/:terminalId/send-file-reference
-  router.post('/terminals/:terminalId/send-file-reference', (req, res) => {
+  router.post('/terminals/:terminalId/send-file-reference', ownerOnlyStrict, (req, res) => {
     const { path: requestedPath, mode } = req.body;
     if (typeof requestedPath !== 'string' || requestedPath.length === 0) {
       return res.status(400).json({ error: 'path is required' });
@@ -450,7 +450,13 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // PATCH /api/terminals/:terminalId
-  router.patch('/terminals/:terminalId', (req, res) => {
+  // A config in the body replaces the whole config blob (role, queued task, autonomy, runner), so it counts as
+  // changing what a thread will do (SEC-05 middle): a credential-free caller needs the web page or the token.
+  // A label-only rename stays open.
+  router.patch('/terminals/:terminalId', (req, res, next) => {
+    if (req.body?.config === undefined) return next();
+    requireOwnerProof(req, res, next);
+  }, (req, res) => {
     const { label, config } = req.body;
     const terminal = sessionService.updateTab(req.params.terminalId, { label, config });
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });

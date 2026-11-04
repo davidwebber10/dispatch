@@ -11,9 +11,18 @@ const require = createRequire(new URL('../packages/core/package.json', import.me
 const WebSocket = require('ws');
 const base = process.env.DISPATCH_TEST_URL ?? 'http://localhost:3456';
 const results = [];
+// SEC-05: a call with no credential is refused on some actions (start a thread, type into a terminal). Send the owner token
+// from the data dir, as `dispatch api` does. DISPATCH_TEST_TOKEN_FILE overrides the path. The token goes in a header, never argv.
+function ownerHeaders() {
+  try {
+    const file = process.env.DISPATCH_TEST_TOKEN_FILE ?? path.join(os.homedir(), '.dispatch', 'access-token');
+    const token = fs.readFileSync(file, 'utf8').trim();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch { return {}; }
+}
 async function request(method, url, body, expected = 200) {
   const res = await fetch(base + url, {
-    method, headers: body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {},
+    method, headers: { ...ownerHeaders(), ...(body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}) },
     body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
@@ -83,7 +92,7 @@ await check('terminal create', async () => {
 });
 if (terminal) {
   await check('terminal WebSocket input, output, resize and managed Codex PATH', async () => {
-    const socket = new WebSocket(base.replace(/^http/, 'ws') + `/api/terminals/${terminal.id}/ws?cols=100&rows=30&meta=1`);
+    const socket = new WebSocket(base.replace(/^http/, 'ws') + `/api/terminals/${terminal.id}/ws?cols=100&rows=30&meta=1`, { headers: ownerHeaders() });
     let output = '';
     try {
       await new Promise((resolve, reject) => {

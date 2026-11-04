@@ -50,6 +50,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/sessions/:sessionId/ledger/:itemId/title',
   // SEC-20: a thread may create these, and the creator is recorded
   'POST /api/integrations',
+  'GET /api/integrations', // the list, with every header and env value masked
   'POST /api/roles/:name/enable',
   'POST /api/agents/schedules',
   // Task 10: Chat routes

@@ -15,7 +15,18 @@ mkdir -p <scratch>/fake-home
 HOME=<scratch>/fake-home PORT=3999 DISPATCH_TELEMETRY=0 node packages/core/dist/server.js > <scratch>/daemon.log 2>&1 &
 ```
 
-Ready when the log prints `Dispatch server listening on port 3999`. No auth on the API.
+Ready when the log prints `Dispatch server listening on port 3999`. Reads need no credential.
+**Some actions refuse a call with no credential** (start a thread, a message or input as the user, answer a held
+tool call, change an integration): they return `401 auth_required`. Send the owner token of the fake HOME in a
+header file, so the token never sits in a command line:
+
+```bash
+umask 077; printf 'Authorization: Bearer %s\n' "$(cat <scratch>/fake-home/.dispatch/access-token)" > <scratch>/owner.hdr
+curl -s -H @<scratch>/owner.hdr -X POST ...        # or: HOME=<scratch>/fake-home PORT=3999 ./bin/dispatch api POST /api/...
+```
+
+A WebSocket that sends input needs the same header (`new WebSocket(url, { headers })`); without it the attach is
+read-only. `scripts/test-live-*.mjs` read the token from `~/.dispatch/access-token` (or `DISPATCH_TEST_TOKEN_FILE`).
 Teardown: `lsof -ti :3999 | xargs kill`.
 
 **Running from a git worktree:** the daemon can resolve its web bundle to the MAIN
@@ -27,9 +38,9 @@ checkout's `packages/web/dist` (stale code, no error). Always pass
 
 ```bash
 # Create a session, then a cheap shell terminal (spawns a real PTY, no CLI login needed)
-SID=$(curl -s -X POST :3999/api/sessions -H 'Content-Type: application/json' \
+SID=$(curl -s -X POST :3999/api/sessions -H @<scratch>/owner.hdr -H 'Content-Type: application/json' \
   -d '{"provider":"claude-code","name":"verify","workingDir":"/tmp"}' | jq -r .id)
-TID=$(curl -s -X POST :3999/api/sessions/$SID/terminals -H 'Content-Type: application/json' \
+TID=$(curl -s -X POST :3999/api/sessions/$SID/terminals -H @<scratch>/owner.hdr -H 'Content-Type: application/json' \
   -d '{"type":"shell","label":"sh"}' | jq -r .id)
 
 # Read state
