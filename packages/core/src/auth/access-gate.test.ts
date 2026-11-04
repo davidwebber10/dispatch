@@ -69,10 +69,43 @@ describe('remote peers', () => {
   });
 });
 
+// R-2: on WSL a Windows portproxy from the LAN arrives from the gateway address, so the gateway
+// peer is not proof that the caller is the owner. It signs in like a phone does.
 describe('WSL gateway peer', () => {
-  test('passes with a loopback Host, refused with a foreign Host', async () => {
-    expect(await ok({ remoteAddress: GATEWAY, host: 'localhost:3456' })).toBe(true);
-    expect(await ok({ remoteAddress: GATEWAY, host: 'evil.example' })).toBe(false);
+  test('is not trusted as local: a loopback Host or a foreign Host is refused', async () => {
+    expect(await status({ remoteAddress: GATEWAY, host: 'localhost:3456' })).toBe('401:auth_required');
+    expect(await status({ remoteAddress: GATEWAY, host: '127.0.0.1:3456' })).toBe('401:auth_required');
+    expect(await status({ remoteAddress: '::ffff:' + GATEWAY, host: 'localhost' })).toBe('401:auth_required');
+    expect(await status({ remoteAddress: GATEWAY, host: 'evil.example' })).toBe('401:auth_required');
+  });
+  test('an allow-host name does not help a gateway peer', async () => {
+    allowedHosts = ['proxy.example.com'];
+    expect(await ok({ remoteAddress: GATEWAY, host: 'proxy.example.com' })).toBe(false);
+  });
+  test('a bearer token or a good cookie passes from the gateway', async () => {
+    const gw = { remoteAddress: GATEWAY, host: 'localhost:3456' };
+    expect(await ok({ ...gw, authorization: `Bearer ${TOKEN}` })).toBe(true);
+    expect(await ok({ ...gw, cookie: `${COOKIE_NAME}=${cookieValue(TOKEN)}` })).toBe(true);
+  });
+  test('tailscale serve relayed through the gateway still passes (own account, owner device)', async () => {
+    const serve = {
+      remoteAddress: GATEWAY, host: 'mac.tail1.ts.net', tailscaleUserLogin: 'me@example.com',
+      proxied: true, forwardedFor: '100.64.0.2',
+    };
+    expect(await ok(serve)).toBe(true);
+    expect(await ok({ ...serve, proxied: false, forwardedFor: undefined })).toBe(true);
+  });
+  test('tailscale serve through the gateway keeps every refusal it has on loopback', async () => {
+    const serve = { remoteAddress: GATEWAY, host: 'mac.tail1.ts.net', tailscaleUserLogin: 'me@example.com' };
+    expect(await ok({ ...serve, tailscaleUserLogin: 'stranger@other.com' })).toBe(false);
+    expect(await ok({ ...serve, tailscaleUserLogin: undefined })).toBe(false);
+    expect(await ok({ ...serve, tailscaleFunnel: '?1' })).toBe(false);
+    expect(await ok({ ...serve, proxied: true, forwardedFor: '203.0.113.9' })).toBe(false);
+    expect(await ok({ ...serve, proxied: true, forwardedFor: undefined })).toBe(false);
+    expect(await ok({ ...serve, host: 'localhost:3456' })).toBe(false);
+  });
+  test('loopback is unchanged: a loopback peer with a loopback Host still passes', async () => {
+    expect(await ok({ remoteAddress: '127.0.0.1', host: 'localhost:3456' })).toBe(true);
   });
   test('a private non-gateway peer with Host localhost is refused', async () => {
     expect(await ok({ remoteAddress: '172.20.0.7', host: 'localhost:3456' })).toBe(false);

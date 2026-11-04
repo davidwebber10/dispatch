@@ -37,6 +37,7 @@ export interface GateRequest {
 
 export interface GateDeps {
   getToken(): string;
+  /** WSL only: the peer is the Windows host. It is not proof of an owner (R-2); it is trusted only through `tailscale serve`. */
   isGatewayPeer(addr: string | undefined): boolean;
   config: AccessConfig;
   tailscale: TailscaleAccess;
@@ -74,9 +75,15 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
   // tunnels rewrite Host to `localhost`. Such a request needs a name the owner vouched for.
   if (!req.proxied && isLoopbackName(host)) return true;
   if (deps.config.allowedHosts().includes(host)) return true;
-  // A Tailscale name counts for a loopback peer only when `tailscale serve` vouched for the
-  // caller. Funnel traffic (public internet) carries no identity header, so it falls through.
-  // The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
+  return vouchedByTailscaleServe(req, host, deps);
+}
+
+/**
+ * A Tailscale name counts for a local peer only when `tailscale serve` vouched for the
+ * caller. Funnel traffic (public internet) carries no identity header, so it falls through.
+ * The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
+ */
+async function vouchedByTailscaleServe(req: GateRequest, host: string, deps: GateDeps): Promise<boolean> {
   if (req.tailscaleUserLogin && req.tailscaleFunnel === undefined) { // Funnel: any value, even empty, means public
     const me = await deps.tailscale.self();
     if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) {
@@ -127,7 +134,11 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
   let via: 'credential' | 'local' | 'tailscale' | null = null;
   if (hasCredential(req, deps.getToken())) {
     via = 'credential';
-  } else if (host && (isLoopbackAddress(peer) || deps.isGatewayPeer(peer)) && (await isKnownLocalHost(req, host, deps))) {
+  } else if (host && isLoopbackAddress(peer) && (await isKnownLocalHost(req, host, deps))) {
+    via = 'local';
+  } else if (host && deps.isGatewayPeer(peer) && (await vouchedByTailscaleServe(req, host, deps))) {
+    // WSL: the gateway is the Windows host, which also forwards a LAN portproxy, and the sender
+    // chooses Host. So it is not local (R-2): only `tailscale serve` on Windows counts, as above.
     via = 'local';
   } else if (host && isTailscaleAddress(peer) && (await deps.tailscale.isOwnerPeer(peer))) {
     const me = await deps.tailscale.self();
