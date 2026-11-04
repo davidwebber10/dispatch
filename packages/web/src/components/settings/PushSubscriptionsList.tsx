@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type PushSubscriptionInfo } from '../../api/client';
-import { currentEnrollmentGeneration, deviceId, syncEnrollment } from '../../lib/push';
+import { deviceId, syncEnrollment } from '../../lib/push';
 import { timeAgo } from '../../lib/time';
 import { useSettings } from '../../stores/settings';
 import { sectionLabel, row, solidBtn, ghostBtn, miniChip } from './ui';
@@ -23,12 +23,11 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
   const mine = deviceId();
 
   const load = useCallback(async () => {
-    const startedAt = currentEnrollmentGeneration();
     try {
       const list = (await api.getPushSubscriptions()).subscriptions;
       setSubs(list);
       setState('ready');
-      void syncEnrollment(list, startedAt); // this device's row may be gone (revoked): turn its switch off
+      void syncEnrollment(); // this device's row may be gone (revoked): turn its switch off (it reads its own fresh list)
     } catch {
       setState('error');
     }

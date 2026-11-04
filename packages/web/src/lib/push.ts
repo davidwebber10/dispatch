@@ -34,52 +34,77 @@ async function ready(): Promise<ServiceWorkerRegistration> {
   return navigator.serviceWorker.ready;
 }
 
-/**
- * Counts changes of this device's enrollment. Each enroll or un-enroll takes a new number when it starts (`mine`)
- * and is "current" only while the counter still equals it; it advances the counter once more when it ends, but only
- * if it is still current. So a newer operation (or a timeout) makes an older one stop at its next step, and the older
- * one never invalidates the newer. A list read that started before any of this is stale: a slow "your row is gone"
- * answer arriving after this device enrolled again must not unsubscribe it.
- */
-let enrollmentGeneration = 0;
-export const currentEnrollmentGeneration = (): number => enrollmentGeneration;
+// ---- Enrollment: one queue --------------------------------------------------------------------------------------
+// Every enable, disable and list-sync runs through ONE queue, one at a time, so two of them never overlap and none
+// can act on a state an earlier one has changed. The newest requested state wins: `desired` is set the moment an
+// enable or disable is asked for, and an older operation that sees it differ stops at its next step. Every network or
+// service-worker step has a time limit, so a step that never answers cannot hold the queue.
+export type EnableResult = 'ok' | 'denied' | 'unsupported' | 'ios-install' | 'timeout' | 'superseded';
 
-export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
-  const mine = ++enrollmentGeneration;
-  try { return await enablePushInner(); } finally { if (enrollmentGeneration === mine) enrollmentGeneration++; }
+/** The most any single step may take (a service worker, the daemon, the browser's push service). */
+const STEP_TIMEOUT_MS = 10_000;
+class StepTimeout extends Error {}
+function step<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new StepTimeout('push step timed out')), STEP_TIMEOUT_MS); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
 }
-async function enablePushInner(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
+
+let desired: 'on' | 'off' | null = null; // the newest state anyone asked for
+let pending = 0; // enable and disable requests not finished yet
+let tail: Promise<unknown> = Promise.resolve();
+function enqueue<T>(op: () => Promise<T>): Promise<T> {
+  const run = tail.then(op, op);
+  tail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/** Ask for this device's push to be on. Resolves when it has run, or been replaced by a newer request ('superseded'). */
+export function enablePush(): Promise<EnableResult> {
+  desired = 'on'; pending++;
+  return enqueue(async () => { try { return await runEnable(); } finally { pending--; } });
+}
+async function runEnable(): Promise<EnableResult> {
+  if (desired !== 'on') return 'superseded';
   if (!pushSupported()) return 'unsupported';
   if (iosNeedsInstall()) return 'ios-install';
-  const perm = await Notification.requestPermission();
-  if (perm !== 'granted') return 'denied';
-  const reg = await ready();
-  const { publicKey } = await api.getPushKey();
-  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
-  await api.pushSubscribe(deviceId(), sub.toJSON());
+  try {
+    const perm = await Notification.requestPermission(); // waits for the person: no time limit
+    if (perm !== 'granted') return 'denied';
+    if (desired !== 'on') return 'superseded';
+    const reg = await step(ready());
+    if (desired !== 'on') return 'superseded';
+    const { publicKey } = await step(api.getPushKey());
+    if (desired !== 'on') return 'superseded';
+    const sub = await step(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) }));
+    if (desired !== 'on') return 'superseded';
+    await step(api.pushSubscribe(deviceId(), sub.toJSON()));
+  } catch (e) {
+    if (e instanceof StepTimeout) return 'timeout';
+    throw e;
+  }
   reportPresence(true, useViewing.getState().id);
   return 'ok';
 }
-/**
- * Turn this device's push off. Returns false when something newer (an enroll, another un-enroll, a timeout)
- * took over while it waited: it stops before its next step and changes nothing more, so a late disable cannot undo
- * a newer enrollment.
- */
-export async function disablePush(): Promise<boolean> {
-  const mine = ++enrollmentGeneration;
-  try { return await disablePushInner(mine); } finally { if (enrollmentGeneration === mine) enrollmentGeneration++; }
+
+/** Ask for this device's push to be off. Resolves true when it finished, false when a newer request replaced it or a step timed out. */
+export function disablePush(): Promise<boolean> {
+  desired = 'off'; pending++;
+  return enqueue(async () => { try { return await runDisable(); } finally { pending--; } });
 }
-async function disablePushInner(mine: number): Promise<boolean> {
+async function runDisable(): Promise<boolean> {
+  if (desired !== 'off') return false;
+  // The browser's own subscription. A failure or time-out here is not fatal: the daemon row below is what stops alerts.
   try {
-    const reg = await navigator.serviceWorker.ready;
-    if (enrollmentGeneration !== mine) return false;
-    const sub = await reg.pushManager.getSubscription();
-    if (enrollmentGeneration !== mine) return false;
-    await sub?.unsubscribe();
-  } catch { /* ignore */ }
-  if (enrollmentGeneration !== mine) return false;
-  try { await api.pushUnsubscribe(deviceId()); } catch { /* ignore */ }
-  return enrollmentGeneration === mine;
+    const reg = await step(navigator.serviceWorker.ready);
+    if (desired !== 'off') return false;
+    const sub = await step(reg.pushManager.getSubscription());
+    if (desired !== 'off') return false;
+    await step(Promise.resolve(sub?.unsubscribe()));
+  } catch { /* go on to the daemon */ }
+  if (desired !== 'off') return false;
+  try { await step(api.pushUnsubscribe(deviceId())); } catch (e) { if (e instanceof StepTimeout) return false; }
+  return true;
 }
 export function reportPresence(foreground: boolean, activeTerminalId: string | null = null): void {
   void api.pushPresence(deviceId(), foreground, activeTerminalId).catch(() => {});
@@ -104,51 +129,28 @@ export function pushErrorMessage(code: string): string {
 /**
  * The owner can revoke this device in Settings > Access > Notification devices, or the daemon can drop its row
  * (a 410 from the push service). This browser would still think it is enrolled: its local switch stays on and
- * `ensurePushEnrolled` returns early, so it never receives an alert again and never asks to. Compare this device's
- * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
- * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
+ * `ensurePushEnrolled` returns early, so it never receives an alert again and never asks to. This reads the daemon's
+ * list, and if this device's row is gone, turns the switch off so the next "on" enrolls again.
+ *
+ * It runs in the queue and reads the list on its own turn, so the list is read after every earlier enable or
+ * disable has finished and cannot be stale. If anyone has asked for a newer state since, it stands down. A list that
+ * cannot be read in time changes nothing. Returns true when it switched the device off.
  */
-/** How long a push-list read, or the un-enroll that follows, may take before the queue moves on. A read that times out changes nothing. */
-const LIST_TIMEOUT_MS = 8000;
-// Reconciliations run one after another, each with its OWN list. A newer one is never dropped for an older one that
-// was already running (an old list that still shows this device must not hide a newer list that says it is gone).
-let reconcileQueue: Promise<unknown> = Promise.resolve();
-export function syncEnrollment(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
-  const asked = startedAt ?? enrollmentGeneration; // the state when the caller asked, not when its turn comes
-  const run = reconcileQueue.then(() => syncEnrollmentOnce(known, asked), () => syncEnrollmentOnce(known, asked));
-  reconcileQueue = run.catch(() => undefined);
-  return run;
-}
-async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
-  // `startedAt` is the generation when the caller began reading its list; without it, the generation now (taken
-  // first, before any await, so nothing that finishes while this function waits can be missed).
-  const gen = startedAt ?? enrollmentGeneration;
+export async function syncEnrollment(): Promise<boolean> {
   const { useSettings } = await import('../stores/settings'); // dynamic: settings.ts imports this module
   if (!useSettings.getState().pushEnabled) return false;
-  let list = known;
-  if (!list) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const read = api.getPushSubscriptions().then((r) => r.subscriptions);
-      const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('push list timed out')), LIST_TIMEOUT_MS); });
-      list = await Promise.race([read, timeout]);
-    } catch { return false; } finally { clearTimeout(timer); }
-  }
-  if (list.some((s) => s.deviceId === deviceId())) return false;
-  // An enroll or un-enroll finished (or is running) since this list was read: the answer is out of date.
-  if (gen !== enrollmentGeneration) return false;
-  // Bounded like the list read: a service worker that never becomes ready must not hold every later reconciliation.
-  // When the limit passes, the stuck un-enroll is cancelled (the counter moves on), so if it wakes up later it does nothing.
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  try {
-    await Promise.race([
-      useSettings.getState().setPushEnabled(false),
-      new Promise<void>((resolve) => { timer = setTimeout(() => { timedOut = true; enrollmentGeneration++; resolve(); }, LIST_TIMEOUT_MS); }),
-    ]);
-  } catch { /* the daemon side is already gone */ } finally { clearTimeout(timer); }
-  if (timedOut) return false; // it did not finish: nothing was switched off
-  return true;
+  // The turn decides; it does not wait for the disable it asks for (that would wait behind itself).
+  const turn = await enqueue(async (): Promise<{ followUp: Promise<boolean> | null }> => {
+    const store = useSettings.getState();
+    if (!store.pushEnabled) return { followUp: null };
+    let list: { deviceId: string }[];
+    try { list = (await step(api.getPushSubscriptions())).subscriptions; } catch { return { followUp: null }; }
+    if (pending > 0) return { followUp: null }; // someone asked for a newer state while the list was read
+    if (list.some((s) => s.deviceId === deviceId())) return { followUp: null };
+    const followUp = disablePush().then((done) => { if (done) useSettings.getState().setPushEnabledLocal(false); return done; });
+    return { followUp };
+  }).catch(() => ({ followUp: null }));
+  return turn.followUp ? await turn.followUp.catch(() => false) : false;
 }
 
 /** Enroll this device (permission prompt + subscription) if it isn't already.

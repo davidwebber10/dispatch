@@ -6,7 +6,7 @@ import { useSettings } from '../../stores/settings';
 
 vi.mock('../../api/client', async (orig) => {
   const real = await orig<typeof import('../../api/client')>();
-  return { ...real, api: { ...real.api, getPushSubscriptions: vi.fn(), revokePushSubscription: vi.fn() } };
+  return { ...real, api: { ...real.api, getPushSubscriptions: vi.fn(), revokePushSubscription: vi.fn(), pushUnsubscribe: vi.fn().mockResolvedValue({ ok: true }) } };
 });
 
 const NOW = Date.parse('2026-11-04T12:00:00Z');
@@ -96,11 +96,11 @@ describe('<PushSubscriptionsList>', () => {
 
   it('turns the switch off on this device when the list no longer has its row (revoked from another device)', async () => {
     localStorage.setItem('dispatch:deviceId', 'me');
-    const setPushEnabled = vi.fn().mockResolvedValue(undefined);
-    useSettings.setState({ pushEnabled: true, setPushEnabled } as any);
+    useSettings.setState({ pushEnabled: true } as any);
     vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [sub({ deviceId: 'other' })] });
     render(<PushSubscriptionsList now={() => NOW} />);
     await screen.findAllByTestId('push-row');
-    await waitFor(() => expect(setPushEnabled).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(useSettings.getState().pushEnabled).toBe(false));
+    expect(api.pushUnsubscribe).toHaveBeenCalledWith('me');
   });
 });
