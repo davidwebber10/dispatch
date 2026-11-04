@@ -20,16 +20,26 @@ import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider } from
  */
 export const PAIR_ADDRESS_KEY = 'dispatch:pairAddress';
 
-/** localhost, any 127.x.y.z address, or ::1: on a phone these mean the phone itself. */
+/**
+ * localhost, any 127.x.y.z address, ::1, the unspecified address, or an IPv4-mapped form of those
+ * (a browser's URL parser rewrites `[::ffff:127.0.0.1]` to `[::ffff:7f00:1]`). On a phone all of
+ * these mean the phone itself.
+ */
 export function isLoopbackHost(host: string): boolean {
-  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return h === 'localhost' || h === '::1' || /^127(\.\d{1,3}){3}$/.test(h);
+  const h = host.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (h === 'localhost' || h === '::1' || h === '::' || h === '0.0.0.0') return true;
+  const mapped = /^::ffff:(.+)$/.exec(h);
+  if (mapped) {
+    const hex = /^([0-9a-f]{1,4}):[0-9a-f]{1,4}$/.exec(mapped[1]);
+    return hex ? parseInt(hex[1], 16) >> 8 === 127 : isLoopbackHost(mapped[1]);
+  }
+  return /^127(\.\d{1,3}){3}$/.test(h);
 }
 
 function hostOfAddress(address: string): string | null {
   try { return new URL(address.includes('://') ? address : `http://${address}`).hostname; } catch { return null; }
 }
-const isLoopbackAddress = (address: string): boolean => {
+export const isLoopbackAddress = (address: string): boolean => {
   const h = hostOfAddress(address);
   return h !== null && isLoopbackHost(h);
 };

@@ -23,9 +23,10 @@ function lanRank(a: string): number {
 
 /**
  * Pure choice step. `tsIps` are this machine's Tailscale addresses from `tailscale status`. They are
- * offered only when an interface here holds one (Tailscale is up). On WSL the Tailscale client runs on
- * the Windows host, so there is no local interface to check, and the VM's own address is no use to a
- * phone, so none is offered.
+ * offered only when an interface here holds one (Tailscale is up in this same machine). On WSL a
+ * Tailscale client on the Windows host does not count: nothing forwards the daemon's port to it, so
+ * the address would not work (spec 6.1). A `tailscaled` inside WSL does count. The WSL VM's own
+ * address is no use to a phone, so no LAN address is offered there.
  */
 export function pickReachable(opts: { tsIps: string[]; ifaces: Ifaces; wsl: boolean }): Reachable {
   const all: { name: string; address: string }[] = [];
@@ -35,7 +36,7 @@ export function pickReachable(opts: { tsIps: string[]; ifaces: Ifaces; wsl: bool
     }
   }
   const local = new Set(all.map((x) => x.address));
-  const tailscale = opts.tsIps.filter((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && isTailscaleAddress(ip) && (opts.wsl || local.has(ip)));
+  const tailscale = opts.tsIps.filter((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip) && isTailscaleAddress(ip) && local.has(ip));
   const lan = opts.wsl ? [] : all.map((x) => x.address).filter((a) => !isTailscaleAddress(a))
     .sort((a, b) => lanRank(a) - lanRank(b));
   return { tailscale, lan: [...new Set(lan)] };

@@ -71,8 +71,19 @@ describe('<AccessSection> devices', () => {
 
 describe('isLoopbackHost', () => {
   it.each([['localhost', true], ['LOCALHOST', true], ['127.0.0.1', true], ['127.5.6.7', true], ['::1', true], ['[::1]', true],
+    ['localhost.', true], ['::ffff:127.0.0.1', true], ['[::ffff:7f00:1]', true], ['::ffff:7f12:3456', true], ['0.0.0.0', true], ['::ffff:c0a8:43c', false],
     ['192.168.4.60', false], ['mac.tail1.ts.net', false], ['100.96.27.65', false], ['localhost.example.com', false]])('%s -> %s', (h, want) => {
     expect(isLoopbackHost(h as string)).toBe(want);
+  });
+});
+
+describe('isLoopbackAddress forms a browser can produce', () => {
+  it('a page address that the URL parser rewrites to IPv4-mapped hex is still loopback', async () => {
+    const { isLoopbackAddress } = await import('./AccessSection');
+    expect(isLoopbackAddress('http://[::ffff:127.0.0.1]:3456')).toBe(true);
+    expect(isLoopbackAddress('http://localhost.:3456')).toBe(true);
+    expect(isLoopbackAddress('localhost:3494')).toBe(true);
+    expect(isLoopbackAddress('http://192.168.4.60:3494')).toBe(false);
   });
 });
 

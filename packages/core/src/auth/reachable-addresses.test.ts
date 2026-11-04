@@ -38,8 +38,12 @@ describe('pickReachable', () => {
   test('node may report family as the number 4', () => {
     expect(pickReachable({ tsIps: [], wsl: false, ifaces: ifaces({ en0: [{ address: '192.168.4.60', family: 4, internal: false }] }) }).lan).toEqual(['192.168.4.60']);
   });
-  test('on WSL the Tailscale IP comes from the Windows host so it needs no local interface, and the VM address is not offered', () => {
+  test('on WSL a Tailscale IP that lives on the Windows host is not offered: nothing forwards the port to it', () => {
     const r = pickReachable({ tsIps: ['100.96.27.65'], wsl: true, ifaces: ifaces({ eth0: [v4('172.20.5.2')] }) });
+    expect(r).toEqual({ tailscale: [], lan: [] });
+  });
+  test('on WSL with tailscaled inside WSL, its own Tailscale IP is offered; the VM address still is not', () => {
+    const r = pickReachable({ tsIps: ['100.96.27.65'], wsl: true, ifaces: ifaces({ eth0: [v4('172.20.5.2')], tailscale0: [v4('100.96.27.65')] }) });
     expect(r).toEqual({ tailscale: ['100.96.27.65'], lan: [] });
   });
 });

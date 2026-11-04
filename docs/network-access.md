@@ -34,7 +34,7 @@ If you opened Settings on the computer itself (`localhost`, `127.0.0.1` or `::1`
 cannot use that address: on a phone, `localhost` means the phone. Dispatch then fills the field
 with an address for this computer that a phone can reach, with the same scheme and port. It
 prefers the Tailscale address when Tailscale is up, and otherwise the Wi-Fi (LAN) address, and a
-note says so. If it finds none, the field keeps the page address and the note asks you to type
+note says so. On WSL2 it offers only a Tailscale address that `tailscaled` inside WSL holds: a Tailscale on the Windows side does not forward Dispatch's port, so type an address yourself there. If it finds none, the field keeps the page address and the note asks you to type
 one. An address you type always wins, and a saved `localhost` address is ignored.
 
 The QR code carries the address in the **Address the phone will use** field plus the code,
