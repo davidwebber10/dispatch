@@ -104,6 +104,8 @@ interface SettingsState {
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
   setPushEnabled: (b: boolean) => Promise<void>;
+  /** Set the switch only (saved), with no network call: for code that already did the work. */
+  setPushEnabledLocal: (b: boolean) => void;
   setMultiPane: (b: boolean) => void;
   setResumeAdviceDismissed: (b: boolean) => void;
   setSttProvider: (id: string) => void;
@@ -144,7 +146,7 @@ applyAccent(initialAccent);
 // another device may have changed it since) — re-sync once per boot.
 if (initialAccent !== ACCENTS[0]) scheduleIconSync(initialAccent);
 
-export const useSettings = create<SettingsState>((set) => ({
+export const useSettings = create<SettingsState>((set, get) => ({
   fontSize: load('dispatch:fontSize', 13),
   scrollback: load('dispatch:scrollback', 20000),
   sidebarFontSize: load('dispatch:sidebarFontSize', 13),
@@ -184,15 +186,16 @@ export const useSettings = create<SettingsState>((set) => ({
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
+  setPushEnabledLocal: (b) => { save('dispatch:pushEnabled', b); set({ pushEnabled: b }); },
   setPushEnabled: async (b) => {
+    const push = await import('../lib/push');
     if (b) {
-      const r = await (await import('../lib/push')).enablePush();
-      const on = r === 'ok';
-      save('dispatch:pushEnabled', on); set({ pushEnabled: on });
-      if (!on) throw new Error(r); // surfaced by the toggle for messaging (denied / unsupported / ios-install)
+      const r = await push.enablePush();
+      if (r === 'superseded') return; // a newer request owns the switch
+      get().setPushEnabledLocal(r === 'ok');
+      if (r !== 'ok') throw new Error(r); // surfaced by the toggle for messaging (denied / unsupported / ios-install / timeout)
     } else {
-      await (await import('../lib/push')).disablePush();
-      save('dispatch:pushEnabled', false); set({ pushEnabled: false });
+      if (await push.disablePush()) get().setPushEnabledLocal(false); // false: replaced by a newer request, or timed out
     }
   },
 }));

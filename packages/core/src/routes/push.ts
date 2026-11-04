@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
-import type { PushService } from '../push/service.js';
+import { PushLimitError, type PushService } from '../push/service.js';
+import { deviceLabelFromUserAgent } from '../push/label.js';
 import { isAllowedPushEndpoint } from '../push/endpoints.js';
 
 export function createPushRouter(push: PushService): Router {
@@ -14,7 +15,19 @@ export function createPushRouter(push: PushService): Router {
     if (!isAllowedPushEndpoint(subscription.endpoint)) {
       return res.status(400).json({ error: 'That push address is not from a supported push service.' });
     }
-    push.subscribe(deviceId, subscription);
+    try {
+      push.subscribe(deviceId, subscription, deviceLabelFromUserAgent(req.headers['user-agent']));
+    } catch (err) {
+      if (err instanceof PushLimitError) return res.status(429).json({ error: err.message });
+      throw err;
+    }
+    res.json({ ok: true });
+  });
+  // Settings > Access: the stored subscriptions and a per-device revoke. Owner only (the policyRouter default), so a
+  // thread key gets 403. The list shows the push service host, never the push address or keys.
+  router.get('/subscriptions', (_req, res) => res.json({ subscriptions: push.listSubscriptions() }));
+  router.delete('/subscriptions/:deviceId', (req, res) => {
+    if (!push.revoke(req.params.deviceId)) return res.status(404).json({ error: 'That push subscription was not found.' });
     res.json({ ok: true });
   });
   router.post('/unsubscribe', (req, res) => {

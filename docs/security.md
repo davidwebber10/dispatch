@@ -42,8 +42,16 @@ environment variable when the daemon starts; set it in the daemon's environment.
 | JSON request body on the routes that carry big payloads (agent hook events, thread messages with images, Chat messages, file save, icons) | 50 MiB | `DISPATCH_MAX_LARGE_JSON_BYTES` |
 | One WebSocket message from a client | 1 MiB (8 MiB on the terminal socket, where a paste is one message) | `DISPATCH_WS_MAX_PAYLOAD`, `DISPATCH_WS_TERMINAL_MAX_PAYLOAD` |
 | Live threads (a running process) in one project | 60 (0 = no cap) | `DISPATCH_MAX_LIVE_THREADS` |
+| Stored push subscriptions (one per phone or browser) | 50 (0 = no cap) | `DISPATCH_MAX_PUSH_SUBSCRIPTIONS` |
+| Live watches over all threads (one thread may hold 20) | 500 (0 = no cap) | `DISPATCH_MAX_WATCHES` |
+| One line of an agent run's output held in memory | 32 MiB (0 = no cap) | `DISPATCH_MAX_STREAM_LINE_BYTES` |
+| Unread data on a WebSocket client before it is checked (it is dropped only if the queue stops shrinking between checks, or passes 4 times this size at once; a long chat history is sent in step with the free space, so it loads on a slow link; the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES`, `DISPATCH_WS_BUFFER_GRACE_MS` (10 s between checks) |
+| Uncaught errors in one minute before the daemon exits to be restarted (below this it logs and stays up) | 10 (0 = never exit) | `DISPATCH_MAX_UNCAUGHT_PER_MINUTE` |
+| Error reports written to the log per minute for one kind (unhandled rejections; uncaught exceptions when the exit limit is 0); the rest are counted in one line | 20 (0 = log all) | `DISPATCH_MAX_CRASH_LOGS_PER_MINUTE` |
 | Shortest gap between runs of a recurring schedule | 1 minute (0 = no minimum) | `DISPATCH_MIN_SCHEDULE_MINUTES` |
 | Folders outside a project that a link inside it may lead to | none | `DISPATCH_FILE_ROOTS` (a `:`-separated list; `/` allows any) |
+
+These limits are a partial fix for stability (SEC-23). Still open: a line-size cap for Chat threads (the run-stream cap covers agent runs only), and a cap on how many threads one thread can start (the owner has not decided this one).
 
 The file routes follow symbolic links, so a link inside a project that stays inside the project
 works as before, and so do dependency links from one `node_modules` folder into another (a package inside a pnpm workspace). A link that leads outside the project is refused unless its target is under a
@@ -81,6 +89,17 @@ in a ledger body).
 A phone or browser can subscribe to notifications only through the push service of its browser
 maker: Apple, Google (FCM), Mozilla or Microsoft (WNS). Dispatch refuses any other address, so
 it cannot be made to send your thread and project names to a server you do not know.
+
+Settings > Access lists every device that receives notifications: its browser and system, the
+push service host, when it was added and when Dispatch last sent it an alert. Revoke stops
+alerts to that one device. The list never shows the full push address. Only the owner can list
+or revoke (a thread key gets 403).
+
+## If the daemon hits an error nothing caught
+
+Dispatch logs the error with its stack and keeps running. An exit would end every live agent
+thread. If more than 10 such errors happen in one minute, it exits so launchd (macOS) restarts a
+clean daemon. The WSL scheduled task does not restart a daemon, so on WSL start it again by hand.
 
 ## Who made an integration or a schedule
 

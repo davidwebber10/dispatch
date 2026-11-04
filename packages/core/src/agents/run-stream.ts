@@ -7,6 +7,8 @@
 // trailing CR (PTYs translate \n -> \r\n), and silently skips any line that is not
 // valid JSON or is an event type we don't care about. Unknown event shapes never throw.
 
+import { maxStreamLineBytes } from '../caps.js';
+
 export type AgentProviderName = 'claude-code' | 'codex';
 
 export interface TodoItem {
@@ -61,26 +63,63 @@ export interface RunStep {
 
 export class RunStreamParser {
   private buf = '';
+  /** True while the rest of an over-long line is being thrown away, up to its newline. */
+  private skipping = false;
+  /** UTF-8 bytes of the partial line in `buf` (kept only while a cap is set). */
+  private bufBytes = 0;
 
   constructor(private readonly provider: AgentProviderName, private readonly onFrame?: (frame: unknown) => void) {}
 
   /** Feed a chunk of stdout; returns any RunEvents completed by this chunk. */
   feed(chunk: string): RunEvent[] {
+    const cap = maxStreamLineBytes();
+    if (this.skipping) {
+      const nl0 = chunk.indexOf('\n');
+      if (nl0 === -1) return [];
+      this.skipping = false;
+      chunk = chunk.slice(nl0 + 1);
+    }
+    const hadNewline = chunk.includes('\n');
+    // Bytes, not characters: a multibyte line is larger on the wire than its string length. Counted per chunk, so a
+    // long line that arrives in many pieces is not re-scanned each time.
+    const chunkBytes = cap > 0 ? Buffer.byteLength(chunk) : 0;
     this.buf += chunk;
     const out: RunEvent[] = [];
     let nl: number;
     while ((nl = this.buf.indexOf('\n')) !== -1) {
       const line = this.buf.slice(0, nl);
       this.buf = this.buf.slice(nl + 1);
+      // A string of n characters is at most 3n bytes in UTF-8, so a short one needs no byte count.
+      if (cap > 0 && line.length * 3 > cap) {
+        const bytes = Buffer.byteLength(line);
+        if (bytes > cap) { this.logDropped(bytes, cap); continue; }
+      }
       out.push(...this.parseLine(line));
     }
+    if (cap > 0) {
+      // Bytes held now: the old partial line plus this chunk when no newline came, else just the new tail.
+      this.bufBytes = hadNewline ? Buffer.byteLength(this.buf) : this.bufBytes + chunkBytes;
+      // No newline yet: a line that already passed the cap will not get shorter. Drop it and skip to its newline.
+      if (this.bufBytes > cap) {
+        this.logDropped(this.bufBytes, cap);
+        this.buf = '';
+        this.bufBytes = 0;
+        this.skipping = true;
+      }
+    }
     return out;
+  }
+
+  private logDropped(length: number, cap: number): void {
+    console.error(`[run-stream] dropped an agent output line of ${length} bytes (limit ${cap}); raise DISPATCH_MAX_STREAM_LINE_BYTES if this was a real event`);
   }
 
   /** Parse any trailing buffered line (call once the stream ends). */
   flush(): RunEvent[] {
     const line = this.buf;
     this.buf = '';
+    this.bufBytes = 0;
+    this.skipping = false;
     return this.parseLine(line);
   }
 

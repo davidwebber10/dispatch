@@ -63,6 +63,7 @@ import { SecretsService } from './secrets/service.js';
 import { sweepThreadMcpConfigs, sweepThreadKeyFiles } from './sessions/mcp-config-sweep.js';
 import { IntegrationsService, type IntegrationLauncher } from './integrations/service.js';
 import { PushService } from './push/service.js';
+import { installProcessGuards } from './runtime/process-guards.js';
 import { wireThreadSettledPush } from './push/notify.js';
 import { StatusService } from './status/service.js';
 import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
@@ -1134,6 +1135,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 // When run directly via tsx src/server.ts
 const isDirectRun = process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js');
 if (isDirectRun) {
+  // Log, do not die, on a stray error: an exit kills every live agent thread (see runtime/process-guards.ts).
+  installProcessGuards();
   const port = process.env.PORT ? Number(process.env.PORT) : undefined;
   startServer({ port }).catch((err) => {
     console.error('Failed to start server:', err);

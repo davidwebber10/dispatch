@@ -3,7 +3,9 @@
 // REST-hydration sentinel fires when the ring holds NO renderable events — covering the
 // empty ring AND the 0b8e106 deadlock ring (system/init + system/status + a stale result),
 // which is non-empty yet renders nothing.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import type { WebSocket } from 'ws';
 import { hasRenderableEvents } from './structured.js';
 
 describe('hasRenderableEvents', () => {
@@ -220,3 +222,131 @@ describe('replay settle for rings that end mid-turn', () => {
     expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
   });
 });
+
+describe('replay back-pressure', () => {
+  afterEach(() => { vi.useRealTimers(); delete process.env.DISPATCH_WS_MAX_BUFFERED_BYTES; delete process.env.DISPATCH_WS_BUFFER_GRACE_MS; vi.restoreAllMocks(); });
+
+  it('drops a client that never reads a big replay, with no later live event needed', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '2000';
+    const events = Array.from({ length: 5 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(500) + i }] } }));
+    const manager = Object.assign(new EventEmitter(), {
+      getEvents: () => events, getEventsTail: () => events, getPending: () => null,
+    }) as any;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, send: vi.fn(function (this: any, d: string) { this.bufferedAmount += d.length; }), terminate: vi.fn(), close: vi.fn(),
+    }) as unknown as WebSocket;
+    handleStructuredConnection(ws, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    expect((ws as any).send.mock.calls.length).toBeLessThan(5); // paced: it stopped sending once the queue was over half the limit
+    await vi.advanceTimersByTimeAsync(2100);
+    expect((ws as any).terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a big history in step with the free buffer space, never past the limit, then the live event held meanwhile, in order', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const events = Array.from({ length: 20 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `${i}`.padEnd(200, 'x') }] } }));
+    const manager = Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+    let peak = 0;
+    const sent: string[] = [];
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { sent.push(d); this.bufferedAmount += d.length; peak = Math.max(peak, this.bufferedAmount); }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    manager.emit('event', 't1', { type: 'assistant', message: { content: [{ type: 'text', text: 'LIVE' }] } });
+    // The client reads 150 bytes every 25 ms.
+    for (let i = 0; i < 400 && sent.length < 21; i++) {
+      await vi.advanceTimersByTimeAsync(25);
+      ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 150);
+    }
+    expect(sent).toHaveLength(21);
+    expect(sent[20]).toContain('LIVE'); // held until the history was out
+    expect(sent.slice(0, 20).every((m, i) => m.includes(`"text":"${i}`))).toBe(true);
+    expect(peak).toBeLessThanOrEqual(500 + 400); // half the limit plus one frame
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  it('a history bigger than the hard ceiling still loads on a slow reading client (it does not hit the ceiling)', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000'; // ceiling 4000
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const events = Array.from({ length: 60 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `${i}`.padEnd(200, 'x') }] } })); // ~16 KB in all
+    const manager = Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+    let count = 0;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { count++; this.bufferedAmount += d.length; }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    for (let i = 0; i < 1000 && count < 60; i++) { await vi.advanceTimersByTimeAsync(25); ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 100); }
+    expect(count).toBe(60);
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  const mkManager = (events: unknown[]) => Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+  const textEvent = (text: string) => ({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
+
+  it('sends the held live events through the same pacer: 4 history + 60 live frames reach a reading client without the hard ceiling', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '2000'; // ceiling 8000; the 60 held frames (about 4.5 KB) fit under the held bound
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const history = Array.from({ length: 4 }, (_, i) => textEvent(`h${i}`.padEnd(150, 'x')));
+    const manager = mkManager(history);
+    let count = 0; let peak = 0;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 1500, terminate: vi.fn(), close: vi.fn(), // a slow client: over half the limit, so the replay must wait
+      send: vi.fn(function (this: any) { count++; this.bufferedAmount += 200; peak = Math.max(peak, this.bufferedAmount); }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    // Sixty live events arrive while the history is still waiting for room: they are held, then paced out behind it.
+    for (let i = 0; i < 60; i++) manager.emit('event', 't1', textEvent(`live${i}`));
+    for (let i = 0; i < 3000 && count < 64; i++) { await vi.advanceTimersByTimeAsync(10); ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 150); }
+    expect(count).toBe(64);
+    expect(ws.terminate).not.toHaveBeenCalled();
+    expect(peak).toBeLessThan(8000);
+  });
+
+  it('bounds the held live events by bytes: a client that cannot keep up with the replay is dropped, not buffered for', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '600000';
+    const manager = mkManager([textEvent('h'.repeat(300)), textEvent('h'.repeat(300))]);
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(function (this: any) { this.readyState = 3; }), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { this.bufferedAmount += d.length; }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    // The client reads nothing (and the grace is long, so the replay itself keeps waiting). Live output keeps coming.
+    for (let i = 0; i < 100 && ws.terminate.mock.calls.length === 0; i++) manager.emit('event', 't1', textEvent('L'.repeat(100))); // held limit is 4 x 1000 bytes
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+    const sentBefore = ws.send.mock.calls.length;
+    manager.emit('event', 't1', textEvent('more'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(ws.send.mock.calls.length).toBe(sentBefore); // nothing more is queued for the dropped client
+  });
+
+  it('counts the held live events in bytes: CJK text (3 bytes a character) hits the bound that its character count would miss', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000'; // held bound: 4000 bytes
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '600000';
+    const manager = mkManager([textEvent('h')]);
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 1500, terminate: vi.fn(function (this: any) { this.readyState = 3; }), close: vi.fn(), // replay waits
+      send: vi.fn(),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    const cjk = textEvent('汉'.repeat(300)); // about 960 bytes of JSON, but only about 350 UTF-16 units
+    expect(JSON.stringify(cjk).length).toBeLessThan(400);
+    for (let i = 0; i < 3; i++) manager.emit('event', 't1', cjk); // 3 x 960 = 2.9 KB: under 4000 bytes
+    expect(ws.terminate).not.toHaveBeenCalled();
+    for (let i = 0; i < 2; i++) manager.emit('event', 't1', cjk); // 5 x 960 = 4.8 KB: over the bound (1.75 KB by character count)
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+  });
+});
+

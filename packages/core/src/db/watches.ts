@@ -92,3 +92,9 @@ export function countByWatcher(db: Database.Database, watcherTerminalId: string)
 export function getById(db: Database.Database, id: string): WatchRow | undefined {
   return db.prepare('SELECT * FROM thread_watches WHERE id = ?').get(id) as WatchRow | undefined;
 }
+
+/** Count of live watches in the whole daemon (used for the total cap). */
+export function countLive(db: Database.Database): number {
+  const row = db.prepare(`SELECT COUNT(*) as count FROM thread_watches WHERE ${LIVE_CLAUSE}`).get() as { count: number };
+  return row.count;
+}

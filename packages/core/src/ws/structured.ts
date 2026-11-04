@@ -2,6 +2,8 @@
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
+import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
+import { wsMaxBufferedBytes } from '../caps.js';
 
 /**
  * True iff at least one ring event would fold into a VISIBLE conversation item in the
@@ -122,39 +124,60 @@ export function handleStructuredConnection(
   // newest-window fetch (since removed: it raced the replay and doubled transcripts). Sent
   // BEFORE replay; harmless alongside one, since the client only hydrates while nothing
   // conversational is rendered (see useStructuredChat's 'system'/'inactive' handler).
-  if (!hasRenderableEvents(events) && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
-  for (const e of events) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
+  // The frames the client gets first, in order: the sentinel, the replay, the settle, the pending permission.
+  // They are sent in step with the client's free buffer space (see below); live events that arrive meanwhile wait behind them.
+  const frames: unknown[] = [];
+  if (!hasRenderableEvents(events)) frames.push({ type: 'system', subtype: 'inactive' });
+  for (const e of events) frames.push(e);
   // Phantom-"Working…" guard: a replay that ends mid-turn latches the client's busy spinner.
   // If the daemon's own status says this thread is settled — and no pending permission is
   // about to be surfaced (that frame clears busy itself) — append the swallowed settle.
   let settled = false;
   try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
-  if (settled && !manager.getPending(id) && replayLeavesBusy(events) && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'result', subtype: 'backfill', is_error: false }));
+  if (settled && !manager.getPending(id) && replayLeavesBusy(events)) {
+    frames.push({ type: 'result', subtype: 'backfill', is_error: false });
   }
-  const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
+  // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
+  const initialPending = manager.getPending(id);
+  if (initialPending) frames.push({ type: 'permission', pending: initialPending });
+  // Live events during the replay are held and sent after it, so the order the client sees is unchanged. The held
+  // list is bounded (by 4 times the back-pressure limit, in bytes, the same as the hard ceiling): a client that cannot keep up with the history while the
+  // thread keeps producing output is dropped, not allowed to grow the daemon's memory.
+  let replaying = true;
+  const held: string[] = [];
+  let heldBytes = 0;
+  const emit = (json: string) => {
+    if (!replaying) { sendOrDrop(ws, json, 'chat'); return; }
+    const cap = wsMaxBufferedBytes() * HARD_CEILING_FACTOR; // the same bound the socket queue itself has
+    heldBytes += Buffer.byteLength(json); // bytes on the wire, not UTF-16 units: CJK and emoji are 3 to 4 bytes
+    if (cap > 0 && heldBytes > cap) {
+      console.warn(`[ws] dropped a slow chat client: ${heldBytes} bytes of live output waiting behind its replay (limit ${cap}). It can reconnect.`);
+      held.length = 0; heldBytes = 0;
+      ws.terminate();
+      return;
+    }
+    held.push(json);
+  };
+  const onEvent = (eid: string, event: unknown) => { if (eid === id) emit(JSON.stringify(event)); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
   // 'exit' so the existing result handler clears `busy` and shows the error.
   // `detail` is the CLI's stderr tail, when it wrote one: often the only place it says why (#76).
   const onExit = (eid: string, code: number, detail?: string) => {
-    if (eid === id && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
+    if (eid === id) {
+      emit(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
     }
   };
   // Forward escalations (the membrane) so a structured chat view can render the
   // pending gated tool / question inline too, not just the Overseer Needs zone.
   const onPermission = (eid: string, pending: unknown) => {
-    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending }));
+    if (eid === id) emit(JSON.stringify({ type: 'permission', pending }));
   };
   // A pending that went away (answered, cancelled, stale at a turn end) clears every viewer's
   // card. A separate manager event, because a `permission` emit means a NEW request to status.
   const onCleared = (eid: string) => {
-    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: null }));
+    if (eid === id) emit(JSON.stringify({ type: 'permission', pending: null }));
   };
-  // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
-  const initialPending = manager.getPending(id);
-  if (initialPending && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: initialPending }));
   manager.on('event', onEvent);
   manager.on('exit', onExit);
   manager.on('permission', onPermission);
@@ -163,4 +186,23 @@ export function handleStructuredConnection(
     manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission);
     manager.off('permission-cleared', onCleared);
   });
+  // Send the frames, then the live events held meanwhile, one at a time. Each waits until the client has room (half
+  // the back-pressure limit), so neither a big history nor a backlog of held events is queued all at once. There is
+  // no await when there is room, so a replay to a client that keeps up runs synchronously.
+  void (async () => {
+    let i = 0;
+    try {
+      for (;;) {
+        let json: string;
+        if (i < frames.length) json = JSON.stringify(frames[i++]);
+        else if (held.length > 0) { json = held.shift()!; heldBytes -= Buffer.byteLength(json); }
+        else break; // nothing left; `replaying` is cleared below in the same tick, so no live event slips between
+        if (!hasRoom(ws) && !(await waitForRoom(ws, 'chat'))) return;
+        sendOrDrop(ws, json, 'chat');
+      }
+    } finally {
+      replaying = false;
+      held.length = 0; heldBytes = 0;
+    }
+  })();
 }

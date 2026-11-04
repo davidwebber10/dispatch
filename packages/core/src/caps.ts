@@ -32,3 +32,51 @@ export const maxLiveThreadsPerProject = (): number => fromEnv('DISPATCH_MAX_LIVE
 
 /** The shortest gap between two runs of a recurring schedule. DISPATCH_MIN_SCHEDULE_MINUTES (default 1; 0 = no minimum). */
 export const minScheduleMinutes = (): number => fromEnv('DISPATCH_MIN_SCHEDULE_MINUTES', 1);
+
+/**
+ * Push subscriptions (one per browser or phone) stored before a new device is refused. A person has a handful of
+ * devices; the cap only stops a runaway client or a hostile caller from filling the table, and the Settings list lets
+ * the owner remove old ones. DISPATCH_MAX_PUSH_SUBSCRIPTIONS (default 50; 0 = no cap).
+ */
+export const maxPushSubscriptions = (): number => fromEnv('DISPATCH_MAX_PUSH_SUBSCRIPTIONS', 50);
+
+/**
+ * Live watches in the whole daemon, over all watchers. The per-watcher limit (20) stays; this stops many watchers
+ * together from growing the table without bound. DISPATCH_MAX_WATCHES (default 500; 0 = no cap).
+ */
+export const maxWatchesTotal = (): number => fromEnv('DISPATCH_MAX_WATCHES', 500);
+
+/**
+ * One line of an agent run's JSON output, held in memory until its newline. A line is one event, and an event can
+ * carry a whole file read, so the default is large. A longer line is dropped (with a log line) and the parser resumes
+ * at the next newline. DISPATCH_MAX_STREAM_LINE_BYTES (default 32 MiB; 0 = no cap).
+ */
+export const maxStreamLineBytes = (): number => fromEnv('DISPATCH_MAX_STREAM_LINE_BYTES', 32 * MiB);
+
+/**
+ * Data a WebSocket client has not yet read, before the daemon drops that client. A slow or stalled browser would
+ * otherwise make the daemon hold every terminal and event byte for it. The browser reconnects and replays. The
+ * default is far above what a working connection holds. DISPATCH_WS_MAX_BUFFERED_BYTES (default 32 MiB; 0 = no cap).
+ */
+export const wsMaxBufferedBytes = (): number => fromEnv('DISPATCH_WS_MAX_BUFFERED_BYTES', 32 * MiB);
+
+/**
+ * Uncaught errors in one minute before the daemon exits so its supervisor restarts it clean. Below this it logs and
+ * keeps running, so one stray error does not kill every live agent thread. DISPATCH_MAX_UNCAUGHT_PER_MINUTE
+ * (default 10; 0 = never exit).
+ */
+export const maxUncaughtPerMinute = (): number => fromEnv('DISPATCH_MAX_UNCAUGHT_PER_MINUTE', 10);
+
+/**
+ * How long a client may stay over the unread-data limit before it is dropped. One large send puts the whole
+ * message in the queue at once and the socket needs time to drain it; only a client still over the limit after
+ * this long has stopped reading. DISPATCH_WS_BUFFER_GRACE_MS (default 10000).
+ */
+export const wsBufferGraceMs = (): number => fromEnv('DISPATCH_WS_BUFFER_GRACE_MS', 10_000);
+
+/**
+ * Error reports the last-resort handlers write per minute for one kind (unhandled rejections; uncaught exceptions
+ * when the exit limit is 0). More are counted and summarised in one line, so a loop that throws on every tick cannot
+ * fill the log. DISPATCH_MAX_CRASH_LOGS_PER_MINUTE (default 20; 0 = log every one).
+ */
+export const maxCrashLogsPerMinute = (): number => fromEnv('DISPATCH_MAX_CRASH_LOGS_PER_MINUTE', 20);

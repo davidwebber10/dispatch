@@ -6,7 +6,7 @@ import { api, ApiError } from '../../api/client';
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn() } }));
 vi.mock('../../api/client', async (orig) => {
   const real = await orig<typeof import('../../api/client')>();
-  return { ...real, api: { ...real.api, makePairCode: vi.fn(), getAccessAddresses: vi.fn().mockResolvedValue({ tailscale: [], lan: [] }), getDevices: vi.fn().mockResolvedValue({ devices: [], currentDeviceId: null, legacyOpen: false }) } };
+  return { ...real, api: { ...real.api, makePairCode: vi.fn(), getAccessAddresses: vi.fn().mockResolvedValue({ tailscale: [], lan: [] }), getDevices: vi.fn().mockResolvedValue({ devices: [], currentDeviceId: null, legacyOpen: false }), getPushSubscriptions: vi.fn().mockResolvedValue({ subscriptions: [] }) } };
 });
 
 beforeEach(async () => {

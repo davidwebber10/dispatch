@@ -126,3 +126,22 @@ describe('vapidSubject', () => {
     expect(vapidSubject()).toMatch(/^https:\/\//);
   });
 });
+
+describe('PushService revoke during a fan-out', () => {
+  it('does not send to a device revoked while an earlier send was still waiting', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const got: string[] = [];
+    const slow = new PushService(db, {
+      vapidDir: dir,
+      send: async (sub) => { got.push(sub.deviceId); if (sub.deviceId === 'phone') await gate; },
+    });
+    const run = slow.notifyThread({ terminalId: 't1', sessionId: 's1', title: 'x', body: 'y' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(got).toEqual(['phone']); // first send started and is waiting
+    expect(slow.revoke('desk')).toBe(true);
+    release();
+    await run;
+    expect(got).toEqual(['phone']); // desk was revoked before its send began
+  });
+});

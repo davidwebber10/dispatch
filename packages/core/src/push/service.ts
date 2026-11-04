@@ -5,6 +5,7 @@ import webpush from 'web-push';
 import type Database from 'better-sqlite3';
 import * as pushDb from '../db/push.js';
 import { isAllowedPushEndpoint } from './endpoints.js';
+import { maxPushSubscriptions } from '../caps.js';
 
 export type Sender = (sub: pushDb.PushSub, payload: string) => Promise<void>;
 const PRESENCE_TTL_MS = 90_000;
@@ -20,6 +21,16 @@ const PRESENCE_TTL_MS = 90_000;
 export function vapidSubject(): string {
   return process.env.DISPATCH_VAPID_SUBJECT?.trim() || 'https://github.com/davidwebber10/dispatch';
 }
+
+/** The stored-subscription cap was reached by a new device. The message is safe to show the caller. */
+export class PushLimitError extends Error {
+  constructor(readonly limit: number) {
+    super(`Dispatch already stores ${limit} push subscriptions (the maximum). Remove an old device in Settings > Access, or raise DISPATCH_MAX_PUSH_SUBSCRIPTIONS.`);
+  }
+}
+
+/** One stored subscription for the owner's list. The push address and keys never leave the daemon; only its host does. */
+export interface PushSubscriptionView { deviceId: string; label: string; host: string; createdAt: string; lastSentAt: string | null }
 
 export class PushService {
   private db: Database.Database;
@@ -47,10 +58,29 @@ export class PushService {
 
   getPublicKey(): string { return this.vapid.publicKey; }
 
-  subscribe(deviceId: string, subscription: { endpoint: string; keys: { p256dh: string; auth: string } }): void {
-    pushDb.upsert(this.db, { deviceId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth });
+  /** Store or refresh a device's subscription. A NEW device past the cap throws PushLimitError; a known device always updates. */
+  subscribe(deviceId: string, subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, label?: string | null): void {
+    const limit = maxPushSubscriptions();
+    // A new device id that arrives with an address already stored replaces that row, so it adds nothing to the count.
+    if (limit > 0 && !pushDb.has(this.db, deviceId) && !pushDb.hasEndpoint(this.db, subscription.endpoint) && pushDb.count(this.db) >= limit) throw new PushLimitError(limit);
+    pushDb.upsert(this.db, { deviceId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth, label });
   }
-  unsubscribe(deviceId: string): void { pushDb.remove(this.db, deviceId); }
+  unsubscribe(deviceId: string): void { pushDb.remove(this.db, deviceId); this.presence.delete(deviceId); }
+
+  /** The subscriptions for Settings: label, push-service host, created, last sent. */
+  listSubscriptions(): PushSubscriptionView[] {
+    return pushDb.listInfo(this.db).map((r) => {
+      let host = 'unknown';
+      try { host = new URL(r.endpoint).hostname; } catch { /* keep unknown */ }
+      return { deviceId: r.deviceId, label: r.label || 'Unknown device', host, createdAt: r.createdAt, lastSentAt: r.lastSentAt };
+    });
+  }
+
+  /** Owner revoke. Returns false when there is no such subscription. */
+  revoke(deviceId: string): boolean {
+    this.presence.delete(deviceId);
+    return pushDb.remove(this.db, deviceId);
+  }
 
   setPresence(deviceId: string, foreground: boolean, activeTerminalId: string | null = null): void {
     this.presence.set(deviceId, { foreground, activeTerminalId, ts: Date.now() });
@@ -70,7 +100,9 @@ export class PushService {
       // A subscription stored before the host check may point anywhere. Keep it, but never send to it.
       if (!isAllowedPushEndpoint(sub.endpoint)) continue;
       if (this.isViewing(sub.deviceId, input.terminalId)) continue;
-      try { await this.send(sub, payload); }
+      // The list was read before the earlier sends were awaited; a device the owner revoked meanwhile gets nothing.
+      if (!pushDb.has(this.db, sub.deviceId)) continue;
+      try { await this.send(sub, payload); pushDb.markSent(this.db, sub.deviceId); }
       catch (e: any) {
         const code = e?.statusCode;
         if (code === 404 || code === 410) pushDb.removeByEndpoint(this.db, sub.endpoint);

@@ -5,6 +5,7 @@ import type { PTYManager } from '../pty/manager.js';
 import type { SessionService } from '../sessions/service.js';
 import type { TerminalMonitor } from '../terminal-monitor.js';
 import { isPtyType } from '../db/terminals.js';
+import { sendOrDrop } from './backpressure.js';
 
 /** The largest terminal a resize message may ask for (the same bounds the declared size at connect time uses). */
 const MAX_TERMINAL_COLS = 1000;
@@ -138,7 +139,7 @@ export function handleTerminalConnection(
     // Exactly one control frame, always first, on every (re)connect that asked for it.
     const slice = ptyManager.getBufferSlice(targetId, replayBytes);
     buffer = slice.data;
-    ws.send(JSON.stringify({
+    sendOrDrop(ws, JSON.stringify({
       type: 'dispatch:replay-meta',
       startOffset: slice.startOffset,
       totalWritten: ptyManager.getBufferOffsets(targetId).totalWritten,
@@ -147,11 +148,11 @@ export function handleTerminalConnection(
       // does not answer the queries in it), so it must know when none is coming: an empty ring
       // sends nothing, and the first frame is then the CLI's live startup queries.
       hasReplay: buffer.length > 0,
-    }));
+    }), 'terminal');
   } else {
     buffer = ptyManager.getBuffer(targetId, replayBytes);
   }
-  if (buffer) ws.send(buffer);
+  if (buffer) sendOrDrop(ws, buffer, 'terminal'); // the scrollback ring is 4 MB, far under the hard ceiling
   // A trimmed replay can't reconstruct a diff-painting TUI's screen (codex only
   // redraws changed cells, so the viewer would see just the actively-updating
   // rows on black). Deliver a SIGWINCH so the app repaints everything.
@@ -161,7 +162,7 @@ export function handleTerminalConnection(
 
   // Forward PTY output to WebSocket
   const onData = (id: string, data: string) => {
-    if (id === targetId && ws.readyState === 1) ws.send(data);
+    if (id === targetId) sendOrDrop(ws, data, 'terminal');
   };
   ptyManager.on('data', onData);
 

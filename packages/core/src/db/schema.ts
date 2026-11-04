@@ -445,4 +445,11 @@ function initializeSchema(db: Database.Database): void {
       token_fp      TEXT NOT NULL
     );
   `));
+  // Push subscriptions list (SEC-21): a short device label (from the browser's user agent, no push address)
+  // and the time of the last notification sent to it. created_at already exists.
+  migrate(db, '015-push-label', () => {
+    const cols = db.prepare('PRAGMA table_info(push_subscriptions)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'label')) db.exec('ALTER TABLE push_subscriptions ADD COLUMN label TEXT');
+    if (!cols.some((c) => c.name === 'last_sent_at')) db.exec('ALTER TABLE push_subscriptions ADD COLUMN last_sent_at TEXT');
+  });
 }
