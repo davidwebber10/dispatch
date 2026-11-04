@@ -100,6 +100,10 @@ export function DevicesList({ now = Date.now, reload = () => window.location.rel
             Each phone or browser that signs in is listed here. Revoke ends that one device. Every other device stays signed in.
             {data.currentDeviceId === null && ' This browser needs no sign-in, so it is not in the list.'}
           </div>
+          <div data-testid="tailscale-note" style={small}>
+            Devices on your own Tailscale need no sign-in, so they do not appear here. Manage or remove them in the Tailscale
+            admin console. To list a phone here, use the Wi-Fi address.
+          </div>
           {data.devices.length === 0 && <div style={small}>No device has signed in yet.</div>}
           {data.devices.map((d) => (
             <div

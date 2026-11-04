@@ -55,6 +55,12 @@ describe('<AccessSection>', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/not available/);
   });
 
+  it('tells the user that a phone on the Tailscale address is not listed, and to use the Wi-Fi address to list it', () => {
+    render(<AccessSection />);
+    expect(screen.getByTestId('address-tailscale-note')).toHaveTextContent(
+      'A phone that opens the Tailscale address needs no sign-in and is not listed. To list a phone, use the Wi-Fi address.');
+  });
+
   it('never shows the token: the section only points at the CLI for it', () => {
     render(<AccessSection />);
     expect(screen.getByText(/never shown here/)).toBeInTheDocument();

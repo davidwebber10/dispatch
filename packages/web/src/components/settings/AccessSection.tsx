@@ -178,6 +178,9 @@ export function AccessSection() {
         <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
           The address goes into the QR code only. Use the one the phone can reach: a tunnel hostname or a Tailscale name.
         </div>
+        <div data-testid="address-tailscale-note" style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+          A phone that opens the Tailscale address needs no sign-in and is not listed. To list a phone, use the Wi-Fi address.
+        </div>
         <div style={row}>
           <span style={item}>Sign-in code</span>
           <button type="button" disabled={busy} onClick={() => void makeCode()} style={solidBtn(!busy)}>

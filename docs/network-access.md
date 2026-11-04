@@ -94,6 +94,10 @@ An address marked **(via proxy)** is what a proxy on this computer reported (`ta
 WSL2 mirrored mode a Windows browser at `localhost` arrives as `127.0.0.1` and shows as **This
 computer**; a LAN device shows its own address.
 
+Devices on your own Tailscale need no sign-in, so they do not appear in this list. Manage or remove
+them in the Tailscale admin console. To list a phone here, open the Wi-Fi (LAN) address instead of
+the Tailscale address.
+
 Up to 100 devices are kept. The least recently active ones drop off first.
 
 ## Scripts and other tools

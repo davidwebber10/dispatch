@@ -50,6 +50,15 @@ describe('<DevicesList>', () => {
     expect(within(rows[1]).getByText(/last active 5m ago/i)).toBeInTheDocument();
   });
 
+  it('explains why own-Tailscale devices are not listed, and how to list a phone', async () => {
+    vi.mocked(api.getDevices).mockResolvedValue(list());
+    render(<DevicesList now={() => NOW} reload={reload} />);
+    const note = await screen.findByTestId('tailscale-note');
+    expect(note).toHaveTextContent('Devices on your own Tailscale need no sign-in, so they do not appear here.');
+    expect(note).toHaveTextContent('Manage or remove them in the Tailscale admin console.');
+    expect(note).toHaveTextContent('To list a phone here, use the Wi-Fi address.');
+  });
+
   it('labels a device from before the device list', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list({ devices: [dev({ signedInVia: 'earlier' })], currentDeviceId: null }));
     render(<DevicesList now={() => NOW} reload={reload} />);
