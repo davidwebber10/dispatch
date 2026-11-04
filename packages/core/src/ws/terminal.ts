@@ -147,7 +147,7 @@ export function handleTerminalConnection(
   } else {
     buffer = ptyManager.getBuffer(targetId, replayBytes);
   }
-  if (buffer) sendOrDrop(ws, buffer, 'terminal');
+  if (buffer) sendOrDrop(ws, buffer, 'terminal'); // the scrollback ring is 4 MB, far under the hard ceiling
   // A trimmed replay can't reconstruct a diff-painting TUI's screen (codex only
   // redraws changed cells, so the viewer would see just the actively-updating
   // rows on black). Deliver a SIGWINCH so the app repaints everything.

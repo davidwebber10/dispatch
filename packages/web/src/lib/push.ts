@@ -34,7 +34,18 @@ async function ready(): Promise<ServiceWorkerRegistration> {
   return navigator.serviceWorker.ready;
 }
 
+/**
+ * Counts every enroll or un-enroll. A list read that started before one finished is stale: it must not undo it
+ * (a slow "your row is gone" answer arriving after this device enrolled again would unsubscribe it).
+ */
+let enrollmentGeneration = 0;
+export const currentEnrollmentGeneration = (): number => enrollmentGeneration;
+
 export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
+  enrollmentGeneration++;
+  try { return await enablePushInner(); } finally { enrollmentGeneration++; }
+}
+async function enablePushInner(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
   if (!pushSupported()) return 'unsupported';
   if (iosNeedsInstall()) return 'ios-install';
   const perm = await Notification.requestPermission();
@@ -47,6 +58,10 @@ export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'i
   return 'ok';
 }
 export async function disablePush(): Promise<void> {
+  enrollmentGeneration++;
+  try { await disablePushInner(); } finally { enrollmentGeneration++; }
+}
+async function disablePushInner(): Promise<void> {
   try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); await sub?.unsubscribe(); } catch { /* ignore */ }
   try { await api.pushUnsubscribe(deviceId()); } catch { /* ignore */ }
 }
@@ -77,7 +92,10 @@ export function pushErrorMessage(code: string): string {
  * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
  * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
  */
-export async function syncEnrollment(known?: { deviceId: string }[]): Promise<boolean> {
+export async function syncEnrollment(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
+  // `startedAt` is the generation when the caller began reading its list; without it, the generation now (taken
+  // first, before any await, so nothing that finishes while this function waits can be missed).
+  const gen = startedAt ?? enrollmentGeneration;
   const { useSettings } = await import('../stores/settings'); // dynamic: settings.ts imports this module
   if (!useSettings.getState().pushEnabled) return false;
   let list = known;
@@ -85,6 +103,8 @@ export async function syncEnrollment(known?: { deviceId: string }[]): Promise<bo
     try { list = (await api.getPushSubscriptions()).subscriptions; } catch { return false; }
   }
   if (list.some((s) => s.deviceId === deviceId())) return false;
+  // An enroll or un-enroll finished (or is running) since this list was read: the answer is out of date.
+  if (gen !== enrollmentGeneration) return false;
   try { await useSettings.getState().setPushEnabled(false); } catch { /* the daemon side is already gone */ }
   return true;
 }

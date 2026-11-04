@@ -226,7 +226,7 @@ describe('replay settle for rings that end mid-turn', () => {
 describe('replay back-pressure', () => {
   afterEach(() => { vi.useRealTimers(); delete process.env.DISPATCH_WS_MAX_BUFFERED_BYTES; delete process.env.DISPATCH_WS_BUFFER_GRACE_MS; vi.restoreAllMocks(); });
 
-  it('drops a client that never reads a big replay, with no later live event needed', () => {
+  it('drops a client that never reads a big replay, with no later live event needed', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
@@ -239,9 +239,52 @@ describe('replay back-pressure', () => {
       readyState: 1, bufferedAmount: 0, send: vi.fn(function (this: any, d: string) { this.bufferedAmount += d.length; }), terminate: vi.fn(), close: vi.fn(),
     }) as unknown as WebSocket;
     handleStructuredConnection(ws, { url: '/api/terminals/t1/structured-ws' } as any, manager);
-    expect((ws as any).send).toHaveBeenCalledTimes(5);
-    vi.advanceTimersByTime(2001);
+    expect((ws as any).send.mock.calls.length).toBeLessThan(5); // paced: it stopped sending once the queue was over half the limit
+    await vi.advanceTimersByTimeAsync(2100);
     expect((ws as any).terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a big history in step with the free buffer space, never past the limit, then the live event held meanwhile, in order', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const events = Array.from({ length: 20 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `${i}`.padEnd(200, 'x') }] } }));
+    const manager = Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+    let peak = 0;
+    const sent: string[] = [];
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { sent.push(d); this.bufferedAmount += d.length; peak = Math.max(peak, this.bufferedAmount); }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    manager.emit('event', 't1', { type: 'assistant', message: { content: [{ type: 'text', text: 'LIVE' }] } });
+    // The client reads 150 bytes every 25 ms.
+    for (let i = 0; i < 400 && sent.length < 21; i++) {
+      await vi.advanceTimersByTimeAsync(25);
+      ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 150);
+    }
+    expect(sent).toHaveLength(21);
+    expect(sent[20]).toContain('LIVE'); // held until the history was out
+    expect(sent.slice(0, 20).every((m, i) => m.includes(`"text":"${i}`))).toBe(true);
+    expect(peak).toBeLessThanOrEqual(500 + 400); // half the limit plus one frame
+    expect(ws.terminate).not.toHaveBeenCalled();
+  });
+
+  it('a history bigger than the hard ceiling still loads on a slow reading client (it does not hit the ceiling)', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000'; // ceiling 4000
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const events = Array.from({ length: 60 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `${i}`.padEnd(200, 'x') }] } })); // ~16 KB in all
+    const manager = Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+    let count = 0;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { count++; this.bufferedAmount += d.length; }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    for (let i = 0; i < 1000 && count < 60; i++) { await vi.advanceTimersByTimeAsync(25); ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 100); }
+    expect(count).toBe(60);
+    expect(ws.terminate).not.toHaveBeenCalled();
   });
 });
 

@@ -45,7 +45,7 @@ environment variable when the daemon starts; set it in the daemon's environment.
 | Stored push subscriptions (one per phone or browser) | 50 (0 = no cap) | `DISPATCH_MAX_PUSH_SUBSCRIPTIONS` |
 | Live watches over all threads (one thread may hold 20) | 500 (0 = no cap) | `DISPATCH_MAX_WATCHES` |
 | One line of an agent run's output held in memory | 32 MiB (0 = no cap) | `DISPATCH_MAX_STREAM_LINE_BYTES` |
-| Unread data on a WebSocket client before it is checked (it is dropped only if the queue stops shrinking between checks, or passes 4 times this size at once; the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES`, `DISPATCH_WS_BUFFER_GRACE_MS` (10 s between checks) |
+| Unread data on a WebSocket client before it is checked (it is dropped only if the queue stops shrinking between checks, or passes 4 times this size at once; a long chat history is sent in step with the free space, so it loads on a slow link; the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES`, `DISPATCH_WS_BUFFER_GRACE_MS` (10 s between checks) |
 | Uncaught errors in one minute before the daemon exits to be restarted (below this it logs and stays up) | 10 (0 = never exit) | `DISPATCH_MAX_UNCAUGHT_PER_MINUTE` |
 | Error reports written to the log per minute for one kind (unhandled rejections; uncaught exceptions when the exit limit is 0); the rest are counted in one line | 20 (0 = log all) | `DISPATCH_MAX_CRASH_LOGS_PER_MINUTE` |
 | Shortest gap between runs of a recurring schedule | 1 minute (0 = no minimum) | `DISPATCH_MIN_SCHEDULE_MINUTES` |

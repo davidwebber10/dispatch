@@ -142,5 +142,25 @@ describe('crash log rate limit', () => {
     for (let i = 0; i < 40; i++) handlers.unhandledRejection(new Error('r'));
     expect(lines).toHaveLength(40);
   });
+
+  it('a flush timer from the previous minute does not clear the next minute\'s count', () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_MAX_CRASH_LOGS_PER_MINUTE = '1';
+    const { handlers, lines, now } = setup();
+    const rej = () => handlers.unhandledRejection(new Error('r'));
+    now.t = 0; rej(); // logged
+    now.t = 59_000; rej(); // counted: notice + a flush timer due at 60 s
+    now.t = 60_000; rej(); // a new minute: the old minute is summarised, this one is logged
+    expect(lines.filter((l) => /1 more unhandled promise rejections/.test(l))).toHaveLength(1);
+    now.t = 61_000; rej(); // counted in the NEW minute
+    const before = lines.length;
+    vi.advanceTimersByTime(1500); // past the old timer's due time (it was cancelled)
+    expect(lines).toHaveLength(before);
+    expect(lines.filter((l) => /more than 1 unhandled promise rejections in one minute/.test(l))).toHaveLength(2); // one notice per minute
+    now.t = 120_000;
+    vi.advanceTimersByTime(60_000); // the new minute's own flush
+    expect(lines.filter((l) => /1 more unhandled promise rejections in the last minute/.test(l))).toHaveLength(2);
+    expect(lines.filter((l) => /more unhandled promise rejections in the last minute/.test(l))).toHaveLength(2); // no third, split summary
+  });
 });
 

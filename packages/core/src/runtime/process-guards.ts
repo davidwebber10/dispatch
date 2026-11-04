@@ -42,21 +42,25 @@ export function installProcessGuards(deps: ProcessGuardDeps = {}): () => void {
     let start = Number.NEGATIVE_INFINITY;
     let logged = 0;
     let suppressed = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cancel = () => { if (timer) { clearTimeout(timer); timers.delete(timer); timer = null; } };
     const summary = () => {
       if (suppressed > 0) log(`[daemon] ${suppressed} more ${kind} in the last minute were not logged (limit ${maxCrashLogsPerMinute()} a minute; set DISPATCH_MAX_CRASH_LOGS_PER_MINUTE to change this).`);
       suppressed = 0;
     };
     return (build: () => string) => {
       const t = now();
-      if (t - start >= WINDOW_MS) { summary(); start = t; logged = 0; }
+      if (t - start >= WINDOW_MS) { cancel(); summary(); start = t; logged = 0; } // a new minute: the old minute's flush timer goes with it
       const n = maxCrashLogsPerMinute();
       if (n === 0 || logged < n) { logged++; log(build()); return; }
       if (suppressed++ === 0) {
         log(`[daemon] more than ${n} ${kind} in one minute: logging the rest as a count.`);
-        // The count is written when the minute ends, even if nothing else throws.
-        const timer = setTimeout(() => { timers.delete(timer); summary(); }, WINDOW_MS);
-        timer.unref?.();
-        timers.add(timer);
+        // The count is written when THIS minute ends, even if nothing else throws.
+        const wait = Math.max(0, start + WINDOW_MS - t);
+        const mine = setTimeout(() => { timers.delete(mine); if (timer === mine) timer = null; summary(); }, wait);
+        mine.unref?.();
+        timer = mine;
+        timers.add(mine);
       }
     };
   };

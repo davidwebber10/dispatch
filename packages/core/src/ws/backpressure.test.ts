@@ -114,4 +114,34 @@ describe('sendOrDrop', () => {
     expect(sendOrDrop(ws, 'hi', 'events')).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('waitForRoom: returns at once when there is room, waits for a reading client, and drops one that makes no progress', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { waitForRoom, hasRoom } = await import('./backpressure.js');
+    const quick = fake(100);
+    expect(hasRoom(quick)).toBe(true);
+    expect(await waitForRoom(quick, 'chat')).toBe(true);
+
+    const reading = fake(900); // limit 1000: room is 500 or less
+    expect(hasRoom(reading)).toBe(false);
+    const p = waitForRoom(reading, 'chat');
+    await vi.advanceTimersByTimeAsync(100);
+    reading.bufferedAmount = 700; await vi.advanceTimersByTimeAsync(100);
+    reading.bufferedAmount = 400; await vi.advanceTimersByTimeAsync(100);
+    expect(await p).toBe(true);
+    expect(reading.terminate).not.toHaveBeenCalled();
+
+    const stuck = fake(900);
+    const q = waitForRoom(stuck, 'chat');
+    await vi.advanceTimersByTimeAsync(6000); // grace is 5000 and the queue never moved
+    expect(await q).toBe(false);
+    expect(stuck.terminate).toHaveBeenCalledTimes(1);
+
+    const gone = fake(900);
+    const r = waitForRoom(gone, 'chat');
+    (gone as any).readyState = 3;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await r).toBe(false);
+  });
 });
+
