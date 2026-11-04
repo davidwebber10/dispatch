@@ -135,6 +135,20 @@ describe('a call with no credential is refused on the dangerous actions', () => 
     expect((await call({ method: 'PATCH', path: `/api/terminals/${qid}`, headers: WEB_PAGE(), body: { config: { ...after.config, queuedTask: 'by the page' } } })).status).toBe(200);
   });
 
+  test('relaunching an EMPTY project (it would spawn a fresh process) is refused; a project with a tab can still be relaunched', async () => {
+    const dir = path.join(home, 'empty-proj');
+    fs.mkdirSync(dir);
+    const empty = json(await call({ method: 'POST', path: '/api/sessions', body: { provider: 'claude-code', name: 'empty', workingDir: dir } })).id;
+    const refused = await call({ method: 'POST', path: `/api/sessions/${empty}/relaunch`, body: {} });
+    expect(refused.status).toBe(401);
+    expect(json(refused).error).toBe('auth_required');
+    expect(json(refused).message).toContain(`POST /api/sessions/${empty}/relaunch`);
+    // the web page and the token may do it (it only spawns the CLI if installed; any answer but 401/403 is enough)
+    expect(json(await call({ method: 'POST', path: `/api/sessions/${empty}/relaunch`, headers: OWNER(), body: {} }))).not.toMatchObject({ error: 'auth_required' });
+    // a project that has a tab: a credential-free relaunch is a plain restart and stays open
+    expect((await call({ method: 'POST', path: `/api/sessions/${sessionId}/relaunch`, body: {} })).status).not.toBe(401);
+  });
+
   test('the coordinator: POST (creates and spawns) is refused; GET only looks, answers 404 when there is none and creates nothing', async () => {
     const p = `/api/sessions/${sessionId}/overseer/coordinator`;
     const post = await call({ method: 'POST', path: p, body: {} });

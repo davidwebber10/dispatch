@@ -71,8 +71,9 @@ given a credential, or a call from an old thread with no key. It does not close 
 that reads `~/.dispatch/access-token` (it runs as you) or sets an `Origin` header by hand. Those
 callers can still act as the owner. A process check on the connection (stage 3 in the per-thread key
 spec) is what would close that. Left open on purpose, so normal use keeps working: all reads, hook
-events, the browser shim, adding an integration, renaming, stopping or restarting a tab, role
-and schedule runs (they start inside the daemon), and the ledger routes (a credential-free caller can still name itself the overseer
+events, the browser shim, adding an integration, renaming, stopping or restarting a tab, schedules (create, edit the prompt, run now: this can run an
+arbitrary task), restart, relaunch and restore of an existing tab (they can reload content a caller wrote
+through the open file routes, provider config or an added integration), and the ledger routes (a credential-free caller can still name itself the overseer
 in a ledger body).
 
 ## Phone notifications

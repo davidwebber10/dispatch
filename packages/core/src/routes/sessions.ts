@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
+import { keyRoute, policyRouter, ownerOnlyStrict, requireOwnerProof } from '../auth/route-policy.js';
 import { allowRule, isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
@@ -175,7 +175,14 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   });
 
   // POST /api/sessions/:id/relaunch — re-spawn PTY for an existing session
-  router.post('/:id/relaunch', (req, res) => {
+  // Relaunching a project that has a tab restarts that tab (open, like a tab relaunch). A project with NO tab falls back to
+  // spawning a fresh process in the project folder, which is starting a thread, so that case needs the web page or the token (SEC-05 middle).
+  router.post('/:id/relaunch', (req, res, next) => {
+    let hasTab = true;
+    try { hasTab = sessionService.listTerminals(req.params.id).length > 0; } catch { /* unknown project: the handler answers 404 */ }
+    if (hasTab) return next();
+    requireOwnerProof(req, res, next);
+  }, (req, res) => {
     const session = sessionService.relaunch(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
     res.json(session);

@@ -152,8 +152,22 @@ Dispatch ends all keys, and the threads that come back get new ones.
   the command line, for example with `curl -H @FILE`).
   **Still works with no credential, by design:** all reads (the coordinator `GET` only looks and
   answers 404 when there is none), hooks, the browser shim, adding an integration, renaming,
-  stopping, restarting or relaunching a tab, and the ledger routes. Role and schedule runs start
-  inside the daemon, not over HTTP, so this check does not touch them.
+  stopping, restarting or relaunching a tab, and the ledger routes. Starting a thread from a project with no tab (`POST /api/sessions/ID/relaunch`) is refused, but a
+  project that has a tab restarts it.
+
+  **Accepted exceptions that can run chosen content.** These stay open to a credential-free caller
+  on purpose, and each can end in a thread that runs something the caller chose:
+  - *Schedules.* Creating a schedule, editing its prompt and `run-now` (`/api/agents/schedules`)
+    need no credential, and the daemon launches the schedule's prompt as a thread task. This is an
+    arbitrary-task execution path. Role runs (the files you wrote) start inside the daemon.
+  - *Restart, relaunch and restore of an existing tab.* They ignore a task or config in the request,
+    but they reload what is on disk and in settings. Project file writes (`/api/sessions/ID/files`)
+    stay open, a restart reloads the provider's own config, and integrations that were added (adding
+    one stays open) go into the next spawn's config. So a restart or a restore does not guarantee that
+    only content you approved runs.
+
+  Closing these needs the same proof on those routes; the owner chose not to, to keep scripts and
+  normal use working.
 - **This is a drift check, not a lock.** A program that sets an `Origin` header by hand passes it,
   and any program running as you can read the token file (see below). The check stops the
   ordinary case: a plain `curl` that an injected agent runs, or an old script. It does not stop a
