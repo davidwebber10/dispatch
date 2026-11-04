@@ -3,7 +3,9 @@
 // REST-hydration sentinel fires when the ring holds NO renderable events — covering the
 // empty ring AND the 0b8e106 deadlock ring (system/init + system/status + a stale result),
 // which is non-empty yet renders nothing.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
+import type { WebSocket } from 'ws';
 import { hasRenderableEvents } from './structured.js';
 
 describe('hasRenderableEvents', () => {
@@ -220,3 +222,26 @@ describe('replay settle for rings that end mid-turn', () => {
     expect(sent.some((e) => e.subtype === 'backfill')).toBe(false);
   });
 });
+
+describe('replay back-pressure', () => {
+  afterEach(() => { vi.useRealTimers(); delete process.env.DISPATCH_WS_MAX_BUFFERED_BYTES; delete process.env.DISPATCH_WS_BUFFER_GRACE_MS; vi.restoreAllMocks(); });
+
+  it('drops a client that never reads a big replay, with no later live event needed', () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '2000';
+    const events = Array.from({ length: 5 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(500) + i }] } }));
+    const manager = Object.assign(new EventEmitter(), {
+      getEvents: () => events, getEventsTail: () => events, getPending: () => null,
+    }) as any;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, send: vi.fn(function (this: any, d: string) { this.bufferedAmount += d.length; }), terminate: vi.fn(), close: vi.fn(),
+    }) as unknown as WebSocket;
+    handleStructuredConnection(ws, { url: '/api/terminals/t1/structured-ws' } as any, manager);
+    expect((ws as any).send).toHaveBeenCalledTimes(5);
+    vi.advanceTimersByTime(2001);
+    expect((ws as any).terminate).toHaveBeenCalledTimes(1);
+  });
+});
+

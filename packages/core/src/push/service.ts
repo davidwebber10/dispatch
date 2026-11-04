@@ -99,6 +99,8 @@ export class PushService {
       // A subscription stored before the host check may point anywhere. Keep it, but never send to it.
       if (!isAllowedPushEndpoint(sub.endpoint)) continue;
       if (this.isViewing(sub.deviceId, input.terminalId)) continue;
+      // The list was read before the earlier sends were awaited; a device the owner revoked meanwhile gets nothing.
+      if (!pushDb.has(this.db, sub.deviceId)) continue;
       try { await this.send(sub, payload); pushDb.markSent(this.db, sub.deviceId); }
       catch (e: any) {
         const code = e?.statusCode;

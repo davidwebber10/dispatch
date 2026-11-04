@@ -123,15 +123,16 @@ export function handleStructuredConnection(
   // newest-window fetch (since removed: it raced the replay and doubled transcripts). Sent
   // BEFORE replay; harmless alongside one, since the client only hydrates while nothing
   // conversational is rendered (see useStructuredChat's 'system'/'inactive' handler).
-  if (!hasRenderableEvents(events) && ws.readyState === 1) ws.send(JSON.stringify({ type: 'system', subtype: 'inactive' }));
-  for (const e of events) { if (ws.readyState === 1) ws.send(JSON.stringify(e)); }
+  if (!hasRenderableEvents(events)) sendOrDrop(ws, JSON.stringify({ type: 'system', subtype: 'inactive' }), 'chat');
+  // Replay goes through the same guard as live sends: a client that never reads a big replay is dropped after the grace time.
+  for (const e of events) sendOrDrop(ws, JSON.stringify(e), 'chat');
   // Phantom-"Working…" guard: a replay that ends mid-turn latches the client's busy spinner.
   // If the daemon's own status says this thread is settled — and no pending permission is
   // about to be surfaced (that frame clears busy itself) — append the swallowed settle.
   let settled = false;
   try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
   if (settled && !manager.getPending(id) && replayLeavesBusy(events) && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'result', subtype: 'backfill', is_error: false }));
+    sendOrDrop(ws, JSON.stringify({ type: 'result', subtype: 'backfill', is_error: false }), 'chat');
   }
   const onEvent = (eid: string, event: unknown) => { if (eid === id) sendOrDrop(ws, JSON.stringify(event), 'chat'); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
@@ -155,7 +156,7 @@ export function handleStructuredConnection(
   };
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
   const initialPending = manager.getPending(id);
-  if (initialPending && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: initialPending }));
+  if (initialPending) sendOrDrop(ws, JSON.stringify({ type: 'permission', pending: initialPending }), 'chat');
   manager.on('event', onEvent);
   manager.on('exit', onExit);
   manager.on('permission', onPermission);
