@@ -5,6 +5,7 @@ import type { PTYManager } from '../pty/manager.js';
 import type { SessionService } from '../sessions/service.js';
 import type { TerminalMonitor } from '../terminal-monitor.js';
 import { isPtyType } from '../db/terminals.js';
+import { sendOrDrop } from './backpressure.js';
 
 /** The largest terminal a resize message may ask for (the same bounds the declared size at connect time uses). */
 const MAX_TERMINAL_COLS = 1000;
@@ -156,7 +157,7 @@ export function handleTerminalConnection(
 
   // Forward PTY output to WebSocket
   const onData = (id: string, data: string) => {
-    if (id === targetId && ws.readyState === 1) ws.send(data);
+    if (id === targetId) sendOrDrop(ws, data, 'terminal');
   };
   ptyManager.on('data', onData);
 

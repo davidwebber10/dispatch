@@ -42,6 +42,11 @@ environment variable when the daemon starts; set it in the daemon's environment.
 | JSON request body on the routes that carry big payloads (agent hook events, thread messages with images, Chat messages, file save, icons) | 50 MiB | `DISPATCH_MAX_LARGE_JSON_BYTES` |
 | One WebSocket message from a client | 1 MiB (8 MiB on the terminal socket, where a paste is one message) | `DISPATCH_WS_MAX_PAYLOAD`, `DISPATCH_WS_TERMINAL_MAX_PAYLOAD` |
 | Live threads (a running process) in one project | 60 (0 = no cap) | `DISPATCH_MAX_LIVE_THREADS` |
+| Stored push subscriptions (one per phone or browser) | 50 (0 = no cap) | `DISPATCH_MAX_PUSH_SUBSCRIPTIONS` |
+| Live watches over all threads (one thread may hold 20) | 500 (0 = no cap) | `DISPATCH_MAX_WATCHES` |
+| One line of an agent run's output held in memory | 32 MiB (0 = no cap) | `DISPATCH_MAX_STREAM_LINE_BYTES` |
+| Unread data on a WebSocket client before the daemon drops it (the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES` |
+| Uncaught errors in one minute before the daemon exits to be restarted (below this it logs and stays up) | 10 (0 = never exit) | `DISPATCH_MAX_UNCAUGHT_PER_MINUTE` |
 | Shortest gap between runs of a recurring schedule | 1 minute (0 = no minimum) | `DISPATCH_MIN_SCHEDULE_MINUTES` |
 | Folders outside a project that a link inside it may lead to | none | `DISPATCH_FILE_ROOTS` (a `:`-separated list; `/` allows any) |
 
@@ -61,6 +66,17 @@ folder in `DISPATCH_FILE_ROOTS`.
 A phone or browser can subscribe to notifications only through the push service of its browser
 maker: Apple, Google (FCM), Mozilla or Microsoft (WNS). Dispatch refuses any other address, so
 it cannot be made to send your thread and project names to a server you do not know.
+
+Settings > Access lists every device that receives notifications: its browser and system, the
+push service host, when it was added and when Dispatch last sent it an alert. Revoke stops
+alerts to that one device. The list never shows the full push address. Only the owner can list
+or revoke (a thread key gets 403).
+
+## If the daemon hits an error nothing caught
+
+Dispatch logs the error with its stack and keeps running. An exit would end every live agent
+thread. If more than 10 such errors happen in one minute, it exits so launchd (macOS) restarts a
+clean daemon. The WSL scheduled task does not restart a daemon, so on WSL start it again by hand.
 
 ## Who made an integration or a schedule
 

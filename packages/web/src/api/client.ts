@@ -41,6 +41,16 @@ export interface DeviceList {
   legacyOpen: boolean;
 }
 
+export interface PushSubscriptionInfo {
+  deviceId: string;
+  /** Browser and system, from the user agent when it subscribed. */
+  label: string;
+  /** The push service host only (for example web.push.apple.com), never the full address. */
+  host: string;
+  createdAt: string;
+  lastSentAt: string | null;
+}
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -379,6 +389,9 @@ export const api = {
   // Push notifications
   getPushKey: () => req<{ publicKey: string }>('/api/push/key'),
   pushSubscribe: (deviceId: string, subscription: unknown) => req<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: body({ deviceId, subscription }) }),
+  // Stored push subscriptions (Settings → Access). Owner only.
+  getPushSubscriptions: () => req<{ subscriptions: PushSubscriptionInfo[] }>('/api/push/subscriptions'),
+  revokePushSubscription: (deviceId: string) => req<{ ok: true }>(`/api/push/subscriptions/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }),
   pushUnsubscribe: (deviceId: string) => req<{ ok: true }>('/api/push/unsubscribe', { method: 'POST', body: body({ deviceId }) }),
   pushPresence: (deviceId: string, foreground: boolean, activeTerminalId: string | null = null) =>
     req<{ ok: true }>('/api/push/presence', { method: 'POST', body: body({ deviceId, foreground, activeTerminalId }) }),

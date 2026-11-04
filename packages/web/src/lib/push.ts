@@ -62,6 +62,8 @@ export function canReceiveAlerts(): boolean {
 
 /** One place for enrollment-failure copy (shared by Settings and the bell toggles). */
 export function pushErrorMessage(code: string): string {
+  // The daemon's own "too many stored subscriptions" text says what to do; show it as it is.
+  if (/push subscriptions/.test(code)) return code;
   return code === 'ios-install' ? 'On iPhone/iPad, add Dispatch to your Home Screen first, then enable.'
     : code === 'unsupported' ? 'Push notifications aren\'t supported in this browser.'
     : code === 'denied' ? 'Notification permission was denied.'

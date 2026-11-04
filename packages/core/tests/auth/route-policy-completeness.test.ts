@@ -139,6 +139,12 @@ describe('route policy completeness', () => {
     expect(routes.find((r) => r.id === 'GET /api/access/no-credential-stats')?.kind).toBe('owner');
   });
 
+  test('the push subscription routes (list, revoke, subscribe) are owner only', () => {
+    for (const id of ['GET /api/push/subscriptions', 'DELETE /api/push/subscriptions/:deviceId', 'POST /api/push/subscribe']) {
+      expect(routes.find((r) => r.id === id)?.kind, id).toBe('owner');
+    }
+  });
+
   test('the device routes are owner only', () => {
     for (const id of ['GET /api/access/devices', 'PATCH /api/access/devices/:id', 'DELETE /api/access/devices/:id', 'POST /api/access/devices/end-legacy', 'GET /api/access/addresses', 'POST /api/access/pair-code']) {
       expect(routes.find((r) => r.id === id)?.kind, id).toBe('owner');
@@ -163,6 +169,12 @@ describe('default deny in the full app', () => {
     expect((await request(app).delete('/api/access/devices/abc').set(auth)).status).toBe(403);
     expect((await request(app).get('/api/access/devices')).status).toBe(404);
     expect((await request(app).get('/api/access/addresses').set(auth)).status).toBe(403);
+    // An integration can be created by a thread key, but changed or removed only by the owner.
+    expect((await request(app).patch('/api/integrations/abc').set(auth).send({ enabled: false })).status).toBe(403);
+    expect((await request(app).delete('/api/integrations/abc').set(auth)).status).toBe(403);
+    // Push subscriptions: a key can neither list nor revoke them.
+    expect((await request(app).get('/api/push/subscriptions').set(auth)).status).toBe(403);
+    expect((await request(app).delete('/api/push/subscriptions/abc').set(auth)).status).toBe(403);
     expect((await request(app).get('/api/whoami').set(auth)).body).toEqual({ kind: 'chat', startedBy: 'user' });
     expect((await request(app).get('/api/servers')).status).toBe(200);
   });

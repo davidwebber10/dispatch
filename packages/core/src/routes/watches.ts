@@ -6,6 +6,7 @@ import * as terminalsDb from '../db/terminals.js';
 import * as watchesDb from '../db/watches.js';
 import type { WatchRow } from '../db/watches.js';
 import { MAX_LIVE_WATCHES_PER_WATCHER } from '../overseer/guards.js';
+import { maxWatchesTotal } from '../caps.js';
 
 const VALID_CRITERIA: ReadonlySet<WatchRow['criteria']> = new Set(['idle', 'needs_input', 'error', 'any']);
 
@@ -52,6 +53,12 @@ export function createWatchesRouter(db: Database.Database, catchUp?: (watchId: s
 
     if (watchesDb.countByWatcher(db, watcherTerminalId) >= MAX_LIVE_WATCHES_PER_WATCHER) {
       res.status(429).json({ error: `watcher already has ${MAX_LIVE_WATCHES_PER_WATCHER} live watches (max) — remove one before adding another` });
+      return;
+    }
+
+    const totalCap = maxWatchesTotal();
+    if (totalCap > 0 && watchesDb.countLive(db) >= totalCap) {
+      res.status(429).json({ error: `Dispatch already holds ${totalCap} live watches (the maximum over all threads) — remove one first, or raise DISPATCH_MAX_WATCHES` });
       return;
     }
 

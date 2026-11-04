@@ -7,6 +7,8 @@
 // trailing CR (PTYs translate \n -> \r\n), and silently skips any line that is not
 // valid JSON or is an event type we don't care about. Unknown event shapes never throw.
 
+import { maxStreamLineBytes } from '../caps.js';
+
 export type AgentProviderName = 'claude-code' | 'codex';
 
 export interface TodoItem {
@@ -61,26 +63,47 @@ export interface RunStep {
 
 export class RunStreamParser {
   private buf = '';
+  /** True while the rest of an over-long line is being thrown away, up to its newline. */
+  private skipping = false;
 
   constructor(private readonly provider: AgentProviderName, private readonly onFrame?: (frame: unknown) => void) {}
 
   /** Feed a chunk of stdout; returns any RunEvents completed by this chunk. */
   feed(chunk: string): RunEvent[] {
+    const cap = maxStreamLineBytes();
+    if (this.skipping) {
+      const nl0 = chunk.indexOf('\n');
+      if (nl0 === -1) return [];
+      this.skipping = false;
+      chunk = chunk.slice(nl0 + 1);
+    }
     this.buf += chunk;
     const out: RunEvent[] = [];
     let nl: number;
     while ((nl = this.buf.indexOf('\n')) !== -1) {
       const line = this.buf.slice(0, nl);
       this.buf = this.buf.slice(nl + 1);
+      if (cap > 0 && line.length > cap) { this.logDropped(line.length, cap); continue; }
       out.push(...this.parseLine(line));
     }
+    // No newline yet: a line that already passed the cap will not get shorter. Drop it and skip to its newline.
+    if (cap > 0 && this.buf.length > cap) {
+      this.logDropped(this.buf.length, cap);
+      this.buf = '';
+      this.skipping = true;
+    }
     return out;
+  }
+
+  private logDropped(length: number, cap: number): void {
+    console.error(`[run-stream] dropped an agent output line of ${length} characters (limit ${cap}); raise DISPATCH_MAX_STREAM_LINE_BYTES if this was a real event`);
   }
 
   /** Parse any trailing buffered line (call once the stream ends). */
   flush(): RunEvent[] {
     const line = this.buf;
     this.buf = '';
+    this.skipping = false;
     return this.parseLine(line);
   }
 

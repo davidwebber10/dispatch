@@ -2,6 +2,7 @@
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
+import { sendOrDrop } from './backpressure.js';
 
 /**
  * True iff at least one ring event would fold into a VISIBLE conversation item in the
@@ -132,25 +133,25 @@ export function handleStructuredConnection(
   if (settled && !manager.getPending(id) && replayLeavesBusy(events) && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'result', subtype: 'backfill', is_error: false }));
   }
-  const onEvent = (eid: string, event: unknown) => { if (eid === id && ws.readyState === 1) ws.send(JSON.stringify(event)); };
+  const onEvent = (eid: string, event: unknown) => { if (eid === id) sendOrDrop(ws, JSON.stringify(event), 'chat'); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
   // 'exit' so the existing result handler clears `busy` and shows the error.
   // `detail` is the CLI's stderr tail, when it wrote one: often the only place it says why (#76).
   const onExit = (eid: string, code: number, detail?: string) => {
-    if (eid === id && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }));
+    if (eid === id) {
+      sendOrDrop(ws, JSON.stringify({ type: 'result', is_error: true, subtype: 'process_exit', result: `Process exited (${code})${detail ? `: ${detail}` : ''}` }), 'chat');
     }
   };
   // Forward escalations (the membrane) so a structured chat view can render the
   // pending gated tool / question inline too, not just the Overseer Needs zone.
   const onPermission = (eid: string, pending: unknown) => {
-    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending }));
+    if (eid === id) sendOrDrop(ws, JSON.stringify({ type: 'permission', pending }), 'chat');
   };
   // A pending that went away (answered, cancelled, stale at a turn end) clears every viewer's
   // card. A separate manager event, because a `permission` emit means a NEW request to status.
   const onCleared = (eid: string) => {
-    if (eid === id && ws.readyState === 1) ws.send(JSON.stringify({ type: 'permission', pending: null }));
+    if (eid === id) sendOrDrop(ws, JSON.stringify({ type: 'permission', pending: null }), 'chat');
   };
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
   const initialPending = manager.getPending(id);

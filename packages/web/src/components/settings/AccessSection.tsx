@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
 import { DevicesList } from './DevicesList';
+import { PushSubscriptionsList } from './PushSubscriptionsList';
 import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider } from './ui';
 
 /**
@@ -208,6 +209,8 @@ export function AccessSection() {
       </div>
       <Divider />
       <DevicesList />
+      <Divider />
+      <PushSubscriptionsList />
       <Divider />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={sectionLabel}>THE ACCESS TOKEN</span>
