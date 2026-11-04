@@ -119,7 +119,7 @@ describe('coordinator PTY-bypass guard (B2)', () => {
 });
 
 // N2 (independent review of PR #47): the guard lived only in spawnTerminal, but the revive path —
-// ensureStructuredAlive, called on ws connect / notifyCoordinatorOfAgent / sendStructuredMessage /
+// ensureStructuredAlive, called on ws connect / notifyStarterOfAgent / sendStructuredMessage /
 // ensureCoordinator — calls spawnStructured DIRECTLY. A coordinator row on a non-capable harness
 // (reachable via PATCH /terminals/:id, which replaces config wholesale, or a queued create whose
 // start was refused) must not revive ungoverned through that door either.

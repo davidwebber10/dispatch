@@ -207,7 +207,7 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
 
 // ---- Agency system notice (centered, muted) ---------------------------------
 // The coordinator conversation receives injected LIFECYCLE notices about its own agents
-// (posted by service.notifyCoordinatorOfAgent → they land as USER-role stream items, so
+// (posted by service.notifyStarterOfAgent → they land as USER-role stream items, so
 // without this they'd render as a right-aligned "You" bubble, as if the human typed the raw
 // coordinator-facing blob — agentId + "call answer_agent(…) / re-spawn with new guidance …
 // Do not silently ignore this" instructions and all).

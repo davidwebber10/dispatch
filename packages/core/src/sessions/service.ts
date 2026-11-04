@@ -22,6 +22,7 @@ import { LedgerService } from '../overseer/ledger-service.js';
 import { untrustedBlock } from '../security/untrusted-text.js';
 import { formatOwnerDecisionsNotice, parseOwnerDecisionsBlock, type BlockParse } from '../overseer/owner-decisions.js';
 import { formatInterimNotice, nextInterimConfig } from './interim-recap.js';
+import { resolveReportTarget } from './report-target.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
 import type { Session, CreateSessionInput } from '../types.js';
@@ -1320,26 +1321,24 @@ export class SessionService {
   }
 
   /**
-   * The membrane's "up" channel. Inject a directive into the coordinator that supervises
-   * `agentTerminalId`, if any: an agent never bothers the human directly — its questions and
-   * lifecycle events surface to its project's coordinator (Dispatch), which decides what to do
-   * (answer, ask the human itself, re-plan). Returns true when a live coordinator received the
-   * note; false when the thread isn't a typed agent, is a scheduled role run, or the project has
-   * no coordinator.
+   * The membrane's "up" channel. Send a worker's notice to the thread that started it
+   * (`config.spawnedBy`; see sessions/report-target.ts). A worker the overseer started (or an old
+   * row with no starter) reports to the project's overseer, which is revived if a restart killed
+   * it. A worker any other thread started reports to that thread, the way a watch wakes its
+   * watcher, but a starter that is stopped, archived or gone is NOT revived: the notice is
+   * dropped and logged, and never falls back to the overseer. A thread Chat started (at any
+   * depth) reports to Chat, and a scheduled role run reports to its own log. Returns true when
+   * the notice reached a live recipient; false otherwise (the caller then surfaces a question to
+   * the human).
    */
-  private notifyCoordinatorOfAgent(agentTerminalId: string, note: string, opts: { kind: NoticeKind; justStarted?: string[] }): boolean {
+  private notifyStarterOfAgent(agentTerminalId: string, note: string, opts: { kind: NoticeKind; justStarted?: string[] }): boolean {
     const agent = terminalsDb.getById(this.db, agentTerminalId);
     if (!agent) return false;
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
-    if (cfg.role !== 'agent') return false; // only agents escalate UP; coordinators/plain → human
-    // A scheduled role run is a role: 'agent' thread in its project's session, but no coordinator
-    // supervises it (roles design §3: "No agent supervises an agent"): it reports to its own log
-    // and the digest, and its questions go to the human. Without this, every role run would wake
-    // (and revive) the coordinator with an invitation to spawn a follow-up.
-    if (typeof cfg.roleRun === 'string' && cfg.roleRun) return false;
-    // A thread Chat started reports to Chat (Endless Chat stage 2), never to the project's Control Plane.
-    if (cfg.origin === 'endless') return false;
+    const target = resolveReportTarget(this.db, cfg);
+    if (target.to === 'none' || target.to === 'chat') return false;
+    if (target.to === 'starter') return this.deliverToStarter(agentTerminalId, target.starterId, note);
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
@@ -1368,6 +1367,35 @@ export class SessionService {
     } catch { return false; }
     if (batch) this.updateInterimTimer(coordinator.id, opts.kind, isBusy(batch));
     return true;
+  }
+
+  /**
+   * Deliver a worker's notice to the non-overseer thread that started it. Never revives: a starter
+   * that is archived, gone, or not running gets nothing, and the notice is logged and dropped (the
+   * overseer is not a fallback). A Pretty starter gets a structured message; a CLI starter gets
+   * the text typed in and submitted, as a watch wake does.
+   */
+  private deliverToStarter(workerId: string, starterId: string, note: string): boolean {
+    const drop = (why: string): false => {
+      console.warn(`report routing: notice from ${workerId} dropped, its starter ${starterId} ${why}`);
+      return false;
+    };
+    const starter = terminalsDb.getById(this.db, starterId);
+    if (!starter) return drop('no longer exists');
+    if (starter.archived_at) return drop('is archived');
+    if (starter.type === 'shell') return drop('is a shell tab');
+    try {
+      if (this.isStructuredTerminal(starter)) {
+        if (!this.structuredManagerForTerminal(starterId)?.isAlive(starterId)) return drop('is not running');
+        this.sendStructuredMessage(starterId, note);
+      } else {
+        if (!this.ptyManager.isAlive(starterId)) return drop('is not running');
+        this.ptyManager.write(starterId, ptyMessagePayload(note));
+      }
+      return true;
+    } catch (err) {
+      return drop(`could not be reached (${err instanceof Error ? err.message : String(err)})`);
+    }
   }
 
   /** Arm or clear the overseer's interim recap timer after a notice (see sessions/interim-recap.ts). */
@@ -1423,8 +1451,9 @@ export class SessionService {
    * Membrane routing for an agent's pending AskUserQuestion: forward it to the project's
    * coordinator instead of the human. Returns true when a coordinator was notified (the caller
    * should keep the agent "working", not mark it needs_input); false to fall back to surfacing
-   * the question to the human (the pending isn't a question, the thread isn't an agent, or the
-   * project has no coordinator). Plain gated tools are never routed up — only questions.
+   * the question to the human (the pending isn't a question, the thread isn't an agent, the
+   * project has no coordinator, or another thread started the worker: that starter is told, but
+   * the human still sees the question). Plain gated tools are never routed up — only questions.
    */
   routeAgentQuestionToCoordinator(agentTerminalId: string, pending: { toolName?: string; questions?: any[] }): boolean {
     if (!pending?.questions?.length) return false; // only AskUserQuestion escalates up; plain tools → human
@@ -1437,7 +1466,10 @@ export class SessionService {
     // chat and the agent asks again, a late answer_agent must not land on the new question.
     const requestId = this.getPendingPermission(agentTerminalId)?.requestId;
     const note = this.formatAgentQuestion(agentTerminalId, agent.label || 'agent', mission, pending.questions, requestId);
-    return this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'question' });
+    const delivered = this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'question' });
+    // Only the overseer takes a question off the human. A starter that is a plain thread gets the
+    // question too, but the worker stays in needs_input so the human can still see and answer it.
+    return delivered && resolveReportTarget(this.db, cfg).to === 'overseer';
   }
 
   /**
@@ -1457,7 +1489,7 @@ export class SessionService {
       `[agentId ${agentTerminalId}] while it was working. They likely want a change of direction or noticed ` +
       `something off. Check in with the user about why and adjust: re-spawn with new guidance, redirect the ` +
       `work, or stand down. Do not silently ignore this.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'stopped' });
+    this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'stopped' });
   }
 
   /** Summarize a user-sent payload for a coordinator notice: a string's first line
@@ -1491,7 +1523,7 @@ export class SessionService {
       `[agentId ${agentTerminalId}] a message directly, not through you: "${summary}". This may change what you ` +
       `asked it to do. Read how it responds with read_agent and adjust — don't assume it's still following your ` +
       `original instructions.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'direct-message' });
+    this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'direct-message' });
   }
 
   /**
@@ -1512,7 +1544,7 @@ export class SessionService {
         ? 'dismissed it without answering. The agent will continue on its own judgment'
         : 'asked it to explain the options first. The agent is explaining and will ask again';
       // The card can be closed from the agent's chat or from a Control Plane Needs card, so say neither.
-      this.notifyCoordinatorOfAgent(agentTerminalId,
+      this.notifyStarterOfAgent(agentTerminalId,
         `💬 The user closed the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
         `[agentId ${agentTerminalId}] asked: they ${what}. Do not call answer_agent for that question. ` +
         `Read how it responds with read_agent and adjust.`, { kind: 'question-answered' });
@@ -1522,7 +1554,7 @@ export class SessionService {
       `💬 The user answered the question your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] asked, directly in the agent's chat: ${summary}. The agent has the answer and ` +
       `is working again. Do not call answer_agent for that question. Read how it responds with read_agent and adjust.`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'question-answered' });
+    this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'question-answered' });
   }
 
   /** The agent's most recent assistant text, pulled live from the structured event ring
@@ -1628,9 +1660,8 @@ export class SessionService {
     const summary = this.lastAssistantText(agentTerminalId);
     // Decision cards, Unit 3: the agent's owner-decisions block becomes proposed ledger items. A
     // scheduled role run reports to its own log, never to an overseer, so it is never read.
-    const isRoleRun = typeof cfg.roleRun === 'string' && !!cfg.roleRun;
-    // A Chat thread's report goes to Chat whole; no overseer triages proposed items for it.
-    const decisions = isRoleRun || cfg.origin === 'endless' ? [] : this.captureOwnerDecisions(agent, mission);
+    // Only a worker the overseer started: the block of any other worker stays in its report to its starter.
+    const decisions = resolveReportTarget(this.db, cfg).to === 'overseer' ? this.captureOwnerDecisions(agent, mission) : [];
     const note =
       `✅ Your agent "${agent.label || 'agent'}"${mission ? ` (mission "${mission}")` : ''} ` +
       `[agentId ${agentTerminalId}] just finished a turn.\n` +
@@ -1639,7 +1670,7 @@ export class SessionService {
       `ingest the result, hand it to another agent, or spawn a follow-up. Keep this ` +
       `brief unless it needs action; the user's own messages are always your top priority.` +
       (decisions.length ? `\n\n${decisions.join('\n')}` : '');
-    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'finished', justStarted: started });
+    this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'finished', justStarted: started });
   }
 
   private ledgerService?: LedgerService;
@@ -1714,7 +1745,7 @@ export class SessionService {
       `${untrustedBlock(`agent "${agent.label || 'agent'}" ${agentTerminalId}`, ask)}\n\n` +
       `It cannot proceed until you reply. Read the full context with read_agent({ agentId: "${agentTerminalId}" }), ` +
       `then answer via message_agent({ agentId: "${agentTerminalId}", text: "..." }).`;
-    this.notifyCoordinatorOfAgent(agentTerminalId, note, { kind: 'blocked' });
+    this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'blocked' });
   }
 
   /**

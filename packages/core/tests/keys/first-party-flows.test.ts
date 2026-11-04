@@ -347,6 +347,21 @@ describe('every first-party tool passes with its key', () => {
       const body = { type: 'claude-code', label: 'w', config: { transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'm', spawnDepth: 4, spawnedBy: 'deep' } };
       code(await request(app).post('/api/sessions/A/terminals').set(as('deep')).send(body), 403, 'depth_exceeded');
     });
+    it('a child of a Chat thread carries the Chat origin down, so it reports to Chat', async () => {
+      const body = { type: 'claude-code', label: 'kid of chat', config: { transport: 'structured', agentType: 'researcher', mission: 'm' } };
+      const res = await request(app).post('/api/sessions/A/terminals').set(as('eA')).send(body);
+      expect(res.status).toBe(201);
+      const cfg = terminalsDb.rowToTerminal(terminalsDb.getById(db, res.body.id)!).config;
+      expect(cfg).toMatchObject({ origin: 'endless', spawnedBy: 'eA', spawnDepth: 2, role: 'agent' });
+    });
+    it('a child of a plain worker has no Chat origin', async () => {
+      const body = { type: 'claude-code', label: 'kid of worker', config: { transport: 'structured', agentType: 'researcher', mission: 'm' } };
+      const res = await request(app).post('/api/sessions/A/terminals').set(as('wA')).send(body);
+      expect(res.status).toBe(201);
+      const cfg = terminalsDb.rowToTerminal(terminalsDb.getById(db, res.body.id)!).config;
+      expect(cfg.origin).toBeUndefined();
+      expect(cfg.spawnedBy).toBe('wA');
+    });
     it('an answer to a held tool call is refused', async () => {
       mgr.pending.set('kid', { requestId: 'r9', toolName: 'Bash', input: { command: 'ls' } });
       const res = await request(app).post('/api/terminals/kid/permission').set(as('wA')).send({ decision: 'allow', requestId: 'r9' });
