@@ -4,6 +4,7 @@ import { policyRouter } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
+import { GIT_NO_FSMONITOR } from '../docs/git.js';
 
 export interface GitChangedFile { path: string; status: string }
 
@@ -73,7 +74,7 @@ export function createGitRouter(db: Database.Database): Router {
         // relative like every other record, even when workingDir is a subdirectory.
         execFile(
           'git',
-          ['-C', session.workingDir, 'status', '--porcelain', '-z', '-uall'],
+          [...GIT_NO_FSMONITOR, '-C', session.workingDir, 'status', '--porcelain', '-z', '-uall'],
           { timeout: 5000, maxBuffer: 4 * 1024 * 1024 },
           (err, stdout) => {
             if (err) return res.json({ branch, files: [] });

@@ -1,7 +1,7 @@
 /**
  * Read-only git helpers for the doc resolver (chat thread visibility spec, 12.5).
  *
- * - Every call is `git --no-optional-locks -C dir ...` through `execFileSync` or `execFile`: no
+ * - Every call is `git -c core.fsmonitor=false --no-optional-locks -C dir ...` through `execFileSync` or `execFile`: no
  *   shell, a 5 s timeout, stderr dropped. `--no-optional-locks` keeps a background `git status` or `diff` from
  *   taking the index lock, so an agent's own `git commit` in the same worktree never fails on it.
  *   The `...Async` twins use `execFile` (no shell either, the same timeout and output cap) so the
@@ -20,8 +20,14 @@ const GIT_MAX_BUFFER = 8 * 1024 * 1024;
 /** The newest this many unmerged branches are searched (the docs list and the resolver). */
 export const DOCS_BRANCHES = 20;
 
-/** The full argument list for `git`: no optional lock, then the folder, then `args`. */
-export function gitArgs(dir: string, args: string[]): string[] { return ['--no-optional-locks', '-C', dir, ...args]; }
+/**
+ * A repository's own `.git/config` can set `core.fsmonitor` to a command, and git runs it on status, diff and
+ * ls-files. The daemon reads project folders it does not own the config of, so every call turns it off.
+ */
+export const GIT_NO_FSMONITOR = ['-c', 'core.fsmonitor=false'];
+
+/** The full argument list for `git`: no fsmonitor command, no optional lock, then the folder, then `args`. */
+export function gitArgs(dir: string, args: string[]): string[] { return [...GIT_NO_FSMONITOR, '--no-optional-locks', '-C', dir, ...args]; }
 
 /** Stdout as bytes, or null on any error (not a repo, a bad ref, a timeout). */
 export function gitBuffer(dir: string, args: string[]): Buffer | null {

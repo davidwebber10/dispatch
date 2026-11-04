@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, Copy, DownloadSimple, X } from '@phosphor-icons/react';
 import { clipboardImageSupported, copyImageToClipboard, loadImageBlob } from '../lib/clipboard';
 import { isLocalImageSrc, remoteImageHost } from '../lib/remoteImage';
+import { isSafeDownloadUrl } from '../lib/safeUrl';
 
 /**
  * ChatImage — the shared, DUMB image renderer for BOTH chat surfaces: the agent
@@ -50,6 +51,8 @@ async function downloadImage(src: string, alt: string | undefined) {
     URL.revokeObjectURL(url);
   } catch {
     // Best-effort fallback (e.g. fetch blocked) — still works for same-origin/data: URIs.
+    // Never for a javascript: or other script address: that would run on the app's origin.
+    if (!isSafeDownloadUrl(src)) return;
     const a = document.createElement('a');
     a.href = src;
     a.download = '';

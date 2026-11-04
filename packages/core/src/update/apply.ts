@@ -55,6 +55,16 @@ export function latestReleaseTag(lsRemote: string): string | null {
 }
 
 /**
+ * A step's failure as the client may see it. A git failure's own text is "Command failed: git -C <folder> ..."
+ * plus git's stderr, which name the install folder, the home folder and the remote. The text goes to the
+ * daemon log; the client gets the step and a pointer to the log.
+ */
+function stepFailed(what: string, err: any): string {
+  console.error(`[update] ${what}:`, err?.message ?? err);
+  return `${what}. The detail is in the Dispatch daemon log.`;
+}
+
+/**
  * Confirms it's safe to run `bin/dispatch update` (which fast-forwards to the newest release tag):
  * a clean working tree and a checkout that can fast-forward to that tag. Injectable
  * `gitExec` lets tests simulate dirty trees / diverged branches without touching real git.
@@ -70,7 +80,7 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
   try {
     status = git(['status', '--porcelain']);
   } catch (err: any) {
-    return { ok: false, reason: `git status failed: ${err.message}` };
+    return { ok: false, reason: stepFailed('git status failed', err) };
   }
   if (status.trim().length > 0 && !opts?.force) {
     const { entries, overflow } = parsePorcelain(status);
@@ -88,14 +98,14 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
     // No --force: a tag that moved upstream is refused, not silently followed.
     git(['fetch', 'origin', '--tags']);
   } catch (err: any) {
-    return { ok: false, reason: `git fetch failed: ${err.message}` };
+    return { ok: false, reason: stepFailed('git fetch failed', err) };
   }
 
   let tag: string | null;
   try {
     tag = latestReleaseTag(git(['ls-remote', '--tags', '--refs', 'origin']));
   } catch (err: any) {
-    return { ok: false, reason: `could not list release tags: ${err.message}` };
+    return { ok: false, reason: stepFailed('could not list release tags', err) };
   }
   if (!tag) {
     return { ok: false, reason: 'No release tag (vX.Y.Z) was found on origin, so there is nothing to update to.' };
@@ -107,7 +117,7 @@ export function preflightUpdate(repoDir: string, gitExec?: GitExec, opts?: { for
     localHead = git(['rev-parse', 'HEAD']).trim();
     tagHead = git(['rev-parse', `${tag}^{commit}`]).trim();
   } catch (err: any) {
-    return { ok: false, reason: `could not resolve ${tag}: ${err.message}` };
+    return { ok: false, reason: stepFailed(`could not resolve ${tag}`, err) };
   }
 
   // Either way round is fine: HEAD behind the tag fast-forwards to it, and HEAD already containing
@@ -128,11 +138,13 @@ export function applyUpdate(repoDir: string, onFailure?: (reason: string) => voi
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, 'update.log');
   const log = fs.openSync(logPath, 'a', 0o600);
-  const fail = (reason: string) => {
-    fs.appendFileSync(logPath, `[dispatch] ${reason}\n`);
+  // `detail` (a system error's text names folders) goes to the log file only; the status file and the
+  // broadcast, which every connected client sees, get the plain reason.
+  const fail = (reason: string, detail?: string) => {
+    fs.appendFileSync(logPath, `[dispatch] ${reason}${detail ? ` ${detail}` : ''}\n`);
     // The update window reads the status file; keep a step error the updater already wrote.
     markUpdateFailed(platform.dataDir(), reason);
-    onFailure?.(`${reason} See ${logPath} for details.`);
+    onFailure?.(`${reason} See update.log in the Dispatch logs folder for details.`);
   };
   try {
     fs.writeSync(log, `\n[dispatch] Update started ${new Date().toISOString()}\n`);
@@ -141,7 +153,7 @@ export function applyUpdate(repoDir: string, onFailure?: (reason: string) => voi
       detached: true,
       stdio: ['ignore', log, log],
     });
-    child.once('error', error => fail(`Could not start updater: ${error.message}`));
+    child.once('error', error => fail('Could not start updater.', error.message));
     child.once('exit', (code, signal) => {
       if (code !== 0) fail(`Update failed (${signal ?? `exit ${code}`}).`);
     });

@@ -132,3 +132,26 @@ it('a click approves that address only: a changed src asks again', () => {
   expect(container.querySelector('img')).toBeNull();
   expect(screen.getByRole('button', { name: /Load image from b\.example\.com/ })).toBeInTheDocument();
 });
+
+it('the download fallback never navigates to a javascript: URL', async () => {
+  // fetch fails (as it does for a script URL), so the component falls back to an anchor with the src.
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('blocked'); }));
+  const hrefs: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { hrefs.push(this.getAttribute('href') ?? ''); });
+  render(<ChatImage src="javascript:alert(1)" alt="x" />);
+  fireEvent.click(screen.getByRole('button', { name: /Load image/ })); // a non-local address waits for this click
+  fireEvent.click(screen.getByAltText('x'));
+  fireEvent.click(screen.getByLabelText('Download image'));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(hrefs.filter((h) => /^\s*javascript:/i.test(h))).toEqual([]);
+});
+
+it('the download fallback still works for a data: image that cannot be decoded', async () => {
+  const hrefs: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { hrefs.push(this.getAttribute('href') ?? ''); });
+  const src = 'data:image/png;base64,@@@@'; // not valid base64: the blob path throws, the anchor path runs
+  render(<ChatImage src={src} alt="y" />);
+  fireEvent.click(screen.getByAltText('y'));
+  fireEvent.click(screen.getByLabelText('Download image'));
+  await waitFor(() => expect(hrefs).toContain(src));
+});

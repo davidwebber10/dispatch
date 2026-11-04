@@ -1,6 +1,7 @@
 import type { UsageLimitService } from '../limits/service.js';
 import { PromptInput } from './prompt-input.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
+import { clientMessage } from '../http/client-message.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -700,7 +701,7 @@ export class SessionService {
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
       this.removeThreadMcpConfig(terminalId);
-      throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
+      throw new Error(`Failed to start ${displayLabel}: ${clientMessage(err)}`);
     }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -818,7 +819,7 @@ export class SessionService {
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
       this.removeThreadMcpConfig(terminalId);
-      throw new Error(`Failed to start ${displayLabel}: ${err.message}`);
+      throw new Error(`Failed to start ${displayLabel}: ${clientMessage(err)}`);
     }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
@@ -863,7 +864,7 @@ export class SessionService {
     } catch (err: any) {
       terminalsDb.remove(this.db, terminalId);
       this.removeThreadMcpConfig(terminalId);
-      throw new Error(`Failed to branch: ${err.message}`);
+      throw new Error(`Failed to branch: ${clientMessage(err)}`);
     }
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
@@ -2918,7 +2919,7 @@ export class SessionService {
       this.lastSpawnError.delete(terminalId);
       return manager.isAlive(terminalId);
     } catch (err) {
-      const cause = redactKeys(err instanceof Error ? err.message : String(err));
+      const cause = redactKeys(err instanceof Error ? clientMessage(err) : String(err)); // a system error's text names folders
       this.lastSpawnError.set(terminalId, cause);
       console.error(`[structured] thread ${terminalId} could not start: ${cause}`);
       return false;

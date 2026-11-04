@@ -21,6 +21,16 @@ Dispatch has one owner per daemon. It has no user accounts and no per-person per
   of other threads. Keep that in mind before you point a thread at content you do not trust.
 - Every program on the computer that runs Dispatch can call the daemon. Agents are such programs.
 
+## What stopping a thread ends
+
+Stopping, archiving or relaunching a thread ends the agent program that Dispatch started. Dispatch asks it to
+quit, and if it is still running 3 seconds later, Dispatch kills it. A shell tab ends the same way.
+
+Dispatch does not hunt down the programs that the agent started. A server that an agent started on
+purpose to keep running (with `nohup`, `setsid` or by detaching it from the shell) can keep running after
+the thread is gone. This is accepted. Such a program looks the same as one you want to keep, such as a dev
+server. To end one, find it with `lsof -i :PORT` or `ps`, and stop it yourself.
+
 ## Limits you can change
 
 These limits stop a runaway agent or a client bug. Normal use does not reach them. Each one reads an
@@ -69,6 +79,9 @@ its key.
   the image host, and loads the image only after you click it.
 - The app sends a Content Security Policy: scripts only from the app, no framing by other
   sites, and connections only to the app itself.
+- The Browser tab opens only `http`, `https` and `about:blank` addresses. A stored `javascript:`,
+  `data:` or `vbscript:` address is replaced with a blank page. The image download fallback never
+  follows a `javascript:` address. These checks work in every browser, with or without the policy above.
 
 ## Updates
 
