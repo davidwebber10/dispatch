@@ -4,7 +4,7 @@ import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { Creator } from '../auth/creator.js';
 import type { McpServerSpec } from '../mcp/injection.js';
-import { findSecretRefs, refsIn, literalSecretProblem } from './secret-refs.js';
+import { findSecretRefs, refsIn, literalSecretProblem, looksSecretName } from './secret-refs.js';
 import { launcherArgs, MCP_REMOTE_PACKAGE, type LaunchSpec } from './launcher.js';
 
 /** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
@@ -54,27 +54,48 @@ function maskUrl(url: string | null): string | null {
   } catch { return HIDDEN_VALUE; }
 }
 
-/** A flag that takes a value which can be a secret (or a header, which usually holds one). */
-const SECRET_FLAG = /^--?(h|header|headers|e|env|auth|authorization|bearer|cookie|token|secret|password|passwd|pass|credential|credentials|api[-_]?key|key|access[-_]?key|client[-_]?secret)([-_].*)?$/i;
-/** A command-line word that is plainly not a secret: a plain flag, a package name or version, a path, a number, a ${NAME} ref. */
-const SAFE_WORD = /^[@A-Za-z0-9_][A-Za-z0-9_@.\/+~-]{0,63}$/;
+/**
+ * A flag (or NAME=value name) whose value is a credential: a name that ends in token, secret, password, key,
+ * credential and the like (`--access-token`, `--client-secret`, `--api-key`), plus auth, authorization, bearer,
+ * cookie, passphrase, header(s) and env, and the one-letter curl/mysql/docker options -H, -e, -p, -P, -u.
+ */
+function isCredentialName(raw: string): boolean {
+  const n = raw.replace(/^-+/, '');
+  if (!n) return false;
+  if (looksSecretName(n)) return true;
+  if (/(^|[-_])(auth|authorization|bearer|cookie|passphrase|pass|pwd|header|headers|env|credentials?)$/i.test(n)) return true;
+  return /^[HepPuU]$/.test(n);
+}
+/** A command-line word that is plainly not a secret: a package name or version, a path, a number. */
+const SAFE_WORD = /^[@A-Za-z0-9_/.~][A-Za-z0-9_@.\/+~-]{0,63}$/;
 const LOOKS_LIKE_TOKEN = /^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_-]{20,}$/;
+const isSafeWord = (w: string) => SAFE_WORD.test(w) && !LOOKS_LIKE_TOKEN.test(w);
 
 /**
- * One command-line argument for a key caller, given the argument before it. A word is shown only when it is
- * plainly safe. The value of a secret-bearing flag (`--header X`, `--token X`, `--api-key=X`), a long token-like
- * word, and free text are hidden; a URL goes through the URL mask; a `${NAME}` reference shows as written.
+ * One command-line argument for a key caller, given the argument before it. This is a mask, not a proof: a
+ * word is shown only when it looks plainly safe, and the usual credential shapes are hidden. Hidden: the value
+ * after a credential flag (`--header X`, `--access-token X`, even when the value starts with `-`), the value of
+ * `--flag=value` and `NAME=value` for a credential name, an attached short option (`-pS3cr3t`, `-HAuth:x`),
+ * a long token-like word, and free text. A URL goes through the URL mask. A `${NAME}` reference shows as written.
+ * ACCEPTED LIMITS (documented, not claimed closed): a short secret in a position nothing marks (a bare
+ * positional word under 20 characters that looks like a package name), unpadded base64 under 20 characters,
+ * a host or port, a query parameter NAME, an unknown flag whose value is a secret, and the command path.
  */
 function maskArg(arg: string, prev: string | undefined): string {
   const a = String(arg ?? '');
   if (refsIn(a).length) return maskValue(a);
-  const eq = /^(--?[A-Za-z][\w-]*)=/.exec(a);
-  if (eq) return `${eq[1]}=${HIDDEN_PART}`;
-  if (/^-/.test(a)) return /^--?[A-Za-z][\w-]*$/.test(a) ? a : HIDDEN_VALUE; // a plain flag shows; a negative number or odd text does not leak either
-  if (prev !== undefined && /^-/.test(prev) && SECRET_FLAG.test(prev)) return HIDDEN_VALUE;
+  // The value of a credential flag, checked first: the value may itself look like a flag.
+  if (prev !== undefined && /^-/.test(prev) && !/=/.test(prev) && isCredentialName(prev)) return HIDDEN_VALUE;
+  const attached = /^(-[HepPuU])(.+)$/.exec(a); // -pS3cr3t, -HAuthorization:Bearer-x, -eKEY=v, -uuser:pw
+  if (attached) return `${attached[1]}${HIDDEN_PART}`;
+  const kv = /^(--?[A-Za-z][\w-]*|[A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+  if (kv) {
+    const shown = isCredentialName(kv[1]) || !isSafeWord(kv[2]) ? HIDDEN_PART : kv[2];
+    return `${kv[1]}=${shown}`;
+  }
+  if (/^-/.test(a)) return /^--?[A-Za-z][\w-]*$/.test(a) ? a : HIDDEN_VALUE; // a plain flag shows
   if (/^https?:\/\//i.test(a)) return maskUrl(a) ?? HIDDEN_VALUE;
-  if (SAFE_WORD.test(a) && !LOOKS_LIKE_TOKEN.test(a)) return a;
-  return HIDDEN_VALUE;
+  return isSafeWord(a) ? a : HIDDEN_VALUE;
 }
 
 function maskCommand(command: string | null): string | null {

@@ -80,6 +80,12 @@ describe('GET /api/integrations for a thread key', () => {
     expect(integrationsDb.list(db).find((i) => i.id === 'i3')!.args[4]).toBe('Authorization:Bearer sk-live-ARGSECRET');
   });
 
+  it('the owner response equals the stored rows exactly, args and urls included', async () => {
+    integrationsDb.create(db, { id: 'i4', name: 'argy', type: 'stdio', command: 'npx', args: ['--access-token', 'ghp_zzzzzzzzzzzzzzzzzzzz1234', '-pS3cr3t'], url: null });
+    const open = await request(app).get('/api/integrations');
+    expect(open.body.integrations).toEqual(JSON.parse(JSON.stringify(integrationsDb.list(db))));
+  });
+
   it('a credential-free local caller still sees every value (reads stay open)', async () => {
     const res = await request(app).get('/api/integrations');
     expect(res.status).toBe(200);
@@ -150,6 +156,25 @@ describe('maskIntegration: args, command and url paths (Codex P1 findings)', () 
     const text = JSON.stringify(out.args);
     for (const secret of ['sk-live-SECRET', 'abc123def456', 'tok_987654321', 'Bearer']) expect(text).not.toContain(secret);
     expect(out.args).toEqual(['-y', 'mcp-remote@0.14.3', 'https://host.example/mcp', '--header', HIDDEN_VALUE, '--api-key=••••', '--token', HIDDEN_VALUE]);
+  });
+  it('hides the value after a credential flag alias, a flag-shaped value included, and keeps unrelated flags', () => {
+    const out = stdio(['--access-token', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789', '--client-secret', 'shh', '--auth', 'x:y', '--password', '-abc123', '--secret', '--verbose', '--port', '8080', '--passphrase', 'correct horse']);
+    const text = JSON.stringify(out.args);
+    for (const secret of ['ghp_', 'shh', 'x:y', 'abc123', 'correct horse']) expect(text).not.toContain(secret);
+    // a flag with no value ('--secret' then '--verbose') hides the next word too: safe, and rare
+    expect(out.args).toEqual(['--access-token', HIDDEN_VALUE, '--client-secret', HIDDEN_VALUE, '--auth', HIDDEN_VALUE, '--password', HIDDEN_VALUE, '--secret', HIDDEN_VALUE, '--port', '8080', '--passphrase', HIDDEN_VALUE]);
+  });
+  it('hides an attached short credential option (-pS3cr3t, -Hfoo:bar, -eKEY=val, -uuser:pw)', () => {
+    const out = stdio(['-pS3cr3t', '-HAuthorization:Bearer-abc', '-eAPI_KEY=zzz999', '-uadmin:hunter2', '-y']);
+    expect(JSON.stringify(out.args)).not.toMatch(/S3cr3t|abc|zzz999|hunter2|admin/);
+    expect(out.args).toEqual(['-p••••', '-H••••', '-e••••', '-u••••', '-y']);
+  });
+  it('--flag=value and NAME=value: hides a credential, shows a plain value', () => {
+    const out = stdio(['--access-token=ghp_1234567890abcdefghijklmnop', '--port=8080', '--mode=fast', 'API_KEY=sk-abcdef0123456789', 'REGION=us-east-1']);
+    expect(out.args).toEqual(['--access-token=••••', '--port=8080', '--mode=fast', 'API_KEY=••••', 'REGION=us-east-1']);
+  });
+  it('does not hide the value of every unknown flag', () => {
+    expect(stdio(['--root', '/srv/data', '--log-level', 'debug', '--transport', 'stdio']).args).toEqual(['--root', '/srv/data', '--log-level', 'debug', '--transport', 'stdio']);
   });
   it('hides a bare secret-looking argument and any other free text, and keeps flags, packages and ${NAME} refs', () => {
     const out = stdio(['@modelcontextprotocol/server-filesystem', '--port', '8080', 'sk-proj-AbC123xyz789QwErTy456', 'some free text', '${MY_TOKEN}']);
