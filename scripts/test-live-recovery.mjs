@@ -9,8 +9,18 @@ const require = createRequire(new URL('../packages/core/package.json', import.me
 const WebSocket = require('ws');
 const prior = JSON.parse(fs.readFileSync(path.join(os.homedir(), 'dispatch-parity-results.json'), 'utf8'));
 const base = process.env.DISPATCH_TEST_URL ?? 'http://localhost:3456';
+
+// SEC-05: a call with no credential is refused on some actions (start a thread, type into a terminal). Send the owner token
+// from the data dir, as `dispatch api` does. DISPATCH_TEST_TOKEN_FILE overrides the path. The token goes in a header, never argv.
+function ownerHeaders() {
+  try {
+    const file = process.env.DISPATCH_TEST_TOKEN_FILE ?? path.join(os.homedir(), '.dispatch', 'access-token');
+    const token = fs.readFileSync(file, 'utf8').trim();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch { return {}; }
+}
 async function get(url) {
-  const res = await fetch(base + url, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(base + url, { headers: ownerHeaders(), signal: AbortSignal.timeout(15000) });
   assert.equal(res.status, 200, url); return res.json();
 }
 const root = `/api/sessions/${prior.projectId}`;
@@ -23,9 +33,9 @@ assert.ok(threads.some(t => t.status === 'queued' && t.type === 'codex'));
 assert.equal((await get(`/api/terminals/${prior.terminalId}`)).label, 'Verified terminal');
 // PTY scrollback is an in-memory ring on every platform; terminal metadata is durable.
 const scrollbackBytesAfterRestart = (await get(`/api/terminals/${prior.terminalId}/scrollback`)).totalBytes;
-const res = await fetch(base + `/api/terminals/${prior.terminalId}/relaunch`, { method: 'POST' });
+const res = await fetch(base + `/api/terminals/${prior.terminalId}/relaunch`, { method: 'POST', headers: ownerHeaders() });
 assert.equal(res.status, 200, await res.text());
-const ws = new WebSocket(base.replace(/^http/, 'ws') + `/api/terminals/${prior.terminalId}/ws?cols=100&rows=30`);
+const ws = new WebSocket(base.replace(/^http/, 'ws') + `/api/terminals/${prior.terminalId}/ws?cols=100&rows=30`, { headers: ownerHeaders() });
 let output = '';
 try {
   await new Promise((resolve, reject) => {

@@ -583,6 +583,19 @@ other projects' overseers (6.4.1).
 | Chat turn | Mint at spawn, revoke at exit. |
 | Scheduled run | Mint at spawn, revoke at exit or cancel. |
 
+### 6.5.1 Middle option (owner decision 2026-11-04): stage 1 plus a short refusal list
+
+Stage 2 (refuse every credential-free local call) was rejected as too strict: it would break `curl`,
+shell tabs, hooks, n8n and old threads. The owner chose a middle option. The access gate and every
+read stay as in stage 1. The daemon refuses a credential-free caller (`401 auth_required`) only on:
+a message or input as the user (thread message, terminal input, file reference, Chat send, Chat
+instructions, and input over the terminal WebSocket), answering a held tool call or setting autonomy,
+starting a thread (create a tab, branch), and changing, deleting or importing integrations.
+A credential-free call passes when it looks like the web page (an `Origin` header, or
+`Sec-Fetch-Site: same-origin`); the owner's cookie, token or box header always passes; a key is judged
+by its own rules as before. The check is a drift check: a program that forges the header, or reads the
+token file, still passes. Stage 2 and stage 3 remain the way to close that.
+
 ### 6.6 Stage 2: the gate stops trusting loopback
 
 Today the Phase 1 gate (`auth/access-gate.ts:116`) lets a loopback or WSL gateway

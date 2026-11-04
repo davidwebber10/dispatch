@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import type { IntegrationsService, AddIntegrationInput, IntegrationsExport } from '../integrations/service.js';
@@ -22,21 +22,21 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     }
   });
 
-  router.patch('/:id', (req, res) => {
+  router.patch('/:id', ownerOnlyStrict, (req, res) => {
     if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) required' });
     const updated = integrations.setEnabled(req.params.id, req.body.enabled);
     if (!updated) return res.status(404).json({ error: 'not found' });
     res.json(updated);
   });
 
-  router.delete('/:id', (req, res) => {
+  router.delete('/:id', ownerOnlyStrict, (req, res) => {
     try { res.json(integrations.remove(req.params.id)); }
     catch { res.status(500).json({ error: 'Could not remove the integration.' }); }
   });
 
   router.get('/export', (_req, res) => res.json(integrations.export()));
 
-  router.post('/import', (req, res) => {
+  router.post('/import', ownerOnlyStrict, (req, res) => {
     if (!Array.isArray(req.body?.integrations)) return res.status(400).json({ error: 'Invalid import document.' });
     try {
       res.json(integrations.import(req.body as IntegrationsExport, creatorOf(req)));

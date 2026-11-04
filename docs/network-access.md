@@ -135,10 +135,27 @@ Dispatch ends all keys, and the threads that come back get new ones.
 - **Owner-only actions.** A call with a thread key to an action that only you may do gets
   `403`. Examples are changing a thread's settings or role. Your browser, the `dispatch` CLI and
   your own scripts are not affected.
-- **Calls with no credential still work in this release.** From this computer they are allowed
-  as before, and Dispatch counts them. A later release will refuse them.
-- **See the counts** with `dispatch status`. A count that stays at zero means nothing relies on
-  the old behavior.
+- **Calls with no credential: most still work, five kinds do not.** From this computer a call with
+  no credential is allowed and counted, except for these actions, which answer `401 auth_required`:
+  1. a message or terminal input as you (a thread message, raw terminal input, a file reference
+     typed into a terminal, a Chat message, the Chat instructions), including typing over a terminal
+     WebSocket (a credential-free script may still attach and watch, but its input is dropped);
+  2. answering a thread's held tool call, or setting a thread to autonomous (which releases them);
+  3. starting a thread (creating a tab, branching a thread);
+  4. changing, deleting or importing integrations.
+
+  These pass when the call comes from the Dispatch web page (a browser always sends an `Origin`
+  header), carries your access token, or carries a thread's own key that the action allows.
+  The browser, the `dispatch` CLI, `dispatch api` and the agent tools need no change. A script or
+  `curl` must send `Authorization: Bearer TOKEN` (`dispatch access` shows the token; keep it out of
+  the command line, for example with `curl -H @FILE`). Reads, hooks, the browser shim, adding an
+  integration and renaming a tab still work with no credential.
+- **This is a drift check, not a lock.** A program that sets an `Origin` header by hand passes it,
+  and any program running as you can read the token file (see below). The check stops the
+  ordinary case: a plain `curl` that an injected agent runs, or an old script. It does not stop a
+  program that works around it on purpose.
+- **See the counts** with `dispatch status`. The refusals also log one rate-limited line,
+  `[keys] refused keyless caller METHOD ROUTE`.
 - **Scripts.** `dispatch api METHOD PATH` makes one call to the daemon on this computer with the
   right credential. The token never appears in the command line. To send a body, use
   `--body FILE` or `--body -` for standard input. For example:
