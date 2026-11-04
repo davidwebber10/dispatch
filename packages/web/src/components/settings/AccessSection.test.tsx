@@ -6,7 +6,7 @@ import { api, ApiError } from '../../api/client';
 vi.mock('qrcode', () => ({ default: { toDataURL: vi.fn() } }));
 vi.mock('../../api/client', async (orig) => {
   const real = await orig<typeof import('../../api/client')>();
-  return { ...real, api: { ...real.api, makePairCode: vi.fn() } };
+  return { ...real, api: { ...real.api, makePairCode: vi.fn(), getDevices: vi.fn().mockResolvedValue({ devices: [], currentDeviceId: null, legacyOpen: false }) } };
 });
 
 beforeEach(async () => {
@@ -58,5 +58,13 @@ describe('<AccessSection>', () => {
   it('never shows the token: the section only points at the CLI for it', () => {
     render(<AccessSection />);
     expect(screen.getByText(/never shown here/)).toBeInTheDocument();
+  });
+});
+
+describe('<AccessSection> devices', () => {
+  it('shows the signed-in devices list under the code', async () => {
+    render(<AccessSection />);
+    expect(await screen.findByText('SIGNED-IN DEVICES')).toBeInTheDocument();
+    expect(await screen.findByText(/No device has signed in yet/)).toBeInTheDocument();
   });
 });

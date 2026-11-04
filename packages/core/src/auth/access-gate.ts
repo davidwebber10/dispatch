@@ -2,7 +2,8 @@ import express from 'express';
 import type { IncomingMessage } from 'node:http';
 import { isLoopbackAddress } from '../files/reveal.js';
 import { tokenMatches } from './box-token.js';
-import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, parseCookies } from './access-token.js';
+import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, deviceCookieValue, parseCookies } from './access-token.js';
+import { describePeer, type DeviceStore, type Peer } from './devices.js';
 import { signInPage, signInPageCsp } from './signin-page.js';
 import type { PairCodes } from './pair-code.js';
 import {
@@ -31,6 +32,9 @@ export interface GateRequest {
   proxied: boolean;
   /** The single X-Forwarded-For entry (undefined for a chain or an empty header). `tailscale serve` sets it to the tailnet client. */
   forwardedFor: string | undefined;
+  /** The nearest proxy's view of the client (last X-Forwarded-For entry), for the device list only. */
+  nearestForwardedFor?: string;
+  userAgent?: string;
   isApi: boolean;
   isUpgrade: boolean;
 }
@@ -40,34 +44,54 @@ export interface GateDeps {
   isGatewayPeer(addr: string | undefined): boolean;
   config: AccessConfig;
   tailscale: TailscaleAccess;
+  /** Signed-in devices. Absent on a hosted box and in tests that predate the device list: the cookie is then the old shared one. */
+  devices?: DeviceStore;
 }
 
+/** What a request proved. A cookie names a device, or (deviceId null) is the shared cookie from before the device list. */
+export type Credential = { kind: 'token' } | { kind: 'cookie'; deviceId: string | null };
+
 export type Decision =
-  | { ok: true; via: 'credential' | 'local' | 'tailscale' }
+  | { ok: true; via: 'credential' | 'local' | 'tailscale'; credential?: Credential }
   | { ok: false; status: 401 | 403; error: 'auth_required' | 'origin_refused' };
 
 const DENY_AUTH: Decision = { ok: false, status: 401, error: 'auth_required' };
 const DENY_ORIGIN: Decision = { ok: false, status: 403, error: 'origin_refused' };
 
+/**
+ * Which owner credential a request carries. With a device store, a cookie counts when it names a
+ * live device, or when it is the shared cookie from before the device list and the owner has not
+ * ended those. Without one, only the shared cookie exists.
+ */
+export function resolveCredential(
+  authorization: string | undefined, cookieHeader: string | undefined, token: string, devices?: DeviceStore,
+): Credential | null {
+  if (authorization && /^Bearer /i.test(authorization) && tokenMatches(token, authorization.slice(7).trim())) return { kind: 'token' };
+  const cookie = parseCookies(cookieHeader)[COOKIE_NAME];
+  if (!cookie) return null;
+  if (devices) {
+    const d = devices.verify(cookie);
+    if (d) return { kind: 'cookie', deviceId: d.id };
+    return tokenMatches(cookieValue(token), cookie) && devices.legacyAllowed() ? { kind: 'cookie', deviceId: null } : null;
+  }
+  return tokenMatches(cookieValue(token), cookie) ? { kind: 'cookie', deviceId: null } : null;
+}
+
 /** Which owner credential a request carries: the Bearer access token, the cookie, or neither. */
 export function ownerCredentialKind(
-  authorization: string | undefined, cookieHeader: string | undefined, token: string,
+  authorization: string | undefined, cookieHeader: string | undefined, token: string, devices?: DeviceStore,
 ): 'token' | 'cookie' | null {
-  if (authorization && /^Bearer /i.test(authorization) && tokenMatches(token, authorization.slice(7).trim())) return 'token';
-  const cookie = parseCookies(cookieHeader)[COOKIE_NAME];
-  return cookie && tokenMatches(cookieValue(token), cookie) ? 'cookie' : null;
+  return resolveCredential(authorization, cookieHeader, token, devices)?.kind ?? null;
 }
 
 export function hasOwnerCredential(authorization: string | undefined, cookie: string | undefined, token: string): boolean {
   return ownerCredentialKind(authorization, cookie, token) !== null;
 }
 
-function hasCredential(req: GateRequest, token: string): boolean {
-  return hasOwnerCredential(req.authorization, req.cookie, token);
-}
-
 /** Symbol under which the gate middleware records how it admitted a request (read by the principal middleware). */
 export const GATE_VIA = Symbol('dispatch.gateVia');
+/** The device id the gate settled on for this request (a device cookie, or a device it just made from the old cookie). */
+export const GATE_DEVICE = Symbol('dispatch.gateDevice');
 
 async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps): Promise<boolean> {
   // A loopback name does not prove the caller is local when a proxy relayed the request: some
@@ -125,7 +149,8 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
   const peer = req.remoteAddress;
 
   let via: 'credential' | 'local' | 'tailscale' | null = null;
-  if (hasCredential(req, deps.getToken())) {
+  const credential = resolveCredential(req.authorization, req.cookie, deps.getToken(), deps.devices);
+  if (credential) {
     via = 'credential';
   } else if (host && (isLoopbackAddress(peer) || deps.isGatewayPeer(peer)) && (await isKnownLocalHost(req, host, deps))) {
     via = 'local';
@@ -134,7 +159,7 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
     if (me && (me.names.includes(host) || me.ips.includes(host))) via = 'tailscale';
   }
   if (!via) return DENY_AUTH;
-  return originAllowed(req, deps.config) ? { ok: true, via } : DENY_ORIGIN;
+  return originAllowed(req, deps.config) ? { ok: true, via, ...(via === 'credential' ? { credential: credential! } : {}) } : DENY_ORIGIN;
 }
 
 type Headers = IncomingMessage['headers'];
@@ -173,6 +198,8 @@ function factsFrom(
     // Presence, not truthiness: an empty relay header still says a proxy relayed the request.
     proxied: ['x-forwarded-for', 'forwarded', 'cf-connecting-ip', 'x-real-ip'].some((n) => h[n] !== undefined),
     forwardedFor: soleForwarded(h),
+    nearestForwardedFor: lastForwarded(h),
+    userAgent: one(h['user-agent']),
     isApi,
     isUpgrade,
   };
@@ -204,12 +231,46 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
   const cookiePath = opts.basePath || '/';
   const failures = new Map<string, { n: number; start: number }>();
 
+  const peerOf = (f: GateRequest): Peer => describePeer(f.remoteAddress, f.nearestForwardedFor, opts.isGatewayPeer);
+
+  /** The Set-Cookie line for a device cookie: same attributes the old cookie had. */
+  const deviceCookieHeader = (req: { socket: unknown; headers: Headers }, id: string): string => {
+    const peer = (req.socket as { remoteAddress?: string }).remoteAddress;
+    const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
+    const https = (req.socket as { encrypted?: boolean }).encrypted === true ||
+      (viaProxy && one(req.headers['x-forwarded-proto']) === 'https');
+    return `${COOKIE_NAME}=${deviceCookieValue(opts.getToken(), id)}; Path=${cookiePath}; Max-Age=${COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${https ? '; Secure' : ''}`;
+  };
+
+  /**
+   * After a request passed with a cookie: record the device as seen, or, for the shared cookie
+   * from before the device list, make a device for this browser and hand it its own cookie
+   * (HTTP only; a WebSocket upgrade cannot set one). Returns the device id, or null.
+   */
+  const noteDevice = (f: GateRequest, d: Extract<Decision, { ok: true }>, setCookie: ((id: string) => void) | null): string | null => {
+    const devices = opts.devices;
+    const c = d.credential;
+    if (!devices || !c || c.kind !== 'cookie') return null;
+    if (c.deviceId) { devices.touch(c.deviceId, peerOf(f), f.userAgent); return c.deviceId; }
+    if (!setCookie) return null;
+    const adopted = devices.adoptLegacy(f.userAgent, peerOf(f));
+    setCookie(adopted.id);
+    return adopted.id;
+  };
+
   const middleware: express.RequestHandler = (req, res, next) => {
     // Express routes case-insensitively, so /API/x reaches the same handlers as /api/x.
     const lower = req.path.toLowerCase();
     const isApi = lower === '/api' || lower.startsWith('/api/');
-    decide(factsFrom(req, isApi, false), opts).then((d) => {
-      if (d.ok) { (req as unknown as Record<symbol, unknown>)[GATE_VIA] = d.via; return next(); }
+    const facts = factsFrom(req, isApi, false);
+    decide(facts, opts).then((d) => {
+      if (d.ok) {
+        const tagged = req as unknown as Record<symbol, unknown>;
+        tagged[GATE_VIA] = d.via;
+        const deviceId = noteDevice(facts, d, (id) => res.append('Set-Cookie', deviceCookieHeader(req, id)));
+        if (deviceId) tagged[GATE_DEVICE] = deviceId;
+        return next();
+      }
       res.setHeader('Cache-Control', 'no-store');
       if (d.status === 401 && !isApi && (req.method === 'GET' || req.method === 'HEAD')) {
         res.setHeader('Content-Security-Policy', signInPageCsp(opts.basePath));
@@ -249,11 +310,19 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
       return void res.status(401).json({ error: typeof given.code === 'string' ? 'bad_code' : 'bad_token' });
     }
     failures.delete(bucket);
-    const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
-    const https = (req.socket as { encrypted?: boolean }).encrypted === true ||
-      (viaProxy && one(req.headers['x-forwarded-proto']) === 'https');
-    res.setHeader('Set-Cookie',
-      `${COOKIE_NAME}=${cookieValue(token)}; Path=${cookiePath}; Max-Age=${COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${https ? '; Secure' : ''}`);
+    if (opts.devices) {
+      // Each sign-in is a device. A browser that signs in again keeps the device it has.
+      const facts = factsFrom(req, true, false);
+      const held = opts.devices.verify(parseCookies(facts.cookie)[COOKIE_NAME]);
+      const id = held?.id ?? opts.devices.create({ userAgent: facts.userAgent, via: codeOk ? 'code' : 'token', peer: peerOf(facts) }).id;
+      res.setHeader('Set-Cookie', deviceCookieHeader(req, id));
+    } else {
+      const viaProxy = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
+      const https = (req.socket as { encrypted?: boolean }).encrypted === true ||
+        (viaProxy && one(req.headers['x-forwarded-proto']) === 'https');
+      res.setHeader('Set-Cookie',
+        `${COOKIE_NAME}=${cookieValue(token)}; Path=${cookiePath}; Max-Age=${COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${https ? '; Secure' : ''}`);
+    }
     res.json({ ok: true });
   };
 
@@ -268,7 +337,11 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
       }) as express.ErrorRequestHandler,
       login,
     ],
-    upgradeDecision: (req, strippedUrl) =>
-      decide(factsFrom(req, strippedUrl.toLowerCase().startsWith('/api/'), true), opts),
+    upgradeDecision: async (req, strippedUrl) => {
+      const facts = factsFrom(req, strippedUrl.toLowerCase().startsWith('/api/'), true);
+      const d = await decide(facts, opts);
+      if (d.ok) noteDevice(facts, d, null);
+      return d;
+    },
   };
 }

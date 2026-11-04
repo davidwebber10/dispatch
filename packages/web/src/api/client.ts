@@ -21,6 +21,26 @@ export interface ResumeAdvice {
 }
 
 /** A failed API call. `status` lets a caller tell "that is gone" (404) from a real failure. */
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  /** code or QR code, the access token, or 'earlier': signed in before the device list existed. */
+  signedInVia: 'code' | 'token' | 'earlier';
+  createdAt: number;
+  lastSeenAt: number;
+  lastAddress: string | null;
+  addressKind: 'direct' | 'local' | 'gateway' | 'forwarded' | null;
+  /** The browser asking is this device. */
+  current: boolean;
+}
+export interface DeviceList {
+  devices: DeviceInfo[];
+  /** Null when this browser is not a listed device (it is on the computer itself, or on the owner's Tailscale). */
+  currentDeviceId: string | null;
+  /** True until the owner ends sign-ins made before the device list existed. */
+  legacyOpen: boolean;
+}
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -331,6 +351,12 @@ export const api = {
   // A one-time sign-in code for another device (Settings → Access). 404 on a hosted box, where
   // there is no sign-in page to type it on.
   makePairCode: () => req<{ code: string; expiresAt: number }>('/api/access/pair-code', { method: 'POST' }),
+  // Signed-in devices (Settings → Access). 404 on a hosted box.
+  getDevices: () => req<DeviceList>('/api/access/devices'),
+  renameDevice: (id: string, name: string) =>
+    req<void>(`/api/access/devices/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ name }) }),
+  revokeDevice: (id: string) => req<void>(`/api/access/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  endLegacyDevices: () => req<void>('/api/access/devices/end-legacy', { method: 'POST' }),
   // One value, only on an explicit reveal or copy; the listing carries names only.
   getSecretValue: async (name: string) =>
     (await req<{ value: string }>(`/api/secrets/${encodeURIComponent(name)}/value`, { headers: { 'X-Dispatch-Reveal': '1' } })).value,

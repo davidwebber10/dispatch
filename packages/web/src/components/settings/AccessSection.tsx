@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
+import { DevicesList } from './DevicesList';
 import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider } from './ui';
 
 /**
@@ -130,13 +131,15 @@ export function AccessSection() {
         )}
       </div>
       <Divider />
+      <DevicesList />
+      <Divider />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={sectionLabel}>THE ACCESS TOKEN</span>
         <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
           The long-lived token stays on the computer that runs Dispatch. It is never shown here. In a terminal
           on that computer, run <span style={{ fontFamily: 'var(--font-mono)' }}>dispatch access</span> to print it, or
           <span style={{ fontFamily: 'var(--font-mono)' }}> dispatch access rotate</span> to make a new one and sign out
-          every device. The command refuses to run inside a Dispatch thread.
+          every device at once. To sign out one device, revoke it in the list above. The command refuses to run inside a Dispatch thread.
         </div>
         <div>
           <button type="button" style={ghostBtn} onClick={() => { setPair(null); setError(null); }} disabled={!live}>

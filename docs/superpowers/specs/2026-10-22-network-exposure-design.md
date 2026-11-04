@@ -646,6 +646,21 @@ page, and makes exposure visible. It needs its own implementation plan.
 
 ### 8.1 Paired devices
 
+**Status (2026-11-03): the device list and per-device revoke are built (branch
+`feat/device-list`, draft PR).** One-time codes and the QR code shipped in v3.7.0. The device
+table, the device cookie, the list, rename and revoke are in this build. Differences from the
+text below:
+
+- The cookie is `v2.<device id>.<MAC>`, where the MAC is keyed by the access token. It is not a
+  stored hashed session ID: with the MAC there is no secret in the database, and `dispatch access
+  rotate` still ends every cookie. The row carries the id, name, how the device signed in, first
+  seen, last seen and last address. Migration `014-devices`.
+- Upgrade: the shared Phase 1 cookie keeps working. The first request from each browser makes
+  a device row ("Signed in before the device list") and swaps the cookie. The list has a button
+  that turns the shared cookie off once the owner has seen the devices appear.
+- Still to build: the setup wizard QR (a pairing secret in its Mobile step), and the
+  "sign out every device" button in the page (the CLI does it today with `access rotate`).
+
 - A device session table in the existing SQLite database: random session ID
   (stored hashed), device name (from the user agent, editable), created, last seen,
   last address.
@@ -661,6 +676,10 @@ page, and makes exposure visible. It needs its own implementation plan.
 - Revoke per device, and "sign out every device" (rotates the token too).
 
 ### 8.2 Settings page: Network and devices
+
+**Status (2026-11-03): the "Paired devices list" item is built** as **Signed-in devices** inside
+Settings → Access. The other 8.2 items (who can connect, known hosts, Tailscale rule, exposure
+sentence) are not built.
 
 - **Who can connect:** "This computer only" (listen on loopback), "This computer
   and my devices" (all interfaces, gate on; the Phase 1 behaviour), with a plain

@@ -31,6 +31,7 @@ import {
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
+import { createDeviceStore } from './auth/devices.js';
 import { mountApiRoutes } from './server-routes.js';
 import { jsonErrorHandler } from './http/error-handler.js';
 import { createJsonBody } from './http/json-body.js';
@@ -490,6 +491,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the credential and the router is the only caller, so the gate stays out of the way there.
   // One-time sign-in codes (Settings → Access) that stand in for the token on the login route.
   const pairCodes = createPairCodes();
+  // Signed-in devices: one row per browser or phone that signed in. Not on a hosted box, where
+  // the router holds the box token and there is no sign-in page.
+  const devices = BOX_TOKEN ? undefined : createDeviceStore(db, { getToken: getAccessToken });
   const accessGate = BOX_TOKEN
     ? undefined
     : createAccessGate({
@@ -499,6 +503,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         tailscale: createTailscaleAccess(),
         basePath: BASE_PATH,
         pairCodes,
+        devices,
       });
   if (accessGate) {
     // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
@@ -506,7 +511,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     app.use(accessGate.middleware);
   }
   app.use(createPrincipalMiddleware({
-    registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
+    registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats, devices,
   }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
   // Create HTTP server
@@ -799,7 +804,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, refreshPtyEnv, endless,
+    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/', refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
@@ -832,6 +837,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // A socket that is not admitted gets an HTTP status line and is closed.
     void handleUpgrade(request, socket, head).catch(() => socket.destroy());
   });
+  // Open WebSockets by device id. A revoke destroys them: the cookie is checked only at connect.
+  const deviceSockets = new Map<string, Set<import('node:stream').Duplex>>();
+  devices?.onRevoke((id) => { for (const s of deviceSockets.get(id) ?? []) s.destroy(); deviceSockets.delete(id); });
   const handleUpgrade = async (request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
     // Node removes its own error listener before 'upgrade' fires, and ws adds one only inside
     // handleUpgrade. The gate below awaits (it may run the tailscale CLI), so without this a
@@ -860,6 +868,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       if (!d.ok) {
         socket.end(`HTTP/1.1 ${d.status} ${d.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;
+      }
+      // Remember which device owns this socket, so revoking the device closes it.
+      const deviceId = d.credential?.kind === 'cookie' ? d.credential.deviceId : null;
+      if (deviceId) {
+        let set = deviceSockets.get(deviceId);
+        if (!set) deviceSockets.set(deviceId, set = new Set());
+        set.add(socket);
+        socket.once('close', () => { set!.delete(socket); if (!set!.size) deviceSockets.delete(deviceId); });
       }
     }
     // No key opens a WebSocket (spec 6.4): the browser owns these sockets.

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Request, RequestHandler } from 'express';
-import { GATE_VIA, ownerCredentialKind } from './access-gate.js';
+import { GATE_DEVICE, GATE_VIA, resolveCredential } from './access-gate.js';
+import type { DeviceStore } from './devices.js';
 import { BOX_TOKEN_HEADER, tokenMatches } from './box-token.js';
 import { bearerKey, type KeyPrincipal, type KeyRegistry } from './principals.js';
 import type { KeyScope } from './key-scope.js';
@@ -16,7 +17,7 @@ export { bearerKey } from './principals.js';
  */
 export type Principal =
   | KeyPrincipal
-  | { kind: 'owner'; via: 'cookie' | 'token' | 'box' }
+  | { kind: 'owner'; via: 'cookie' | 'token' | 'box'; /** The signed-in device, when the cookie names one. */ deviceId?: string }
   | { kind: 'none'; via: 'local' | 'tailscale' | 'test' };
 
 const PRINCIPAL = Symbol('dispatch.principal');
@@ -67,6 +68,8 @@ export interface PrincipalOptions {
   scope: KeyScope;
   /** Current access token, or null. Absent in createApp. */
   getToken?: () => string | null;
+  /** Signed-in devices (daemon only). */
+  devices?: DeviceStore;
   boxToken?: string;
   stats?: NoCredentialStats;
   log?: (line: string) => void;
@@ -108,8 +111,12 @@ export function createPrincipalMiddleware(opts: PrincipalOptions): RequestHandle
     }
     const token = opts.getToken?.() ?? null;
     if (token) {
-      const kind = ownerCredentialKind(auth, headerOf(req, 'cookie'), token);
-      if (kind) return set({ kind: 'owner', via: kind });
+      const cred = resolveCredential(auth, headerOf(req, 'cookie'), token, opts.devices);
+      if (cred) {
+        // The gate may have just made a device for an old cookie; it records the id on the request.
+        const deviceId = cred.kind === 'cookie' ? (cred.deviceId ?? ((req as unknown as Tagged)[GATE_DEVICE] as string | undefined)) : undefined;
+        return set({ kind: 'owner', via: cred.kind, ...(deviceId ? { deviceId } : {}) });
+      }
     }
     const gateVia = (req as unknown as Tagged)[GATE_VIA];
     if (gateVia === 'local' || gateVia === 'tailscale') {
