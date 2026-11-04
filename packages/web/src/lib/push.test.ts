@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { api } from '../api/client';
 import { useSettings } from '../stores/settings';
 import { syncEnrollment, ensurePushEnrolled, enablePush, disablePush, currentEnrollmentGeneration } from './push';
@@ -143,7 +143,7 @@ describe('reconciliations run one at a time, each with its own list', () => {
     const hung = syncEnrollment([]);
     const later = syncEnrollment([{ deviceId: 'me' }]); // this device's row is present: nothing to do
     await vi.advanceTimersByTimeAsync(8100);
-    expect(await hung).toBe(true);
+    expect(await hung).toBe(false); // it did not finish, so nothing was switched off
     expect(await later).toBe(false); // it ran, and was not stuck behind the hung one
     vi.useRealTimers();
   });
@@ -179,6 +179,55 @@ describe('reconciliations run one at a time, each with its own list', () => {
     } finally {
       delete (navigator as any).serviceWorker;
     }
+  });
+
+});
+
+// These two use the REAL store action and mock only below it (the service worker and the daemon calls).
+describe('disable races (real setPushEnabled; service worker and api mocked)', () => {
+  const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const setWorker = (value: unknown) => Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value });
+  beforeEach(() => { useSettings.setState({ pushEnabled: true, setPushEnabled: realSetPushEnabled } as any); });
+  afterEach(() => { delete (navigator as any).serviceWorker; vi.useRealTimers(); });
+
+  it('an older un-enroll that finishes does not cancel the newer one (A waits in unsubscribe, B in getSubscription)', async () => {
+    const unsubA = deferred<boolean>();
+    const subB = deferred<{ unsubscribe: () => Promise<boolean> }>();
+    const unsubscribeB = vi.fn().mockResolvedValue(true);
+    let call = 0;
+    setWorker({ ready: Promise.resolve({ pushManager: { getSubscription: () => (++call === 1 ? Promise.resolve({ unsubscribe: () => unsubA.promise }) : subB.promise) } }) });
+    const g0 = currentEnrollmentGeneration();
+    const a = disablePush();
+    await vi.waitFor(() => expect(call).toBe(1)); // A is inside unsubscribe()
+    // B is a second un-enroll that takes over; it reaches getSubscription() and waits there.
+    const b = disablePush();
+    await vi.waitFor(() => expect(call).toBe(2));
+    unsubA.resolve(true); // A finishes its unsubscribe, sees that B is newer, and stops
+    expect(await a).toBe(false);
+    subB.resolve({ unsubscribe: unsubscribeB }); // B carries on
+    expect(await b).toBe(true); // A's end did not invalidate B
+    expect(unsubscribeB).toHaveBeenCalledTimes(1);
+    expect(api.pushUnsubscribe).toHaveBeenCalledWith('me'); // the server row is removed by B, once
+    expect(api.pushUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(currentEnrollmentGeneration()).toBeGreaterThan(g0);
+  });
+
+  it('the time limit cancels the stuck un-enroll: a later reconciliation that keeps the device enrolled is not undone when the service worker finally answers', async () => {
+    vi.useFakeTimers();
+    const ready = deferred<any>();
+    const unsubscribe = vi.fn().mockResolvedValue(true);
+    setWorker({ ready: ready.promise });
+    const a = syncEnrollment([]); // this device is missing from the list: it starts an un-enroll, which stalls on the service worker
+    const b = syncEnrollment([{ deviceId: 'me' }]); // queued behind it; this device IS present, so it leaves enrollment alone
+    await vi.advanceTimersByTimeAsync(8100); // the limit passes: A is cancelled and the queue moves on
+    expect(await a).toBe(false);
+    expect(await b).toBe(false);
+    expect(useSettings.getState().pushEnabled).toBe(true);
+    ready.resolve({ pushManager: { getSubscription: async () => ({ unsubscribe }) } }); // the service worker answers, very late
+    await vi.advanceTimersByTimeAsync(50);
+    expect(unsubscribe).not.toHaveBeenCalled();
+    expect(api.pushUnsubscribe).not.toHaveBeenCalled();
+    expect(useSettings.getState().pushEnabled).toBe(true); // the late un-enroll did nothing
   });
 });
 

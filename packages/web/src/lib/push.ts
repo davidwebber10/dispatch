@@ -35,15 +35,18 @@ async function ready(): Promise<ServiceWorkerRegistration> {
 }
 
 /**
- * Counts every enroll or un-enroll. A list read that started before one finished is stale: it must not undo it
- * (a slow "your row is gone" answer arriving after this device enrolled again would unsubscribe it).
+ * Counts changes of this device's enrollment. Each enroll or un-enroll takes a new number when it starts (`mine`)
+ * and is "current" only while the counter still equals it; it advances the counter once more when it ends, but only
+ * if it is still current. So a newer operation (or a timeout) makes an older one stop at its next step, and the older
+ * one never invalidates the newer. A list read that started before any of this is stale: a slow "your row is gone"
+ * answer arriving after this device enrolled again must not unsubscribe it.
  */
 let enrollmentGeneration = 0;
 export const currentEnrollmentGeneration = (): number => enrollmentGeneration;
 
 export async function enablePush(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
-  enrollmentGeneration++;
-  try { return await enablePushInner(); } finally { enrollmentGeneration++; }
+  const mine = ++enrollmentGeneration;
+  try { return await enablePushInner(); } finally { if (enrollmentGeneration === mine) enrollmentGeneration++; }
 }
 async function enablePushInner(): Promise<'ok' | 'denied' | 'unsupported' | 'ios-install'> {
   if (!pushSupported()) return 'unsupported';
@@ -58,12 +61,13 @@ async function enablePushInner(): Promise<'ok' | 'denied' | 'unsupported' | 'ios
   return 'ok';
 }
 /**
- * Turn this device's push off. Returns false when an enroll or another un-enroll started while it waited (so it
- * stopped before its next step and changed nothing more): a late disable must not undo a newer enrollment.
+ * Turn this device's push off. Returns false when something newer (an enroll, another un-enroll, a timeout)
+ * took over while it waited: it stops before its next step and changes nothing more, so a late disable cannot undo
+ * a newer enrollment.
  */
 export async function disablePush(): Promise<boolean> {
   const mine = ++enrollmentGeneration;
-  try { return await disablePushInner(mine); } finally { enrollmentGeneration++; }
+  try { return await disablePushInner(mine); } finally { if (enrollmentGeneration === mine) enrollmentGeneration++; }
 }
 async function disablePushInner(mine: number): Promise<boolean> {
   try {
@@ -134,13 +138,16 @@ async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: nu
   // An enroll or un-enroll finished (or is running) since this list was read: the answer is out of date.
   if (gen !== enrollmentGeneration) return false;
   // Bounded like the list read: a service worker that never becomes ready must not hold every later reconciliation.
+  // When the limit passes, the stuck un-enroll is cancelled (the counter moves on), so if it wakes up later it does nothing.
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
     await Promise.race([
       useSettings.getState().setPushEnabled(false),
-      new Promise<void>((resolve) => { timer = setTimeout(resolve, LIST_TIMEOUT_MS); }),
+      new Promise<void>((resolve) => { timer = setTimeout(() => { timedOut = true; enrollmentGeneration++; resolve(); }, LIST_TIMEOUT_MS); }),
     ]);
   } catch { /* the daemon side is already gone */ } finally { clearTimeout(timer); }
+  if (timedOut) return false; // it did not finish: nothing was switched off
   return true;
 }
 
