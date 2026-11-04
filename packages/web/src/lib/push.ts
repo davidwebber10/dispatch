@@ -70,11 +70,32 @@ export function pushErrorMessage(code: string): string {
     : 'Couldn\'t enable push notifications — please try again.';
 }
 
+/**
+ * The owner can revoke this device in Settings > Access > Notification devices, or the daemon can drop its row
+ * (a 410 from the push service). This browser would still think it is enrolled: its local switch stays on and
+ * `ensurePushEnrolled` returns early, so it never receives an alert again and never asks to. Compare this device's
+ * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
+ * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
+ */
+export async function syncEnrollment(known?: { deviceId: string }[]): Promise<boolean> {
+  const { useSettings } = await import('../stores/settings'); // dynamic: settings.ts imports this module
+  if (!useSettings.getState().pushEnabled) return false;
+  let list = known;
+  if (!list) {
+    try { list = (await api.getPushSubscriptions()).subscriptions; } catch { return false; }
+  }
+  if (list.some((s) => s.deviceId === deviceId())) return false;
+  try { await useSettings.getState().setPushEnabled(false); } catch { /* the daemon side is already gone */ }
+  return true;
+}
+
 /** Enroll this device (permission prompt + subscription) if it isn't already.
  *  Returns null on success, a user-facing message on failure. Must be called
  *  from a user gesture (the permission prompt requires it). */
 export async function ensurePushEnrolled(): Promise<string | null> {
   const { useSettings } = await import('../stores/settings'); // dynamic: settings.ts imports this module
+  // A device the owner revoked still has its switch on: check the daemon's list before trusting it.
+  if (useSettings.getState().pushEnabled) await syncEnrollment();
   if (useSettings.getState().pushEnabled) return null;
   try { await useSettings.getState().setPushEnabled(true); return null; }
   catch (e: any) { return pushErrorMessage(String(e?.message)); }

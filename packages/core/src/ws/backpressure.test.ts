@@ -26,9 +26,9 @@ describe('sendOrDrop', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('terminates a client that stays over the limit past the grace time, and logs it', () => {
+  it('terminates a client over the limit whose queue does not shrink, and logs it', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const ws = fake(50_000);
+    const ws = fake(3500);
     expect(sendOrDrop(ws, 'a', 'terminal')).toBe(true);
     sendOrDrop(ws, 'b', 'terminal');
     expect(ws.send).toHaveBeenCalledTimes(2); // still sending during the grace time
@@ -41,7 +41,7 @@ describe('sendOrDrop', () => {
   });
 
   it('keeps a client that drains during the grace time (one big send, then small ones)', () => {
-    const ws = fake(33 * 1024 * 1024);
+    const ws = fake(3500);
     sendOrDrop(ws, 'big', 'chat');
     sendOrDrop(ws, 'small', 'chat');
     ws.bufferedAmount = 0; // the socket drained
@@ -50,9 +50,9 @@ describe('sendOrDrop', () => {
   });
 
   it('leaves no close listener behind after repeated bursts that drain', () => {
-    const ws = fake(33 * 1024 * 1024);
+    const ws = fake(3500);
     for (let i = 0; i < 12; i++) {
-      ws.bufferedAmount = 33 * 1024 * 1024;
+      ws.bufferedAmount = 3500;
       sendOrDrop(ws, 'big', 'chat');
       ws.bufferedAmount = 0;
       vi.advanceTimersByTime(6000);
@@ -61,8 +61,42 @@ describe('sendOrDrop', () => {
     expect(ws.terminate).not.toHaveBeenCalled();
   });
 
+  it('keeps a slow client that is still reading: the queue shrinks at each check but stays over the limit', () => {
+    const ws = fake(3000); // limit 1000, ceiling 4000
+    sendOrDrop(ws, 'a', 'chat');
+    for (const left of [2500, 2000, 1500, 1100, 1050]) {
+      ws.bufferedAmount = left; // the client read some before this check
+      vi.advanceTimersByTime(5000);
+      expect(ws.terminate).not.toHaveBeenCalled();
+    }
+    ws.bufferedAmount = 900; // drained under the limit
+    vi.advanceTimersByTime(5000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(ws.listenerCount('close')).toBe(0);
+  });
+
+  it('drops a client that was reading and then stops (no shrink between two checks)', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ws = fake(3000);
+    sendOrDrop(ws, 'a', 'chat');
+    ws.bufferedAmount = 2500;
+    vi.advanceTimersByTime(5000);
+    expect(ws.terminate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(5000); // still 2500: no progress
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a client at once when its queue passes the hard ceiling (4 times the limit)', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ws = fake(4001);
+    sendOrDrop(ws, 'a', 'chat');
+    expect(ws.terminate).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('clears the timer when the socket closes', () => {
-    const ws = fake(50_000);
+    const ws = fake(3500);
     sendOrDrop(ws, 'a', 'events');
     ws.emit('close');
     expect(vi.getTimerCount()).toBe(0);

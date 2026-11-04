@@ -133,3 +133,29 @@ describe('the stored subscription cap (SEC-23)', () => {
     }
   });
 });
+
+describe('a browser that cleared its storage (new device id, same push address)', () => {
+  it('keeps one row and gets each alert once', async () => {
+    const sent: string[] = [];
+    const svc = new PushService(db, { vapidDir: dir, send: async (sub) => { sent.push(sub.deviceId); } });
+    const a = express();
+    a.use(express.json());
+    a.use('/api/push', createPushRouter(svc));
+    await request(a).post('/api/push/subscribe').send({ ...sub('https://web.push.apple.com/same'), deviceId: 'before' });
+    await request(a).post('/api/push/subscribe').send({ ...sub('https://web.push.apple.com/same'), deviceId: 'after' });
+    expect(pushDb.list(db).map((s) => s.deviceId)).toEqual(['after']);
+    await svc.notifyThread({ terminalId: 't', sessionId: 's', title: 'x', body: 'y' });
+    expect(sent).toEqual(['after']);
+  });
+
+  it('is allowed at the cap, because it replaces a row and adds none', async () => {
+    process.env.DISPATCH_MAX_PUSH_SUBSCRIPTIONS = '1';
+    const a = app();
+    await request(a).post('/api/push/subscribe').send({ ...sub('https://web.push.apple.com/same'), deviceId: 'before' });
+    const again = await request(a).post('/api/push/subscribe').send({ ...sub('https://web.push.apple.com/same'), deviceId: 'after' });
+    expect(again.status).toBe(200);
+    const other = await request(a).post('/api/push/subscribe').send({ ...sub('https://web.push.apple.com/different'), deviceId: 'third' });
+    expect(other.status).toBe(429);
+  });
+});
+

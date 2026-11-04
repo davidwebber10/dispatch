@@ -93,4 +93,14 @@ describe('<PushSubscriptionsList>', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('iPhone · Safari')).toBeTruthy();
   });
+
+  it('turns the switch off on this device when the list no longer has its row (revoked from another device)', async () => {
+    localStorage.setItem('dispatch:deviceId', 'me');
+    const setPushEnabled = vi.fn().mockResolvedValue(undefined);
+    useSettings.setState({ pushEnabled: true, setPushEnabled } as any);
+    vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [sub({ deviceId: 'other' })] });
+    render(<PushSubscriptionsList now={() => NOW} />);
+    await screen.findAllByTestId('push-row');
+    await waitFor(() => expect(setPushEnabled).toHaveBeenCalledWith(false));
+  });
 });

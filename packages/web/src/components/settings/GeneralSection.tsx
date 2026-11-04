@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useConnection } from '../../stores/connection';
 import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit } from '../../stores/settings';
 import { useServers, currentLabel } from '../../stores/servers';
@@ -71,6 +71,9 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
   const [pushMsg, setPushMsg] = useState('');
   const servers = useServers((s) => s.servers);
   const openSetup = useSetup((s) => s.open);
+
+  // Opening Settings: if the owner revoked this device, its switch is still on. Check and turn it off.
+  useEffect(() => { void import('../../lib/push').then((m) => m.syncEnrollment()).catch(() => {}); }, []);
 
   async function togglePush() {
     setPushMsg('');

@@ -61,7 +61,8 @@ export class PushService {
   /** Store or refresh a device's subscription. A NEW device past the cap throws PushLimitError; a known device always updates. */
   subscribe(deviceId: string, subscription: { endpoint: string; keys: { p256dh: string; auth: string } }, label?: string | null): void {
     const limit = maxPushSubscriptions();
-    if (limit > 0 && !pushDb.has(this.db, deviceId) && pushDb.count(this.db) >= limit) throw new PushLimitError(limit);
+    // A new device id that arrives with an address already stored replaces that row, so it adds nothing to the count.
+    if (limit > 0 && !pushDb.has(this.db, deviceId) && !pushDb.hasEndpoint(this.db, subscription.endpoint) && pushDb.count(this.db) >= limit) throw new PushLimitError(limit);
     pushDb.upsert(this.db, { deviceId, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth, label });
   }
   unsubscribe(deviceId: string): void { pushDb.remove(this.db, deviceId); this.presence.delete(deviceId); }

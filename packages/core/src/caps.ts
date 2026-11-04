@@ -73,3 +73,10 @@ export const maxUncaughtPerMinute = (): number => fromEnv('DISPATCH_MAX_UNCAUGHT
  * this long has stopped reading. DISPATCH_WS_BUFFER_GRACE_MS (default 10000).
  */
 export const wsBufferGraceMs = (): number => fromEnv('DISPATCH_WS_BUFFER_GRACE_MS', 10_000);
+
+/**
+ * Error reports the last-resort handlers write per minute for one kind (unhandled rejections; uncaught exceptions
+ * when the exit limit is 0). More are counted and summarised in one line, so a loop that throws on every tick cannot
+ * fill the log. DISPATCH_MAX_CRASH_LOGS_PER_MINUTE (default 20; 0 = log every one).
+ */
+export const maxCrashLogsPerMinute = (): number => fromEnv('DISPATCH_MAX_CRASH_LOGS_PER_MINUTE', 20);

@@ -46,4 +46,13 @@ describe('push db', () => {
     initSchema(old);
     expect(pushDb.listInfo(old)).toEqual([{ deviceId: 'old', endpoint: 'https://e/old', label: null, createdAt: '2026-01-01T00:00:00.000Z', lastSentAt: null }]);
   });
+
+  it('replaces the older row when a new device id arrives with the same push address', () => {
+    pushDb.upsert(d, { deviceId: 'old-id', endpoint: 'https://e/same', p256dh: 'k', auth: 'a', label: 'Mac · Chrome' });
+    pushDb.upsert(d, { deviceId: 'other', endpoint: 'https://e/other', p256dh: 'k', auth: 'a' });
+    pushDb.upsert(d, { deviceId: 'new-id', endpoint: 'https://e/same', p256dh: 'k2', auth: 'a2', label: 'Mac · Chrome' });
+    expect(pushDb.list(d).map((s) => s.deviceId).sort()).toEqual(['new-id', 'other']);
+    expect(pushDb.count(d)).toBe(2);
+  });
 });
+
