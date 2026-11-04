@@ -38,21 +38,54 @@ export function maskValue(value: unknown): string {
   return parts.map((p, i) => (i % 2 === 1 || p === '' || AUTH_SCHEME.test(p) ? p : HIDDEN_PART)).join('');
 }
 
+/** Path words that are never secret. Any other path segment of a URL is hidden for a key caller. */
+const SAFE_PATH_SEGMENT = /^(mcp|sse|v\d+|api|rpc|jsonrpc|http|https|ws|messages?|stream|streams|events?|server|servers|tools?|connect|public|openapi)$/i;
+
 function maskUrl(url: string | null): string | null {
   if (!url) return url;
   try {
     const u = new URL(url);
-    u.username = '';
-    u.password = '';
-    for (const k of [...u.searchParams.keys()]) u.searchParams.set(k, 'hidden');
-    return u.toString();
+    const params = new URLSearchParams();
+    for (const k of new Set(u.searchParams.keys())) params.set(k, 'hidden');
+    const path = u.pathname.split('/').map((seg) => (seg === '' || SAFE_PATH_SEGMENT.test(seg) ? seg : HIDDEN_PART)).join('/');
+    const query = params.toString();
+    // Built by hand: no user:password, no fragment, no percent-encoding of the hidden marker.
+    return `${u.protocol}//${u.host}${path}${query ? `?${query}` : ''}`;
   } catch { return HIDDEN_VALUE; }
 }
 
-/** An integration as a thread key may read it: every header and env value masked, the url stripped of secrets. */
+/** A flag that takes a value which can be a secret (or a header, which usually holds one). */
+const SECRET_FLAG = /^--?(h|header|headers|e|env|auth|authorization|bearer|cookie|token|secret|password|passwd|pass|credential|credentials|api[-_]?key|key|access[-_]?key|client[-_]?secret)([-_].*)?$/i;
+/** A command-line word that is plainly not a secret: a plain flag, a package name or version, a path, a number, a ${NAME} ref. */
+const SAFE_WORD = /^[@A-Za-z0-9_][A-Za-z0-9_@.\/+~-]{0,63}$/;
+const LOOKS_LIKE_TOKEN = /^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_-]{20,}$/;
+
+/**
+ * One command-line argument for a key caller, given the argument before it. A word is shown only when it is
+ * plainly safe. The value of a secret-bearing flag (`--header X`, `--token X`, `--api-key=X`), a long token-like
+ * word, and free text are hidden; a URL goes through the URL mask; a `${NAME}` reference shows as written.
+ */
+function maskArg(arg: string, prev: string | undefined): string {
+  const a = String(arg ?? '');
+  if (refsIn(a).length) return maskValue(a);
+  const eq = /^(--?[A-Za-z][\w-]*)=/.exec(a);
+  if (eq) return `${eq[1]}=${HIDDEN_PART}`;
+  if (/^-/.test(a)) return /^--?[A-Za-z][\w-]*$/.test(a) ? a : HIDDEN_VALUE; // a plain flag shows; a negative number or odd text does not leak either
+  if (prev !== undefined && /^-/.test(prev) && SECRET_FLAG.test(prev)) return HIDDEN_VALUE;
+  if (/^https?:\/\//i.test(a)) return maskUrl(a) ?? HIDDEN_VALUE;
+  if (SAFE_WORD.test(a) && !LOOKS_LIKE_TOKEN.test(a)) return a;
+  return HIDDEN_VALUE;
+}
+
+function maskCommand(command: string | null): string | null {
+  if (!command) return command;
+  return /[\s=]/.test(command) ? HIDDEN_VALUE : command; // an inline shell line can hold a secret; a program path cannot
+}
+
+/** An integration as a thread key may read it: header and env values masked, args and command stripped of secrets, the url cut to its safe parts. */
 export function maskIntegration(i: Integration): Integration {
   const mask = (bag: Record<string, string>) => Object.fromEntries(Object.entries(bag).map(([k, v]) => [k, maskValue(v)]));
-  return { ...i, url: maskUrl(i.url), headers: mask(i.headers), env: mask(i.env) };
+  return { ...i, command: maskCommand(i.command), args: i.args.map((a, n) => maskArg(a, i.args[n - 1])), url: maskUrl(i.url), headers: mask(i.headers), env: mask(i.env) };
 }
 
 export class IntegrationsService {

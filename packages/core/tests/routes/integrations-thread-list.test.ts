@@ -66,6 +66,20 @@ describe('GET /api/integrations for a thread key', () => {
     expect(linear.url).toMatch(/^https:\/\/mcp\.example\.com\/sse/);
   });
 
+  it('the list a thread key reads holds no secret from stdio args or a private url path; the owner and the stored row are unchanged', async () => {
+    integrationsDb.create(db, {
+      id: 'i3', name: 'remote-via-args', type: 'stdio', command: 'npx',
+      args: ['-y', 'mcp-remote', 'https://host.example/mcp/private-token-1234', '--header', 'Authorization:Bearer sk-live-ARGSECRET'],
+    });
+    const res = await request(app).get('/api/integrations').set('Authorization', `Bearer ${key}`);
+    const text = JSON.stringify(res.body);
+    expect(text).not.toContain('sk-live-ARGSECRET');
+    expect(text).not.toContain('private-token-1234');
+    const open = await request(app).get('/api/integrations');
+    expect(JSON.stringify(open.body)).toContain('sk-live-ARGSECRET');
+    expect(integrationsDb.list(db).find((i) => i.id === 'i3')!.args[4]).toBe('Authorization:Bearer sk-live-ARGSECRET');
+  });
+
   it('a credential-free local caller still sees every value (reads stay open)', async () => {
     const res = await request(app).get('/api/integrations');
     expect(res.status).toBe(200);
@@ -127,6 +141,40 @@ describe('GET /api/integrations for the owner', () => {
   });
 });
 
+describe('maskIntegration: args, command and url paths (Codex P1 findings)', () => {
+  const base = { id: 'i', name: 'n', type: 'stdio', url: null, headers: {}, env: {}, enabled: true, createdAt: '', updatedAt: '', createdBy: null } as const;
+  const stdio = (args: string[], command = 'npx') => maskIntegration({ ...base, command, args } as any);
+
+  it('hides the value of a header/secret flag, in both the next-arg and the --flag=value forms', () => {
+    const out = stdio(['-y', 'mcp-remote@0.14.3', 'https://host.example/mcp', '--header', 'Authorization:Bearer sk-live-SECRET', '--api-key=abc123def456', '--token', 'tok_987654321']);
+    const text = JSON.stringify(out.args);
+    for (const secret of ['sk-live-SECRET', 'abc123def456', 'tok_987654321', 'Bearer']) expect(text).not.toContain(secret);
+    expect(out.args).toEqual(['-y', 'mcp-remote@0.14.3', 'https://host.example/mcp', '--header', HIDDEN_VALUE, '--api-key=••••', '--token', HIDDEN_VALUE]);
+  });
+  it('hides a bare secret-looking argument and any other free text, and keeps flags, packages and ${NAME} refs', () => {
+    const out = stdio(['@modelcontextprotocol/server-filesystem', '--port', '8080', 'sk-proj-AbC123xyz789QwErTy456', 'some free text', '${MY_TOKEN}']);
+    expect(out.args).toEqual(['@modelcontextprotocol/server-filesystem', '--port', '8080', HIDDEN_VALUE, HIDDEN_VALUE, '${MY_TOKEN}']);
+  });
+  it('hides a command that holds a space or an = (an inline shell line)', () => {
+    expect(stdio([], 'curl -H "Authorization: Bearer abc"').command).toBe(HIDDEN_VALUE);
+    expect(stdio([], 'npx').command).toBe('npx');
+    expect(stdio([], '/usr/local/bin/node').command).toBe('/usr/local/bin/node');
+  });
+  it('masks the url inside an argument', () => {
+    const out = stdio(['mcp-remote', 'https://u:p@h.example/mcp/private-token-1234?key=zzz#frag']);
+    expect(JSON.stringify(out.args)).not.toMatch(/private-token|zzz|frag|u:p/);
+  });
+  it('the url keeps scheme, host and known-safe path words; hides other path segments and the fragment', () => {
+    const remote = (url: string) => maskIntegration({ ...base, type: 'remote', command: null, args: [], url } as any).url as string;
+    const a = remote('https://host.example/mcp/private-token-1234/sse#frag');
+    expect(a).not.toMatch(/private-token|frag/);
+    expect(a).toMatch(/^https:\/\/host\.example\/mcp\/.*\/sse$/);
+    expect(remote('https://mcp.linear.app/sse')).toBe('https://mcp.linear.app/sse');
+    expect(remote('https://host.example/v1/mcp')).toBe('https://host.example/v1/mcp');
+    expect(remote('https://host.example/')).toBe('https://host.example/');
+  });
+});
+
 describe('maskIntegration', () => {
   it('hides a literal and keeps a pure or partial reference form per value', () => {
     const base = { id: 'i', name: 'n', type: 'remote', command: null, args: [], url: 'https://u.example/x', enabled: true, createdAt: '', updatedAt: '', createdBy: null } as const;
@@ -137,6 +185,6 @@ describe('maskIntegration', () => {
     const base = { id: 'i', name: 'n', type: 'remote', command: null, args: [], headers: {}, env: {}, enabled: true, createdAt: '', updatedAt: '', createdBy: null } as const;
     const out = maskIntegration({ ...base, url: 'https://bob:pw@h.example/p?token=abc&b=2' } as any);
     expect(out.url).not.toMatch(/bob|pw@|abc|b=2/);
-    expect(out.url).toContain('h.example/p');
+    expect(out.url).toMatch(/^https:\/\/h\.example\//);
   });
 });
