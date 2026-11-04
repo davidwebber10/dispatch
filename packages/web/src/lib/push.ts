@@ -92,7 +92,16 @@ export function pushErrorMessage(code: string): string {
  * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
  * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
  */
-export async function syncEnrollment(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
+let reconciling: Promise<boolean> | null = null;
+export function syncEnrollment(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
+  // One reconciliation at a time: a second caller joins the one running, so two cannot both un-enroll (the second
+  // could finish after an enroll that the first one led to, and remove it).
+  if (reconciling) return reconciling;
+  const run = syncEnrollmentOnce(known, startedAt).finally(() => { if (reconciling === run) reconciling = null; });
+  reconciling = run;
+  return run;
+}
+async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: number): Promise<boolean> {
   // `startedAt` is the generation when the caller began reading its list; without it, the generation now (taken
   // first, before any await, so nothing that finishes while this function waits can be missed).
   const gen = startedAt ?? enrollmentGeneration;

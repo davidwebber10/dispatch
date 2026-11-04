@@ -89,3 +89,25 @@ describe('a stale list answer must not undo a newer enroll', () => {
   });
 });
 
+describe('reconciliations do not overlap', () => {
+  it('a second syncEnrollment while one is running joins it: the device is un-enrolled once, not twice', async () => {
+    let finishDisable!: () => void;
+    setPushEnabled.mockImplementation(() => new Promise<void>((r) => { finishDisable = () => r(); }));
+    vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [] } as any);
+    const first = syncEnrollment();
+    await vi.waitFor(() => expect(setPushEnabled).toHaveBeenCalledTimes(1)); // the first one is inside its un-enroll
+    const second = syncEnrollment();
+    await Promise.resolve();
+    finishDisable();
+    expect(await first).toBe(true);
+    expect(await second).toBe(true); // it joined the first
+    expect(setPushEnabled).toHaveBeenCalledTimes(1);
+    expect(api.getPushSubscriptions).toHaveBeenCalledTimes(1);
+    // After it ends, a new reconciliation starts fresh.
+    useSettings.setState({ pushEnabled: true } as any);
+    setPushEnabled.mockResolvedValue(undefined);
+    await syncEnrollment();
+    expect(api.getPushSubscriptions).toHaveBeenCalledTimes(2);
+  });
+});
+

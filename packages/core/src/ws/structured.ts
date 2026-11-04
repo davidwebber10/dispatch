@@ -2,7 +2,8 @@
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
-import { sendOrDrop, waitForRoom, hasRoom } from './backpressure.js';
+import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
+import { wsMaxBufferedBytes } from '../caps.js';
 
 /**
  * True iff at least one ring event would fold into a VISIBLE conversation item in the
@@ -139,10 +140,24 @@ export function handleStructuredConnection(
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
   const initialPending = manager.getPending(id);
   if (initialPending) frames.push({ type: 'permission', pending: initialPending });
-  // Live events during the replay are held and sent after it, so the order the client sees is unchanged.
+  // Live events during the replay are held and sent after it, so the order the client sees is unchanged. The held
+  // list is bounded (by 4 times the back-pressure limit, in bytes, the same as the hard ceiling): a client that cannot keep up with the history while the
+  // thread keeps producing output is dropped, not allowed to grow the daemon's memory.
   let replaying = true;
   const held: string[] = [];
-  const emit = (json: string) => { if (replaying) held.push(json); else sendOrDrop(ws, json, 'chat'); };
+  let heldBytes = 0;
+  const emit = (json: string) => {
+    if (!replaying) { sendOrDrop(ws, json, 'chat'); return; }
+    const cap = wsMaxBufferedBytes() * HARD_CEILING_FACTOR; // the same bound the socket queue itself has
+    heldBytes += json.length;
+    if (cap > 0 && heldBytes > cap) {
+      console.warn(`[ws] dropped a slow chat client: ${heldBytes} bytes of live output waiting behind its replay (limit ${cap}). It can reconnect.`);
+      held.length = 0; heldBytes = 0;
+      ws.terminate();
+      return;
+    }
+    held.push(json);
+  };
   const onEvent = (eid: string, event: unknown) => { if (eid === id) emit(JSON.stringify(event)); };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
@@ -171,17 +186,23 @@ export function handleStructuredConnection(
     manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission);
     manager.off('permission-cleared', onCleared);
   });
-  // Send the frames, then the live events held meanwhile. Each frame waits until the client has room (half the
-  // back-pressure limit), so a big history is never queued all at once. A synchronous run when there is room.
+  // Send the frames, then the live events held meanwhile, one at a time. Each waits until the client has room (half
+  // the back-pressure limit), so neither a big history nor a backlog of held events is queued all at once. There is
+  // no await when there is room, so a replay to a client that keeps up runs synchronously.
   void (async () => {
+    let i = 0;
     try {
-      for (const f of frames) {
-        if (!hasRoom(ws) && !(await waitForRoom(ws, 'chat'))) return; // no await when there is room: the replay stays synchronous
-        sendOrDrop(ws, JSON.stringify(f), 'chat');
+      for (;;) {
+        let json: string;
+        if (i < frames.length) json = JSON.stringify(frames[i++]);
+        else if (held.length > 0) { json = held.shift()!; heldBytes -= json.length; }
+        else break; // nothing left; `replaying` is cleared below in the same tick, so no live event slips between
+        if (!hasRoom(ws) && !(await waitForRoom(ws, 'chat'))) return;
+        sendOrDrop(ws, json, 'chat');
       }
     } finally {
       replaying = false;
-      for (const json of held.splice(0)) sendOrDrop(ws, json, 'chat');
+      held.length = 0; heldBytes = 0;
     }
   })();
 }
