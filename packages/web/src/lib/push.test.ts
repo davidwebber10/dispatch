@@ -8,12 +8,14 @@ vi.mock('../api/client', async (orig) => {
   return { ...real, api: { ...real.api, getPushSubscriptions: vi.fn(), pushUnsubscribe: vi.fn().mockResolvedValue({ ok: true }), getPushKey: vi.fn() } };
 });
 
+const realSetPushEnabled = useSettings.getState().setPushEnabled; // the real store action, before tests replace it
 const setPushEnabled = vi.fn();
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem('dispatch:deviceId', 'me');
   setPushEnabled.mockReset().mockResolvedValue(undefined);
   vi.mocked(api.getPushSubscriptions).mockReset();
+  vi.mocked(api.pushUnsubscribe).mockClear();
   useSettings.setState({ pushEnabled: true, setPushEnabled } as any);
 });
 
@@ -134,4 +136,49 @@ describe('reconciliations run one at a time, each with its own list', () => {
     expect(setPushEnabled).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
+
+  it('an un-enroll that never finishes does not hold the queue: the next reconciliation runs after the time limit', async () => {
+    vi.useFakeTimers();
+    setPushEnabled.mockImplementationOnce(() => new Promise(() => {})); // hangs (a service worker that never gets ready)
+    const hung = syncEnrollment([]);
+    const later = syncEnrollment([{ deviceId: 'me' }]); // this device's row is present: nothing to do
+    await vi.advanceTimersByTimeAsync(8100);
+    expect(await hung).toBe(true);
+    expect(await later).toBe(false); // it ran, and was not stuck behind the hung one
+    vi.useRealTimers();
+  });
+
+  it('a late un-enroll that finishes after a newer enroll changes nothing (no browser unsubscribe, no server call, switch stays on)', async () => {
+    let ready!: (reg: any) => void;
+    const unsubscribe = vi.fn().mockResolvedValue(true);
+    const reg = { pushManager: { getSubscription: vi.fn().mockResolvedValue({ unsubscribe }) } };
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { ready: new Promise((r) => { ready = r; }) } });
+    useSettings.setState({ pushEnabled: true, setPushEnabled: realSetPushEnabled } as any);
+    try {
+      const g0 = currentEnrollmentGeneration();
+      const late = useSettings.getState().setPushEnabled(false); // starts: waits for the service worker
+      await vi.waitFor(() => expect(currentEnrollmentGeneration()).toBeGreaterThan(g0)); // the un-enroll is under way
+      await enablePush(); // a newer enroll starts and finishes while the un-enroll waits
+      ready(reg); // now the old un-enroll wakes up
+      await late;
+      expect(unsubscribe).not.toHaveBeenCalled();
+      expect(api.pushUnsubscribe).not.toHaveBeenCalled();
+      expect(useSettings.getState().pushEnabled).toBe(true);
+    } finally {
+      delete (navigator as any).serviceWorker;
+    }
+  });
+
+  it('an un-enroll with nothing racing it still does all its steps', async () => {
+    const unsubscribe = vi.fn().mockResolvedValue(true);
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { ready: Promise.resolve({ pushManager: { getSubscription: async () => ({ unsubscribe }) } }) } });
+    try {
+      expect(await disablePush()).toBe(true);
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+      expect(api.pushUnsubscribe).toHaveBeenCalledWith('me');
+    } finally {
+      delete (navigator as any).serviceWorker;
+    }
+  });
 });
+

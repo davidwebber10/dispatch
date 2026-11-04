@@ -191,7 +191,8 @@ export const useSettings = create<SettingsState>((set) => ({
       save('dispatch:pushEnabled', on); set({ pushEnabled: on });
       if (!on) throw new Error(r); // surfaced by the toggle for messaging (denied / unsupported / ios-install)
     } else {
-      await (await import('../lib/push')).disablePush();
+      // false = an enroll started while this waited: leave the new state alone.
+      if (!(await (await import('../lib/push')).disablePush())) return;
       save('dispatch:pushEnabled', false); set({ pushEnabled: false });
     }
   },

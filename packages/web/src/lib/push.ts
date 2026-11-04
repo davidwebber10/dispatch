@@ -57,13 +57,25 @@ async function enablePushInner(): Promise<'ok' | 'denied' | 'unsupported' | 'ios
   reportPresence(true, useViewing.getState().id);
   return 'ok';
 }
-export async function disablePush(): Promise<void> {
-  enrollmentGeneration++;
-  try { await disablePushInner(); } finally { enrollmentGeneration++; }
+/**
+ * Turn this device's push off. Returns false when an enroll or another un-enroll started while it waited (so it
+ * stopped before its next step and changed nothing more): a late disable must not undo a newer enrollment.
+ */
+export async function disablePush(): Promise<boolean> {
+  const mine = ++enrollmentGeneration;
+  try { return await disablePushInner(mine); } finally { enrollmentGeneration++; }
 }
-async function disablePushInner(): Promise<void> {
-  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); await sub?.unsubscribe(); } catch { /* ignore */ }
+async function disablePushInner(mine: number): Promise<boolean> {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (enrollmentGeneration !== mine) return false;
+    const sub = await reg.pushManager.getSubscription();
+    if (enrollmentGeneration !== mine) return false;
+    await sub?.unsubscribe();
+  } catch { /* ignore */ }
+  if (enrollmentGeneration !== mine) return false;
   try { await api.pushUnsubscribe(deviceId()); } catch { /* ignore */ }
+  return enrollmentGeneration === mine;
 }
 export function reportPresence(foreground: boolean, activeTerminalId: string | null = null): void {
   void api.pushPresence(deviceId(), foreground, activeTerminalId).catch(() => {});
@@ -92,7 +104,7 @@ export function pushErrorMessage(code: string): string {
  * id with the daemon's list; if the row is gone, turn the switch off so the next "on" enrolls again. Pass a list you
  * already fetched, or it fetches one. A list that cannot be read changes nothing. Returns true when it switched off.
  */
-/** How long a push-list read may take before it counts as "could not read" (nothing changes). */
+/** How long a push-list read, or the un-enroll that follows, may take before the queue moves on. A read that times out changes nothing. */
 const LIST_TIMEOUT_MS = 8000;
 // Reconciliations run one after another, each with its OWN list. A newer one is never dropped for an older one that
 // was already running (an old list that still shows this device must not hide a newer list that says it is gone).
@@ -121,7 +133,14 @@ async function syncEnrollmentOnce(known?: { deviceId: string }[], startedAt?: nu
   if (list.some((s) => s.deviceId === deviceId())) return false;
   // An enroll or un-enroll finished (or is running) since this list was read: the answer is out of date.
   if (gen !== enrollmentGeneration) return false;
-  try { await useSettings.getState().setPushEnabled(false); } catch { /* the daemon side is already gone */ }
+  // Bounded like the list read: a service worker that never becomes ready must not hold every later reconciliation.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      useSettings.getState().setPushEnabled(false),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, LIST_TIMEOUT_MS); }),
+    ]);
+  } catch { /* the daemon side is already gone */ } finally { clearTimeout(timer); }
   return true;
 }
 
