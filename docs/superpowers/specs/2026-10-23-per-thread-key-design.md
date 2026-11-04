@@ -528,7 +528,12 @@ A `summarizer` chat key gets only the `GET` routes.
 
 **Shell key (`dsk_`)**: `POST /api/auth-requests` only, with `terminalId` from the key.
 
-**Everything else is owner only**, for example: secrets, integrations, roles
+**Integrations** (SEC-20, later change): a thread key may `POST /api/integrations` (the daemon records
+the thread as the creator) and `GET /api/integrations`. The list masks every header and env value:
+a `${NAME}` reference shows as written, a literal shows as `•••• (hidden)`, and a URL loses its
+`user:password` part and its query values. `PATCH`, `DELETE`, `export` and `import` stay owner only.
+
+**Everything else is owner only**, for example: secrets, other integration routes, roles
 enable and disable, schedules and runs, Claude sign-in, auth-request
 complete and callback, update, settings, servers, push, access, setup and install,
 Chat instructions and send, terminal input, autonomy, relaunch, restore, stop,
@@ -550,7 +555,9 @@ creating or changing a project.
 | `429` | `rate_limited` | Per-pair message limit |
 
 An `owner_only` answer from an MCP tool tells the agent, in one sentence, to ask the
-owner to do it in the browser.
+owner to do it in the browser. The daemon's own `owner_only` message names the refused method and
+route and says the refusal covers only that route (a thread that read "owner only" on a list
+call once concluded it could not add integrations at all).
 
 **The owner is not restricted** by this table. The browser keeps sending
 `source: user` with its cookie. Owner-only actions that SEC-20 worries about could

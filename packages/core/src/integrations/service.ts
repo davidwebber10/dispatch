@@ -4,7 +4,7 @@ import * as integrationsDb from '../db/integrations.js';
 import type { Integration } from '../db/integrations.js';
 import type { Creator } from '../auth/creator.js';
 import type { McpServerSpec } from '../mcp/injection.js';
-import { findSecretRefs, refsIn, literalSecretProblem } from './secret-refs.js';
+import { findSecretRefs, refsIn, literalSecretProblem, looksSecretName } from './secret-refs.js';
 import { launcherArgs, MCP_REMOTE_PACKAGE, type LaunchSpec } from './launcher.js';
 
 /** Where the integration launcher lives and which Doppler connection it reads (see launcher.ts). */
@@ -18,6 +18,96 @@ export type ExportedIntegration = Omit<Integration, 'id' | 'createdAt' | 'update
 export interface IntegrationsExport { version: 1; integrations: ExportedIntegration[] }
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+/** What a key caller sees in place of a literal header or env value. */
+export const HIDDEN_VALUE = '•••• (hidden)';
+/** What stands in for the literal part around a `${NAME}` reference. */
+export const HIDDEN_PART = '••••';
+const REF_SPLIT = /(\$\{[A-Za-z_][A-Za-z0-9_]*\})/;
+const AUTH_SCHEME = /^(Bearer|Basic|Token) $/i;
+
+/**
+ * One header or env value for a caller that is not the owner. A `${NAME}` reference is shown as it is
+ * (it names a secret, it is not one). A value with no reference is hidden. A value that mixes a reference
+ * with literal text keeps the reference and an auth scheme word (`Bearer `), and hides the rest.
+ */
+export function maskValue(value: unknown): string {
+  const v = String(value ?? '');
+  const parts = v.split(REF_SPLIT);
+  if (parts.length === 1) return HIDDEN_VALUE;
+  return parts.map((p, i) => (i % 2 === 1 || p === '' || AUTH_SCHEME.test(p) ? p : HIDDEN_PART)).join('');
+}
+
+/** Path words that are never secret. Any other path segment of a URL is hidden for a key caller. */
+const SAFE_PATH_SEGMENT = /^(mcp|sse|v\d+|api|rpc|jsonrpc|http|https|ws|messages?|stream|streams|events?|server|servers|tools?|connect|public|openapi)$/i;
+
+function maskUrl(url: string | null): string | null {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    const params = new URLSearchParams();
+    for (const k of new Set(u.searchParams.keys())) params.set(k, 'hidden');
+    const path = u.pathname.split('/').map((seg) => (seg === '' || SAFE_PATH_SEGMENT.test(seg) ? seg : HIDDEN_PART)).join('/');
+    const query = params.toString();
+    // Built by hand: no user:password, no fragment, no percent-encoding of the hidden marker.
+    return `${u.protocol}//${u.host}${path}${query ? `?${query}` : ''}`;
+  } catch { return HIDDEN_VALUE; }
+}
+
+/**
+ * A flag (or NAME=value name) whose value is a credential: a name that ends in token, secret, password, key,
+ * credential and the like (`--access-token`, `--client-secret`, `--api-key`), plus auth, authorization, bearer,
+ * cookie, passphrase, header(s) and env, and the one-letter curl/mysql/docker options -H, -e, -p, -P, -u.
+ */
+function isCredentialName(raw: string): boolean {
+  const n = raw.replace(/^-+/, '');
+  if (!n) return false;
+  if (looksSecretName(n)) return true;
+  if (/(^|[-_])(auth|authorization|bearer|cookie|passphrase|pass|pwd|header|headers|env|credentials?)$/i.test(n)) return true;
+  return /^[HepPuU]$/.test(n);
+}
+/** A command-line word that is plainly not a secret: a package name or version, a path, a number. */
+const SAFE_WORD = /^[@A-Za-z0-9_/.~][A-Za-z0-9_@.\/+~-]{0,63}$/;
+const LOOKS_LIKE_TOKEN = /^(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9_-]{20,}$/;
+const isSafeWord = (w: string) => SAFE_WORD.test(w) && !LOOKS_LIKE_TOKEN.test(w);
+
+/**
+ * One command-line argument for a key caller, given the argument before it. This is a mask, not a proof: a
+ * word is shown only when it looks plainly safe, and the usual credential shapes are hidden. Hidden: the value
+ * after a credential flag (`--header X`, `--access-token X`, even when the value starts with `-`), the value of
+ * `--flag=value` and `NAME=value` for a credential name, an attached short option (`-pS3cr3t`, `-HAuth:x`),
+ * a long token-like word, and free text. A URL goes through the URL mask. A `${NAME}` reference shows as written.
+ * ACCEPTED LIMITS (documented, not claimed closed): a short secret in a position nothing marks (a bare
+ * positional word under 20 characters that looks like a package name), unpadded base64 under 20 characters,
+ * a host or port, a query parameter NAME, an unknown flag whose value is a secret, and the command path.
+ */
+function maskArg(arg: string, prev: string | undefined): string {
+  const a = String(arg ?? '');
+  if (refsIn(a).length) return maskValue(a);
+  // The value of a credential flag, checked first: the value may itself look like a flag.
+  if (prev !== undefined && /^-/.test(prev) && !/=/.test(prev) && isCredentialName(prev)) return HIDDEN_VALUE;
+  const attached = /^(-[HepPuU])(.+)$/.exec(a); // -pS3cr3t, -HAuthorization:Bearer-x, -eKEY=v, -uuser:pw
+  if (attached) return `${attached[1]}${HIDDEN_PART}`;
+  const kv = /^(--?[A-Za-z][\w-]*|[A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(a);
+  if (kv) {
+    const shown = isCredentialName(kv[1]) || !isSafeWord(kv[2]) ? HIDDEN_PART : kv[2];
+    return `${kv[1]}=${shown}`;
+  }
+  if (/^-/.test(a)) return /^--?[A-Za-z][\w-]*$/.test(a) ? a : HIDDEN_VALUE; // a plain flag shows
+  if (/^https?:\/\//i.test(a)) return maskUrl(a) ?? HIDDEN_VALUE;
+  return isSafeWord(a) ? a : HIDDEN_VALUE;
+}
+
+function maskCommand(command: string | null): string | null {
+  if (!command) return command;
+  return /[\s=]/.test(command) ? HIDDEN_VALUE : command; // an inline shell line can hold a secret; a program path cannot
+}
+
+/** An integration as a thread key may read it: header and env values masked, args and command stripped of secrets, the url cut to its safe parts. */
+export function maskIntegration(i: Integration): Integration {
+  const mask = (bag: Record<string, string>) => Object.fromEntries(Object.entries(bag).map(([k, v]) => [k, maskValue(v)]));
+  return { ...i, command: maskCommand(i.command), args: i.args.map((a, n) => maskArg(a, i.args[n - 1])), url: maskUrl(i.url), headers: mask(i.headers), env: mask(i.env) };
+}
 
 export class IntegrationsService {
   /**

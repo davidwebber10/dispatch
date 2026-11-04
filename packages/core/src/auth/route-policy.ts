@@ -2,6 +2,7 @@ import { Router, type Request, type RequestHandler, type Response, type RouterOp
 import { principalOf, scopeOf, type Principal } from './request-principal.js';
 import type { KeyPrincipal } from './principals.js';
 import type { CallerFacts, KeyScope } from './key-scope.js';
+import { redactKeys } from './redact-keys.js';
 
 /**
  * Route policy (spec 6.4). Default deny: a route with no key policy is owner only.
@@ -91,16 +92,28 @@ function principalOrNone(req: Request): Principal {
   try { return principalOf(req); } catch { return { kind: 'none', via: 'test' }; }
 }
 
-const OWNER_ONLY: Extract<RuleResult, { ok: false }> = {
-  ok: false, status: 403, error: 'owner_only',
-  message: 'This action is for the owner only. Ask the owner to do it in the browser.',
-};
+const KEY_LABEL: Record<string, string> = { thread: 'thread', chat: 'Chat', shell: 'shell' };
+
+/**
+ * The owner_only refusal. It names the method and the route, and says the refusal covers only this
+ * route, so a caller does not read it as "this key may do nothing here" (a thread key may add an
+ * integration but not export them). The path has no query string and no key.
+ */
+export function ownerOnlyResult(req: Request): Extract<RuleResult, { ok: false }> {
+  let who = 'This key';
+  try { who = `A ${KEY_LABEL[principalOf(req).kind] ?? 'caller'} key`; } catch { /* no principal */ }
+  const path = redactKeys(String(req.originalUrl ?? `${req.baseUrl ?? ''}${req.path ?? ''}`).split('?')[0]).slice(0, 200);
+  return {
+    ok: false, status: 403, error: 'owner_only',
+    message: `${who} cannot use ${req.method} ${path} (owner only). This refusal covers only this route; other actions may be allowed. Ask the owner to do this one in the browser.`,
+  };
+}
 
 /** The owner and a credential-free local caller pass; any key gets 403 owner_only. */
 export const ownerOnly: RequestHandler = tag((req, res, next) => {
   const p = principalOrNone(req);
   if (p.kind === 'owner' || p.kind === 'none') return next();
-  refuse(res, OWNER_ONLY);
+  refuse(res, ownerOnlyResult(req));
 }, 'owner');
 
 /** Any principal passes (whoami, icons, the page). */
@@ -128,7 +141,7 @@ export function keyRoute(rules: KeyRules): RequestHandler {
       }
       rule = principal.kind === 'shell' ? rules.shell : caller.roleRun ? rules.roleRun : rules.thread;
     }
-    if (!rule) return refuse(res, OWNER_ONLY);
+    if (!rule) return refuse(res, ownerOnlyResult(req));
     const result = rule(req, { principal, caller, scope });
     if (!result.ok) return refuse(res, result);
     next();
