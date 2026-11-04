@@ -428,4 +428,21 @@ function initializeSchema(db: Database.Database): void {
       if (!cols.some((c) => c.name === 'created_by')) db.exec(`ALTER TABLE ${table} ADD COLUMN created_by TEXT`);
     }
   });
+  // Signed-in devices (network exposure spec 8.1): one row per browser or phone that signed in.
+  // The cookie carries the id plus a token-bound MAC (auth/access-token.ts); the row is what a
+  // revoke deletes. No cookie secret is stored. `token_fp` marks which access token the row was
+  // made under, so `dispatch access rotate` retires every row. Times are epoch milliseconds.
+  migrate(db, '014-devices', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS devices (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      user_agent    TEXT,
+      signed_in_via TEXT NOT NULL,
+      created_at    INTEGER NOT NULL,
+      last_seen_at  INTEGER NOT NULL,
+      last_address  TEXT,
+      address_kind  TEXT,
+      token_fp      TEXT NOT NULL
+    );
+  `));
 }

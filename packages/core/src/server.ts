@@ -31,6 +31,8 @@ import {
 import { createNoCredentialStats } from './auth/no-credential-stats.js';
 import { publicRoute } from './auth/route-policy.js';
 import { createPairCodes } from './auth/pair-code.js';
+import { createDeviceStore } from './auth/devices.js';
+import { reachableAddresses } from './auth/reachable-addresses.js';
 import { mountApiRoutes } from './server-routes.js';
 import { jsonErrorHandler } from './http/error-handler.js';
 import { createJsonBody } from './http/json-body.js';
@@ -490,15 +492,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // the credential and the router is the only caller, so the gate stays out of the way there.
   // One-time sign-in codes (Settings → Access) that stand in for the token on the login route.
   const pairCodes = createPairCodes();
+  // Signed-in devices: one row per browser or phone that signed in. Not on a hosted box, where
+  // the router holds the box token and there is no sign-in page.
+  const devices = BOX_TOKEN ? undefined : createDeviceStore(db, { getToken: getAccessToken });
+  const tailscaleAccess = createTailscaleAccess();
   const accessGate = BOX_TOKEN
     ? undefined
     : createAccessGate({
         getToken: getAccessToken,
         isGatewayPeer: (a) => platform.isHostGatewayPeer(a),
         config: createAccessConfig(dataDir),
-        tailscale: createTailscaleAccess(),
+        tailscale: tailscaleAccess,
         basePath: BASE_PATH,
         pairCodes,
+        devices,
       });
   if (accessGate) {
     // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
@@ -506,7 +513,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     app.use(accessGate.middleware);
   }
   app.use(createPrincipalMiddleware({
-    registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats,
+    registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats, devices,
   }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
   // Create HTTP server
@@ -799,7 +806,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, refreshPtyEnv, endless,
+    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
+    reachableAddresses: async () => {
+      const me = await tailscaleAccess.self().catch(() => null);
+      return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
+    }, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
@@ -832,6 +843,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // A socket that is not admitted gets an HTTP status line and is closed.
     void handleUpgrade(request, socket, head).catch(() => socket.destroy());
   });
+  // Open WebSockets by device id. A revoke destroys them: the cookie is checked only at connect.
+  const deviceSockets = new Map<string, Set<import('node:stream').Duplex>>();
+  const legacySockets = new Map<import('node:stream').Duplex, string>();
+  const trackDeviceSocket = (id: string, socket: import('node:stream').Duplex) => {
+    let set = deviceSockets.get(id);
+    if (!set) deviceSockets.set(id, set = new Set());
+    set.add(socket);
+    socket.once('close', () => { set!.delete(socket); if (!set!.size) deviceSockets.delete(id); });
+  };
+  devices?.onAdopt((key, id) => {
+    for (const [s, k] of legacySockets) if (k === key) { legacySockets.delete(s); trackDeviceSocket(id, s); }
+  });
+  devices?.onEndLegacy(() => { for (const s of legacySockets.keys()) s.destroy(); legacySockets.clear(); });
+  devices?.onRevoke((id) => { for (const s of deviceSockets.get(id) ?? []) s.destroy(); deviceSockets.delete(id); });
   const handleUpgrade = async (request: http.IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => {
     // Node removes its own error listener before 'upgrade' fires, and ws adds one only inside
     // handleUpgrade. The gate below awaits (it may run the tailscale CLI), so without this a
@@ -861,6 +886,20 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         socket.end(`HTTP/1.1 ${d.status} ${d.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
         return;
       }
+      // Remember which device owns this socket, so revoking the device closes it.
+      let deviceId = d.credential?.kind === 'cookie' ? d.credential.deviceId : null;
+      if (d.credential?.kind === 'cookie' && !deviceId && devices) {
+        // The shared cookie from before the device list. If this browser was just made a device, the socket
+        // belongs to it. If not, hold it by browser+address: the browser's next HTTP request adopts it
+        // (onAdopt below), and "end older sign-ins" closes whatever is still held here.
+        const key = accessGate.legacyKey(request);
+        deviceId = devices.recentAdoption(key);
+        if (!deviceId) {
+          legacySockets.set(socket, key);
+          socket.once('close', () => legacySockets.delete(socket));
+        }
+      }
+      if (deviceId) trackDeviceSocket(deviceId, socket);
     }
     // No key opens a WebSocket (spec 6.4): the browser owns these sockets.
     if (refuseKeyUpgrade(request)) {

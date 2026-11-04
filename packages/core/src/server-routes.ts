@@ -1,4 +1,4 @@
-import type { Express } from 'express';
+import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
 import type { SessionService } from './sessions/service.js';
 import type { StatusService } from './status/service.js';
@@ -16,6 +16,10 @@ import type { ToolAuthProber } from './tools/auth-probe.js';
 import type { EventBroadcaster } from './ws/events.js';
 import type { NoCredentialStats } from './auth/no-credential-stats.js';
 import type { PairCodes } from './auth/pair-code.js';
+import type { DeviceStore } from './auth/devices.js';
+import type { Reachable } from './auth/reachable-addresses.js';
+import { COOKIE_NAME } from './auth/access-token.js';
+import { principalOf } from './auth/request-principal.js';
 import { noCredentialStatsHandler, whoamiHandler } from './auth/request-principal.js';
 import { ownerOnly, publicRoute } from './auth/route-policy.js';
 import { TranscriptionService } from './transcription/service.js';
@@ -74,6 +78,12 @@ export interface ApiRouteDeps {
   /** One-time sign-in codes (Settings → Access). Absent in `createApp` and on a hosted box, where
    *  there is no sign-in page to type one on: `POST /api/access/pair-code` then answers 404. */
   pairCodes?: PairCodes;
+  /** Signed-in devices (Settings → Access). Absent in `createApp` and on a hosted box: the device routes then answer 404. */
+  devices?: DeviceStore;
+  /** Addresses a phone could use to reach this computer (Settings > Access). Absent in `createApp`: the route then answers empty lists. */
+  reachableAddresses?: () => Promise<Reachable>;
+  /** Cookie Path, for clearing a device's own cookie when it revokes itself. */
+  cookiePath?: string;
   /** Re-reads the spawn env after a secrets or harness-settings write (daemon only). */
   refreshPtyEnv?: () => void;
   /** Absent in `createApp` unless a test passes a stub: `/api/endless` then answers 503. */
@@ -98,6 +108,16 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     res.setHeader('Cache-Control', 'no-store');
     if (!d.pairCodes) return void res.status(404).json({ error: 'not_available' });
     res.json(d.pairCodes.issue());
+  });
+
+  mountDeviceRoutes(app, d);
+
+  // Owner only: the lists name this computer's network addresses. A browser on this computer only knows `localhost`.
+  app.get('/api/access/addresses', ownerOnly, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    (d.reachableAddresses?.() ?? Promise.resolve({ tailscale: [], lan: [] }))
+      .then((r) => res.json(r))
+      .catch(() => res.json({ tailscale: [], lan: [] }));
   });
 
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
@@ -129,4 +149,55 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
+}
+
+/**
+ * Signed-in devices (network exposure spec 8.1/8.2). Owner only: a thread key gets 403 from
+ * `ownerOnly` before any handler runs. A device cookie is the owner's, so a signed-in phone can
+ * list and revoke the others, and itself.
+ */
+function mountDeviceRoutes(app: Express, d: ApiRouteDeps): void {
+  const devices = d.devices;
+  const currentDevice = (req: Request): string | null => {
+    const p = principalOf(req);
+    return p.kind === 'owner' && p.deviceId ? p.deviceId : null;
+  };
+  const unavailable = (res: Response) => void res.status(404).json({ error: 'not_available' });
+
+  app.get('/api/access/devices', ownerOnly, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!devices) return unavailable(res);
+    const current = currentDevice(req);
+    res.json({
+      devices: devices.list().map((x) => ({ ...x, current: x.id === current })),
+      currentDeviceId: current,
+      legacyOpen: devices.legacyAllowed(),
+    });
+  });
+
+  app.patch('/api/access/devices/:id', ownerOnly, (req, res) => {
+    if (!devices) return unavailable(res);
+    const name = (req.body as { name?: unknown } | undefined)?.name;
+    if (typeof name !== 'string' || !name.trim()) return void res.status(400).json({ error: 'bad_name' });
+    if (!devices.rename(String(req.params.id), name)) return void res.status(404).json({ error: 'no_such_device' });
+    res.json({ ok: true });
+  });
+
+  app.delete('/api/access/devices/:id', ownerOnly, (req, res) => {
+    if (!devices) return unavailable(res);
+    const id = String(req.params.id);
+    const self = currentDevice(req) === id;
+    if (!devices.revoke(id)) return void res.status(404).json({ error: 'no_such_device' });
+    // Signing out this very browser: drop its cookie too, so the page lands on the sign-in page.
+    if (self) res.append('Set-Cookie', `${COOKIE_NAME}=; Path=${d.cookiePath || '/'}; Max-Age=0; HttpOnly; SameSite=Lax`);
+    res.json({ ok: true });
+  });
+
+  // Turns off the shared cookie that every browser held before the device list. A browser that
+  // has not opened Dispatch since the update has to sign in again.
+  app.post('/api/access/devices/end-legacy', ownerOnly, (_req, res) => {
+    if (!devices) return unavailable(res);
+    devices.endLegacy();
+    res.json({ ok: true });
+  });
 }

@@ -138,6 +138,12 @@ describe('route policy completeness', () => {
   test('the stats route is owner only', () => {
     expect(routes.find((r) => r.id === 'GET /api/access/no-credential-stats')?.kind).toBe('owner');
   });
+
+  test('the device routes are owner only', () => {
+    for (const id of ['GET /api/access/devices', 'PATCH /api/access/devices/:id', 'DELETE /api/access/devices/:id', 'POST /api/access/devices/end-legacy', 'GET /api/access/addresses', 'POST /api/access/pair-code']) {
+      expect(routes.find((r) => r.id === id)?.kind, id).toBe('owner');
+    }
+  });
 });
 
 describe('default deny in the full app', () => {
@@ -152,6 +158,11 @@ describe('default deny in the full app', () => {
     expect(plain.status).toBe(403);
     expect(plain.body.error).toBe('owner_only');
     expect((await request(app).get('/api/access/no-credential-stats').set(auth)).status).toBe(403);
+    // The device list is owner only too (createApp has no device store, so the owner gets 404, a key 403).
+    expect((await request(app).get('/api/access/devices').set(auth)).status).toBe(403);
+    expect((await request(app).delete('/api/access/devices/abc').set(auth)).status).toBe(403);
+    expect((await request(app).get('/api/access/devices')).status).toBe(404);
+    expect((await request(app).get('/api/access/addresses').set(auth)).status).toBe(403);
     expect((await request(app).get('/api/whoami').set(auth)).body).toEqual({ kind: 'chat', startedBy: 'user' });
     expect((await request(app).get('/api/servers')).status).toBe(200);
   });

@@ -30,6 +30,13 @@ code** button. There are two ways through it.
 2. Scan the QR code with the phone's camera and open the link. The phone signs in and the app
    opens. Or open Dispatch on the phone, tap **Enter a code**, and type the code.
 
+If you opened Settings on the computer itself (`localhost`, `127.0.0.1` or `::1`), a phone
+cannot use that address: on a phone, `localhost` means the phone. Dispatch then fills the field
+with an address for this computer that a phone can reach, with the same scheme and port. It
+prefers the Tailscale address when Tailscale is up, and otherwise the Wi-Fi (LAN) address, and a
+note says so. On WSL2 it offers only a Tailscale address that `tailscaled` inside WSL holds: a Tailscale on the Windows side does not forward Dispatch's port, so type an address yourself there. If it finds none, the field keeps the page address and the note asks you to type
+one. An address you type always wins, and a saved `localhost` address is ignored.
+
 The QR code carries the address in the **Address the phone will use** field plus the code,
 as `ADDRESS/#code=ABCD-EFGH`. Browsers never send the part after `#` to a server. Set the
 field to the address the phone can reach (a tunnel hostname or a Tailscale name). The daemon
@@ -43,12 +50,55 @@ sent to the browser.
    run `./bin/dispatch access` from the repository folder.)
 2. Open Dispatch on the other device, tap **Enter a code**, and paste the token.
 
-Either way the browser keeps a cookie for 400 days.
+Either way the browser keeps a cookie for 400 days, and it shows up as a device (next section).
 
 `dispatch access --link HOST` (a port in HOST is kept as given; or `--link https://MACHINE.ts.net` for `tailscale serve`) prints a link for a phone: the token is in the part after `#`, which
 browsers never send to a server.
 
-`dispatch access rotate` makes a new token and signs out every device.
+`dispatch access rotate` makes a new token and signs out every device at once.
+
+## Signed-in devices
+
+Every browser or phone that signs in, by code, QR code or token, becomes a device. **Settings →
+Access → Signed-in devices** lists them. Each row has a name taken from the browser (you can
+rename it), how it signed in, the address it last used, when it was first seen and when it was
+last active. The row for the browser you are using is marked **This device**.
+
+**Revoke** on a row signs out that one device and no other. The device's open connections close
+at once, and it sees the sign-in page on its next request. **Sign out this device** on your own
+row signs you out here. Only the owner can list or revoke: an agent thread key gets `403` on
+these routes. A browser on the computer itself, or on your own Tailscale, needs no sign-in and
+has no row.
+
+How it works: the cookie names the device and carries a signature that depends on the access
+token. Dispatch accepts the cookie only while the token is the same and the device row exists.
+So `dispatch access rotate` still signs out every device (and clears the list), and a revoke
+deletes one row. The database holds no cookie secret.
+
+**Upgrading does not sign anyone out.** Before the device list, every browser held the same
+cookie. After the update, that cookie still works. The first time each phone or browser opens
+Dispatch, Dispatch makes a device for it ("Signed in before the device list") and hands it its
+own cookie in the reply. From then on you can revoke it on its own. Two browsers that open
+Dispatch within 10 seconds, with the same browser name and address, may share one row until the
+next sign-in. A device that never opens Dispatch again never gets a row, and the old shared
+cookie cannot be told apart from it. Once your devices have appeared, press **Sign out devices
+not in this list** to turn the old shared cookie off. Anything still holding it then has to
+sign in again. `dispatch access rotate` also turns it off.
+
+**Addresses.** The address is the one the connection came from. Behind `tailscale serve` it is
+the tailnet client that `serve` reports. A request from this computer shows as **This computer**.
+On WSL2 in the default (NAT) mode, a Windows browser at `localhost` arrives from the Windows host,
+shown as **Windows host (WSL)**. A phone that reaches Dispatch through a Windows `netsh portproxy`
+rule shows the same label, because Dispatch cannot tell the two apart (see the WSL note below).
+An address marked **(via proxy)** is what a proxy on this computer reported (`tailscale serve` reports the tailnet client). Dispatch cannot check it, and a client behind a portproxy can set it, so treat it as a hint. It never grants access. "This device" never uses the address: it uses the cookie, so it stays right in every setup. In
+WSL2 mirrored mode a Windows browser at `localhost` arrives as `127.0.0.1` and shows as **This
+computer**; a LAN device shows its own address.
+
+Devices on your own Tailscale need no sign-in, so they do not appear in this list. Manage or remove
+them in the Tailscale admin console. To list a phone here, open the Wi-Fi (LAN) address instead of
+the Tailscale address.
+
+Up to 100 devices are kept. The least recently active ones drop off first.
 
 ## Scripts and other tools
 

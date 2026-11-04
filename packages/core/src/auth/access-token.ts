@@ -50,6 +50,28 @@ export function cookieValue(token: string): string {
   return crypto.createHmac('sha256', token).update('dispatch-access-cookie-v1').digest('base64url');
 }
 
+/**
+ * The device cookie (device list, spec 8.1): `v2.<device id>.<MAC>`. The MAC is keyed by the
+ * access token, so nobody can mint one without the token, and `dispatch access rotate` kills
+ * every one at once. Revoking a device deletes its row; the MAC alone is not enough.
+ */
+const DEVICE_COOKIE_PREFIX = 'v2.';
+export function deviceCookieValue(token: string, deviceId: string): string {
+  const mac = crypto.createHmac('sha256', token).update(`dispatch-device-cookie-v2|${deviceId}`).digest('base64url');
+  return `${DEVICE_COOKIE_PREFIX}${deviceId}.${mac}`;
+}
+
+export function parseDeviceCookie(value: string | undefined): { id: string; mac: string } | null {
+  if (!value || !value.startsWith(DEVICE_COOKIE_PREFIX)) return null;
+  const m = /^v2\.([A-Za-z0-9_-]{8,64})\.([A-Za-z0-9_-]{20,64})$/.exec(value);
+  return m ? { id: m[1], mac: m[2] } : null;
+}
+
+/** Short stable tag of a token, for marking which token a stored row belongs to. Reveals nothing useful. */
+export function tokenFingerprint(token: string): string {
+  return crypto.createHmac('sha256', token).update('dispatch-token-fp-v1').digest('hex').slice(0, 16);
+}
+
 export function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
