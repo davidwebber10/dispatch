@@ -591,6 +591,8 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
   by a minute; (b) a Windows forwarder that reaches the daemon through WSL's localhost relay arrives as
   loopback and is trusted like any local program, so it needs its own sign-in. Untested on a
   real WSL machine; covered by gate and route tests only.
+  **Accepted by the owner on 2026-11-03:** limits (a) and (b) stay as they are. No stricter mode,
+  no code change, documented only (same treatment as R-6).
 - **R-3. Other OS users on the same machine.** Loopback is trusted (4.2).
 - **R-4. A LAN that uses `100.64.0.0/10`** with a route more specific than
   Tailscale's, plus an attacker who takes the address of the owner's own device
