@@ -312,7 +312,7 @@ daemon sees the phone's tailnet address).
   portproxy users open (R-2). The WSL sign-in change removed the rule: the gateway peer
   signs in, except for `tailscale serve`, and a LAN caller that forges those headers is still a
   residual (section 7.12).
-- Phase 2 no longer needs a `127.0.0.1` listen on WSL for R-2: sign-in closed it (section 7.12).
+- Phase 2 no longer needs a `127.0.0.1` listen on WSL for R-2: sign-in mostly closes it (section 7.12).
 
 ### 6.2 macOS
 
