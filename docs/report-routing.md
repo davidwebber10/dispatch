@@ -21,7 +21,7 @@ notices to that thread:
 | The overseer | The overseer. It is revived if a restart stopped it. |
 | An old row with no `spawnedBy` | The overseer (the old behavior). |
 | A thread you opened, or another worker | That thread. |
-| Chat, or any child of a Chat thread, at any depth | Chat, through its own report path. |
+| Chat, or a child of a Chat thread made since this change, at any depth | Chat, through its own report path. |
 | A scheduled role run | Its own log and the digest (see [roles](roles.md)). |
 
 A notice to a starter that is not the overseer is delivered the way a watch delivers: a
@@ -46,7 +46,9 @@ overseer.
 
 A thread key that starts a thread writes `spawnedBy` and the depth. When the caller is a
 thread Chat started, it also writes `origin: endless`, so the whole chain under that thread
-reports to Chat. Rows made before this change are resolved at notice time: a worker with a
-Chat ancestor reports to Chat.
+reports to Chat. Chat only hears a thread whose own row carries that origin.
+
+A child of a Chat thread made before this change has no origin. It reports to the thread
+that started it, like any other thread, and not to Chat or the overseer.
 
 There is no setting for this.

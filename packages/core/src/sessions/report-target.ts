@@ -4,7 +4,10 @@
  *
  * The thread that started the worker (`config.spawnedBy`) hears them. A worker the overseer
  * started reports to the overseer; a worker any other thread started reports to that thread. A
- * thread Chat started, and any child of one at any depth, reports to Chat (Chat has its own path).
+ * thread Chat started reports to Chat (Chat has its own path). Chat only hears a thread whose own
+ * row carries `origin: endless`, which a thread key now passes down to every child, so a child of
+ * a Chat thread reports to Chat at any depth. A child made before that change has no origin: it
+ * reports to its starter, like any other thread.
  * A worker with no `spawnedBy` is an old row from before the field existed: it reports to the
  * overseer, as it always did. A scheduled role run reports to its own log.
  */
@@ -16,8 +19,6 @@ export type ReportTarget =
   | { to: 'starter'; starterId: string }
   | { to: 'chat' }
   | { to: 'none' };
-
-const MAX_HOPS = 8; // a chain is at most 4 deep; the cap only guards a cycle in bad data
 
 function cfgOf(raw: string | null | undefined): Record<string, any> {
   try { return JSON.parse(raw || '{}') ?? {}; } catch { return {}; }
@@ -32,19 +33,6 @@ export function resolveReportTarget(db: Database.Database, cfg: Record<string, a
   if (!starterId) return { to: 'overseer' };
   const starter = terminalsDb.getById(db, starterId);
   if (!starter) return { to: 'starter', starterId }; // gone: the caller drops the notice
-  const starterCfg = cfgOf(starter.config);
-  if (starterCfg.role === 'coordinator') return { to: 'overseer' };
-  // Any ancestor Chat started puts the whole chain under Chat (rows made before the origin went down).
-  const seen = new Set<string>([starterId]);
-  let cur: Record<string, any> = starterCfg;
-  for (let i = 0; i < MAX_HOPS; i++) {
-    if (cur.origin === 'endless') return { to: 'chat' };
-    const up = typeof cur.spawnedBy === 'string' ? cur.spawnedBy : '';
-    if (!up || seen.has(up)) break;
-    seen.add(up);
-    const row = terminalsDb.getById(db, up);
-    if (!row) break;
-    cur = cfgOf(row.config);
-  }
+  if (cfgOf(starter.config).role === 'coordinator') return { to: 'overseer' };
   return { to: 'starter', starterId };
 }

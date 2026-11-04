@@ -133,13 +133,24 @@ describe('a worker reports to the thread that started it', () => {
       expect(c.sent).not.toHaveBeenCalled();
     });
 
-    it(`${kind}: a child or grandchild of a Chat thread sends nothing to the overseer or the starter`, () => {
+    it(`${kind}: a thread that carries the Chat origin sends nothing to the overseer or a starter`, () => {
       const c = makeService();
       c.mk('chat', 'Chat thread', { role: 'agent', origin: 'endless', spawnDepth: 1 });
-      c.mk('kid', 'Kid', { role: 'agent', spawnedBy: 'chat', spawnDepth: 2 });
+      c.mk('kid', 'Kid', { role: 'agent', origin: 'endless', spawnedBy: 'chat', spawnDepth: 2 });
       worker(c, 'kid');
+      terminalsDb.updateConfig(c.db, 'w', { role: 'agent', origin: 'endless', spawnedBy: 'kid', spawnDepth: 3 });
       run(c.svc);
       expect(c.sent).not.toHaveBeenCalled();
+    });
+
+    it(`${kind}: a child made before the origin went down reports to its starter, not the overseer`, () => {
+      const c = makeService();
+      c.mk('chat', 'Chat thread', { role: 'agent', origin: 'endless', spawnDepth: 1, transport: 'structured' });
+      c.live.add('chat');
+      worker(c, 'chat');
+      run(c.svc);
+      expect(c.to('chat')).toHaveLength(1);
+      expect(c.to('coord')).toHaveLength(0);
     });
   }
 
