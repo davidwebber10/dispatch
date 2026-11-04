@@ -87,6 +87,13 @@ it cannot be made to send your thread and project names to a server you do not k
 Agents may add integrations, enable roles and create schedules. Dispatch does not block this.
 A thread that sends its own key may do all three, and Dispatch records the thread by name. A
 role run, a shell and Chat cannot, so a scheduled run cannot add the next schedule.
+A thread that sends its own key may also list the integrations (`GET /api/integrations`). It sees
+the names, types, commands and which ones are on. Every header and env value is hidden
+(`•••• (hidden)`), except a `${NAME}` reference, which shows as written. A command-line
+argument that can hold a secret (the value after `--header` or `--token`, a long token-like word,
+free text) is hidden too, and a URL shows only its host and common path words (`/mcp`, `/sse`).
+Only the owner can
+export, turn on or off, or delete an integration.
 Settings shows "Added by" on each integration, and the Agents screen shows "Created by" on
 each schedule (a role's schedule shows who enabled the role). A row from before the record
 existed shows "Unknown". A call with no key and no sign-in shows as "Local, no sign-in",

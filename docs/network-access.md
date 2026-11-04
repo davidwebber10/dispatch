@@ -133,8 +133,10 @@ key each time it starts the process, and it ends the key when the process ends. 
 Dispatch ends all keys, and the threads that come back get new ones.
 
 - **Owner-only actions.** A call with a thread key to an action that only you may do gets
-  `403`. Examples are changing a thread's settings or role. Your browser, the `dispatch` CLI and
-  your own scripts are not affected.
+  `403 owner_only`. Examples are changing a thread's settings or role. The message names the
+  method and the route (for example, `GET /api/integrations/export`) and says that the refusal
+  covers only that route: a thread key may still do other things, such as add or list
+  integrations. Your browser, the `dispatch` CLI and your own scripts are not affected.
 - **Calls with no credential: most still work, four kinds do not.** From this computer a call with
   no credential is allowed and counted, except for these actions, which answer `401 auth_required`:
   1. a message or terminal input as you (a thread message, raw terminal input, a file reference
@@ -174,6 +176,13 @@ Dispatch ends all keys, and the threads that come back get new ones.
   program that works around it on purpose.
 - **See the counts** with `dispatch status`. The refusals also log one rate-limited line,
   `[keys] refused keyless caller METHOD ROUTE`.
+||||||| 778d03a0
+  `403`. Examples are changing a thread's settings or role. Your browser, the `dispatch` CLI and
+  your own scripts are not affected.
+- **Calls with no credential still work in this release.** From this computer they are allowed
+  as before, and Dispatch counts them. A later release will refuse them.
+- **See the counts** with `dispatch status`. A count that stays at zero means nothing relies on
+  the old behavior.
 - **Scripts.** `dispatch api METHOD PATH` makes one call to the daemon on this computer with the
   right credential. The token never appears in the command line. To send a body, use
   `--body FILE` or `--body -` for standard input. For example:

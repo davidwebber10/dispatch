@@ -2,12 +2,21 @@ import type { Router } from 'express';
 import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
-import type { IntegrationsService, AddIntegrationInput, IntegrationsExport } from '../integrations/service.js';
+import { principalOf } from '../auth/request-principal.js';
+import { maskIntegration, type IntegrationsService, type AddIntegrationInput, type IntegrationsExport } from '../integrations/service.js';
 
 export function createIntegrationsRouter(integrations: IntegrationsService): Router {
   const router = policyRouter();
 
-  router.get('/', (_req, res) => res.json({ integrations: integrations.list() }));
+  // A thread key may list (so it can tell "I may add one" from "I may not look"), but never reads a secret value:
+  // every header and env value is masked, and a `${NAME}` reference is shown as it is. The owner and a
+  // credential-free local caller (the browser UI before a token exists) see everything. /export stays owner only.
+  router.get('/', keyRoute({ thread: allowRule }), (req, res) => {
+    let keyed = false;
+    try { keyed = ['thread', 'chat', 'shell'].includes(principalOf(req).kind); } catch { /* no principal: a bare test app */ }
+    const all = integrations.list();
+    res.json({ integrations: keyed ? all.map(maskIntegration) : all });
+  });
 
   // SEC-20: a thread with its own key may create this (never blocked); the route records the thread as the creator.
   // Only `thread` has a rule, so a role run, a shell and Chat stay owner only and a scheduled run cannot add the next schedule.
