@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { Router } from 'express';
-import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule, chatArmRule } from '../auth/key-rules.js';
 import { LedgerError } from '../overseer/ledger-service.js';
 import { EndlessService, UserError } from '../endless/service.js';
@@ -39,7 +39,7 @@ export function createEndlessRouter(svc: EndlessService): Router {
     res.json(svc.page({ before, limit, project }));
   });
 
-  router.post('/send', (req, res) => {
+  router.post('/send', ownerOnlyStrict, (req, res) => {
     const { text, project, images, files } = req.body ?? {};
     try {
       svc.send({ text: typeof text === 'string' ? text : '', project: str(project), images: Array.isArray(images) ? images : [], files: Array.isArray(files) ? files : [] });
@@ -122,7 +122,7 @@ export function createEndlessRouter(svc: EndlessService): Router {
   });
 
   router.get('/instructions', (_req, res) => { res.json({ text: svc.instructions() }); });
-  router.put('/instructions', (req, res) => {
+  router.put('/instructions', ownerOnlyStrict, (req, res) => {
     svc.setInstructions(typeof req.body?.text === 'string' ? req.body.text : '');
     res.json({ ok: true });
   });

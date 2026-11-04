@@ -56,6 +56,26 @@ folder in `DISPATCH_FILE_ROOTS`.
 - Keep literal secret values out of integration settings. Use a `${NAME}` reference to a secret
   instead, so the value stays out of command lines and config files.
 
+## Calls with no credential (SEC-05, the middle option)
+
+A call from this computer with no thread key, cookie or token still works for most routes, including
+every read. Dispatch refuses it with `401 auth_required` only for the actions that act as you or start
+work: a message or input as the user, answering or releasing a held tool call, starting or branching a
+thread (also starting a queued thread, creating a coordinator, and replacing a thread's config), and changing, deleting or importing integrations. The web page, your token (the `dispatch` CLI,
+`dispatch api`, a script that sends the token) and a thread's own key (for the actions its rules allow)
+pass. The full list and the script advice are in `docs/network-access.md`.
+
+**How much this closes.** It closes the ordinary case: an injected agent that runs a plain
+`curl $DISPATCH_SERVER_URL/api/terminals/ID/message` with `source: "user"`, a script that was never
+given a credential, or a call from an old thread with no key. It does not close the case of a thread
+that reads `~/.dispatch/access-token` (it runs as you) or sets an `Origin` header by hand. Those
+callers can still act as the owner. A process check on the connection (stage 3 in the per-thread key
+spec) is what would close that. Left open on purpose, so normal use keeps working: all reads, hook
+events, the browser shim, adding an integration, renaming, stopping or restarting a tab, schedules (create, edit the prompt, run now: this can run an
+arbitrary task), restart, relaunch and restore of an existing tab (they can reload content a caller wrote
+through the open file routes, provider config or an added integration), and the ledger routes (a credential-free caller can still name itself the overseer
+in a ledger body).
+
 ## Phone notifications
 
 A phone or browser can subscribe to notifications only through the push service of its browser
