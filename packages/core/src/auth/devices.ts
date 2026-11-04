@@ -43,6 +43,10 @@ export interface DeviceStore {
   revoke(id: string): boolean;
   /** Called for every row that goes away (revoke, cap eviction, stale-token prune), so the server can close that device's open sockets. */
   onRevoke(fn: (id: string) => void): void;
+  /** Called each time a browser holding the shared cookie is adopted into a device; `key` is `legacyKey(...)`. */
+  onAdopt(fn: (key: string, deviceId: string) => void): void;
+  /** The device a browser with this key was adopted into in the last few seconds, or null. */
+  recentAdoption(key: string): string | null;
   /** Called after the owner ends sign-ins made with the shared cookie, so sockets opened with it can close. */
   onEndLegacy(fn: () => void): void;
   /** True until the owner ends older sign-ins for the current token. */
@@ -76,6 +80,9 @@ export function deviceNameFromUserAgent(ua: string | undefined): string {
   else if (/Safari\//.test(ua)) browser = 'Safari';
   return browser ? `${os} (${browser})` : os;
 }
+
+/** What ties a socket opened with the shared cookie to the device made from it: browser string plus address. */
+export const legacyKey = (userAgent: string | undefined, peer: Peer): string => `${userAgent ?? ''}|${peer.addr}`;
 
 const ADDR_SHAPE = /^[0-9a-fA-F:.]{2,45}$/;
 
@@ -117,6 +124,7 @@ export function createDeviceStore(
   const now = opts.now ?? Date.now;
   const listeners: ((id: string) => void)[] = [];
   const legacyListeners: (() => void)[] = [];
+  const adoptListeners: ((key: string, id: string) => void)[] = [];
   const lastWrite = new Map<string, number>();
   const adopted = new Map<string, { id: string; until: number }>();
   const fp = () => tokenFingerprint(opts.getToken());
@@ -128,6 +136,9 @@ export function createDeviceStore(
       for (const [k, v] of adopted) if (v.id === id) adopted.delete(k);
       for (const fn of listeners) { try { fn(id); } catch { /* a listener must not break a revoke */ } }
     }
+  };
+  const announce = (key: string, id: string) => {
+    for (const fn of adoptListeners) { try { fn(key, id); } catch { /* ignore */ } }
   };
   const dropStale = () => {
     const ids = (db.prepare('SELECT id FROM devices WHERE token_fp != ?').all(fp()) as { id: string }[]).map((r) => r.id);
@@ -160,18 +171,26 @@ export function createDeviceStore(
     create: ({ userAgent, via, peer }) => insert(userAgent, via, peer),
 
     adoptLegacy(userAgent, peer) {
-      const key = `${userAgent ?? ''}|${peer.addr}`;
+      const key = legacyKey(userAgent, peer);
       const t = now();
       const hit = adopted.get(key);
       if (hit && hit.until > t) {
         const r = db.prepare('SELECT * FROM devices WHERE id = ?').get(hit.id) as Row | undefined;
-        if (r) return toInfo(r);
+        if (r) { announce(key, r.id); return toInfo(r); }
       }
       if (adopted.size > 200) adopted.clear();
       const d = insert(userAgent, 'earlier', peer);
       adopted.set(key, { id: d.id, until: t + ADOPT_WINDOW_MS });
+      announce(key, d.id);
       return d;
     },
+
+    recentAdoption(key) {
+      const hit = adopted.get(key);
+      return hit && hit.until > now() ? hit.id : null;
+    },
+
+    onAdopt(fn) { adoptListeners.push(fn); },
 
     verify(cookie) {
       const parsed = parseDeviceCookie(cookie);

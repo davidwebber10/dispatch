@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http';
 import { isLoopbackAddress } from '../files/reveal.js';
 import { tokenMatches } from './box-token.js';
 import { COOKIE_MAX_AGE_SECONDS, COOKIE_NAME, cookieValue, deviceCookieValue, parseCookies } from './access-token.js';
-import { describePeer, type DeviceStore, type Peer } from './devices.js';
+import { describePeer, legacyKey, type DeviceStore, type Peer } from './devices.js';
 import { signInPage, signInPageCsp } from './signin-page.js';
 import type { PairCodes } from './pair-code.js';
 import {
@@ -224,6 +224,8 @@ export interface AccessGate {
   loginRoute: (express.RequestHandler | express.ErrorRequestHandler)[];
   /** Decision for a WebSocket upgrade. */
   upgradeDecision(req: IncomingMessage, strippedUrl: string): Promise<Decision>;
+  /** Key that ties an upgrade made with the shared cookie to the device later made from that cookie. */
+  legacyKey(req: IncomingMessage): string;
 }
 
 export function createAccessGate(opts: AccessGateOptions): AccessGate {
@@ -337,6 +339,7 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
       }) as express.ErrorRequestHandler,
       login,
     ],
+    legacyKey: (req) => { const f = factsFrom(req, true, true); return legacyKey(f.userAgent, peerOf(f)); },
     upgradeDecision: async (req, strippedUrl) => {
       const facts = factsFrom(req, strippedUrl.toLowerCase().startsWith('/api/'), true);
       const d = await decide(facts, opts);

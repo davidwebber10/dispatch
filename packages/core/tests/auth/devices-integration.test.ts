@@ -167,6 +167,32 @@ describe.skipIf(!lanIp)('device list over the real daemon', () => {
     await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('socket stayed open')), 3000))]);
   });
 
+  test('a socket opened with the shared cookie closes when the device later made from that cookie is revoked', async () => {
+    const other = await signIn();
+    const old = cookieValue(token);
+    const ws = new WebSocket(`ws://${lanIp}:${port}/api/events`, { headers: { Cookie: `dispatch_access=${old}`, Host: `${lanIp}:${port}`, 'User-Agent': UA } });
+    await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+    const closed = new Promise<void>((res) => ws.once('close', () => res()));
+    // The same browser's next HTTP request adopts it into a device of its own.
+    const r = await call({ path: '/api/access/devices', cookie: old });
+    const mine = JSON.parse(r.body).currentDeviceId as string;
+    expect(mine).toBeTruthy();
+    expect((await call({ method: 'DELETE', path: `/api/access/devices/${mine}`, cookie: other })).status).toBe(200);
+    await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('legacy socket survived the revoke')), 3000))]);
+  });
+
+  test('a socket opened with the shared cookie just after its device was made is tied to that device', async () => {
+    const other = await signIn();
+    const old = cookieValue(token);
+    const r = await call({ path: '/api/access/devices', cookie: old, headers: { 'User-Agent': 'late-browser/1.0 (Mac)' } });
+    const mine = JSON.parse(r.body).currentDeviceId as string;
+    const ws = new WebSocket(`ws://${lanIp}:${port}/api/events`, { headers: { Cookie: `dispatch_access=${old}`, Host: `${lanIp}:${port}`, 'User-Agent': 'late-browser/1.0 (Mac)' } });
+    await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej); });
+    const closed = new Promise<void>((res) => ws.once('close', () => res()));
+    expect((await call({ method: 'DELETE', path: `/api/access/devices/${mine}`, cookie: other })).status).toBe(200);
+    await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('late legacy socket survived the revoke')), 3000))]);
+  });
+
   test('ending older sign-ins closes sockets that were opened with the shared cookie', async () => {
     const a = await signIn();
     const old = cookieValue(token);

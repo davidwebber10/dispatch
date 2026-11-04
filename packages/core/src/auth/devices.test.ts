@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import {
-  createDeviceStore, describePeer, deviceNameFromUserAgent, type DeviceStore,
+  createDeviceStore, describePeer, legacyKey, deviceNameFromUserAgent, type DeviceStore,
 } from './devices.js';
 import { cookieValue, deviceCookieValue, parseDeviceCookie } from './access-token.js';
 
@@ -150,6 +150,17 @@ describe('older sign-ins (cookie from before the device list)', () => {
     t += 11_000;
     const c = store.adoptLegacy(IPHONE, LAN);
     expect(c.id).not.toBe(a.id); // a second browser later with the same look is its own device
+  });
+  test('adoption is announced by key, and findable for a few seconds', () => {
+    const seen: [string, string][] = [];
+    store.onAdopt((k, id) => seen.push([k, id]));
+    const key = legacyKey(IPHONE, LAN);
+    expect(store.recentAdoption(key)).toBeNull();
+    const d = store.adoptLegacy(IPHONE, LAN);
+    expect(seen).toEqual([[key, d.id]]);
+    expect(store.recentAdoption(key)).toBe(d.id);
+    t += 11_000;
+    expect(store.recentAdoption(key)).toBeNull();
   });
   test('ending older sign-ins turns the old cookie off and persists', () => {
     store.endLegacy();
