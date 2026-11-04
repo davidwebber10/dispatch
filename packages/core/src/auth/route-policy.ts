@@ -156,7 +156,7 @@ export const ownerOnly: RequestHandler = tag((req, res, next) => {
 /** `ownerOnly` plus SEC-05 "middle": a credential-free caller must look like the web page (`requireOwnerProof`). */
 export const ownerOnlyStrict: RequestHandler = tag((req, res, next) => {
   const p = principalOrNone(req);
-  if (p.kind !== 'owner' && p.kind !== 'none') return refuse(res, OWNER_ONLY);
+  if (p.kind !== 'owner' && p.kind !== 'none') return refuse(res, ownerOnlyResult(req));
   requireOwnerProof(req, res, next);
 }, 'owner');
 
