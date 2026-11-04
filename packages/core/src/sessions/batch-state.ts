@@ -4,6 +4,7 @@
  */
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
+import { resolveReportTarget } from './report-target.js';
 
 /** The agent notices that carry the Batch line. */
 export type NoticeKind = 'finished' | 'blocked' | 'question' | 'stopped' | 'direct-message' | 'question-answered';
@@ -27,10 +28,10 @@ export interface BatchOptions {
 }
 
 /**
- * Sort the project's agents (`config.role === 'agent'`, not archived, not a scheduled role run,
- * not a thread Chat started)
- * into working / queued / waiting on the overseer. `hasPending` says whether a terminal has a
- * pending question (the structured manager's getPending).
+ * Sort the overseer's agents (`config.role === 'agent'`, not archived, started by the overseer or
+ * an old row with no starter; see report-target.ts) into working / queued / waiting on the
+ * overseer. `hasPending` says whether a terminal has a pending question (the structured
+ * manager's getPending).
  */
 export function computeBatchState(
   db: Database.Database,
@@ -45,10 +46,9 @@ export function computeBatchState(
     if (exclude.has(row.id)) continue;
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
-    if (cfg.role !== 'agent') continue;
-    if (typeof cfg.roleRun === 'string' && cfg.roleRun) continue;
-    // A thread Chat started reports to Chat, not to the Control Plane: not part of its batch.
-    if (cfg.origin === 'endless') continue;
+    // Only the overseer's own workers: a role run, a thread Chat started, and a worker another
+    // thread started report elsewhere, so they are not part of this batch.
+    if (resolveReportTarget(db, cfg).to !== 'overseer') continue;
     const ref = { id: row.id, label: row.label || 'agent' };
     // A pending question beats the "just started" override: an agent paused on a question
     // (for example one the user just messaged directly) waits on the overseer.

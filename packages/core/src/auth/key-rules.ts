@@ -179,7 +179,8 @@ export function createBodyRule(mode: 'thread' | 'chat'): Rule {
     if (mode === 'thread') {
       const caller = must(ctx);
       if (projectId !== caller.sessionId) return outOfScope('A thread may start threads only in its own project.');
-      const written: Written = { spawnDepth: caller.depth + 1, spawnedBy: caller.id };
+      // A child of a thread Chat started reports to Chat too, at any depth: the origin goes down the chain.
+      const written: Written = { spawnDepth: caller.depth + 1, spawnedBy: caller.id, ...(caller.origin === 'endless' ? { origin: 'endless' } : {}) };
       const fields = checkCreateBody(req, ctx.scope, projectId, written);
       if (!fields.ok) return fields;
       const depth = checkSpawnDepth(caller.depth);

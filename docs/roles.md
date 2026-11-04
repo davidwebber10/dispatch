@@ -181,7 +181,8 @@ never opens to a read error before the first run lands).
 
 No agent supervises another agent — this is deterministic bookkeeping in the daemon.
 A role run never reports to its project's coordinator: its completion, a `needs_you`,
-or a question does not wake the coordinator. The run's report goes to `log.jsonl` and
+or a question does not wake the coordinator. (Other workers report to the thread that
+started them; see [report routing](report-routing.md).) The run's report goes to `log.jsonl` and
 the digest, and a question it asks waits for you.
 
 - A failed, errored, or wall-clock-capped run retries **once**, fresh.
