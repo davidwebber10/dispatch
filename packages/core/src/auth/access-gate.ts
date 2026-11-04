@@ -83,7 +83,7 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
  * caller. Funnel traffic (public internet) carries no identity header, so it falls through.
  * The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
  */
-async function vouchedByTailscaleServe(req: GateRequest, host: string, deps: GateDeps): Promise<boolean> {
+async function vouchedByTailscaleServe(req: GateRequest, host: string, deps: GateDeps, requireForwarded = false): Promise<boolean> {
   if (req.tailscaleUserLogin && req.tailscaleFunnel === undefined) { // Funnel: any value, even empty, means public
     const me = await deps.tailscale.self();
     if (me && me.login && req.tailscaleUserLogin.trim().toLowerCase() === me.login && (me.names.includes(host) || me.ips.includes(host))) {
@@ -91,7 +91,9 @@ async function vouchedByTailscaleServe(req: GateRequest, host: string, deps: Gat
       // the client's Host and merely forwards the identity header would carry a different address,
       // so when the header is there it must name one of the owner's own devices.
       // Any relay header without a verified X-Forwarded-For (Forwarded, X-Real-IP, CF-Connecting-IP) is refused.
-      if (!req.proxied) return true;
+      // From the WSL gateway a real `tailscale serve` always sets it; a portproxy forwards raw headers, so
+      // without it the identity header is something a LAN caller wrote.
+      if (!req.proxied && !requireForwarded) return true;
       if (!req.forwardedFor) return false;
       return isTailscaleAddress(req.forwardedFor) && (await deps.tailscale.isOwnerPeer(req.forwardedFor));
     }
@@ -136,7 +138,7 @@ export async function decide(req: GateRequest, deps: GateDeps): Promise<Decision
     via = 'credential';
   } else if (host && isLoopbackAddress(peer) && (await isKnownLocalHost(req, host, deps))) {
     via = 'local';
-  } else if (host && deps.isGatewayPeer(peer) && (await vouchedByTailscaleServe(req, host, deps))) {
+  } else if (host && deps.isGatewayPeer(peer) && (await vouchedByTailscaleServe(req, host, deps, true))) {
     // WSL: the gateway is the Windows host, which also forwards a LAN portproxy, and the sender
     // chooses Host. So it is not local (R-2): only `tailscale serve` on Windows counts, as above.
     via = 'local';
@@ -235,8 +237,10 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     const peer = req.socket.remoteAddress ?? '?';
     // Behind a same-machine proxy every client has the same peer address, so a visitor's failed
     // tries must not lock the owner out: also key on the proxy's view of the client.
+    // The WSL gateway is excluded: a portproxy forwards the caller's headers unchanged, so a LAN caller
+    // would pick its own bucket. All gateway callers share one budget.
     const proxied = isLoopbackAddress(peer) || opts.isGatewayPeer(peer);
-    const bucket = proxied ? `${peer}|${lastForwarded(req.headers)}` : peer;
+    const bucket = proxied && !opts.isGatewayPeer(peer) ? `${peer}|${lastForwarded(req.headers)}` : peer;
     // Login needs no credential, but the Origin rule still applies: a web page cannot post to it.
     if (!originAllowed(factsFrom(req, true, false), opts.config)) {
       return void res.status(403).json({ error: 'origin_refused' });

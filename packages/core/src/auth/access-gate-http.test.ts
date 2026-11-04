@@ -108,6 +108,17 @@ describe('WSL gateway peer signs in like any other device (R-2)', () => {
     const cookie = `${COOKIE_NAME}=${cookieValue(getToken())}`;
     expect((await request(app).get('/api/x').set('Host', 'localhost:3456').set('Cookie', cookie)).status).toBe(200);
   });
+  test('failed tries from the gateway share one budget, whatever X-Forwarded-For says', async () => {
+    peer = WSL_GATEWAY;
+    const { app, getToken } = build('', undefined, WSL_GATEWAY);
+    const login = (xff: string | undefined, token: string) => {
+      const r = request(app).post('/api/access/login').set('Host', 'localhost:3456');
+      return (xff ? r.set('X-Forwarded-For', xff) : r).send({ token });
+    };
+    for (let i = 0; i < 10; i++) await login(`203.0.113.${i}`, 'nope');
+    expect((await login('203.0.113.99', 'nope')).status).toBe(429);
+    expect((await login(undefined, getToken())).status).toBe(429);
+  });
   test('loopback on WSL still passes with no sign-in', async () => {
     peer = '127.0.0.1';
     const { app } = build('', undefined, WSL_GATEWAY);

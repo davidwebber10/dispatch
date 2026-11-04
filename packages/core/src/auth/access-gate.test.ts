@@ -12,7 +12,7 @@ let ownerPeers: Set<string>;
 function deps(): GateDeps {
   return {
     getToken: () => TOKEN,
-    isGatewayPeer: (a) => a === GATEWAY,
+    isGatewayPeer: (a) => a?.replace(/^::ffff:/, '') === GATEWAY,
     config: {
       allowedHosts: () => allowedHosts, allowedOrigins: () => allowedOrigins,
       addHost() {}, removeHost() {},
@@ -93,7 +93,13 @@ describe('WSL gateway peer', () => {
       proxied: true, forwardedFor: '100.64.0.2',
     };
     expect(await ok(serve)).toBe(true);
-    expect(await ok({ ...serve, proxied: false, forwardedFor: undefined })).toBe(true);
+    expect(await ok({ ...serve, remoteAddress: '::ffff:' + GATEWAY })).toBe(true);
+  });
+  test('serve identity with no X-Forwarded-For is refused from the gateway (a portproxy forwards raw headers)', async () => {
+    const bare = { remoteAddress: GATEWAY, host: 'mac.tail1.ts.net', tailscaleUserLogin: 'me@example.com', proxied: false, forwardedFor: undefined };
+    expect(await ok(bare)).toBe(false);
+    // the same request from loopback keeps passing: Tailscale on the Mac is unchanged
+    expect(await ok({ ...bare, remoteAddress: '127.0.0.1' })).toBe(true);
   });
   test('tailscale serve through the gateway keeps every refusal it has on loopback', async () => {
     const serve = { remoteAddress: GATEWAY, host: 'mac.tail1.ts.net', tailscaleUserLogin: 'me@example.com' };

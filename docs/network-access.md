@@ -62,8 +62,14 @@ To sign in your Windows browser, run `dispatch access` in WSL and paste the toke
 page, or run `dispatch access --link localhost:3456` and open the link it prints. The browser
 keeps its cookie for 400 days. A cookie from before this change still works.
 
+Failed sign-in tries from the Windows side share one budget (10 a minute), so a wrong try
+from one browser can delay another by a minute.
+
 Still trusted without a sign-in: a program inside WSL (agents, hooks, the `dispatch` command),
-and your own Tailscale devices, including `tailscale serve` on Windows (same Tailscale account).
+and your own Tailscale devices, including `tailscale serve` on Windows (same Tailscale account). Someone on your LAN who
+already knows your Tailscale login, this machine's Tailscale name and the tailnet address of one
+of your devices could imitate `tailscale serve` through a portproxy; remove the portproxy if you
+do not need it.
 
 ## Scripts and other tools
 

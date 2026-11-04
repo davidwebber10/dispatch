@@ -571,7 +571,7 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
 - **R-1. A host added with `allow-host`.** The daemon trusts it like `localhost`,
   so the proxy behind that name must have its own sign-in. `tailscale funnel` is
   not affected: it gets the sign-in page.
-- **R-2. WSL with a LAN portproxy.** CLOSED by the WSL sign-in change (decision 2026-11-03,
+- **R-2. WSL with a LAN portproxy.** MOSTLY CLOSED by the WSL sign-in change (decision 2026-11-03,
   option A; `fix/wsl-signin`). Traffic through a Windows portproxy arrives from the gateway
   address, the same as the Windows browser, and the attacker controls `Host`. Instead of the
   `127.0.0.1` listen that Phase 2 planned, the daemon no longer treats the gateway peer as
@@ -580,10 +580,14 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
   token, as a phone does. The Windows browser cannot be told from forwarded traffic, so it signs
   in once too. A cookie from before the change keeps working. The gateway peer is still trusted
   for one case: `tailscale serve` on Windows (owner's login, `ts.net` or tailnet-IP `Host`,
-  owner-device `X-Forwarded-For` when a relay header is present), so Tailscale keeps working.
-  Limits that remain: (a) a LAN attacker who knows the owner's Tailscale login, tailnet name and
-  one device's tailnet address can forge those headers through a portproxy, the same limit as
-  R-6; (b) a Windows forwarder that reaches the daemon through WSL's localhost relay arrives as
+  owner-device `X-Forwarded-For`, which the gateway path always requires, because a real
+  `tailscale serve` sets it), so Tailscale keeps working.
+  Limits that remain: (a) a LAN attacker who knows the owner's Tailscale login, the machine's
+  Tailscale name and the tailnet address of one of the owner's devices can forge those headers
+  through a portproxy, the same class of limit as R-6, so R-2 is not closed against that attacker;
+  (a2) sign-in tries from the gateway share one budget (10 failures a minute), because a portproxy
+  lets the caller choose `X-Forwarded-For`; a LAN caller can delay the Windows browser's sign-in
+  by a minute; (b) a Windows forwarder that reaches the daemon through WSL's localhost relay arrives as
   loopback and is trusted like any local program, so it needs its own sign-in. Untested on a
   real WSL machine; covered by gate and route tests only.
 - **R-3. Other OS users on the same machine.** Loopback is trusted (4.2).
