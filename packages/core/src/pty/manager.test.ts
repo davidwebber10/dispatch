@@ -53,6 +53,6 @@ describe('PTYManager.kill', () => {
     expect(mgr.isAlive('same-id')).toBe(true);        // the replacement is still registered
     expect(alive(newPid)).toBe(true);
     expect(exits).not.toContain(newPid);
-    expect(exits.filter((p) => p === oldPid).length).toBeLessThanOrEqual(1);
+    expect(exits).not.toContain(oldPid); // the stale exit is dropped, not reported
   });
 });
