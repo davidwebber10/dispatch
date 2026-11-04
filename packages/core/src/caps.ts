@@ -66,3 +66,10 @@ export const wsMaxBufferedBytes = (): number => fromEnv('DISPATCH_WS_MAX_BUFFERE
  * (default 10; 0 = never exit).
  */
 export const maxUncaughtPerMinute = (): number => fromEnv('DISPATCH_MAX_UNCAUGHT_PER_MINUTE', 10);
+
+/**
+ * How long a client may stay over the unread-data limit before it is dropped. One large send puts the whole
+ * message in the queue at once and the socket needs time to drain it; only a client still over the limit after
+ * this long has stopped reading. DISPATCH_WS_BUFFER_GRACE_MS (default 10000).
+ */
+export const wsBufferGraceMs = (): number => fromEnv('DISPATCH_WS_BUFFER_GRACE_MS', 10_000);

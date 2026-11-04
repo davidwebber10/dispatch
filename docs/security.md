@@ -45,7 +45,7 @@ environment variable when the daemon starts; set it in the daemon's environment.
 | Stored push subscriptions (one per phone or browser) | 50 (0 = no cap) | `DISPATCH_MAX_PUSH_SUBSCRIPTIONS` |
 | Live watches over all threads (one thread may hold 20) | 500 (0 = no cap) | `DISPATCH_MAX_WATCHES` |
 | One line of an agent run's output held in memory | 32 MiB (0 = no cap) | `DISPATCH_MAX_STREAM_LINE_BYTES` |
-| Unread data on a WebSocket client before the daemon drops it (the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES` |
+| Unread data on a WebSocket client before the daemon drops it, if it stays over for 10 seconds (the browser reconnects) | 32 MiB (0 = no cap) | `DISPATCH_WS_MAX_BUFFERED_BYTES`, `DISPATCH_WS_BUFFER_GRACE_MS` |
 | Uncaught errors in one minute before the daemon exits to be restarted (below this it logs and stays up) | 10 (0 = never exit) | `DISPATCH_MAX_UNCAUGHT_PER_MINUTE` |
 | Shortest gap between runs of a recurring schedule | 1 minute (0 = no minimum) | `DISPATCH_MIN_SCHEDULE_MINUTES` |
 | Folders outside a project that a link inside it may lead to | none | `DISPATCH_FILE_ROOTS` (a `:`-separated list; `/` allows any) |

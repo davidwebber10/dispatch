@@ -19,14 +19,20 @@ export interface ProcessGuardDeps {
 
 const WINDOW_MS = 60_000;
 
+/** Never throws: an error object can have a getter that throws, and this runs where a throw ends the process. */
 function describeError(err: unknown): string {
-  if (err instanceof Error) return err.stack || `${err.name}: ${err.message}`;
-  try { return typeof err === 'string' ? err : JSON.stringify(err); } catch { return String(err); }
+  try {
+    if (err instanceof Error) return err.stack || `${err.name}: ${err.message}`;
+    return typeof err === 'string' ? err : JSON.stringify(err) ?? String(err);
+  } catch {
+    try { return String(err); } catch { return '(an error that could not be described)'; }
+  }
 }
 
 export function installProcessGuards(deps: ProcessGuardDeps = {}): () => void {
   const proc = deps.proc ?? process;
-  const log = deps.log ?? ((l: string) => console.error(l));
+  const rawLog = deps.log ?? ((l: string) => console.error(l));
+  const log = (l: string) => { try { rawLog(l); } catch { /* a failing log must not end the process */ } };
   const now = deps.now ?? Date.now;
   const times: number[] = [];
 

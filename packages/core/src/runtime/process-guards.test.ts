@@ -62,6 +62,27 @@ describe('installProcessGuards', () => {
     expect(b.proc.exit).not.toHaveBeenCalled();
   });
 
+  it('survives an error whose stack getter throws, and a log function that throws', () => {
+    process.env.DISPATCH_MAX_UNCAUGHT_PER_MINUTE = '1';
+    const { handlers, proc, lines } = setup();
+    const bad = new Error('bad');
+    Object.defineProperty(bad, 'stack', { get() { throw new Error('getter'); } });
+    expect(() => handlers.uncaughtException(bad)).not.toThrow();
+    expect(lines).toHaveLength(1);
+    const evil = { toString() { throw new Error('x'); }, toJSON() { throw new Error('y'); } };
+    expect(() => handlers.unhandledRejection(evil)).not.toThrow();
+    expect(lines[1]).toMatch(/could not be described/);
+    // The breaker still counts after a bad error.
+    handlers.uncaughtException(new Error('again'));
+    expect(proc.exit).toHaveBeenCalledWith(1);
+    // A log that throws does not stop the exit path.
+    const handlers2: Record<string, (...a: any[]) => void> = {};
+    const proc2 = { on: (e: string, f: any) => { handlers2[e] = f; }, off: vi.fn(), exit: vi.fn() } as any;
+    installProcessGuards({ proc: proc2, log: () => { throw new Error('log failed'); }, now: () => 0 });
+    expect(() => { handlers2.uncaughtException(new Error('a')); handlers2.uncaughtException(new Error('b')); }).not.toThrow();
+    expect(proc2.exit).toHaveBeenCalledWith(1);
+  });
+
   it('returns a function that removes both handlers', () => {
     const { off, proc } = setup();
     off();

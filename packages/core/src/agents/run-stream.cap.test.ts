@@ -43,4 +43,21 @@ describe('RunStreamParser line cap (SEC-23)', () => {
     const big = 'z'.repeat(200_000);
     expect(p.feed(line(big)).map((e: any) => e.text.length)).toEqual([200_000]);
   });
+
+  it('counts bytes, not characters: multibyte text over the cap is dropped, whole or in pieces', () => {
+    process.env.DISPATCH_MAX_STREAM_LINE_BYTES = '600';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const cjk = '汉'.repeat(150); // 150 characters, 450 bytes of text, 450 + JSON wrapper is under 600
+    const big = '汉'.repeat(300); // 900 bytes of text
+    const ok = new RunStreamParser('claude-code').feed(line(cjk));
+    expect(ok.map((e: any) => e.text.length)).toEqual([150]);
+    expect(new RunStreamParser('claude-code').feed(line(big))).toEqual([]);
+    // In pieces: the partial buffer is over 600 bytes before 600 characters.
+    const p = new RunStreamParser('claude-code');
+    const out: any[] = [];
+    const raw = line(big);
+    for (let i = 0; i < raw.length; i += 100) out.push(...p.feed(raw.slice(i, i + 100)));
+    out.push(...p.feed(line('after')));
+    expect(out.map((e) => e.text)).toEqual(['after']);
+  });
 });
