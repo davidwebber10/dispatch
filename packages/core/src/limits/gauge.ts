@@ -52,11 +52,12 @@ export interface PausedGroup {
   /** The newest parked_at: a pause newer than a device's dismiss shows the banner again. */
   latestStartedAt: number;
   /**
-   * When the limit stops holding the group back: the latest reset over its rows (a waiting row with
-   * no readable reset uses its wake time, when it retries). Past it the chip is not red. Null when
-   * unknown: a stopped row with no readable reset has no end time to trust, so the chip stays red.
+   * When the limit stops holding the group back, so the chip is no longer red: the latest reset
+   * over its rows. A row with no readable reset uses its retry deadline (`wake_at`, set when it was
+   * parked: 30 minutes for a session limit, 6 hours for a weekly one), so a stopped thread with an
+   * unknown reset cannot keep the chip red for ever. The banner still lists it.
    */
-  activeUntil: number | null;
+  activeUntil: number;
 }
 export interface UsageSummary {
   type: 'usage-limits';
@@ -94,7 +95,6 @@ export class UsageGauge {
   private timer: NodeJS.Timeout | null = null;
   private pending: NodeJS.Timeout | null = null;
   private lastSent = '';
-  private lastAt = 0;
 
   constructor(private readonly d: GaugeDeps) {
     this.o = { ...DEFAULTS, ...d.options };
@@ -154,7 +154,7 @@ export class UsageGauge {
         firstSessionId,
         episodeStartedAt: Math.min(...rows.map((r) => r.parked_at)),
         latestStartedAt: Math.max(...rows.map((r) => r.parked_at)),
-        activeUntil: rows.some((r) => r.resets_at === null && r.state === 'capped') ? null : Math.max(...rows.map((r) => r.resets_at ?? r.wake_at)),
+        activeUntil: Math.max(...rows.map((r) => r.resets_at ?? r.wake_at)),
       });
     }
     return out;
@@ -167,10 +167,7 @@ export class UsageGauge {
       if (s) { const { account: _account, ...rest } = s; providers.push(rest); }
     }
     const settings = this.settings();
-    // Strictly increasing, so two summaries never share a stamp and a clock step back cannot make a newer one look older.
-    const at = Math.max(this.now(), this.lastAt + 1);
-    this.lastAt = at;
-    return { type: 'usage-limits', at, warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
+    return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
   }
 
   /** The highest counted window at or above the threshold, or null. For a future spawn guard (ledger N8). */

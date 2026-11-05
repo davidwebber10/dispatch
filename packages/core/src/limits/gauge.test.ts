@@ -91,10 +91,10 @@ describe('summary', () => {
     expect(gauge.summary().paused[0].activeUntil).toBe(RESET);
   });
 
-  it('activeUntil is null (unknown) when a stopped row never had a readable reset: its retry time is not an end', () => {
+  it('a stopped row with no readable reset ends at its retry deadline (wake_at), not never', () => {
     thread('a');
-    park('a', { state: 'capped', resets_at: null, wake_at: RESET, parsed: 0 });
-    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    park('a', { state: 'capped', resets_at: null, wake_at: RESET + 30 * MIN, parsed: 0 });
+    expect(gauge.summary().paused[0].activeUntil).toBe(RESET + 30 * MIN);
   });
 
   it('mixed kinds: weekly beats session', () => {
@@ -137,15 +137,7 @@ describe('archived threads and the push switch', () => {
     clock += 3 * MIN;
     gauge.pausesChanged();
     expect(events).toHaveLength(n); // same figures: no new event just for a new stamp
-    expect(gauge.summary().at).toBeGreaterThanOrEqual(clock);
-  });
-
-  it('stamps never repeat or go back, even in one millisecond or after the clock steps back', () => {
-    const a = gauge.summary().at;
-    const b = gauge.summary().at;
-    expect(b).toBeGreaterThan(a);
-    clock -= 60 * MIN;
-    expect(gauge.summary().at).toBeGreaterThan(b);
+    expect(gauge.summary().at).toBe(clock);
   });
 });
 

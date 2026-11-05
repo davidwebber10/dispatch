@@ -505,8 +505,8 @@ export interface UsagePausedGroup {
   episodeStartedAt: number;
   /** The newest pause start: this device's dismiss holds until a pause newer than it. Missing from an older daemon. */
   latestStartedAt?: number;
-  /** When the limit stops holding the group back (latest reset, or wake time when none was read; null = unknown, stays red). The chip is red only before it. Missing from an older daemon. */
-  activeUntil?: number | null;
+  /** When the limit stops holding the group back (latest reset, or the retry deadline when none was read). The chip is red only before it. Missing from an older daemon. */
+  activeUntil?: number;
 }
 /** GET /api/usage-limits/summary and the `usage-limits` broadcast carry the same body. */
 export interface UsageSummary {

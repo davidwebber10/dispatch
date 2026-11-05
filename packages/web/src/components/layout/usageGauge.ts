@@ -38,7 +38,7 @@ export function peakWindow(p: UsageSummaryProvider, now: number, types: readonly
  * window has reset, so the chip shows normal or amber again. An older daemon sends no end time: active.
  */
 export function activePaused(s: UsageSummary, now: number): Set<string> {
-  return new Set(s.paused.filter((g) => g.activeUntil == null || g.activeUntil > now).map((g) => g.provider));
+  return new Set(s.paused.filter((g) => g.activeUntil === undefined || g.activeUntil > now).map((g) => g.provider));
 }
 
 export interface ChipModel {
