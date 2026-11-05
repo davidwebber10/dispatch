@@ -151,6 +151,7 @@ export class UsageLimitService {
           this.d.note(row.terminal_id, `[${name}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
         } else {
           parksDb.setState(this.d.db, row.terminal_id, 'parked', attempts, now + this.o.sendRetryMs, now);
+          changed = true; // the retry time moved, and the chip reads it as the end of the pause
         }
       }
     }

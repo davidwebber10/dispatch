@@ -344,18 +344,31 @@ describe('change listener (#127)', () => {
     wakeError = new Error('no pty');
     for (let i = 0; i < 5; i++) { clock += 6 * MIN; svc.tick(); }
     expect(parksDb.get(db, 'b')!.state).toBe('capped');
-    expect(n).toBe(5); // the retries keep it parked, only the cap is a change
+    expect(n).toBe(9); // each failed retry moves the deadline the chip reads, so it notifies; then the cap
     expect(parksDb.listPaused(db).map((r) => r.terminal_id)).toEqual(['b']);
     svc.onUserMessage('b');
-    expect(n).toBe(6);
+    expect(n).toBe(10);
     svc.onStopped('b'); // already gone
-    expect(n).toBe(6);
+    expect(n).toBe(10);
     // restore drops a park whose thread was archived.
     svc.park('c', 'claude-code', session);
-    expect(n).toBe(7);
+    expect(n).toBe(11);
     db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'c'").run();
     svc.restore();
-    expect(n).toBe(8);
+    expect(n).toBe(12);
+  });
+
+  it('a failed wake that moves the retry time notifies, so open clients read the new deadline', () => {
+    let n = 0;
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    svc.addChangeListener(() => { n++; });
+    const firstDeadline = parksDb.get(db, 'a')!.wake_at;
+    wakeError = new Error('no pty');
+    clock = firstDeadline + 1;
+    svc.tick();
+    expect(parksDb.get(db, 'a')!.wake_at).toBeGreaterThan(firstDeadline);
+    expect(n).toBe(1);
   });
 
   it('a throwing listener does not break the service', () => {
