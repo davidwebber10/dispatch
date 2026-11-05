@@ -260,3 +260,80 @@ describe('GrokTranslator — the permission membrane', () => {
     expect(buildPermissionResponse({ behavior: 'deny' }, options)).toEqual({ outcome: { outcome: 'cancelled' } });
   });
 });
+
+// The frames below are the real ones a Grok CLI wrote on its free-usage stop
+// (~/.grok/sessions/.../updates.jsonl, 2026-10-26): retry_state exhausted, then turn_completed
+// with stop_reason "rate_limit". Only the ids are shortened.
+const exhaustedFrame = {
+  method: '_x.ai/session/update',
+  params: { sessionId: 's1', update: {
+    sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true,
+    reason: "API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You've used all the included free usage for model grok-4.7 for now. Usage resets over a rolling 24-hour window — tokens (actual/limit): 626631/600000. Upgrade to a Grok subscription for higher limits: https://grok.com/supergrok",
+  } },
+};
+const retryingFrame = {
+  method: '_x.ai/session/update',
+  params: { sessionId: 's1', update: { sessionUpdate: 'retry_state', type: 'retrying', attempt: 1, max_retries: 15, error_type: 'rate_limited', reason: 'API error (status 429 Too Many Requests): Some resource has been exhausted: You are sending requests too quickly.' } },
+};
+const rateLimitedTurn = { method: '_x.ai/session/update', params: { sessionId: 's1', update: { sessionUpdate: 'turn_completed', prompt_id: 'p1', stop_reason: 'rate_limit' } } };
+const limitOf = (actions: GrokAction[]) => (actions.find((a) => a.kind === ('usage-limit' as any)) as any)?.limit;
+
+describe('GrokTranslator — usage limit', () => {
+  it('retry_state exhausted + turn_completed rate_limit ends the turn as a usage-limit pause, not idle or failed', () => {
+    const t = new GrokTranslator();
+    expect(t.translate(exhaustedFrame as any)).toEqual([]);
+    const out = t.translate(rateLimitedTurn as any);
+    expect(limitOf(out)).toMatchObject({ kind: 'usage', resetsAt: null });
+    expect(limitOf(out).message).toContain('free-usage-exhausted');
+    expect(kinds(out)).not.toContain('idle');
+    expect(kinds(out)).not.toContain('failed');
+    expect(kinds(out)).not.toContain('needs-help');
+    // The chat still shows the stop as an error footer.
+    expect(events(out).some((e) => e.type === 'result' && e.is_error === true)).toBe(true);
+  });
+
+  it('a retry that is still going is ignored, and the turn that follows ends normally', () => {
+    const t = new GrokTranslator();
+    expect(t.translate(retryingFrame as any)).toEqual([]);
+    const out = t.translate(fx.turnCompleted as any);
+    expect(kinds(out)).toContain('idle');
+    expect(limitOf(out)).toBeUndefined();
+  });
+
+  it('a stop_reason of rate_limit with no retry_state before it is still a pause', () => {
+    const t = new GrokTranslator();
+    const out = t.translate(rateLimitedTurn as any);
+    expect(limitOf(out)).toMatchObject({ kind: 'usage', resetsAt: null });
+  });
+
+  it('the pause does not leak into the next turn', () => {
+    const t = new GrokTranslator();
+    t.translate(exhaustedFrame as any);
+    t.translate(rateLimitedTurn as any);
+    const out = t.translate(fx.turnCompleted as any);
+    expect(limitOf(out)).toBeUndefined();
+    expect(kinds(out)).toContain('idle');
+  });
+
+  it('a limit seen in a replayed history is not a live pause', () => {
+    const t = new GrokTranslator();
+    expect(t.translate(exhaustedFrame as any, { replay: true })).toEqual([]);
+    expect(t.translate(rateLimitedTurn as any, { replay: true })).toEqual([]);
+  });
+
+  it('takePendingLimit hands over a limit that was seen when the prompt call then fails, once', () => {
+    const t = new GrokTranslator();
+    t.translate(exhaustedFrame as any);
+    expect(t.takePendingLimit()?.kind).toBe('usage');
+    expect(t.takePendingLimit()).toBeNull();
+  });
+
+  it('OpenCode is left alone: its dialect has no confirmed limit output', () => {
+    const t = new GrokTranslator('opencode');
+    t.translate(exhaustedFrame as any);
+    const out = t.promptResult({ stopReason: 'error' });
+    expect(limitOf(out)).toBeUndefined();
+    expect(kinds(out)).toContain('failed');
+    expect(t.takePendingLimit()).toBeNull();
+  });
+});

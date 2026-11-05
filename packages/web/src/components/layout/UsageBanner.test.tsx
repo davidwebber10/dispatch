@@ -25,6 +25,9 @@ describe('bannerText', () => {
     expect(bannerText(g({ kind: 'weekly', earliestResetsAt: Date.UTC(2026, 10, 9, 14, 0) }), NOW, 'UTC')).toBe('Claude agents paused: weekly limit, resumes Mon 2:00 PM (3 threads)');
     expect(bannerText(g({ kind: 'fable', provider: 'codex' }), NOW, 'UTC')).toBe('Codex agents paused: Fable limit, resumes 6:10 AM (3 threads)');
   });
+  it('names Grok, which has no figures for the chip but does pause on its usage limit', () => {
+    expect(bannerText(g({ provider: 'grok', kind: 'usage', earliestResetsAt: null, threads: 1 }), NOW)).toBe('Grok agents paused: usage limit, reset time unknown (1 thread)');
+  });
   it('adds the capped count, and says stopped when every row is capped', () => {
     expect(bannerText(g({ capped: 1 }), NOW, 'UTC')).toBe('Claude agents paused: session limit, resumes 6:10 AM (3 threads), 1 stopped after 5 tries');
     expect(bannerText(g({ threads: 2, capped: 2 }), NOW)).toBe('Claude agents stopped: session limit, auto-resume gave up (2 threads)');

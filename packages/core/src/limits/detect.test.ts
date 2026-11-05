@@ -164,3 +164,76 @@ describe('named limits: Fable, Opus, Sonnet', () => {
   });
 });
 
+
+// --- Codex CLI (terminal) and Grok -------------------------------------------------------------
+// The Codex wording is taken from the strings inside the installed `codex` 0.166.0 binary
+// (the "You've hit your usage limit..." templates and "try again at <time>"). The Grok wording
+// is a real stop in ~/.grok/logs (subscription:free-usage-exhausted) and its ACP session file.
+import { detectCodexBannerLimit, textAfterCodexBanner, detectGrokLimit } from './detect.js';
+
+describe('detectCodexBannerLimit (Codex CLI threads)', () => {
+  const plus = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.";
+  it('reads the reset time from "try again at <time>"', () => {
+    const l = detectCodexBannerLimit(plus, NOW)!;
+    expect(l.kind).toBe('usage');
+    expect(l.message).toContain("You've hit your usage limit");
+    // 9:15 AM on the next local clock reading; the time is local, so compare against the parser.
+    expect(l.resetsAt).toBe(parseResetTime('try again at 9:15 AM', NOW)!.at);
+  });
+  it('reads a dated reset and the Pro wording', () => {
+    const t = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 29th, 2026 9:00 AM.";
+    expect(detectCodexBannerLimit(t, NOW)!.resetsAt).toBe(parseResetTime('try again at Oct 29th, 2026 9:00 AM', NOW)!.at);
+  });
+  it('reads the "for <model>" and admin wordings', () => {
+    expect(detectCodexBannerLimit("You've hit your usage limit for GPT-6 Astra. Switch to another model now, or try again at 3:10 PM.", NOW)).not.toBeNull();
+    expect(detectCodexBannerLimit('You’ve hit your usage limit. To get more access now, send a request to your admin or try again at 3:10 PM.', NOW)).not.toBeNull();
+  });
+  it('a limit with no time is a limit with a null reset', () => {
+    const l = detectCodexBannerLimit("You've hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits", NOW)!;
+    expect(l.resetsAt).toBeNull();
+  });
+  it('survives screen codes and a time wrapped onto the next line', () => {
+    const t = "\x1b[1m■\x1b[0m You've hit your usage limit. Upgrade to Plus to continue using Codex\r\n  (https://chatgpt.com/explore/plus), or try again at\r\n  9:15 AM.\r\n";
+    expect(detectCodexBannerLimit(t, NOW)!.resetsAt).toBe(parseResetTime('try again at 9:15 AM', NOW)!.at);
+  });
+  it('prose that merely mentions the words is not a limit', () => {
+    expect(detectCodexBannerLimit('The doc explains that when you hit your usage limit the CLI shows a banner.', NOW)).toBeNull();
+    expect(detectCodexBannerLimit('Tests: "You\'ve hit your usage limit" is parsed by detectCodexLimit', NOW)).toBeNull();
+    expect(detectCodexBannerLimit('npm test\nall green', NOW)).toBeNull();
+  });
+  it('the Claude banner is not a Codex banner, and the other way round', () => {
+    expect(detectCodexBannerLimit("You've hit your session limit · resets 1:10am (America/Indianapolis)", NOW)).toBeNull();
+    expect(detectBannerLimit(plus, NOW)).toBeNull();
+  });
+  it('counts the letters left on the screen after the banner', () => {
+    expect(textAfterCodexBanner(plus + '\r\n\r\n> ')).toBeLessThan(10);
+    expect(textAfterCodexBanner(plus + '\r\nSo what that means in practice is that the agent keeps explaining things for a long time afterwards, with many words.')).toBeGreaterThan(60);
+  });
+});
+
+describe('detectGrokLimit (Grok ACP retry_state)', () => {
+  const exhausted = {
+    sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true,
+    reason: "API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You've used all the included free usage for model grok-4.7 for now. Usage resets over a rolling 24-hour window — tokens (actual/limit): 626631/600000. Upgrade to a Grok subscription for higher limits: https://grok.com/supergrok",
+  };
+  it('the real free-usage stop is a usage limit with no reset time', () => {
+    const l = detectGrokLimit(exhausted, NOW)!;
+    expect(l.kind).toBe('usage');
+    expect(l.resetsAt).toBeNull();
+    expect(l.message).toContain('free-usage-exhausted');
+  });
+  it('a retry that is still going is not a stop', () => {
+    expect(detectGrokLimit({ sessionUpdate: 'retry_state', type: 'retrying', attempt: 1, max_retries: 15, error_type: 'rate_limited', reason: 'API error (status 429 Too Many Requests): Some resource has been exhausted: You are sending requests too quickly.' }, NOW)).toBeNull();
+  });
+  it('an exhausted retry that was not a rate limit (a doom loop) is not a usage limit', () => {
+    expect(detectGrokLimit({ sessionUpdate: 'retry_state', type: 'exhausted', error_type: 'doom_loop_detected', reason: 'doom loop detected' }, NOW)).toBeNull();
+  });
+  it('reads a stop_reason of rate_limit with no retry_state before it', () => {
+    const l = detectGrokLimit({ sessionUpdate: 'turn_completed', stop_reason: 'rate_limit' }, NOW)!;
+    expect(l).toMatchObject({ kind: 'usage', resetsAt: null });
+  });
+  it('anything else is null', () => {
+    expect(detectGrokLimit({ sessionUpdate: 'turn_completed', stop_reason: 'end_turn' }, NOW)).toBeNull();
+    expect(detectGrokLimit(null as any, NOW)).toBeNull();
+  });
+});

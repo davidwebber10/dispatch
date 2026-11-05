@@ -122,3 +122,48 @@ describe('PtyLimitWatcher', () => {
   });
 });
 
+
+describe('PtyLimitWatcher with the Codex banner', () => {
+  const codexBanner = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.\r\n";
+  let got: { id: string; provider?: string; kind: string }[];
+  let cw: PtyLimitWatcher;
+  beforeEach(() => {
+    got = [];
+    cw = new PtyLimitWatcher({ isIdle: () => idle, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000 });
+  });
+  afterEach(() => { cw.forget('c1'); });
+
+  it('names the provider whose banner it was, once the terminal is quiet', () => {
+    cw.feed('c1', codexBanner);
+    quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'codex', kind: 'usage' }]);
+  });
+  it('a Claude banner is reported as claude-code', () => {
+    cw.feed('c1', banner);
+    quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'claude-code', kind: 'session' }]);
+  });
+  it('the Codex prompt box left after the banner does not count as more talk', () => {
+    cw.feed('c1', codexBanner + '\r\n  gpt-6-astra high · ~/Developer/Projects/app            100% context left\r\n› Ask Codex to do anything\r\n');
+    quiet();
+    expect(got).toHaveLength(1);
+  });
+  it('a quoted Codex banner followed by prose never parks', () => {
+    cw.feed('c1', codexBanner);
+    cw.feed('c1', 'That is the message the CLI prints. After it the agent stops and waits for you to send a message. ' + 'The daemon reads the time and wakes the thread by itself when it is over. '.repeat(8) + '\r\n');
+    quiet(10000);
+    expect(got).toEqual([]);
+  });
+  it('a Codex banner in the middle of a sentence never parks', () => {
+    cw.feed('c1', "In the docs, Codex prints: You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM. And that is all.\r\n");
+    quiet(10000);
+    expect(got).toEqual([]);
+  });
+  it('reports a repainted Codex banner once', () => {
+    cw.feed('c1', codexBanner); cw.feed('c1', codexBanner);
+    quiet();
+    cw.feed('c1', codexBanner);
+    quiet();
+    expect(got).toHaveLength(1);
+  });
+});

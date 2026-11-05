@@ -308,6 +308,11 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
           session.turnActive = false;
           this.emit('failed', session.terminalId);
           break;
+        case 'usage-limit':
+          // A usage limit is a pause, not a failure: the limit service parks the thread and wakes it.
+          session.turnActive = false;
+          this.emit('usage-limit', session.terminalId, action.limit);
+          break;
         case 'busy':
           this.emit('busy', session.terminalId);
           break;
@@ -395,10 +400,12 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
       if (this.sessions.get(session.terminalId) !== session) return;
+      const limit = session.translator.takePendingLimit(); // the retries ran out on a usage limit, then the call failed
       session.translator.abortTurn(); // the failed turn's prose must not join the next turn's texts
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
-      this.emit('failed', session.terminalId);
+      if (limit) this.emit('usage-limit', session.terminalId, limit);
+      else this.emit('failed', session.terminalId);
       return;
     }
     // Response-driven boundary: OpenCode sends no turn_completed update — the prompt

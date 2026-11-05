@@ -184,6 +184,84 @@ export function textAfterBanner(output: string): number {
   return letters(clean.slice(end)) + (letters(lead) > 3 ? 1000 : 0);
 }
 
+/**
+ * Codex CLI's usage-limit stop, as the TUI prints it (inline mode keeps it in the scrollback). The
+ * wording is the set of templates inside the codex binary: "You've hit your usage limit. Upgrade to
+ * Plus to continue using Codex (...), or try again at <time>.", the Pro / credits / admin variants,
+ * and "You've hit your usage limit for <model>. Switch to another model now, or try again at <time>."
+ */
+const CODEX_BANNER = /you['’]ve hit your usage limit/gi;
+const CODEX_RETRY = /try again (at|in)\s+([^.]{3,60}?)\s*(?:\.|$)/i;
+
+/** The Codex banner's last real occurrence in `clean` (screen codes already gone): where it starts, where its sentence ends, and its words. Words before it on its line mean it was quoted in prose. */
+function findCodexBanner(clean: string): { start: number; end: number; text: string; retry: RegExpExecArray | null } | null {
+  let found: { start: number; end: number; text: string; retry: RegExpExecArray | null } | null = null;
+  for (const m of clean.matchAll(CODEX_BANNER)) {
+    const lead = clean.slice(clean.lastIndexOf('\n', m.index!) + 1, m.index!);
+    if ((lead.match(/[A-Za-z0-9]/g) ?? []).length > 3) continue;
+    // The CLI wraps its text: read the sentence run across line breaks.
+    const flat = clean.slice(m.index!, m.index! + 700).replace(/\s+/g, ' ');
+    const retry = CODEX_RETRY.exec(flat);
+    let end: number;
+    let text: string;
+    if (retry) {
+      text = flat.slice(0, retry.index + retry[0].length);
+      end = m.index! + endOfFlat(clean.slice(m.index!, m.index! + 700), text.length);
+    } else {
+      end = clean.indexOf('\n', m.index!);
+      end = end < 0 ? clean.length : end;
+      text = flat.slice(0, Math.max(m[0].length, end - m.index!)).trim();
+    }
+    found = { start: m.index!, end, text, retry };
+  }
+  return found;
+}
+
+/** The offset in `raw` (with its original line breaks) after `n` characters of its whitespace-collapsed form. */
+function endOfFlat(raw: string, n: number): number {
+  let flat = 0;
+  let prevSpace = false;
+  for (let i = 0; i < raw.length; i++) {
+    const space = /\s/.test(raw[i]);
+    if (!(space && prevSpace)) flat++;
+    prevSpace = space;
+    if (flat >= n) return i + 1;
+  }
+  return raw.length;
+}
+
+/** The Codex banner in CLI (PTY) output, or null. Prose that only mentions the words is not matched. */
+export function detectCodexBannerLimit(output: string, now: number): UsageLimit | null {
+  const found = findCodexBanner(output.replace(ANSI, ''));
+  if (!found) return null;
+  const resetsAt = found.retry ? (parseResetTime(`try again ${found.retry[1]} ${found.retry[2]}`, now)?.at ?? null) : null;
+  return { kind: kindFromText(found.text), resetsAt, message: found.text.slice(0, 400) };
+}
+
+/** Letters and digits on the screen after the last Codex banner (the same test as textAfterBanner). */
+export function textAfterCodexBanner(output: string): number {
+  const clean = output.replace(ANSI, '');
+  const found = findCodexBanner(clean);
+  if (!found) return 0;
+  return (clean.slice(found.end).match(/[A-Za-z0-9]/g) ?? []).length;
+}
+
+/**
+ * A Grok (ACP) stop on its usage limit. Grok sends `retry_state` `exhausted` with
+ * `is_rate_limited: true` when its retries ran out on a 429, and the turn then ends with
+ * `turn_completed` `stop_reason: "rate_limit"`. The free tier's message says "Usage resets over a
+ * rolling 24-hour window": there is no clock time to read, so the reset is null. A `retrying` update
+ * (the CLI is still retrying) is not a stop.
+ */
+export function detectGrokLimit(update: any, now: number): UsageLimit | null {
+  if (!update || typeof update !== 'object') return null;
+  const reason = typeof update.reason === 'string' ? update.reason : '';
+  const exhausted = update.sessionUpdate === 'retry_state' && update.type === 'exhausted' && update.is_rate_limited === true;
+  const turnStop = update.sessionUpdate === 'turn_completed' && update.stop_reason === 'rate_limit';
+  if (!exhausted && !turnStop) return null;
+  return { kind: kindFromText(reason), resetsAt: parseResetTime(reason, now)?.at ?? null, message: reason.trim() || 'usage limit reached' };
+}
+
 const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', fable: 'Fable limit', opus: 'Opus limit', sonnet: 'Sonnet limit', usage: 'usage limit' };
 
 /** "session limit", "Fable limit": the kind as a phrase. */
