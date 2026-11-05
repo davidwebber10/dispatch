@@ -10,6 +10,7 @@ import { LimitSnapshots } from '../limits/snapshot.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
+import { createCodexRefresh } from '../limits/codex-refresh.js';
 
 let db: ReturnType<typeof createDatabase>;
 let snaps: LimitSnapshots;
@@ -93,5 +94,22 @@ describe('account switches and the Codex file', () => {
     codexTerm(); codexFile('2026-10-24T13:00:00.000Z', { primary: null, secondary: null, plan_type: 'business' });
     snaps.record('codex', 'acct-A', { five_hour: { usedPercent: 80, resetsAt: 1792861200_000 } }, Date.parse('2026-10-24T12:00:00.000Z'), 'plus', true);
     expect((await request(app()).get('/api/usage-limits?terminalId=x1')).body.snapshot.windows).toEqual({});
+  });
+});
+
+describe('the shared Codex refresher (#127)', () => {
+  it('the gauge tick and the route share one 30 s throttle after the move', async () => {
+    codexTerm(); codexFile('2026-10-24T12:00:00.000Z', RL);
+    let clock = NOW;
+    const refresh = createCodexRefresh(snaps, { now: () => clock, accountFor: () => account, codexLoginChangedAt: () => loginChangedAt, codexRoots: { sessions: sessionsRoot, archived: path.join(sessionsRoot, 'none') } });
+    const a = express();
+    a.use('/api', createUsageLimitsRouter(db, snaps, { now: () => clock, accountFor: () => account, refreshCodex: refresh }));
+    refresh('x1', EXT); // the gauge tick reads first
+    expect(snaps.get('codex', 'acct-A')!.windows.five_hour?.usedPercent).toBe(41);
+    codexFile('2026-10-24T13:00:00.000Z', { ...RL, primary: { ...RL.primary, used_percent: 90 } });
+    clock += 10_000;
+    expect((await request(a).get('/api/usage-limits?terminalId=x1')).body.snapshot.windows.five_hour.usedPercent).toBe(41);
+    clock += 30_000;
+    expect((await request(a).get('/api/usage-limits?terminalId=x1')).body.snapshot.windows.five_hour.usedPercent).toBe(90);
   });
 });
