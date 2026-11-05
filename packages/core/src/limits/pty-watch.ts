@@ -31,7 +31,7 @@ export interface PtyDetector {
  */
 export const PTY_DETECTORS: PtyDetector[] = [
   { provider: 'claude-code', detect: detectBannerLimit, textAfter: textAfterBanner, maxTrailing: MAX_TRAILING_LETTERS },
-  { provider: 'codex', detect: detectCodexBannerLimit, textAfter: textAfterCodexBanner, maxTrailing: 400 },
+  { provider: 'codex', detect: detectCodexBannerLimit, textAfter: textAfterCodexBanner, maxTrailing: 250 },
 ];
 
 export interface PtyLimitWatcherDeps {
@@ -41,6 +41,12 @@ export interface PtyLimitWatcherDeps {
   confirmMs?: number;
   /** Default: PTY_DETECTORS. */
   detectors?: PtyDetector[];
+  /**
+   * The CLI a terminal runs (its type). When given, a terminal is read only for that CLI's banner and
+   * a terminal of any other type (a shell, an unknown one) is not read at all. Without it every
+   * detector reads every terminal.
+   */
+  providerOf?(terminalId: string): string | undefined;
 }
 
 export class PtyLimitWatcher {
@@ -52,9 +58,11 @@ export class PtyLimitWatcher {
 
   constructor(private readonly d: PtyLimitWatcherDeps) { this.detectors = d.detectors ?? PTY_DETECTORS; }
 
-  /** The first detector that finds a banner in `output`. */
-  private find(output: string, now: number): { limit: UsageLimit; detector: PtyDetector } | null {
-    for (const detector of this.detectors) {
+  /** The first detector for this terminal's CLI that finds a banner in `output`. */
+  private find(terminalId: string, output: string, now: number): { limit: UsageLimit; detector: PtyDetector } | null {
+    const provider = this.d.providerOf?.(terminalId);
+    const detectors = this.d.providerOf ? (provider ? this.detectors.filter((x) => x.provider === provider) : []) : this.detectors;
+    for (const detector of detectors) {
       const limit = detector.detect(output, now);
       if (limit) return { limit, detector };
     }
@@ -66,10 +74,10 @@ export class PtyLimitWatcher {
     this.tails.set(terminalId, tail);
     if (this.pending.has(terminalId)) {
       // The banner painted again, or blank screen codes: still quiet. Anything else: not quiet.
-      if (!this.find(chunk, Date.now()) && chunk.replace(ANSI, '').trim()) this.arm(terminalId);
+      if (!this.find(terminalId, chunk, Date.now()) && chunk.replace(ANSI, '').trim()) this.arm(terminalId);
       return;
     }
-    const hit = this.find(tail, Date.now());
+    const hit = this.find(terminalId, tail, Date.now());
     if (hit && !this.isRepaint(terminalId, hit.limit)) this.arm(terminalId);
   }
 
@@ -85,7 +93,7 @@ export class PtyLimitWatcher {
       this.pending.delete(terminalId);
       const tail = this.tails.get(terminalId) ?? '';
       // Read the whole banner now: chunks may have split it, so the first look can lack the time.
-      const hit = this.find(tail, Date.now());
+      const hit = this.find(terminalId, tail, Date.now());
       if (!hit || hit.detector.textAfter(tail) > hit.detector.maxTrailing || this.isRepaint(terminalId, hit.limit)) { this.tails.delete(terminalId); return; }
       const { limit, detector } = hit;
       // A repaint resets the monitor's idle clock: wait again instead of dropping a real stop.

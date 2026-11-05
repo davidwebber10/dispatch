@@ -166,4 +166,28 @@ describe('PtyLimitWatcher with the Codex banner', () => {
     quiet();
     expect(got).toHaveLength(1);
   });
+
+  it('a wrapped Codex banner is not claimed by the Claude detector', () => {
+    const wrapped = "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.\r\n";
+    // Claude's detector reads "You've hit your usage limit." at a line end as its own banner, so a terminal is read only for its own CLI.
+    const typed = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'codex' });
+    typed.feed('c1', wrapped); quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'codex', kind: 'usage' }]);
+    typed.forget('c1');
+  });
+  it('a terminal of one CLI is only read for that CLI\'s banner', () => {
+    const typed: Record<string, string | undefined> = { cl: 'claude-code', cx: 'codex', sh: 'shell' };
+    const tw = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: (id) => typed[id] });
+    tw.feed('cl', codexBanner);   // Codex text in a Claude thread
+    tw.feed('cx', banner);        // Claude text in a Codex thread
+    tw.feed('sh', codexBanner);   // a plain shell
+    tw.feed('sh', banner);
+    quiet(10000);
+    expect(got).toEqual([]);
+    tw.feed('cx', codexBanner);
+    tw.feed('cl', banner);
+    quiet();
+    expect(got.map((g) => `${g.id}:${g.provider}`).sort()).toEqual(['cl:claude-code', 'cx:codex']);
+    for (const id of Object.keys(typed)) tw.forget(id);
+  });
 });

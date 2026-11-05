@@ -201,6 +201,18 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
     expect(detectCodexBannerLimit('Tests: "You\'ve hit your usage limit" is parsed by detectCodexLimit', NOW)).toBeNull();
     expect(detectCodexBannerLimit('npm test\nall green', NOW)).toBeNull();
   });
+  it('finds the banner when the CLI wraps inside the opening words', () => {
+    for (const wrapped of [
+      "You've hit your usage\r\n  limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.",
+      "You've hit\r\n  your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at 9:15 AM.",
+      "You've hit your usage limit for GPT-6\r\n  Astra. Switch to another model now, or try again at 9:15 AM.",
+    ]) expect(detectCodexBannerLimit(wrapped, NOW)?.resetsAt, wrapped).toBe(parseResetTime('try again at 9:15 AM', NOW)!.at);
+  });
+  it('prose that starts with the phrase but is not one of the CLI messages is not a limit', () => {
+    expect(detectCodexBannerLimit("You've hit your usage limit is the text this detector searches for.", NOW)).toBeNull();
+    expect(detectCodexBannerLimit("You've hit your usage limit message appears when the quota is spent, and the daemon then parks the thread until it resets.", NOW)).toBeNull();
+    expect(detectCodexBannerLimit("You've hit your usage limit. That is what the CLI prints, and the daemon reads it from the screen.", NOW)).toBeNull();
+  });
   it('the Claude banner is not a Codex banner, and the other way round', () => {
     expect(detectCodexBannerLimit("You've hit your session limit · resets 1:10am (America/Indianapolis)", NOW)).toBeNull();
     expect(detectBannerLimit(plus, NOW)).toBeNull();

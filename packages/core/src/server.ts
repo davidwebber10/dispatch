@@ -774,8 +774,17 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // CLI (PTY) Claude and Codex threads: the usage-limit banner, once the terminal has gone quiet.
   // A banner parks only a terminal of the CLI that prints it (a Codex banner quoted in a Claude
   // thread, or in a plain shell, is not a stop).
+  const ptyTypes = new Map<string, string>(); // terminal id -> type, read once per terminal (this runs on every output chunk)
   const ptyLimits = new PtyLimitWatcher({
     isIdle: (id) => terminalMonitor.getStatus(id)?.activity !== 'busy',
+    providerOf: (id) => {
+      let type = ptyTypes.get(id);
+      if (type === undefined) {
+        type = terminalsDb.getById(db, id)?.type;
+        if (type !== undefined) ptyTypes.set(id, type);
+      }
+      return type;
+    },
     onLimit: (id, limit, provider) => {
       const t = terminalsDb.getById(db, id);
       if (t && !t.archived_at && t.type === provider) usageLimits.park(id, t.type, limit);
@@ -786,7 +795,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     agentService.onRunnerData(id, data);
     ptyLimits.feed(id, data.toString('utf8'));
   });
-  ptyManager.on('exit', (id: string) => ptyLimits.forget(id));
+  ptyManager.on('exit', (id: string) => { ptyLimits.forget(id); ptyTypes.delete(id); });
   usageLimits.addTouchListener((id) => ptyLimits.forget(id));
 
   function rollupSession(sessionId: string) {

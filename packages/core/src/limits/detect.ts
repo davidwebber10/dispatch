@@ -190,7 +190,11 @@ export function textAfterBanner(output: string): number {
  * Plus to continue using Codex (...), or try again at <time>.", the Pro / credits / admin variants,
  * and "You've hit your usage limit for <model>. Switch to another model now, or try again at <time>."
  */
-const CODEX_BANNER = /you['’]ve hit your usage limit/gi;
+// Only the CLI's own sentences count: the opening, an optional " for <model>", a full stop, then the
+// start of its advice (or the end of the line). Prose that merely begins with the opening words
+// ("You've hit your usage limit is the text we search for") does not match. The CLI wraps its text, so
+// any run of whitespace, line breaks included, may sit between the words.
+const CODEX_BANNER = /you['’]ve\s+hit\s+your\s+usage\s+limit(?:\s+for\s+[^.]{1,40}?)?\.(?=[ \t]*$|\s+(?:upgrade|visit|to\s+get|switch|try\s+again|or\s+try))/gim;
 const CODEX_RETRY = /try again (at|in)\s+([^.]{3,60}?)\s*(?:\.|$)/i;
 
 /** The Codex banner's last real occurrence in `clean` (screen codes already gone): where it starts, where its sentence ends, and its words. Words before it on its line mean it was quoted in prose. */

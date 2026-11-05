@@ -54,6 +54,12 @@ rl.on('line', (line) => {
       notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'rate_limit' } });
       return finish('end_turn');
     }
+    if (MODE === 'rate-limit-then-rpc-error') {
+      // The turn ended "rate_limit" and THEN the prompt call was rejected: one stop, not two.
+      notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true, reason: 'API error (status 429 Too Many Requests): subscription:free-usage-exhausted' } });
+      notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'rate_limit' } });
+      return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Rate limited' } });
+    }
     if (MODE === 'rate-limit-rpc') {
       // The retries ran out and the call itself failed.
       notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true, reason: 'API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You\\'ve used all the included free usage.' } });
@@ -174,6 +180,21 @@ describe('GrokStructuredSessionManager', () => {
     expect(limits[0].tid).toBe('t1');
     expect(limits[0].limit).toMatchObject({ kind: 'usage', resetsAt: null });
     expect(seen).toEqual([]);
+  });
+
+  it('a rate_limit turn end followed by a rejected prompt call is one pause, not a pause and a failure', async () => {
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'rate-limit-then-rpc-error' } }));
+    const seen: string[] = [];
+    for (const e of ['idle', 'failed', 'needs-help']) m.on(e, () => seen.push(e));
+    const limits: any[] = [];
+    m.on('usage-limit', (_tid, l) => limits.push(l));
+    m.sendMessage('t1', 'hi', 'user');
+    await until<void>((resolve) => { const tick = () => (limits.length ? resolve() : setTimeout(tick, 10)); tick(); });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(limits).toHaveLength(1);
+    expect(seen).toEqual([]);
+    expect((m.getEvents('t1') as any[]).filter((e) => e?.type === 'result' && e?.is_error === true)).toHaveLength(1);
   });
 
   it('a failed prompt call after the retries ran out is a usage-limit pause, not a failure', async () => {

@@ -26,8 +26,10 @@ The Codex CLI (0.166.0) holds these messages as strings in its binary:
 - "You've hit your usage limit. To get more access now, send a request to your admin or try again at TIME."
 - "You've hit your usage limit. Visit the usage page to purchase more credits" (no time).
 
-Dispatch reads these from the terminal screen. A banner counts only when it starts its own line and
-the terminal then stays quiet, so an agent that quotes the text and goes on working does not pause.
+Dispatch reads these from the terminal screen of a Codex thread only. A banner counts only when it is
+one of the CLI sentences above (not prose that starts with the same words), starts its own line, and the
+terminal then stays quiet with little text after it. An agent that quotes the text and goes on working
+does not pause. Lines the CLI wraps are joined before the reset time is read.
 The screen was not captured on a real stop, so this is simulated. The session files of a real stop
 also hold a `token_count` event with `rate_limit_reached_type`, which Dispatch does not read.
 
