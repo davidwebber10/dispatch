@@ -181,6 +181,14 @@ describe('PtyLimitWatcher with the Codex banner', () => {
     expect(got).toEqual([]);
     claude.forget('c2');
   });
+  it('a Claude stop below a quoted Codex message still parks', () => {
+    const claude = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'claude-code' });
+    claude.feed('c3', "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n");
+    claude.feed('c3', banner);
+    quiet();
+    expect(got).toEqual([{ id: 'c3', provider: 'claude-code', kind: 'session' }]);
+    claude.forget('c3');
+  });
   it('a terminal of one CLI is only read for that CLI\'s banner', () => {
     const typed: Record<string, string | undefined> = { cl: 'claude-code', cx: 'codex', sh: 'shell' };
     const tw = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: (id) => typed[id] });

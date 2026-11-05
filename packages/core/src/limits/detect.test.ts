@@ -169,7 +169,7 @@ describe('named limits: Fable, Opus, Sonnet', () => {
 // The Codex wording is taken from the strings inside the installed `codex` 0.166.0 binary
 // (the "You've hit your usage limit..." templates and "try again at <time>"). The Grok wording
 // is a real stop in ~/.grok/logs (subscription:free-usage-exhausted) and its ACP session file.
-import { detectCodexBannerLimit, textAfterCodexBanner, detectGrokLimit } from './detect.js';
+import { detectCodexBannerLimit, textAfterCodexBanner, textAfterBanner, detectGrokLimit } from './detect.js';
 
 describe('detectCodexBannerLimit (Codex CLI threads)', () => {
   const plus = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.";
@@ -211,6 +211,15 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
     expect(detectBannerLimit("You've hit your usage limit for GPT-6 Astra. Switch to another model now, or try again at 3:10 PM.", NOW)).toBeNull();
     // Claude's own timeless wording still parks.
     expect(detectBannerLimit("You've hit your usage limit\r\n", NOW)).not.toBeNull();
+  });
+  it('a Codex message quoted earlier on the screen does not hide a real Claude stop below it', () => {
+    const screen = "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\nYou've hit your session limit · resets 1:10am (America/Indianapolis)\r\n";
+    const l = detectBannerLimit(screen, NOW)!;
+    expect(l.kind).toBe('session');
+    expect(iso(l.resetsAt)).toBe('2026-10-24T05:10:00.000Z');
+    // The quiet check measures from the real banner, not from the Codex quote.
+    expect(textAfterBanner(screen)).toBeLessThan(5);
+    expect(textAfterBanner("You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n")).toBe(0);
   });
   it('finds the banner when the CLI wraps inside the opening words', () => {
     for (const wrapped of [

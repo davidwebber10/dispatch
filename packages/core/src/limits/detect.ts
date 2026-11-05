@@ -160,11 +160,16 @@ const BANNER_RESET = String.raw`resets(?:\s+(?:at\s+)?(?:(?:${DAYS.join('|')})[a
 /** "You've hit|reached your <label> limit", then optionally "· resets <time>". Fable's credits screen has no time: it must end the line or go straight to its own advice, so a sentence that merely quotes it never matches. */
 const BANNER = new RegExp(String.raw`you['’]ve (?:hit|reached) your\s+[\w\s.-]{0,30}?limit(?:\s*[·∙•|-]\s*${BANNER_RESET}|(?=\s*[.!]?\s*(?:[\r\n]|$)|[.!]\s+(?:Switch|Run|Buy|Set|\/)))`, 'i');
 
+/** Every Claude banner match in `clean`, leaving out Codex messages that look like Claude's timeless wording (a Codex quote must not hide a real stop below it). */
+function claudeBanners(clean: string): RegExpExecArray[] {
+  return [...clean.matchAll(new RegExp(BANNER.source, 'gi'))].filter((m) => !isCodexMessageAt(clean, m.index!));
+}
+
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
 export function detectBannerLimit(output: string, now: number): UsageLimit | null {
   const clean = output.replace(ANSI, '');
-  const m = BANNER.exec(clean);
-  if (!m || isCodexMessageAt(clean, m.index)) return null;
+  const m = claudeBanners(clean)[0];
+  if (!m) return null;
   const message = m[0].trim();
   return { kind: kindFromText(message), resetsAt: parseResetTime(message, now)?.at ?? null, message };
 }
@@ -176,8 +181,7 @@ export function textAfterBanner(output: string): number {
   const clean = output.replace(ANSI, '');
   let start = -1;
   let end = -1;
-  const re = new RegExp(BANNER.source, 'gi');
-  for (let m = re.exec(clean); m; m = re.exec(clean)) { start = m.index; end = m.index + m[0].length; }
+  for (const m of claudeBanners(clean)) { start = m.index!; end = m.index! + m[0].length; }
   if (end < 0) return 0;
   const letters = (t: string) => (t.match(/[A-Za-z0-9]/g) ?? []).length;
   // Words before the banner on its own line also mean a quote: a real stop line is only the banner.
