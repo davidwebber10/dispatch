@@ -145,3 +145,37 @@ describe('PushService revoke during a fan-out', () => {
     expect(got).toEqual(['phone']); // desk was revoked before its send began
   });
 });
+
+describe('PushService.notifyAccount (#127)', () => {
+  const account = (s: PushService) => s.notifyAccount({ title: 'Claude usage at 82%', body: 'Session (5h) window, resets 1:10 AM.', tag: 'usage-claude-code-five_hour' });
+
+  it('sends to every device, even one viewing a thread in the foreground, with the tag and no thread', async () => {
+    svc.setPresence('phone', true, 't1');
+    await account(svc);
+    expect(sent.map((s) => s.deviceId).sort()).toEqual(['desk', 'phone']);
+    expect(sent[0].payload).toEqual({ title: 'Claude usage at 82%', body: 'Session (5h) window, resets 1:10 AM.', tag: 'usage-claude-code-five_hour' });
+  });
+
+  it('prunes 404 and 410 subscriptions', async () => {
+    const pruning = new PushService(db, {
+      vapidDir: dir,
+      send: async (sub) => { const e: any = new Error('gone'); e.statusCode = sub.deviceId === 'phone' ? 410 : 404; throw e; },
+    });
+    await account(pruning);
+    expect(pushDb.list(db)).toHaveLength(0);
+  });
+
+  it('skips a device revoked during the fan-out, and an endpoint off the allow list', async () => {
+    pushDb.upsert(db, { deviceId: 'odd', endpoint: 'https://evil.example/push', p256dh: 'k', auth: 'a' });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const got: string[] = [];
+    const slow = new PushService(db, { vapidDir: dir, send: async (sub) => { got.push(sub.deviceId); if (sub.deviceId === 'phone') await gate; } });
+    const run = account(slow);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(slow.revoke('desk')).toBe(true);
+    release();
+    await run;
+    expect(got).toEqual(['phone']);
+  });
+});
