@@ -33,11 +33,11 @@ export function UsageLimitsSection() {
   }, []);
   // Another device changed the threshold: the broadcast carries it.
   useEffect(() => {
-    if (summary && cfg && summary.warnPercent !== cfg.warnPercent) { setCfg({ ...cfg, warnPercent: summary.warnPercent }); setDraft(String(summary.warnPercent)); }
+    if (summary && cfg && summary.warnPercent !== cfg.warnPercent) { setCfg((c) => c && { ...c, warnPercent: summary.warnPercent }); setDraft(String(summary.warnPercent)); }
   }, [summary?.warnPercent]); // eslint-disable-line react-hooks/exhaustive-deps
   // Another device changed the push switch: the broadcast carries it too.
   useEffect(() => {
-    if (summary && cfg && summary.pushOnWarn !== undefined && summary.pushOnWarn !== cfg.pushOnWarn) setCfg({ ...cfg, pushOnWarn: summary.pushOnWarn });
+    if (summary && cfg && summary.pushOnWarn !== undefined && summary.pushOnWarn !== cfg.pushOnWarn) { const push = summary.pushOnWarn; setCfg((c) => c && { ...c, pushOnWarn: push }); }
   }, [summary?.pushOnWarn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = (patch: Partial<UsageLimitSettings>) => {

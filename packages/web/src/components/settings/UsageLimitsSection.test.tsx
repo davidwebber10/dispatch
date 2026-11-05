@@ -85,6 +85,17 @@ describe('UsageLimitsSection', () => {
     await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('true'));
   });
 
+  it('follows a threshold and a push switch that change together, and steps from the new threshold', async () => {
+    const put = vi.spyOn(api, 'setUsageLimitSettings').mockImplementation(async (p) => ({ warnPercent: p.warnPercent ?? 90, pushOnWarn: false }));
+    render(<UsageLimitsSection />);
+    await waitFor(() => expect(level().value).toBe('80'));
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 90, pushOnWarn: false, providers: [], paused: [] } }); });
+    await waitFor(() => expect(level().value).toBe('90'));
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Push alert at the warning level' }).getAttribute('aria-checked')).toBe('false'));
+    fireEvent.click(screen.getByLabelText('Raise the warning level'));
+    await waitFor(() => expect(put).toHaveBeenCalledWith({ warnPercent: 95 }));
+  });
+
   it('follows a threshold another device set', async () => {
     render(<UsageLimitsSection />);
     await waitFor(() => expect(level().value).toBe('80'));
