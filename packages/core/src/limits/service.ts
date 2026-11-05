@@ -171,13 +171,14 @@ export class UsageLimitService {
 
   private removePark(terminalId: string): void { if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
 
-  /** At boot: the status of every thread was reset, so show the parked ones as paused again. */
+  /** At boot: the status of every thread was reset, so show the parked ones as paused again. A stopped (capped) row of an archived or missing thread is dropped too. */
   restore(): void {
     const now = this.now();
-    for (const row of parksDb.listActive(this.d.db)) {
+    for (const row of parksDb.listPaused(this.d.db)) {
       if (row.terminal_id === CHAT_ID) { if (!this.d.chat) this.removePark(CHAT_ID); continue; }
       const t = terminalsDb.getById(this.d.db, row.terminal_id);
       if (!t || t.archived_at) { this.removePark(row.terminal_id); continue; }
+      if (row.state === 'capped') continue;
       const fallback = isWeeklyKind(row.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
       this.safe(() => this.d.markPaused(row.terminal_id, pauseLabel(row.kind, row.resets_at, now, this.d.zone, fallback)));
     }

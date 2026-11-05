@@ -203,6 +203,17 @@ describe('restart', () => {
     expect(labels).toEqual([{ id: 'a', label: 'Paused: session limit, resumes 1:10 AM' }]);
     expect(parksDb.get(db, 'b')).toBeNull();
   });
+  it('restore also drops a capped park whose thread was archived or is gone', () => {
+    thread('a'); thread('b');
+    svc.park('a', 'claude-code', session);
+    svc.park('b', 'claude-code', session);
+    parksDb.setState(db, 'a', 'capped', 5, RESET, clock);
+    parksDb.setState(db, 'b', 'capped', 5, RESET, clock);
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'a'").run();
+    svc.restore();
+    expect(parksDb.get(db, 'a')).toBeNull();
+    expect(parksDb.get(db, 'b')).not.toBeNull();
+  });
   it('a weekly park keeps its wake time across a new service instance and does not retry early', () => {
     thread('a');
     const monday = Date.UTC(2026, 9, 26, 13, 0);

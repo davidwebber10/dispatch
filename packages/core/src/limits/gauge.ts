@@ -27,6 +27,8 @@ const DEFAULTS = {
   tickMs: 60_000,
   /** Refresh Codex figures only when a Codex thread was active this recently. */
   codexActiveMs: 10 * MIN,
+  /** Two reset times this close are the same limit window (the CLI's reset time jitters by seconds). */
+  sameWindowMs: 10 * MIN,
   /** A null reset time keeps its alert key this long. */
   nullResetTtlMs: 7 * 24 * 60 * MIN,
 };
@@ -45,10 +47,23 @@ export interface PausedGroup {
   /** The first paused thread for the banner's click (CHAT_ID when Chat is the only one). */
   firstTerminalId: string;
   firstSessionId: string | null;
-  /** The earliest parked_at: keys the per-device dismiss. */
+  /** The earliest parked_at. */
   episodeStartedAt: number;
+  /** The newest parked_at: a pause newer than a device's dismiss shows the banner again. */
+  latestStartedAt: number;
+  /** When the limit stops holding the group back: the latest reset over its rows (the wake time when none was read). Past it the chip is not red. */
+  activeUntil: number;
 }
-export interface UsageSummary { type: 'usage-limits'; warnPercent: number; providers: SummaryProvider[]; paused: PausedGroup[] }
+export interface UsageSummary {
+  type: 'usage-limits';
+  /** When the daemon built this summary (ms). A client keeps the newest, so a slow GET never undoes a newer broadcast. */
+  at: number;
+  warnPercent: number;
+  /** The daemon-wide push switch, so every open Settings follows a change made on another device. */
+  pushOnWarn: boolean;
+  providers: SummaryProvider[];
+  paused: PausedGroup[];
+}
 
 export interface PushTarget { notifyAccount(input: { title: string; body: string; tag: string }): Promise<void> }
 
@@ -107,10 +122,15 @@ export class UsageGauge {
     return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows };
   }
 
+  /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
+  private pausedRows(): parksDb.ParkRow[] {
+    return parksDb.listPaused(this.d.db).filter((r) => r.terminal_id === CHAT_ID || !terminalsDb.getById(this.d.db, r.terminal_id)?.archived_at);
+  }
+
   /** Paused threads grouped by provider, from the park rows in `parked` or `capped`. */
   private pausedGroups(): PausedGroup[] {
     const by = new Map<string, parksDb.ParkRow[]>();
-    for (const r of parksDb.listPaused(this.d.db)) by.set(r.provider, [...(by.get(r.provider) ?? []), r]);
+    for (const r of this.pausedRows()) by.set(r.provider, [...(by.get(r.provider) ?? []), r]);
     const out: PausedGroup[] = [];
     for (const [provider, rows] of by) {
       // Mixed kinds: weekly beats session, then the latest pause wins.
@@ -128,6 +148,8 @@ export class UsageGauge {
         firstTerminalId: first.terminal_id,
         firstSessionId,
         episodeStartedAt: Math.min(...rows.map((r) => r.parked_at)),
+        latestStartedAt: Math.max(...rows.map((r) => r.parked_at)),
+        activeUntil: Math.max(...rows.map((r) => r.resets_at ?? r.wake_at)),
       });
     }
     return out;
@@ -139,7 +161,8 @@ export class UsageGauge {
       const s = this.providerSummary(p);
       if (s) { const { account: _account, ...rest } = s; providers.push(rest); }
     }
-    return { type: 'usage-limits', warnPercent: this.settings().warnPercent, providers, paused: this.pausedGroups() };
+    const settings = this.settings();
+    return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
   }
 
   /** The highest counted window at or above the threshold, or null. For a future spawn guard (ledger N8). */
@@ -158,15 +181,24 @@ export class UsageGauge {
 
   /** The provider's threads stopped on a limit right now (parked or capped). For a future spawn guard (ledger N8). */
   activePauses(provider: string): parksDb.ParkRow[] {
-    return parksDb.listPaused(this.d.db).filter((r) => r.provider === provider);
+    return this.pausedRows().filter((r) => r.provider === provider);
   }
 
   // --- the one-push-per-window alert -------------------------------------------------------
 
   private alertKey(provider: string, account: string, type: string, resetsAt: number | null): string {
-    // Rounded to 10 minutes: the reset time can jitter between events of one window.
-    const r = resetsAt === null ? 'none' : String(Math.round(resetsAt / (10 * MIN)) * 10 * MIN);
-    return `${provider}|${account}|${type}|${r}`;
+    return `${provider}|${account}|${type}|${resetsAt === null ? 'none' : resetsAt}`;
+  }
+
+  /** The stored key of the same limit window, or null. The reset time jitters between events, so any stored reset within `sameWindowMs` counts as the same window. */
+  private alertedKey(alerts: Record<string, number>, provider: string, account: string, type: string, resetsAt: number | null): string | null {
+    const prefix = `${provider}|${account}|${type}|`;
+    for (const k of Object.keys(alerts)) {
+      if (!k.startsWith(prefix)) continue;
+      const r = k.slice(prefix.length);
+      if (resetsAt === null ? r === 'none' : r !== 'none' && Math.abs(Number(r) - resetsAt) <= this.o.sameWindowMs) return k;
+    }
+    return null;
   }
 
   private loadAlerts(): Record<string, number> {
@@ -191,8 +223,8 @@ export class UsageGauge {
     const out: { type: string; w: SummaryWindow }[] = [];
     for (const [type, w] of Object.entries(s.windows)) {
       if (!COUNTED.has(type) || !live(w, now) || w.usedPercent! < warn) continue;
+      if (this.alertedKey(alerts, provider, s.account, type, w.resetsAt)) continue;
       const key = this.alertKey(provider, s.account, type, w.resetsAt);
-      if (key in alerts) continue;
       alerts[key] = w.resetsAt ?? now + this.o.nullResetTtlMs;
       out.push({ type, w });
     }
@@ -239,12 +271,12 @@ export class UsageGauge {
     this.flush();
   }
 
-  /** 60 s: refresh Codex from its most recently active thread, if one was active in the last 10 minutes. */
+  /** 60 s: refresh Codex from its most recently active thread: one active in the last 10 minutes, or one still working (a long turn writes no activity stamp). */
   tick(): void {
     if (!this.d.refreshCodex) return;
     const since = new Date(this.now() - this.o.codexActiveMs).toISOString();
     const row = this.d.db.prepare(
-      "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND last_activity_at >= ? ORDER BY last_activity_at DESC LIMIT 1",
+      "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND (status = 'working' OR last_activity_at >= ?) ORDER BY last_activity_at DESC LIMIT 1",
     ).get(since) as { id: string; external_id: string } | undefined;
     if (row) this.d.refreshCodex(row.id, row.external_id);
   }
@@ -269,7 +301,8 @@ export class UsageGauge {
   private send(): void {
     let summary: UsageSummary;
     try { summary = this.summary(); } catch (err) { console.warn('[usage-gauge] summary failed:', err); return; }
-    const key = JSON.stringify({ ...summary, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
+    const { at: _at, ...stable } = summary; // the build time moves on every call: it must not count as a change
+    const key = JSON.stringify({ ...stable, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
     if (key === this.lastSent) return;
     this.lastSent = key;
     this.d.broadcast(summary as unknown as Record<string, unknown>);

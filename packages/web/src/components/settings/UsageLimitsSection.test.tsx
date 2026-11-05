@@ -75,6 +75,16 @@ describe('UsageLimitsSection', () => {
     expect(localStorage.getItem('dispatch:usageBanner')).toBe('false');
   });
 
+  it('follows the push switch another device changed', async () => {
+    render(<UsageLimitsSection />);
+    const sw = () => screen.getByRole('switch', { name: 'Push alert at the warning level' });
+    await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('true'));
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, pushOnWarn: false, providers: [], paused: [] } }); });
+    await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('false'));
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, pushOnWarn: true, providers: [], paused: [] } }); });
+    await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('true'));
+  });
+
   it('follows a threshold another device set', async () => {
     render(<UsageLimitsSection />);
     await waitFor(() => expect(level().value).toBe('80'));

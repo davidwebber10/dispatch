@@ -8,6 +8,9 @@ import { ChatMode } from '../endless/ChatMode';
 import { useUI } from '../../stores/ui';
 import { useProjects } from '../../stores/projects';
 import { act } from '@testing-library/react';
+import { waitFor } from '@testing-library/react';
+import { useUsageLimits } from '../../stores/usageLimits';
+import { useSettings } from '../../stores/settings';
 
 const savedEndless = useEndless.getState();
 
@@ -71,5 +74,38 @@ describe('MobileApp open-project intent', () => {
     expect(useProjects.getState().activeId).toBe('s7');
     expect(window.location.pathname).toMatch(/\/p\/s7$/);
     expect(screen.queryByTestId('chat-mode')).not.toBeInTheDocument();
+  });
+});
+
+describe('MobileApp Chat-paused banner', () => {
+  const chatPause = { provider: 'claude-code', kind: 'session', earliestResetsAt: Date.now() + 3600_000, threads: 1, capped: 0, chat: true, firstTerminalId: 'endless-chat', firstSessionId: null, episodeStartedAt: 1, latestStartedAt: 1, activeUntil: Date.now() + 3600_000 };
+  // The deep-linked thread view loads its terminal; leave it pending so nothing rejects unhandled.
+  beforeEach(() => { vi.spyOn(api, 'getTerminal').mockReturnValue(new Promise(() => {}) as any); });
+  const slider = () => (screen.getByTestId('chat-mode').parentElement!.parentElement as HTMLElement);
+
+  it.each([
+    ['a project\'s thread (project and thread entries pushed)', '/p/s1/t/t1', 3],
+    ['a project\'s thread list', '/p/s1', 2],
+  ])('shows Chat at the root screen from %s', async (_name, path) => {
+    window.history.pushState({}, '', path);
+    useSettings.setState({ showUsageBanner: true });
+    useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [chatPause] } as any });
+    render(<MobileApp />);
+    fireEvent.click(await screen.findByText(/Chat paused/));
+    await screen.findByTestId('chat-mode');
+    await waitFor(() => expect(slider().style.transform).toBe('translateX(-0%)'));
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+  });
+
+  it('from a thread opened off the Threads list (one entry pushed) lands at the root too', async () => {
+    window.history.pushState({}, '', '/');
+    useSettings.setState({ showUsageBanner: true });
+    useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [chatPause] } as any });
+    render(<MobileApp />);
+    act(() => { useUI.getState().requestOpenThread({ sessionId: 's1', terminalId: 't1' }); });
+    await waitFor(() => expect(window.location.pathname).toMatch(/\/p\/s1\/t\/t1$/));
+    fireEvent.click(screen.getByText(/Chat paused/));
+    await screen.findByTestId('chat-mode');
+    await waitFor(() => expect(slider().style.transform).toBe('translateX(-0%)'));
   });
 });

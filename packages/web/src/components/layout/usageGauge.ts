@@ -32,6 +32,15 @@ export function peakWindow(p: UsageSummaryProvider, now: number, types: readonly
   return best;
 }
 
+/**
+ * Providers whose pause is still holding them back. A group stays in the banner until its thread
+ * resumes or is messaged, but the chip is red only while the limit is on: past `activeUntil` the
+ * window has reset, so the chip shows normal or amber again. An older daemon sends no end time: active.
+ */
+export function activePaused(s: UsageSummary, now: number): Set<string> {
+  return new Set(s.paused.filter((g) => g.activeUntil === undefined || g.activeUntil > now).map((g) => g.provider));
+}
+
 export interface ChipModel {
   provider: string;
   /** `C` or `X`, only when more than one provider has figures. */
@@ -56,7 +65,7 @@ const dash = (v: number | null) => (v === null ? '–' : String(v));
  */
 export function chipModel(s: UsageSummary | null, now: number): ChipModel | null {
   if (!s || s.providers.length === 0) return null;
-  const paused = new Set(s.paused.map((g) => g.provider));
+  const paused = activePaused(s, now);
   const score = (p: UsageSummaryProvider) => (paused.has(p.provider) ? 1000 : 0) + (peakWindow(p, now)?.value ?? -1);
   const pick = s.providers.reduce((a, b) => (score(b) > score(a) ? b : a));
   const peak = peakWindow(pick, now);
@@ -101,7 +110,7 @@ export interface ProviderTable {
 /** The popover and the Settings table: every provider, its plan, windows, resets and "As of". */
 export function usageTables(s: UsageSummary | null, now: number, zone?: string): ProviderTable[] {
   if (!s) return [];
-  const paused = new Set(s.paused.map((g) => g.provider));
+  const paused = activePaused(s, now);
   return s.providers.map((p) => {
     const known = Object.keys(TYPE_LABEL).filter((t) => p.windows[t]);
     const unknown = Object.keys(p.windows).filter((t) => !(t in TYPE_LABEL)).sort();

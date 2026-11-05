@@ -56,7 +56,7 @@ afterEach(() => { gauge.stop(); vi.useRealTimers(); db.close(); });
 
 describe('summary', () => {
   it('is empty with no snapshot, and never carries the account id', () => {
-    expect(gauge.summary()).toEqual({ type: 'usage-limits', warnPercent: 80, providers: [], paused: [] });
+    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
     claude(46.4, 21);
     const s = gauge.summary();
     expect(s.providers).toEqual([{ provider: 'claude-code', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
@@ -78,8 +78,17 @@ describe('summary', () => {
     parksDb.upsert(db, { terminal_id: 'w', provider: 'claude-code', kind: 'session', resets_at: RESET, wake_at: RESET, message: 'm', parsed: 1, attempts: 1, state: 'woken', parked_at: T0 }, T0);
     const p = gauge.summary().paused;
     const c = p.find((g) => g.provider === 'claude-code')!;
-    expect(c).toEqual({ provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 1, chat: true, firstTerminalId: 'b', firstSessionId: 'proj', episodeStartedAt: T0 + 1 });
+    expect(c).toEqual({ provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 1, chat: true, firstTerminalId: 'b', firstSessionId: 'proj', episodeStartedAt: T0 + 1, latestStartedAt: T0 + 9, activeUntil: RESET + 10 * MIN });
     expect(p.find((g) => g.provider === 'codex')).toMatchObject({ kind: 'weekly', threads: 1, firstSessionId: null });
+  });
+
+  it('activeUntil is the latest reset (or wake time when none was read) over every row, capped included', () => {
+    thread('a'); thread('b');
+    park('a', { state: 'capped', resets_at: RESET });
+    park('b', { resets_at: null, wake_at: RESET + 3 * 60 * MIN, parsed: 0 });
+    expect(gauge.summary().paused[0].activeUntil).toBe(RESET + 3 * 60 * MIN);
+    parksDb.remove(db, 'b');
+    expect(gauge.summary().paused[0].activeUntil).toBe(RESET);
   });
 
   it('mixed kinds: weekly beats session', () => {
@@ -92,6 +101,37 @@ describe('summary', () => {
   it('Chat alone: the first thread is Chat', () => {
     park(CHAT_ID);
     expect(gauge.summary().paused[0]).toMatchObject({ chat: true, threads: 1, firstTerminalId: CHAT_ID, firstSessionId: null });
+  });
+});
+
+describe('archived threads and the push switch', () => {
+  it('a paused or capped row of an archived thread is not shown', () => {
+    thread('a'); thread('b');
+    park('a', { state: 'capped' });
+    park('b');
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'a'").run();
+    const g = gauge.summary().paused[0];
+    expect(g).toMatchObject({ threads: 1, capped: 0, firstTerminalId: 'b' });
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'b'").run();
+    expect(gauge.summary().paused).toEqual([]);
+    expect(gauge.activePauses('claude-code')).toEqual([]);
+  });
+
+  it('the summary carries the push switch, so other devices follow it', () => {
+    expect(gauge.summary().pushOnWarn).toBe(true);
+    gaugeSettings.set(db, { pushOnWarn: false });
+    gauge.settingsChanged();
+    expect(events.at(-1)).toMatchObject({ pushOnWarn: false });
+  });
+
+  it('the summary is stamped with the time it was built, outside the change check', () => {
+    claude(46, 21);
+    gauge.pausesChanged();
+    const n = events.length;
+    clock += 3 * MIN;
+    gauge.pausesChanged();
+    expect(events).toHaveLength(n); // same figures: no new event just for a new stamp
+    expect(gauge.summary().at).toBe(clock);
   });
 });
 
@@ -141,6 +181,19 @@ describe('threshold push', () => {
     expect(pushes).toHaveLength(1);
     clock = RESET + MIN;
     snaps.record('claude-code', account, { five_hour: { usedPercent: 81, resetsAt: RESET + 5 * 60 * MIN } }, clock);
+    expect(pushes).toHaveLength(2);
+  });
+
+  it('a reset that jitters across a 10-minute rounding boundary is still the same window', () => {
+    const edge = Date.UTC(2026, 10, 5, 6, 5); // exactly between two 10-minute buckets
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 85, resetsAt: edge - 1000 } }, clock);
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 86, resetsAt: edge + 1000 } }, clock + 1);
+    expect(pushes).toHaveLength(1);
+  });
+
+  it('a reset that moves 20 minutes is a new window', () => {
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 85, resetsAt: RESET } }, clock);
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 86, resetsAt: RESET + 20 * MIN } }, clock + 1);
     expect(pushes).toHaveLength(2);
   });
 
@@ -229,7 +282,7 @@ describe('broadcast', () => {
   it('a settings change sends at once with the new threshold', () => {
     gaugeSettings.set(db, { warnPercent: 90 });
     gauge.settingsChanged();
-    expect(events).toEqual([{ type: 'usage-limits', warnPercent: 90, providers: [], paused: [] }]);
+    expect(events).toEqual([{ type: 'usage-limits', at: T0, warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
   });
 });
 
@@ -244,5 +297,19 @@ describe('Codex refresh tick', () => {
     clock = T0 + 20 * MIN;
     gauge.tick();
     expect(refreshed).toEqual(['c2']);
+  });
+
+  it('keeps polling a Codex thread that is still working, however old its last activity', () => {
+    thread('c1', 'codex'); thread('c2', 'codex');
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run('e1', new Date(T0 - 40 * MIN).toISOString(), 'working', 'c1');
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run('e2', new Date(T0 - 40 * MIN).toISOString(), 'idle', 'c2');
+    gauge.tick();
+    expect(refreshed).toEqual(['c1']);
+  });
+  it('does not poll an archived working thread', () => {
+    thread('c1', 'codex');
+    db.prepare("UPDATE terminals SET external_id = 'e1', status = 'working', archived_at = 'x' WHERE id = 'c1'").run();
+    gauge.tick();
+    expect(refreshed).toEqual([]);
   });
 });
