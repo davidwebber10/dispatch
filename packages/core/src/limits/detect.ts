@@ -162,8 +162,9 @@ const BANNER = new RegExp(String.raw`you['’]ve (?:hit|reached) your\s+[\w\s.-]
 
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
 export function detectBannerLimit(output: string, now: number): UsageLimit | null {
-  const m = BANNER.exec(output.replace(ANSI, ''));
-  if (!m) return null;
+  const clean = output.replace(ANSI, '');
+  const m = BANNER.exec(clean);
+  if (!m || isCodexMessageAt(clean, m.index)) return null;
   const message = m[0].trim();
   return { kind: kindFromText(message), resetsAt: parseResetTime(message, now)?.at ?? null, message };
 }
@@ -194,7 +195,13 @@ export function textAfterBanner(output: string): number {
 // start of its advice (or the end of the line). Prose that merely begins with the opening words
 // ("You've hit your usage limit is the text we search for") does not match. The CLI wraps its text, so
 // any run of whitespace, line breaks included, may sit between the words.
-const CODEX_BANNER = /you['’]ve\s+hit\s+your\s+usage\s+limit(?:\s+for\s+[^.]{1,40}?)?\.(?=[ \t]*$|\s+(?:upgrade|visit|to\s+get|switch|try\s+again|or\s+try))/gim;
+const CODEX_BANNER = /you['’]ve\s+hit\s+your\s+usage\s+limit(?:\s+for\s+[\s\S]{1,40}?)?\.(?=[ \t]*$|\s+(?:upgrade|visit|to\s+get|switch|try\s+again|or\s+try))/gim;
+/** True when the text at `index` is a Codex usage-limit message, which the Claude banner pattern must leave alone ("You've hit your usage limit." at a line end looks like Claude's timeless wording). */
+function isCodexMessageAt(clean: string, index: number): boolean {
+  const re = new RegExp(CODEX_BANNER.source, 'iym');
+  re.lastIndex = index;
+  return re.test(clean);
+}
 const CODEX_RETRY = /try again (at|in)\s+([^.]{3,60}?)\s*(?:\.|$)/i;
 
 /** The Codex banner's last real occurrence in `clean` (screen codes already gone): where it starts, where its sentence ends, and its words. Words before it on its line mean it was quoted in prose. */

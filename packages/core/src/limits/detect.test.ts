@@ -201,6 +201,17 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
     expect(detectCodexBannerLimit('Tests: "You\'ve hit your usage limit" is parsed by detectCodexLimit', NOW)).toBeNull();
     expect(detectCodexBannerLimit('npm test\nall green', NOW)).toBeNull();
   });
+  it('reads a model name with dots in it', () => {
+    const l = detectCodexBannerLimit("You've hit your usage limit for gpt-5.6-sol. Switch to another model now, or try again at 9:15 AM.", NOW)!;
+    expect(l.resetsAt).toBe(parseResetTime('try again at 9:15 AM', NOW)!.at);
+  });
+  it('the Claude detector leaves a Codex message alone, wrapped or not', () => {
+    expect(detectBannerLimit("You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n", NOW)).toBeNull();
+    expect(detectBannerLimit("You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.", NOW)).toBeNull();
+    expect(detectBannerLimit("You've hit your usage limit for GPT-6 Astra. Switch to another model now, or try again at 3:10 PM.", NOW)).toBeNull();
+    // Claude's own timeless wording still parks.
+    expect(detectBannerLimit("You've hit your usage limit\r\n", NOW)).not.toBeNull();
+  });
   it('finds the banner when the CLI wraps inside the opening words', () => {
     for (const wrapped of [
       "You've hit your usage\r\n  limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.",

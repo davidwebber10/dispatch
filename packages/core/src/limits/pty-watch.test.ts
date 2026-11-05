@@ -174,6 +174,12 @@ describe('PtyLimitWatcher with the Codex banner', () => {
     typed.feed('c1', wrapped); quiet();
     expect(got).toEqual([{ id: 'c1', provider: 'codex', kind: 'usage' }]);
     typed.forget('c1');
+    // The same wrapped text quoted in a Claude thread is not a Claude stop.
+    got.length = 0;
+    const claude = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'claude-code' });
+    claude.feed('c2', wrapped); quiet(10000);
+    expect(got).toEqual([]);
+    claude.forget('c2');
   });
   it('a terminal of one CLI is only read for that CLI\'s banner', () => {
     const typed: Record<string, string | undefined> = { cl: 'claude-code', cx: 'codex', sh: 'shell' };
