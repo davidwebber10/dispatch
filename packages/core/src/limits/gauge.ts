@@ -53,11 +53,13 @@ export interface PausedGroup {
   latestStartedAt: number;
   /**
    * When the limit stops holding the group back, so the chip is no longer red: the latest reset
-   * over its rows. A row with no readable reset uses its retry deadline (`wake_at`, set when it was
-   * parked: 30 minutes for a session limit, 6 hours for a weekly one), so a stopped thread with an
-   * unknown reset cannot keep the chip red for ever. The banner still lists it.
+   * over its rows. A row with no readable reset has no end time: the limit holds until the thread
+   * resumes (the row goes away) or fresh figures for the provider, taken after the pause, show every
+   * counted window under 100% (then the end is when those figures were taken). Null while any row is
+   * still in that state, and the chip stays red. A failed wake stamps its row (a send failure is not
+   * the limit). The retry timing (30 minutes, 6 hours) does not change this. The banner still lists it.
    */
-  activeUntil: number;
+  activeUntil: number | null;
 }
 export interface UsageSummary {
   type: 'usage-limits';
@@ -132,6 +134,16 @@ export class UsageGauge {
     return parksDb.listPaused(this.d.db).filter((r) => r.terminal_id === CHAT_ID || !terminalsDb.getById(this.d.db, r.terminal_id)?.archived_at);
   }
 
+  /** When one paused row's limit ends: its read reset, else when fresh figures showed the window clear, else null (unknown, still holding). */
+  private rowEnd(r: parksDb.ParkRow): number | null {
+    if (r.resets_at !== null) return r.resets_at;
+    const s = this.providerSummary(r.provider);
+    if (!s || s.asOf <= r.parked_at) return null;
+    const now = this.now();
+    const full = Object.entries(s.windows).some(([type, w]) => COUNTED.has(type) && live(w, now) && w.usedPercent! >= 100);
+    return full ? null : s.asOf;
+  }
+
   /** Paused threads grouped by provider, from the park rows in `parked` or `capped`. */
   private pausedGroups(): PausedGroup[] {
     const by = new Map<string, parksDb.ParkRow[]>();
@@ -142,6 +154,7 @@ export class UsageGauge {
       const latest = [...rows].sort((a, b) => b.parked_at - a.parked_at);
       const kind = (latest.find((r) => WEEKLY_KINDS.has(r.kind)) ?? latest[0]).kind;
       const resets = rows.filter((r) => r.state === 'parked' && r.resets_at !== null).map((r) => r.resets_at as number);
+      const ends = rows.map((r) => this.rowEnd(r));
       const first = rows.find((r) => r.terminal_id !== CHAT_ID) ?? rows[0];
       const firstSessionId = first.terminal_id === CHAT_ID ? null : terminalsDb.getById(this.d.db, first.terminal_id)?.session_id ?? null;
       out.push({
@@ -154,7 +167,7 @@ export class UsageGauge {
         firstSessionId,
         episodeStartedAt: Math.min(...rows.map((r) => r.parked_at)),
         latestStartedAt: Math.max(...rows.map((r) => r.parked_at)),
-        activeUntil: Math.max(...rows.map((r) => r.resets_at ?? r.wake_at)),
+        activeUntil: ends.includes(null) ? null : Math.max(...(ends as number[])),
       });
     }
     return out;

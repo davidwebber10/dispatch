@@ -35,10 +35,11 @@ export function peakWindow(p: UsageSummaryProvider, now: number, types: readonly
 /**
  * Providers whose pause is still holding them back. A group stays in the banner until its thread
  * resumes or is messaged, but the chip is red only while the limit is on: past `activeUntil` the
- * window has reset, so the chip shows normal or amber again. An older daemon sends no end time: active.
+ * window has reset, so the chip shows normal or amber again. A null or missing end time (a reset that
+ * was never read, or an older daemon) is active: the daemon sends a time once the limit clears.
  */
 export function activePaused(s: UsageSummary, now: number): Set<string> {
-  return new Set(s.paused.filter((g) => g.activeUntil === undefined || g.activeUntil > now).map((g) => g.provider));
+  return new Set(s.paused.filter((g) => g.activeUntil == null || g.activeUntil > now).map((g) => g.provider));
 }
 
 export interface ChipModel {

@@ -53,6 +53,7 @@ describe('chipModel', () => {
     expect(chipModel(sum([claude(85, 20)], { paused: [stopped] }), NOW)!.tone).toBe('amber');
     // Still red while the reset is ahead, and when an older daemon sends no end time.
     expect(chipModel(sum([claude(10, 20)], { paused: [{ ...stopped, activeUntil: NOW + 1 }] }), NOW)!.tone).toBe('red');
+    expect(chipModel(sum([claude(10, 20)], { paused: [{ ...stopped, activeUntil: null }] }), NOW)!.tone).toBe('red'); // unknown end: red until it clears
     const { activeUntil: _a, ...old } = stopped;
     expect(chipModel(sum([claude(10, 20)], { paused: [old] }), NOW)!.tone).toBe('red');
   });

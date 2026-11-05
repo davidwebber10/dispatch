@@ -34,6 +34,11 @@ export function setState(db: Database.Database, terminalId: string, state: ParkS
   db.prepare('UPDATE usage_limit_parks SET state = ?, attempts = ?, wake_at = ?, updated_at = ? WHERE terminal_id = ?').run(state, attempts, wakeAt, now, terminalId);
 }
 
+/** A wake was tried, so the limit is taken as over: stamp the time on a row that never had a readable reset. A reset that was read is kept. */
+export function markLimitOver(db: Database.Database, terminalId: string, now: number): void {
+  db.prepare('UPDATE usage_limit_parks SET resets_at = COALESCE(resets_at, ?) WHERE terminal_id = ?').run(now, terminalId);
+}
+
 export function remove(db: Database.Database, terminalId: string): boolean {
   return db.prepare('DELETE FROM usage_limit_parks WHERE terminal_id = ?').run(terminalId).changes > 0;
 }

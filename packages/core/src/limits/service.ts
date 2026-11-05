@@ -144,6 +144,7 @@ export class UsageLimitService {
         this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
+        parksDb.markLimitOver(this.d.db, row.terminal_id, now); // a failed send is not the limit: the chip may leave red
         if (attempts >= this.o.maxAttempts) {
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
           changed = true;

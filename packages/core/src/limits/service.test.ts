@@ -371,6 +371,25 @@ describe('change listener (#127)', () => {
     expect(n).toBe(1);
   });
 
+  it('a failed wake takes the limit as over: an unknown reset is stamped with the wake time', () => {
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    expect(parksDb.get(db, 'a')!.resets_at).toBeNull();
+    wakeError = new Error('no pty');
+    clock = parksDb.get(db, 'a')!.wake_at + 1;
+    svc.tick();
+    expect(parksDb.get(db, 'a')).toMatchObject({ state: 'parked', resets_at: clock });
+  });
+
+  it('a failed wake keeps a reset that was read', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    wakeError = new Error('no pty');
+    clock = RESET + 91_000;
+    svc.tick();
+    expect(parksDb.get(db, 'a')!.resets_at).toBe(RESET);
+  });
+
   it('a throwing listener does not break the service', () => {
     svc.addChangeListener(() => { throw new Error('boom'); });
     thread('a');

@@ -82,19 +82,61 @@ describe('summary', () => {
     expect(p.find((g) => g.provider === 'codex')).toMatchObject({ kind: 'weekly', threads: 1, firstSessionId: null });
   });
 
-  it('activeUntil is the latest reset (or wake time when none was read) over every row, capped included', () => {
-    thread('a'); thread('b');
+  it('activeUntil is the latest reset over every row, capped included; null while any row has none read', () => {
+    thread('a'); thread('b'); thread('c');
     park('a', { state: 'capped', resets_at: RESET });
-    park('b', { resets_at: null, wake_at: RESET + 3 * 60 * MIN, parsed: 0 });
+    park('c', { resets_at: RESET + 3 * 60 * MIN });
     expect(gauge.summary().paused[0].activeUntil).toBe(RESET + 3 * 60 * MIN);
+    parksDb.remove(db, 'c');
+    park('b', { resets_at: null, wake_at: RESET + 3 * 60 * MIN, parsed: 0 });
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
     parksDb.remove(db, 'b');
     expect(gauge.summary().paused[0].activeUntil).toBe(RESET);
   });
 
-  it('a stopped row with no readable reset ends at its retry deadline (wake_at), not never', () => {
+  it('a row with no readable reset has no end time (null) while the limit may still hold, however old its retry time', () => {
     thread('a');
     park('a', { state: 'capped', resets_at: null, wake_at: RESET + 30 * MIN, parsed: 0 });
-    expect(gauge.summary().paused[0].activeUntil).toBe(RESET + 30 * MIN);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = RESET + 24 * 60 * MIN; // a day past the retry time: still unknown
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('fresh figures taken after the pause that show the window under 100% end an unknown-reset pause', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    // Figures from before the pause (or at the pause) prove nothing.
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 40, resetsAt: RESET } }, T0);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Fresh figures still at the limit: still active.
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 100, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Fresh figures under 100%: the limit cleared, so the chip may leave red (end time = when we learned it).
+    clock = T0 + 10 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    // Another provider's figures say nothing about this one.
+  });
+
+  it('another provider\'s figures do not clear it', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    clock = T0 + MIN;
+    snaps.record('codex', 'acct-A', { five_hour: { usedPercent: 5, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('a new figure that clears the pause is broadcast', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    gauge.pausesChanged();
+    const n = events.length;
+    clock = T0 + 10 * MIN;
+    claude(12, 58);
+    vi.advanceTimersByTime(5000);
+    expect(events.length).toBe(n + 1);
+    expect(events.at(-1).paused[0].activeUntil).toBe(clock);
   });
 
   it('mixed kinds: weekly beats session', () => {
