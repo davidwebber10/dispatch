@@ -13,7 +13,7 @@ export function whenLabel(ms: number, now: number, zone?: string): string {
 export function windowLabel(w: LimitWindow, now: number, zone?: string): string {
   if (w.resetsAt !== null && w.resetsAt <= now) return `Reset ${whenLabel(w.resetsAt, now, zone)}, no new figure yet`;
   const reset = w.resetsAt === null ? '' : `, resets ${whenLabel(w.resetsAt, now, zone)}`;
-  return w.usedPercent === null ? `Under the warning level${reset}` : `${Math.round(w.usedPercent)}% used${reset}`;
+  return w.usedPercent === null ? `No figure reported${reset}` : `${Math.round(w.usedPercent)}% used${reset}`;
 }
 
 const KIND = { session: 'session limit', weekly: 'weekly limit', usage: 'usage limit' } as const;
@@ -24,7 +24,7 @@ export function pausedLabel(p: NonNullable<ThreadUsageLimits['paused']>, now: nu
   return `Paused: ${KIND[p.kind]}, ${p.resetsAt === null ? 'reset time unknown' : p.resetsAt <= now ? 'resuming now' : `resumes ${whenLabel(p.resetsAt, now, zone)}`}`;
 }
 
-/** Row labels by limit type, matching Claude Code's own names (CLI 2.1.309). Codex uses the first two. */
+/** Row labels by limit type, matching Claude Code's own names (CLI 2.1.316). Codex uses the first two. */
 export const TYPE_LABEL: Record<string, string> = {
   five_hour: 'Session (5h)',
   seven_day: 'Weekly',

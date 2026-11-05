@@ -41,7 +41,7 @@ describe('limitRows', () => {
 
 describe('windowLabel', () => {
   it('no percent means below the warning level, not a made-up number', () => {
-    expect(windowLabel({ usedPercent: null, resetsAt: at('2026-10-24T17:10:00Z') }, NOW, Z)).toBe('Under the warning level, resets 1:10 PM');
+    expect(windowLabel({ usedPercent: null, resetsAt: at('2026-10-24T17:10:00Z') }, NOW, Z)).toBe('No figure reported, resets 1:10 PM');
   });
   it('a window past its reset does not keep showing the old figure', () => {
     expect(windowLabel({ usedPercent: 98, resetsAt: at('2026-10-24T12:00:00Z') }, NOW, Z)).toBe('Reset 8:00 AM, no new figure yet');
