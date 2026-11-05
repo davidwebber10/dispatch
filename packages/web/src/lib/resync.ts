@@ -2,6 +2,7 @@ import { useThreadStatus } from '../stores/threadStatus';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
 import { useLedgerCard } from '../stores/ledgerCard';
+import { useUsageLimits } from '../stores/usageLimits';
 
 /**
  * Reconcile board/live state after the events socket reconnects.
@@ -22,6 +23,8 @@ import { useLedgerCard } from '../stores/ledgerCard';
  *
  * The pinned decision cards load again too: a `ledger:changed` missed while the socket was down
  * never replays (pinned card spec 2026-10-08, Unit 6).
+ *
+ * The usage gauge reloads too: a `usage-limits` broadcast missed while down never replays (#127).
  */
 export async function resyncAfterReconnect(): Promise<void> {
   useThreadStatus.getState().reset();
@@ -29,5 +32,6 @@ export async function resyncAfterReconnect(): Promise<void> {
   await Promise.all([
     ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
     useLedgerCard.getState().reloadAll(),
+    useUsageLimits.getState().load(),
   ]);
 }
