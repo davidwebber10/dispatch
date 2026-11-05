@@ -93,6 +93,11 @@ interface SettingsState {
    * a dismissal made before this setting existed still holds.
    */
   showPrettyHint: boolean;
+  /**
+   * The red "agents paused on a usage limit" banner (#127). Per-device: off hides it on this
+   * device only. The warning push is a separate daemon-wide switch in Settings > Usage limits.
+   */
+  showUsageBanner: boolean;
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -115,6 +120,7 @@ interface SettingsState {
   setPtyAutocorrect: (b: boolean) => void;
   setEditor: (e: DocEditor) => void;
   setShowPrettyHint: (b: boolean) => void;
+  setShowUsageBanner: (b: boolean) => void;
 }
 
 /** The pre-setting per-device dismissal flag the hint's × wrote (kept as the default's source). */
@@ -167,6 +173,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
   editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
   showPrettyHint: load<boolean>('dispatch:showPrettyHint', legacyPrettyHintShown()),
+  showUsageBanner: load<boolean>('dispatch:usageBanner', true) !== false,
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -186,6 +193,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
+  setShowUsageBanner: (b) => { save('dispatch:usageBanner', b); set({ showUsageBanner: b }); },
   setPushEnabledLocal: (b) => { save('dispatch:pushEnabled', b); set({ pushEnabled: b }); },
   setPushEnabled: async (b) => {
     const push = await import('../lib/push');

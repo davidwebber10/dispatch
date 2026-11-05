@@ -33,3 +33,13 @@ describe('dismissedNotices store', () => {
     expect(noticeHidden({ scope: 't', keys: [dismissKey('t', 'k')] }, 'k')).toBe(true);
   });
 });
+
+describe('usage banner dismiss key (#127)', () => {
+  it('is per provider and per episode', async () => {
+    const { useDismissedNotices, USAGE_BANNER_SCOPE, usageBannerKey } = await import('./dismissedNotices');
+    useDismissedNotices.getState().dismiss(USAGE_BANNER_SCOPE, usageBannerKey('claude-code', 100));
+    expect(useDismissedNotices.getState().isDismissed(USAGE_BANNER_SCOPE, usageBannerKey('claude-code', 100))).toBe(true);
+    expect(useDismissedNotices.getState().isDismissed(USAGE_BANNER_SCOPE, usageBannerKey('claude-code', 200))).toBe(false);
+    expect(useDismissedNotices.getState().isDismissed(USAGE_BANNER_SCOPE, usageBannerKey('codex', 100))).toBe(false);
+  });
+});
