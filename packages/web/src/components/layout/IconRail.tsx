@@ -6,6 +6,7 @@ import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
+import { UsageChip } from './UsageChip';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -89,6 +90,8 @@ export function IconRail() {
           active={view === n.view} onClick={() => setView(n.view)} badge={n.view === 'previews' ? unseen : 0} />
       ))}
       <div style={{ flex: 1 }} />
+      {/* Account usage (#127): above the connection dot, hidden until a provider reports. */}
+      <UsageChip variant="rail" />
       <div title={conn.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 2px' }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', background: conn.color,

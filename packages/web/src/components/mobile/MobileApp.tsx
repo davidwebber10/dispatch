@@ -5,6 +5,7 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
+import { UsageChip } from '../layout/UsageChip';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { Eye } from '@phosphor-icons/react';
@@ -262,6 +263,8 @@ export function MobileApp() {
               <PreviewBadge count={unseenHere} />
             </button>
           )}
+          {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
+          <UsageChip variant="phone" />
           <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
               desktop control, which mobile never rendered (so a Pretty thread was
