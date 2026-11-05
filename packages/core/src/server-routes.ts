@@ -35,6 +35,7 @@ import { createServersRouter } from './routes/servers.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
+import { createUsageLimitSettingsRouter } from './routes/usage-limit-settings.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { createSetupRouter } from './routes/setup.js';
 import { createFilesRouter } from './routes/files.js';
@@ -91,7 +92,7 @@ export interface ApiRouteDeps {
   /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
   /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
   watchCatchUp?: (watchId: string) => string | null;
-  usageLimits?: { snapshots: LimitSnapshots; accountFor: (provider: string) => string };
+  usageLimits?: { snapshots: LimitSnapshots; accountFor: (provider: string) => string; onSettingsChange?: () => void };
 }
 
 /**
@@ -132,6 +133,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/secrets', createSecretsRouter(d.secretsService, d.refreshPtyEnv));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(d.db, d.secretsService, d.refreshPtyEnv));
   app.use('/api/settings/telemetry', createTelemetrySettingsRouter(d.db));
+  app.use('/api/settings/usage-limits', createUsageLimitSettingsRouter(d.db, { onChange: () => d.usageLimits?.onSettingsChange?.() }));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService)));
   app.use('/api/setup', createSetupRouter(d.db, d.secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(d.db));
