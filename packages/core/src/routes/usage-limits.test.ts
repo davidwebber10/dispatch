@@ -113,3 +113,15 @@ describe('the shared Codex refresher (#127)', () => {
     expect((await request(a).get('/api/usage-limits?terminalId=x1')).body.snapshot.windows.five_hour.usedPercent).toBe(90);
   });
 });
+
+describe('GET /api/usage-limits/summary (#127)', () => {
+  it('returns the gauge summary, and 503 without a gauge', async () => {
+    expect((await request(app()).get('/api/usage-limits/summary')).status).toBe(503);
+    const body = { type: 'usage-limits', warnPercent: 80, providers: [], paused: [] };
+    const a = express();
+    a.use('/api', createUsageLimitsRouter(db, snaps, { summary: () => body as any }));
+    const r = await request(a).get('/api/usage-limits/summary');
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual(body);
+  });
+});

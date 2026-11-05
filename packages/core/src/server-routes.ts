@@ -12,6 +12,8 @@ import type { PushService } from './push/service.js';
 import type { LedgerService } from './overseer/ledger-service.js';
 import type { EndlessService } from './endless/service.js';
 import type { LimitSnapshots } from './limits/snapshot.js';
+import type { UsageSummary } from './limits/gauge.js';
+import type { CodexRefresh } from './limits/codex-refresh.js';
 import type { ToolAuthProber } from './tools/auth-probe.js';
 import type { EventBroadcaster } from './ws/events.js';
 import type { NoCredentialStats } from './auth/no-credential-stats.js';
@@ -92,7 +94,15 @@ export interface ApiRouteDeps {
   /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
   /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
   watchCatchUp?: (watchId: string) => string | null;
-  usageLimits?: { snapshots: LimitSnapshots; accountFor: (provider: string) => string; onSettingsChange?: () => void };
+  usageLimits?: {
+    snapshots: LimitSnapshots;
+    accountFor: (provider: string) => string;
+    /** The gauge's summary and the shared Codex refresher (#127). */
+    summary?: () => UsageSummary;
+    refreshCodex?: CodexRefresh;
+    /** Applies a settings PUT live: the gauge rebroadcasts with the new threshold. */
+    onSettingsChange?: () => void;
+  };
 }
 
 /**
@@ -148,7 +158,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
   app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
-  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor }));
+  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
 }

@@ -6,6 +6,7 @@ import * as parksDb from '../db/usage-limits.js';
 import { accountIdFor } from '../limits/account.js';
 import type { LimitSnapshots } from '../limits/snapshot.js';
 import { createCodexRefresh, type CodexRefresh, type CodexRefreshOpts } from '../limits/codex-refresh.js';
+import type { UsageSummary } from '../limits/gauge.js';
 
 const REPORTING = new Set(['claude-code', 'codex']);
 
@@ -16,10 +17,18 @@ const REPORTING = new Set(['claude-code', 'codex']);
 export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitSnapshots, opts: CodexRefreshOpts & {
   /** The daemon's shared refresher (the gauge tick uses it too, so the 30 s throttle holds for both). */
   refreshCodex?: CodexRefresh;
+  /** The usage gauge's summary (#127). Without it `/usage-limits/summary` answers 503. */
+  summary?: () => UsageSummary;
 } = {}): Router {
   const accountFor = opts.accountFor ?? accountIdFor;
   const router = policyRouter();
   const refreshCodex = opts.refreshCodex ?? createCodexRefresh(snapshots, opts);
+
+  /** GET /api/usage-limits/summary: the same body as the `usage-limits` broadcast, for a first load or a reconnect. */
+  router.get('/usage-limits/summary', (_req, res) => {
+    if (!opts.summary) { res.status(503).json({ error: 'usage gauge unavailable' }); return; }
+    res.json(opts.summary());
+  });
 
   router.get('/usage-limits', (req, res) => {
     const id = typeof req.query.terminalId === 'string' ? req.query.terminalId : '';
