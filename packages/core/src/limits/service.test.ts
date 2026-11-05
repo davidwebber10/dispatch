@@ -310,3 +310,47 @@ describe('named limits in the service', () => {
   });
 });
 
+
+describe('change listener (#127)', () => {
+  it('fires on park, wake, cap, remove and restore, and not on a no-op', () => {
+    let n = 0;
+    svc.addChangeListener(() => { n++; });
+    thread('a'); thread('b'); thread('c');
+    svc.park('a', 'claude-code', session);
+    expect(n).toBe(1);
+    svc.onTurnSettled('zzz'); // no row: nothing changed
+    svc.tick(); // not due yet
+    expect(n).toBe(1);
+    clock = RESET + 91_000;
+    svc.tick(); // wakes a
+    expect(n).toBe(2);
+    expect(parksDb.listPaused(db)).toHaveLength(0);
+    svc.onTurnEnded('a'); // a woken row ends its chain
+    expect(n).toBe(3);
+    // A cap: five failed sends.
+    svc.park('b', 'claude-code', { ...session, resetsAt: clock });
+    expect(n).toBe(4);
+    wakeError = new Error('no pty');
+    for (let i = 0; i < 5; i++) { clock += 6 * MIN; svc.tick(); }
+    expect(parksDb.get(db, 'b')!.state).toBe('capped');
+    expect(n).toBe(5); // the retries keep it parked, only the cap is a change
+    expect(parksDb.listPaused(db).map((r) => r.terminal_id)).toEqual(['b']);
+    svc.onUserMessage('b');
+    expect(n).toBe(6);
+    svc.onStopped('b'); // already gone
+    expect(n).toBe(6);
+    // restore drops a park whose thread was archived.
+    svc.park('c', 'claude-code', session);
+    expect(n).toBe(7);
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'c'").run();
+    svc.restore();
+    expect(n).toBe(8);
+  });
+
+  it('a throwing listener does not break the service', () => {
+    svc.addChangeListener(() => { throw new Error('boom'); });
+    thread('a');
+    expect(() => svc.park('a', 'claude-code', session)).not.toThrow();
+    expect(parksDb.get(db, 'a')).not.toBeNull();
+  });
+});
