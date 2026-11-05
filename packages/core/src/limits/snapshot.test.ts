@@ -107,3 +107,22 @@ describe('LimitSnapshots', () => {
     expect(new LimitSnapshots(db).get('codex', 'x')).toMatchObject({ plan: 'plus', windows: { seven_day: { usedPercent: 7 } } });
   });
 });
+
+describe('record listener (#127)', () => {
+  const fresh = () => { const db = new Database(':memory:'); db.exec('CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)'); return { db, s: new LimitSnapshots(db) }; };
+  it('hears a recorded report and returns true; an ignored report is silent and false', () => {
+    const { s } = fresh();
+    const heard: string[] = [];
+    s.addRecordListener((p) => heard.push(p));
+    expect(s.record('claude-code', 'a', { five_hour: { usedPercent: 46, resetsAt: NOW + 1000 } }, NOW)).toBe(true);
+    expect(s.record('claude-code', 'a', {}, NOW + 1)).toBe(false);
+    expect(s.record('claude-code', 'a', { five_hour: { usedPercent: 10, resetsAt: NOW + 1000 } }, NOW - 1)).toBe(false);
+    expect(heard).toEqual(['claude-code']);
+  });
+  it('a throwing listener does not stop the record', () => {
+    const { s } = fresh();
+    s.addRecordListener(() => { throw new Error('boom'); });
+    expect(s.record('codex', 'a', { five_hour: { usedPercent: 1, resetsAt: NOW + 1 } }, NOW, undefined, true)).toBe(true);
+    expect(s.get('codex', 'a')).not.toBeNull();
+  });
+});

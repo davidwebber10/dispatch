@@ -16,9 +16,10 @@ const ms = (v: unknown): number | null => (typeof v === 'number' && Number.isFin
 
 /**
  * Windows from a Claude Code `rate_limit_event`'s `rate_limit_info`, keyed by the CLI's own type
- * name. `unifiedWindows` (sent once the account passes a warning level) carries every window the
- * account has; the event's own `rateLimitType` covers the plain `allowed` event, which has a reset
- * time and no utilization. Utilization is a 0-1 fraction.
+ * name. `unifiedWindows` carries every window the account has. CLI 2.1.316 sends it on every turn,
+ * even at 46% (2.1.309 sent it only past a warning level, so older CLIs may still omit it). The
+ * event's own `rateLimitType` covers a plain `allowed` event with a reset time and no utilization.
+ * Utilization is a 0-1 fraction.
  */
 export function parseClaudeRateLimit(info: any): LimitWindows {
   const out: LimitWindows = {};
@@ -53,6 +54,10 @@ export function parseCodexRateLimits(rl: any): { windows: LimitWindows; plan?: s
 
 export class LimitSnapshots {
   private byProvider: Record<string, ProviderLimits> = {};
+  private recordListeners: ((provider: string) => void)[] = [];
+
+  /** Told after a report changed a provider's snapshot (the usage gauge, #127). */
+  addRecordListener(fn: (provider: string) => void): void { this.recordListeners.push(fn); }
 
   constructor(private readonly db: Database.Database) {
     try { this.byProvider = JSON.parse(appState.get(db, KEY) ?? '{}') ?? {}; } catch { this.byProvider = {}; }
@@ -69,11 +74,12 @@ export class LimitSnapshots {
    * than the stored one is ignored (an idle thread's old figures must not undo newer ones).
    * `replace`: the report lists every window the account has (Codex), so windows it omits are gone.
    * Merged windows more than an hour past their reset are dropped, so a type reported once does not linger.
+   * Returns false when the report was ignored.
    */
-  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false): void {
-    if (!replace && Object.keys(windows).length === 0) return;
+  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false): boolean {
+    if (!replace && Object.keys(windows).length === 0) return false;
     const prior = this.get(provider, account);
-    if (prior && now < prior.asOf) return;
+    if (prior && now < prior.asOf) return false;
     const merged: LimitWindows = replace ? {} : { ...(prior?.windows ?? {}) };
     for (const [type, w] of Object.entries(windows)) {
       const old = prior?.windows[type];
@@ -82,5 +88,9 @@ export class LimitSnapshots {
     for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) delete merged[type];
     this.byProvider[provider] = { account, asOf: now, plan: plan ?? prior?.plan, windows: merged };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
+    for (const fn of this.recordListeners) {
+      try { fn(provider); } catch (err) { console.warn('[usage-limit] a snapshot listener failed:', err); }
+    }
+    return true;
   }
 }
