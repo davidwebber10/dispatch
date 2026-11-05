@@ -487,6 +487,28 @@ export interface ThreadUsageLimits {
   paused: { kind: 'session' | 'weekly' | 'usage'; resetsAt: number | null; capped: boolean } | null;
 }
 
+/** One provider in the usage gauge (#127): the current account's windows, percents as integers. */
+export interface UsageSummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow> }
+/** Threads of one provider stopped on a limit, for the paused banner. */
+export interface UsagePausedGroup {
+  provider: string;
+  /** session | weekly | fable | opus | sonnet | usage */
+  kind: string;
+  earliestResetsAt: number | null;
+  /** Paused and capped together; Chat's own park counts as one. */
+  threads: number;
+  capped: number;
+  chat: boolean;
+  firstTerminalId: string;
+  firstSessionId: string | null;
+  /** The earliest pause start: keys this device's dismiss. */
+  episodeStartedAt: number;
+}
+/** GET /api/usage-limits/summary and the `usage-limits` broadcast carry the same body. */
+export interface UsageSummary { warnPercent: number; providers: UsageSummaryProvider[]; paused: UsagePausedGroup[] }
+/** GET/PUT /api/settings/usage-limits: daemon-wide, every device sees the same values. */
+export interface UsageLimitSettings { warnPercent: number; pushOnWarn: boolean }
+
 /** Previews (docs/superpowers/specs/2026-10-28-previews-design.md): what a thread handed the user to look at or copy. */
 export interface PreviewFile { path: string; name: string; mime: string; size: number }
 export interface Preview {

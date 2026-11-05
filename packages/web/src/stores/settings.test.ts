@@ -96,3 +96,14 @@ describe('showPrettyHint setting', () => {
     expect(JSON.parse(localStorage.getItem('dispatch:showPrettyHint')!)).toBe(false);
   });
 });
+
+describe('showUsageBanner setting (#127)', () => {
+  it('defaults to shown and persists under dispatch:usageBanner', () => {
+    expect(useSettings.getState().showUsageBanner).toBe(true);
+    useSettings.getState().setShowUsageBanner(false);
+    expect(useSettings.getState().showUsageBanner).toBe(false);
+    expect(JSON.parse(localStorage.getItem('dispatch:usageBanner')!)).toBe(false);
+    useSettings.getState().setShowUsageBanner(true);
+    expect(JSON.parse(localStorage.getItem('dispatch:usageBanner')!)).toBe(true);
+  });
+});

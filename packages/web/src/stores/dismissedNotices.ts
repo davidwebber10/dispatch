@@ -34,6 +34,13 @@ function save(keys: string[]) { try { localStorage.setItem(DISMISSED_NOTICES_KEY
 /** The map key for one card. Exported so readers can't drift from writers. */
 export const dismissKey = (scope: string, noticeKey: string) => `${scope}:${noticeKey}`;
 
+/**
+ * The paused-usage banner's dismiss (#127) shares this store. One key per provider and pause
+ * episode, so the × holds until a new episode starts (a new earliest pause time).
+ */
+export const USAGE_BANNER_SCOPE = 'usage-banner';
+export const usageBannerKey = (provider: string, episodeStartedAt: number) => `${provider}:${episodeStartedAt}`;
+
 /** The dismissed set a plain render function (renderTimeline / renderStream, no hooks)
  *  needs to skip a closed card's row entirely: the component that calls it subscribes to
  *  `keys` and hands them down with the scope, so the skip is reactive. */

@@ -879,3 +879,12 @@ it("a rate_limit_event is emitted as 'rate-limit' with its info, and is not a pa
   await new Promise((r) => setTimeout(r, 100));
   expect(usageLimit).not.toHaveBeenCalled();
 });
+
+it('a rate_limit_event below any warning level still carries unifiedWindows (CLI 2.1.316, #127)', async () => {
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const p = waitForManagerEvent(m, 'rate-limit', 't1');
+  m.sendMessage('t1', 'TRIGGER_RATE_EVENT:0.46:0.21');
+  const [info] = await p;
+  expect(info).toMatchObject({ status: 'allowed', utilization: 0.46, unifiedWindows: { five_hour: { utilization: 0.46 }, seven_day: { utilization: 0.21 } } });
+});

@@ -46,3 +46,8 @@ export function listDue(db: Database.Database, now: number): ParkRow[] {
 export function listActive(db: Database.Database): ParkRow[] {
   return db.prepare("SELECT * FROM usage_limit_parks WHERE state = 'parked' ORDER BY wake_at ASC").all() as ParkRow[];
 }
+
+/** Threads still stopped on a limit: waiting for the reset (`parked`) or given up (`capped`). Oldest pause first. */
+export function listPaused(db: Database.Database): ParkRow[] {
+  return db.prepare("SELECT * FROM usage_limit_parks WHERE state IN ('parked', 'capped') ORDER BY parked_at ASC, terminal_id ASC").all() as ParkRow[];
+}

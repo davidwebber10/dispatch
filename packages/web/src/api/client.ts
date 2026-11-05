@@ -3,7 +3,7 @@ import { apiPath } from '../lib/basePath';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { Preview } from './types';
-import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits } from './types';
+import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
  * A content block for a structured `user` turn (mirrors the daemon's wire shape). A
@@ -158,6 +158,9 @@ export const api = {
   branchTerminal: (terminalId: string) => req<Terminal>(`/api/terminals/${terminalId}/branch`, { method: 'POST' }),
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getUsageLimits: (terminalId: string) => req<ThreadUsageLimits>(`/api/usage-limits?terminalId=${encodeURIComponent(terminalId)}`),
+  getUsageSummary: () => req<UsageSummary>('/api/usage-limits/summary'),
+  getUsageLimitSettings: () => req<UsageLimitSettings>('/api/settings/usage-limits'),
+  setUsageLimitSettings: (patch: Partial<UsageLimitSettings>) => req<UsageLimitSettings>('/api/settings/usage-limits', { method: 'PUT', body: body(patch) }),
   getConversation: (id: string, params: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.since != null) q.set('since', String(params.since));

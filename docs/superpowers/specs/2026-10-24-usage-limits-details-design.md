@@ -23,11 +23,12 @@ Codex maps its 300-minute window to Session (5h) and its 10080-minute window to 
 - Each snapshot is tagged with the account that reported it (Claude: `oauthAccount.accountUuid`
   in `.claude.json`; Codex: `tokens.account_id` in `auth.json`). A snapshot from another account
   is never shown as current; the first report from the new account replaces it.
-- Claude: the stream-json `rate_limit_event`. Measured with CLI 2.1.309 on 2026-10-24: it is sent
-  once per turn (2 turns, 2 events). The plain `allowed` event has a reset time and no
-  `utilization`; once the account passes the 90% warning level it also carries `utilization` and
-  `unifiedWindows` (every limit type the account has). Below that level the panel shows
-  "Under the warning level, resets ...", not an invented number.
+- Claude: the stream-json `rate_limit_event`, sent once per turn. Measured with CLI 2.1.309 on
+  2026-10-24: the plain `allowed` event had a reset time and no `utilization`, and only past the
+  90% warning level did it carry `utilization` and `unifiedWindows`. CLI 2.1.316 (2026-11-05)
+  sends `utilization` and `unifiedWindows` (every limit type the account has) on every turn, even
+  at 46%. Older CLIs may still omit it. A window with no figure shows "No figure reported,
+  resets ...", not an invented number.
 - Codex: `rate_limits` on `token_count` events in the session file, one bounded tail read
   (256 KiB, no widening), at most once per 30 s per thread. Null windows (unlimited plans) show nothing.
 - No usage API is polled.
@@ -47,7 +48,7 @@ Known gaps: a phone thread in CLI (terminal) mode has no context ring, so it sti
 
 - Claude threads in the CLI (PTY) view do not stream; they show the last figure another Claude
   thread reported, or "Not reported yet".
-- Claude utilization below 90% is not reported by the CLI.
+- Claude CLIs before 2.1.316 do not report utilization below 90%. Those windows show "No figure reported".
 - Provenance: figures are tagged with the account at the time they are read. Codex figures written
   before its login file last changed are skipped; a report older than the stored one is ignored; an
   unknown account id is an account of its own; a headless box's injected Claude token is the account.

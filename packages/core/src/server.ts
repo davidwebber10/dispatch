@@ -81,6 +81,8 @@ import { PtyLimitWatcher } from './limits/pty-watch.js';
 import { LimitSnapshots, parseClaudeRateLimit } from './limits/snapshot.js';
 import { accountIdFor, tokenAccountId } from './limits/account.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
+import { UsageGauge } from './limits/gauge.js';
+import { createCodexRefresh } from './limits/codex-refresh.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { platform } from './platform/index.js';
@@ -622,6 +624,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   for (const m of [structuredManager, endlessManager]) {
     m.on('rate-limit', (_id: string, info: unknown) => limitSnapshots.record('claude-code', limitAccount('claude-code'), parseClaudeRateLimit(info), Date.now()));
   }
+  // The usage gauge (#127): the header chip, the paused banner and the one-push-per-window warning.
+  // It hears every recorded snapshot and every pause change, and refreshes Codex on its own tick.
+  const refreshCodex = createCodexRefresh(limitSnapshots, { accountFor: limitAccount });
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex });
+  limitSnapshots.addRecordListener((provider) => usageGauge.onRecord(provider));
+  usageLimits.addChangeListener(() => usageGauge.pausesChanged());
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
   // Chat through its own manager. An owner action on Chat ends its pause.
   statusService.addThreadSettledListener(({ terminalId }) => usageLimits.onTurnSettled(terminalId));
@@ -812,7 +820,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
-    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount },
+    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged() },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 
@@ -1039,6 +1047,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // settle delay before reading status, so it must not block startup.
   usageLimits.restore();
   usageLimits.start();
+  usageGauge.start();
   void sessionService.kickstartInterruptedAgents()
     .then(({ kicked, skipped, completed }) => {
       if (kicked.length) console.log(`Kickstart: resumed ${kicked.length} interrupted thread(s); skipped ${skipped.length}`);
@@ -1102,6 +1111,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(interimRecapInterval);
     clearInterval(heartbeat);
     usageLimits.stop();
+    usageGauge.stop();
     boxHeartbeat.stop();
     threadAutoNamer.dispose();
     endless.stop();

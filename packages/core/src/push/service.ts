@@ -96,10 +96,22 @@ export class PushService {
 
   async notifyThread(input: { terminalId: string; sessionId: string; title: string; body: string }): Promise<void> {
     const payload = JSON.stringify({ title: input.title, body: input.body, terminalId: input.terminalId, sessionId: input.sessionId });
+    await this.fanOut(payload, (deviceId) => this.isViewing(deviceId, input.terminalId));
+  }
+
+  /**
+   * A push about the account, not one thread (the usage warning, #127). Every device gets it,
+   * foreground or not. `tag` coalesces repeats on the device; a tap opens `/`.
+   */
+  async notifyAccount(input: { title: string; body: string; tag: string }): Promise<void> {
+    await this.fanOut(JSON.stringify({ title: input.title, body: input.body, tag: input.tag }), () => false);
+  }
+
+  private async fanOut(payload: string, skip: (deviceId: string) => boolean): Promise<void> {
     for (const sub of pushDb.list(this.db)) {
       // A subscription stored before the host check may point anywhere. Keep it, but never send to it.
       if (!isAllowedPushEndpoint(sub.endpoint)) continue;
-      if (this.isViewing(sub.deviceId, input.terminalId)) continue;
+      if (skip(sub.deviceId)) continue;
       // The list was read before the earlier sends were awaited; a device the owner revoked meanwhile gets nothing.
       if (!pushDb.has(this.db, sub.deviceId)) continue;
       try { await this.send(sub, payload); pushDb.markSent(this.db, sub.deviceId); }

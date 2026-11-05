@@ -94,7 +94,7 @@ self.addEventListener('push', (event) => {
       body: d.body || '',
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      tag: d.terminalId || undefined,   // coalesce repeated pings per thread
+      tag: d.terminalId || d.tag || undefined,   // coalesce repeated pings per thread (or per usage window, #127)
       data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null },
     });
     // Bump the app-icon count too, so the home screen shows how many alerts are waiting.

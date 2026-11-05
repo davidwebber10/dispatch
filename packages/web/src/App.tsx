@@ -12,6 +12,7 @@ import { SettingsView } from './components/settings/SettingsView';
 import { PreviewsView } from './components/previews/PreviewsView';
 import { PreviewSheet } from './components/previews/PreviewSheet';
 import { usePreviews } from './stores/previews';
+import { useUsageLimits } from './stores/usageLimits';
 import { PanelToggle } from './components/layout/PanelToggle';
 import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
 import { AgentPane } from './components/agents/AgentPane';
@@ -96,6 +97,7 @@ export default function App() {
     void useUpdate.getState().load();
     void useHost.getState().load();
     void useAgents.getState().loadSchedules();
+    void useUsageLimits.getState().load();
     // A notification tap parks its target in the SW; drain it here. This is the
     // path that actually carries the tap on iOS, where the frozen page misses the
     // postMessage entirely. Draining on every foreground (not useResume, whose 8s
@@ -147,6 +149,7 @@ export default function App() {
         useLedgerCard.getState().applyEvent(e);
         useEndless.getState().applyEvent(e);
         usePreviews.getState().applyEvent(e);
+        useUsageLimits.getState().applyEvent(e);
       },
     });
     sockRef.current = sock;

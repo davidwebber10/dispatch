@@ -5,6 +5,8 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
+import { UsageChip } from '../layout/UsageChip';
+import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { Eye } from '@phosphor-icons/react';
@@ -262,6 +264,8 @@ export function MobileApp() {
               <PreviewBadge count={unseenHere} />
             </button>
           )}
+          {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
+          <UsageChip variant="phone" />
           <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
           {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
               desktop control, which mobile never rendered (so a Pretty thread was
@@ -276,6 +280,8 @@ export function MobileApp() {
           <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
         )}
       </header>
+      {/* Agents paused on a usage limit (#127): one line under the header, wraps to two. */}
+      <UsageBanner compact onOpenChat={() => { setBottomTab('chat'); if (level > 0) history.back(); }} />
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>

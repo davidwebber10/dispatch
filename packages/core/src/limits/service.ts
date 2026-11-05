@@ -55,6 +55,13 @@ export class UsageLimitService {
   private timer: NodeJS.Timeout | null = null;
   private lastWake = new Map<string, number>();
   private touchListeners: ((terminalId: string) => void)[] = [];
+  private changeListeners: (() => void)[] = [];
+
+  /** Told whenever the set of paused threads may have changed (a park row written or removed). The usage gauge (#127) rebuilds its banner from it. */
+  addChangeListener(fn: () => void): void { this.changeListeners.push(fn); }
+  private changed(): void {
+    for (const fn of this.changeListeners) this.safe(fn);
+  }
 
   /** Told whenever the owner messages or stops a thread (the CLI watcher drops pending detection). */
   addTouchListener(fn: (terminalId: string) => void): void { this.touchListeners.push(fn); }
@@ -97,6 +104,7 @@ export class UsageLimitService {
       message: limit.message.slice(0, 1000), parsed: parsed ? 1 : 0, attempts,
       state: capped ? 'capped' : 'parked', parked_at: prior?.parked_at ?? now,
     }, now);
+    this.changed();
     const label = pauseLabel(limit.kind, limit.resetsAt, now, this.d.zone, fallbackMs);
     if (capped) {
       this.safe(() => this.d.markPaused(terminalId, `Stopped: ${limitName(limit.kind)}, auto-resume gave up after ${attempts} tries`));
@@ -114,12 +122,16 @@ export class UsageLimitService {
 
   /** Wake every parked thread whose time has come, at most one per provider per stagger gap. */
   tick(): void {
-    const now = this.now();
+    if (this.wakeDue(this.now())) this.changed();
+  }
+
+  private wakeDue(now: number): boolean {
+    let changed = false;
     for (const row of parksDb.listDue(this.d.db, now)) {
       const isChat = row.terminal_id === CHAT_ID;
       const t = isChat ? null : terminalsDb.getById(this.d.db, row.terminal_id);
       const gone = isChat ? !this.d.chat || this.d.chat.isBusy() : !t || !!t.archived_at || t.status === 'working';
-      if (gone) { parksDb.remove(this.d.db, row.terminal_id); continue; }
+      if (gone) { if (parksDb.remove(this.d.db, row.terminal_id)) changed = true; continue; }
       const name = isChat ? 'Chat' : (t!.label || row.terminal_id);
       const last = this.lastWake.get(row.provider);
       if (last !== undefined && now - last < this.o.staggerMs) continue;
@@ -128,11 +140,13 @@ export class UsageLimitService {
       try {
         if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
+        changed = true;
         this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
         if (attempts >= this.o.maxAttempts) {
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
+          changed = true;
           this.safe(() => this.d.markPaused(row.terminal_id, `Stopped: ${limitName(row.kind)}, auto-resume gave up after ${attempts} tries`));
           this.d.note(row.terminal_id, `[${name}] could not be resumed after ${attempts} tries. It stays stopped. Send it a message to continue.`, { deliver: true });
         } else {
@@ -140,27 +154,30 @@ export class UsageLimitService {
         }
       }
     }
+    return changed;
   }
 
   /** The owner sent the thread a message or typed in it: they took over, so no auto-resume. */
-  onUserMessage(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
+  onUserMessage(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
-  onStopped(terminalId: string): void { parksDb.remove(this.d.db, terminalId); this.touched(terminalId); }
+  onStopped(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
   /** A turn ended in a failure: a resumed thread is done with its chain; a waiting one stays parked. */
   onTurnEnded(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);
-    if (row && row.state === 'woken') parksDb.remove(this.d.db, terminalId);
+    if (row && row.state === 'woken') this.removePark(terminalId);
   }
   /** A turn finished normally: the thread moved on, so any pause (woken, waiting or capped) is over. */
-  onTurnSettled(terminalId: string): void { parksDb.remove(this.d.db, terminalId); }
+  onTurnSettled(terminalId: string): void { this.removePark(terminalId); }
+
+  private removePark(terminalId: string): void { if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
 
   /** At boot: the status of every thread was reset, so show the parked ones as paused again. */
   restore(): void {
     const now = this.now();
     for (const row of parksDb.listActive(this.d.db)) {
-      if (row.terminal_id === CHAT_ID) { if (!this.d.chat) parksDb.remove(this.d.db, CHAT_ID); continue; }
+      if (row.terminal_id === CHAT_ID) { if (!this.d.chat) this.removePark(CHAT_ID); continue; }
       const t = terminalsDb.getById(this.d.db, row.terminal_id);
-      if (!t || t.archived_at) { parksDb.remove(this.d.db, row.terminal_id); continue; }
+      if (!t || t.archived_at) { this.removePark(row.terminal_id); continue; }
       const fallback = isWeeklyKind(row.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
       this.safe(() => this.d.markPaused(row.terminal_id, pauseLabel(row.kind, row.resets_at, now, this.d.zone, fallback)));
     }

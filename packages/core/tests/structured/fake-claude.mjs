@@ -68,7 +68,18 @@ rl.on('line', (line) => {
       send({ type: 'result', subtype: 'success', is_error: true, result: words, api_error_status: 429 });
       return;
     }
-    // A rate_limit_event as the CLI sends it every turn (here past the warning level, with unifiedWindows).
+    // A rate_limit_event as CLI 2.1.316 sends it every turn, with unifiedWindows at any level (2.1.309
+    // sent unifiedWindows only past a warning level). `TRIGGER_RATE_EVENT:<5h>:<week>[:rejected]` takes
+    // 0-1 utilizations and resets 2 hours and 3 days from now (the usage gauge checks, #127).
+    if (typeof text === 'string' && text.startsWith('TRIGGER_RATE_EVENT:')) {
+      const [, five, week, status] = text.split(':');
+      const now = Math.floor(Date.now() / 1000);
+      const r5 = now + 2 * 3600, r7 = now + 3 * 86400;
+      send({ type: 'rate_limit_event', rate_limit_info: { status: status || 'allowed', rateLimitType: 'five_hour', resetsAt: r5, utilization: Number(five),
+        unifiedWindows: { five_hour: { utilization: Number(five), resetsAt: r5 }, seven_day: { utilization: Number(week), resetsAt: r7 } } } });
+      send({ type: 'result', subtype: 'success', is_error: false, result: 'ok' });
+      return;
+    }
     if (text === 'TRIGGER_RATE_EVENT') {
       send({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: 1792861200, utilization: 0.62,
         unifiedWindows: { five_hour: { utilization: 0.62, resetsAt: 1792861200 }, seven_day: { utilization: 0.24, resetsAt: 1793062800 } } } });
