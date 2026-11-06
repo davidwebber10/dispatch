@@ -12,7 +12,7 @@ export const WORD_SETS: readonly { name: string; words: readonly string[] }[] = 
   { name: 'Dispatch', words: ['Dispatching', 'Routing', 'Relaying', 'Coordinating', 'Patching through', 'Copying that', 'Rolling', 'On it'] },
   { name: 'Workshop', words: ['Tinkering', 'Wrenching', 'Soldering', 'Sanding', 'Measuring twice', 'Tightening bolts', 'Calibrating', 'Hammering'] },
   { name: 'Kitchen', words: ['Cooking', 'Simmering', 'Prepping', 'Seasoning', 'Whisking', 'Plating', 'Tasting', 'Reducing'] },
-  { name: 'POLYWOOD', words: ['Recycling milk jugs', 'Building Adirondacks', 'Milling lumber', 'Weatherproofing', 'Assembling', 'Stacking chairs', 'Setting the patio', 'Rocking on the porch', 'Lounging', 'Built to last'] },
+  { name: 'POLYWOOD', words: ['Recycling', 'Upcycling', 'Molding', 'Milling', 'Weatherproofing', 'Assembling', 'Crafting', 'Stacking', 'Rocking', 'Lounging'] },
   { name: 'Space', words: ['Launching', 'Orbiting', 'Docking', 'Charting', 'Calculating trajectory', 'Firing thrusters', 'Scanning', 'Warping'] },
 ];
 
