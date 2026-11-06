@@ -137,3 +137,27 @@ describe('toConvItems items', () => {
     expect(chatIndexOf(toConvItems([m(-1, 'unii', 'older')])[0])).toEqual({ i: -1, piece: null });
   });
 });
+
+describe('a call whose result was never logged (2026-11-05)', () => {
+  const plain = (items: ConvItem[]) => items.map((it) => `${it.kind}:${it.toolId ?? ''}:${it.text ?? ''}`);
+
+  it('once the conversation has moved past it, it gets a stand-in result, so it does not read "running…"', () => {
+    const items = toConvItems([m(1, 'tool', 'Bash {"command":"ls"}'), m(2, 'unii', 'done')]);
+    expect(plain(items)).toEqual(['tool:chat:t1:', 'tool-result:chat:t1:(no output recorded)', 'assistant::done']);
+  });
+
+  it('the newest call, with nothing after it, is still running', () => {
+    const items = toConvItems([m(1, 'user', 'go'), m(2, 'tool', 'Bash {"command":"ls"}')]);
+    expect(items.some((it) => it.kind === 'tool-result')).toBe(false);
+  });
+
+  it('Chat\'s own cards (recalled, Started) are left to handle a missing result themselves', () => {
+    const items = toConvItems([m(1, 'tool', 'mcp__memory__zoom {"i":3}'), spawnTool(2, 'Fixer'), m(3, 'unii', 'ok')]);
+    expect(items.some((it) => it.kind === 'tool-result')).toBe(false);
+  });
+
+  it('the stand-in keeps its identity across renders', () => {
+    const msgs = [m(1, 'tool', 'Bash {}'), m(2, 'user', 'next')];
+    expect(toConvItems(msgs)[1]).toBe(toConvItems(msgs)[1]);
+  });
+});

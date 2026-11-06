@@ -10,6 +10,7 @@
 
 import type { ConvItem, EndlessMessage } from '../../api/types';
 import { endlessMediaUrl } from '../../api/client';
+import { SPAWN_TOOL } from './spawn';
 
 export const ZOOM_TOOL = /^mcp__memory__zoom\s/;
 /** A thread report (kind 'work') and an imported-memories note (kind 'note') ride as tool calls
@@ -85,14 +86,32 @@ const built = new WeakMap<EndlessMessage, { call: number | undefined; items: Con
 export function toConvItems(messages: EndlessMessage[]): ConvItem[] {
   const callOf = new Map<number, number>(); // echo.i -> its call's i
   for (const [tool, echo] of pairEchoes(messages)) callOf.set(echo.i, tool);
-  return messages.flatMap((m) => {
+  const answered = new Set(callOf.values());
+  // The last reply or user message: a call before it is over, whether or not its result was logged.
+  let lastTurn = -1;
+  for (let k = messages.length - 1; k >= 0; k--) if (messages[k].kind === 'user' || messages[k].kind === 'unii') { lastTurn = k; break; }
+  return messages.flatMap((m, k) => {
     const call = callOf.get(m.i);
     const hit = built.get(m);
-    if (hit && hit.call === call) return hit.items;
-    const items = build(m, callOf);
-    built.set(m, { call, items });
+    let items: ConvItem[];
+    if (hit && hit.call === call) items = hit.items;
+    else { items = build(m, callOf); built.set(m, { call, items }); }
+    // A plain tool call whose result was never logged (an interrupted turn) and that the
+    // conversation has since moved past: draw it finished with no output, not "running…" forever
+    // (2026-11-05). Chat's own cards (Started, recalled, reports, notes) take a missing result as is.
+    if (m.kind === 'tool' && k < lastTurn && !answered.has(m.i) && !ZOOM_TOOL.test(m.text) && !SPAWN_TOOL.test(m.text)) {
+      return [...items, noResult(m)];
+    }
     return items;
   });
+}
+
+const noResults = new WeakMap<EndlessMessage, ConvItem>();
+/** The stand-in result of a call that never logged one (kept per message, so its identity is stable). */
+function noResult(m: EndlessMessage): ConvItem {
+  let r = noResults.get(m);
+  if (!r) { r = { kind: 'tool-result', text: '(no output recorded)', toolId: `chat:t${m.i}`, uuid: `e${m.i}:none` }; noResults.set(m, r); }
+  return r;
 }
 
 /** The Chat message (and, for a user message's image, which one) an item was built from. */
