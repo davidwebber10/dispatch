@@ -38,6 +38,11 @@ describe('findDocPaths', () => {
     expect(paths('www.example.cloud/a.html, example.tech/docs/x.json and foo.bar/baz.txt')).toEqual([]);
     expect(paths('build.v2/out.json and v2.1/out.json and ./app.config/x.json')).toEqual([['build.v2/out.json', null], ['v2.1/out.json', null], ['./app.config/x.json', null]]);
   });
+  it('every known binary type is a path by its bare name too', () => {
+    expect(paths('archive.rar model.onnx photo.heic mod.wasm data.feather clip.webm and x.a, y.o, z.pt')).toEqual([
+      ['archive.rar', null], ['model.onnx', null], ['photo.heic', null], ['mod.wasm', null], ['data.feather', null], ['clip.webm', null],
+    ]);
+  });
   it('7z and long extensions are paths; an absurd one is left alone, not cut', () => {
     expect(paths('backup/data.7z and data.7z')).toEqual([['backup/data.7z', null], ['data.7z', null]]);
     expect(paths('profiles/dev.mobileprovision')).toEqual([['profiles/dev.mobileprovision', null]]);
@@ -151,6 +156,13 @@ describe('duplicate project folder names', () => {
     expect(resolveProjectPath('shared/a.py', 'd', projects)).toBeNull();
     expect(resolveProjectPath('shared/a.py', null, projects)).toBeNull();
   });
+  it('the message project has the folder name too: the path could mean either, so no project', () => {
+    const projects = [{ id: 'a', folder: '/x/shared' }, { id: 'b', folder: '/y/shared' }];
+    expect(resolveProjectPath('shared/a.py', 'a', projects)).toBeNull();
+    expect(resolveProjectPath('shared/a.py', 'b', projects)).toBeNull();
+    // a project with a folder name nobody else has: the path stays with the message project, name kept
+    expect(resolveProjectPath('shared/a.py', 'a', [projects[0]])).toEqual({ project: 'a', path: 'shared/a.py', rel: 'shared/a.py' });
+  });
   it('a path that is not ambiguous still works next to a duplicate', () => {
     const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'a1', folder: '/x/shared' }, { id: 'a2', folder: '/y/shared' }];
     expect(resolveProjectPath('src/a.py', 'd', projects)).toEqual({ project: 'd', path: 'src/a.py', rel: 'src/a.py' });
@@ -178,7 +190,7 @@ describe('fileKind', () => {
     expect(fileKind('n.txt')).toBe('doc');
     expect(fileKind('s/x.png')).toBe('image');
     expect(fileKind('x.svg')).toBe('text');
-    for (const f of ['a.xlsx', 'a.xls', 'a.parquet', 'a.pdf', 'a.zip', 'a.docx', 'a.sqlite', 'a.tar.gz', 'a.pkl']) expect(fileKind(f)).toBe('binary');
+    for (const f of ['a.xlsx', 'a.xls', 'a.parquet', 'a.pdf', 'a.zip', 'a.docx', 'a.sqlite', 'a.tar.gz', 'a.pkl', 'a.rar', 'a.heic', 'a.wasm', 'a.onnx', 'a.tiff']) expect(fileKind(f)).toBe('binary');
     for (const f of ['a.py', 'a.tsx', 'a.json', 'a.csv', 'a.sql', 'a.sh', 'a.yml', 'a.unknown']) expect(fileKind(f)).toBe('text');
   });
 });

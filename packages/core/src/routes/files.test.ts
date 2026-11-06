@@ -164,6 +164,27 @@ describe('read cannot follow a symlink out of the project', () => {
     expect((await read(app, path.join(workDir, 'leaf.txt'))).status).toBe(403);
     expect((await read(app, path.join(workDir, 'docs', '..', 'link', 'secret.txt'))).status).toBe(403);
   });
+  it('a file swapped for a symlink out of the project after the check is never read', async () => {
+    fs.writeFileSync(path.join(workDir, 'swap.txt'), 'inside');
+    const realOpen = fs.promises.open.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => {
+      // the check has passed; now the file becomes a link to the outside file
+      fs.rmSync(path.join(workDir, 'swap.txt'));
+      fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(workDir, 'swap.txt'));
+      return (realOpen as any)(p, ...rest);
+    }) as any);
+    try {
+      const app = makeApp(workDir);
+      const rel = await read(app, 'swap.txt');
+      expect(rel.status).toBe(403);
+      expect(JSON.stringify(rel.body)).not.toContain('top secret');
+      fs.rmSync(path.join(workDir, 'swap.txt'));
+      fs.writeFileSync(path.join(workDir, 'swap.txt'), 'inside');
+      const abs = await read(app, path.join(workDir, 'swap.txt'));
+      expect(abs.status).toBe(403);
+      expect(JSON.stringify(abs.body)).not.toContain('top secret');
+    } finally { spy.mockRestore(); }
+  });
   it('a real file inside the project reads, by a relative or an absolute path', async () => {
     const app = makeApp(workDir);
     expect((await read(app, 'ok.txt')).body.content).toBe('fine');

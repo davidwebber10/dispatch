@@ -20,6 +20,8 @@ const BARE_EXT = new Set((
   'png jpg jpeg gif webp avif bmp pdf zip tar gz tgz bz2 xz 7z docx doc pptx ppt rtf pkl pickle npy npz ' +
   'tf hcl proto graphql gql vue svelte patch diff'
 ).split(' '));
+/** A bare name is a file with a text extension above, a picture type, or a binary type of 3 or more letters ("x.a", "x.o" and "x.so" are not). */
+const isBareExt = (ext: string) => BARE_EXT.has(ext) || IMAGE_EXT.has(ext) || (ext.length >= 3 && BINARY_EXT.has(ext));
 /** Well-known project names that end like a file: "Node.js" is not a script. */
 const NOT_FILES = new Set(['node.js', 'next.js', 'vue.js', 'react.js', 'nuxt.js', 'express.js', 'three.js', 'd3.js', 'chart.js', 'p5.js', 'ember.js', 'backbone.js', 'angular.js', 'nest.js', 'deno.js']);
 
@@ -28,7 +30,7 @@ function looksLikeHost(first: string): boolean {
   if (!first.includes('.') || /^\.{0,2}$/.test(first)) return false;
   const last = first.slice(first.lastIndexOf('.') + 1).toLowerCase();
   if (TLD.has(last)) return true;
-  return /^[a-z]{2,}$/.test(last) && !BARE_EXT.has(last) && !BINARY_EXT.has(last) && !IMAGE_EXT.has(last);
+  return /^[a-z]{2,}$/.test(last) && !isBareExt(last);
 }
 
 /** True when a matched path is a file path, not an email address, a domain, a version, an abbreviation or a product name. */
@@ -40,7 +42,7 @@ function isFilePath(path: string, next: string): boolean {
   // "jo@example.sh": an "@" inside the first word is an email address. A leading "@" is a package scope ("@types/node").
   if (first.indexOf('@') > 0) return false;
   // A bare name followed by "(" is a call ("res.json(data)"), not a file.
-  if (slash < 0) return BARE_EXT.has(ext) && !NOT_FILES.has(path.toLowerCase()) && next !== '(';
+  if (slash < 0) return isBareExt(ext) && !NOT_FILES.has(path.toLowerCase()) && next !== '(';
   // "www.example.com/about.html": a first folder that is a host name makes the whole thing a web address.
   return !looksLikeHost(first);
 }
@@ -80,8 +82,10 @@ export const docName = (p: string) => p.split('/').pop() || p;
 export type FileKind = 'doc' | 'image' | 'text' | 'binary';
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp']);
 const BINARY_EXT = new Set((
-  'xlsx xls xlsm xlsb parquet avro orc pdf zip tar gz tgz bz2 xz 7z rar docx doc pptx ppt pkl pickle npy npz db sqlite sqlite3 ' +
-  'bin exe dll so dylib class jar pyc o a dmg iso mp3 mp4 mov avi mkv wav flac woff woff2 ttf otf eot ico psd'
+  'xlsx xls xlsm xlsb parquet avro orc feather arrow h5 hdf5 pdf zip tar gz tgz bz2 xz zst lz4 rar 7z cab deb rpm apk ipa msi dmg iso ' +
+  'docx doc pptx ppt odt ods odp epub pages numbers pkl pickle npy npz onnx safetensors gguf tflite db sqlite sqlite3 mdb accdb ' +
+  'bin exe dll so dylib class jar pyc o a wasm mp3 mp4 mov avi mkv wav flac ogg m4a aac webm wmv flv ' +
+  'woff woff2 ttf otf eot ico icns psd heic heif tif tiff'
 ).split(' '));
 export function fileKind(path: string): FileKind {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
@@ -134,7 +138,7 @@ export function projectForPath(p: string, messageProject: string | null, project
  * project through ".." has no project. An absolute path goes to the longest project folder that holds it.
  * A relative path that starts with the folder name of another known project ("sandbox/notes/board.md")
  * belongs to that project, with that name removed; two such projects: no project, no guess. The message
- * project's own folder name is not removed. Else the message project.
+ * project's own folder name is not removed, and when it is also another project's folder name there is no project. Else the message project.
  */
 export function resolveProjectPath(p: string, messageProject: string | null, projects: Projects): { project: string; path: string; rel: string } | null {
   const parts = stepOut(p.split('/'));
@@ -147,8 +151,10 @@ export function resolveProjectPath(p: string, messageProject: string | null, pro
     return rel ? { project: owner.id, path: abs, rel } : null;
   }
   if (parts.length > 1) {
-    const owners = projects.filter((x) => x.id !== messageProject && x.folder && strip(x.folder).split('/').pop() === parts[0]);
-    if (owners.length > 1) return null;
+    const named = (x: { folder: string }) => !!x.folder && strip(x.folder).split('/').pop() === parts[0];
+    const owners = projects.filter((x) => x.id !== messageProject && named(x));
+    // The message project has the same folder name: the path could mean its own subfolder or the other project.
+    if (owners.length > 1 || (owners.length === 1 && projects.some((x) => x.id === messageProject && named(x)))) return null;
     if (owners.length === 1) { const rest = parts.slice(1).join('/'); return { project: owners[0].id, path: rest, rel: rest }; }
   }
   const rel = parts.join('/');

@@ -318,9 +318,20 @@ export function createFilesRouter(db: Database.Database): Router {
       // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
       // then check the OPEN descriptor (not the path), so a swap after the check changes nothing, and
       // read at most the cap plus one byte so a file that grows meanwhile is still bounded.
-      const fh = await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      // A path that is checked against the project (`named`) is opened by its real path, with O_NOFOLLOW, and the open
+      // descriptor must be the file seen at check time and still inside the project. A symlink swapped in after the
+      // containment check is never followed (same pattern as docs/confined.ts).
+      let target = resolved;
+      let checked: fs.Stats | null = null;
+      if (named) {
+        try { target = await fs.promises.realpath(resolved); checked = await fs.promises.lstat(target); } catch { target = resolved; }
+      }
+      const fh = await fs.promises.open(target, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (named ? (fs.constants.O_NOFOLLOW ?? 0) : 0));
       try {
         const st = await fh.stat();
+        if (named && ((checked && (st.dev !== checked.dev || st.ino !== checked.ino)) || !insideRealRoot(session.workingDir, target))) {
+          return res.status(403).json({ error: 'Path traversal not allowed' });
+        }
         if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
         if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
         const buf = Buffer.alloc(MAX_READ_BYTES + 1);
@@ -334,6 +345,7 @@ export function createFilesRouter(db: Database.Database): Router {
         res.json({ content: buf.toString('utf-8', 0, n), path: requestedPath });
       } finally { await fh.close(); }
     } catch (err: any) {
+      if (named && err?.code === 'ELOOP') return res.status(403).json({ error: 'Path traversal not allowed' });
       res.status(400).json({ error: clientMessage(err) });
     }
   });
