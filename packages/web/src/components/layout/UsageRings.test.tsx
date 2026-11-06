@@ -34,15 +34,17 @@ describe('usage rings', () => {
   it('shows every limit with its reset and the run-out estimate, marked as an estimate', () => {
     render(<UsageRings summary={summary()} now={now} />);
     const claude = screen.getByRole('region', { name: 'Claude' });
-    expect(within(claude).getByRole('img').getAttribute('aria-label')).toBe('Claude: 82% of 5-hour used, 18% left');
-    expect(claude.textContent).not.toContain('82% used'); // the ring holds that number; no second copy
-    expect(within(claude).getByRole('button', { name: /weekly/ }).textContent).toContain('21%'); // the other limit keeps its own
+    // One bar per limit, in a steady order (5-hour, then weekly), each with how much is used.
+    const bars = within(claude).getAllByRole('meter');
+    expect(bars.map((b) => b.getAttribute('aria-label'))).toEqual(['Claude 5-hour: 82% used', 'Claude weekly: 21% used']);
+    expect(bars.map((b) => b.getAttribute('aria-valuenow'))).toEqual(['82', '21']);
     // Short on the row, marked EST; the pace it is based on is in the tooltip.
     expect(claude.textContent).toContain('out ~');
     expect(claude.textContent).toContain('EST');
     expect(claude.textContent).toContain('lasts to reset');
     expect(claude.querySelector('[title^="At the last 2 h pace it runs out around"]')).not.toBeNull();
-    expect(within(screen.getByRole('region', { name: 'Codex' })).getByRole('img').getAttribute('aria-label')).toContain('4% of weekly used');
+    expect(within(screen.getByRole('region', { name: 'Codex' })).getByRole('meter').getAttribute('aria-label')).toBe('Codex weekly: 4% used');
+    expect(claude.textContent).toContain('Resets'); // the reset line, capitalised under its bar
   });
 
   it('a tool with no current figure gets no ring', () => {
@@ -63,30 +65,28 @@ describe('usage rings', () => {
     // Every reset's expiry is listed; one inside 48 hours is marked.
     const expiries = within(codex).getByTestId('reset-expiries');
     expect(expiries.textContent).toMatch(/^Expire (today|tomorrow) .+ · \w{3} \d{1,2}$/);
-    fireEvent.click(within(codex).getByRole('button', { name: '3 resets banked · Use one' }));
+    expect(codex.textContent).toContain('3resets banked');
+    fireEvent.click(within(codex).getByRole('button', { name: 'Use one' }));
     expect(screen.getByText(/the one expiring (today|tomorrow)/)).toBeInTheDocument();
     expect(spend).not.toHaveBeenCalled(); // confirmation first
-    fireEvent.click(screen.getByRole('button', { name: 'Use one' }));
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Use a banked reset?' })).getByRole('button', { name: 'Use one' }));
     await waitFor(() => expect(spend).toHaveBeenCalledWith('codex', 'soon')); // the one that would lapse first
     expect(await within(codex).findByText('Reset used: the limit is back to zero.')).toBeInTheDocument();
     spend.mockRestore();
   });
 
-  it('the ring counts up to its figure, and tapping another limit puts that one in the ring', async () => {
+  it('the numbers count up to their figures when the sheet opens, and the bar fills to match', async () => {
     render(<UsageRings summary={summary()} now={now} />);
     const claude = screen.getByRole('region', { name: 'Claude' });
-    await waitFor(() => expect(claude.textContent).toContain('82%5-hour used')); // counted up from 0
-    const weekly = within(claude).getByRole('button', { name: /weekly/ });
-    expect(weekly.getAttribute('aria-pressed')).toBe('false');
-    fireEvent.click(weekly);
-    expect(weekly.getAttribute('aria-pressed')).toBe('true');
-    expect(within(claude).getByRole('img').getAttribute('aria-label')).toBe('Claude: 21% of weekly used, 79% left');
-    await waitFor(() => expect(claude.textContent).toContain('21%weekly used'));
+    await waitFor(() => expect(claude.textContent).toContain('82% used')); // counted up from 0
+    expect(claude.textContent).toContain('21% used');
   });
 
-  it('a tool with one limit has a plain row, nothing to tap', () => {
+  it('the warning level is marked on each bar: yellow 30 points before it, red at it', () => {
     render(<UsageRings summary={summary()} now={now} />);
-    expect(within(screen.getByRole('region', { name: 'Codex' })).queryByRole('button', { name: /weekly/ })).toBeNull();
+    const bar = within(screen.getByRole('region', { name: 'Codex' })).getByRole('meter');
+    const marks = Array.from(bar.querySelectorAll('[aria-hidden]')) as HTMLElement[];
+    expect(marks.map((m) => m.style.left)).toEqual(['calc(50% - 1px)', 'calc(80% - 1px)']);
   });
 });
 
