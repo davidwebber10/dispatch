@@ -172,6 +172,9 @@ export const yellowFrom = (warn: number) => Math.max(10, warn - 30);
 export const ringTone = (used: number, warn: number): RingTone => (used >= warn ? 'red' : used >= yellowFrom(warn) ? 'yellow' : 'green');
 
 export interface RingRow { type: string; label: string; left: number | null; tone: RingTone; reset: string | null; estimate: string | null; estimateTitle: string | null }
+/** The page where a provider's banked reset is used. Codex's app-server refuses the in-app spend until a limit is hit. */
+export const USE_RESET_URL: Record<string, string> = { codex: 'https://chatgpt.com/settings/usage?tab=overview' };
+
 export interface RingModel {
   provider: string;
   accountId: string;
@@ -188,6 +191,8 @@ export interface RingModel {
   credits: number;
   /** Each banked reset, soonest to expire first: its id and when it expires. */
   creditList: { id: string; expires: string | null; soon: boolean }[];
+  /** Where a banked reset is used: the provider's own usage page (2026-11-06), or null. */
+  useUrl: string | null;
   /** "Extra usage $2.51 of $1,000.00 this month" (Claude), or null. */
   spend: string | null;
   /** "83,273 credits" (Codex's prepaid balance), or null. */
@@ -262,6 +267,7 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
       rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
       credits: p.resetCredits?.available ?? 0,
       spend: spendLabel(p.spend), creditBalance: creditBalanceLabel(p.creditBalance),
+      useUrl: p.provider === 'codex' ? USE_RESET_URL.codex : null,
       creditList: (p.resetCredits?.credits ?? []).map((c) => ({ id: c.id, expires: c.expiresAt === null ? null : expiryLabel(c.expiresAt, now, zone), soon: c.expiresAt !== null && c.expiresAt - now < 48 * 3600_000 })),
     });
   }

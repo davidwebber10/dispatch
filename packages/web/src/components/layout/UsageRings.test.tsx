@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
-import { api } from '../../api/client';
+import { render, screen, within, act } from '@testing-library/react';
 import { UsageRings } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
 
@@ -62,8 +61,7 @@ describe('usage rings', () => {
     expect(screen.getByText('No figures reported yet')).toBeInTheDocument();
   });
 
-  it('banked resets show on the card, ask first, and say what happened', async () => {
-    const spend = vi.spyOn(api, 'useResetCredit').mockResolvedValue({ outcome: 'reset' });
+  it('banked resets show on the card with their expiries, and Use links to the ChatGPT usage page (2026-11-06)', () => {
     const s = summary();
     (s as any).providers[1].resetCredits = { available: 3, nextExpiresAt: now + 20 * H, credits: [
       { id: 'soon', expiresAt: now + 20 * H, title: 'Full reset' },
@@ -75,13 +73,12 @@ describe('usage rings', () => {
     const expiries = within(codex).getByTestId('reset-expiries');
     expect(expiries.textContent).toMatch(/^Expire (today|tomorrow) .+ · \w{3} \d{1,2}$/);
     expect(codex.textContent).toContain('3resets banked');
-    fireEvent.click(within(codex).getByRole('button', { name: 'Use one' }));
-    expect(screen.getByText(/the one expiring (today|tomorrow)/)).toBeInTheDocument();
-    expect(spend).not.toHaveBeenCalled(); // confirmation first
-    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Use a banked reset?' })).getByRole('button', { name: 'Use one' }));
-    await waitFor(() => expect(spend).toHaveBeenCalledWith('codex', 'soon', 'cli')); // the one that would lapse first, for this account
-    expect(await within(codex).findByText('Reset used: the limit is back to zero.')).toBeInTheDocument();
-    spend.mockRestore();
+    // Codex's app-server answers "nothingToReset" to the in-app spend until a limit is hit, so the
+    // reset is used on ChatGPT's own usage page.
+    const use = within(codex).getByRole('link', { name: 'Use a reset on the Codex usage page' });
+    expect(use).toHaveAttribute('href', 'https://chatgpt.com/settings/usage?tab=overview');
+    expect(use).toHaveAttribute('target', '_blank');
+    expect(screen.queryByRole('button', { name: 'Use one' })).toBeNull();
   });
 
   // The count-up reads performance.now() and the frame time. Under jsdom those are two clocks with

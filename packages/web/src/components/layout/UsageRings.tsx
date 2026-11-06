@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowCounterClockwise } from '@phosphor-icons/react';
+import { ArrowSquareOut } from '@phosphor-icons/react';
 import type { UsageSummary } from '../../api/types';
-import { api } from '../../api/client';
-import { ConfirmModal } from '../common/ConfirmModal';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 import { ringModels, RING_COLOR, yellowFrom, bannerText, COUNTED, type RingModel, type RingRow } from './usageGauge';
 
@@ -72,7 +70,7 @@ function LimitRow({ toolName, row, warn, first }: { toolName: string; row: RingR
   );
 }
 
-function ToolCard({ m, warn, onUseCredit, note }: { m: RingModel; warn: number; onUseCredit: (m: RingModel) => void; note: { ok: boolean; text: string } | null }) {
+function ToolCard({ m, warn }: { m: RingModel; warn: number }) {
   // A steady order (5-hour, then weekly, …), not closest-to-the-limit first, so rows never swap.
   const order = (t: string) => { const i = (COUNTED as readonly string[]).indexOf(t); return i < 0 ? 99 : i; };
   const rows = [...m.rows].sort((a, b) => order(a.type) - order(b.type));
@@ -97,11 +95,14 @@ function ToolCard({ m, warn, onUseCredit, note }: { m: RingModel; warn: number; 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
             <span style={{ fontSize: 14 }}>reset{m.credits === 1 ? '' : 's'} banked</span>
-            {/* "Use one" spends the reset that expires soonest, so none lapses unused. */}
-            <button type="button" onClick={() => onUseCredit(m)}
-              style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-              <ArrowCounterClockwise size={13} weight="bold" />Use one
-            </button>
+            {/* A reset is used on the ChatGPT usage page (2026-11-06). Codex's own app-server refuses the
+                in-app spend until a limit is hit ("nothingToReset"), so the link is the way that works. */}
+            {m.useUrl && (
+              <a href={m.useUrl} target="_blank" rel="noopener noreferrer" aria-label={`Use a reset on the ${m.name} usage page`}
+                style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, textDecoration: 'none' }}>
+                Use<ArrowSquareOut size={13} weight="bold" />
+              </a>
+            )}
           </div>
           {m.creditList.length > 0 && (
             <div data-testid="reset-expiries" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
@@ -113,53 +114,20 @@ function ToolCard({ m, warn, onUseCredit, note }: { m: RingModel; warn: number; 
           )}
         </div>
       )}
-      {note && <div role="status" style={{ fontSize: 12, padding: '0 0 11px', color: note.ok ? 'var(--color-accent)' : 'var(--color-status-red)' }}>{note.text}</div>}
     </section>
   );
 }
 
-const OUTCOME: Record<string, [boolean, string]> = {
-  reset: [true, 'Reset used: the limit is back to zero.'],
-  nothingToReset: [false, 'Nothing to reset yet: no credit was spent.'],
-  noCredit: [false, 'No banked resets left.'],
-  alreadyRedeemed: [false, 'That reset was already used.'],
-};
-
 export function UsageRings({ summary, now }: { summary: UsageSummary | null; now: number }) {
   const rings = ringModels(summary, now);
-  // Spending a banked reset is the account's to spend: confirm first, then say what happened.
-  const [confirmFor, setConfirmFor] = useState<RingModel | null>(null);
-  const [creditNote, setCreditNote] = useState<{ provider: string; ok: boolean; text: string } | null>(null);
-  const onUseCredit = (m: RingModel) => { setCreditNote(null); setConfirmFor(m); };
-  const spend = async () => {
-    const m = confirmFor;
-    setConfirmFor(null);
-    if (!m) return;
-    try {
-      const { outcome } = await api.useResetCredit(m.provider, m.creditList[0]?.id, m.accountId);
-      const [ok, text] = OUTCOME[outcome] ?? [false, `Codex answered: ${outcome}`];
-      setCreditNote({ provider: m.provider, ok, text });
-    } catch (e) {
-      setCreditNote({ provider: m.provider, ok: false, text: e instanceof Error ? e.message : 'Could not use a reset' });
-    }
-  };
   if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
-        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} onUseCredit={onUseCredit}
-          note={creditNote?.provider === m.provider ? creditNote : null} />
+        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} />
       ))}
-      <ConfirmModal
-        open={!!confirmFor}
-        title="Use a banked reset?"
-        message={confirmFor ? `This spends 1 of ${confirmFor.name}'s ${confirmFor.credits} banked resets${confirmFor.creditList[0]?.expires ? `, the one expiring ${confirmFor.creditList[0].expires}` : ''}, and sets its limit back to zero.` : ''}
-        confirmLabel="Use one"
-        onConfirm={() => void spend()}
-        onCancel={() => setConfirmFor(null)}
-      />
       {summary.paused.map((g) => (
         <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
       ))}
