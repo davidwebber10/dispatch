@@ -227,6 +227,30 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
       expect(detectCodexBannerLimit(quoted, NOW), quoted).toBeNull();
     }
   });
+  it('a message two or more lines inside a fenced block is a quote, for Codex and Claude wording', () => {
+    const codex = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
+    const claude = "You've hit your session limit · resets 1:10am (America/Indianapolis)";
+    for (const fence of ['```', '~~~', '```text']) {
+      const close = fence.slice(0, 3);
+      const inside = (msg: string) => `${fence}\r\nfirst line\r\nsecond line\r\n${msg}\r\nmore\r\n${close}\r\n`;
+      expect(detectCodexBannerLimit(inside(codex), NOW), `codex ${fence}`).toBeNull();
+      expect(detectBannerLimit(inside(claude), NOW), `claude ${fence}`).toBeNull();
+      expect(textAfterCodexBanner(inside(codex)), `after codex ${fence}`).toBe(0);
+      expect(textAfterBanner(inside(claude)), `after claude ${fence}`).toBe(0);
+    }
+    // Unclosed so far (the block is still being printed): still inside.
+    expect(detectCodexBannerLimit(`\`\`\`\r\na\r\nb\r\n${codex}\r\n`, NOW)).toBeNull();
+  });
+  it('a real stop after a closed fence still parks', () => {
+    const codex = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
+    const claude = "  ⎿  You've hit your session limit · resets 1:10am (America/Indianapolis)";
+    const block = '```\r\nconst a = 1;\r\nconst b = 2;\r\n```\r\n';
+    expect(detectCodexBannerLimit(block + codex + '\r\n', NOW)).not.toBeNull();
+    expect(detectBannerLimit(block + claude + '\r\n', NOW)?.kind).toBe('session');
+    // A fenced quote earlier, a real stop after it: the stop is the one found.
+    const quoted = '```\r\nx\r\ny\r\n' + "You've hit your session limit · resets 9:00am (America/Indianapolis)" + '\r\n```\r\n';
+    expect(iso(detectBannerLimit(quoted + claude + '\r\n', NOW)!.resetsAt)).toBe('2026-10-24T05:10:00.000Z');
+  });
   it('no prefix, indentation and the error mark are accepted', () => {
     const msg = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
     for (const ok of [msg, `■ ${msg}`, `  ■ ${msg}`, `  ${msg}`, `\x1b[31m■\x1b[0m ${msg}`]) expect(detectCodexBannerLimit(ok, NOW), ok).not.toBeNull();

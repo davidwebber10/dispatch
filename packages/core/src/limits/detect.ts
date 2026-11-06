@@ -162,7 +162,20 @@ const BANNER = new RegExp(String.raw`you['’]ve (?:hit|reached) your\s+[\w\s.-]
 
 /** Every Claude banner match in `clean`, leaving out Codex messages that look like Claude's timeless wording (a Codex quote must not hide a real stop below it). */
 function claudeBanners(clean: string): RegExpExecArray[] {
-  return [...clean.matchAll(new RegExp(BANNER.source, 'gi'))].filter((m) => !isCodexMessageAt(clean, m.index!));
+  return [...clean.matchAll(new RegExp(BANNER.source, 'gi'))].filter((m) => !isCodexMessageAt(clean, m.index!) && !insideFence(clean, m.index!));
+}
+
+/**
+ * True when `index` is inside a fenced code block of the scanned text: an odd number of fence lines
+ * (a line that starts with three backticks or three tildes) come before it. Whatever an agent prints
+ * in a fenced block is a quote, however many lines down. The scan sees only the retained window of
+ * output, so a fence that opened before the window is not known.
+ */
+function insideFence(clean: string, index: number): boolean {
+  let open = false;
+  for (const line of clean.slice(0, index).split('\n')) if (/^[ \t]*(?:```|~~~)/.test(line)) open = !open;
+  // The match's own line can be the fence line ("```You've hit ..."): the lead check refuses that already.
+  return open;
 }
 
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
@@ -217,8 +230,7 @@ function findCodexBanner(clean: string): { start: number; end: number; text: str
     // Only the CLI's own error mark may come before the message on its line. A quote marker ("> ", "• ",
     // "- "), a word, or a code fence ahead of it, or on the line above, means it is being quoted.
     if (!/^[ \t]*(?:■[ \t]*)?$/.test(lead)) continue;
-    const prevLine = clean.slice(clean.lastIndexOf('\n', Math.max(0, lineStart - 2)) + 1, Math.max(0, lineStart - 1));
-    if (/^\s*(```|~~~)/.test(prevLine)) continue;
+    if (insideFence(clean, m.index!)) continue;
     // The CLI wraps its text: read the sentence run across line breaks.
     const flat = clean.slice(m.index!, m.index! + 700).replace(/\s+/g, ' ');
     const retry = CODEX_RETRY.exec(flat);

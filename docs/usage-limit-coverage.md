@@ -53,6 +53,12 @@ warning push. The red banner and the auto-resume still work.
   and the turn then ends with a normal `end_turn`, the stored limit stays set until the next turn
   boundary (`grok-translate.ts`, `pendingLimit`). A rate-limited turn ends with `stop_reason: "rate_limit"`
   in every captured stop, so this was not seen to happen, and it was left as is.
+- **Fenced blocks:** text inside a fenced code block (an odd number of lines starting with three
+  backticks or tildes before it) is a quote and never parks, for the Claude and the Codex wording. The
+  watcher sees only a window of recent output, so a fence that opened before that window is not known.
+- **A wake that redraws the screen can park a thread again.** If the resumed CLI repaints the old
+  banner from its scrollback right after the wake, the watcher can read it as a new stop. Left for a
+  later change.
 - **A repeat stop right after a wake** is seen: a wake clears the terminal watcher's memory of the
   thread, and the service keeps the attempt count (5 wakes without a finished turn, then it stops).
 
