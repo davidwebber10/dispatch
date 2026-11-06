@@ -84,8 +84,8 @@ export function acceptSummary(cur: Position, inc: { epoch: string | null; rev: n
 
 export const useUsageLimits = create<UsageLimitsState>((set, get) => {
   /**
-   * Bumped only when a load starts. A load's answer is dropped when a newer load started after
-   * it. Everything else, GET against socket included, is ordered by acceptSummary.
+   * Bumped only when a load starts. A load's answer that carries no rev is dropped when a newer
+   * load started after it: nothing else orders it. An answer with a rev is ordered by acceptSummary.
    */
   let loadSeq = 0;
   const take = (p: Parsed | null) => {
@@ -101,10 +101,18 @@ export const useUsageLimits = create<UsageLimitsState>((set, get) => {
     rev: 0,
     load: async () => {
       const seq = ++loadSeq;
+      // The epoch held when the GET went out. If a socket event moved the store to a new epoch
+      // while it was in flight, an answer from any other epoch is from a daemon the store already
+      // moved past, even one it never saw (the first GET reaching a daemon that then restarted).
+      const heldAtStart = get().epoch;
       try {
         const answer = (await api.getUsageSummary()) as unknown as Record<string, unknown>;
-        if (seq !== loadSeq) return; // a newer load started while this one was in flight
-        take(parse(answer));
+        const p = parse(answer);
+        if (!p) return;
+        if (p.rev === null && seq !== loadSeq) return; // a newer load started, and this one has no rev to order it
+        const held = get().epoch;
+        if (held !== heldAtStart && p.epoch !== held) return;
+        take(p);
       } catch { /* an older daemon has no gauge, or the network dropped: keep what is there */ }
     },
     applyEvent: (e) => {

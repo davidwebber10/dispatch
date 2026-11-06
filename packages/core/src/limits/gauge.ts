@@ -422,7 +422,7 @@ export class UsageGauge {
     if (!rows.length) return false;
     // A stable sort keeps the SQL order among equal poll times.
     const picked = rows
-      .map((row, i) => ({ row, i, at: this.polledAt.get(row.id) ?? -Infinity }))
+      .map((row, i) => ({ row, i, at: this.polledAt.get(row.id) ?? 0 })) // 0: never polled, goes first
       .sort((a, b) => (a.at - b.at) || (a.i - b.i))
       .slice(0, this.o.codexRefreshMax);
     const now = this.now();
@@ -457,13 +457,29 @@ export class UsageGauge {
   /**
    * Send only when the payload changed. Percents are already integers. `at`, `epoch` and `rev` are
    * left out: they move on every call. `asOf` moves on every turn, so it is compared at 5-minute
-   * grain: enough for the client's 30-minute staleness dim.
+   * grain: enough for the client's 30-minute staleness dim. A forecast's `runsOutAt` is left out
+   * too. It is projected from now, so it moves on every tick with no new figure, and far faster
+   * than the clock on a slow pace: 2 points an hour with 78 left moves it 40 minutes a minute, so
+   * no fixed grain holds it still. A real change still sends: a new figure moves `usedPercent` or
+   * `asOf`, and the pace's basis or a flip of `lastsUntilReset` is in the key. Every send carries
+   * the fresh `runsOutAt`.
    */
   private send(): void {
     let summary: UsageSummary;
     try { summary = this.summary(); } catch (err) { console.warn('[usage-gauge] summary failed:', err); return; }
     const { at: _at, epoch: _epoch, rev: _rev, ...stable } = summary;
-    const key = JSON.stringify({ ...stable, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
+    const grain = (t: number) => Math.floor(t / (5 * MIN));
+    const window = (w: SummaryWindow) => {
+      if (!w.forecast) return w;
+      const { runsOutAt: _runsOutAt, ...forecast } = w.forecast;
+      return { ...w, forecast };
+    };
+    const providers = summary.providers.map((p) => ({
+      ...p,
+      asOf: grain(p.asOf),
+      windows: Object.fromEntries(Object.entries(p.windows).map(([k, w]) => [k, window(w)])),
+    }));
+    const key = JSON.stringify({ ...stable, providers });
     if (key === this.lastSent) return;
     this.lastSent = key;
     this.d.broadcast(summary as unknown as Record<string, unknown>);

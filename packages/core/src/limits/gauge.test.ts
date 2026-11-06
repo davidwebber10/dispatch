@@ -633,6 +633,43 @@ describe('account switch', () => {
   });
 });
 
+// Fable re-review of #131: a forecast's runsOutAt is computed from now, so an idle tick must not
+// resend it to every client once there is enough history for a forecast.
+describe('idle tick with a forecast', () => {
+  it('sends nothing when only the clock moved, then sends again on a new figure', () => {
+    claude(10, 20);
+    clock = T0 + 60 * MIN;
+    claude(70, 22); // five_hour runs out at T0 + 90 min, before the reset; seven_day lasts 39 h at 2 an hour
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    const w = events[0].providers[0].windows;
+    expect(w.five_hour.forecast).toMatchObject({ runsOutAt: T0 + 90 * MIN, lastsUntilReset: false });
+    expect(w.seven_day.forecast.lastsUntilReset).toBe(false);
+    const sevenDay = w.seven_day.forecast.runsOutAt;
+    for (let i = 0; i < 10; i++) { clock += MIN; gauge.tick(); vi.advanceTimersByTime(5000); }
+    // The projection moved by hours, and still nothing was sent.
+    expect(gauge.summary().providers[0].windows.seven_day.forecast!.runsOutAt! - sevenDay).toBeGreaterThan(5 * 60 * MIN);
+    expect(events).toHaveLength(1);
+    claude(75, 22);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers[0].windows.five_hour.forecast.runsOutAt).toBeGreaterThan(clock);
+  });
+
+  it('sends when the forecast flips to lasting until the reset', () => {
+    claude(10, 20);
+    clock = T0 + 60 * MIN;
+    claude(70, 22);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    // With no new figure the pace slows as the span grows: at T0 + 88 min, 60 points took 88 min,
+    // so the last 30 take 44 more, past the reset at T0 + 130 min. The basis is still 1 hour.
+    clock = T0 + 88 * MIN; gauge.tick(); vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers[0].windows.five_hour.forecast).toMatchObject({ lastsUntilReset: true, basisHours: 1 });
+  });
+});
+
 // Review finding 5: a client must be able to tell an older GET answer from a newer socket event.
 describe('summary revision', () => {
   it('rises on every summary, even with the clock standing still, and survives a restart', () => {
