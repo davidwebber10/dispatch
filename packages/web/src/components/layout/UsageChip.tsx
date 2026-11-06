@@ -10,9 +10,11 @@ import { chipModel, usageTables, bannerText, TONE_COLOR, CLI_NOTE } from './usag
 /** Every provider's windows, resets and "As of", plus any pause. The popover, the phone sheet and Settings share it. */
 export function UsageTable({ summary, now }: { summary: UsageSummary | null; now: number }) {
   const tables = usageTables(summary, now);
-  if (!summary || tables.length === 0) return <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>;
+  if (!summary || (tables.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-table" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
+      {tables.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {tables.map((t) => (
         <div key={t.provider} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
