@@ -110,10 +110,10 @@ npm install -g --prefix "$HOME/.dispatch/tools" opencode-ai
 
 **Sign-in:** OpenCode needs an OpenRouter API key. Run `opencode auth login` once in a normal
 terminal and choose OpenRouter, or keep the key in Doppler (default secret name
-`OPENROUTER_API_KEY`; change it in **Settings → Harnesses → OpenCode key**).
+`OPENROUTER_API_KEY`; change it in **Settings → Agents → OpenCode key**).
 
 **Models:** the New Thread picker lists OpenRouter models. Edit the list in
-**Settings → Harnesses**.
+**Settings → Agents**.
 
 ---
 

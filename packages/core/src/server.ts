@@ -501,7 +501,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   if (BOX_TOKEN) app.use(createBoxGate({ boxToken: BOX_TOKEN, registry: keys, getToken: getAccessToken }));
   // The request gate (network exposure spec, section 7). On a hosted box the box token above is
   // the credential and the router is the only caller, so the gate stays out of the way there.
-  // One-time sign-in codes (Settings → Access) that stand in for the token on the login route.
+  // One-time sign-in codes (Settings → Devices & access) that stand in for the token on the login route.
   const pairCodes = createPairCodes();
   // Signed-in devices: one row per browser or phone that signed in. Not on a hosted box, where
   // the router holds the box token and there is no sign-in page.
@@ -734,7 +734,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // route an OAuth URL has to the person signing in: there is no local browser.
     spawnEnv.PATH = withShimPath(dataDir, spawnEnv.PATH);
     // Every Claude Code thread preloads the agent_summary off-switch (claude-agent-summary.ts).
-    // Settings → Harnesses → Claude Code turns it off; the PUT re-runs this refresh.
+    // Settings → Agents → Claude Code turns it off; the PUT re-runs this refresh.
     const bunOptions = withAgentSummaryPreload(process.env.BUN_OPTIONS, skipClaudeAgentSummaries(db) ? agentSummaryHook : null);
     if (bunOptions) spawnEnv.BUN_OPTIONS = bunOptions;
     toolsAuth.setSpawnEnv(spawnEnv);
@@ -1116,7 +1116,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // An update that restarted this daemon is done: the update window shows "Updated to …".
   finishRestartedUpdate(dataDir, getRunningVersion());
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
-  // Anonymous usage report: 60 s after boot, then an hourly check (Settings → General switch).
+  // Anonymous usage report: 60 s after boot, then an hourly check (Settings → About & updates switch).
   const telemetryLoop = startTelemetryLoop(db);
   const agentSchedulerInterval = setInterval(() => {
     try {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { HarnessesSection } from './HarnessesSection';
+import { AgentsSection } from './AgentsSection';
 import { api } from '../../api/client';
 
 const MODELS = [
@@ -39,9 +39,9 @@ beforeEach(() => {
 /** The OpenCode card, found by its heading. */
 const opencodeCard = async () => (await screen.findByText('OPENCODE')).parentElement as HTMLElement;
 
-describe('HarnessesSection — OpenCode model list', () => {
+describe('AgentsSection — OpenCode model list', () => {
   it('lists the configured models, with their ids, and offers them as the default model', async () => {
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     const list = within(card).getByRole('list', { name: 'OpenCode models' });
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
@@ -53,7 +53,7 @@ describe('HarnessesSection — OpenCode model list', () => {
   });
 
   it('removing a model saves the list without it', async () => {
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.click(within(card).getByRole('button', { name: 'Remove Kimi' }));
     await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ opencode: { models: [MODELS[0]] } }));
@@ -62,7 +62,7 @@ describe('HarnessesSection — OpenCode model list', () => {
 
   it('removing the model that is the default also clears the default', async () => {
     (api.getHarnessSettings as any).mockResolvedValue(response({ settings: { opencode: { defaultModel: MODELS[1].model } } }));
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.click(within(card).getByRole('button', { name: 'Remove Kimi' }));
     await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ opencode: { models: [MODELS[0]], defaultModel: null } }));
@@ -73,7 +73,7 @@ describe('HarnessesSection — OpenCode model list', () => {
       { id: 'openrouter/~x-ai/grok-latest', label: 'Grok Latest', name: 'xAI: Grok Latest', contextLength: 500000, created: 2, alias: true, aliasTarget: 'x-ai/grok-4.6' },
       { id: 'openrouter/~moonshotai/kimi-latest', label: 'Kimi Latest', name: 'MoonshotAI: Kimi Latest', contextLength: 1048576, created: 1, alias: true },
     ]);
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'grok' } });
     await waitFor(() => expect(api.searchOpencodeCatalog).toHaveBeenCalledWith('grok'));
@@ -92,7 +92,7 @@ describe('HarnessesSection — OpenCode model list', () => {
       { id: 'openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition', label: 'Uncensored', name: 'Venice: Uncensored', contextLength: 128000, created: 3, alias: false, tools: false },
       { id: 'openrouter/~x-ai/grok-latest', label: 'Grok Latest', name: 'xAI: Grok Latest', contextLength: 500000, created: 2, alias: true, aliasTarget: 'x-ai/grok-4.6', tools: true },
     ]);
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'venice' } });
     const results = await within(card).findByRole('list', { name: 'Catalog results' });
@@ -106,14 +106,14 @@ describe('HarnessesSection — OpenCode model list', () => {
 
   it('shows the catalog outage instead of an empty result', async () => {
     (api.searchOpencodeCatalog as any).mockRejectedValue(new Error('Could not reach the OpenRouter catalog: ENOTFOUND'));
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'grok' } });
     expect(await within(card).findByText(/Could not reach the OpenRouter catalog/)).toBeInTheDocument();
   });
 
   it('offers to add a typed id when the catalog has no match for it', async () => {
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'openrouter/acme/model-9' } });
     fireEvent.click(await within(card).findByRole('button', { name: 'Add openrouter/acme/model-9 as typed' }));
@@ -123,16 +123,16 @@ describe('HarnessesSection — OpenCode model list', () => {
   });
 
   it('reset restores the daemon defaults', async () => {
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const card = await opencodeCard();
     fireEvent.click(within(card).getByRole('button', { name: 'Reset to defaults' }));
     await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ opencode: { models: null } }));
   });
 });
 
-describe('HarnessesSection — Claude Code agent status summaries', () => {
+describe('AgentsSection — Claude Code agent status summaries', () => {
   it('shows the skip switch on by default, and turning it off saves false', async () => {
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     const sw = await screen.findByRole('switch', { name: 'Skip agent status summaries' });
     expect(sw).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(sw);
@@ -141,7 +141,26 @@ describe('HarnessesSection — Claude Code agent status summaries', () => {
 
   it('reflects a stored off', async () => {
     (api.getHarnessSettings as any).mockResolvedValue(response({ settings: { 'claude-code': { skipAgentSummaries: false } } }));
-    render(<HarnessesSection />);
+    render(<AgentsSection />);
     expect(await screen.findByRole('switch', { name: 'Skip agent status summaries' })).toHaveAttribute('aria-checked', 'false');
+  });
+});
+
+describe('AgentsSection — Control Plane name (moved from General)', () => {
+  it('edits the coordinator name in the shared store', async () => {
+    const { useSettings } = await import('../../stores/settings');
+    useSettings.setState({ coordinatorName: 'Control Plane' });
+    render(<AgentsSection />);
+    fireEvent.change(screen.getByLabelText('Control Plane name'), { target: { value: 'Mission Control' } });
+    expect(useSettings.getState().coordinatorName).toBe('Mission Control');
+  });
+
+  it('uses the shared switch for the per-harness auto-archive default', async () => {
+    render(<AgentsSection />);
+    const card = await opencodeCard();
+    const sw = within(card).getByRole('switch', { name: 'Auto-archive thread' });
+    expect(sw.tagName).toBe('BUTTON');
+    fireEvent.click(sw);
+    await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ opencode: { autoArchiveMs: 12 * 3_600_000 } }));
   });
 });

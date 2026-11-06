@@ -13,7 +13,7 @@ const seg = (on: boolean) => ({
 const chip = { height: 26, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' } as const;
 
 /**
- * Settings → Harnesses → Claude Code: the words shown while Claude works ("Flibbertigibbeting…").
+ * Settings → Agents → Claude Code: the words shown while Claude works ("Flibbertigibbeting…").
  * Claude Code threads get them as their `spinnerVerbs` setting; Dispatch's own "Working…" indicator
  * (Pretty threads, Control Plane, Chat) uses the same list. Saved on blur, on a set, or on a mode change.
  */

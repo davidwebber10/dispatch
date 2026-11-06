@@ -4,16 +4,10 @@ import type { Integration, AddIntegrationInput, IntegrationsExport } from '../..
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { describeCreator } from '../../lib/creator';
 import { useSecrets } from '../../stores/secrets';
-import { pageLabel, summaryLine, ghostBtn, miniChip, fieldInput, solidBtn, GroupHeader, HoverRow, FilterSegments, Sheet, Divider } from './ui';
+import { sectionLabel, summaryLine, ghostBtn, miniChip, fieldInput, solidBtn, GroupHeader, HoverRow, FilterSegments, Sheet, Divider, Toggle } from './ui';
 
 const sub: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
-const onBtn = (on: boolean): React.CSSProperties => ({
-  flexShrink: 0, height: 26, padding: '0 10px', borderRadius: 'var(--radius-sm)', font: '500 11px var(--font-mono)', cursor: 'pointer',
-  background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
-  border: on ? '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)' : '1px solid #2c2c32',
-  color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-});
 
 function parseKV(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -97,7 +91,7 @@ export function IntegrationsSection() {
         <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.type === 'remote' ? i.url : `${i.command} ${i.args.join(' ')}`}</span>
         <span data-testid="integration-creator" style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>Added by {describeCreator(i.createdBy)}</span>
       </span>
-      <button title={i.enabled ? 'Disable' : 'Enable'} onClick={() => void toggle(i)} style={onBtn(i.enabled)}>{i.enabled ? 'On' : 'Off'}</button>
+      <Toggle on={i.enabled} label={`${i.name} on`} onClick={() => void toggle(i)} />
       <button title="Remove" onClick={() => void remove(i.id)}
         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-red)'; e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--color-status-red) 45%, transparent)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = '#2c2c32'; }}
@@ -134,24 +128,24 @@ export function IntegrationsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={pageLabel}>INTEGRATIONS</span>
+        <span style={sectionLabel}>INTEGRATIONS</span>
         <span style={{ display: 'flex', gap: 6 }}>
           <button style={ghostBtn} onClick={() => void doExport()}>Export</button>
           <button style={ghostBtn} onClick={() => fileRef.current?.click()}>Import</button>
           <input ref={fileRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void doImport(f); e.target.value = ''; }} />
         </span>
       </div>
-      <div style={desc}>MCP servers added to every agent thread (Claude Code, Codex, Grok, OpenCode).</div>
+      <div style={desc}>MCP integrations added to every agent thread (Claude Code, Codex, Grok, OpenCode). The same on every device.</div>
       <div style={desc}>
         {'Write ${NAME} in a header or env value. '}
-        {`Dispatch reads NAME from Doppler${dopplerWhere} when the server starts; the value never appears in a command line or a config file.`}
+        {`Dispatch reads NAME from Doppler${dopplerWhere} when the integration starts; the value never appears in a command line or a config file.`}
       </div>
       {doppler && !dopplerOn && (
         <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>
-          {doppler.connected ? 'Doppler is turned off' : 'Doppler is not connected'}{', so ${NAME} will not resolve from it. Connect it under Secrets.'}
+          {doppler.connected ? 'Doppler is turned off' : 'Doppler is not connected'}{', so ${NAME} will not resolve from it. Connect Doppler in Settings → Secrets.'}
         </div>
       )}
-      <div style={summaryLine}>{list.length} server{list.length === 1 ? '' : 's'} · {active.length} on</div>
+      <div style={summaryLine}>{list.length} integration{list.length === 1 ? '' : 's'} · {active.length} on</div>
 
       {list.length === 0 && <div style={sub}>No integrations yet. Add one below.</div>}
       {active.length > 0 && (
@@ -169,13 +163,13 @@ export function IntegrationsSection() {
 
       {isMobile ? (
         <>
-          <button onClick={() => setSheet(true)} style={{ ...solidBtn(true), width: '100%', marginTop: 4 }}>Add server</button>
-          <Sheet open={sheet} onClose={() => setSheet(false)} title="Add a server">{addForm(true)}</Sheet>
+          <button onClick={() => setSheet(true)} style={{ ...solidBtn(true), width: '100%', marginTop: 4 }}>Add an integration</button>
+          <Sheet open={sheet} onClose={() => setSheet(false)} title="Add an integration">{addForm(true)}</Sheet>
         </>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
           <Divider />
-          <span style={{ ...pageLabel, fontSize: 10, fontWeight: 600 }}>ADD A SERVER</span>
+          <span style={sectionLabel}>ADD AN INTEGRATION</span>
           {addForm(false)}
         </div>
       )}

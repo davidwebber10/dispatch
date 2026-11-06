@@ -128,7 +128,7 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
     const { sttProvider, sttModel, sttSecretName } = useSettings.getState();
     if (!sttProvider || !sttModel || !sttSecretName) {
       teardown();
-      setError('Set up transcription in Settings → Transcription.');
+      setError('Set up dictation in Settings → Dictation.');
       setState('error');
       return;
     }

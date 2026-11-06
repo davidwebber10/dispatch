@@ -23,7 +23,7 @@ export function createPushRouter(push: PushService): Router {
     }
     res.json({ ok: true });
   });
-  // Settings > Access: the stored subscriptions and a per-device revoke. Owner only (the policyRouter default), so a
+  // Settings > Notifications: the stored subscriptions and a per-device revoke. Owner only (the policyRouter default), so a
   // thread key gets 403. The list shows the push service host, never the push address or keys.
   router.get('/subscriptions', (_req, res) => res.json({ subscriptions: push.listSubscriptions() }));
   router.delete('/subscriptions/:deviceId', (req, res) => {

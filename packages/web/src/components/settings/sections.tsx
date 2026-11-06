@@ -1,45 +1,64 @@
 import type { ComponentType } from 'react';
-import { Gear, PlugsConnected, Key, Wrench, Microphone, Robot, DeviceMobile, Gauge } from '@phosphor-icons/react';
+import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { GeneralSection } from './GeneralSection';
-import { AccessSection } from './AccessSection';
-import { HarnessesSection } from './HarnessesSection';
-import { SecretsSection } from './SecretsSection';
-import { IntegrationsSection } from './IntegrationsSection';
-import { ToolsSection } from './ToolsSection';
-import { TranscriptionSection } from './TranscriptionSection';
+import { AppearanceSection } from './AppearanceSection';
+import { NotificationsSection } from './NotificationsSection';
+import { DictationSection } from './DictationSection';
+import { AgentsSection } from './AgentsSection';
 import { UsageLimitsSection } from './UsageLimitsSection';
+import { IntegrationsSection } from './IntegrationsSection';
+import { SecretsSection } from './SecretsSection';
+import { ToolsSection } from './ToolsSection';
+import { AccessSection } from './AccessSection';
+import { ServersSection } from './ServersSection';
+import { AboutSection } from './AboutSection';
 
 /**
  * The settings sections, declared once and rendered by both shells:
- *   - desktop  → SettingsView, a full page with a vertical section nav
- *   - mobile   → MobileSettings, as a drill-down list (Settings ▸ section)
+ *   - desktop  → SettingsView, a full page with a grouped vertical section nav
+ *   - mobile   → MobileSettings, a grouped drill-down list (Settings ▸ section)
  *
- * Adding a section here surfaces it in both places. `blurb` is mobile-only — the
- * desktop tab strip has no room for a subtitle.
+ * Adding a section here surfaces it in both places. Sections sit in three groups, in the
+ * order people open them: YOU (how Dispatch looks and talks to you), AGENTS (what your
+ * agents run with), THIS MAC (the machine and who can reach it). `blurb` is the subtitle
+ * under the label on mobile and beside the title in the desktop content header.
  */
-export type SettingsSectionKey = 'general' | 'access' | 'harnesses' | 'usage' | 'integrations' | 'secrets' | 'tools' | 'transcription';
+export type SettingsSectionKey =
+  | 'appearance' | 'notifications' | 'dictation'
+  | 'agents' | 'usage' | 'integrations' | 'secrets' | 'tools'
+  | 'devices' | 'servers' | 'about';
+
+export type SettingsGroup = 'YOU' | 'AGENTS' | 'THIS MAC';
+export const SETTINGS_GROUPS: readonly SettingsGroup[] = ['YOU', 'AGENTS', 'THIS MAC'];
 
 export type SettingsSection = {
   key: SettingsSectionKey;
+  group: SettingsGroup;
   label: string;
   blurb: string;
   icon: Icon;
-  /** `onDone` dismisses the surrounding chrome; only General uses it (setup wizard). */
+  /** `onDone` dismisses the surrounding chrome; only About uses it (the setup wizard). */
   Component: ComponentType<{ onDone?: () => void }>;
 };
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { key: 'general', label: 'General', blurb: 'Coordinator, connection, appearance, updates', icon: Gear, Component: GeneralSection },
-  { key: 'access', label: 'Access', blurb: 'Sign in your phone and other devices', icon: DeviceMobile, Component: AccessSection },
-  { key: 'harnesses', label: 'Harnesses', blurb: 'Default model and mode per agent CLI, OpenCode key', icon: Robot, Component: HarnessesSection },
-  { key: 'usage', label: 'Usage limits', blurb: 'Warning level, alerts, banner', icon: Gauge, Component: UsageLimitsSection },
-  { key: 'integrations', label: 'Integrations', blurb: 'Connected services', icon: PlugsConnected, Component: IntegrationsSection },
-  { key: 'secrets', label: 'Secrets', blurb: 'Doppler environment variables', icon: Key, Component: SecretsSection },
-  { key: 'tools', label: 'Tools', blurb: 'Agent tool permissions', icon: Wrench, Component: ToolsSection },
-  { key: 'transcription', label: 'Transcription', blurb: 'Dictation and speech-to-text', icon: Microphone, Component: TranscriptionSection },
+  { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Accent, text sizes, density, layout', icon: PaintBrush, Component: AppearanceSection },
+  { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push on this device, which alerts, devices', icon: Bell, Component: NotificationsSection },
+  { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider and key', icon: Microphone, Component: DictationSection },
+  { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults per harness, Control Plane, working words', icon: Robot, Component: AgentsSection },
+  { key: 'usage', group: 'AGENTS', label: 'Usage limits', blurb: 'Warning level, paused banner, current figures', icon: Gauge, Component: UsageLimitsSection },
+  { key: 'integrations', group: 'AGENTS', label: 'Integrations', blurb: 'MCP integrations your agents can use', icon: PlugsConnected, Component: IntegrationsSection },
+  { key: 'secrets', group: 'AGENTS', label: 'Secrets', blurb: 'Doppler environment variables', icon: Key, Component: SecretsSection },
+  { key: 'tools', group: 'AGENTS', label: 'Tools', blurb: 'CLI tools installed and signed in', icon: Wrench, Component: ToolsSection },
+  { key: 'devices', group: 'THIS MAC', label: 'Devices & access', blurb: 'Sign in a phone, signed-in devices', icon: DeviceMobile, Component: AccessSection },
+  { key: 'servers', group: 'THIS MAC', label: 'Servers', blurb: 'Other Dispatch machines', icon: HardDrives, Component: ServersSection },
+  { key: 'about', group: 'THIS MAC', label: 'About & updates', blurb: 'Version, updates, setup, usage stats', icon: Info, Component: AboutSection },
 ];
 
-export function settingsSection(key: SettingsSectionKey): SettingsSection | undefined {
-  return SETTINGS_SECTIONS.find((s) => s.key === key);
+/** Keys from before the reorganisation, still found in old history entries and links. */
+const LEGACY_KEYS: Record<string, SettingsSectionKey> = { general: 'appearance', access: 'devices', harnesses: 'agents', transcription: 'dictation' };
+
+export function settingsSection(key: string): SettingsSection | undefined {
+  const k = LEGACY_KEYS[key] ?? key;
+  return SETTINGS_SECTIONS.find((s) => s.key === k);
 }

@@ -65,7 +65,7 @@ export const HARNESSES: Harness[] = [
     // Pretty-ONLY, like Grok, and the only harness with no bundled model: it runs
     // models through OpenRouter (`opencode acp`, same ACP transport as Grok) under
     // the user's OpenCode/OpenRouter credential. Its model list is NOT here: it is a
-    // per-user setting (Settings → Harnesses → OpenCode) seeded from the daemon's
+    // per-user setting (Settings → Agents → OpenCode) seeded from the daemon's
     // curated defaults, and arrives as `opencodeModels` on GET /api/settings/harnesses.
     id: 'opencode', label: 'OpenCode', type: 'opencode', provider: 'opencode', modes: ['pretty'],
     models: [],

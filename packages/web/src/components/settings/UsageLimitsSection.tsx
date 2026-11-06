@@ -16,17 +16,16 @@ const note: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-ter
 export function clampWarn(n: number): number { return Math.min(WARN_MAX, Math.max(WARN_MIN, Math.round(n))); }
 
 /**
- * Settings > Usage limits (#127). The threshold and the push are daemon-wide (every device sees
- * the same, the daemon sends the push). The paused banner switch is this device only.
+ * The daemon-wide usage limit settings (#127): the warning threshold and the push alert. Every device sees
+ * the same; the daemon sends the push. Used by Settings > Usage limits (the threshold) and Settings >
+ * Notifications (the push alert); each keeps its own copy and follows the daemon's broadcasts.
  * A failed PUT rolls the row back to what the daemon last confirmed.
  */
-export function UsageLimitsSection() {
+function useUsageLimitSettings() {
   const [cfg, setCfg] = useState<UsageLimitSettings | null>(null);
   const [draft, setDraft] = useState('');
   const [err, setErr] = useState<string | null>(null);
-  const showBanner = useSettings((s) => s.showUsageBanner);
   const summary = useUsageLimits((s) => s.summary);
-  const now = useNow();
   // One settings state, three writers: the first GET, a broadcast from the daemon (another device changed
   // something), and this device's own saves. `rev` counts every write that took effect. A GET or a PUT
   // remembers the count when it started and installs its answer only if no later write happened meanwhile.
@@ -62,6 +61,33 @@ export function UsageLimitsSection() {
         if (rev.current === started) install(prior); // a newer write (a broadcast, another save) already replaced what this one showed
       });
   };
+  return { cfg, draft, setDraft, err, save, summary };
+}
+
+/** Settings > Notifications: the push sent when a usage window reaches the warning level. All devices. */
+export function UsageAlertSetting() {
+  const { cfg, err, save } = useUsageLimitSettings();
+  return (
+    <>
+      {cfg && (
+        <>
+          <div style={row}>
+            <span style={item}>Push alert at the usage warning level</span>
+            <Toggle on={cfg.pushOnWarn} onClick={() => save({ pushOnWarn: !cfg.pushOnWarn })} label="Push alert at the warning level" />
+          </div>
+          <div style={note}>One push per limit window when a 5-hour or weekly window reaches {cfg.warnPercent}% (set in Usage limits), to every device with notifications on.</div>
+        </>
+      )}
+      {err && <div role="alert" style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
+    </>
+  );
+}
+
+/** Settings > Usage limits (#127): the threshold (all devices), the paused banner (this device), the figures. */
+export function UsageLimitsSection() {
+  const { cfg, draft, setDraft, err, save, summary } = useUsageLimitSettings();
+  const showBanner = useSettings((s) => s.showUsageBanner);
+  const now = useNow();
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };
   const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
@@ -85,12 +111,7 @@ export function UsageLimitsSection() {
                 <span style={{ marginLeft: 6, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>%</span>
               </div>
             </div>
-            <div style={note}>The chip turns amber when a 5-hour or weekly window reaches this level. 50 to 99.</div>
-            <div style={row}>
-              <span style={item}>Push alert at the warning level</span>
-              <Toggle on={cfg.pushOnWarn} onClick={() => save({ pushOnWarn: !cfg.pushOnWarn })} label="Push alert at the warning level" />
-            </div>
-            <div style={note}>One push per limit window, to every device with notifications on.</div>
+            <div style={note}>The chip turns amber when a 5-hour or weekly window reaches this level. 50 to 99. The push alert at this level is in Notifications.</div>
           </>
         )}
         {err && <div role="alert" style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}

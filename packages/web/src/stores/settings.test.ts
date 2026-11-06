@@ -1,50 +1,113 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useSettings, stepSidebarLimit, formatSidebarLimit } from './settings';
+import { useSettings, stepSidebarLimit, formatSidebarLimit, loadSharedSettings } from './settings';
+import { api } from '../api/client';
 
 beforeEach(() => { try { localStorage.clear(); } catch {} });
 
-describe('transcription settings', () => {
+describe('dictation settings (same on every device)', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
   it('has sensible defaults', () => {
     const s = useSettings.getState();
     expect(s.sttProvider).toBe('groq');
     expect(s.sttModel).toBe('whisper-large-v3-turbo');
     expect(s.sttSecretName).toBe('');
   });
-  it('persists setters to localStorage', () => {
+
+  it('setters update the store, cache in localStorage, and save to the daemon', () => {
+    const put = vi.spyOn(api, 'putDictationSettings').mockResolvedValue({ saved: true });
     useSettings.getState().setSttProvider('openai');
     useSettings.getState().setSttModel('whisper-1');
     useSettings.getState().setSttSecretName('OPENAI_API_KEY');
     expect(useSettings.getState().sttProvider).toBe('openai');
     expect(JSON.parse(localStorage.getItem('dispatch:sttSecretName')!)).toBe('OPENAI_API_KEY');
+    expect(put.mock.calls).toEqual([[{ provider: 'openai' }], [{ model: 'whisper-1' }], [{ secretName: 'OPENAI_API_KEY' }]]);
+  });
+
+  it('a failed save keeps the local value', async () => {
+    vi.spyOn(api, 'putDictationSettings').mockRejectedValue(new Error('offline'));
+    useSettings.getState().setSttSecretName('GROQ_API_KEY');
+    await Promise.resolve();
+    expect(useSettings.getState().sttSecretName).toBe('GROQ_API_KEY');
   });
 });
 
-describe('mobileViewMode setting', () => {
-  it('defaults to threads', () => {
-    expect(useSettings.getState().mobileViewMode).toBe('threads');
+describe('loadSharedSettings', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    useSettings.setState({ sttProvider: 'groq', sttModel: 'whisper-large-v3-turbo', sttSecretName: '', coordinatorName: 'Control Plane' });
   });
 
-  it('setMobileViewMode(board) updates the store and persists to localStorage', () => {
-    useSettings.getState().setMobileViewMode('board');
-    expect(useSettings.getState().mobileViewMode).toBe('board');
-    expect(JSON.parse(localStorage.getItem('dispatch:mobileViewMode')!)).toBe('board');
+  it('uses the daemon values when the daemon has them, and caches them', async () => {
+    vi.spyOn(api, 'getDictationSettings').mockResolvedValue({ provider: 'openai', model: 'whisper-1', secretName: 'OPENAI_API_KEY', saved: true });
+    vi.spyOn(api, 'getCoordinatorSettings').mockResolvedValue({ name: 'Mission Control', saved: true });
+    const putD = vi.spyOn(api, 'putDictationSettings');
+    const putC = vi.spyOn(api, 'putCoordinatorSettings');
+    await loadSharedSettings();
+    const s = useSettings.getState();
+    expect([s.sttProvider, s.sttModel, s.sttSecretName, s.coordinatorName]).toEqual(['openai', 'whisper-1', 'OPENAI_API_KEY', 'Mission Control']);
+    expect(JSON.parse(localStorage.getItem('dispatch:coordinatorName')!)).toBe('Mission Control');
+    expect(putD).not.toHaveBeenCalled();
+    expect(putC).not.toHaveBeenCalled();
   });
 
-  it('setMobileViewMode(threads) updates the store back and persists', () => {
-    useSettings.getState().setMobileViewMode('board');
-    useSettings.getState().setMobileViewMode('threads');
-    expect(useSettings.getState().mobileViewMode).toBe('threads');
-    expect(JSON.parse(localStorage.getItem('dispatch:mobileViewMode')!)).toBe('threads');
+  it("uploads this device's old values once when the daemon has none", async () => {
+    localStorage.setItem('dispatch:sttSecretName', JSON.stringify('GROQ_API_KEY'));
+    localStorage.setItem('dispatch:coordinatorName', JSON.stringify('Ops'));
+    useSettings.setState({ sttSecretName: 'GROQ_API_KEY', coordinatorName: 'Ops' });
+    vi.spyOn(api, 'getDictationSettings').mockResolvedValue({ saved: false });
+    vi.spyOn(api, 'getCoordinatorSettings').mockResolvedValue({ saved: false });
+    const putD = vi.spyOn(api, 'putDictationSettings').mockImplementation(async (p) => ({ ...(p as object), saved: true }) as never);
+    const putC = vi.spyOn(api, 'putCoordinatorSettings').mockImplementation(async (p) => ({ name: p.name ?? undefined, saved: true }));
+    await loadSharedSettings();
+    expect(putD).toHaveBeenCalledWith({ provider: 'groq', model: 'whisper-large-v3-turbo', secretName: 'GROQ_API_KEY' });
+    expect(putC).toHaveBeenCalledWith({ name: 'Ops' });
+    expect(useSettings.getState().sttSecretName).toBe('GROQ_API_KEY');
+    expect(useSettings.getState().coordinatorName).toBe('Ops');
   });
 
-  it('reads a previously-saved value back on module init — the real save/load round trip', async () => {
-    localStorage.setItem('dispatch:mobileViewMode', JSON.stringify('board'));
-    // `load()` runs at module scope (mirrors every other useSettings field), so re-importing
-    // the module fresh is what actually exercises "persists": a genuine reload, not just
-    // re-reading the same in-memory store we just wrote to.
-    vi.resetModules();
-    const fresh = await import('./settings');
-    expect(fresh.useSettings.getState().mobileViewMode).toBe('board');
+  it('uploads nothing when neither side has a value (defaults stay defaults)', async () => {
+    vi.spyOn(api, 'getDictationSettings').mockResolvedValue({ saved: false });
+    vi.spyOn(api, 'getCoordinatorSettings').mockResolvedValue({ saved: false });
+    const putD = vi.spyOn(api, 'putDictationSettings');
+    const putC = vi.spyOn(api, 'putCoordinatorSettings');
+    await loadSharedSettings();
+    expect(putD).not.toHaveBeenCalled();
+    expect(putC).not.toHaveBeenCalled();
+    expect(useSettings.getState().coordinatorName).toBe('Control Plane');
+  });
+
+  it('keeps the cached values when the daemon cannot be reached', async () => {
+    useSettings.setState({ sttSecretName: 'CACHED' });
+    vi.spyOn(api, 'getDictationSettings').mockRejectedValue(new Error('offline'));
+    vi.spyOn(api, 'getCoordinatorSettings').mockRejectedValue(new Error('offline'));
+    await expect(loadSharedSettings()).resolves.toBeUndefined();
+    expect(useSettings.getState().sttSecretName).toBe('CACHED');
+  });
+});
+
+describe('Control Plane name (same on every device)', () => {
+  it('saves to the daemon once typing pauses, not per keystroke', () => {
+    vi.useFakeTimers();
+    try {
+      const put = vi.spyOn(api, 'putCoordinatorSettings').mockResolvedValue({ name: 'Ops', saved: true });
+      useSettings.getState().setCoordinatorName('O');
+      useSettings.getState().setCoordinatorName('Op');
+      useSettings.getState().setCoordinatorName('Ops');
+      expect(useSettings.getState().coordinatorName).toBe('Ops');
+      expect(put).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(500);
+      expect(put).toHaveBeenCalledTimes(1);
+      expect(put).toHaveBeenCalledWith({ name: 'Ops' });
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('removed dead settings', () => {
+  it('no longer carries the unused view mode or tip flag', () => {
+    const s = useSettings.getState() as unknown as Record<string, unknown>;
+    expect('mobileViewMode' in s).toBe(false);
+    expect('resumeAdviceDismissed' in s).toBe(false);
   });
 });
 

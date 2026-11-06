@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { UsageLimitsSection, clampWarn } from './UsageLimitsSection';
+import { UsageLimitsSection, UsageAlertSetting, clampWarn } from './UsageLimitsSection';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
 import { useUsageLimits } from '../../stores/usageLimits';
@@ -13,6 +13,9 @@ beforeEach(() => {
   vi.spyOn(api, 'getUsageLimitSettings').mockResolvedValue({ warnPercent: 80, pushOnWarn: true });
 });
 
+// The threshold lives in Usage limits and the push alert in Notifications; both halves read and write the
+// same daemon setting with the same race rules, so they are rendered side by side here.
+const renderBoth = () => render(<><UsageLimitsSection /><UsageAlertSetting /></>);
 const level = () => screen.getByLabelText('Warning level percent') as HTMLInputElement;
 
 describe('clampWarn', () => {
@@ -23,9 +26,9 @@ describe('clampWarn', () => {
   });
 });
 
-describe('UsageLimitsSection', () => {
+describe('UsageLimitsSection + UsageAlertSetting', () => {
   it('loads the daemon values and says no figures yet', async () => {
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     expect(screen.getByRole('switch', { name: 'Push alert at the warning level' }).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByText('No figures reported yet')).toBeTruthy();
@@ -35,7 +38,7 @@ describe('UsageLimitsSection', () => {
 
   it('steps by 5 and clamps at the top', async () => {
     const put = vi.spyOn(api, 'setUsageLimitSettings').mockImplementation(async (p) => ({ warnPercent: p.warnPercent ?? 80, pushOnWarn: true }));
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     fireEvent.click(screen.getByLabelText('Raise the warning level'));
     await waitFor(() => expect(level().value).toBe('85'));
@@ -49,7 +52,7 @@ describe('UsageLimitsSection', () => {
 
   it('a typed value is clamped on blur', async () => {
     const put = vi.spyOn(api, 'setUsageLimitSettings').mockImplementation(async (p) => ({ warnPercent: p.warnPercent ?? 80, pushOnWarn: true }));
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     fireEvent.change(level(), { target: { value: '30' } });
     fireEvent.blur(level());
@@ -59,7 +62,7 @@ describe('UsageLimitsSection', () => {
 
   it('a failed PUT rolls back and says so', async () => {
     vi.spyOn(api, 'setUsageLimitSettings').mockRejectedValue(new Error('500'));
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     fireEvent.click(screen.getByLabelText('Lower the warning level'));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Could not save'));
@@ -69,14 +72,14 @@ describe('UsageLimitsSection', () => {
   });
 
   it('the banner switch is this device only', async () => {
-    render(<UsageLimitsSection />);
+    renderBoth();
     fireEvent.click(screen.getByRole('switch', { name: 'Show the paused banner on this device' }));
     expect(useSettings.getState().showUsageBanner).toBe(false);
     expect(localStorage.getItem('dispatch:usageBanner')).toBe('false');
   });
 
   it('follows the push switch another device changed', async () => {
-    render(<UsageLimitsSection />);
+    renderBoth();
     const sw = () => screen.getByRole('switch', { name: 'Push alert at the warning level' });
     await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('true'));
     act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, pushOnWarn: false, providers: [], paused: [] } }); });
@@ -87,7 +90,7 @@ describe('UsageLimitsSection', () => {
 
   it('follows a threshold and a push switch that change together, and steps from the new threshold', async () => {
     const put = vi.spyOn(api, 'setUsageLimitSettings').mockImplementation(async (p) => ({ warnPercent: p.warnPercent ?? 90, pushOnWarn: false }));
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     act(() => { useUsageLimits.setState({ summary: { warnPercent: 90, pushOnWarn: false, providers: [], paused: [] } }); });
     await waitFor(() => expect(level().value).toBe('90'));
@@ -97,7 +100,7 @@ describe('UsageLimitsSection', () => {
   });
 
   it('follows a threshold another device set', async () => {
-    render(<UsageLimitsSection />);
+    renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     act(() => { useUsageLimits.setState({ summary: { warnPercent: 90, providers: [], paused: [] } }); });
     await waitFor(() => expect(level().value).toBe('90'));
@@ -111,7 +114,7 @@ describe('UsageLimitsSection', () => {
     it('a delayed GET does not overwrite a newer broadcast (90 and push off beat 80 and push on)', async () => {
       const get = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       vi.spyOn(api, 'getUsageLimitSettings').mockReturnValue(get.promise);
-      render(<UsageLimitsSection />);
+      renderBoth();
       broadcast(90, false);
       await waitFor(() => expect(level().value).toBe('90'));
       await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('false'));
@@ -128,7 +131,7 @@ describe('UsageLimitsSection', () => {
       useUsageLimits.setState({ summary: { warnPercent: 90, pushOnWarn: false, providers: [], paused: [] } });
       const get = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       vi.spyOn(api, 'getUsageLimitSettings').mockReturnValue(get.promise);
-      render(<UsageLimitsSection />);
+      renderBoth();
       await act(async () => { get.resolve({ warnPercent: 80, pushOnWarn: true }); });
       expect(level().value).toBe('90');
       expect(sw().getAttribute('aria-checked')).toBe('false');
@@ -137,7 +140,7 @@ describe('UsageLimitsSection', () => {
     it('a PUT answered after a newer broadcast does not install its values', async () => {
       const put = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       vi.spyOn(api, 'setUsageLimitSettings').mockReturnValue(put.promise);
-      render(<UsageLimitsSection />);
+      renderBoth();
       await waitFor(() => expect(level().value).toBe('80'));
       fireEvent.click(screen.getByLabelText('Raise the warning level'));
       await waitFor(() => expect(level().value).toBe('85'));
@@ -151,7 +154,7 @@ describe('UsageLimitsSection', () => {
     it('a failed PUT after a newer broadcast does not roll back over it', async () => {
       const put = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       vi.spyOn(api, 'setUsageLimitSettings').mockReturnValue(put.promise);
-      render(<UsageLimitsSection />);
+      renderBoth();
       await waitFor(() => expect(level().value).toBe('80'));
       fireEvent.click(screen.getByLabelText('Raise the warning level'));
       await waitFor(() => expect(level().value).toBe('85'));
@@ -166,7 +169,7 @@ describe('UsageLimitsSection', () => {
       const first = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       const second = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
       const put = vi.spyOn(api, 'setUsageLimitSettings').mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-      render(<UsageLimitsSection />);
+      renderBoth();
       await waitFor(() => expect(level().value).toBe('80'));
       fireEvent.click(screen.getByLabelText('Raise the warning level'));
       await waitFor(() => expect(level().value).toBe('85'));
@@ -177,5 +180,17 @@ describe('UsageLimitsSection', () => {
       await act(async () => { first.resolve({ warnPercent: 85, pushOnWarn: true }); });
       expect(level().value).toBe('90');
     });
+  });
+});
+
+describe('split between the two sections', () => {
+  it('Usage limits no longer holds the push alert, and the alert names the level it fires at', async () => {
+    const { unmount } = render(<UsageLimitsSection />);
+    await waitFor(() => expect(level().value).toBe('80'));
+    expect(screen.queryByRole('switch', { name: 'Push alert at the warning level' })).toBeNull();
+    unmount();
+    render(<UsageAlertSetting />);
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Push alert at the warning level' })).toBeTruthy());
+    expect(screen.getByText(/reaches 80%/)).toBeTruthy();
   });
 });

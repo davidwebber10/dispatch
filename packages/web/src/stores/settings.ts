@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { syncAppIcons } from '../lib/appIcon';
+import { api } from '../api/client';
 
 export const ACCENTS = [
   '#3ECF6A', // green
@@ -16,15 +17,6 @@ export const ACCENTS = [
 ] as const;
 
 export type Density = 'compact' | 'cozy' | 'roomy';
-
-/**
- * How mobile renders the thread list: `'threads'` is the existing projects → threads
- * drill-down (default); `'board'` is the cross-project board bucketed by what needs you.
- * Mobile-only, per-device (localStorage, no server sync) — see
- * docs/superpowers/specs/2026-07-20-thread-board-design.md "Placement, and the view-mode
- * setting".
- */
-export type MobileViewMode = 'threads' | 'board';
 
 /** The editor the doc viewer's "Open in editor" uses, through its URL scheme ('' = none, the button stays hidden). */
 export type DocEditor = '' | 'vscode' | 'cursor' | 'zed';
@@ -70,19 +62,26 @@ interface SettingsState {
   showPinnedFiles: boolean;
   density: Density;
   accent: string;
-  coordinatorName: string;   // raw value; empty falls back to "Control Plane" at display (see useDispatchName)
+  /**
+   * Raw value; empty falls back to "Control Plane" at display (see useDispatchName). The same on
+   * every device: stored on the daemon (/api/settings/coordinator), cached here for first paint.
+   */
+  coordinatorName: string;
   pushEnabled: boolean;
   multiPane: boolean;
-  resumeAdviceDismissed: boolean;
+  /**
+   * Dictation (Settings → Dictation). The same on every device: stored on the daemon
+   * (/api/settings/dictation), cached here so the mic works before the daemon answers.
+   */
   sttProvider: string;
   sttModel: string;
   sttSecretName: string;
-  mobileViewMode: MobileViewMode;
   /**
    * Spelling help in the mobile CLI/PTY composer. On by default — most of what is
    * typed there is prose aimed at the agent. Toggled from the soft-key row above the
-   * input, because a run of shell commands is exactly when you want it off. The
-   * Pretty composer is always on and has no toggle: it takes prose only.
+   * input, because a run of shell commands is exactly when you want it off, and in
+   * Settings → Appearance. The Pretty composer is always on and has no toggle: it takes
+   * prose only.
    */
   ptyAutocorrect: boolean;
   editor: DocEditor;
@@ -95,7 +94,7 @@ interface SettingsState {
   showPrettyHint: boolean;
   /**
    * The red "agents paused on a usage limit" banner (#127). Per-device: off hides it on this
-   * device only. The warning push is a separate daemon-wide switch in Settings > Usage limits.
+   * device only. The warning push is a separate daemon-wide switch in Settings > Notifications.
    */
   showUsageBanner: boolean;
   setCoordinatorName: (name: string) => void;
@@ -112,11 +111,9 @@ interface SettingsState {
   /** Set the switch only (saved), with no network call: for code that already did the work. */
   setPushEnabledLocal: (b: boolean) => void;
   setMultiPane: (b: boolean) => void;
-  setResumeAdviceDismissed: (b: boolean) => void;
   setSttProvider: (id: string) => void;
   setSttModel: (id: string) => void;
   setSttSecretName: (name: string) => void;
-  setMobileViewMode: (m: MobileViewMode) => void;
   setPtyAutocorrect: (b: boolean) => void;
   setEditor: (e: DocEditor) => void;
   setShowPrettyHint: (b: boolean) => void;
@@ -152,6 +149,8 @@ applyAccent(initialAccent);
 // another device may have changed it since) — re-sync once per boot.
 if (initialAccent !== ACCENTS[0]) scheduleIconSync(initialAccent);
 
+export const STT_DEFAULTS = { provider: 'groq', model: 'whisper-large-v3-turbo' } as const;
+
 export const useSettings = create<SettingsState>((set, get) => ({
   fontSize: load('dispatch:fontSize', 13),
   scrollback: load('dispatch:scrollback', 20000),
@@ -165,11 +164,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
-  resumeAdviceDismissed: load('dispatch:resumeAdviceDismissed', false),
-  sttProvider: load('dispatch:sttProvider', 'groq'),
-  sttModel: load('dispatch:sttModel', 'whisper-large-v3-turbo'),
+  sttProvider: load('dispatch:sttProvider', STT_DEFAULTS.provider),
+  sttModel: load('dispatch:sttModel', STT_DEFAULTS.model),
   sttSecretName: load('dispatch:sttSecretName', ''),
-  mobileViewMode: load<MobileViewMode>('dispatch:mobileViewMode', 'threads'),
   ptyAutocorrect: load<boolean>('dispatch:ptyAutocorrect', true),
   editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
   showPrettyHint: load<boolean>('dispatch:showPrettyHint', legacyPrettyHintShown()),
@@ -182,14 +179,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setSidebarMaxFiles: (n) => { const sidebarMaxFiles = clampSidebarLimit(n); save('dispatch:sidebarMaxFiles', sidebarMaxFiles); set({ sidebarMaxFiles }); },
   setShowPinnedFiles: (b) => { save('dispatch:showPinnedFiles', b); set({ showPinnedFiles: b }); },
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
-  setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); },
+  setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); scheduleCoordinatorPut(coordinatorName); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
-  setResumeAdviceDismissed: (b) => { save('dispatch:resumeAdviceDismissed', b); set({ resumeAdviceDismissed: b }); },
   setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); scheduleIconSync(accent); },
-  setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); },
-  setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); },
-  setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); },
-  setMobileViewMode: (m) => { save('dispatch:mobileViewMode', m); set({ mobileViewMode: m }); },
+  setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); putShared(() => api.putDictationSettings({ provider: id })); },
+  setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); putShared(() => api.putDictationSettings({ model: id })); },
+  setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); putShared(() => api.putDictationSettings({ secretName: name })); },
   setPtyAutocorrect: (b) => { save('dispatch:ptyAutocorrect', b); set({ ptyAutocorrect: b }); },
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
@@ -207,6 +202,57 @@ export const useSettings = create<SettingsState>((set, get) => ({
     }
   },
 }));
+
+/** Write a same-on-every-device setting through to the daemon. Best effort: the local value already changed. */
+function putShared(call: () => Promise<unknown> | undefined) {
+  try { void call()?.catch(() => {}); } catch { /* an API without the route (tests, an old daemon) */ }
+}
+
+// The name field saves as you type: one PUT once typing pauses, not one per keystroke.
+let coordinatorTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleCoordinatorPut(name: string) {
+  clearTimeout(coordinatorTimer);
+  coordinatorTimer = setTimeout(() => putShared(() => api.putCoordinatorSettings({ name })), 400);
+}
+
+const STT_KEYS = ['dispatch:sttProvider', 'dispatch:sttModel', 'dispatch:sttSecretName'] as const;
+const hasLocal = (key: string) => { try { return localStorage.getItem(key) != null; } catch { return false; } };
+
+/**
+ * Load the two same-on-every-device settings (Dictation, the Control Plane name) from the daemon,
+ * once at launch. They used to be per device, in localStorage: when the daemon has none yet
+ * (`saved: false`) and this device has its own, they are uploaded once, and the daemon's copy is
+ * used from then on. localStorage stays as a cache, so the first paint and an offline page keep the
+ * last known values.
+ */
+export async function loadSharedSettings(): Promise<void> {
+  const { setState, getState } = useSettings;
+  await Promise.all([
+    (async () => {
+      let d = await api.getDictationSettings();
+      if (!d.saved && STT_KEYS.some(hasLocal)) {
+        const s = getState();
+        d = await api.putDictationSettings({ provider: s.sttProvider, model: s.sttModel, secretName: s.sttSecretName });
+      }
+      if (!d.saved) return;
+      const next = {
+        sttProvider: d.provider ?? STT_DEFAULTS.provider,
+        sttModel: d.model ?? STT_DEFAULTS.model,
+        sttSecretName: d.secretName ?? '',
+      };
+      save('dispatch:sttProvider', next.sttProvider); save('dispatch:sttModel', next.sttModel); save('dispatch:sttSecretName', next.sttSecretName);
+      setState(next);
+    })().catch(() => { /* keep the cached values */ }),
+    (async () => {
+      let c = await api.getCoordinatorSettings();
+      if (!c.saved && hasLocal('dispatch:coordinatorName')) c = await api.putCoordinatorSettings({ name: getState().coordinatorName });
+      if (!c.saved) return;
+      const coordinatorName = c.name ?? '';
+      save('dispatch:coordinatorName', coordinatorName);
+      setState({ coordinatorName });
+    })().catch(() => { /* keep the cached value */ }),
+  ]);
+}
 
 /**
  * The coordinator's user-facing display name — the ONE place the "fall back to Control

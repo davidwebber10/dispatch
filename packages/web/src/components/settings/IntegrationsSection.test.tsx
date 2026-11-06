@@ -18,13 +18,13 @@ const INTEGRATIONS: Integration[] = [
   { ...base, id: '3', name: 'files', type: 'stdio', command: 'npx', args: ['-y', 'srv'], url: null, enabled: true },
 ];
 
-test('groups servers under ACTIVE and OFF with a summary line', async () => {
+test('groups integrations under ACTIVE and OFF with a summary line', async () => {
   vi.spyOn(api, 'listIntegrations').mockResolvedValue({ integrations: INTEGRATIONS });
   render(<IntegrationsSection />);
   await waitFor(() => expect(screen.getByText('linear')).toBeInTheDocument());
   expect(screen.getByText('ACTIVE')).toBeInTheDocument();
   expect(screen.getByText('OFF')).toBeInTheDocument();
-  expect(screen.getByText(/3 servers · 2 on/)).toBeInTheDocument();
+  expect(screen.getByText(/3 integrations · 2 on/)).toBeInTheDocument();
   expect(screen.getAllByText('REMOTE')).toHaveLength(2);
   expect(screen.getByText('LOCAL')).toBeInTheDocument();
   expect(screen.getByText('npx -y srv')).toBeInTheDocument();
@@ -34,7 +34,7 @@ test('explains ${NAME} refs with the connected Doppler project/config, without l
   vi.spyOn(api, 'listIntegrations').mockResolvedValue({ integrations: [] });
   const listSecrets = vi.spyOn(api, 'listSecrets').mockResolvedValue([]);
   render(<IntegrationsSection />);
-  await waitFor(() => expect(screen.getByText(/Dispatch reads NAME from Doppler \(acme\/dev\) when the server starts/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText(/Dispatch reads NAME from Doppler \(acme\/dev\) when the integration starts/)).toBeInTheDocument());
   expect(screen.getByText(/Write \$\{NAME\} in a header or env value\./)).toBeInTheDocument();
   expect(screen.getByText(/the value never appears in a command line or a config file/)).toBeInTheDocument();
   expect(screen.queryByText(/servers inherit your session env/)).not.toBeInTheDocument();
@@ -47,7 +47,7 @@ test('hints when Doppler is not connected', async () => {
   vi.spyOn(api, 'getSecretsStatus').mockResolvedValue({ connected: false, project: null, config: null, enabled: true, readOnly: false });
   render(<IntegrationsSection />);
   await waitFor(() => expect(screen.getByText(/Doppler is not connected/)).toBeInTheDocument());
-  expect(screen.getByText(/Connect it under Secrets/)).toBeInTheDocument();
+  expect(screen.getByText(/Connect Doppler in Settings → Secrets\./)).toBeInTheDocument();
 });
 
 test('renders only non-empty groups', async () => {
@@ -58,7 +58,7 @@ test('renders only non-empty groups', async () => {
   expect(screen.queryByText('OFF')).not.toBeInTheDocument();
 });
 
-test('shows who added each server, and Unknown when there is no record', async () => {
+test('shows who added each integration, and Unknown when there is no record', async () => {
   vi.spyOn(api, 'listIntegrations').mockResolvedValue({
     integrations: [
       { ...INTEGRATIONS[0], createdBy: { kind: 'owner' } },

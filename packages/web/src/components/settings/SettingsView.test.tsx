@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { beforeEach, afterEach, vi, test, expect } from 'vitest';
 import { SettingsView } from './SettingsView';
 import { IconRail } from '../layout/IconRail';
@@ -16,12 +16,31 @@ afterEach(() => vi.unstubAllGlobals());
 
 test('renders the section nav, the daemon block, and the autosave footer', () => {
   render(<SettingsView />);
-  for (const label of ['General', 'Integrations', 'Secrets', 'Tools', 'Transcription']) {
+  for (const label of ['Appearance', 'Notifications', 'Dictation', 'Agents', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'About & updates']) {
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   }
+  expect(screen.queryByRole('button', { name: 'General' })).toBeNull();
   expect(screen.getByText('DAEMON')).toBeInTheDocument();
   expect(screen.getByText('v2.19.0')).toBeInTheDocument();
   expect(screen.getByText('Changes save as you edit')).toBeInTheDocument();
+});
+
+test('the nav is grouped YOU / AGENTS / THIS MAC, each holding its sections', () => {
+  render(<SettingsView />);
+  const names = (g: string) => within(screen.getByRole('group', { name: g })).getAllByRole('button').map((b) => b.textContent);
+  expect(names('YOU')).toEqual(['Appearance', 'Notifications', 'Dictation']);
+  expect(names('AGENTS')).toEqual(['Agents', 'Usage limits', 'Integrations', 'Secrets', 'Tools']);
+  expect(names('THIS MAC')).toEqual(['Devices & access', 'Servers', 'About & updates']);
+});
+
+test('opens on Appearance, and a deep link opens its section (old keys still work)', () => {
+  render(<SettingsView />);
+  expect(screen.getByText('Accent, text sizes, density, layout')).toBeInTheDocument();
+  act(() => { useUI.getState().requestSettings('dictation'); });
+  expect(screen.getByText('Speech-to-text provider and key')).toBeInTheDocument();
+  act(() => { useUI.getState().requestSettings('transcription'); });
+  expect(screen.getByText('Speech-to-text provider and key')).toBeInTheDocument();
+  expect(useUI.getState().pendingSettingsSection).toBeNull();
 });
 
 test('selecting a section swaps the content header', () => {

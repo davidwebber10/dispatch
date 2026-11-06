@@ -90,7 +90,7 @@ A phone or browser can subscribe to notifications only through the push service 
 maker: Apple, Google (FCM), Mozilla or Microsoft (WNS). Dispatch refuses any other address, so
 it cannot be made to send your thread and project names to a server you do not know.
 
-Settings > Access lists every device that receives notifications: its browser and system, the
+Settings > Notifications lists every device that receives notifications: its browser and system, the
 push service host, when it was added and when Dispatch last sent it an alert. Revoke stops
 alerts to that one device. The list never shows the full push address. Only the owner can list
 or revoke (a thread key gets 403).

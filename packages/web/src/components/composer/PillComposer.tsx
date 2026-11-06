@@ -31,7 +31,7 @@ export interface PillComposerProps {
   /** Extra rows at the top of the + menu (Chat's project choice). */
   menuExtra?: (close: () => void) => ReactNode;
   dictation: Dictation;
-  /** False shows the mic greyed out, pointing at Settings → Transcription. */
+  /** False shows the mic greyed out, pointing at Settings → Dictation. */
   sttConfigured: boolean;
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** Passed through to the text box: aria-label, onPaste, spell-check and capitalisation. */
@@ -124,7 +124,7 @@ export function PillComposer({
     {micHint && !sttConfigured && (
       <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 6px 8px', fontSize: 13 }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-text-secondary)' }}>Dictation isn't set up yet.</span>
-        <button type="button" onClick={() => { setMicHint(false); useUI.getState().requestSettings('transcription'); }} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Set up</button>
+        <button type="button" onClick={() => { setMicHint(false); useUI.getState().requestSettings('dictation'); }} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Set up</button>
         <button type="button" onClick={() => setMicHint(false)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     )}
@@ -176,7 +176,7 @@ export function PillComposer({
       )}
       {!recording && (
         <button type="button" aria-label="Dictate"
-          title={sttConfigured ? 'Dictate' : 'Dictation: set up in Settings → Transcription'}
+          title={sttConfigured ? 'Dictate' : 'Dictation: set up in Settings → Dictation'}
           onMouseDown={(e) => e.preventDefault() /* keep the keyboard up */}
           onClick={() => { if (sttConfigured) void dictation.start(); else setMicHint((v) => !v); }}
           style={{ ...circle, gridArea: 'mic', background: 'transparent', color: sttConfigured ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', cursor: 'pointer', opacity: sttConfigured ? 1 : 0.5 }}>

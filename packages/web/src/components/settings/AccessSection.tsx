@@ -2,11 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
 import { DevicesList } from './DevicesList';
-import { PushSubscriptionsList } from './PushSubscriptionsList';
 import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider } from './ui';
 
 /**
- * Settings → Access: sign in another device (network exposure spec, 8.1, first slice).
+ * Settings → Devices & access: sign in another device (network exposure spec, 8.1, first slice).
  *
  * Other devices see Dispatch's sign-in page until they prove they know the access token. The
  * token lives on this computer and `dispatch access` prints it, but a phone cannot type 43
@@ -209,8 +208,6 @@ export function AccessSection() {
       </div>
       <Divider />
       <DevicesList />
-      <Divider />
-      <PushSubscriptionsList />
       <Divider />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={sectionLabel}>THE ACCESS TOKEN</span>

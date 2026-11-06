@@ -2,7 +2,7 @@ import os from 'node:os';
 import { isTailscaleAddress } from './tailscale-access.js';
 
 /**
- * Addresses another device (a phone) could use to reach this computer, for Settings > Access.
+ * Addresses another device (a phone) could use to reach this computer, for Settings > Devices & access.
  * A browser on this computer cannot learn them: it only knows `localhost`. Owner only.
  */
 export interface Reachable { tailscale: string[]; lan: string[] }

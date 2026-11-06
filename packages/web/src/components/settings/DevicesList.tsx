@@ -5,7 +5,7 @@ import { sectionLabel, row, fieldInput, solidBtn, ghostBtn, miniChip } from './u
 import { reloadFresh } from '../../lib/shellCache';
 
 /**
- * Settings → Access: signed-in devices (network exposure spec, 8.1 and 8.2).
+ * Settings → Devices & access: signed-in devices (network exposure spec, 8.1 and 8.2).
  *
  * One row per browser or phone that signed in. Revoke ends that one device and no other. A
  * browser on the computer itself, or on the owner's own Tailscale, needs no sign-in and has no

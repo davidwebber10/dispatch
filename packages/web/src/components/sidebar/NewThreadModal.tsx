@@ -263,7 +263,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
       setKeyDraft('');
       setHarnessSettings(await api.getHarnessSettings());
     } catch (err) {
-      setKeyError(err instanceof Error ? err.message : 'Could not save the key. Connect Doppler in Settings → Secrets first.');
+      setKeyError(err instanceof Error ? err.message : 'Could not save the key. Connect Doppler in Settings → Secrets.');
     }
     setKeySaving(false);
   }
@@ -390,7 +390,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
             <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
               OpenCode runs open models through OpenRouter. Paste a key from openrouter.ai — it's
               saved to Doppler as <code style={{ font: '400 11px var(--font-mono)' }}>{harnessSettings!.opencodeKey.secret}</code> and
-              injected at spawn, never stored in a file. Change the secret later in Settings → Harnesses.
+              injected at spawn, never stored in a file. Change the secret later in Settings → Agents.
             </div>
             <input
               type="password"

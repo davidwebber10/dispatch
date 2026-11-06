@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TelemetrySetting } from './TelemetrySetting';
-import { GeneralSection } from './GeneralSection';
+import { AboutSection } from './AboutSection';
 import { api } from '../../api/client';
 
 beforeEach(() => { vi.restoreAllMocks(); });
@@ -18,15 +18,19 @@ describe('TelemetrySetting', () => {
     await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
   });
 
-  it('sits right above the Multi-pane tabs row in General', async () => {
+  it('is the last block of About & updates, under its own heading', async () => {
     vi.spyOn(api, 'getTelemetrySetting').mockResolvedValue({ enabled: true });
-    const { container } = render(<GeneralSection />);
+    vi.spyOn(api, 'checkUpdate').mockRejectedValue(new Error('offline'));
+    const { container } = render(<AboutSection />);
     await screen.findByText('Send anonymous usage stats');
     const text = container.textContent!;
-    const at = text.indexOf('Send anonymous usage stats');
-    const multi = text.indexOf('Multi-pane tabs');
-    expect(at).toBeGreaterThan(text.indexOf('Push notifications on this device'));
-    expect(multi).toBeGreaterThan(at);
-    expect(text.slice(at + 'Send anonymous usage stats'.length, multi).trim()).toBe('');
+    expect(text.indexOf('USAGE STATS')).toBeGreaterThan(text.indexOf('Re-run setup wizard'));
+    expect(text.trim().endsWith('Send anonymous usage stats')).toBe(true);
+  });
+
+  it('shows no heading while the daemon has not answered', () => {
+    vi.spyOn(api, 'getTelemetrySetting').mockReturnValue(new Promise(() => {}));
+    render(<TelemetrySetting />);
+    expect(screen.queryByText('USAGE STATS')).toBeNull();
   });
 });

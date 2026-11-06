@@ -212,7 +212,7 @@ const LOGIN_MAX_FAILURES = 10;
 export interface AccessGateOptions extends GateDeps {
   /** Mount prefix (already stripped from req.url upstream). Used for the cookie Path and the sign-in page. */
   basePath: string;
-  /** One-time pairing codes from Settings → Access; the login route takes `{ code }` as well as `{ token }`. */
+  /** One-time pairing codes from Settings → Devices & access; the login route takes `{ code }` as well as `{ token }`. */
   pairCodes?: PairCodes;
   now?: () => number;
 }

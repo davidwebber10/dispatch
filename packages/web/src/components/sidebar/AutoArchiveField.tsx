@@ -1,11 +1,12 @@
 import { Timer } from '@phosphor-icons/react';
+import { Toggle } from '../settings/ui';
 import { DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, type DurationUnit } from '../../lib/autoArchive';
 
 interface AutoArchiveFieldProps {
   enabled: boolean;
   ms: number;
   onChange: (enabled: boolean, ms: number) => void;
-  /** Settings → Harnesses sits it flush inside an already-elevated card. */
+  /** Settings → Agents sits it flush inside an already-elevated card. */
   flush?: boolean;
 }
 
@@ -26,18 +27,12 @@ export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFi
 
   return (
     <div style={flush ? undefined : { marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Timer size={16} weight="fill" color="var(--color-text-tertiary)" />
         <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)' }}>Auto-archive thread</span>
-        <input
-          type="checkbox"
-          role="switch"
-          aria-label="Auto-archive thread"
-          checked={enabled}
-          onChange={(e) => onChange(e.target.checked, ms || DEFAULT_AUTO_ARCHIVE_MS)}
-          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-accent)' }}
-        />
-      </label>
+        {/* The app's one switch style (settings/ui Toggle), not a checkbox. */}
+        <Toggle on={enabled} label="Auto-archive thread" onClick={() => onChange(!enabled, ms || DEFAULT_AUTO_ARCHIVE_MS)} />
+      </div>
 
       {enabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>

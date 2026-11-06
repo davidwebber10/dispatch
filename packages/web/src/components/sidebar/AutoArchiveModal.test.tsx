@@ -23,12 +23,12 @@ beforeEach(() => {
 describe('AutoArchiveModal', () => {
   it('starts off for a thread with no policy', () => {
     render(<AutoArchiveModal tab={tab({ transport: 'structured' })} onClose={() => {}} />);
-    expect((screen.getByRole('switch', { name: /auto-archive thread/i }) as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByRole('switch', { name: /auto-archive thread/i }).getAttribute('aria-checked')).toBe('false');
   });
 
   it('pre-fills the existing policy', () => {
     render(<AutoArchiveModal tab={tab({ autoArchive: true, autoArchiveMs: 3 * 3_600_000 })} onClose={() => {}} />);
-    expect((screen.getByRole('switch', { name: /auto-archive thread/i }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('switch', { name: /auto-archive thread/i }).getAttribute('aria-checked')).toBe('true');
     expect((screen.getByLabelText('Inactivity before archiving') as HTMLInputElement).value).toBe('3');
   });
 

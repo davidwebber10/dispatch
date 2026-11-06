@@ -1,16 +1,13 @@
 /**
- * Shared presentational primitives for the settings sections.
- *
- * These used to live as module-private constants inside SettingsModal. They moved
- * here when the sections were split into standalone components so that both the
- * desktop modal and the mobile full-screen settings screens render identically.
+ * Shared presentational primitives for the settings sections, so the desktop page
+ * (SettingsView) and the phone's drill-down (MobileSettings) render every section
+ * identically. `sectionLabel` is the one heading style; `Toggle` is the one switch.
  */
 
 import { Modal } from '../common/Modal';
 import { useState } from 'react';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-export const pageLabel: React.CSSProperties = { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
 export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' };
 export const miniChip: React.CSSProperties = { flexShrink: 0, font: '500 9.5px var(--font-mono)', letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-xs)', padding: '1px 5px' };
@@ -22,11 +19,18 @@ export const item: React.CSSProperties = { fontSize: 13, color: '#c9c9cf' };
 export const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: '#c9c9cf', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', padding: '5px 10px' };
 export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
+/** This browser's link to the daemon, worded the same in the desktop nav and in Settings → Servers. */
+export const CONNECTION_STATUS = {
+  open:       { color: 'var(--color-accent)', label: 'Connected' },
+  connecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
+  closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
+} as const;
+
 export function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }
 
 export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
   return (
-    <button onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
+    <button type="button" onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 2, left: on ? 19 : 2, width: 17, height: 17, borderRadius: '50%', background: on ? '#08240F' : '#e9e9ec', transition: 'left .15s ease' }} />
     </button>
   );

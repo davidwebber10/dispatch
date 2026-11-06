@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import type { ToolStatus, ToolsResponse } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
-import { pageLabel, summaryLine, ghostBtn, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
+import { sectionLabel, summaryLine, ghostBtn, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
 
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const colHead: React.CSSProperties = { font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -102,7 +102,7 @@ export function ToolsSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={pageLabel}>TOOLS (CLI)</span>
+        <span style={sectionLabel}>TOOLS (CLI)</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={summaryLine} title={checkedAt ? new Date(checkedAt).toLocaleString() : undefined}>{checkedLabel(checkedAt)}</span>
           <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>

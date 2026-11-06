@@ -29,14 +29,14 @@ describe('Chat composer: + menu', () => {
     expect(click).toHaveBeenCalled();
   });
 
-  it('a mic without dictation set up says so and links to Settings → Transcription', () => {
+  it('a mic without dictation set up says so and links to Settings → Dictation', () => {
     useSettings.setState({ sttProvider: '', sttModel: '', sttSecretName: '' } as never);
     const requestSettings = vi.spyOn(useUI.getState(), 'requestSettings');
     render(<Composer />);
     fireEvent.click(screen.getByRole('button', { name: 'Dictate' }));
     expect(screen.getByRole('note')).toHaveTextContent("Dictation isn't set up yet.");
     fireEvent.click(screen.getByRole('button', { name: 'Set up' }));
-    expect(requestSettings).toHaveBeenCalledWith('transcription');
+    expect(requestSettings).toHaveBeenCalledWith('dictation');
     expect(screen.queryByRole('note')).toBeNull();
     // Dictate is not in the + menu: the mic is its one place.
     fireEvent.click(screen.getByRole('button', { name: 'More input options' }));

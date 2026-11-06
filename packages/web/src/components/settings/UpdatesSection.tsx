@@ -3,14 +3,12 @@ import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from '../update/useApplyUpdate';
 import { STEP_LABEL } from '../update/UpdateProgress';
 import { ReleaseNotes } from '../update/ReleaseNotes';
+import { sectionLabel, row, item, ghostBtn as baseGhostBtn } from './ui';
 
-const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
-const item: React.CSSProperties = { fontSize: 13, color: '#c9c9cf' };
-const ghostBtn: React.CSSProperties = { height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' };
+const ghostBtn: React.CSSProperties = { ...baseGhostBtn, padding: '0 14px', color: 'var(--color-text-primary)', fontSize: 12.5 };
 
 /**
- * Settings → UPDATES: always-reachable update surface (the modal can be
+ * Settings → About & updates → UPDATES: always-reachable update surface (the modal can be
  * dismissed — or missed entirely on the PWA before it was a modal). Shows the
  * running version, checks GitHub on demand, and applies + auto-refreshes.
  */
