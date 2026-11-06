@@ -20,8 +20,9 @@ export const AGENT_SORTS: readonly (readonly [AgentSort, string])[] = [
   ['name', 'Name (A–Z)'],
 ];
 
-/** Threads default to the server's own order, so nothing moves until the user picks a sort. */
-export const DEFAULT_THREAD_SORT: ThreadSort = 'custom';
+/** Threads lead with the most recently active, like projects and the Threads view (2026-11-05).
+ *  Dragging a thread still switches that project to 'custom'. */
+export const DEFAULT_THREAD_SORT: ThreadSort = 'active';
 /** Automations have no meaningful stored order, so lead with the question a schedule list answers. */
 export const DEFAULT_AGENT_SORT: AgentSort = 'next';
 

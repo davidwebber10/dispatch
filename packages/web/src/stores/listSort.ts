@@ -3,11 +3,28 @@ import { AGENT_SORTS, DEFAULT_AGENT_SORT, DEFAULT_THREAD_SORT, THREAD_SORTS, typ
 
 export const LIST_SORT_KEY = 'dispatch:listSort';
 
-interface Persisted { threads?: Record<string, ThreadSort>; agents?: Record<string, AgentSort> }
+interface Persisted { threads?: Record<string, ThreadSort>; agents?: Record<string, AgentSort>; v?: number }
+
+/**
+ * 2: the thread default became 'active' (2026-11-05). A saved 'custom' was usually never chosen —
+ * it was the old default, or a drag switched to it — so it is dropped once, and that project
+ * falls to the new default. Every other saved choice stays.
+ */
+const VERSION = 2;
 
 // Mirrors the load/save idiom in stores/settings.ts.
 function load(): Persisted {
-  try { const v = localStorage.getItem(LIST_SORT_KEY); return v == null ? {} : (JSON.parse(v) as Persisted); } catch { return {}; }
+  try {
+    const v = localStorage.getItem(LIST_SORT_KEY);
+    if (v == null) return {};
+    const p = JSON.parse(v) as Persisted;
+    if ((p.v ?? 1) < VERSION && p.threads) {
+      p.threads = Object.fromEntries(Object.entries(p.threads).filter(([, s]) => s !== 'custom'));
+      p.v = VERSION;
+      save(p);
+    }
+    return p;
+  } catch { return {}; }
 }
 function save(v: Persisted) { try { localStorage.setItem(LIST_SORT_KEY, JSON.stringify(v)); } catch { /* ignore */ } }
 
@@ -41,11 +58,11 @@ export const useListSort = create<ListSortState>((set, get) => ({
   setThreadSort: (projectId, v) => {
     const threads = { ...get().threads, [projectId]: v };
     set({ threads });
-    save({ threads, agents: get().agents });
+    save({ threads, agents: get().agents, v: VERSION });
   },
   setAgentSort: (projectId, v) => {
     const agents = { ...get().agents, [projectId]: v };
     set({ agents });
-    save({ threads: get().threads, agents });
+    save({ threads: get().threads, agents, v: VERSION });
   },
 }));
