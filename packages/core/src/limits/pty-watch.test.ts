@@ -191,6 +191,15 @@ describe('PtyLimitWatcher with the Codex banner', () => {
     expect(got).toEqual([{ id: 'f1', provider: 'codex', kind: 'usage' }]);
     typed.forget('f1');
   });
+  it('a block still being printed when the banner text appears is closed before the quiet wait ends: no park', () => {
+    const typed = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'codex' });
+    typed.feed('f2', '```\r\nExample:\r\n' + codexBanner);
+    quiet(2000);
+    typed.feed('f2', '```\r\n'); // the closing fence arrives: the text was inside the block
+    quiet(10000);
+    expect(got).toEqual([]);
+    typed.forget('f2');
+  });
   it('a Claude stop below a quoted Codex message still parks', () => {
     const claude = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'claude-code' });
     claude.feed('c3', "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n");

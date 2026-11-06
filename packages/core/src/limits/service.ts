@@ -31,6 +31,13 @@ const DEFAULTS = {
   /** Retry delay after a wake that could not be sent. */
   sendRetryMs: 5 * MIN,
   tickMs: 30_000,
+  /**
+   * How long the chain of a woken thread is remembered after a turn-complete signal cleared it. A CLI
+   * thread reports the end of a resumed turn that hit the limit again the same way as a good one; its
+   * banner is read a few seconds later (quiet wait, busy retries). A stop inside this window continues
+   * the chain instead of starting at zero, so a limit with no reset time cannot retry forever.
+   */
+  chainKeepMs: 2 * MIN,
 };
 
 export interface UsageLimitDeps {
@@ -54,6 +61,7 @@ export class UsageLimitService {
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
   private lastWake = new Map<string, number>();
+  private cleared = new Map<string, { attempts: number; parked_at: number; at: number }>();
   private touchListeners: ((terminalId: string) => void)[] = [];
   private changeListeners: (() => void)[] = [];
 
@@ -97,7 +105,7 @@ export class UsageLimitService {
   /** The thread stopped on a usage limit. Stores it, labels it, and (first stop of a chain) tells Chat. */
   park(terminalId: string, provider: string, limit: UsageLimit): void {
     const now = this.now();
-    const prior = parksDb.get(this.d.db, terminalId);
+    const prior = parksDb.get(this.d.db, terminalId) ?? this.takeCleared(terminalId, now);
     const attempts = prior?.attempts ?? 0;
     const parsed = limit.resetsAt !== null;
     const fallbackMs = isWeeklyKind(limit.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
@@ -122,6 +130,13 @@ export class UsageLimitService {
       const tail = parsed ? ' It resumes by itself.' : ` The reset time could not be read, so it retries in ${fallbackMs / MIN >= 120 ? `${fallbackMs / MIN / 60} hours` : `${fallbackMs / MIN} minutes`}.`;
       this.d.note(terminalId, `[${this.threadName(terminalId)}] ${label}.${tail}`, { deliver: false });
     }
+  }
+
+  /** The chain of a woken thread whose row a turn-complete signal just cleared, if it is still inside the keep window. Used once. */
+  private takeCleared(terminalId: string, now: number): { attempts: number; parked_at: number; state: 'woken' } | null {
+    const c = this.cleared.get(terminalId);
+    this.cleared.delete(terminalId);
+    return c && now - c.at <= this.o.chainKeepMs ? { attempts: c.attempts, parked_at: c.parked_at, state: 'woken' } : null;
   }
 
   /** Wake every parked thread whose time has come, at most one per provider per stagger gap. */
@@ -166,16 +181,24 @@ export class UsageLimitService {
   }
 
   /** The owner sent the thread a message or typed in it: they took over, so no auto-resume. */
-  onUserMessage(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
+  onUserMessage(terminalId: string): void { this.cleared.delete(terminalId); this.removePark(terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
-  onStopped(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
+  onStopped(terminalId: string): void { this.cleared.delete(terminalId); this.removePark(terminalId); this.touched(terminalId); }
   /** A turn ended in a failure: a resumed thread is done with its chain; a waiting one stays parked. */
   onTurnEnded(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);
-    if (row && row.state === 'woken') this.removePark(terminalId);
+    if (row && row.state === 'woken') { this.rememberChain(row); this.removePark(terminalId); }
   }
   /** A turn finished normally: the thread moved on, so any pause (woken, waiting or capped) is over. */
-  onTurnSettled(terminalId: string): void { this.removePark(terminalId); }
+  onTurnSettled(terminalId: string): void {
+    const row = parksDb.get(this.d.db, terminalId);
+    if (row && row.state === 'woken') this.rememberChain(row);
+    this.removePark(terminalId);
+  }
+
+  private rememberChain(row: parksDb.ParkRow): void {
+    this.cleared.set(row.terminal_id, { attempts: row.attempts, parked_at: row.parked_at, at: this.now() });
+  }
 
   private removePark(terminalId: string): void { if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
 

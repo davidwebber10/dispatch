@@ -119,6 +119,58 @@ describe('tick / wake', () => {
     clock = later + 2 * MIN; svc.tick();
     expect(wakes).toHaveLength(2);
   });
+  // A Codex terminal thread has no stream: its "turn complete" hook fires when a resumed turn ends, and
+  // Codex reports a turn that stopped on the limit the same way (its task_complete carries the error).
+  // The settle clears the woken row, and the banner parks the thread again a few seconds later. That
+  // second stop must continue the chain, or a limit with no reset time retries every 30 minutes forever.
+  describe('a turn-complete signal after a resumed turn that hit the limit again', () => {
+    const noReset = { kind: 'usage' as const, resetsAt: null, message: 'limit' };
+    it('keeps the attempt count and the start of the chain, up to the cap', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      const startedAt = parksDb.get(db, 'a')!.parked_at;
+      for (let i = 1; i <= 5; i++) {
+        clock += 31 * MIN + 30_000; svc.tick();
+        expect(wakes).toHaveLength(i);
+        svc.onTurnSettled('a');                  // the hook: the turn ended (it hit the limit)
+        expect(parksDb.get(db, 'a')).toBeNull();
+        clock += 8_000;                          // the watcher confirms the banner
+        svc.park('a', 'codex', noReset);
+        expect(parksDb.get(db, 'a')).toMatchObject({ attempts: i >= 5 ? 5 : i, parked_at: startedAt });
+      }
+      expect(parksDb.get(db, 'a')!.state).toBe('capped');
+      clock += 24 * 60 * MIN; svc.tick();
+      expect(wakes).toHaveLength(5);              // gave up: not every 30 minutes forever
+    });
+    it('does not post a second "paused" note for the continued chain', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      const before = notes.length;
+      svc.onTurnSettled('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(notes.slice(before).filter((n) => n.text.includes('Paused'))).toEqual([]);
+    });
+    it('a turn that really finished, with no limit after it, starts a fresh chain at the next stop', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a');
+      clock += 60 * MIN;                          // no banner followed: the turn was a success
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0, parked_at: clock });
+    });
+    it('the owner taking over ends the chain', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a');
+      svc.onUserMessage('a');
+      clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0 });
+    });
+  });
   it('stops at the cap and tells Chat, waking Chat', () => {
     thread('a');
     svc.park('a', 'claude-code', session);

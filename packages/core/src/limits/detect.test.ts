@@ -238,8 +238,8 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
       expect(textAfterCodexBanner(inside(codex)), `after codex ${fence}`).toBe(0);
       expect(textAfterBanner(inside(claude)), `after claude ${fence}`).toBe(0);
     }
-    // Unclosed so far (the block is still being printed): still inside.
-    expect(detectCodexBannerLimit(`\`\`\`\r\na\r\nb\r\n${codex}\r\n`, NOW)).toBeNull();
+    // A block that never closes in the window quotes nothing (see the fence rule below).
+    expect(detectCodexBannerLimit(`\`\`\`\r\na\r\nb\r\n■ ${codex}\r\n`, NOW)).not.toBeNull();
   });
   it('a real stop after a closed fence still parks', () => {
     const codex = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
@@ -250,6 +250,69 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
     // A fenced quote earlier, a real stop after it: the stop is the one found.
     const quoted = '```\r\nx\r\ny\r\n' + "You've hit your session limit · resets 9:00am (America/Indianapolis)" + '\r\n```\r\n';
     expect(iso(detectBannerLimit(quoted + claude + '\r\n', NOW)!.resetsAt)).toBe('2026-10-24T05:10:00.000Z');
+  });
+  // The fence rule: limit text is quoted only between an opening fence and a matching closing fence
+  // AFTER it (same character, closing at least as long). An unclosed fence above it, or a closing
+  // fence with no opener in the window, quotes nothing.
+  describe('fence rule', () => {
+    const codexMsg = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
+    const claudeMsg = "  ⎿  You've hit your session limit · resets 1:10am (America/Indianapolis)";
+    const stops = (prefix: string, suffix = '') => ({
+      claude: detectBannerLimit(prefix + claudeMsg + '\r\n' + suffix, NOW),
+      codex: detectCodexBannerLimit(prefix + '■ ' + codexMsg + '\r\n' + suffix, NOW),
+    });
+    it('a real stop is found when an unclosed fence is above it (a collapsed tool preview cut the block)', () => {
+      const r = stops('● Read(notes.md)\r\n  ⎿  ```md\r\n     # notes\r\n     … +40 lines (ctrl+r to expand)\r\n');
+      // the "```md" here is prefixed by the TUI gutter, so it is no fence line at all
+      expect(r.claude?.kind).toBe('session');
+      expect(r.codex).not.toBeNull();
+      const bare = stops('```md\r\n# notes\r\n… +40 lines (ctrl+r to expand)\r\n');
+      expect(bare.claude?.kind, 'unclosed bare fence above').toBe('session');
+      expect(bare.codex, 'unclosed bare fence above').not.toBeNull();
+    });
+    it('a real stop is found when only a closing fence is in the window (the opener scrolled out of it)', () => {
+      const r = stops('some code\r\nmore code\r\n```\r\nDone.\r\n');
+      expect(r.claude?.kind).toBe('session');
+      expect(r.codex).not.toBeNull();
+    });
+    it('a prefixed fence line is not a fence: stops after it are found', () => {
+      for (const prefixed of ['  ⎿  ```', '> ```', '│ ```', '● ```js']) {
+        const r = stops(`${prefixed}\r\ncode\r\n`);
+        expect(r.claude?.kind, prefixed).toBe('session');
+        expect(r.codex, prefixed).not.toBeNull();
+      }
+    });
+    it('a stop after two separate closed blocks is found; a stray opener after a closed block does not quote', () => {
+      const r = stops('```\r\na\r\n```\r\ntext\r\n~~~\r\nb\r\n~~~\r\n');
+      expect(r.claude?.kind).toBe('session');
+      expect(r.codex).not.toBeNull();
+      const stray = stops('```\r\na\r\n```\r\n```\r\nc\r\n');
+      expect(stray.claude?.kind).toBe('session');
+    });
+    it('a block closed by a longer fence of the same character quotes what is inside it', () => {
+      const inner = (open: string, close: string) => `${open}\r\nx\r\n${claudeMsg}\r\n${close}\r\n`;
+      expect(detectBannerLimit(inner('```', '````'), NOW)).toBeNull();
+      expect(detectBannerLimit(inner('~~~', '~~~~~'), NOW)).toBeNull();
+      expect(detectCodexBannerLimit(`\`\`\`\r\nx\r\n■ ${codexMsg}\r\n\`\`\`\`\r\n`, NOW)).toBeNull();
+    });
+    it('shorter or mixed delimiters do not close a block', () => {
+      // 4-backtick opener is not closed by 3 backticks or by tildes: nothing is quoted
+      const shortClose = `\`\`\`\`\r\nx\r\n${claudeMsg}\r\n\`\`\`\r\n`;
+      expect(detectBannerLimit(shortClose, NOW)?.kind).toBe('session');
+      const mixedClose = `\`\`\`\r\nx\r\n${claudeMsg}\r\n~~~\r\n`;
+      expect(detectBannerLimit(mixedClose, NOW)?.kind).toBe('session');
+    });
+    it('a nested shorter fence inside a longer block does not end it', () => {
+      const body = `\`\`\`\`md\r\n\`\`\`\r\ninner\r\n\`\`\`\r\nx\r\n■ ${codexMsg}\r\n\`\`\`\`\r\n`;
+      expect(detectCodexBannerLimit(body, NOW)).toBeNull();
+      // and a closing fence with words after it is not a closer
+      const notCloser = `\`\`\`\r\nx\r\n${claudeMsg}\r\n\`\`\` trailing words\r\n`;
+      expect(detectBannerLimit(notCloser, NOW)?.kind).toBe('session');
+    });
+    it('the blank-line and indentation forms of a closing fence work', () => {
+      const text = `  \`\`\`js\r\nx\r\n${claudeMsg}\r\n  \`\`\`  \r\n`;
+      expect(detectBannerLimit(text, NOW)).toBeNull();
+    });
   });
   it('no prefix, indentation and the error mark are accepted', () => {
     const msg = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";

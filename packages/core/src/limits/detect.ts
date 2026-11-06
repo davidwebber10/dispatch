@@ -166,16 +166,34 @@ function claudeBanners(clean: string): RegExpExecArray[] {
 }
 
 /**
- * True when `index` is inside a fenced code block of the scanned text: an odd number of fence lines
- * (a line that starts with three backticks or three tildes) come before it. Whatever an agent prints
- * in a fenced block is a quote, however many lines down. The scan sees only the retained window of
- * output, so a fence that opened before the window is not known.
+ * True when `index` sits between an opening code fence and its closing fence, which comes AFTER it.
+ * A fence line is three or more backticks or tildes at the start of a line (blank space allowed). A
+ * block closes at the next line of the same character, at least as long as the opener, with nothing
+ * after it. A fence that never closes in the scanned text quotes nothing (the CLI may have cut the
+ * block: a collapsed tool preview), and neither does a closing fence whose opener scrolled out of the
+ * window. Lines the TUI prefixes ("⎿ ```", "> ```") are not fence lines.
  */
 function insideFence(clean: string, index: number): boolean {
-  let open = false;
-  for (const line of clean.slice(0, index).split('\n')) if (/^[ \t]*(?:```|~~~)/.test(line)) open = !open;
-  // The match's own line can be the fence line ("```You've hit ..."): the lead check refuses that already.
-  return open;
+  const lines: { text: string; start: number; end: number }[] = [];
+  let at = 0;
+  for (const raw of clean.split('\n')) {
+    lines.push({ text: raw.replace(/\r$/, ''), start: at, end: at + raw.length });
+    at += raw.length + 1;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^[ \t]*(`{3,}|~{3,})/.exec(lines[i].text);
+    if (!open) continue;
+    const mark = open[1];
+    // A backtick fence's info string cannot hold a backtick (that would be inline code).
+    if (mark[0] === '`' && lines[i].text.slice(open[0].length).includes('`')) continue;
+    const closer = new RegExp(`^[ \\t]*\\${mark[0]}{${mark.length},}[ \\t]*$`);
+    let j = i + 1;
+    while (j < lines.length && !closer.test(lines[j].text)) j++;
+    if (j >= lines.length) continue; // never closed: quotes nothing
+    if (index > lines[i].start && index < lines[j].end) return true;
+    i = j; // the next block starts after this one closed
+  }
+  return false;
 }
 
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
