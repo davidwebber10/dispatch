@@ -16,9 +16,15 @@
    hidden behind it (100vh is taller than the visible viewport in Safari). The
    leading 100vh is the fallback for engines without dvh.
    Installed PWA: there's no Safari toolbar and 100dvh mis-reports until the
-   device is rotated, so pin to 100vh (via the .pwa-standalone class on <html>). */
+   device is rotated, so the root is pinned to the viewport instead (below, via the
+   .pwa-standalone class on <html>). */
 html, body, #root { margin: 0; padding: 0; height: 100vh; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
-html.pwa-standalone, html.pwa-standalone body, html.pwa-standalone #root { height: 100vh; }
+html.pwa-standalone, html.pwa-standalone body { height: 100%; }
+/* Since the status bar went opaque (index.html, "black"), the page starts BELOW it, but 100vh is
+   still the whole screen, so the app overflowed by the status bar's height and pushed the
+   bottom tab bar off-screen (2026-11-05). Pinning the root to the layout viewport sizes it to
+   exactly the visible area, with or without a status bar. */
+html.pwa-standalone #root { position: fixed; inset: 0; height: auto; }
 body { background: var(--color-canvas); color: var(--color-text-primary); font-family: var(--font-sans); }
 ::selection { background: rgba(62,207,106,.25); }
 /* xterm computes its scrollbar reservation as offsetWidth-scrollArea OR 15 when
