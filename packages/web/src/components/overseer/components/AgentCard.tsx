@@ -1,8 +1,8 @@
 // Overseer — AgentCard: a tappable card for one of the coordinator's OWN spawn_agent /
-// queue_agent / message_agent / start_agent tool calls. live.convItemsToStream pairs each
-// tool_use/tool_result into an 'agentCard' StreamMessage (see types.StreamMessage's isAgentCard
-// fields) instead of dropping it — this renders that inline in the stream, so a coordinator
-// spawning/steering agents is no longer invisible. Tapping it opens the target agent's lightbox
+// queue_agent / message_agent / start_agent tool calls. live.agencyCards pairs each
+// tool_use/tool_result into an AgentCardInfo, and overseer/timeline.tsx draws it in place of
+// the tool row inside the shared renderTimeline, so a coordinator spawning/steering agents is
+// no longer invisible. Tapping it opens the target agent's lightbox
 // via drillInto, same action WorkRail's chips and Stream's AgencyNoticeMsg notice pills use.
 
 import { useState } from 'react';
@@ -10,9 +10,9 @@ import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
 import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import { AGENT_TYPE } from '../types';
-import type { AgentThread, RenderVals, StreamMessage } from '../types';
+import type { AgentCardAction, AgentCardInfo, AgentThread, RenderVals } from '../types';
 
-const ACTION_LABEL: Record<NonNullable<StreamMessage['agentAction']>, string> = {
+const ACTION_LABEL: Record<AgentCardAction, string> = {
   spawned: 'Spawned',
   queued: 'Queued',
   messaged: 'Messaged',
@@ -38,17 +38,16 @@ function findLiveThread(rv: RenderVals, agentId: string): AgentThread | undefine
   return undefined;
 }
 
-export function AgentCard({ msg }: { msg: StreamMessage }) {
+export function AgentCard({ card }: { card: AgentCardInfo }) {
   const drillInto = useOverseer((s) => s.drillInto);
   const rv = useRenderVals();
   const [hovered, setHovered] = useState(false);
-  const agentId = msg.agentId;
-  if (!agentId) return null;
+  const agentId = card.agentId;
 
   const thread = findLiveThread(rv, agentId);
-  const icon = msg.agentType ? AGENT_TYPE[msg.agentType].icon : FALLBACK_ICON;
-  const name = msg.agentName || agentId;
-  const actionLabel = ACTION_LABEL[msg.agentAction ?? 'spawned'];
+  const icon = card.agentType ? AGENT_TYPE[card.agentType].icon : FALLBACK_ICON;
+  const name = card.name || agentId;
+  const actionLabel = ACTION_LABEL[card.action];
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -100,7 +99,7 @@ export function AgentCard({ msg }: { msg: StreamMessage }) {
             <MonoLabel size={9.5} color="var(--tt)" spacing=".06em">
               {actionLabel}
             </MonoLabel>
-            {msg.agentMission && (
+            {card.mission && (
               <span
                 style={{
                   fontSize: 10.5,
@@ -110,7 +109,7 @@ export function AgentCard({ msg }: { msg: StreamMessage }) {
                   textOverflow: 'ellipsis',
                 }}
               >
-                · {msg.agentMission}
+                · {card.mission}
               </span>
             )}
           </div>

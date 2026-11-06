@@ -8,8 +8,6 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
-import { m } from '../data';
-import { convItemsToStream } from '../live';
 import { ConversationStream } from './Stream';
 
 // jsdom lacks the observers + scroll APIs the MessageScroller primitive touches.
@@ -29,7 +27,7 @@ beforeEach(() => {
   useOverseer.setState({
     coordinatorId: 'coord-1',
     coordinatorProject: 'proj-1',
-    coordinatorStream: [],
+    coordinatorItems: [],
     coordinatorBusy: false,
     coordinatorPending: null,
     coordinatorAnswer: () => {},
@@ -89,10 +87,10 @@ describe('ConversationStream — coordinator AskUserQuestion surfaced inline', (
 
 // Regression test for the actual reported bug: answering the coordinator's own AskUserQuestion
 // used to make it disappear from the conversation entirely — clearing coordinatorPending
-// unmounts the live <AskQuestionCard> above, and (before this fix) nothing in coordinatorStream
-// ever took its place, since convItemsToStream silently dropped AskUserQuestion tool_use/
+// unmounts the live <AskQuestionCard> above, and (before this fix) nothing in the transcript
+// ever took its place, since the old stream adapter silently dropped AskUserQuestion tool_use/
 // tool_result pairs. This reproduces the POST-answer state (pending cleared, the durable
-// tool_result now folded into the stream via convItemsToStream) and asserts the question stays
+// tool_result now in the transcript) and asserts the question stays
 // visible as a collapsed record instead of vanishing.
 describe('ConversationStream — answered AskUserQuestion stays visible (regression)', () => {
   it('shows a collapsed summary once the pending question resolves, instead of nothing', () => {
@@ -103,7 +101,7 @@ describe('ConversationStream — answered AskUserQuestion stays visible (regress
       },
       { kind: 'tool-result', toolId: 'tu-1', text: 'Your questions have been answered: "Have you finished logging in to Salsify?"="Yes, logged in". You can now continue with these answers in mind.' },
     ];
-    useOverseer.setState({ coordinatorPending: null, coordinatorStream: convItemsToStream(items) });
+    useOverseer.setState({ coordinatorPending: null, coordinatorItems: items });
     render(<ConversationStream />);
     // The interactive live card (with its clickable options) is gone...
     expect(screen.queryByRole('button', { name: /Yes, logged in/ })).not.toBeInTheDocument();
@@ -117,7 +115,7 @@ describe('ConversationStream — answered AskUserQuestion stays visible (regress
       { kind: 'tool', toolId: 'tu-2', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Deploy to prod?', options: ['Yes', 'No'] }] }) },
       { kind: 'tool-result', toolId: 'tu-2', text: 'Your questions have been answered: "Deploy to prod?"="Yes". You can now continue with these answers in mind.' },
     ];
-    useOverseer.setState({ coordinatorPending: null, coordinatorStream: convItemsToStream(items) });
+    useOverseer.setState({ coordinatorPending: null, coordinatorItems: items });
     render(<ConversationStream />);
     // "No" (the unselected option) only shows once the record is expanded.
     expect(screen.queryByText('No')).not.toBeInTheDocument();
@@ -135,7 +133,7 @@ describe('ConversationStream — answered AskUserQuestion stays visible (regress
     const items: ConvItem[] = [
       { kind: 'tool', toolId: 'tu-3', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Which env?', options: ['staging', 'prod'] }] }) },
     ];
-    useOverseer.setState({ coordinatorPending: null, coordinatorStream: convItemsToStream(items) });
+    useOverseer.setState({ coordinatorPending: null, coordinatorItems: items });
     render(<ConversationStream />);
     expect(screen.queryByText('Which env?')).not.toBeInTheDocument();
   });
@@ -149,7 +147,7 @@ describe('ConversationStream — answered AskUserQuestion stays visible (regress
 describe('ConversationStream — coordinator message header', () => {
   it('renders the message body without a redundant coordinator name label', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'Stage deploy failed and rolled back cleanly.', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'Stage deploy failed and rolled back cleanly.' }],
     });
     render(<ConversationStream />);
     expect(screen.getByText('Stage deploy failed and rolled back cleanly.')).toBeInTheDocument();
@@ -165,7 +163,7 @@ describe('ConversationStream — Load earlier messages button', () => {
   it('renders when older history exists and pages on click', () => {
     const loadOlder = vi.fn();
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'newest turn' }],
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
       coordinatorLoadOlder: loadOlder,
@@ -182,7 +180,7 @@ describe('ConversationStream — Load earlier messages button', () => {
 
   it('is hidden while an older-page fetch is in flight (the pill owns that state)', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'newest turn' }],
       coordinatorHasMore: true,
       coordinatorLoadingOlder: true,
       coordinatorLoadOlder: vi.fn(),
@@ -193,7 +191,7 @@ describe('ConversationStream — Load earlier messages button', () => {
 
   it('is hidden once hasMore is exhausted', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'newest turn' }],
       coordinatorHasMore: false,
       coordinatorLoadingOlder: false,
       coordinatorLoadOlder: vi.fn(),
@@ -205,7 +203,7 @@ describe('ConversationStream — Load earlier messages button', () => {
   it('is hidden when the loaded coordinator belongs to ANOTHER project (cross-tab gate)', () => {
     useProjects.setState({ activeId: 'proj-OTHER' });
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'newest turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'newest turn' }],
       coordinatorHasMore: true,
       coordinatorLoadingOlder: false,
       coordinatorLoadOlder: vi.fn(),
@@ -220,7 +218,7 @@ describe('ConversationStream — Load earlier messages button', () => {
 describe('ConversationStream — API retry indicator', () => {
   it('replaces "Working…" with the retry status while a model call is being retried', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'a turn' }],
       coordinatorBusy: true,
       coordinatorApiRetry: { attempt: 3, maxRetries: 10, errorStatus: 529 },
     });
@@ -231,7 +229,7 @@ describe('ConversationStream — API retry indicator', () => {
 
   it('shows the plain Working indicator when no retry is in flight', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'a turn' }],
       coordinatorBusy: true,
       coordinatorApiRetry: null,
     });
@@ -241,7 +239,7 @@ describe('ConversationStream — API retry indicator', () => {
 
   it('names a non-529 status generically', () => {
     useOverseer.setState({
-      coordinatorStream: [m('overseer', 'Control Plane', 'a turn', '9:02', 1)],
+      coordinatorItems: [{ kind: 'assistant', text: 'a turn' }],
       coordinatorBusy: true,
       coordinatorApiRetry: { attempt: 1, maxRetries: 10, errorStatus: 500 },
     });
@@ -253,21 +251,19 @@ describe('ConversationStream — API retry indicator', () => {
 // ---- Stream render parity: the new machinery/thinking/status/footer/notice branches ----
 describe('ConversationStream — render parity messages', () => {
   it('renders a machinery message as tool rows', () => {
-    const stream = convItemsToStream([
+    useOverseer.setState({ coordinatorItems: [
       { kind: 'tool', toolId: 'b1', toolName: 'Bash', toolInput: JSON.stringify({ command: 'ls' }) },
       { kind: 'tool-result', toolId: 'b1', text: 'ok' },
-    ] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    ] as ConvItem[] });
     render(<ConversationStream />);
     expect(screen.getByText('Bash')).toBeInTheDocument();
   });
 
   it('renders a report_status message as the StatusNotice card', () => {
-    const stream = convItemsToStream([
+    useOverseer.setState({ coordinatorItems: [
       { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: JSON.stringify({ state: 'blocked', summary: 'waiting on CI', blocker: 'run 42 pending' }) },
       { kind: 'tool-result', toolId: 'rs1', text: '{"ok":true}' },
-    ] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    ] as ConvItem[] });
     render(<ConversationStream />);
     expect(screen.getByTestId('status-notice')).toBeInTheDocument();
     expect(screen.getByText('BLOCKED')).toBeInTheDocument();
@@ -275,22 +271,19 @@ describe('ConversationStream — render parity messages', () => {
   });
 
   it('renders thinking collapsed with its preview text', () => {
-    const stream = convItemsToStream([{ kind: 'thinking', text: 'weighing the options carefully' }] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'thinking', text: 'weighing the options carefully' }] as ConvItem[] });
     render(<ConversationStream />);
     expect(screen.getByText(/weighing the options/)).toBeInTheDocument();
   });
 
   it('renders a result footer with cost and tokens', () => {
-    const stream = convItemsToStream([{ kind: 'result', costUsd: 0.5, tokensIn: 1000, tokensOut: 200, durationMs: 3000 }] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'result', costUsd: 0.5, tokensIn: 1000, tokensOut: 200, durationMs: 3000 }] as ConvItem[] });
     render(<ConversationStream />);
     expect(screen.getByText(/1,200 tok/)).toBeInTheDocument();
   });
 
   it('renders a background-task notice as a muted line', () => {
-    const stream = convItemsToStream([{ kind: 'notice', text: 'Background task finished (exit 0)' }] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'notice', text: 'Background task finished (exit 0)' }] as ConvItem[] });
     render(<ConversationStream />);
     expect(screen.getByText('Background task finished (exit 0)')).toBeInTheDocument();
   });
@@ -323,11 +316,10 @@ describe('ConversationStream — machinery file links', () => {
     useTabs.setState({ byProject: {} } as never);
     useUI.setState({ pendingOpenTab: null } as never);
 
-    const stream = convItemsToStream([
+    useOverseer.setState({ coordinatorItems: [
       { kind: 'tool', toolId: 'r1', toolName: 'Read', toolInput: JSON.stringify({ file_path: '/repo/notes.md' }), toolFile: '/repo/notes.md' },
       { kind: 'tool-result', toolId: 'r1', text: 'contents' },
-    ] as ConvItem[]);
-    useOverseer.setState({ coordinatorStream: stream });
+    ] as ConvItem[] });
     render(<ConversationStream />);
 
     fireEvent.click(screen.getByText('Read'));            // expand the settled tool row

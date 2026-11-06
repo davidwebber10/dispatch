@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
 import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
@@ -20,6 +20,7 @@ import { useDictation } from '../../../hooks/useDictation';
 import { PillComposer } from '../../composer/PillComposer';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { InsightText } from '../../InsightText';
+import type { LedgerChips } from '../../../lib/ledgerRefs';
 import { ThreadDocsContext, useThreadDocs, useThreadDocChips } from '../../threadDocs';
 import { DocViewer } from '../../endless/DocViewer';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
@@ -109,23 +110,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     if (e.currentTarget.scrollTop < 120 && hasMore && !loadingOlder) loadOlder();
   }
 
-  // Detect a loadOlder() prepend (items[0] changed, but the array isn't a full reset — the
-  // PREVIOUS first item is still present somewhere later on) and remember that previous
-  // first item as a permanent group boundary. Without this, renderTimeline's turn-grouping
-  // (below) would silently MERGE the newly-prepended older content into whatever group used
-  // to start the array — same top-level DOM node, just grown taller in place — which
-  // MessageScroller's preserveScrollOnPrepend can't compensate for (it only recognizes a
-  // prepend as NEW SIBLING nodes appearing before an unmoved existing one, not an existing
-  // node silently growing). Forcing a flush at each boundary turns every older page into
-  // its own new sibling group instead, matching what the scroller expects — see its use in
-  // renderTimeline. Plain ref writes during render (no effect) — same pattern as `draftRef`
-  // above, needed here because renderTimeline() below must see this render's boundary.
-  const prevItemsRef = useRef<ConvItem[]>([]);
-  const pageBoundariesRef = useRef<Set<ConvItem>>(new Set());
-  if (items.length && prevItemsRef.current.length && items[0] !== prevItemsRef.current[0]) {
-    pageBoundariesRef.current.add(prevItemsRef.current[0]);
-  }
-  prevItemsRef.current = items;
+  // loadOlder() page starts, as permanent group boundaries for renderTimeline (see usePageBoundaries).
+  const pageBoundaries = usePageBoundaries(items);
 
   const [draft, setDraft, clearDraft] = useDraft(terminalId);
   // Status cards the reader closed with ×, scoped to this thread (stores/dismissedNotices.ts).
@@ -244,7 +230,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // stays visibility:hidden until the open/reconnect replay burst settles, so the reader
   // lands at the bottom with zero visible catch-up motion. A pending question forces the
   // view visible — the CLI is parked on stdin, nothing is bursting, and the question must
-  // never be swallowed by the gate. See Stream.tsx's `ready` doc for the full mechanics.
+  // never be swallowed by the gate. See StickToEndOnLoad for the full mechanics.
   const [ready, setReady] = useState(false);
   const handleReady = useCallback(() => setReady(true), []);
   const hasPendingQuestion = !!pending?.questions?.length;
@@ -278,7 +264,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundariesRef.current, relayName, loginItem, noticeFilter)
+                renderTimeline(items, openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -286,11 +272,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem, noticeFilter)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundariesRef.current, relayName, loginItem)}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -459,6 +445,55 @@ function stableId(it: ConvItem): string {
   return id;
 }
 
+/**
+ * Detect a loadOlder() prepend (items[0] changed, but the array isn't a full reset — the
+ * PREVIOUS first item is still present somewhere later on) and remember that previous
+ * first item as a permanent group boundary. Without this, renderTimeline's turn-grouping
+ * would silently MERGE the newly-prepended older content into whatever group used to start
+ * the array — same top-level DOM node, just grown taller in place — which MessageScroller's
+ * preserveScrollOnPrepend can't compensate for (it only recognizes a prepend as NEW SIBLING
+ * nodes appearing before an unmoved existing one, not an existing node silently growing).
+ * Forcing a flush at each boundary turns every older page into its own new sibling group
+ * instead, matching what the scroller expects — see its use in renderTimeline. Plain ref
+ * writes during render (no effect), because renderTimeline() must see this render's
+ * boundary. Shared by every surface that renders through renderTimeline (the thread
+ * ChatView and the Control Plane's ConversationStream).
+ */
+export function usePageBoundaries(items: ConvItem[]): Set<ConvItem> {
+  const prevItemsRef = useRef<ConvItem[]>([]);
+  const pageBoundariesRef = useRef<Set<ConvItem>>(new Set());
+  if (items.length && prevItemsRef.current.length && items[0] !== prevItemsRef.current[0]) {
+    pageBoundariesRef.current.add(prevItemsRef.current[0]);
+  }
+  prevItemsRef.current = items;
+  return pageBoundariesRef.current;
+}
+
+/**
+ * Surface-specific hooks into renderTimeline, so one renderer serves every transcript view.
+ * Every hook is optional; leaving one out keeps the thread view's own rendering. Used by the
+ * Control Plane (overseer/timeline.tsx's controlPlaneTimeline) for its agent cards, its
+ * agency notices and its ledger chips.
+ */
+export interface TimelineExtensions {
+  /** A tool call drawn as a custom card, given its paired result (if any yet). Return
+   *  undefined to fall through to the default rendering, or null to draw nothing — the
+   *  call's paired result is then hidden too. The card sits in the assistant turn's column,
+   *  outside any machinery strip, and is never folded into a same-tool ToolGroup. */
+  toolCard?(tool: ConvItem, result: ConvItem | undefined): ReactNode | undefined;
+  /** True to drop a standalone tool result (one whose call is not in the window). */
+  hideResult?(result: ConvItem): boolean;
+  /** A user turn drawn as something other than the human's bubble (e.g. a daemon notice that
+   *  arrived on the user role). Return undefined for the default UserBubble, null to drop the
+   *  turn. A custom row is its own centered row: it is not part of the human's turn, so it
+   *  draws no turn separator and does not group with the bubbles around it. */
+  userRow?(item: ConvItem): ReactNode | undefined;
+  /** Assistant prose. Default: <AssistantText>. */
+  prose?(text: string): ReactNode;
+  /** Plain (non-markdown) text inside user bubbles and report_status cards. Default: the text. */
+  plainText?(text: string): ReactNode;
+}
+
 /** A staged (pre-send) image preview with an × to drop it before sending. Mirrors the
  *  coordinator Composer's StagedThumbnail (packages/web/src/components/overseer/components/Composer.tsx). */
 function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
@@ -481,8 +516,8 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
  * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
  * grouping each assistant turn into ONE row: a flush-left column holding that
  * turn's text / thinking / tool cards / footer. A `user` turn breaks the group
- * and renders its own right-aligned bubble. `pageBoundaries` (see ChatView's doc
- * comment on pageBoundariesRef) also forces a break — otherwise a loadOlder() prepend
+ * and renders its own right-aligned bubble. `pageBoundaries` (see usePageBoundaries)
+ * also forces a break — otherwise a loadOlder() prepend
  * could silently merge into a group that already existed, defeating scroll preservation.
  */
 /** Who relayed a coordinator-sent turn in this thread: 'Chat' for a thread Chat started, else the Dispatch name. */
@@ -501,7 +536,7 @@ export function loginItemFor(type: string | undefined, items: ConvItem[]): ConvI
   return null;
 }
 
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter) {
+export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter, ext?: TimelineExtensions) {
   // Map tool_use id -> its result item, so paired results aren't rendered standalone.
   const resultById = new Map<string, ConvItem>();
   // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
@@ -568,6 +603,18 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     if (pageBoundaries.has(it)) flushGroup();
 
     if (it.kind === 'user') {
+      const custom = ext?.userRow?.(it);
+      if (custom === null) continue;
+      if (custom !== undefined) {
+        flushGroup();
+        rows.push(
+          <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
+            {custom}
+          </MessageScroller.Item>,
+        );
+        lastRowWasUser = false;
+        continue;
+      }
       flushGroup();
       // Turn separator: a hairline between the previous assistant block and this user turn,
       // so long threads read as clearly delimited exchanges (redesign). Not before the
@@ -578,7 +625,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} />
+          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} />
         </MessageScroller.Item>,
       );
       lastRowWasUser = true;
@@ -603,10 +650,20 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       continue;
     }
 
+    // A surface's own card for this call (ext.toolCard) wins over everything below,
+    // including the same-tool run grouping. Resolved with the same pairing rule as the
+    // single-call path: by id, else by adjacency (marked consumed so it doesn't re-render).
+    let custom: React.ReactNode | undefined;
+    if (it.kind === 'tool' && ext?.toolCard) {
+      const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
+      custom = ext.toolCard(it, result);
+      if (custom !== undefined && result && !it.toolId) consumed.add(result);
+    }
+
     // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
     // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
     // AskUserQuestion is excluded — it has live-overlay special-casing below.
-    if (it.kind === 'tool' && it.toolName !== 'AskUserQuestion' && !isReportStatusTool(it.toolName)) {
+    if (custom === undefined && it.kind === 'tool' && it.toolName !== 'AskUserQuestion' && !isReportStatusTool(it.toolName)) {
       const run: ConvItem[] = [it];
       // Tool-result items encountered while scanning the run, IN ENCOUNTER ORDER — used
       // below for en-bloc pairing of toolId-less members (see the `pairs` comment). Not
@@ -661,7 +718,8 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     }
 
     let node: React.ReactNode = null;
-    if (it.kind === 'assistant') node = <AssistantText text={it.text ?? ''} />;
+    if (custom !== undefined) node = custom;
+    else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '') : <AssistantText text={it.text ?? ''} />;
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
@@ -695,7 +753,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         // no gap in the turn. The wrapper's own null-return is only the safety net for callers
         // that pass no filter.
         if (noticeHidden(notices, reportStatusKey(it.toolInput))) continue;
-        node = <DismissableStatusNotice scope={notices?.scope} input={it.toolInput} />;
+        node = <DismissableStatusNotice scope={notices?.scope} input={it.toolInput} renderText={ext?.plainText} />;
       } else {
         // Generic machinery — routes through pushMach so consecutive calls share one
         // bordered block, and so the header's Hide-tool-calls toggle can drop it.
@@ -705,6 +763,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
+      if (ext?.hideResult?.(it)) continue;               // ...or a surface hides it outright
       pushMach(id, <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>);
       continue;
     } else if (it.kind === 'result') node = <ResultFooter item={it} login={it === loginItem} />;
@@ -889,7 +948,7 @@ function EmptyState({ model }: { model?: string }) {
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
 // `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
-export function UserBubble({ text, source, grouped = false, relayName }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string }) {
+export function UserBubble({ text, source, grouped = false, relayName, renderText }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
@@ -920,7 +979,7 @@ export function UserBubble({ text, source, grouped = false, relayName }: { text:
           wordBreak: 'break-word',
         }}
       >
-        {text}
+        {renderText ? renderText(text) : text}
       </div>
     </div>
   );
@@ -929,12 +988,13 @@ export function UserBubble({ text, source, grouped = false, relayName }: { text:
 // Assistant prose flows through the SHARED <InsightText>; the chat surface uses the redesign's
 // left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
 // callouts. The wrapper sets the redesign's reading size — md-view inherits it.
-function AssistantText({ text }: { text: string }) {
+// `ledger` (the Control Plane) draws known ledger numbers as chips.
+export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerChips }) {
   const docs = useThreadDocs();
   if (!text) return null;
   return (
     <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
-      <InsightText source={text} scheme="global" variant="rail" docs={docs} />
+      <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} />
     </div>
   );
 }
@@ -1020,7 +1080,7 @@ export function ResultFooter({ item, login = false }: { item: ConvItem; login?: 
  * (pre-paint): the stick lands before the browser paints each backfill frame, so the thread
  * opens ALREADY at the bottom instead of visibly scrolling top→bottom through its history.
  */
-function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: string; count: number; onReady?: () => void }) {
+export function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: string | null; count: number; onReady?: () => void }) {
   const { scrollToEnd } = useMessageScroller();
   const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
   const settledRef = useRef(false);
@@ -1085,7 +1145,7 @@ function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: string; 
  * nothing to scroll and onViewportScroll's near-top trigger never fires, stranding `hasMore:
  * true` history that's unreachable through the UI. See useBootstrapOlderPages's doc comment.
  */
-function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
+export function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
   useBootstrapOlderPages(props);
   return null;
 }
@@ -1130,7 +1190,7 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
  * in and out of that list right alongside the real prepend (both land in the same React
  * commit) can race that diff. Floating it outside Content sidesteps that entirely.
  */
-function LoadingOlderPill({ show }: { show: boolean }) {
+export function LoadingOlderPill({ show }: { show: boolean }) {
   if (!show) return null;
   return (
     <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
@@ -1140,7 +1200,7 @@ function LoadingOlderPill({ show }: { show: boolean }) {
 }
 
 /** shadcn MessageScroller.Button — floating "jump to latest", shown only off-tail. */
-function JumpButton() {
+export function JumpButton() {
   const { end } = useMessageScrollerScrollable();
   if (!end) return null;
   return (

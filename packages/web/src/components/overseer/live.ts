@@ -4,25 +4,25 @@
 // Pure functions that map Dispatch's structured-thread substrate (the coordinator
 // conversation as ConvItem[], plus the project's structured child terminals + their
 // live status) into the Overseer view-model shapes declared in types.ts. No React,
-// no store, no I/O — store.ts/useRenderVals() compose these over live data and keep
-// the RenderVals shape identical so overseer/components/* stay untouched.
+// no store, no I/O — store.ts/useRenderVals() compose these over live data. The
+// coordinator transcript itself stays ConvItem[] and renders through the thread view's
+// renderTimeline; agencyCards/isOrphanAgencyResult below feed overseer/timeline.tsx.
 //
 // Config conventions (ride in terminals.config JSON — no migration for incr. 1):
 //   coordinator → { transport: 'structured', role: 'coordinator' }            (excluded here)
 //   worker      → { transport: 'structured', agentType, mission? }            (managed)
 
 import type { ConvItem, PendingPermission, PermissionQuestion, Terminal } from '../../api/types';
-import { isReportStatusTool, parseReportStatus } from '../tabs/chat/reportStatus';
-import { btn, m, mission as makeMission, outc, th } from './data';
+import { btn, mission as makeMission, outc, th } from './data';
 import {
   AGENT_TYPE,
   type AgentCardAction,
+  type AgentCardInfo,
   type AgentThread,
   type AgentType,
   type Mission,
   type Need,
   type Outcome,
-  type StreamMessage,
   type ThreadStatus,
 } from './types';
 // The wire harness types (claude-code/codex/grok/opencode) — mirrors the daemon's
@@ -200,35 +200,12 @@ function summaryText(live: number, done: number): string {
 }
 
 /**
- * An 'image' ConvItem → an image StreamMessage. Constructed inline (not via the m()
- * factory, which only knows text kinds) so it stays disjoint from data.ts; carries the
- * already-resolved src/alt straight through to <ChatImage>. Key matches m()'s "s"+i scheme.
- * `fromUser` marks a picture the HUMAN attached on their own turn so the stream attributes
- * it to "You" (right-aligned) instead of rendering it as a Dispatch turn.
- */
-function imageMessage(imageUrl: string, imageAlt: string | undefined, i: string, fromUser: boolean): StreamMessage {
-  return {
-    kind: 'image',
-    who: fromUser ? 'You' : null,
-    text: '',
-    time: '',
-    key: `s${i}`,
-    isUser: fromUser,
-    isOverseer: false,
-    isNote: false,
-    isImage: true,
-    imageUrl,
-    imageAlt,
-  };
-}
-
-/**
  * agency-mcp tool names (packages/core/src/overseer/agency-mcp.ts) whose tool_use/
- * tool_result PAIR gets turned into an AgentCard instead of being dropped. Each returns
+ * tool_result PAIR gets turned into an AgentCard instead of a tool row. Each returns
  * `{ agentId, ... }` on success (verified against the tool implementations) — spawn/queue
  * also return `label` (the resolved display name) and an optional `mission`; message/start
  * return only `{ ok, agentId }`, so their card's name/type/mission are backfilled from the
- * `knownAgents` map built while walking earlier spawn/queue results in the same timeline.
+ * `knownAgents` map built from the spawn/queue results in the same window.
  */
 const AGENT_TOOL_ACTION: Record<string, AgentCardAction> = {
   spawn_agent: 'spawned',
@@ -251,184 +228,84 @@ function agencyToolName(toolName?: string): string | undefined {
   return undefined;
 }
 
-/** An 'agentCard' ConvItem pair → an agentCard StreamMessage. Mirrors imageMessage's shape:
- * constructed inline (not via the m() factory) so it stays disjoint from data.ts. */
-function agentCardMessage(
-  agentId: string,
-  name: string,
-  agentType: AgentType | undefined,
-  mission: string | undefined,
-  action: AgentCardAction,
-  key: string,
-): StreamMessage {
-  return {
-    kind: 'agentCard',
-    who: null,
-    text: '',
-    time: '',
-    key,
-    isUser: false,
-    isOverseer: false,
-    isNote: false,
-    isAgentCard: true,
-    agentId,
-    agentName: name,
-    agentType,
-    agentMission: mission,
-    agentAction: action,
-  };
+function parseJsonObject(text?: string): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const v: unknown = JSON.parse(text);
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null; // still streaming / malformed / not a JSON tool result
+  }
 }
 
-/** An answered AskUserQuestion tool_use/tool_result pair → an answeredQuestion StreamMessage.
- * Mirrors imageMessage/agentCardMessage's shape: constructed inline (not via the m() factory,
- * which only knows text kinds) so it stays disjoint from data.ts. */
-function answeredQuestionMessage(questions: PermissionQuestion[], resultText: string, key: string): StreamMessage {
-  return {
-    kind: 'answeredQuestion',
-    who: null,
-    text: '',
-    time: '',
-    key,
-    isUser: false,
-    isOverseer: false,
-    isNote: false,
-    isAnsweredQuestion: true,
-    questions,
-    resultText,
-  };
-}
-
-// Stable fallback key for a ConvItem with no `uuid` (e.g. a plain 'user'/'assistant' item
-// built by useStructuredChat's non-streaming reconcile path). Keyed by OBJECT IDENTITY, not
-// array index: loadOlder() prepends an older page in FRONT of existing items, shifting every
-// later index — an index-derived key would then force React to unmount+remount that
-// StreamMessage's node on every page, breaking MessageScroller's preserveScrollOnPrepend
-// (it tracks the reader's scroll anchor by DOM node identity). Item objects are never
-// mutated in place after creation, so a WeakMap-cached key stays attached to the same
-// logical item for its whole life in `items` (mirrors ChatView.tsx's stableId).
-let fallbackKeyCounter = 0;
-const fallbackKeys = new WeakMap<ConvItem, string>();
-function stableKey(it: ConvItem): string {
-  if (it.uuid) return it.uuid;
-  let key = fallbackKeys.get(it);
-  if (!key) { key = `fallback-${++fallbackKeyCounter}`; fallbackKeys.set(it, key); }
-  return key;
-}
-
-/** The coordinator conversation (ConvItem timeline) → the Overseer message stream. */
-export function convItemsToStream(items: ConvItem[]): StreamMessage[] {
-  const out: StreamMessage[] = [];
-  // Consecutive generic tool/tool-result items buffer here and flush as ONE 'machinery'
-  // StreamMessage (rendered by the shared MachineryStrip) the moment anything that is
-  // not machinery arrives — mirroring renderTimeline's pushMach/flushMach strips.
-  let machinery: ConvItem[] = [];
-  // toolIds of every generic call routed into a machinery strip, across the whole window —
-  // the orphan-agency-result drop below must NOT fire for a result whose call is right
-  // here in a strip (e.g. complete_agent's {ok,agentId}), or the call renders "running…"
-  // forever. Only a result whose call truly fell outside the window gets dropped.
-  const machineryCallIds = new Set<string>();
-  const flushMachinery = () => {
-    if (!machinery.length) return;
-    const first = machinery[0];
-    const key = `mach${first.toolId ?? first.uuid ?? out.length}`;
-    out.push({ ...m('machinery', null, '', '', key), key, isMachinery: true, machineryItems: machinery });
-    machinery = [];
-  };
-  // report_status tool_use ids whose `{ok:true}` result must be swallowed (the status
-  // itself renders as a card; a stray result row under it would double the record).
-  const statusIds = new Set<string>();
-  // Pairs an agent tool_use (by toolId) with its later tool_result — tool calls always
-  // precede their result in the timeline, so a single forward pass suffices.
-  const pendingCalls = new Map<string, { toolName: string; args: Record<string, unknown> }>();
-  // Same pairing, for the coordinator's OWN AskUserQuestion tool_use/tool_result — kept
-  // separate from pendingCalls (a different StreamMessage shape) though never the same toolId.
-  const pendingQuestions = new Map<string, PermissionQuestion[]>();
-  // agentId -> the name/type/mission resolved from a successful spawn_agent/queue_agent in
-  // THIS window, so a later message_agent/start_agent card (whose args are just agentId+text)
-  // can still show a real name/icon instead of a bare id.
-  const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
-
-  items.forEach((it) => {
-    const key = stableKey(it);
-    if (it.kind === 'user' && it.text?.trim()) { flushMachinery(); out.push(m('user', 'You', it.text, '', key)); }
-    else if (it.kind === 'assistant' && it.text?.trim()) { flushMachinery(); out.push(m('overseer', 'Control Plane', it.text, '', key)); }
-    else if (it.kind === 'image' && it.imageUrl) { flushMachinery(); out.push(imageMessage(it.imageUrl, it.imageAlt, key, it.imageFromUser === true)); }
-    else if (it.kind === 'thinking' && it.text?.trim()) {
-      flushMachinery();
-      out.push({ ...m('thinking', null, it.text, '', `th${key}`), isThinking: true });
-    } else if (it.kind === 'result') {
-      flushMachinery();
-      out.push({ ...m('footer', null, '', '', `rf${key}`), isFooter: true, footerItem: it });
-    } else if (it.kind === 'notice' && it.text?.trim()) {
-      flushMachinery();
-      out.push({ ...m('notice', null, it.text, '', `tn${key}`), isNotice: true });
-    } else if (it.kind === 'tool' && it.toolId && it.toolName === 'AskUserQuestion') {
-      try {
-        const input = it.toolInput ? JSON.parse(it.toolInput) : {};
-        if (Array.isArray(input.questions)) pendingQuestions.set(it.toolId, input.questions);
-      } catch { /* still streaming / malformed input */ }
-    } else if (it.kind === 'tool' && it.toolId && agencyToolName(it.toolName)) {
-      let args: Record<string, unknown> = {};
-      try { args = it.toolInput ? JSON.parse(it.toolInput) : {}; } catch { /* still streaming / malformed input */ }
-      pendingCalls.set(it.toolId, { toolName: agencyToolName(it.toolName)!, args });
-    } else if (it.kind === 'tool' && isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
-      // The coordinator's own declared status — a card, not a collapsed tool row (the
-      // same burying fix the agent ChatView and the CLI view already have).
-      flushMachinery();
-      if (it.toolId) statusIds.add(it.toolId);
-      out.push({ ...m('status', null, '', '', `rs${key}`), isStatus: true, statusInput: it.toolInput });
-    } else if (it.kind === 'tool') {
-      // Generic machinery (Bash/Read/Edit/…, or a still-streaming report_status whose
-      // input doesn't parse yet): buffer into the current strip.
-      if (it.toolId) machineryCallIds.add(it.toolId);
-      machinery.push(it);
-    } else if (it.kind === 'tool-result' && it.toolId && pendingQuestions.has(it.toolId)) {
-      // The coordinator's own AskUserQuestion just got its (durable, transcript-backed)
-      // answer — render the collapsed record instead of dropping the pair silently, which
-      // is what happened before this branch existed (nothing here ever matched a
-      // 'tool'/AskUserQuestion or its paired 'tool-result', so both fell through unhandled).
-      flushMachinery();
-      out.push(answeredQuestionMessage(pendingQuestions.get(it.toolId)!, it.text ?? '', `aq${key}`));
-    } else if (it.kind === 'tool-result' && it.toolId && statusIds.has(it.toolId)) {
-      // report_status's `{ok:true}` — already represented by the status card above.
-    } else if (it.kind === 'tool-result' && it.toolId && pendingCalls.has(it.toolId) && !it.isError) {
-      const call = pendingCalls.get(it.toolId)!;
-      let result: Record<string, unknown> = {};
-      try { result = it.text ? JSON.parse(it.text) : {}; } catch { return; } // not a JSON tool result
-      const agentId = typeof result.agentId === 'string' ? result.agentId : undefined;
-      if (!agentId) return;
-      flushMachinery();
-      const action = AGENT_TOOL_ACTION[call.toolName];
-      if (call.toolName === 'spawn_agent' || call.toolName === 'queue_agent') {
-        const name = (typeof result.label === 'string' && result.label.trim()) || 'Agent';
-        const agentType = asAgentType(call.args.agentType);
-        const missionName = typeof result.mission === 'string' && result.mission.trim() ? result.mission.trim() : undefined;
-        knownAgents.set(agentId, { name, agentType, mission: missionName });
-        out.push(agentCardMessage(agentId, name, agentType, missionName, action, `ac${key}`));
-      } else {
-        const known = knownAgents.get(agentId);
-        out.push(agentCardMessage(agentId, known?.name ?? agentId, known?.agentType, known?.mission, action, `ac${key}`));
-      }
-    } else if (it.kind === 'tool-result') {
-      // An agency result whose call fell outside the window was always dropped — keep
-      // that: its text is internal JSON (agentId bookkeeping), not output to show. A
-      // result whose call sits in a machinery strip is NOT an orphan — it must reach the
-      // strip so the call doesn't render as running forever (complete_agent's {ok,agentId}).
-      if (it.toolId && !pendingCalls.has(it.toolId) && !machineryCallIds.has(it.toolId)) {
-        try {
-          const parsed: unknown = it.text ? JSON.parse(it.text) : null;
-          if (parsed && typeof parsed === 'object' && typeof (parsed as Record<string, unknown>).agentId === 'string') return;
-        } catch { /* not JSON — a real tool's output */ }
-      }
-      // A generic tool's result (paired, adjacency-paired, or orphaned): the strip's
-      // own pairing rules sort it out (see MachineryStrip).
-      machinery.push(it);
+/**
+ * The Control Plane's agent cards for one transcript window, keyed by the agency call's
+ * toolId (pure — no React; overseer/timeline.tsx draws them through renderTimeline):
+ *
+ *   - a successful spawn/queue/message/start (JSON result with an agentId) → its card;
+ *   - a call with no result yet, or whose result is not JSON / carries no agentId → null
+ *     (draw nothing — the call has nothing to show the human yet);
+ *   - a call whose result is an error → no entry, so it draws as an ordinary tool row
+ *     with its error.
+ *
+ * Names are resolved over the WHOLE window first (knownAgents), so a message_agent/
+ * start_agent card — whose args are just agentId+text — shows the spawned agent's real
+ * name, type and mission instead of a bare id.
+ */
+export function agencyCards(items: ConvItem[]): Map<string, AgentCardInfo | null> {
+  const calls: Array<{ toolId: string; toolName: string; args: Record<string, unknown> }> = [];
+  const results = new Map<string, ConvItem>();
+  for (const it of items) {
+    if (it.kind === 'tool' && it.toolId) {
+      const bare = agencyToolName(it.toolName);
+      if (bare) calls.push({ toolId: it.toolId, toolName: bare, args: parseJsonObject(it.toolInput) ?? {} });
+    } else if (it.kind === 'tool-result' && it.toolId) {
+      results.set(it.toolId, it);
     }
-  });
-  flushMachinery();
+  }
+
+  // agentId -> the name/type/mission a successful spawn_agent/queue_agent resolved in this window.
+  const knownAgents = new Map<string, { name: string; agentType: AgentType; mission?: string }>();
+  const parsed = new Map<string, Record<string, unknown> | null>();
+  for (const call of calls) {
+    const r = results.get(call.toolId);
+    if (!r || r.isError) continue;
+    const result = parseJsonObject(r.text);
+    parsed.set(call.toolId, result);
+    const agentId = typeof result?.agentId === 'string' ? result.agentId : undefined;
+    if (!agentId || (call.toolName !== 'spawn_agent' && call.toolName !== 'queue_agent')) continue;
+    knownAgents.set(agentId, {
+      name: (typeof result!.label === 'string' && result!.label.trim()) || 'Agent',
+      agentType: asAgentType(call.args.agentType),
+      mission: typeof result!.mission === 'string' && result!.mission.trim() ? result!.mission.trim() : undefined,
+    });
+  }
+
+  const out = new Map<string, AgentCardInfo | null>();
+  for (const call of calls) {
+    const r = results.get(call.toolId);
+    if (r?.isError) continue; // drawn as an ordinary tool row
+    const result = parsed.get(call.toolId);
+    const agentId = typeof result?.agentId === 'string' ? result.agentId : undefined;
+    if (!agentId) { out.set(call.toolId, null); continue; }
+    const action = AGENT_TOOL_ACTION[call.toolName];
+    const known = knownAgents.get(agentId);
+    out.set(call.toolId, { agentId, name: known?.name ?? agentId, agentType: known?.agentType, mission: known?.mission, action });
+  }
   return out;
 }
 
+/**
+ * A standalone agency result whose call fell outside the window (its JSON carries an
+ * agentId): internal bookkeeping, not output to show — the Control Plane drops it. Only
+ * ever asked of a result renderTimeline could NOT pair with a call in the window, so a
+ * result whose call is right there (complete_agent's {ok,agentId}) still pairs with it
+ * and never renders "running…" forever. An id-less result is never dropped.
+ */
+export function isOrphanAgencyResult(it: ConvItem): boolean {
+  if (it.kind !== 'tool-result' || !it.toolId) return false;
+  return typeof parseJsonObject(it.text)?.agentId === 'string';
+}
 /**
  * Group the project's structured worker threads by mission (live → working/waiting;
  * done → outcome). Archived workers (completed via complete_agent — fetched separately

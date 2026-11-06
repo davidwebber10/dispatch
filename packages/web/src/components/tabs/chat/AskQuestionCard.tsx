@@ -282,7 +282,7 @@ export function selectedOptionLabels(answer: string, labels: string[]): Set<stri
  * rendered in the permanent timeline once the interactive <AskQuestionCard> above resolves
  * (its paired tool_result has landed), so an answered question stays in the conversation
  * instead of vanishing the instant it's answered. See ChatView's renderTimeline and
- * live.convItemsToStream for where this replaces the old "just drop it" behavior.
+ * renderTimeline (ChatView.tsx) for where this replaces the old "just drop it" behavior.
  */
 export function AnsweredQuestionCard({ questions, resultText }: { questions: PermissionQuestion[]; resultText: string }) {
   const [open, setOpen] = useState(false);

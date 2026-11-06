@@ -7,8 +7,8 @@ import { isSafeDownloadUrl } from '../lib/safeUrl';
 
 /**
  * ChatImage — the shared, DUMB image renderer for BOTH chat surfaces: the agent
- * ChatView's image ConvItem and the overseer's StreamMessage. Props are PRIMITIVES
- * ONLY (`src` / `alt`) — deliberately no `ConvItem` / `StreamMessage` coupling — so
+ * ChatView's image ConvItem and other surfaces. Props are PRIMITIVES
+ * ONLY (`src` / `alt`) — deliberately no `ConvItem` coupling — so
  * either surface can feed it whatever it already has without a shared item type.
  *
  * Renders a bounded, lazy-loaded thumbnail that matches the chat's rounded-card style;

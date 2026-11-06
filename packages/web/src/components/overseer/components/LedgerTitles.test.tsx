@@ -4,7 +4,6 @@
 // the status and the answer. An item without a title looks as it does today.
 import { render, screen, fireEvent, cleanup, within, renderHook, act } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
-import { m } from '../data';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { useLedgerCard, useLedgerFolds } from '../../../stores/ledgerCard';
@@ -14,7 +13,6 @@ import { LedgerRefPopover, useLedgerChips } from './LedgerChips';
 import { chipLabel } from '../../../lib/ledgerRefs';
 import { FIXTURE, NOW } from '../ledger-fixture';
 import type { CardItem, LedgerCard as Card } from '../../../api/types';
-import type { StreamMessage } from '../types';
 
 const TITLES: Record<number, string> = { 14: 'Clean nights before live mode', 9: 'Old tag check', 20: 'Check the staging banner', 40: 'Staging bucket for the export' };
 const titled = (i: CardItem): CardItem => ({ ...i, title: TITLES[i.seq] ?? null });
@@ -40,7 +38,7 @@ beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
   localStorage.clear();
   useProjects.setState({ activeId: 'proj-1' });
-  useOverseer.setState({ coordinatorId: 'coord-1', coordinatorProject: 'proj-1', coordinatorStream: [], coordinatorBusy: false, coordinatorPending: null, coordinatorAnswer: () => {}, mobileTab: 'stream' });
+  useOverseer.setState({ coordinatorId: 'coord-1', coordinatorProject: 'proj-1', coordinatorItems: [], coordinatorBusy: false, coordinatorPending: null, coordinatorAnswer: () => {}, mobileTab: 'stream' });
   useLedgerCard.setState({ byProject: { 'proj-1': { card: TITLED, loading: false, error: null, request: 1 } }, focus: null, popover: null });
   useLedgerFolds.setState({ open: {} });
 });
@@ -58,10 +56,10 @@ describe('chipLabel', () => {
 
 describe('chips with titles', () => {
   it('in a reply and in plain text: "N14 · title", the full question on hover; an item without a title keeps its question', () => {
-    useOverseer.setState({ coordinatorStream: [
-      m('overseer', 'Control Plane', 'N14 and N12 wait on you.', '', 'o1'),
-      m('user', 'You', 'N14: A', '', 'u1'),
-    ] as StreamMessage[] });
+    useOverseer.setState({ coordinatorItems: [
+      { kind: 'assistant', text: 'N14 and N12 wait on you.' },
+      { kind: 'user', text: 'N14: A' },
+    ] });
     render(<ConversationStream />);
     const chips = [...document.querySelectorAll('[data-ledger-chip="14"]')];
     expect(chips).toHaveLength(2);

@@ -1,8 +1,7 @@
 // Every daemon notice to the overseer renders as a muted system pill (or the 💬 card), never as a
-// raw "You" bubble — including the Batch block the daemon appends to the five agent notices.
+// raw "YOU" bubble (the thread view's human label) — including the Batch block the daemon appends to the five agent notices.
 import { render, screen, cleanup } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { m } from '../data';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { ConversationStream } from './Stream';
@@ -20,7 +19,7 @@ beforeEach(() => {
   useOverseer.setState({
     coordinatorId: 'coord-1',
     coordinatorProject: 'proj-1',
-    coordinatorStream: [],
+    coordinatorItems: [],
     coordinatorBusy: false,
     coordinatorPending: null,
     coordinatorAnswer: () => {},
@@ -47,26 +46,26 @@ const NOTICES: Array<[string, string, string]> = [
 describe('ConversationStream — agency notices with the Batch block', () => {
   for (const [kind, text, summary] of NOTICES) {
     it(`${kind}: renders the one-line pill, not a raw bubble`, () => {
-      useOverseer.setState({ coordinatorStream: [m('user', 'You', text, '9:02', 0)] });
+      useOverseer.setState({ coordinatorItems: [{ kind: 'user', text: text }] });
       render(<ConversationStream />);
       expect(screen.getByText(summary)).toBeInTheDocument();
       expect(screen.queryByText(/Batch:/)).not.toBeInTheDocument();
-      expect(screen.queryByText('You')).not.toBeInTheDocument();
+      expect(screen.queryByText('YOU')).not.toBeInTheDocument();
     });
   }
 
   it('direct message: still the card, with the Batch block appended', () => {
     const text = '💬 The user just sent your agent "Bob" (mission "Fix auth") [agentId term-1] a message directly, not through you: "use staging". This may change what you asked it to do. Read how it responds with read_agent and adjust.' + BATCH;
-    useOverseer.setState({ coordinatorStream: [m('user', 'You', text, '9:02', 0)] });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'user', text: text }] });
     render(<ConversationStream />);
     expect(screen.getByText('Direct message to "Bob"')).toBeInTheDocument();
     expect(screen.getByText('“use staging”')).toBeInTheDocument();
   });
 
   it('a real user message that starts with one of the emoji stays a "You" bubble', () => {
-    useOverseer.setState({ coordinatorStream: [m('user', 'You', '⏸️ pause the deploy for now', '9:02', 0)] });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'user', text: '⏸️ pause the deploy for now' }] });
     render(<ConversationStream />);
-    expect(screen.getByText('You')).toBeInTheDocument();
+    expect(screen.getByText('YOU')).toBeInTheDocument();
     expect(screen.getByText('⏸️ pause the deploy for now')).toBeInTheDocument();
   });
 });

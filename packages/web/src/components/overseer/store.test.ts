@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useOverseer, coordinatorMatchesView, viewCoordinatorFields } from './store';
 import { api } from '../../api/client';
-import type { StreamMessage } from './types';
+import type { ConvItem } from '../../api/types';
 
 const img = (data: string) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png' as const, data } });
 
@@ -104,8 +104,7 @@ describe('sendDirective with the coordinator parked on its own question', () => 
   });
 });
 
-const sm = (key: string): StreamMessage =>
-  ({ kind: 'text', who: 'overseer', text: key, time: '', key, isUser: false, isOverseer: true, isNote: false } as unknown as StreamMessage);
+const sm = (text: string): ConvItem => ({ kind: 'assistant', text });
 
 describe('replyToCoordinatorQuestion and denyCoordinatorQuestion report whether the send worked', () => {
   it('resolve true on success, and false (with sendError set) on failure, so the card can unlock', async () => {
@@ -137,17 +136,17 @@ describe('viewCoordinatorFields — a stale-project coordinator is never surface
   const stream = [sm('a1'), sm('a2')];
 
   it('passes the coordinator fields through when the project matches', () => {
-    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-a', coordinatorStream: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
+    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-a', coordinatorItems: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
     expect(out.projectMatches).toBe(true);
-    expect(out.stream).toBe(stream);
+    expect(out.items).toBe(stream);
     expect(out.busy).toBe(true);
     expect(out.hasCoordinator).toBe(true);
   });
 
-  it('blanks the stream/busy/hasCoordinator when the store holds ANOTHER project', () => {
-    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-b', coordinatorStream: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
+  it('blanks the items/busy/hasCoordinator when the store holds ANOTHER project', () => {
+    const out = viewCoordinatorFields({ coordinatorProject: 'proj-a', activeId: 'proj-b', coordinatorItems: stream, coordinatorBusy: true, coordinatorId: 'coord-a' });
     expect(out.projectMatches).toBe(false);
-    expect(out.stream).toEqual([]);
+    expect(out.items).toEqual([]);
     expect(out.busy).toBe(false);
     expect(out.hasCoordinator).toBe(false);
   });

@@ -47,7 +47,7 @@ export const usageBannerDismissed = (keys: string[], provider: string, latestSta
   return keys.some((k) => k.startsWith(prefix) && Number(k.slice(prefix.length)) >= latestStartedAt);
 };
 
-/** The dismissed set a plain render function (renderTimeline / renderStream, no hooks)
+/** The dismissed set a plain render function (renderTimeline, no hooks)
  *  needs to skip a closed card's row entirely: the component that calls it subscribes to
  *  `keys` and hands them down with the scope, so the skip is reactive. */
 export interface NoticeFilter { scope: string; keys: string[] }

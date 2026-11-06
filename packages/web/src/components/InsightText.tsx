@@ -1,6 +1,6 @@
 // Shared assistant-text renderer with ★ Insight callouts.
 //
-// Both the coordinator stream (OverseerMsg) and the agent chat (AssistantText) render the
+// The agent chat and the Control Plane (both through ChatView's AssistantText) render the
 // SAME assistant prose, some of which embeds an "insight" block delimited by a star-headed
 // opener line and a closing rule of dashes. Claude often fences the delimiter lines as inline
 // code, so the opener/closer arrive wrapped in backticks:
@@ -110,7 +110,7 @@ function InsightCallout({ content, tokens, ledger, docs }: { content: string; to
  * click anywhere to expand. Deliberately quieter than the coordinator's tinted callout: in a
  * thread the insight is an aside to the work, not a headline.
  */
-function InsightRail({ content, docs }: { content: string; docs?: DocChips }) {
+function InsightRail({ content, ledger, docs }: { content: string; ledger?: LedgerChips; docs?: DocChips }) {
   const [open, setOpen] = useState(false);
   return (
     // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
@@ -137,7 +137,7 @@ function InsightRail({ content, docs }: { content: string; docs?: DocChips }) {
           ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical' as const, WebkitLineClamp: 2, overflow: 'hidden' }),
         }}
       >
-        <Markdown source={content} docs={docs} />
+        <Markdown source={content} ledger={ledger} docs={docs} />
       </div>
     </div>
   );
@@ -157,7 +157,7 @@ export function InsightText({ source, scheme = 'scoped', variant = 'callout', le
     <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {segs.map((seg, i) =>
         seg.type === 'insight' ? (
-          variant === 'rail' ? <InsightRail key={i} content={seg.content} docs={docs} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} docs={docs} />
+          variant === 'rail' ? <InsightRail key={i} content={seg.content} ledger={ledger} docs={docs} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} docs={docs} />
         ) : (
           <Markdown key={i} source={seg.content} ledger={ledger} docs={docs} />
         ),

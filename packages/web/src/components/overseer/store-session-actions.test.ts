@@ -63,7 +63,7 @@ describe('resumeCoordinatorSession — swap an archived coordinator back in', ()
     // Order: archive strictly before restore (one active coordinator per project).
     expect(archive.mock.invocationCallOrder[0]).toBeLessThan(restore.mock.invocationCallOrder[0]);
     expect(useOverseer.getState().coordinatorId).toBe('old-1');
-    expect(useOverseer.getState().coordinatorStream).toEqual([]); // view reset for the swap
+    expect(useOverseer.getState().coordinatorItems).toEqual([]); // view reset for the swap
   });
 
   it('falls back to a FRESH coordinator when the restore fails (never zero coordinators), and resolves true (the session DID change)', async () => {
