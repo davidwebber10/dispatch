@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { UsageChip } from './UsageChip';
+import { UsageChip, UsageTable } from './UsageChip';
 import { useUsageLimits } from '../../stores/usageLimits';
 import type { UsageSummary } from '../../api/types';
 
@@ -48,6 +48,20 @@ describe('UsageChip', () => {
     expect(screen.getByTestId('usage-chip').getAttribute('data-tone')).toBe('red');
     fireEvent.click(screen.getByTestId('usage-chip'));
     expect(screen.getByTestId('usage-rings').textContent).toContain('Claude agents paused: session limit');
+  });
+
+  // #131: a paused Codex with no figures used to leave the chip hidden and the sheet empty.
+  it('a paused tool with no figures: red chip, and the popover and the table name the pause', () => {
+    const pause = { provider: 'codex', kind: 'session', earliestResetsAt: Date.now() + H, threads: 1, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: 's', episodeStartedAt: 1, latestStartedAt: 1, activeUntil: Date.now() + H };
+    const s = summary(0, { providers: [], paused: [pause] });
+    useUsageLimits.setState({ summary: s });
+    render(<UsageChip variant="rail" />);
+    const chip = screen.getByTestId('usage-chip');
+    expect(chip.getAttribute('data-tone')).toBe('red');
+    fireEvent.click(chip);
+    expect(screen.getByTestId('usage-rings').textContent).toContain('Codex agents paused: session limit');
+    render(<UsageTable summary={s} now={Date.now()} />);
+    expect(screen.getByTestId('usage-table').textContent).toContain('Codex agents paused: session limit');
   });
 
   it('recolors when the threshold changes live', () => {

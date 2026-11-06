@@ -63,6 +63,22 @@ describe('chipModel', () => {
     expect(m.provider).toBe('codex');
   });
 
+  // Review finding 3: a paused provider with no snapshot hid behind a normal chip of another provider.
+  it('a paused provider with no figures still wins the pick, red, with unknown percents', () => {
+    const m = chipModel(sum([claude(46, 21)], { paused: [pause('codex')] }), NOW)!;
+    expect(m).toMatchObject({ provider: 'codex', tone: 'red', mark: 'X', stale: false, five: '–', week: '–', peak: '–' });
+    expect(m.title).toBe('Codex usage, Session (5h) –, Weekly –. Agents paused on a limit');
+  });
+
+  it('a paused provider whose limit is over does not get a placeholder chip', () => {
+    expect(chipModel(sum([], { paused: [{ ...pause('codex'), activeUntil: NOW - 1 }] }), NOW)).toBeNull();
+  });
+
+  it('shows a paused provider when no provider has figures at all', () => {
+    const m = chipModel(sum([], { paused: [pause('codex')] }), NOW)!;
+    expect(m).toMatchObject({ provider: 'codex', tone: 'red', mark: null, peak: '–' });
+  });
+
   it('with two providers, shows the one with the highest counted window, with its mark', () => {
     const m = chipModel(sum([claude(30, 21), codex(10, 60)]), NOW)!;
     expect(m).toMatchObject({ provider: 'codex', mark: 'X', five: '10', week: '60', peak: '60%' });

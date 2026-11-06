@@ -56,7 +56,7 @@ afterEach(() => { gauge.stop(); vi.useRealTimers(); db.close(); });
 
 describe('summary', () => {
   it('is empty with no snapshot, and never carries the account id', () => {
-    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
+    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, epoch: expect.any(String), rev: expect.any(Number), warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
     claude(46.4, 21);
     const s = gauge.summary();
     expect(s.providers).toEqual([{ provider: 'claude-code', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
@@ -414,6 +414,13 @@ describe('threshold push', () => {
     expect(pushes).toHaveLength(2);
   });
 
+  it('still matches an alert key written by the 3.11 rounded format', () => {
+    const rounded = Math.round(RESET / (10 * MIN)) * 10 * MIN;
+    db.prepare("INSERT INTO app_state (key, value) VALUES ('usage_limit_alerts', ?)").run(JSON.stringify({ [`claude-code|acct-A|five_hour|${rounded}`]: rounded }));
+    claude(85, 21);
+    expect(pushes).toHaveLength(0);
+  });
+
   it('never pushes for overage, and names a weekly day', () => {
     claude(10, 88, { overage: { usedPercent: 99, resetsAt: WEEK } });
     expect(pushes).toEqual([{ title: 'Claude usage at 88%', body: 'Weekly window, resets Mon 9:00 AM.', tag: 'usage-claude-code-seven_day' }]);
@@ -499,21 +506,59 @@ describe('broadcast', () => {
   it('a settings change sends at once with the new threshold', () => {
     gaugeSettings.set(db, { warnPercent: 90 });
     gauge.settingsChanged();
-    expect(events).toEqual([{ type: 'usage-limits', at: T0, warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
+    expect(events).toEqual([{ type: 'usage-limits', at: T0, epoch: expect.any(String), rev: expect.any(Number), warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
   });
 });
 
 describe('Codex refresh tick', () => {
-  it('refreshes from the most recently active Codex thread, only within 10 minutes', () => {
+  const codex = (id: string, ext: string, at: number, status = 'waiting') =>
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run(ext, new Date(at).toISOString(), status, id);
+
+  it('refreshes the recently active Codex threads, newest first, only within 10 minutes', () => {
     thread('c1', 'codex'); thread('c2', 'codex'); thread('k', 'claude-code');
-    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e1', new Date(T0 - 5 * MIN).toISOString(), 'c1');
-    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e2', new Date(T0 - 2 * MIN).toISOString(), 'c2');
+    codex('c1', 'e1', T0 - 5 * MIN);
+    codex('c2', 'e2', T0 - 2 * MIN);
     db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e3', new Date(T0).toISOString(), 'k');
     gauge.tick();
-    expect(refreshed).toEqual(['c2']);
+    expect(refreshed).toEqual(['c2', 'c1']);
     clock = T0 + 20 * MIN;
+    refreshed = [];
     gauge.tick();
-    expect(refreshed).toEqual(['c2']);
+    expect(refreshed).toEqual([]);
+  });
+
+  // Review finding 1: a Codex turn longer than 10 minutes writes no activity, and was never polled.
+  it('keeps polling a working Codex thread whose last activity is old', () => {
+    thread('long', 'codex'); thread('recent', 'codex');
+    codex('long', 'eL', T0 - 45 * MIN, 'working');
+    codex('recent', 'eR', T0 - 1 * MIN);
+    gauge.tick();
+    expect(refreshed).toEqual(['long', 'recent']);
+  });
+
+  it('refreshes a bounded set', () => {
+    for (let i = 0; i < 10; i++) { thread(`c${i}`, 'codex'); codex(`c${i}`, `e${i}`, T0 - i * 1000, 'working'); }
+    gauge.tick();
+    expect(refreshed).toEqual(['c0', 'c1', 'c2', 'c3']);
+  });
+
+  // Review of #131: a fixed set of 4 starved the 5th working thread. Least recently polled goes first.
+  it('rotates: with 6 working threads, every one is polled within 2 ticks', () => {
+    for (let i = 0; i < 6; i++) { thread(`w${i}`, 'codex'); codex(`w${i}`, `e${i}`, T0 - i * 1000, 'working'); }
+    gauge.tick();
+    expect(refreshed).toEqual(['w0', 'w1', 'w2', 'w3']);
+    clock += MIN;
+    gauge.tick();
+    expect(new Set(refreshed)).toEqual(new Set(['w0', 'w1', 'w2', 'w3', 'w4', 'w5']));
+    expect(refreshed.slice(4, 6)).toEqual(['w4', 'w5']);
+  });
+
+  it('stuck working rows never crowd out a live thread for more than a few ticks', () => {
+    // The stuck rows rank above the live one by activity, so a fixed top 4 never reaches it.
+    for (let i = 0; i < 8; i++) { thread(`s${i}`, 'codex'); codex(`s${i}`, `es${i}`, T0 - 20 * MIN - i * 1000, 'working'); }
+    thread('live', 'codex'); codex('live', 'eLive', T0 - 90 * MIN, 'working');
+    for (let t = 0; t < 3; t++) { gauge.tick(); clock += MIN; }
+    expect(refreshed).toContain('live');
   });
 
   it('keeps polling a Codex thread that is still working, however old its last activity', () => {
@@ -523,11 +568,193 @@ describe('Codex refresh tick', () => {
     gauge.tick();
     expect(refreshed).toEqual(['c1']);
   });
+
   it('does not poll an archived working thread', () => {
     thread('c1', 'codex');
     db.prepare("UPDATE terminals SET external_id = 'e1', status = 'working', archived_at = 'x' WHERE id = 'c1'").run();
     gauge.tick();
     expect(refreshed).toEqual([]);
+  });
+
+  it('asks Codex directly only when no Codex thread is a candidate', async () => {
+    gauge.stop();
+    const polls: number[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
+      refreshCodex: (id) => { refreshed.push(id); }, pollCodex: async () => { polls.push(clock); return true; } });
+    thread('c1', 'codex'); codex('c1', 'e1', T0 - MIN);
+    g.tick(); await Promise.resolve();
+    expect(refreshed).toEqual(['c1']);
+    expect(polls).toEqual([]);
+    clock = T0 + 20 * MIN;
+    g.tick(); await Promise.resolve();
+    expect(polls).toEqual([clock]);
+    g.stop();
+  });
+
+  it('a refresh that throws does not stop the others or the broadcast', () => {
+    thread('c1', 'codex'); thread('c2', 'codex');
+    codex('c1', 'e1', T0 - MIN); codex('c2', 'e2', T0 - 2 * MIN);
+    gauge.stop();
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: (e) => events.push(e),
+      refreshCodex: (id) => { if (id === 'c1') throw new Error('boom'); refreshed.push(id); } });
+    g.tick();
+    vi.advanceTimersByTime(5000);
+    expect(refreshed).toEqual(['c2']);
+    expect(events).toHaveLength(1);
+  });
+});
+
+// Review finding 4: an account switch changes the summary with no new record. The tick must notice.
+describe('account switch', () => {
+  it('the next tick broadcasts the new account\'s summary', () => {
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    account = 'acct-B';
+    gauge.tick();
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers).toEqual([]);
+  });
+
+  it('works without a Codex refresher, and an unchanged tick sends nothing', () => {
+    snaps = new LimitSnapshots(db);
+    const mine: any[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: (e) => mine.push(e) });
+    snaps.addRecordListener((p) => g.onRecord(p));
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    g.tick(); vi.advanceTimersByTime(5000);
+    expect(mine).toHaveLength(1);
+    account = 'acct-B';
+    g.tick(); vi.advanceTimersByTime(5000);
+    expect(mine).toHaveLength(2);
+    g.stop();
+  });
+});
+
+// Fable re-review of #131: a forecast's runsOutAt is computed from now, so an idle tick must not
+// resend it to every client once there is enough history for a forecast.
+describe('idle tick with a forecast', () => {
+  it('sends nothing when only the clock moved, then sends again on a new figure', () => {
+    claude(10, 20);
+    clock = T0 + 60 * MIN;
+    claude(70, 22); // five_hour runs out at T0 + 90 min, before the reset; seven_day lasts 39 h at 2 an hour
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    const w = events[0].providers[0].windows;
+    expect(w.five_hour.forecast).toMatchObject({ runsOutAt: T0 + 90 * MIN, lastsUntilReset: false });
+    expect(w.seven_day.forecast.lastsUntilReset).toBe(false);
+    const sevenDay = w.seven_day.forecast.runsOutAt;
+    for (let i = 0; i < 10; i++) { clock += MIN; gauge.tick(); vi.advanceTimersByTime(5000); }
+    // The projection moved by hours, and still nothing was sent.
+    expect(gauge.summary().providers[0].windows.seven_day.forecast!.runsOutAt! - sevenDay).toBeGreaterThan(5 * 60 * MIN);
+    expect(events).toHaveLength(1);
+    claude(75, 22);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers[0].windows.five_hour.forecast.runsOutAt).toBeGreaterThan(clock);
+  });
+
+  it('sends when the forecast flips to lasting until the reset', () => {
+    claude(10, 20);
+    clock = T0 + 60 * MIN;
+    claude(70, 22);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    // With no new figure the pace slows as the span grows: at T0 + 88 min, 60 points took 88 min,
+    // so the last 30 take 44 more, past the reset at T0 + 130 min. The basis is still 1 hour.
+    clock = T0 + 88 * MIN; gauge.tick(); vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers[0].windows.five_hour.forecast).toMatchObject({ lastsUntilReset: true, basisHours: 1 });
+  });
+});
+
+// N18 (#131 round 3): runsOutAt is not in the key, so an idle client would keep a run-out time the
+// clock has passed and show "used up". The gauge resends once the soonest one sent is past.
+describe('idle resend when the sent run-out time passes', () => {
+  // One window with a far reset: 10% at T0, then `last` at T0 + 40 min. At 70 it runs out at T0 + 60 min.
+  const five = (pct: number) => snaps.record('claude-code', account, { five_hour: { usedPercent: pct, resetsAt: WEEK } }, clock);
+  const held = () => events[events.length - 1].providers[0].windows.five_hour.forecast;
+  const idle = (minutes: number, each?: () => void) => {
+    for (let i = 0; i < minutes; i++) { clock += MIN; gauge.tick(); vi.advanceTimersByTime(5000); each?.(); }
+  };
+  const start = (last: number) => { five(10); clock = T0 + 40 * MIN; five(last); vi.advanceTimersByTime(5000); };
+
+  it('an idle client never holds a past runsOutAt for more than one tick', () => {
+    start(70);
+    expect(held()).toMatchObject({ runsOutAt: T0 + 60 * MIN, lastsUntilReset: false });
+    idle(6 * 60, () => {
+      const f = held();
+      if (!f.lastsUntilReset && f.runsOutAt !== null) expect(f.runsOutAt).toBeGreaterThan(clock - MIN);
+    });
+    // The first resend came on the tick the sent time passed, with a later run-out time.
+    expect(events[1].at).toBe(T0 + 60 * MIN);
+    expect(events[1].providers[0].windows.five_hour.forecast.runsOutAt).toBeGreaterThan(T0 + 60 * MIN);
+  });
+
+  it('idle resends stay bounded: a handful in six hours, not one a minute', () => {
+    start(70);
+    idle(6 * 60);
+    // About one per basis hour, plus the run-out resends, which space out as the pace slows.
+    expect(events.length).toBeGreaterThan(2);
+    expect(events.length).toBeLessThanOrEqual(15);
+  });
+
+  // The bound is not "a handful" near saturation. The next run-out is span * left / gained ahead:
+  // 0 to 99.4 in an hour puts it 0.6 / 99.4 * span away, under a minute until the span passes
+  // about 166 minutes. Until then every tick resends. This pins that worst case.
+  it('near saturation an idle client gets one resend a minute until the run-out is a minute out', () => {
+    five(0); clock = T0 + 60 * MIN; five(99.4); vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    expect(events[0].providers[0].windows.five_hour.usedPercent).toBe(99); // shown as 99, so not "used up for real"
+    idle(105);
+    expect(events).toHaveLength(106); // every idle tick so far was a resend
+    idle(6 * 60 - 105);
+    // After that the resends space out: still far more than the typical case, and under one a tick.
+    expect(events.length).toBeGreaterThan(200);
+    expect(events.length).toBeLessThan(240);
+  });
+
+  it('a window already at 100% does not resend', () => {
+    start(99.6); // shows 100, and the unrounded figure still runs out a few seconds later
+    expect(events).toHaveLength(1);
+    expect(events[0].providers[0].windows.five_hour.usedPercent).toBe(100);
+    expect(held().runsOutAt).toBeGreaterThan(clock);
+    idle(45); // the basis stays 1 hour, so nothing else changes
+    expect(events).toHaveLength(1);
+  });
+});
+
+// Review finding 5: a client must be able to tell an older GET answer from a newer socket event.
+describe('summary revision', () => {
+  it('rises on every summary, even with the clock standing still, and survives a restart', () => {
+    const a = gauge.summary().rev;
+    const b = gauge.summary().rev;
+    expect(b).toBeGreaterThan(a);
+    // A new daemon starts from the clock, so a client holding the old daemon's revision still updates.
+    clock += 1000;
+    const g2 = make();
+    expect(g2.summary().rev).toBeGreaterThan(b);
+    g2.stop();
+  });
+
+  // Codex re-review of #131: a client tells a restarted daemon apart by its epoch, not its revision.
+  it('carries one epoch per daemon instance, the same on every summary', () => {
+    const e1 = gauge.summary().epoch;
+    expect(e1).toMatch(/^[0-9a-f-]{36}$/);
+    expect(gauge.summary().epoch).toBe(e1);
+    const g2 = make();
+    expect(g2.summary().epoch).not.toBe(e1);
+    g2.stop();
+  });
+
+  it('is carried on the broadcast but never makes an unchanged payload resend', () => {
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    gauge.pausesChanged();
+    expect(events).toHaveLength(1);
+    expect(typeof events[0].rev).toBe('number');
   });
 });
 

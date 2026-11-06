@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
+import { codexHome } from '../platform/codex-home.js';
 
 const cache = new Map<string, { sig: string; id: string }>();
 
@@ -29,7 +30,7 @@ export function claudeAccountId(env: NodeJS.ProcessEnv = process.env, home: stri
 
 /** Codex: `tokens.account_id` in `auth.json`. '' when it cannot be told. */
 export function codexAccountId(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string {
-  const file = path.join(env.CODEX_HOME || path.join(home, '.codex'), 'auth.json');
+  const file = path.join(codexHome(env, home), 'auth.json');
   return readId(file, (j) => j?.tokens?.account_id);
 }
 
@@ -44,5 +45,5 @@ export function tokenAccountId(token: string | null | undefined): string {
 
 /** When the Codex login file was last written: figures a Codex session file holds from before that may belong to another account. */
 export function codexLoginChangedAt(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): number {
-  try { return fs.statSync(path.join(env.CODEX_HOME || path.join(home, '.codex'), 'auth.json')).mtimeMs; } catch { return 0; }
+  try { return fs.statSync(path.join(codexHome(env, home), 'auth.json')).mtimeMs; } catch { return 0; }
 }

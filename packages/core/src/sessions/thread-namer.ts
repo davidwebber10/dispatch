@@ -1,7 +1,7 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { platform } from '../platform/index.js';
+import { codexSessionsRoot as defaultCodexSessionsRoot } from '../platform/codex-home.js';
 
 const MAX_NAME_LEN = 48;
 
@@ -144,8 +144,6 @@ export function deriveThreadName(transcriptText: string, kind: 'claude' | 'codex
   return cleanName(deriveThreadRaw(transcriptText, kind));
 }
 
-const CODEX_SESSIONS_ROOT = path.join(os.homedir(), '.codex', 'sessions');
-
 /**
  * Codex rollout files live at <root>/<Y>/<M>/<D>/rollout-<ts>-<uuid>.jsonl (see
  * codex-sessions.ts's listRecentCodexSessions doc comment) — the date/timestamp
@@ -169,8 +167,9 @@ async function findCodexRolloutPath(sessionId: string, root: string): Promise<st
 /**
  * Resolve a thread's transcript file path on disk. claude-code: deterministic join of
  * the platform's claudeProjectDir + `<externalId>.jsonl` (no fs touch — just string
- * construction, existence is the caller's problem). codex: scans `~/.codex/sessions`
- * (override via `codexSessionsRoot`, e.g. in tests) for the rollout file matching
+ * construction, existence is the caller's problem). codex: scans the Codex sessions root
+ * (`$CODEX_HOME/sessions`, default `~/.codex/sessions`; override via `codexSessionsRoot`,
+ * e.g. in tests) for the rollout file matching
  * externalId, since codex's on-disk layout embeds a timestamp we don't have. Returns
  * null without an externalId, for an unrecognized `type`, or when codex can't find a
  * match.
@@ -178,7 +177,7 @@ async function findCodexRolloutPath(sessionId: string, root: string): Promise<st
 export async function resolveTranscriptPath(
   t: { type: string; externalId: string | null; workingDir: string | null },
   sessionWorkingDir: string,
-  codexSessionsRoot: string = CODEX_SESSIONS_ROOT,
+  codexSessionsRoot: string = defaultCodexSessionsRoot(),
 ): Promise<string | null> {
   if (!t.externalId) return null;
   if (t.type === 'claude-code') {

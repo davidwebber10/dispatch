@@ -4,6 +4,7 @@
 // `usage-limits` broadcast, the one-push-per-window threshold alert, and the Codex refresh tick.
 // No overseer imports: a future coordinator spawn guard calls nearLimit() and activePauses().
 import type Database from 'better-sqlite3';
+import { randomUUID } from 'crypto';
 import * as appState from '../db/app-state.js';
 import * as parksDb from '../db/usage-limits.js';
 import * as terminalsDb from '../db/terminals.js';
@@ -33,8 +34,10 @@ const DEFAULTS = {
   /** At most one broadcast per this gap (trailing edge). A pause or settings change skips the wait. */
   throttleMs: 5000,
   tickMs: 60_000,
-  /** Refresh Codex figures only when a Codex thread was active this recently. */
+  /** Refresh Codex figures from a thread active this recently, or one still working. */
   codexActiveMs: 10 * MIN,
+  /** At most this many Codex threads per tick. Each read is throttled per thread by its owner. */
+  codexRefreshMax: 4,
   /** Two reset times this close are the same limit window (the CLI's reset time jitters by seconds). */
   sameWindowMs: 10 * MIN,
   /** With no active Codex thread, ask Codex directly at most this often. */
@@ -77,8 +80,18 @@ export interface PausedGroup {
 }
 export interface UsageSummary {
   type: 'usage-limits';
-  /** When the daemon built this summary (ms). A client keeps the newest, so a slow GET never undoes a newer broadcast. */
+  /** When the daemon built this summary (ms). Informational: clients order by (epoch, rev), not by this clock. */
   at: number;
+  /**
+   * A random id made once per daemon start. A client orders summaries by (epoch, rev): a new
+   * epoch always lands and resets its floor, so a restart whose clock went back is never ignored.
+   */
+  epoch: string;
+  /**
+   * Rises on every summary of this epoch, the GET answer and the broadcast alike. A client keeps
+   * the highest it has seen in the epoch, so an older answer that lands late never wins.
+   */
+  rev: number;
   warnPercent: number;
   /** The daemon-wide push switch, so every open Settings follows a change made on another device. */
   pushOnWarn: boolean;
@@ -117,6 +130,12 @@ export class UsageGauge {
   private timer: NodeJS.Timeout | null = null;
   private pending: NodeJS.Timeout | null = null;
   private lastSent = '';
+  /** The soonest `runsOutAt` still ahead when last sent, or null. Once the clock passes it, send again (see send). */
+  private resendAt: number | null = null;
+  private rev = 0;
+  private readonly epoch = randomUUID();
+  /** When the tick last asked to refresh each Codex thread, for the least-recently-polled rotation. */
+  private readonly polledAt = new Map<string, number>();
 
   constructor(private readonly d: GaugeDeps) {
     this.o = { ...DEFAULTS, ...d.options };
@@ -232,7 +251,9 @@ export class UsageGauge {
       if (s) { const { account: _account, figureAt: _figureAt, raw: _raw, ...rest } = s; providers.push(rest); }
     }
     const settings = this.settings();
-    return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
+    const at = this.now();
+    this.rev = Math.max(at, this.rev + 1);
+    return { type: 'usage-limits', at, epoch: this.epoch, rev: this.rev, warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
   }
 
   /** The highest counted window at or above the threshold, or null. For a future spawn guard (ledger N8). */
@@ -366,17 +387,56 @@ export class UsageGauge {
   }
 
   /**
-   * 60 s: refresh Codex from its most recently active thread (one active in the last 10 minutes,
-   * or one still working: a long turn writes no activity stamp); otherwise ask Codex itself, at
-   * most every codexPollMs (Codex was missing from the sheet whenever no Codex thread was busy).
+   * 60 s: refresh Codex from its threads (one active in the last 10 minutes, or one still working:
+   * a long turn writes no activity stamp); with none, ask Codex itself, at most every codexPollMs.
+   * Then broadcast if the summary changed. The broadcast runs even when nothing was refreshed: an
+   * account switch changes the summary with no new record.
    */
   tick(): void {
-    this.maybeProbeClaude();
+    try {
+      this.maybeProbeClaude();
+      if (!this.refreshCodexThreads()) this.maybePollCodex();
+    } finally {
+      this.schedule();
+    }
+  }
+
+  /**
+   * Read a bounded set of Codex threads, from every working one and any active lately. The least
+   * recently polled go first, so a 5th working thread, or a live one behind rows stuck at
+   * `working`, gets its turn within a few ticks. Ties go to working, then newest activity. Each
+   * read records only a figure newer than the held one, so the newest report wins whatever the
+   * order. False when there is no candidate thread (or no refresher): then Codex is asked directly.
+   */
+  private refreshCodexThreads(): boolean {
+    const refresh = this.d.refreshCodex;
+    if (!refresh) return false;
     const since = new Date(this.now() - this.o.codexActiveMs).toISOString();
-    const row = this.d.db.prepare(
-      "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND (status = 'working' OR last_activity_at >= ?) ORDER BY last_activity_at DESC LIMIT 1",
-    ).get(since) as { id: string; external_id: string } | undefined;
-    if (row && this.d.refreshCodex) { this.d.refreshCodex(row.id, row.external_id); return; }
+    const rows = this.d.db.prepare(
+      `SELECT id, external_id FROM terminals
+       WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL
+         AND (status = 'working' OR last_activity_at >= ?)
+       ORDER BY (status = 'working') DESC, last_activity_at DESC`,
+    ).all(since) as { id: string; external_id: string }[];
+    // Forget threads that are no longer candidates, so the map stays as small as the set.
+    const ids = new Set(rows.map((r) => r.id));
+    for (const id of this.polledAt.keys()) if (!ids.has(id)) this.polledAt.delete(id);
+    if (!rows.length) return false;
+    // A stable sort keeps the SQL order among equal poll times.
+    const picked = rows
+      .map((row, i) => ({ row, i, at: this.polledAt.get(row.id) ?? 0 })) // 0: never polled, goes first
+      .sort((a, b) => (a.at - b.at) || (a.i - b.i))
+      .slice(0, this.o.codexRefreshMax);
+    const now = this.now();
+    for (const { row } of picked) {
+      this.polledAt.set(row.id, now);
+      try { refresh(row.id, row.external_id); } catch (err) { console.warn('[usage-gauge] Codex refresh failed:', err); }
+    }
+    return true;
+  }
+
+  /** No Codex thread active lately: ask Codex itself (codex-poll.ts), at most every codexPollMs. */
+  private maybePollCodex(): void {
     if (!this.d.pollCodex || this.codexPolling || this.now() - this.lastCodexPoll < this.o.codexPollMs) return;
     this.lastCodexPoll = this.now();
     this.codexPolling = true;
@@ -397,16 +457,50 @@ export class UsageGauge {
   }
 
   /**
-   * Send only when the payload changed. Percents are already integers. `asOf` moves on every turn,
-   * so it is compared at 5-minute grain: enough for the client's 30-minute staleness dim.
+   * Send only when the payload changed. Percents are already integers. `at`, `epoch` and `rev` are
+   * left out: they move on every call. `asOf` moves on every turn, so it is compared at 5-minute
+   * grain: enough for the client's 30-minute staleness dim. A forecast's `runsOutAt` is left out
+   * too. It is projected from now, so it moves on every tick with no new figure, and far faster
+   * than the clock on a slow pace: 2 points an hour with 78 left moves it 40 minutes a minute, so
+   * no fixed grain holds it still. A real change still sends: a new figure moves `usedPercent` or
+   * `asOf`, and the pace's basis or a flip of `lastsUntilReset` is in the key. Every send carries
+   * the fresh `runsOutAt`.
+   *
+   * A client shows "used up" once a held `runsOutAt` is past. So once the clock passes the soonest
+   * one sent, send again with no other change. With no new figure the projection only moves later,
+   * and faster as the span grows. The next run-out is the span times (points left / points gained)
+   * ahead, so a typical idle episode resends a few times, not every tick. Near saturation it can
+   * resend every tick (once a minute) until that gap passes a minute: from 0 to 99.4% in an hour,
+   * that is the first 105 idle minutes, and about 220 sends in six hours. A window already at 100%
+   * is used up for real and never sets this.
    */
   private send(): void {
     let summary: UsageSummary;
     try { summary = this.summary(); } catch (err) { console.warn('[usage-gauge] summary failed:', err); return; }
-    const { at: _at, ...stable } = summary; // the build time moves on every call: it must not count as a change
-    const key = JSON.stringify({ ...stable, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
-    if (key === this.lastSent) return;
+    const { at: _at, epoch: _epoch, rev: _rev, ...stable } = summary;
+    const grain = (t: number) => Math.floor(t / (5 * MIN));
+    const window = (w: SummaryWindow) => {
+      if (!w.forecast) return w;
+      const { runsOutAt: _runsOutAt, ...forecast } = w.forecast;
+      return { ...w, forecast };
+    };
+    const providers = summary.providers.map((p) => ({
+      ...p,
+      asOf: grain(p.asOf),
+      windows: Object.fromEntries(Object.entries(p.windows).map(([k, w]) => [k, window(w)])),
+    }));
+    const key = JSON.stringify({ ...stable, providers });
+    const now = summary.at;
+    if (key === this.lastSent && (this.resendAt === null || now < this.resendAt)) return;
     this.lastSent = key;
+    this.resendAt = null;
+    for (const p of summary.providers) {
+      for (const w of Object.values(p.windows)) {
+        const f = w.forecast;
+        if (!f || f.lastsUntilReset || f.runsOutAt === null || f.runsOutAt <= now || (w.usedPercent ?? 0) >= 100) continue;
+        if (this.resendAt === null || f.runsOutAt < this.resendAt) this.resendAt = f.runsOutAt;
+      }
+    }
     this.d.broadcast(summary as unknown as Record<string, unknown>);
   }
 }

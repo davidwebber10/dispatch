@@ -520,8 +520,12 @@ export interface UsagePausedGroup {
 }
 /** GET /api/usage-limits/summary and the `usage-limits` broadcast carry the same body. */
 export interface UsageSummary {
-  /** When the daemon built it (ms). The store keeps the newest, so a slow GET never undoes a newer event. Missing from an older daemon. */
+  /** When the daemon built it (ms). Orders summaries only from a 3.12 to 3.17 daemon, which sends no `epoch`. Missing from an older daemon. */
   at?: number;
+  /** The daemon instance that built it. A new one means the daemon restarted. Missing from an older daemon. */
+  epoch?: string;
+  /** Rises on every summary within one epoch. The store keeps the newest, so a slow GET never undoes a newer event. Missing from an older daemon. */
+  rev?: number;
   warnPercent: number;
   /** The daemon-wide push switch. Missing from an older daemon. */
   pushOnWarn?: boolean;
