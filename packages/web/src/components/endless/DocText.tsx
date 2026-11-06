@@ -1,25 +1,25 @@
 import { Fragment, useMemo } from 'react';
-import { findDocPaths, docName, projectForPath, type DocSpan } from '../../lib/docPaths';
-import { useDocViewer } from '../../stores/docViewer';
+import { findDocPaths, docName, resolveProjectPath, type DocSpan } from '../../lib/docPaths';
+import { openChipFile } from '../../lib/openChipFile';
 import { useEndless } from '../../stores/endless';
 
 type Projects = { id: string; folder: string }[];
 
 /**
- * The doc paths in `text` that are links (spec 12.2): an absolute path inside a registered project's
+ * The file paths in `text` that are links (spec 12.2): an absolute path inside a registered project's
  * folder, or a relative path when the message has a project. A relative path with no project is not a link.
  */
 export function docLinks(text: string, messageProject: string | null, projects: Projects): DocSpan[] {
-  return findDocPaths(text).filter((s) => projectForPath(s.path, messageProject, projects) !== null);
+  return findDocPaths(text).filter((s) => resolveProjectPath(s.path, messageProject, projects) !== null);
 }
 
-/** Open a doc path from Chat in the doc viewer. The chip never checks the file first. */
+/** Open a file path from Chat: a doc in the doc viewer, other files as openChipFile says. The chip never checks the file first. */
 export function openDoc(path: string, branch: string | null, messageProject: string | null): void {
-  const project = projectForPath(path, messageProject, useEndless.getState().projects);
-  if (project) useDocViewer.getState().show({ project, path, branch });
+  const target = resolveProjectPath(path, messageProject, useEndless.getState().projects);
+  if (target) void openChipFile({ project: target.project, path: target.path, branch, nav: 'chat' });
 }
 
-/** One doc chip (board ChatStates S6): the file name, the full path in its title. A click never reaches the card under it. */
+/** One file chip (board ChatStates S6): the file name, the full path in its title. A click never reaches the card under it. */
 export function DocChip({ span, project, raised }: { span: DocSpan; project: string | null; raised?: boolean }) {
   const name = docName(span.path);
   return (

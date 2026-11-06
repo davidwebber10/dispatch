@@ -9,6 +9,8 @@ import { useEndless } from '../../stores/endless';
 import { useThreadStatus } from '../../stores/threadStatus';
 import * as open from './openThread';
 import { useDocViewer } from '../../stores/docViewer';
+import * as fileTab from '../../lib/openFileTab';
+import * as saveFiles from '../../lib/saveFiles';
 import type { EndlessMessage } from '../../api/types';
 
 const scans = vi.hoisted(() => ({ n: 0 }));
@@ -94,6 +96,64 @@ describe('report card', () => {
     fireEvent.click(screen.getByRole('button', { name: /\[Fix\] report: done|Fix/ }));
     expect(spy).toHaveBeenCalledWith('s1', 't9');
     expect(setView).not.toHaveBeenCalled();
+  });
+});
+
+describe('file chips in a Chat reply (any file type)', () => {
+  const projects = [{ id: 's1', name: 'dispatch', folder: '/w/dispatch' }, { id: 's2', name: 'sandbox', folder: '/w/sandbox' }] as any;
+  const show = (text: string) => {
+    useEndless.setState({ projects });
+    const reply = { ...m(0, 'unii', text), project: 's1' };
+    return render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
+  };
+  beforeEach(() => { useUI.setState({ pendingOpenThread: null } as never); });
+  it('a code path draws a chip; a click opens a file tab and switches to Threads', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    show('I wrote `scripts/extract.py` for you.');
+    fireEvent.click(screen.getByRole('button', { name: 'extract.py' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s1', 'scripts/extract.py', { focus: false });
+    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 'ft1' });
+    expect(useUI.getState().view).toBe('workspace');
+    expect(useDocViewer.getState().open).toBeNull();
+  });
+  it('an .xlsx path draws a chip and takes the binary path (a download, no tab)', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab');
+    const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();
+    show('The numbers are in data/out.xlsx now.');
+    fireEvent.click(screen.getByRole('button', { name: 'out.xlsx' }));
+    await act(async () => {});
+    expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=data%2Fout.xlsx', 'out.xlsx');
+    expect(tab).not.toHaveBeenCalled();
+  });
+  it('a .md path still opens the doc viewer', () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab');
+    show('See docs/plan.md.');
+    fireEvent.click(screen.getByRole('button', { name: 'plan.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/plan.md', branch: null });
+    expect(tab).not.toHaveBeenCalled();
+  });
+  it('a path that starts with another project folder name opens in that project, without the name', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft2');
+    show('Board: sandbox/team-requests/board.md and sandbox/team-requests/run.py');
+    fireEvent.click(screen.getByRole('button', { name: 'board.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's2', path: 'team-requests/board.md', branch: null });
+    fireEvent.click(screen.getByRole('button', { name: 'run.py' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s2', 'team-requests/run.py', { focus: false });
+  });
+  it('URLs, domains, versions and abbreviations draw no chip', () => {
+    show('Released v3.19.0, e.g. at https://example.com/a/b.html and example.com, with Node.js; mail me@example.com.');
+    expect(document.querySelectorAll('.doc-chip')).toHaveLength(0);
+  });
+  it('a report card path to a code file opens a file tab too', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft3');
+    useEndless.setState({ projects });
+    const work = { ...m(0, 'work', '[Build] report: done. Files: src/app.tsx'), project: 's1', ref: 't1' };
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'app.tsx' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s1', 'src/app.tsx', { focus: false });
   });
 });
 
