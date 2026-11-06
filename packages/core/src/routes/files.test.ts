@@ -288,6 +288,76 @@ describe('a swap between the check and the open never leaks an outside file', ()
   });
 });
 
+describe('links that are allowed still read and download', () => {
+  let base: string;
+  let project: string;
+  const saved = process.env.DISPATCH_FILE_ROOTS;
+  const bytes = (route: string, app: express.Express, p: string) => request(app).get(`/api/sessions/s1/files/${route}`).query({ path: p }).buffer(true).parse((res, cb) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('end', () => cb(null, Buffer.concat(chunks)));
+  });
+  beforeEach(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-ok-')));
+    project = path.join(base, 'repo', 'packages', 'web');
+    fs.mkdirSync(path.join(project, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'src', 'real.txt'), 'real file');
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DISPATCH_FILE_ROOTS; else process.env.DISPATCH_FILE_ROOTS = saved;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('a link that stays inside the project (a file link and a folder link) reads and downloads', async () => {
+    fs.symlinkSync(path.join(project, 'src', 'real.txt'), path.join(project, 'alias.txt'));
+    fs.symlinkSync(path.join(project, 'src'), path.join(project, 'srclink'));
+    const app = makeApp(project);
+    for (const p of ['alias.txt', 'srclink/real.txt', path.join(project, 'alias.txt')]) {
+      expect(JSON.parse((await bytes('read', app, p)).body.toString()).content).toBe('real file');
+    }
+    const dl = await bytes('download', app, 'srclink/real.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('real file');
+  });
+  it('a pnpm node_modules link that leads outside the project, into another node_modules folder, reads and downloads', async () => {
+    const store = path.join(base, 'repo', 'node_modules', '.pnpm', 'pkg@1.0.0', 'node_modules', 'pkg');
+    fs.mkdirSync(store, { recursive: true });
+    fs.writeFileSync(path.join(store, 'index.js'), 'module.exports = 1;');
+    fs.mkdirSync(path.join(project, 'node_modules'));
+    fs.symlinkSync(store, path.join(project, 'node_modules', 'pkg'));
+    const app = makeApp(project);
+    expect(JSON.parse((await bytes('read', app, 'node_modules/pkg/index.js')).body.toString()).content).toBe('module.exports = 1;');
+    const dl = await bytes('download', app, 'node_modules/pkg/index.js');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('module.exports = 1;');
+  });
+  it('a link into a DISPATCH_FILE_ROOTS folder reads and downloads; without it, the same link is refused', async () => {
+    const shared = path.join(base, 'shared');
+    fs.mkdirSync(shared);
+    fs.writeFileSync(path.join(shared, 'a.txt'), 'shared file');
+    fs.symlinkSync(shared, path.join(project, 'shared'));
+    const app = makeApp(project);
+    delete process.env.DISPATCH_FILE_ROOTS;
+    expect((await bytes('read', app, 'shared/a.txt')).status).toBe(403);
+    expect((await bytes('download', app, 'shared/a.txt')).status).toBe(403);
+    process.env.DISPATCH_FILE_ROOTS = shared;
+    expect(JSON.parse((await bytes('read', app, 'shared/a.txt')).body.toString()).content).toBe('shared file');
+    const dl = await bytes('download', app, 'shared/a.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('shared file');
+  });
+  it('a project reached through a linked root (such as /tmp on macOS) reads and downloads', async () => {
+    const linkRoot = path.join(base, 'linkroot');
+    fs.symlinkSync(path.join(base, 'repo'), linkRoot);
+    const app = makeApp(path.join(linkRoot, 'packages', 'web'));
+    expect(JSON.parse((await bytes('read', app, 'src/real.txt')).body.toString()).content).toBe('real file');
+    expect(JSON.parse((await bytes('read', app, path.join(linkRoot, 'packages', 'web', 'src', 'real.txt'))).body.toString()).content).toBe('real file');
+    const dl = await bytes('download', app, 'src/real.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('real file');
+  });
+});
+
 describe('symlinked folders cannot lead delete or rename outside the project', () => {
   let workDir: string;
   let outside: string;

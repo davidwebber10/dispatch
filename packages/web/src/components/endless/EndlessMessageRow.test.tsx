@@ -133,14 +133,28 @@ describe('file chips in a Chat reply (any file type)', () => {
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/plan.md', branch: null });
     expect(tab).not.toHaveBeenCalled();
   });
-  it('a path that starts with another project folder name opens in that project, without the name', async () => {
+  it('a path whose first folder is another project\'s folder name still opens in the message project', async () => {
     const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft2');
-    show('Board: sandbox/team-requests/board.md and sandbox/team-requests/run.py');
+    show('Board: sandbox/team-requests/board.md and sandbox/team-requests/run.py and ./sandbox/b.py');
     fireEvent.click(screen.getByRole('button', { name: 'board.md' }));
-    expect(useDocViewer.getState().open).toEqual({ project: 's2', path: 'team-requests/board.md', branch: null });
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'sandbox/team-requests/board.md', branch: null });
     fireEvent.click(screen.getByRole('button', { name: 'run.py' }));
     await act(async () => {});
-    expect(tab).toHaveBeenCalledWith('s2', 'team-requests/run.py', { focus: false });
+    expect(tab).toHaveBeenCalledWith('s1', 'sandbox/team-requests/run.py', { focus: false });
+    fireEvent.click(screen.getByRole('button', { name: 'b.py' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s1', 'sandbox/b.py', { focus: false });
+  });
+  it('docs/ and web/ paths stay in the message project when projects named docs and web exist', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft2');
+    useEndless.setState({ projects: [...projects, { id: 's5', name: 'docs', folder: '/w/docs' }, { id: 's6', name: 'web', folder: '/w/web' }] as any });
+    const reply = { ...m(0, 'unii', 'Plan docs/plans/x.md and web/src/App.tsx'), project: 's1' };
+    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'x.md' }));
+    expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/plans/x.md', branch: null });
+    fireEvent.click(screen.getByRole('button', { name: 'App.tsx' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s1', 'web/src/App.tsx', { focus: false });
   });
   it('an absolute path opens as the path inside the project', async () => {
     const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
@@ -152,12 +166,6 @@ describe('file chips in a Chat reply (any file type)', () => {
   it('a path that leaves the project draws no chip', () => {
     show('Read /w/dispatch/../../etc/secret.py and ../secret.py and docs/../../x.py and /w/dispatch/a/../../../b.txt');
     expect(document.querySelectorAll('.doc-chip')).toHaveLength(0);
-  });
-  it('two projects with one folder name: no chip for a path that starts with it', () => {
-    useEndless.setState({ projects: [...projects, { id: 's3', name: 'a', folder: '/x/shared' }, { id: 's4', name: 'b', folder: '/y/shared' }] as any });
-    const reply = { ...m(0, 'unii', 'Files: shared/a.py and src/b.py'), project: 's1' };
-    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
-    expect([...document.querySelectorAll('.doc-chip')].map((c) => c.textContent)).toEqual(['b.py']);
   });
   it('a .7z path draws a chip and downloads', async () => {
     const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();

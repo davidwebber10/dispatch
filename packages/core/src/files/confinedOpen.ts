@@ -12,9 +12,15 @@
  * - On Linux the kernel also says where the descriptor really is (/proc/self/fd), and that must be `real`.
  * - Any metadata that cannot be read fails closed.
  *
- * Known limit (macOS, where no call tells a descriptor's path): a same-user process that flips a folder
- * to a link and back twice, in step with these checks, within a few microseconds. Path checks cannot close
- * that in Node; the attacker would already need to run as the user who can read that file.
+ * Known limits (written down on purpose; no code change closes them in Node):
+ * - The coordinated double swap (macOS, where no call tells a descriptor's path): a same-user process that flips a
+ *   folder to a link and back twice, in step with these checks, within a few microseconds. Path checks cannot
+ *   close that; the attacker would already need to run as the user who can read that file.
+ * - Hard links: a hard link inside the project to a file outside it is the same file, with a real path inside the
+ *   project, so every path check passes. Only a user who can already read the outside file can make one.
+ * - /read has one more rule by design: a path outside the project, named absolutely, still reads (the "View file"
+ *   escape hatch), but a path inside the project that leads out through a link is refused. The link cannot be a way
+ *   around the project; if the file is wanted, name it by its real path.
  */
 import fs from 'node:fs';
 import path from 'node:path';

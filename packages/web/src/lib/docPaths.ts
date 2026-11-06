@@ -10,8 +10,6 @@ export interface DocSpan { start: number; end: number; path: string; branch: str
 // start), and not after a backslash (a Windows path is no chip at all, never a chip for its last part). Trailing punctuation is not part of the path. The filters below remove what the regex cannot:
 // domains, email addresses, and bare words such as "e.g." or "Node.js".
 const PATH = /(?<![\w:/.@~\\-])((?:\/|\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.(?:[a-z][a-z0-9]{0,31}|7z))(?![\w/-]|\.\w)/gi;
-/** Top-level domains: "example.com", "socket.io" or "www.x.org/a.html" is a site, not a file. Not .sh, .py, .rs, .ts, .md, .cc. */
-const TLD = new Set(['com', 'org', 'net', 'io', 'dev', 'app', 'ai', 'co', 'edu', 'gov', 'info', 'biz', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'me', 'tv']);
 /** A name with no folder in it is a file only with one of these extensions: "extract.py" is, "e.g." and "v3.5" are not. */
 const BARE_EXT = new Set((
   'md markdown txt rst json jsonl ndjson yml yaml toml ini cfg conf lock xml html htm css scss less svg ' +
@@ -53,15 +51,41 @@ function looksLikeHost(first: string): boolean {
 /** True when a matched path is a file path, not an email address, a domain, a version, an abbreviation or a product name. */
 function isFilePath(path: string, next: string): boolean {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
-  if (TLD.has(ext)) return false;
   const slash = path.indexOf('/');
   const first = slash < 0 ? path : path.slice(0, slash);
-  // "jo@example.sh": an "@" inside the first word is an email address. A leading "@" is a package scope ("@types/node").
-  if (first.indexOf('@') > 0) return false;
-  // A bare name followed by "(" is a call ("res.json(data)"), not a file.
+  // "jo@example.sh": an "@" inside a word is an email address. A leading "@" is a package scope ("@types/node").
+  if (path.split('/').some((seg) => seg.indexOf('@') > 0)) return false;
+  // A bare name followed by "(" is a call ("res.json(data)"), not a file. "docs/tool.com" takes any extension; "tool.com" does not.
   if (slash < 0) return isBareExt(ext) && !NOT_FILES.has(path.toLowerCase()) && next !== '(';
+  // "e.g./i.e": a first folder that ends in a dot is an abbreviation, not a folder.
+  if (first.endsWith('.') && first !== '.' && first !== '..') return false;
   // "www.example.com/about.html": a first folder that is a host name makes the whole thing a web address.
   return !looksLikeHost(first);
+}
+
+/** A Windows drive or network path starts with "C:\", "C:/" or "\\\\". */
+const WIN_START = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+/** A word that ends in a file extension ("b.py", "b.py,") is a whole file name: a Windows path does not go on after it. */
+const ENDS_IN_FILE = /\.[a-z][a-z0-9]*[,;:!?)"'`]*$/i;
+/**
+ * True when the path match at `start` is the tail of a Windows path with spaces ("C:/Program Files/x/a.py" matches
+ * "Files/x/a.py"): walking back over single-spaced words, a word that starts a drive or network path comes before a word that
+ * ends in a file extension. A chip for a tail would open the wrong file, so there is no chip.
+ */
+function afterWindowsPath(text: string, start: number): boolean {
+  let pos = start;
+  for (let n = 0; n < 6; n++) {
+    if (pos === 0 || text[pos - 1] !== ' ') return false;
+    while (pos > 0 && text[pos - 1] === ' ') pos--;
+    let ws = pos;
+    while (ws > 0 && !/\s/.test(text[ws - 1])) ws--;
+    const word = text.slice(ws, pos).replace(/^["'`(\[]+/, '');
+    if (ENDS_IN_FILE.test(word)) return false;
+    if (WIN_START.test(word)) return true;
+    if (!/^[\w.@()\-/\\:~]+$/.test(word)) return false;
+    pos = ws;
+  }
+  return false;
 }
 
 /** The "(branch NAME)" right after a path (sticky: it reads at `lastIndex` only). */
@@ -82,6 +106,7 @@ export function findDocPaths(text: string): DocSpan[] {
   for (const m of text.matchAll(PATH)) {
     const start = m.index ?? 0;
     if (inUrl(text, start)) continue; // inside a URL
+    if (afterWindowsPath(text, start)) continue; // the tail of a Windows path with spaces
     const path = m[1];
     if (!isFilePath(path, text[start + path.length] ?? '')) continue;
     const end = start + path.length;
@@ -153,9 +178,11 @@ export function projectForPath(p: string, messageProject: string | null, project
  * out (absolute stays absolute; for a doc). `rel` is the path inside the project (for a file tab or a
  * download: a relative path is the one the server also checks for symlinks). A path that leaves its
  * project through ".." has no project. An absolute path goes to the longest project folder that holds it.
- * A relative path that starts with the folder name of another known project ("sandbox/notes/board.md")
- * belongs to that project, with that name removed; two such projects: no project, no guess. The message
- * project's own folder name is not removed, and when it is also another project's folder name there is no project. Else the message project.
+ * A relative path opens in the message's own project, always (a "docs/x.md" or "web/src/App.tsx" is in the
+ * project that wrote it, even if another project is named docs or web). Only a message with no project uses
+ * the folder-name rule: a path that starts with the folder name of exactly one known project
+ * ("sandbox/notes/board.md") belongs to that project, with that name removed; two such projects: no project,
+ * no guess. An explicit "./x" or "../x" path never uses the folder-name rule.
  */
 export function resolveProjectPath(p: string, messageProject: string | null, projects: Projects): { project: string; path: string; rel: string } | null {
   const parts = stepOut(p.split('/'));
@@ -167,13 +194,11 @@ export function resolveProjectPath(p: string, messageProject: string | null, pro
     const rel = abs.slice(strip(owner.folder).length + 1);
     return rel ? { project: owner.id, path: abs, rel } : null;
   }
-  if (parts.length > 1) {
-    const named = (x: { folder: string }) => !!x.folder && strip(x.folder).split('/').pop() === parts[0];
-    const owners = projects.filter((x) => x.id !== messageProject && named(x));
-    // The message project has the same folder name: the path could mean its own subfolder or the other project.
-    if (owners.length > 1 || (owners.length === 1 && projects.some((x) => x.id === messageProject && named(x)))) return null;
+  const rel = parts.join('/');
+  if (messageProject) return { project: messageProject, path: rel, rel };
+  if (parts.length > 1 && !p.startsWith('./') && !p.startsWith('../')) {
+    const owners = projects.filter((x) => x.folder && strip(x.folder).split('/').pop() === parts[0]);
     if (owners.length === 1) { const rest = parts.slice(1).join('/'); return { project: owners[0].id, path: rest, rel: rest }; }
   }
-  const rel = parts.join('/');
-  return messageProject ? { project: messageProject, path: rel, rel } : null;
+  return null;
 }
