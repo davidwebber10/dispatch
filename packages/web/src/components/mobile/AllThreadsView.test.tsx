@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { api } from '../../api/client';
 import { AllThreadsView } from './AllThreadsView';
 import { useProjects } from '../../stores/projects';
@@ -17,6 +17,11 @@ beforeEach(() => {
   }, loading: {} } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
+
+// The filters sit behind the Filters button (2026-11-06): every render here opens the panel, so the
+// tests below can reach the Started-by switch and the project chips.
+const openFilters = () => { const b = screen.queryByRole('button', { name: /^Filters/ }); if (b && b.getAttribute('aria-expanded') !== 'true') fireEvent.click(b); };
+const render = (ui: React.ReactElement) => { const r = rtlRender(ui); openFilters(); return r; };
 
 // Rows are the project view's ThreadRow (data-thread-id); its label carries the name as aria-label.
 const labels = () => Array.from(document.querySelectorAll('[data-thread-id]')).map((row) => row.querySelector('span[aria-label]')?.getAttribute('aria-label'));
@@ -37,7 +42,7 @@ describe('<AllThreadsView>', () => {
     unmount();
     render(<AllThreadsView onOpenThread={() => {}} />);
     expect(screen.getByRole('button', { name: 'Beta' })).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(screen.getByRole('button', { name: 'All' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All projects' }));
     expect(labels()).toHaveLength(3);
   });
 
@@ -78,17 +83,39 @@ describe('<AllThreadsView>', () => {
         t('b2', 'B', 'Fix round 2', '2026-10-28T07:00:00Z', { config: { role: 'agent', spawnedBy: 'b1' } })],
     }, loading: {} } as any);
     const seg = (name: RegExp | string) => screen.getByRole('radio', { name });
-    const chips = () => within(screen.getByRole('group', { name: 'Project filter' })).getAllByRole('button').map((b) => b.textContent);
+    // These tests start from a saved Mine; the default (All) has its own test.
+    beforeEach(() => { localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'mine'); });
+    const chips = () => within(screen.getByRole('group', { name: 'Project filter' })).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
 
     it('is hidden when no thread was started by an agent, and the list shows everything', () => {
-      localStorage.setItem('dispatch:mobileThreadsStarter', 'agents');
+      localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'agents');
       useTabs.setState({ byProject: { A: [t('a1', 'A', 'Fix login', '2026-10-28T10:00:00Z'), t('a2', 'A', 'Write docs', '2026-10-28T09:00:00Z')] }, loading: {} } as any);
       render(<AllThreadsView onOpenThread={() => {}} />);
       expect(screen.queryByRole('radiogroup', { name: 'Started by' })).toBeNull();
       expect(labels()).toEqual(['Fix login', 'Write docs']);
     });
 
-    it('opens on Mine and hides agent threads', () => {
+    it('with nothing saved it opens on All, and the Filters button shows no count', () => {
+      localStorage.removeItem('dispatch:mobileThreadsStarter:v2');
+      seed();
+      rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+      expect(screen.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByTestId('applied-filters')).toBeNull();
+      expect(labels()).toEqual(['Ship v2', 'Fix login', 'Review login', 'Overseer job', 'Fix round 2']);
+    });
+
+    it('a filter that is on shows as a pill while the panel is closed, and × removes it', () => {
+      seed();
+      rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+      expect(screen.getByRole('button', { name: 'Filters, 1 on' })).toBeInTheDocument();
+      const applied = screen.getByTestId('applied-filters');
+      expect(applied.textContent).toContain('Started byMine');
+      fireEvent.click(within(applied).getByRole('button', { name: 'Remove Started by filter' }));
+      expect(screen.queryByTestId('applied-filters')).toBeNull();
+      expect(labels()).toHaveLength(5);
+    });
+
+    it('a saved Mine hides agent threads', () => {
       seed();
       render(<AllThreadsView onOpenThread={() => {}} />);
       expect(seg(/^Mine/)).toHaveAttribute('aria-checked', 'true');
@@ -134,18 +161,18 @@ describe('<AllThreadsView>', () => {
       expect(seg(/^All/)).toHaveTextContent('All 2');
     });
 
-    it('the choice is stored, comes back after a remount, and a bad stored value gives Mine', () => {
+    it('the choice is stored, comes back after a remount, and a bad stored value gives All', () => {
       seed();
       const { unmount } = render(<AllThreadsView onOpenThread={() => {}} />);
       fireEvent.click(seg(/^Agents/));
-      expect(localStorage.getItem('dispatch:mobileThreadsStarter')).toBe('agents');
+      expect(localStorage.getItem('dispatch:mobileThreadsStarter:v2')).toBe('agents');
       unmount();
       const second = render(<AllThreadsView onOpenThread={() => {}} />);
       expect(seg(/^Agents/)).toHaveAttribute('aria-checked', 'true');
       second.unmount();
-      localStorage.setItem('dispatch:mobileThreadsStarter', 'bogus');
+      localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'bogus');
       render(<AllThreadsView onOpenThread={() => {}} />);
-      expect(seg(/^Mine/)).toHaveAttribute('aria-checked', 'true');
+      expect(seg(/^All/)).toHaveAttribute('aria-checked', 'true');
     });
 
     it('the project chips list only projects that have a thread in the current filter', () => {
@@ -154,11 +181,11 @@ describe('<AllThreadsView>', () => {
         B: [t('b2', 'B', 'Fix round 2', '2026-10-28T07:00:00Z', { config: { role: 'agent' } })],
       } } as any);
       render(<AllThreadsView onOpenThread={() => {}} />);
-      expect(chips()).toEqual(['All', 'Alpha']);
+      expect(chips()).toEqual(['All projects', 'Alpha']);
       fireEvent.click(seg(/^Agents/));
-      expect(chips()).toEqual(['All', 'Beta']);
+      expect(chips()).toEqual(['All projects', 'Beta']);
       fireEvent.click(seg(/^All/));
-      expect(chips()).toEqual(['All', 'Alpha', 'Beta']);
+      expect(chips()).toEqual(['All projects', 'Alpha', 'Beta']);
     });
 
     it('search works inside the filter', () => {
@@ -173,32 +200,34 @@ describe('<AllThreadsView>', () => {
 
     it('when the filter has no match but the other one does, a button switches to it', async () => {
       seed();
-      render(<AllThreadsView onOpenThread={() => {}} query="overseer job" />);
+      rtlRender(<AllThreadsView onOpenThread={() => {}} query="overseer job" />);
       expect(labels()).toEqual([]);
       fireEvent.click(await screen.findByRole('button', { name: 'Show 1 agent thread' }));
       expect(labels()).toEqual(['Overseer job']);
+      openFilters();
       expect(seg(/^Agents/)).toHaveAttribute('aria-checked', 'true');
     });
 
     it('from Agents, the button offers the owner\'s threads', async () => {
       seed();
-      localStorage.setItem('dispatch:mobileThreadsStarter', 'agents');
-      render(<AllThreadsView onOpenThread={() => {}} query="fix login" />);
+      localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'agents');
+      rtlRender(<AllThreadsView onOpenThread={() => {}} query="fix login" />);
       fireEvent.click(await screen.findByRole('button', { name: 'Show 1 of my threads' }));
       expect(labels()).toEqual(['Fix login']);
+      openFilters();
       expect(seg(/^Mine/)).toHaveAttribute('aria-checked', 'true');
     });
 
     it('no button when nothing matches in any filter', async () => {
       seed();
-      render(<AllThreadsView onOpenThread={() => {}} query="zzz" />);
+      rtlRender(<AllThreadsView onOpenThread={() => {}} query="zzz" />);
       expect(await screen.findByText('No threads match.')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Show / })).toBeNull();
     });
 
     it('agent rows say who started them, after the project name', () => {
       seed();
-      localStorage.setItem('dispatch:mobileThreadsStarter', 'all');
+      localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'all');
       render(<AllThreadsView onOpenThread={() => {}} />);
       const row = (id: string) => document.querySelector(`[data-thread-id="${id}"]`)!.textContent;
       expect(row('a2')).toContain('Alpha · Chat');
@@ -209,7 +238,7 @@ describe('<AllThreadsView>', () => {
 
     it('with a project chip on, the agent row shows only the started-by word', () => {
       seed();
-      localStorage.setItem('dispatch:mobileThreadsStarter', 'agents');
+      localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'agents');
       render(<AllThreadsView onOpenThread={() => {}} />);
       fireEvent.click(screen.getByRole('button', { name: 'Beta' }));
       const text = document.querySelector('[data-thread-id="b2"]')!.textContent;

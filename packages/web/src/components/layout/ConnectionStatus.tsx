@@ -1,4 +1,4 @@
-import { useShownStatus } from '../../stores/connection';
+import { useShownStatus, type ShownStatus } from '../../stores/connection';
 
 const STYLES = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -7,8 +7,10 @@ const STYLES = {
   closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
 } as const;
 
-export function ConnectionStatus() {
-  const status = useShownStatus();
+/** `shown`: a status the caller already settled (its own grace period ran), so this one doesn't wait again. */
+export function ConnectionStatus({ shown }: { shown?: ShownStatus } = {}) {
+  const own = useShownStatus();
+  const status = shown ?? own;
   const st = STYLES[status];
   return (
     <span style={{

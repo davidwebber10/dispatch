@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChatsCircle } from '@phosphor-icons/react';
+import { ChatsCircle, FunnelSimple, X } from '@phosphor-icons/react';
 import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
@@ -12,10 +12,12 @@ import { ArchivedThreadsList } from './ArchivedThreadsList';
 import { isAgentStarted, startedByOf, startedByText } from '../../lib/startedBy';
 
 const FILTER_KEY = 'dispatch:mobileThreadsProject';
-const STARTER_KEY = 'dispatch:mobileThreadsStarter';
+// v2 (2026-11-06): the default became All. The old key mostly held 'mine' written automatically as
+// the old default, so it is not carried over.
+const STARTER_KEY = 'dispatch:mobileThreadsStarter:v2';
 type Starter = 'mine' | 'agents' | 'all';
 const STARTERS: { id: Starter; label: string }[] = [{ id: 'mine', label: 'Mine' }, { id: 'agents', label: 'Agents' }, { id: 'all', label: 'All' }];
-const readStarter = (): Starter => { try { const v = localStorage.getItem(STARTER_KEY); return v === 'agents' || v === 'all' ? v : 'mine'; } catch { return 'mine'; } };
+const readStarter = (): Starter => { try { const v = localStorage.getItem(STARTER_KEY); return v === 'agents' || v === 'mine' ? v : 'all'; } catch { return 'all'; } };
 const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
 
 /**
@@ -27,7 +29,8 @@ const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
  *
  * Mine · Agents · All (2026-11-05): most rows were started by an agent (Chat, an overseer, another
  * thread, a scheduled role), which buried the owner's own threads. The split comes from the
- * thread's config alone (lib/startedBy.ts). It opens on Mine and is remembered per device.
+ * thread's config alone (lib/startedBy.ts). It opens on All and is remembered per device. Both
+ * filters sit behind the Filters button (2026-11-06).
  */
 export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string }) {
   const projects = useProjects((s) => s.sessions);
@@ -86,17 +89,6 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
     try { await api.archiveTerminal(t.id); await useTabs.getState().loadTabs(t.sessionId); } catch { /* surfaced via connection state */ }
   }
 
-  const chip = (on: boolean) => ({
-    flex: '0 0 auto', height: 30, padding: '0 12px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', cursor: 'pointer',
-    background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? '#08240F' : 'var(--color-text-secondary)',
-    fontSize: 13, fontWeight: on ? 600 : 500, whiteSpace: 'nowrap' as const, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis',
-  });
-
-  const seg = (on: boolean): React.CSSProperties => ({
-    flex: 1, height: 28, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-pill)', whiteSpace: 'nowrap',
-    background: on ? 'var(--color-accent)' : 'transparent', color: on ? '#08240F' : 'var(--color-text-secondary)', fontSize: 12.5, fontWeight: on ? 600 : 500,
-  });
-
   // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
   const tabBtn = (on: boolean): React.CSSProperties => ({
     padding: '8px 2px 7px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
@@ -104,27 +96,86 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
     color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: '700 12.5px var(--font-mono)', letterSpacing: '1px',
   });
   const chipProjects = tab === 'archived' ? projects : withThreads;
+
+  // Filters (2026-11-06): tucked behind a Filters button, open as an inline panel. While any filter
+  // is on, the button says how many and a row of pills says exactly what is applied.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const starterOn = tab === 'active' && anyAgents && starter !== 'all';
+  const nFilters = (starterOn ? 1 : 0) + (active ? 1 : 0);
+  const threadsIn = (pid: string) => (byProject[pid] ?? []).filter(inFilter).length;
+  const starterLabel = STARTERS.find((o) => o.id === starter)?.label;
+  const clearAll = () => { setStarter('all'); setFilter(null); };
+  const pill: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 4px 0 10px', flexShrink: 0, maxWidth: 220,
+    borderRadius: 'var(--radius-pill)', fontSize: 13, color: 'var(--color-text-primary)',
+    background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', border: '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)',
+  };
+  const pillX = (label: string, onClick: () => void) => (
+    <button type="button" aria-label={label} onClick={onClick} style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
+      <X size={12} weight="bold" />
+    </button>
+  );
+  const group: React.CSSProperties = { font: '500 10.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-tertiary)', margin: '2px 0 8px' };
+  const pchip = (on: boolean): React.CSSProperties => ({
+    display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 11px', borderRadius: 'var(--radius-pill)', cursor: 'pointer', fontSize: 13.5, maxWidth: 200,
+    border: `1px solid ${on ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border)'}`,
+    background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+  });
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div role="tablist" aria-label="Thread list" style={{ display: 'flex', gap: 18, padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
         <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
         <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
+        <button type="button" aria-expanded={filtersOpen} aria-label={nFilters ? `Filters, ${nFilters} on` : 'Filters'} onClick={() => setFiltersOpen((v) => !v)}
+          style={{
+            marginLeft: 'auto', alignSelf: 'center', marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', cursor: 'pointer', fontSize: 13,
+            borderRadius: 'var(--radius-pill)', border: `1px solid ${nFilters ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border)'}`,
+            background: nFilters || filtersOpen ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent', color: nFilters ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+          }}>
+          <FunnelSimple size={15} weight="bold" />Filters
+          {nFilters > 0 && <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: '#06140B', font: '600 11px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{nFilters}</span>}
+        </button>
       </div>
-      {tab === 'active' && anyAgents && (
-        <div role="radiogroup" aria-label="Started by" style={{ display: 'flex', gap: 2, margin: '8px 12px 0', padding: 2, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', background: 'var(--color-elevated)' }}>
-          {STARTERS.map((o) => (
-            <button key={o.id} type="button" role="radio" aria-checked={starter === o.id} onClick={() => setStarter(o.id)} style={seg(starter === o.id)}>
-              {o.label} <span style={{ opacity: 0.75, fontVariantNumeric: 'tabular-nums' }}>{counts[o.id]}</span>
-            </button>
-          ))}
+      {nFilters > 0 && !filtersOpen && (
+        <div data-testid="applied-filters" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px 2px', flexWrap: 'wrap', flexShrink: 0 }}>
+          {starterOn && <span style={pill}><span style={{ color: 'var(--color-text-secondary)' }}>Started by</span>{starterLabel}{pillX('Remove Started by filter', () => setStarter('all'))}</span>}
+          {active && <span style={pill}><span style={{ color: 'var(--color-text-secondary)' }}>Project</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf.get(active)}</span>{pillX('Remove Project filter', () => setFilter(null))}</span>}
+          <button type="button" onClick={clearAll} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', padding: '0 4px' }}>Clear</button>
         </div>
       )}
-      <div role="group" aria-label="Project filter" style={{ display: 'flex', gap: 6, padding: '8px 12px 6px', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-        <button type="button" aria-pressed={active === null} onClick={() => setFilter(null)} style={chip(active === null)}>All</button>
-        {chipProjects.map((p) => (
-          <button key={p.id} type="button" aria-pressed={active === p.id} onClick={() => setFilter(p.id)} style={chip(active === p.id)}>{p.name}</button>
-        ))}
-      </div>
+      {filtersOpen && (
+        <div data-testid="filters-panel" style={{ margin: '10px 12px 4px', padding: 12, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-elevated)' }}>
+          {tab === 'active' && anyAgents && (
+            <>
+              <div style={group}>STARTED BY</div>
+              <div role="radiogroup" aria-label="Started by" style={{ display: 'flex', gap: 2, padding: 2, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-base)', marginBottom: 14 }}>
+                {STARTERS.map((o) => (
+                  <button key={o.id} type="button" role="radio" aria-checked={starter === o.id} onClick={() => setStarter(o.id)}
+                    style={{ flex: 1, height: 30, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: 13.5, background: starter === o.id ? 'var(--color-hover)' : 'transparent', color: starter === o.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
+                    {o.label} <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{counts[o.id]}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          <div style={group}>PROJECT</div>
+          <div role="group" aria-label="Project filter" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <button type="button" aria-pressed={active === null} onClick={() => setFilter(null)} style={pchip(active === null)}>All projects</button>
+            {chipProjects.map((p) => (
+              <button key={p.id} type="button" aria-pressed={active === p.id} aria-label={p.name} onClick={() => setFilter(p.id)} style={pchip(active === p.id)}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                {tab === 'active' && <span aria-hidden style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{threadsIn(p.id)}</span>}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--color-border)' }}>
+            <button type="button" onClick={clearAll} disabled={!nFilters} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, color: 'var(--color-text-secondary)', cursor: 'pointer', opacity: nFilters ? 1 : 0.5 }}>Reset</button>
+            <button type="button" onClick={() => setFiltersOpen(false)} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13.5, fontWeight: 500, color: 'var(--color-accent)', cursor: 'pointer' }}>
+              {tab === 'active' ? `Show ${threads.length} thread${threads.length === 1 ? '' : 's'}` : 'Done'}
+            </button>
+          </div>
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
         {tab === 'archived' ? <ArchivedThreadsList project={active} query={query} onOpenThread={onOpenThread} /> : <>
         {loading && !threads.length && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>}
@@ -133,7 +184,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
             <ChatsCircle size={30} style={{ opacity: 0.5 }} />
             <div style={{ marginTop: 10 }}>{q || active || otherCount ? 'No threads match.' : 'No threads yet.'}</div>
             {otherFilter && otherCount > 0 && (
-              <button type="button" onClick={() => setStarter(otherFilter)} style={{ ...chip(false), marginTop: 12, height: 34, maxWidth: 'none' }}>
+              <button type="button" onClick={() => setStarter(otherFilter)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
                 {otherFilter === 'agents' ? `Show ${otherCount} agent ${otherCount === 1 ? 'thread' : 'threads'}` : `Show ${otherCount} of my threads`}
               </button>
             )}

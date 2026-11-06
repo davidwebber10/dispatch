@@ -29,7 +29,9 @@ const sheetItem: React.CSSProperties = { ...item, padding: '13px 12px', fontSize
  * phone's cross-project Threads list, so both offer the same actions. Stays mounted while
  * `at` is null so a dialog opened from the menu outlives the menu itself.
  */
-export function ThreadMenu({ at, onClose, onBranched }: { at: ThreadMenuAt | null; onClose: () => void; onBranched: (thread: Terminal) => void }) {
+/** `lead`: rows shown before the thread's own (the phone's thread header puts Previews and the mode
+ *  switch there). Each closes the menu itself, through the `close` it is given. */
+export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt | null; onClose: () => void; onBranched: (thread: Terminal) => void; lead?: (close: () => void, rowStyle: React.CSSProperties) => React.ReactNode }) {
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
   const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
   const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
@@ -73,6 +75,7 @@ export function ThreadMenu({ at, onClose, onBranched }: { at: ThreadMenuAt | nul
   // The menu's rows, the same in the sheet and the desktop menu.
   const menuItems = (at: ThreadMenuAt) => (
     <>
+            {lead?.(onClose, isMobile ? sheetItem : item)}
             {isMobile && THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick(setDetailsTarget)} style={isMobile ? sheetItem : item}>Thread details</button>
             )}

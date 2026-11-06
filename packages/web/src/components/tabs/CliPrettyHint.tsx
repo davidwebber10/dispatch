@@ -4,6 +4,7 @@ import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings, CLI_PRETTY_HINT_KEY } from '../../stores/settings';
 
 export { CLI_PRETTY_HINT_KEY };
@@ -27,6 +28,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
   const dismissed = !useSettings((s) => s.showPrettyHint);
   const [busy, setBusy] = useState(false);
   const threadStatus = useThreadStatus((s) => s.byTerminal[tab.id]?.threadStatus);
+  const isMobile = useIsMobile();
 
   if (dismissed) return null;
 
@@ -38,6 +40,8 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
       ? 'Wait for the current turn to finish'
       : undefined;
 
+  // One line on a phone (2026-11-06): the full sentence wrapped to two under the header.
+  const short = isMobile;
   async function switchToPretty() {
     if (!canSwitch) return;
     setBusy(true);
@@ -60,22 +64,26 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.4,
       }}
     >
-      <span style={{ flex: 1, minWidth: 0 }}>
-        Long responses read best in Pretty — the CLI view can rewrap or drop replayed output.
+      <span style={{ flex: 1, minWidth: 0, ...(short ? { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } : {}) }}
+        title={short ? 'Long responses read best in Pretty — the CLI view can rewrap or drop replayed output.' : undefined}>
+        {short ? 'Reads best in Pretty' : 'Long responses read best in Pretty — the CLI view can rewrap or drop replayed output.'}
       </span>
       <button
         type="button"
         disabled={!canSwitch}
         title={tip}
         onClick={() => void switchToPretty()}
-        style={{
+        style={short ? {
+          flexShrink: 0, height: 24, padding: '0 4px', border: 'none', background: 'transparent', color: 'var(--color-accent)',
+          font: '500 13px var(--font-sans)', cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
+        } : {
           flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #2C2C32',
           background: 'var(--color-hover)', color: 'var(--color-text-primary)',
           font: '600 11px var(--font-mono, monospace)', letterSpacing: '0.3px',
           cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
         }}
       >
-        Switch to Pretty
+        {short ? 'Switch' : 'Switch to Pretty'}
       </button>
       <button
         type="button"

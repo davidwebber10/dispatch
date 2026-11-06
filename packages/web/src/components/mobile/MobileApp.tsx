@@ -3,14 +3,17 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
-import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { UsageChip } from '../layout/UsageChip';
 import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
-import { Eye } from '@phosphor-icons/react';
+import { Eye, DotsThree } from '@phosphor-icons/react';
+import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
+import { useTransportSwitch } from '../layout/TransportToggle';
+import { useShownStatus } from '../../stores/connection';
+import { useThreadStatus } from '../../stores/threadStatus';
 import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
@@ -273,6 +276,17 @@ export function MobileApp() {
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
   const unseenHere = usePreviews((s) => unseenPreviews(s.items, project?.id ?? null));
+  // In a thread (2026-11-06, header option C): the title is the thread's own name, with its status,
+  // project and mode underneath; Previews and the CLI ⇄ Pretty switch live in the ⋯ menu, which
+  // carries the unseen-previews badge.
+  const leafTab = level === 2 && leaf === 'tab' && leafTabId ? findTerminal(byProject, leafTabId) : undefined;
+  const transport = useTransportSwitch(leafTab ? leafTab.id : null);
+  const leafStatus = useThreadStatus((s) => (leafTab ? s.byTerminal[leafTab.id]?.threadStatus : undefined));
+  const statusColor = leafStatus === 'working' || leafStatus === 'starting' ? 'var(--color-accent)'
+    : leafStatus === 'needs_input' ? 'var(--color-status-yellow)'
+      : leafStatus === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
+  const [threadMenu, setThreadMenu] = useState<ThreadMenuAt | null>(null);
+  const connection = useShownStatus();
   useEffect(() => { void usePreviews.getState().load(); }, []);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
@@ -281,6 +295,25 @@ export function MobileApp() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <PreviewSheet />
+      <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
+        lead={(close, row) => (
+          <>
+            {project && (
+              <button type="button" style={row} onClick={() => { close(); usePreviews.getState().openSheet(project.id); }}>
+                <Eye size={17} />Previews
+                {unseenHere > 0 && <span style={{ marginLeft: 'auto', font: '500 12px var(--font-mono)', color: 'var(--color-accent)' }}>{unseenHere} new</span>}
+              </button>
+            )}
+            {transport.applies && (
+              <button type="button" style={{ ...row, opacity: transport.canSwitch ? 1 : 0.5 }} disabled={!transport.canSwitch} title={transport.tip}
+                onClick={() => { close(); void transport.switchTo(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
+                <TerminalWindow size={17} />{transport.current === 'pretty' ? 'Switch to CLI' : 'Switch to Pretty'}
+                {!transport.canSwitch && transport.tip && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-tertiary)' }}>{transport.tip.startsWith('Wait') ? 'mid-turn' : 'after a message'}</span>}
+              </button>
+            )}
+            <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />
+          </>
+        )} />
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>
@@ -307,15 +340,30 @@ export function MobileApp() {
             )}
           </>
         ) : (
+          leafTab ? (
+            <>
+              <button onClick={back} aria-label={`Back to ${project?.name ?? 'project'}`} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px 2px', flexShrink: 0 }}>
+                <CaretLeft size={22} weight="bold" />
+              </button>
+              <div data-testid="thread-title" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
+                <span style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leafTab.label}</span>
+                <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
+                  {project?.name}{transport.applies ? ` · ${transport.current === 'pretty' ? 'Pretty' : 'CLI'}` : ''}
+                </span>
+              </div>
+            </>
+          ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
             <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{headerTitle}</span>
           </button>
+          )
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Previews: what threads handed the user to look at or copy (spec 2026-10-28). Shown inside
               a project (its threads list and a thread), for terminal and Pretty threads alike. */}
-          {level >= 1 && !inSettings && project && (
+          {level >= 1 && !inSettings && project && !leafTab && (
             <button type="button" aria-label="Previews" title="Previews" onClick={() => usePreviews.getState().openSheet(project.id)}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <Eye size={18} />
@@ -325,12 +373,14 @@ export function MobileApp() {
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
           <UsageChip variant="phone" />
           <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
-          {/* CLI ⇄ Pretty transport switch — the mobile counterpart of TabHost's floating
-              desktop control, which mobile never rendered (so a Pretty thread was
-              unswitchable on a phone). Non-floating (compact) to match the header pills.
-              Self-gates to claude-code/codex threads. This is the only render switch now
-              (the old View/Terminal ModeToggle was removed). */}
-          <TransportToggle terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
+          {leafTab && (
+            <button type="button" aria-label="Thread menu" title="Previews, Pretty / CLI and thread options"
+              onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setThreadMenu({ tab: leafTab, x: r.right, y: r.bottom }); }}
+              style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
+              <DotsThree size={22} weight="bold" />
+              <PreviewBadge count={unseenHere} />
+            </button>
+          )}
         </div>
         {/* Centred section title, iOS-style, while drilled into a settings section
             (the back button on the left already reads "‹ Settings"). */}
@@ -414,9 +464,10 @@ export function MobileApp() {
 
           {/* Level 2 — the thread terminal or the agent dashboard */}
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', ['--composer-safe-bottom' as string]: '0px' }}>
-            {leaf === 'tab' && leafTabId && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
+            {/* Only a real drop: a healthy connection needs no label (useShownStatus waits 1.5 s). */}
+            {leaf === 'tab' && leafTabId && connection !== 'open' && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
               <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 'var(--radius-md)', padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
-                <ConnectionStatus />
+                <ConnectionStatus shown={connection} />
               </div>
             )}
             {leaf === 'agent'

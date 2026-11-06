@@ -67,7 +67,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
           style={{ ...HEADER_BOX, minWidth: 44, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, ...(m.tone === 'normal' ? {} : { borderColor: color }), color, font: '600 13px var(--font-mono)', cursor: 'pointer' }}>
           {/* Stale figures dim the figure, not the button: the header's controls keep one weight. */}
           <span style={{ display: 'flex', alignItems: 'center', gap: 3, opacity }}>
-            {m.mark && <span style={{ fontSize: 10, opacity: 0.8 }}>{m.mark}</span>}
+            {/* Just the figure (2026-11-06): the "C"/"X" tool letter read as noise. The label says which tool. */}
             {m.peak}
           </span>
         </button>

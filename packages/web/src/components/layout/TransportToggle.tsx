@@ -16,20 +16,26 @@ import { api } from '../../api/client';
  * you can only switch between turns. The whole control greys out when it can't switch, so its
  * unavailability reads at a glance rather than only on hover. Renders nothing for non-AI tabs.
  */
-export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
+/**
+ * The CLI ⇄ Pretty switch for one thread, shared by this control and the phone's thread menu
+ * (2026-11-06). `applies` is false for a thread that has no second mode (not Claude Code or Codex).
+ */
+export function useTransportSwitch(terminalId: string | null | undefined) {
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : undefined));
   const threadStatus = useThreadStatus((s) => (terminalId ? s.byTerminal[terminalId]?.threadStatus : undefined));
   const [busy, setBusy] = useState(false);
-
-  if (!terminalId || !tab || (tab.type !== 'claude-code' && tab.type !== 'codex')) return null;
-
-  const current: 'cli' | 'pretty' = (tab.config as { transport?: string } | undefined)?.transport === 'structured' ? 'pretty' : 'cli';
+  const applies = !!terminalId && !!tab && (tab.type === 'claude-code' || tab.type === 'codex');
+  const current: 'cli' | 'pretty' = (tab?.config as { transport?: string } | undefined)?.transport === 'structured' ? 'pretty' : 'cli';
   // A turn is in flight when the CLI is starting or actively working (this also covers a native
   // compaction, which the StatusService reports as working) — the window where a resume-respawn
   // would drop live output.
   const midTurn = threadStatus === 'working' || threadStatus === 'starting';
-  const canSwitch = !!tab.externalId && !midTurn;
-
+  const canSwitch = applies && !!tab?.externalId && !midTurn;
+  const tip = !tab?.externalId
+    ? 'Send a message first to enable switching'
+    : midTurn
+      ? 'Wait for the current turn to finish'
+      : undefined;
   async function switchTo(target: 'cli' | 'pretty') {
     if (busy || !tab || target === current || !canSwitch) return;
     setBusy(true);
@@ -42,14 +48,16 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
       setBusy(false);
     }
   }
+  return { applies, tab, current, canSwitch, busy, tip, switchTo };
+}
+
+export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
+  const { applies, tab, current, canSwitch, busy, switchTo } = useTransportSwitch(terminalId);
+  if (!applies || !tab) return null;
 
   const dim = floating ? { w: 46, h: 32, radius: 'var(--radius-md)', pad: 3, font: 11 } : { w: 40, h: HEADER_INNER, radius: 'var(--radius-sm)', pad: HEADER_PAD, font: 11 };
   const opts: ['cli' | 'pretty', string][] = [['cli', 'CLI'], ['pretty', 'Pretty']];
-  const tip = !tab.externalId
-    ? 'Send a message first to enable switching'
-    : midTurn
-      ? 'Wait for the current turn to finish'
-      : undefined;
+  const { tip } = { tip: !tab.externalId ? 'Send a message first to enable switching' : !canSwitch ? 'Wait for the current turn to finish' : undefined };
 
   return (
     <div

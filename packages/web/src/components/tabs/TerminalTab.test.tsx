@@ -296,7 +296,7 @@ test('the mobile composer spell-checks and autocorrects by default, but never au
   const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
 
-  const input = getByPlaceholderText('Type a message or command…');
+  const input = getByPlaceholderText('Message or /command');
   // Prose typed to the agent gets the keyboard's spelling help...
   expect(input.getAttribute('spellcheck')).toBe('true');
   expect(input.getAttribute('autocorrect')).toBe('on');
@@ -318,7 +318,7 @@ test('the "Aa" key turns the composer\'s spelling help off, and leaves capitalis
 
   act(() => { fireEvent.click(toggle); });
 
-  const input = getByPlaceholderText('Type a message or command…');
+  const input = getByPlaceholderText('Message or /command');
   expect(input.getAttribute('spellcheck')).toBe('false');
   expect(input.getAttribute('autocorrect')).toBe('off');
   expect(input.getAttribute('autocapitalize')).toBe('off');
@@ -332,7 +332,7 @@ test('the mobile composer wraps and grows with its text up to half the screen, a
   const { factory, created } = makeSocketFactory();
   const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
-  const box = getByPlaceholderText('Type a message or command…') as HTMLTextAreaElement;
+  const box = getByPlaceholderText('Message or /command') as HTMLTextAreaElement;
   expect(box.tagName).toBe('TEXTAREA');
 
   Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
