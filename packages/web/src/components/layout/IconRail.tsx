@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChartBar, ChatCircleDots, Eye, Gear, Rows } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
-import { useConnection } from '../../stores/connection';
+import { useShownStatus } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
@@ -10,7 +10,8 @@ import { UsageChip } from './UsageChip';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
+  connecting: { color: 'var(--color-status-yellow)', label: 'Connecting…' },
+  reconnecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
   closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
 } as const;
 
@@ -59,7 +60,7 @@ const NAV: { view: View; label: string; icon: Icon }[] = [
 export function IconRail() {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
-  const status = useConnection((s) => s.status);
+  const status = useShownStatus();
   const servers = useServers((s) => s.servers);
   const conn = CONN[status];
   const serverLabel = currentLabel(servers, window.location.origin);

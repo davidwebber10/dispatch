@@ -3,7 +3,7 @@ import {
   CaretLeft, Sparkle, ChatText, Wrench, ListChecks, CheckCircle, XCircle,
   Brain, Coins, ArrowElbowDownRight, Terminal as TerminalIcon,
 } from '@phosphor-icons/react';
-import { TerminalTab } from '../tabs/TerminalTab';
+import { TerminalTab } from '../tabs/LazyTerminalTab';
 import { useAgents } from '../../stores/agents';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { api } from '../../api/client';

@@ -35,9 +35,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('routes a source file to the editor', () => {
+it('routes a source file to the editor', async () => {
   renderPath('src/index.ts');
-  expect(screen.getByTestId('file-editor')).toBeInTheDocument();
+  expect(await screen.findByTestId('file-editor')).toBeInTheDocument();
   expect(screen.queryByTestId('image-viewer')).toBeNull();
 });
 
@@ -69,10 +69,10 @@ function aiTab(config: Record<string, unknown>): Terminal {
   } as unknown as Terminal;
 }
 
-it('a CLI claude thread renders the terminal WITH the Pretty hint and the status card', () => {
+it('a CLI claude thread renders the terminal WITH the Pretty hint and the status card', async () => {
   useTabs.setState({ byProject: { p1: [aiTab({})] } });
   render(<TabHost terminalId="t1" />);
-  expect(screen.getByTestId('terminal')).toBeInTheDocument();
+  expect(await screen.findByTestId('terminal')).toBeInTheDocument();
   expect(screen.getByTestId('pretty-hint')).toBeInTheDocument();
   expect(screen.getByTestId('cli-status-card')).toBeInTheDocument();
 });

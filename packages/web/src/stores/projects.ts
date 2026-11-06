@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { api } from '../api/client';
 import type { Session } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
+import { readSnapshot } from '../lib/launchSnapshot';
 
 interface ProjectsState {
   sessions: Session[];
@@ -14,7 +15,8 @@ interface ProjectsState {
 }
 
 export const useProjects = create<ProjectsState>((set, get) => ({
-  sessions: [],
+  // The last list seen on this device, drawn at once at launch; load() replaces it.
+  sessions: readSnapshot()?.sessions ?? [],
   activeId: null,
   load: async () => {
     const sessions = await api.listSessions();

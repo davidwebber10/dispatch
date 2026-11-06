@@ -2,6 +2,15 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { reloadForSignIn } from './lib/signInReload';
+import { reloadFresh } from './lib/shellCache';
+// Fonts ship with the app (cached forever) instead of Google Fonts, which blocked the first paint on
+// a third-party round trip. Latin only, the three weights the app uses.
+import '@fontsource/ibm-plex-sans/latin-400.css';
+import '@fontsource/ibm-plex-sans/latin-500.css';
+import '@fontsource/ibm-plex-sans/latin-600.css';
+import '@fontsource/jetbrains-mono/latin-400.css';
+import '@fontsource/jetbrains-mono/latin-500.css';
+import '@fontsource/jetbrains-mono/latin-600.css';
 import './theme.css';
 import './tailwind.css';
 
@@ -54,7 +63,7 @@ function watchForUpdates() {
       if (shell.status === 401) { reloadForSignIn(); return; }
       const html = await shell.text();
       const m = html.match(/\/assets\/index-[A-Za-z0-9_]+\.js/);
-      if (m && !current.endsWith(m[0])) { reloading = true; location.reload(); }
+      if (m && !current.endsWith(m[0])) { reloading = true; void reloadFresh(); }
     } catch { /* offline / transient — try again next tick */ }
   };
   window.addEventListener('focus', () => void check());

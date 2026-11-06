@@ -1,3 +1,5 @@
+import { reloadFresh } from './shellCache';
+
 const KEY = 'dispatch:signin-reload';
 const COOLDOWN_MS = 10_000;
 
@@ -12,5 +14,5 @@ export function reloadForSignIn(): void {
     if (last && Date.now() - last < COOLDOWN_MS) return;
     sessionStorage.setItem(KEY, String(Date.now()));
   } catch { /* storage blocked: reload anyway */ }
-  location.reload();
+  void reloadFresh();
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type DeviceInfo, type DeviceList } from '../../api/client';
 import { timeAgo } from '../../lib/time';
 import { sectionLabel, row, fieldInput, solidBtn, ghostBtn, miniChip } from './ui';
+import { reloadFresh } from '../../lib/shellCache';
 
 /**
  * Settings → Access: signed-in devices (network exposure spec, 8.1 and 8.2).
@@ -27,7 +28,7 @@ const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { year: '
 
 type Pending = { id: string; kind: 'revoke' | 'rename' } | 'legacy' | null;
 
-export function DevicesList({ now = Date.now, reload = () => window.location.reload() }: { now?: () => number; reload?: () => void }) {
+export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(); } }: { now?: () => number; reload?: () => void }) {
   const [data, setData] = useState<DeviceList | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'unavailable' | 'error'>('loading');
   const [pending, setPending] = useState<Pending>(null);

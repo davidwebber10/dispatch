@@ -12,7 +12,7 @@
 // compact row below.
 
 import { ChatView } from '../../tabs/chat/ChatView';
-import { TerminalTab } from '../../tabs/TerminalTab';
+import { TerminalTab } from '../../tabs/LazyTerminalTab';
 import { isStructured } from '../../tabs/TabHost';
 import { useTabs, findTerminal } from '../../../stores/tabs';
 import { useIsMobile } from '../../../hooks/useIsMobile';

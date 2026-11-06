@@ -21,3 +21,23 @@ describe('events broadcaster back-pressure', () => {
     expect(slow.terminate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('events liveness ping', () => {
+  it('answers the text "ping" with a pong and ignores anything else', async () => {
+    const { WebSocketServer, WebSocket } = await import('ws');
+    const { answerEventsPing, EVENTS_PONG } = await import('./events.js');
+    const wss = new WebSocketServer({ port: 0 });
+    wss.on('connection', (ws) => answerEventsPing(ws));
+    await new Promise((r) => wss.once('listening', r));
+    const port = (wss.address() as { port: number }).port;
+    const c = new WebSocket(`ws://127.0.0.1:${port}`);
+    const got: string[] = [];
+    c.on('message', (d) => got.push(d.toString()));
+    await new Promise((r) => c.once('open', r));
+    c.send('hello');
+    c.send('ping');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(got).toEqual([EVENTS_PONG]);
+    c.close(); wss.close();
+  });
+});

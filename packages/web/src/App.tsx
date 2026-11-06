@@ -28,7 +28,9 @@ import { Spinner } from './components/common/Spinner';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
-import { createEventsSocket } from './api/events-socket';
+import { createEventsSocket, type EventsSocket } from './api/events-socket';
+import { preloadTerminalTab } from './components/tabs/LazyTerminalTab';
+import { writeSnapshot } from './lib/launchSnapshot';
 import { useConnection } from './stores/connection';
 import { useProjects } from './stores/projects';
 import { useTabs, isDispatchTab, findTerminal } from './stores/tabs';
@@ -83,7 +85,7 @@ export default function App() {
   // main reactive: merging/unmerging the active tab swaps single ⇄ grouped view.
   const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
   const reconnectGen = useReconnect((s) => s.gen);
-  const sockRef = useRef<{ close(): void; reconnect(): void } | null>(null);
+  const sockRef = useRef<EventsSocket | null>(null);
 
   useEffect(() => {
     void useProjects.getState().load();
@@ -98,6 +100,19 @@ export default function App() {
     void useHost.getState().load();
     void useAgents.getState().loadSchedules();
     void useUsageLimits.getState().load();
+    // Fetch the terminal's code once the app has settled, so the first CLI thread opens without a
+    // spinner; it is split out of the startup script (LazyTerminalTab).
+    const idle = (cb: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 2500));
+    idle(preloadTerminalTab);
+    // Keep the launch snapshot current (lib/launchSnapshot.ts): the project and thread lists, saved
+    // a moment after they change so a burst of status events writes once.
+    let snapTimer: ReturnType<typeof setTimeout> | undefined;
+    const saveSnapshot = () => {
+      clearTimeout(snapTimer);
+      snapTimer = setTimeout(() => writeSnapshot({ sessions: useProjects.getState().sessions, byProject: useTabs.getState().byProject }), 1500);
+    };
+    const unsubSnapProjects = useProjects.subscribe((s, p) => { if (s.sessions !== p.sessions) saveSnapshot(); });
+    const unsubSnapTabs = useTabs.subscribe((s, p) => { if (s.byProject !== p.byProject) saveSnapshot(); });
     // A notification tap parks its target in the SW; drain it here. This is the
     // path that actually carries the tap on iOS, where the frozen page misses the
     // postMessage entirely. Draining on every foreground (not useResume, whose 8s
@@ -153,7 +168,7 @@ export default function App() {
       },
     });
     sockRef.current = sock;
-    return () => { sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
+    return () => { unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
 
   useEffect(() => {
@@ -203,13 +218,19 @@ export default function App() {
     useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
   }, [pendingProject, isMobile]);
 
-  // Returning from the background: re-establish the events socket and remount
-  // every terminal (which iOS may have silently killed) so the UI is live
-  // again without the user having to back out of the view.
+  // Returning from the background: first ask the daemon whether the connection is still alive
+  // (2026-11-05). Usually it is, and then nothing is torn down: no spinner, no "Reconnecting",
+  // every view stays as it was. Only when the ping goes unanswered (iOS killed the sockets while
+  // the app was away) re-establish the events socket and remount every terminal and chat, as before.
   useResume(() => {
-    sockRef.current?.reconnect();
-    useReconnect.getState().bump();
-  });
+    const sock = sockRef.current;
+    if (!sock) return;
+    void sock.checkAlive(1500).then((alive) => {
+      if (alive || sockRef.current !== sock) return;
+      sock.reconnect();
+      useReconnect.getState().bump();
+    });
+  }, 2000);
 
   // Browser close / refresh with unsaved file edits — the tab-close guard can't see this one.
   useEffect(() => {
