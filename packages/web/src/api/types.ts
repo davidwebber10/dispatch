@@ -343,7 +343,11 @@ export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; ta
 // crosses this wire: `opencodeKey` carries the Doppler secret NAME and a presence boolean.
 /** One entry of the OpenCode picker list: an OpenCode-namespaced OpenRouter id plus its label. */
 export interface OpencodeModel { label: string; model: string }
-export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; models?: OpencodeModel[]; skipAgentSummaries?: boolean; autoArchiveMs?: number }
+/** Claude's working words (core settings/harness-settings.ts SpinnerVerbs): 'replace' shows only these, 'append' adds them. */
+export interface SpinnerVerbs { mode: 'append' | 'replace'; verbs: string[] }
+/** One of your own named word sets (core SpinnerSet). */
+export interface SpinnerSet { name: string; words: string[] }
+export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; models?: OpencodeModel[]; skipAgentSummaries?: boolean; autoArchiveMs?: number; spinnerVerbs?: SpinnerVerbs; spinnerSets?: SpinnerSet[] }
 export interface HarnessSettingsResponse {
   settings: Partial<Record<string, HarnessSettingsEntry>>;
   opencodeKey: { secret: string; present: boolean };

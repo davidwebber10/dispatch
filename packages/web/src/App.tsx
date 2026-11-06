@@ -31,6 +31,7 @@ import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
 import { createEventsSocket, type EventsSocket } from './api/events-socket';
 import { preloadTerminalTab } from './components/tabs/LazyTerminalTab';
 import { writeSnapshot } from './lib/launchSnapshot';
+import { useSpinnerWords } from './stores/spinnerWords';
 import { useConnection } from './stores/connection';
 import { useProjects } from './stores/projects';
 import { useTabs, isDispatchTab, findTerminal } from './stores/tabs';
@@ -100,6 +101,7 @@ export default function App() {
     void useHost.getState().load();
     void useAgents.getState().loadSchedules();
     void useUsageLimits.getState().load();
+    void useSpinnerWords.getState().load();
     // Fetch the terminal's code once the app has settled, so the first CLI thread opens without a
     // spinner; it is split out of the startup script (LazyTerminalTab).
     const idle = (cb: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 2500));

@@ -2,7 +2,7 @@ import type { harnessCapabilities } from '../../../core/src/providers/capabiliti
 import { apiPath } from '../lib/basePath';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { Preview } from './types';
+import type { Preview, SpinnerVerbs, SpinnerSet } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -226,7 +226,7 @@ export const api = {
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
   getTelemetrySetting: () => req<{ enabled: boolean }>('/api/settings/telemetry'),
   setTelemetrySetting: (enabled: boolean) => req<{ enabled: boolean }>('/api/settings/telemetry', { method: 'PUT', body: body({ enabled }) }),
-  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null; skipAgentSummaries?: boolean | null; autoArchiveMs?: number | null }>) =>
+  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null; skipAgentSummaries?: boolean | null; autoArchiveMs?: number | null; spinnerVerbs?: SpinnerVerbs | null; spinnerSets?: SpinnerSet[] | null }>) =>
     req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   /** Search OpenRouter's public catalog (daemon-cached) for the OpenCode "add a model" box. */
   searchOpencodeCatalog: (q: string) =>

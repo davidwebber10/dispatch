@@ -25,6 +25,10 @@ import { OPENCODE_DEFAULT_MODELS, type OpencodeModel } from '../providers/openco
  *                 summaries cost a large share of spend for a status line nobody reads.
  *   autoArchiveMs every harness — when set, the New Thread modal opens with auto-archive
  *                 on at this inactivity deadline. Absent ⇒ the toggle starts off.
+ *   spinnerVerbs  claude-code only — the words shown while Claude works ("Flibbertigibbeting…").
+ *                 Passed to every Claude Code thread as its `spinnerVerbs` setting (CLI threads),
+ *                 and used by the web's own working indicator (Pretty threads). 'replace' shows
+ *                 only these; 'append' adds them to Claude's own. Absent ⇒ Claude's defaults.
  */
 export interface HarnessSettings {
   defaultModel?: string;
@@ -33,6 +37,55 @@ export interface HarnessSettings {
   models?: OpencodeModel[];
   skipAgentSummaries?: boolean;
   autoArchiveMs?: number;
+  spinnerVerbs?: SpinnerVerbs;
+  /** claude-code only — the user's own named word sets, offered next to the built-in ones in Settings. */
+  spinnerSets?: SpinnerSet[];
+}
+
+export interface SpinnerSet { name: string; words: string[] }
+const MAX_SETS = 30;
+const MAX_SET_NAME = 30;
+
+/** Named sets: each name trimmed and unique (case-insensitive, first wins), words cleaned as for spinnerVerbs. */
+export function pickSpinnerSets(v: unknown): SpinnerSet[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const seen = new Set<string>();
+  const out: SpinnerSet[] = [];
+  for (const item of v) {
+    if (!item || typeof item !== 'object') continue;
+    const name = pickString((item as Record<string, unknown>).name);
+    const words = pickSpinnerVerbs({ mode: 'replace', verbs: (item as Record<string, unknown>).words })?.verbs;
+    if (!name || name.length > MAX_SET_NAME || !words || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, words });
+    if (out.length >= MAX_SETS) break;
+  }
+  return out.length ? out : undefined;
+}
+
+export interface SpinnerVerbs { mode: 'append' | 'replace'; verbs: string[] }
+
+/** A word longer than this, or more words than this, is a paste accident, not a preference. */
+const MAX_VERB_CHARS = 40;
+const MAX_VERBS = 60;
+
+/** Trimmed, de-duplicated, non-empty words, with any trailing dots dropped (the CLI adds its own). */
+export function pickSpinnerVerbs(v: unknown): SpinnerVerbs | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const rec = v as Record<string, unknown>;
+  if (rec.mode !== 'append' && rec.mode !== 'replace') return undefined;
+  if (!Array.isArray(rec.verbs)) return undefined;
+  const seen = new Set<string>();
+  const verbs: string[] = [];
+  for (const w of rec.verbs) {
+    if (typeof w !== 'string') continue;
+    const t = w.trim().replace(/(\.|…)+$/, '').trim();
+    if (!t || t.length > MAX_VERB_CHARS || seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    verbs.push(t);
+    if (verbs.length >= MAX_VERBS) break;
+  }
+  return verbs.length ? { mode: rec.mode, verbs } : undefined;
 }
 
 export type AllHarnessSettings = Partial<Record<AgentType, HarnessSettings>>;
@@ -79,6 +132,10 @@ function sanitize(raw: unknown): AllHarnessSettings {
     const models = type === 'opencode' ? pickModels(rec.models) : undefined;
     if (models) entry.models = models;
     if (type === 'claude-code' && typeof rec.skipAgentSummaries === 'boolean') entry.skipAgentSummaries = rec.skipAgentSummaries;
+    const spinner = type === 'claude-code' ? pickSpinnerVerbs(rec.spinnerVerbs) : undefined;
+    if (spinner) entry.spinnerVerbs = spinner;
+    const sets = type === 'claude-code' ? pickSpinnerSets(rec.spinnerSets) : undefined;
+    if (sets) entry.spinnerSets = sets;
     const archive = rec.autoArchiveMs;
     if (typeof archive === 'number' && Number.isInteger(archive) && archive >= 60_000 && archive <= MAX_AUTO_ARCHIVE_MS) entry.autoArchiveMs = archive;
     if (Object.keys(entry).length) out[type] = entry;
@@ -102,7 +159,7 @@ export function updateHarnessSettings(db: Database.Database, patch: unknown): Al
       if (p === undefined) continue;
       const merged: Record<string, unknown> = { ...(current[type] ?? {}) };
       if (p && typeof p === 'object') {
-        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models', 'skipAgentSummaries', 'autoArchiveMs'] as const) {
+        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models', 'skipAgentSummaries', 'autoArchiveMs', 'spinnerVerbs', 'spinnerSets'] as const) {
           const v = (p as Record<string, unknown>)[field];
           if (v === undefined) continue;
           if (v === null) delete merged[field];
@@ -130,4 +187,9 @@ export function opencodeKeySecretName(db: Database.Database): string {
 /** Whether Claude Code threads preload the agent_summary off-switch. On unless turned off. */
 export function skipClaudeAgentSummaries(db: Database.Database): boolean {
   return readHarnessSettings(db)['claude-code']?.skipAgentSummaries ?? true;
+}
+
+/** The spinner words every Claude Code thread is started with, or undefined for Claude's own. */
+export function claudeSpinnerVerbs(db: Database.Database): SpinnerVerbs | undefined {
+  return readHarnessSettings(db)['claude-code']?.spinnerVerbs;
 }

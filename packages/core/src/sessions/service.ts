@@ -56,7 +56,7 @@ import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { writeOpencodeConfig } from '../providers/opencode-config.js';
 import { modelSupportsToolsCached } from '../settings/model-capabilities.js';
 import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
-import { readHarnessSettings } from '../settings/harness-settings.js';
+import { readHarnessSettings, claudeSpinnerVerbs } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
@@ -506,7 +506,11 @@ export class SessionService {
         fs.mkdirSync(ctx.hooksDir, { recursive: true });
         const file = path.join(ctx.hooksDir, `${terminalId}.json`);
         // Owner-only like the other per-thread files; mode applies on create, so tighten an older file too.
-        fs.writeFileSync(file, JSON.stringify(plan.claudeSettings, null, 2), { mode: 0o600 });
+        // The spinner words chosen in Settings (harness-settings.ts) ride in the same per-thread
+        // settings file, so a new or restarted Claude Code thread shows them.
+        const spinnerVerbs = claudeSpinnerVerbs(this.db);
+        const settings = spinnerVerbs ? { ...plan.claudeSettings, spinnerVerbs } : plan.claudeSettings;
+        fs.writeFileSync(file, JSON.stringify(settings, null, 2), { mode: 0o600 });
         try { fs.chmodSync(file, 0o600); } catch { /* best effort on FS that lacks chmod */ }
         return { claudeSettingsPath: file };
       } catch {

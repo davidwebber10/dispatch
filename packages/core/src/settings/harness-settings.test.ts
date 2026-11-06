@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
-import { readHarnessSettings, updateHarnessSettings, opencodeModels, skipClaudeAgentSummaries } from './harness-settings.js';
+import { readHarnessSettings, updateHarnessSettings, opencodeModels, skipClaudeAgentSummaries, claudeSpinnerVerbs } from './harness-settings.js';
 import { OPENCODE_DEFAULT_MODELS } from '../providers/opencode.js';
 
 function db() { const d = new Database(':memory:'); initSchema(d); return d; }
@@ -96,5 +96,47 @@ describe('harness settings — default auto-archive', () => {
       updateHarnessSettings(d, { codex: { autoArchiveMs: bad } });
       expect(readHarnessSettings(d).codex?.autoArchiveMs).toBeUndefined();
     }
+  });
+});
+
+describe('harness settings — Claude spinner words (2026-11-06)', () => {
+  it('stores the words and the mode for Claude Code, and null clears them', () => {
+    const d = db();
+    expect(claudeSpinnerVerbs(d)).toBeUndefined();
+    updateHarnessSettings(d, { 'claude-code': { spinnerVerbs: { mode: 'replace', verbs: ['Shipping', 'Tinkering'] } } });
+    expect(claudeSpinnerVerbs(d)).toEqual({ mode: 'replace', verbs: ['Shipping', 'Tinkering'] });
+    updateHarnessSettings(d, { 'claude-code': { spinnerVerbs: null } });
+    expect(claudeSpinnerVerbs(d)).toBeUndefined();
+  });
+
+  it('cleans the list: trims, drops trailing dots, empties, duplicates and over-long words', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { spinnerVerbs: { mode: 'append', verbs: ['  Shipping… ', 'shipping', '', 'Tinkering...', 'x'.repeat(41), 7] } } });
+    expect(claudeSpinnerVerbs(d)).toEqual({ mode: 'append', verbs: ['Shipping', 'Tinkering'] });
+  });
+
+  it('refuses a bad mode, an empty list, and other harnesses', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { spinnerVerbs: { mode: 'shuffle', verbs: ['A'] } } });
+    expect(claudeSpinnerVerbs(d)).toBeUndefined();
+    updateHarnessSettings(d, { 'claude-code': { spinnerVerbs: { mode: 'replace', verbs: [] } } });
+    expect(claudeSpinnerVerbs(d)).toBeUndefined();
+    updateHarnessSettings(d, { codex: { spinnerVerbs: { mode: 'replace', verbs: ['A'] } } });
+    expect((readHarnessSettings(d).codex as Record<string, unknown> | undefined)?.spinnerVerbs).toBeUndefined();
+  });
+});
+
+describe('harness settings — your own word sets (2026-11-06)', () => {
+  it('stores named sets for Claude Code, cleaned; null clears them', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { spinnerSets: [
+      { name: ' Studio ', words: ['Mixing', 'mixing', 'Mastering…'] },
+      { name: 'studio', words: ['Dup name'] },
+      { name: 'Empty', words: [] },
+      { name: '', words: ['No name'] },
+    ] } });
+    expect(readHarnessSettings(d)['claude-code']?.spinnerSets).toEqual([{ name: 'Studio', words: ['Mixing', 'Mastering'] }]);
+    updateHarnessSettings(d, { 'claude-code': { spinnerSets: null } });
+    expect(readHarnessSettings(d)['claude-code']?.spinnerSets).toBeUndefined();
   });
 });
