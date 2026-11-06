@@ -21,9 +21,9 @@
     <meta name="apple-mobile-web-app-title" content="Dispatch" />
     <meta name="mobile-web-app-capable" content="yes" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Painted before any stylesheet or script arrives, so a launch never flashes white
+         (--color-canvas; the app is dark only). -->
+    <style>html,body{background:#08080A;color-scheme:dark}</style>
     <title>Dispatch</title>
   </head>
   <body>

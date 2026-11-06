@@ -2,7 +2,9 @@
 // Deliberately conservative because the origin sits behind Cloudflare Access:
 // API / WebSocket / Access / upload paths are never intercepted, and the HTML
 // shell is revalidated over the network so an expired session re-authenticates.
-const VERSION = 'dispatch-v6';
+const VERSION = 'dispatch-v7';
+// The saved app shell. Mirrored by src/lib/shellCache.ts — change both together.
+const SHELL_URL = '/';
 const CACHE = `dispatch-${VERSION}`;
 // Durable hand-off for a notification tap. Kept OUT of the versioned shell cache
 // so an activate sweep can't discard a tap that landed mid-update.
@@ -65,21 +67,27 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // App-shell navigations: network-first (so Access auth is always revalidated),
-  // falling back to the cached shell only when offline.
+  // App-shell navigations: the saved shell at once, refreshed in the background (2026-11-05).
+  // Waiting on the network first meant every launch sat on a blank screen until the phone's
+  // VPN (Tailscale) woke and the Mac answered, with no time limit. The shell is tiny and only
+  // names the content-hashed scripts, so a saved copy is safe to show. The page drops the saved
+  // copy itself before a reload that must reach the network (a new version, or the sign-in page;
+  // lib/shellCache.ts), and a refresh that comes back as anything but the app drops it here.
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
-      try {
+      const cache = await caches.open(CACHE);
+      const saved = await cache.match(SHELL_URL);
+      const fresh = (async () => {
         const res = await fetch(req);
-        if (res.ok && !res.redirected) {
-          const cache = await caches.open(CACHE);
-          cache.put('/', res.clone());
-        }
+        if (res.ok && !res.redirected) await cache.put(SHELL_URL, res.clone());
+        else await cache.delete(SHELL_URL);
         return res;
-      } catch {
-        const cache = await caches.open(CACHE);
-        return (await cache.match('/')) || Response.error();
+      })();
+      if (saved) {
+        event.waitUntil(fresh.catch(() => {}));
+        return saved;
       }
+      try { return await fresh; } catch { return Response.error(); }
     })());
   }
 });

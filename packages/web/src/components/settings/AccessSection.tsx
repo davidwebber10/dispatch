@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import QRCode from 'qrcode';
 import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
 import { DevicesList } from './DevicesList';
@@ -100,7 +99,8 @@ export function AccessSection() {
   useEffect(() => {
     if (!live) { setQr(null); return; }
     let on = true;
-    QRCode.toDataURL(pairLink(address, live.code), { width: 220, margin: 1 })
+    // Loaded on demand: the QR library is not needed at launch.
+    import('qrcode').then(({ default: QRCode }) => QRCode.toDataURL(pairLink(address, live.code), { width: 220, margin: 1 }))
       .then((url) => { if (on) setQr(url); })
       .catch(() => { if (on) setQr(null); });
     return () => { on = false; };

@@ -3,10 +3,11 @@ import { CheckCircle, Circle, MinusCircle, XCircle } from '@phosphor-icons/react
 import { api } from '../../api/client';
 import { useUpdate } from '../../stores/update';
 import { Spinner } from '../common/Spinner';
+import { reloadFresh } from '../../lib/shellCache';
 import type { UpdateProgress, UpdateStepName } from '../../api/types';
 
 /** The page reload, as a seam the tests replace. */
-export const pageReload = { run: () => { location.reload(); } };
+export const pageReload = { run: () => { void reloadFresh(); } };
 /** With the update done, the page reloads after this long without game input. */
 export const IDLE_RELOAD_MS = 15_000;
 

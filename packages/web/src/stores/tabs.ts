@@ -4,6 +4,7 @@ import type { Terminal } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
 import { useProjects } from './projects';
 import { clearDraft } from '../lib/fileDrafts';
+import { readSnapshot } from '../lib/launchSnapshot';
 
 const STORAGE_KEY = 'dispatch:tabs';
 
@@ -123,7 +124,8 @@ export const useTabs = create<TabsState>((set, get) => ({
     delete next[id];
     set({ loading: next });
   },
-  byProject: {},
+  // The last thread lists seen on this device, drawn at once at launch; loadTabs replaces each.
+  byProject: readSnapshot()?.byProject ?? {},
   openTabIds: [],
   activeTabId: null,
   tabSession: {},

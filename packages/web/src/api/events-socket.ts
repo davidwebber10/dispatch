@@ -6,7 +6,12 @@ export interface WebSocketLike {
   onclose: (() => void) | null;
   onmessage: ((ev: { data: string }) => void) | null;
   close(): void;
+  send?(data: string): void;
+  readyState?: number;
 }
+
+/** The daemon's answer to the liveness check (core ws/events.ts). Mirrors EVENTS_PONG. */
+const PONG = '{"type":"pong"}';
 
 interface Opts {
   onEvent: (e: ServerEvent) => void;
@@ -18,12 +23,25 @@ function defaultUrl(): string {
   return wsUrl('/api/events');
 }
 
-export function createEventsSocket(opts: Opts): { close(): void; reconnect(): void } {
+export interface EventsSocket {
+  close(): void;
+  reconnect(): void;
+  /**
+   * Is the connection really alive? Sends a ping and waits up to `timeoutMs` for the daemon's
+   * pong. False when the socket is not open or no answer comes (iOS can kill a socket in the
+   * background without telling the page). An older daemon never answers, so it reads as dead
+   * and the caller falls back to a full reconnect, as before.
+   */
+  checkAlive(timeoutMs: number): Promise<boolean>;
+}
+
+export function createEventsSocket(opts: Opts): EventsSocket {
   const factory = opts.wsFactory ?? ((url) => new WebSocket(url) as unknown as WebSocketLike);
   let ws: WebSocketLike | null = null;
   let stopped = false;
   let backoff = 500;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pongWaiters: Array<() => void> = [];
 
   function connect() {
     if (stopped) return;
@@ -31,6 +49,7 @@ export function createEventsSocket(opts: Opts): { close(): void; reconnect(): vo
     ws = factory(defaultUrl());
     ws.onopen = () => { backoff = 500; opts.onStatus('open'); };
     ws.onmessage = (ev) => {
+      if (ev.data === PONG) { const w = pongWaiters; pongWaiters = []; w.forEach((f) => f()); return; }
       try { opts.onEvent(JSON.parse(ev.data) as ServerEvent); } catch { /* ignore malformed */ }
     };
     ws.onclose = () => {
@@ -47,6 +66,18 @@ export function createEventsSocket(opts: Opts): { close(): void; reconnect(): vo
       stopped = true;
       if (timer) clearTimeout(timer);
       ws?.close();
+    },
+    checkAlive(timeoutMs) {
+      const sock = ws;
+      if (stopped || !sock?.send || (sock.readyState !== undefined && sock.readyState !== 1)) return Promise.resolve(false);
+      return new Promise<boolean>((resolve) => {
+        let done = false;
+        const finish = (v: boolean) => { if (done) return; done = true; clearTimeout(t); pongWaiters = pongWaiters.filter((f) => f !== onPong); resolve(v); };
+        const onPong = () => finish(sock === ws);
+        const t = setTimeout(() => finish(false), timeoutMs);
+        pongWaiters.push(onPong);
+        try { sock.send!('ping'); } catch { finish(false); }
+      });
     },
     // Force an immediate fresh connection — used when the app returns from the
     // background. iOS silently kills sockets without always firing onclose, so

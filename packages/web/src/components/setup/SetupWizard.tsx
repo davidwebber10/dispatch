@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from 'react';
-import QRCode from 'qrcode';
 import type { SetupState, ProviderStatus, ProviderName, TailscaleStatus } from '../../api/types';
 import { api } from '../../api/client';
 import { useHost } from '../../stores/host';
@@ -130,7 +129,7 @@ function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
   const [checking, setChecking] = useState(false);
   const recheck = async () => { setChecking(true); try { setTs(await api.recheckTailscale()); } catch { /* keep */ } setChecking(false); };
   useEffect(() => {
-    if (ts.url) QRCode.toDataURL(ts.url, { width: 180, margin: 1 }).then(setQr).catch(() => setQr(null));
+    if (ts.url) import('qrcode').then(({ default: QRCode }) => QRCode.toDataURL(ts.url!, { width: 180, margin: 1 })).then(setQr).catch(() => setQr(null));
     else setQr(null);
   }, [ts.url]);
   return (

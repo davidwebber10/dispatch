@@ -1,13 +1,14 @@
-import { useConnection } from '../../stores/connection';
+import { useShownStatus } from '../../stores/connection';
 
 const STYLES = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
+  connecting: { color: 'var(--color-status-yellow)', label: 'Connecting…' },
+  reconnecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
   closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
 } as const;
 
 export function ConnectionStatus() {
-  const status = useConnection((s) => s.status);
+  const status = useShownStatus();
   const st = STYLES[status];
   return (
     <span style={{

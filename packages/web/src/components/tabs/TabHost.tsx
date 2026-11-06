@@ -1,10 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
-import { TerminalTab } from './TerminalTab';
+import { TerminalTab } from './LazyTerminalTab';
 import { BrowserTab } from './BrowserTab';
-import { NotesTab } from './NotesTab';
-import { FileEditorTab } from './FileEditorTab';
 import { ImageFileTab } from './ImageFileTab';
 import { ChatView } from './chat/ChatView';
 import { CliPrettyHint } from './CliPrettyHint';
@@ -14,6 +12,13 @@ import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isImage, isSvg } from '../../lib/fileType';
+import { Spinner } from '../common/Spinner';
+
+// The notes editor (Tiptap) and the file editor (CodeMirror) are a third of the app's code and
+// only needed once a note or a file is open, so they load then, not at launch (2026-11-05).
+const NotesTab = lazy(() => import('./NotesTab').then((m) => ({ default: m.NotesTab })));
+const FileEditorTab = lazy(() => import('./FileEditorTab').then((m) => ({ default: m.FileEditorTab })));
+const editorFallback = <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={20} /></div>;
 
 /** True for stream-json ("structured") threads, which have no PTY and render as
  *  a chat (never a terminal). */
@@ -96,14 +101,14 @@ export function TabHost({ terminalId }: { terminalId: string }) {
   if (!tab) return <div style={{ padding: 12, color: 'var(--color-text-secondary)' }}>Loading…</div>;
   switch (tab.type) {
     case 'browser': return <BrowserTab terminal={tab} />;
-    case 'notes': return <NotesTab terminal={tab} />;
+    case 'notes': return <Suspense fallback={editorFallback}><NotesTab terminal={tab} /></Suspense>;
     case 'file': {
       // Binary images can't go through the CodeMirror editor — /files/read is utf-8 JSON and
       // would hand back mojibake. SVG is the exception: it is TEXT (the mojibake rationale does
       // not apply, and languageFor() maps it to the html() mode), so it keeps opening in the
       // editor where it can actually be read and edited.
       const p = (tab.config?.path as string) || tab.label;
-      return isImage(p) && !isSvg(p) ? <ImageFileTab terminal={tab} /> : <FileEditorTab terminal={tab} />;
+      return isImage(p) && !isSvg(p) ? <ImageFileTab terminal={tab} /> : <Suspense fallback={editorFallback}><FileEditorTab terminal={tab} /></Suspense>;
     }
     case 'shell': return <TerminalTab terminalId={tab.id} />;
     default: return <AiThread tab={tab} />;

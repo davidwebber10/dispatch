@@ -42,6 +42,7 @@ import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
+import { compressedAssets, IMMUTABLE } from './web-assets.js';
 import { lockDownDataDir } from './auth/private-dir.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
@@ -66,7 +67,7 @@ import { PushService } from './push/service.js';
 import { installProcessGuards } from './runtime/process-guards.js';
 import { wireThreadSettledPush } from './push/notify.js';
 import { StatusService } from './status/service.js';
-import { createEventsBroadcaster, createNoopBroadcaster } from './ws/events.js';
+import { createEventsBroadcaster, answerEventsPing, createNoopBroadcaster } from './ws/events.js';
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
@@ -433,7 +434,10 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
     app.get('/icons/:name', publicRoute, customIconHandler(dispatchDir));
-    app.use(express.static(webDist));
+    app.use('/assets', compressedAssets(path.join(webDist, 'assets')));
+    app.use(express.static(webDist, {
+      setHeaders: (res, file) => { if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', IMMUTABLE); },
+    }));
     app.get(/^\/(?!api\/).*/, publicRoute, (_req, res) => {
       res.sendFile(path.join(webDist, 'index.html'));
     });
@@ -868,7 +872,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       res.type('html').send(indexHtml);
     };
     app.get('/icons/:name', publicRoute, customIconHandler(dataDir));
-    app.use(express.static(webDist, { index: false }));
+    // Build files: content-hashed, so compressed once and cached forever (web-assets.ts).
+    app.use('/assets', compressedAssets(path.join(webDist, 'assets')));
+    app.use(express.static(webDist, {
+      index: false,
+      setHeaders: (res, file) => { if (file.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', IMMUTABLE); },
+    }));
     app.get(/^\/(?!api\/).*/, publicRoute, sendIndex);
     console.log(`Serving web client from ${webDist}${BASE_PATH ? ` under ${BASE_PATH}` : ''}`);
   }
@@ -972,6 +981,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       });
     } else if (url === '/api/events') {
       eventsWss.handleUpgrade(request, socket, head, (ws) => {
+        answerEventsPing(ws);
         eventsWss.emit('connection', ws, request);
       });
     } else {

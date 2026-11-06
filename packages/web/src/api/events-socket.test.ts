@@ -48,3 +48,31 @@ test('reconnect() reports closed before the new socket opens, so the app resyncs
   sockets[1].emitOpen();
   expect(statuses).toEqual(['closed', 'connecting', 'open']);
 });
+
+class PingWS extends FakeWS {
+  readyState = 1;
+  sent: string[] = [];
+  answer = true;
+  send(data: string) { this.sent.push(data); if (this.answer) queueMicrotask(() => this.onmessage?.({ data: '{"type":"pong"}' })); }
+}
+
+test('checkAlive: true when the daemon answers the ping, and the pong is not passed on as an event', async () => {
+  const events: unknown[] = [];
+  let ws!: PingWS;
+  const sock = createEventsSocket({ onEvent: (e) => events.push(e), onStatus: () => {}, wsFactory: () => (ws = new PingWS()) });
+  ws.emitOpen();
+  await expect(sock.checkAlive(1000)).resolves.toBe(true);
+  expect(ws.sent).toEqual(['ping']);
+  expect(events).toEqual([]);
+  sock.close();
+});
+
+test('checkAlive: false when no answer comes in time (a socket iOS killed), or the socket is not open', async () => {
+  let ws!: PingWS;
+  const sock = createEventsSocket({ onEvent: () => {}, onStatus: () => {}, wsFactory: () => (ws = new PingWS()) });
+  ws.answer = false;
+  await expect(sock.checkAlive(20)).resolves.toBe(false);
+  ws.readyState = 3;
+  await expect(sock.checkAlive(20)).resolves.toBe(false);
+  sock.close();
+});
