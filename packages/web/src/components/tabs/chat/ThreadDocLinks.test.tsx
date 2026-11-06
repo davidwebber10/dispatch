@@ -6,6 +6,9 @@ import { api } from '../../../api/client';
 import { useDocViewer } from '../../../stores/docViewer';
 import { useProjects } from '../../../stores/projects';
 import { useTabs } from '../../../stores/tabs';
+import { useUI } from '../../../stores/ui';
+import * as fileTab from '../../../lib/openFileTab';
+import * as saveFiles from '../../../lib/saveFiles';
 
 let items: ConvItem[] = [];
 vi.mock('./useStructuredChat', async (orig) => ({
@@ -79,5 +82,33 @@ describe.each(['claude-code', 'codex', 'grok', 'opencode'])('a %s thread', (type
     for (const n of ['out', 'code']) expect(fireEvent.click(screen.getByRole('link', { name: n, hidden: true }))).toBe(false);
     expect(open).toHaveBeenCalledTimes(2);
     expect(useDocViewer.getState().open).toBeNull();
+  });
+});
+
+describe('file chips in a thread reply (any file type)', () => {
+  it('a code path is a chip; a click opens a file tab and brings it to front', async () => {
+    items = say('I wrote `scripts/extract.py` and data/out.xlsx, see also https://example.com/a.html and v3.19.0.');
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();
+    mount('claude-code');
+    await screen.findByText('I wrote', { exact: false });
+    const chips = document.querySelectorAll<HTMLElement>('.doc-chip');
+    expect([...chips].map((c) => c.textContent)).toEqual(['extract.py', 'out.xlsx']);
+    fireEvent.click(chips[0]);
+    expect(tab).toHaveBeenCalledWith('s1', 'scripts/extract.py', { focus: true });
+    expect(useDocViewer.getState().open).toBeNull();
+    fireEvent.click(chips[1]);
+    expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=data%2Fout.xlsx', 'out.xlsx');
+    expect(useUI.getState().pendingOpenThread).toBeNull();
+  });
+  it('an absolute path opens as the path inside the project; a path that leaves it is no chip', async () => {
+    items = say(`Wrote ${FOLDER}/scripts/run.py, and ${FOLDER}/../other/x.py, and ../y.py`);
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    mount('codex');
+    await screen.findByText('Wrote', { exact: false });
+    const chips = document.querySelectorAll<HTMLElement>('.doc-chip');
+    expect([...chips].map((c) => c.textContent)).toEqual(['run.py']);
+    fireEvent.click(chips[0]);
+    expect(tab).toHaveBeenCalledWith('s1', 'scripts/run.py', { focus: true });
   });
 });

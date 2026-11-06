@@ -137,6 +137,227 @@ describe('path safety and read limits', () => {
   });
 });
 
+describe('read cannot follow a symlink out of the project', () => {
+  let workDir: string;
+  let outside: string;
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-rd-'));
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-rdout-'));
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'top secret');
+    fs.writeFileSync(path.join(workDir, 'ok.txt'), 'fine');
+    fs.mkdirSync(path.join(workDir, 'docs'));
+    fs.symlinkSync(outside, path.join(workDir, 'link'));
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(workDir, 'leaf.txt'));
+  });
+  afterEach(() => { fs.rmSync(workDir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  const read = (app: express.Express, p: string) => request(app).get('/api/sessions/s1/files/read').query({ path: p });
+
+  it('a relative path through a linked folder or to a linked file is refused', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, 'link/secret.txt')).status).toBe(403);
+    expect((await read(app, 'leaf.txt')).status).toBe(403);
+    expect((await read(app, 'docs/../../secret.txt')).status).toBe(403);
+  });
+  it('an absolute path inside the project that goes through a symlink out of it is refused too', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, path.join(workDir, 'link', 'secret.txt'))).status).toBe(403);
+    expect((await read(app, path.join(workDir, 'leaf.txt'))).status).toBe(403);
+    expect((await read(app, path.join(workDir, 'docs', '..', 'link', 'secret.txt'))).status).toBe(403);
+  });
+  it('a file swapped for a symlink out of the project after the check is never read', async () => {
+    fs.writeFileSync(path.join(workDir, 'swap.txt'), 'inside');
+    const realOpen = fs.promises.open.bind(fs.promises);
+    const spy = vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => {
+      // the check has passed; now the file becomes a link to the outside file
+      fs.rmSync(path.join(workDir, 'swap.txt'));
+      fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(workDir, 'swap.txt'));
+      return (realOpen as any)(p, ...rest);
+    }) as any);
+    try {
+      const app = makeApp(workDir);
+      const rel = await read(app, 'swap.txt');
+      expect(rel.status).toBe(403);
+      expect(JSON.stringify(rel.body)).not.toContain('top secret');
+      fs.rmSync(path.join(workDir, 'swap.txt'));
+      fs.writeFileSync(path.join(workDir, 'swap.txt'), 'inside');
+      const abs = await read(app, path.join(workDir, 'swap.txt'));
+      expect(abs.status).toBe(403);
+      expect(JSON.stringify(abs.body)).not.toContain('top secret');
+    } finally { spy.mockRestore(); }
+  });
+  it('sniff=1: reads only the start of the file and says whether it is binary (a NUL byte); no sniff changes nothing', async () => {
+    fs.writeFileSync(path.join(workDir, 'model.pt'), Buffer.from([0x80, 0x02, 0x00, 0x01, 0x7a]));
+    const app = makeApp(workDir);
+    const sniffed = await request(app).get('/api/sessions/s1/files/read').query({ path: 'model.pt', sniff: '1' });
+    expect(sniffed.body).toEqual({ content: '', path: 'model.pt', binary: true });
+    const text = await request(app).get('/api/sessions/s1/files/read').query({ path: 'ok.txt', sniff: '1' });
+    expect(text.body).toEqual({ content: '', path: 'ok.txt', binary: false });
+    const plain = await request(app).get('/api/sessions/s1/files/read').query({ path: 'model.pt' });
+    expect(plain.body.binary).toBeUndefined();
+    expect(plain.body.content.length).toBeGreaterThan(0);
+  });
+  it('a real file inside the project reads, by a relative or an absolute path', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, 'ok.txt')).body.content).toBe('fine');
+    expect((await read(app, path.join(workDir, 'ok.txt'))).body.content).toBe('fine');
+  });
+  it('an absolute path outside the project still reads (the View button for an agent that edits another repo)', async () => {
+    const res = await read(makeApp(workDir), path.join(outside, 'secret.txt'));
+    expect(res.status).toBe(200);
+    expect(res.body.content).toBe('top secret');
+  });
+});
+
+describe('a swap between the check and the open never leaks an outside file', () => {
+  let workDir: string;
+  let outside: string;
+  const get = (app: express.Express, route: string, p: string) => request(app).get(`/api/sessions/s1/files/${route}`).query({ path: p }).buffer(true).parse((res, cb) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('end', () => cb(null, Buffer.concat(chunks)));
+  });
+  const bodyText = (r: request.Response) => (Buffer.isBuffer(r.body) ? r.body.toString('utf8') : JSON.stringify(r.body));
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-sw-'));
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-swout-'));
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'top secret');
+    fs.mkdirSync(path.join(outside, 'docs'));
+    fs.writeFileSync(path.join(outside, 'docs', 'a.py'), 'top secret');
+    fs.writeFileSync(path.join(workDir, 'archive.zip'), 'inside zip');
+    fs.writeFileSync(path.join(workDir, 'pic.png'), 'inside png');
+    fs.mkdirSync(path.join(workDir, 'docs'));
+    fs.writeFileSync(path.join(workDir, 'docs', 'a.py'), 'inside');
+  });
+  afterEach(() => { vi.restoreAllMocks(); fs.rmSync(workDir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+
+  /** Replace `rel` with a symlink to `target` (and back). */
+  const swapIn = (rel: string, target: string) => { const p = path.join(workDir, rel); fs.renameSync(p, `${p}.bak`); fs.symlinkSync(target, p); };
+  const swapOut = (rel: string) => { const p = path.join(workDir, rel); fs.rmSync(p, { force: true }); fs.renameSync(`${p}.bak`, p); };
+
+  it('a download whose file becomes a link to an outside file is refused', async () => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => { swapIn('archive.zip', path.join(outside, 'secret.txt')); return (realOpen as any)(p, ...rest); }) as any);
+    const res = await get(makeApp(workDir), 'download', 'archive.zip');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it('an image whose file becomes a link to an outside file is refused', async () => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => { swapIn('pic.png', path.join(outside, 'secret.txt')); return (realOpen as any)(p, ...rest); }) as any);
+    const res = await get(makeApp(workDir), 'image', 'pic.png');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it('a download and a read of an unchanged file still work', async () => {
+    const app = makeApp(workDir);
+    const dl = await get(app, 'download', 'archive.zip');
+    expect(dl.status).toBe(200);
+    expect(bodyText(dl)).toBe('inside zip');
+    expect(dl.headers['content-disposition']).toContain('archive.zip');
+    expect(JSON.parse(bodyText(await get(app, 'read', 'docs/a.py'))).content).toBe('inside');
+  });
+  it.each(['read', 'download'])('%s: a parent folder swapped for a link to an outside folder after the realpath, and put back after the open, is refused', async (route) => {
+    const realRealpath = fs.promises.realpath.bind(fs.promises);
+    const realOpen = fs.promises.open.bind(fs.promises);
+    let swapped = false;
+    vi.spyOn(fs.promises, 'realpath').mockImplementation((async (p: any, ...rest: any[]) => {
+      const r = await (realRealpath as any)(p, ...rest);
+      if (!swapped && String(r).endsWith(path.join('docs', 'a.py'))) { swapped = true; swapIn('docs', path.join(outside, 'docs')); }
+      return r;
+    }) as any);
+    vi.spyOn(fs.promises, 'open').mockImplementation((async (p: any, ...rest: any[]) => {
+      const fh = await (realOpen as any)(p, ...rest);
+      if (swapped) { swapOut('docs'); swapped = false; }
+      return fh;
+    }) as any);
+    const res = await get(makeApp(workDir), route, 'docs/a.py');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it.each(['read', 'download'])('%s: a parent folder swapped just before the open and put back after it is refused', async (route) => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation((async (p: any, ...rest: any[]) => {
+      swapIn('docs', path.join(outside, 'docs'));
+      const fh = await (realOpen as any)(p, ...rest);
+      swapOut('docs');
+      return fh;
+    }) as any);
+    const res = await get(makeApp(workDir), route, 'docs/a.py');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+});
+
+describe('links that are allowed still read and download', () => {
+  let base: string;
+  let project: string;
+  const saved = process.env.DISPATCH_FILE_ROOTS;
+  const bytes = (route: string, app: express.Express, p: string) => request(app).get(`/api/sessions/s1/files/${route}`).query({ path: p }).buffer(true).parse((res, cb) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('end', () => cb(null, Buffer.concat(chunks)));
+  });
+  beforeEach(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-ok-')));
+    project = path.join(base, 'repo', 'packages', 'web');
+    fs.mkdirSync(path.join(project, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(project, 'src', 'real.txt'), 'real file');
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DISPATCH_FILE_ROOTS; else process.env.DISPATCH_FILE_ROOTS = saved;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('a link that stays inside the project (a file link and a folder link) reads and downloads', async () => {
+    fs.symlinkSync(path.join(project, 'src', 'real.txt'), path.join(project, 'alias.txt'));
+    fs.symlinkSync(path.join(project, 'src'), path.join(project, 'srclink'));
+    const app = makeApp(project);
+    for (const p of ['alias.txt', 'srclink/real.txt', path.join(project, 'alias.txt')]) {
+      expect(JSON.parse((await bytes('read', app, p)).body.toString()).content).toBe('real file');
+    }
+    const dl = await bytes('download', app, 'srclink/real.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('real file');
+  });
+  it('a pnpm node_modules link that leads outside the project, into another node_modules folder, reads and downloads', async () => {
+    const store = path.join(base, 'repo', 'node_modules', '.pnpm', 'pkg@1.0.0', 'node_modules', 'pkg');
+    fs.mkdirSync(store, { recursive: true });
+    fs.writeFileSync(path.join(store, 'index.js'), 'module.exports = 1;');
+    fs.mkdirSync(path.join(project, 'node_modules'));
+    fs.symlinkSync(store, path.join(project, 'node_modules', 'pkg'));
+    const app = makeApp(project);
+    expect(JSON.parse((await bytes('read', app, 'node_modules/pkg/index.js')).body.toString()).content).toBe('module.exports = 1;');
+    const dl = await bytes('download', app, 'node_modules/pkg/index.js');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('module.exports = 1;');
+  });
+  it('a link into a DISPATCH_FILE_ROOTS folder reads and downloads; without it, the same link is refused', async () => {
+    const shared = path.join(base, 'shared');
+    fs.mkdirSync(shared);
+    fs.writeFileSync(path.join(shared, 'a.txt'), 'shared file');
+    fs.symlinkSync(shared, path.join(project, 'shared'));
+    const app = makeApp(project);
+    delete process.env.DISPATCH_FILE_ROOTS;
+    expect((await bytes('read', app, 'shared/a.txt')).status).toBe(403);
+    expect((await bytes('download', app, 'shared/a.txt')).status).toBe(403);
+    process.env.DISPATCH_FILE_ROOTS = shared;
+    expect(JSON.parse((await bytes('read', app, 'shared/a.txt')).body.toString()).content).toBe('shared file');
+    const dl = await bytes('download', app, 'shared/a.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('shared file');
+  });
+  it('a project reached through a linked root (such as /tmp on macOS) reads and downloads', async () => {
+    const linkRoot = path.join(base, 'linkroot');
+    fs.symlinkSync(path.join(base, 'repo'), linkRoot);
+    const app = makeApp(path.join(linkRoot, 'packages', 'web'));
+    expect(JSON.parse((await bytes('read', app, 'src/real.txt')).body.toString()).content).toBe('real file');
+    expect(JSON.parse((await bytes('read', app, path.join(linkRoot, 'packages', 'web', 'src', 'real.txt'))).body.toString()).content).toBe('real file');
+    const dl = await bytes('download', app, 'src/real.txt');
+    expect(dl.status).toBe(200);
+    expect(dl.body.toString()).toBe('real file');
+  });
+});
+
 describe('symlinked folders cannot lead delete or rename outside the project', () => {
   let workDir: string;
   let outside: string;

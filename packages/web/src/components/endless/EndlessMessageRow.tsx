@@ -8,7 +8,7 @@ import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
 import { openThreadInPlace } from './openThread';
 import { DocText, openDoc } from './DocText';
-import { projectForPath } from '../../lib/docPaths';
+import { resolveProjectPath } from '../../lib/docPaths';
 import { classifyLink } from '../../lib/docLinks';
 import { useEndless } from '../../stores/endless';
 import { ZOOM_TOOL } from './convItems';
@@ -124,14 +124,14 @@ export function WorkCard({ m }: { m: EndlessMessage }) {
 /** The project ids and folders as one string: a pane reload makes a new projects array, not a new key. */
 const projectsKey = (s: { projects: { id: string; folder: string }[] }) => JSON.stringify(s.projects.map((p) => [p.id, p.folder]));
 
-/** A Dispatch reply: markdown, with each doc path as a doc chip (spec 12.2). */
+/** A Dispatch reply: markdown, with each file path as a chip (spec 12.2). */
 export function ChatProse({ m }: { m: EndlessMessage }) {
   const key = useEndless(projectsKey);
   const docs = useMemo(() => {
     const projects = (JSON.parse(key) as [string, string][]).map(([id, folder]) => ({ id, folder }));
     return {
       onOpen: (p: string, b: string | null) => openDoc(p, b, m.project),
-      accept: (p: string) => projectForPath(p, m.project, projects) !== null,
+      accept: (p: string) => resolveProjectPath(p, m.project, projects) !== null,
       link: (href: string) => classifyLink(href, { project: m.project, projects }),
     };
   }, [m.project, key]);
