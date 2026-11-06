@@ -26,6 +26,8 @@ import type {
   PendingPermission,
   PermissionDecision,
   StatusDeclaration,
+  ThreadSettingsChange,
+  ApplyResult,
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
@@ -169,6 +171,9 @@ interface CodexSession {
   turnActive: boolean;
   sessionId?: string;
   model?: string;
+  /** What the owner picked in the slash menu. Sent on every `turn/start` once set; `model` above also
+   *  tracks the thread's bound default, so the pick is kept apart to send only a real choice. */
+  picked?: { model?: string; effort?: string };
   cwd: string;
   resumeId?: string;
   /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
@@ -675,7 +680,14 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (session.turnActive && session.currentTurnId) {
       await this.conn.request('turn/steer', { threadId: session.threadId, expectedTurnId: session.currentTurnId, input });
     } else {
-      await this.conn.request('turn/start', { threadId: session.threadId, input });
+      // A model or effort the owner picked rides on the turn. Live-verified on codex-cli 0.166.0: it
+      // sticks for later turns and survives thread/resume; sending it every time costs nothing.
+      await this.conn.request('turn/start', {
+        threadId: session.threadId,
+        input,
+        ...(session.picked?.model ? { model: session.picked.model } : {}),
+        ...(session.picked?.effort ? { effort: session.picked.effort } : {}),
+      });
     }
   }
 
@@ -718,6 +730,25 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const session = this.sessions.get(terminalId);
     if (!session || !this.conn?.alive || !session.threadId) return;
     void this.conn.request('thread/compact/start', { threadId: session.threadId }).catch(() => {});
+  }
+
+  /**
+   * Change the model and/or effort of a live thread. Nothing is sent now: the values are kept on the
+   * session and the next `turn/start` carries them (a turn in flight is not touched). The new model is
+   * announced with a fresh `system/init`, so the status row shows it at once.
+   */
+  async applySettings(terminalId: string, change: ThreadSettingsChange): Promise<ApplyResult> {
+    const session = this.sessions.get(terminalId);
+    if (!session) return { ok: false, error: 'This thread is not running.' };
+    session.picked ??= {};
+    if (change.model) {
+      session.model = change.model; // a crash-recovery thread/resume asks for it too
+      session.picked.model = change.model;
+      // init() resets the usage gauge, so it waits for a turn in flight to end; the web shows the pick meanwhile.
+      if (!session.turnActive) this.applyActions(session, session.translator.init(change.model));
+    }
+    if (change.effort) session.picked.effort = change.effort;
+    return { ok: true };
   }
 
   /**

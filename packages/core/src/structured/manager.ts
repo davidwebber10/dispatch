@@ -94,7 +94,12 @@ interface Session {
   declared?: StatusDeclaration;
   /** A usage limit this turn's frames reported (see limits/detect.ts), read at its `result`. */
   limit?: UsageLimit;
+  /** Control requests of our own that wait for their reply, by request id (see applySettings). */
+  controlWaiters?: Map<string, (reply: { ok: true } | { ok: false; error: string }) => void>;
 }
+
+/** How long applySettings waits for the CLI's reply to a control request. */
+const CONTROL_TIMEOUT_MS = 15_000;
 
 /** Options accepted by a structured manager's `spawn`. For the Claude manager
  *  `command`/`args` are the `claude` stream-json invocation; for a future Codex
@@ -150,6 +155,10 @@ export interface StructuredSpawnOpts {
    */
   threadConfig?: Record<string, unknown>;
 }
+
+/** A model and/or effort change for a live thread (see IStructuredManager.applySettings). */
+export interface ThreadSettingsChange { model?: string | null; effort?: string }
+export type ApplyResult = { ok: true } | { ok: false; error: string };
 
 /** A permission decision written back to a blocked structured session. */
 export type PermissionDecision =
@@ -218,6 +227,14 @@ export interface IStructuredManager extends EventEmitter {
   setEscalate(terminalId: string, escalate: boolean): boolean;
   interrupt(terminalId: string): boolean;
   compact(terminalId: string): void;
+  /**
+   * Change the live model and/or effort of a thread (slash menu). Absent on a harness that cannot yet
+   * (Grok, OpenCode). Resolves when the harness has taken it; never throws. `model: null` resets a
+   * Claude thread to its default. `timeoutMs` bounds the wait for a harness that answers.
+   */
+  applySettings?(terminalId: string, change: ThreadSettingsChange, timeoutMs?: number): Promise<ApplyResult>;
+  /** True while a turn is in flight (Claude only; absent elsewhere). A settings change waits for it. */
+  isTurnOpen?(terminalId: string): boolean;
   noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void;
   getPending(terminalId: string): PendingPermission | null;
   getSessionId(terminalId: string): string | undefined;
@@ -342,6 +359,19 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (!trimmed) return;
       let event: any;
       try { event = JSON.parse(trimmed); } catch { return; } // skip non-JSON noise
+      // The reply to a control request of our own (applySettings) is for that caller alone: not an event
+      // for the chat, the replay ring or the status.
+      if (event?.type === 'control_response') {
+        const rid = event.response?.request_id;
+        const waiter = typeof rid === 'string' ? session.controlWaiters?.get(rid) : undefined;
+        if (waiter) {
+          session.controlWaiters!.delete(rid);
+          waiter(event.response?.subtype === 'error'
+            ? { ok: false, error: String(event.response?.error ?? 'The CLI refused the change.') }
+            : { ok: true });
+          return;
+        }
+      }
       session.events.push(event);
       if (session.events.length > MAX_EVENTS) session.events.shift();
       // Capture the claude session_id (carried on the init/system event, and echoed
@@ -515,6 +545,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
       if (this.sessions.get(terminalId)?.child !== child) return;
       session.pending = null; // drop any unanswered permission — the process is gone
+      this.failWaiters(session);
       this.sessions.delete(terminalId);
       const detail = redactKeys(session.stderrTail?.trim() ?? '') || undefined;
       // The daemon log is the only place this reaches when no browser is watching.
@@ -686,10 +717,56 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     return true;
   }
 
+  /** An unanswered control request of ours ends with the process. */
+  private failWaiters(s: Session): void {
+    const waiters = s.controlWaiters;
+    if (!waiters?.size) return;
+    s.controlWaiters = undefined;
+    for (const w of waiters.values()) w({ ok: false, error: 'The thread stopped before it answered.' });
+  }
+
+  /** Send one control request and wait for its reply (or the timeout). */
+  private control(terminalId: string, request: Record<string, unknown>, timeoutMs: number): Promise<ApplyResult> {
+    const s = this.sessions.get(terminalId);
+    if (!s || s.exitCode !== undefined || !s.child.stdin.writable) return Promise.resolve({ ok: false, error: 'This thread is not running.' });
+    const requestId = `ctl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return new Promise<ApplyResult>((resolve) => {
+      const timer = setTimeout(() => {
+        s.controlWaiters?.delete(requestId);
+        resolve({ ok: false, error: 'The CLI did not answer the change in time.' });
+      }, timeoutMs);
+      timer.unref?.();
+      (s.controlWaiters ??= new Map()).set(requestId, (reply) => { clearTimeout(timer); resolve(reply); });
+      this.write(terminalId, { type: 'control_request', request_id: requestId, request });
+    });
+  }
+
+  /**
+   * Change the model and/or effort of the live CLI with stream-json control requests (live-verified on
+   * Claude Code 2.1.316: no model call, nothing saved to the user's settings.json). `set_model` goes
+   * first; a refusal (an unknown model) stops before the effort is sent. A flag-layer effort survives
+   * later `set_model` calls. The effort value is not checked by the CLI (it ignores a bad one), so the
+   * caller validates it.
+   */
+  async applySettings(terminalId: string, change: ThreadSettingsChange, timeoutMs = CONTROL_TIMEOUT_MS): Promise<ApplyResult> {
+    if (change.model !== undefined) {
+      const r = await this.control(terminalId, { subtype: 'set_model', model: change.model }, timeoutMs);
+      if (!r.ok) return r;
+    }
+    if (change.effort !== undefined) {
+      const r = await this.control(terminalId, { subtype: 'apply_flag_settings', settings: { effortLevel: change.effort } }, timeoutMs);
+      if (!r.ok) return r;
+    }
+    return { ok: true };
+  }
+
+  isTurnOpen(terminalId: string): boolean { return this.sessions.get(terminalId)?.turnOpen === true; }
+
   kill(terminalId: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;
     s.pending = null;
+    this.failWaiters(s);
     // Remove the session first: closing readline below can finish a pending drain (see spawn()),
     // which must then find the session gone and stay silent — this is the one 'exit'.
     this.sessions.delete(terminalId);

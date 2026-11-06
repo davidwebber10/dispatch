@@ -112,6 +112,7 @@ rl.on('line', (line) => {
     // constant — a resumed session's live-turn notifications must route back to it, exactly
     // like the real app-server would.
     const tid = msg.params?.threadId ?? THREAD;
+    logRequest('turn/start', msg.params);
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
     notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
