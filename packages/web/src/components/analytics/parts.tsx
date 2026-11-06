@@ -10,14 +10,14 @@ import { Tooltip } from 'recharts';
 
 export const panel: React.CSSProperties = {
   background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 12, padding: 14, minWidth: 0,
+  borderRadius: 'var(--radius-lg)', padding: 14, minWidth: 0,
 };
 export const labelStyle: React.CSSProperties = {
   font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)',
 };
 export const inputStyle: React.CSSProperties = {
   height: 28, padding: '0 8px', background: 'var(--color-elevated)',
-  border: '1px solid var(--color-border)', borderRadius: 7,
+  border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
   color: 'var(--color-text-primary)', fontSize: 12,
 };
 export const muted: React.CSSProperties = { color: 'var(--color-text-tertiary)', fontSize: 12.5 };
@@ -98,7 +98,7 @@ export function Kpi({ label, value, title, badge, badgeTitle, caption, info }: {
             title={badgeTitle}
             style={{
               font: '500 9.5px var(--font-mono)', letterSpacing: '.6px', color: 'var(--color-text-tertiary)',
-              border: '1px solid var(--color-border)', borderRadius: 5, padding: '1px 5px', cursor: 'help',
+              border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '1px 5px', cursor: 'help',
             }}
           >{badge}</span>
         )}
@@ -137,7 +137,7 @@ export function chartTooltip(
   return (
     <Tooltip
       cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 8, fontSize: 12 }}
+      contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 'var(--radius-md)', fontSize: 12 }}
       labelStyle={{ color: theme.muted }}
       itemStyle={{ color: theme.text }}
       formatter={formatter as never}

@@ -456,7 +456,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                       data-day={c.day}
                       title={c.value > 0 ? `${c.day} · ${fmtTokens(c.value)} tokens` : ''}
                       style={{
-                        width: 11, height: 11, borderRadius: 3, background: c.color,
+                        width: 11, height: 11, borderRadius: 'var(--radius-xs)', background: c.color,
                         border: c.value > 0 ? 'none' : `1px solid ${theme.grid}`, boxSizing: 'border-box',
                       }}
                     />
@@ -465,7 +465,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, ...muted }}>
                 <span style={{ font: '400 10px var(--font-mono)' }}>less</span>
-                {HEAT.map((c) => <span key={c} style={{ width: 11, height: 11, borderRadius: 3, background: c }} />)}
+                {HEAT.map((c) => <span key={c} style={{ width: 11, height: 11, borderRadius: 'var(--radius-xs)', background: c }} />)}
                 <span style={{ font: '400 10px var(--font-mono)' }}>more</span>
               </div>
             </Block>

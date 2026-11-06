@@ -43,10 +43,10 @@ export function MemorySearch() {
     <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
       <MagnifyingGlass size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--color-text-tertiary)' }} />
       <input aria-label="Search memory" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memory"
-        style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16 }} />
+        style={{ width: '100%', height: 32, padding: '0 10px 0 30px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16 }} />
       {results && (
         <div role="listbox" aria-label="Memory search results"
-          style={{ position: 'absolute', top: 36, left: 0, right: 0, zIndex: 20, maxHeight: '60vh', overflowY: 'auto', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-pane)', boxShadow: '0 12px 28px -8px rgba(0,0,0,.6)' }}>
+          style={{ position: 'absolute', top: 36, left: 0, right: 0, zIndex: 20, maxHeight: '60vh', overflowY: 'auto', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', boxShadow: '0 12px 28px -8px rgba(0,0,0,.6)' }}>
           {results.length === 0 ? (
             <div style={{ padding: 12, color: 'var(--color-text-tertiary)', fontSize: 13 }}>{failed ? 'Search is unavailable' : 'No matches'}</div>
           ) : results.map((h) => (

@@ -62,7 +62,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     return (
       <>
         <button type="button" data-testid="usage-chip" data-tone={m.tone} aria-label={m.title} title={m.title} onClick={() => setOpen(true)}
-          style={{ height: 36, minWidth: 44, flexShrink: 0, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, background: 'var(--color-elevated)', border: `1px solid ${m.tone === 'normal' ? '#2C2C32' : color}`, borderRadius: 10, color, font: '600 13px var(--font-mono)', cursor: 'pointer', opacity }}>
+          style={{ height: 36, minWidth: 44, flexShrink: 0, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, background: 'var(--color-elevated)', border: `1px solid ${m.tone === 'normal' ? '#2C2C32' : color}`, borderRadius: 'var(--radius-md)', color, font: '600 13px var(--font-mono)', cursor: 'pointer', opacity }}>
           {m.mark && <span style={{ fontSize: 10, opacity: 0.8 }}>{m.mark}</span>}
           {m.peak}
         </button>
@@ -76,13 +76,13 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
   return (
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={m.tone} aria-label={m.title} title={m.title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
-        style={{ width: 52, padding: '4px 0', borderRadius: 9, border: `1px solid ${m.tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, color, opacity, font: '500 10px var(--font-mono)', lineHeight: '13px' }}>
+        style={{ width: 52, padding: '4px 0', borderRadius: 'var(--radius-md)', border: `1px solid ${m.tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, color, opacity, font: '500 10px var(--font-mono)', lineHeight: '13px' }}>
         {m.mark && <span style={{ fontSize: 8.5, opacity: 0.8 }}>{m.mark}</span>}
         <span style={{ whiteSpace: 'nowrap' }}>5h {m.five}</span>
         <span style={{ whiteSpace: 'nowrap' }}>wk {m.week}</span>
       </button>
       {open && (
-        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 300, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: '#1B1B1E', border: '1px solid var(--color-border)', borderRadius: 12, boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>
+        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 300, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: '#1B1B1E', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>
           <div style={{ font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)', marginBottom: 10 }}>USAGE LIMITS</div>
           <UsageTable summary={summary} now={now} />
         </div>

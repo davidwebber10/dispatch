@@ -42,7 +42,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             flex: 'none',
             width: 28,
             height: 28,
-            borderRadius: 7,
+            borderRadius: 'var(--radius-sm)',
             background: 'var(--elev)',
             border: '1px solid var(--border)',
             color: 'var(--ts)',
@@ -109,7 +109,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             padding: '9px 11px',
             border: '1px solid var(--accLine)',
             background: 'var(--accDim)',
-            borderRadius: 9,
+            borderRadius: 'var(--radius-md)',
             marginBottom: 16,
           }}
         >
@@ -198,7 +198,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             color: 'var(--ts)',
             background: 'var(--elev)',
             border: '1px solid var(--border)',
-            borderRadius: 8,
+            borderRadius: 'var(--radius-md)',
             padding: '9px 11px',
             marginBottom: 14,
           }}
@@ -233,7 +233,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             alignItems: 'center',
             background: 'var(--elev)',
             border: '1px solid var(--border)',
-            borderRadius: 10,
+            borderRadius: 'var(--radius-md)',
             padding: '6px 6px 6px 10px',
           }}
         >
@@ -258,7 +258,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             style={{
               flex: 'none',
               padding: '6px 11px',
-              borderRadius: 7,
+              borderRadius: 'var(--radius-sm)',
               background: 'var(--acc)',
               color: '#06140B',
               border: 'none',
@@ -290,7 +290,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
                 color: 'var(--red)',
                 background: 'transparent',
                 padding: '5px 10px',
-                borderRadius: 7,
+                borderRadius: 'var(--radius-sm)',
                 fontSize: 11.5,
                 fontWeight: 500,
                 cursor: 'pointer',

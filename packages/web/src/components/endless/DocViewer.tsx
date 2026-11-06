@@ -155,14 +155,14 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
 
   const iconButton: React.CSSProperties = {
     width: mobile ? 44 : 32, height: mobile ? 44 : 32, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, border: 0, background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0,
+    borderRadius: 'var(--radius-md)', border: 0, background: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0,
   };
   const action: React.CSSProperties = {
-    height: mobile ? 44 : 32, display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '0 12px' : '0 10px', borderRadius: 8,
+    height: mobile ? 44 : 32, display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '0 12px' : '0 10px', borderRadius: 'var(--radius-md)',
     border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap',
   };
   const chip: React.CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 22, padding: '1px 7px', boxSizing: 'border-box', borderRadius: 5, maxWidth: '100%',
+    display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 22, padding: '1px 7px', boxSizing: 'border-box', borderRadius: 'var(--radius-sm)', maxWidth: '100%',
     background: 'var(--color-elevated)', border: '1px solid var(--color-border)', ...mono(mobile ? 11 : 11.5, 'var(--color-text-secondary)'), lineHeight: 1.4,
     whiteSpace: 'normal', overflowWrap: 'anywhere',
   };
@@ -198,11 +198,11 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
         {state.kind === 'loading' && (
           <div aria-busy="true" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', gap: 6 }}>
-              <div style={{ width: 220, height: 22, borderRadius: 5, background: 'var(--color-hover)' }} />
-              <div style={{ width: 90, height: 22, borderRadius: 5, background: 'var(--color-hover)' }} />
+              <div style={{ width: 220, height: 22, borderRadius: 'var(--radius-sm)', background: 'var(--color-hover)' }} />
+              <div style={{ width: 90, height: 22, borderRadius: 'var(--radius-sm)', background: 'var(--color-hover)' }} />
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '20px 24px', borderRadius: 8, background: 'var(--color-base)' }}>
-              {['55%', '35%', '90%', '80%'].map((w, k) => <div key={k} style={{ width: w, height: k === 0 ? 18 : 10, borderRadius: 5, background: 'var(--color-hover)', marginTop: k === 2 ? 10 : 0 }} />)}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '20px 24px', borderRadius: 'var(--radius-md)', background: 'var(--color-base)' }}>
+              {['55%', '35%', '90%', '80%'].map((w, k) => <div key={k} style={{ width: w, height: k === 0 ? 18 : 10, borderRadius: 'var(--radius-sm)', background: 'var(--color-hover)', marginTop: k === 2 ? 10 : 0 }} />)}
             </div>
           </div>
         )}
@@ -229,7 +229,7 @@ export function DocViewer({ owner }: { owner?: string } = {}) {
               {note && <span role="status" style={mono(11.5, 'var(--color-text-secondary)')}>{note}</span>}
             </div>
             <div key={`${open.project}:${open.branch ?? ''}:${open.worktree ?? ''}:${open.path}`}
-              style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
+              style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
               <article onClick={onLink} onAuxClick={(e) => { if (e.button === 1) onLink(e); }} style={{ maxWidth: 680, margin: '0 auto', padding: mobile ? '24px 20px 34px' : '32px 24px', fontSize: 14.5, lineHeight: 1.75 }}>
                 <Markdown source={doc.markdown} docs={docs} />
               </article>

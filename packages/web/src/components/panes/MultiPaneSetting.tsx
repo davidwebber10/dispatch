@@ -26,7 +26,7 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
       style={{
         width: 38,
         height: 21,
-        borderRadius: 11,
+        borderRadius: 'var(--radius-lg)',
         border: 'none',
         cursor: 'pointer',
         background: on ? 'var(--color-accent)' : '#34343a',

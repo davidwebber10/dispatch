@@ -69,7 +69,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
             <div
               key={s.deviceId}
               data-testid="push-row"
-              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 9 }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-md)' }}
             >
               <div style={{ ...row, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>

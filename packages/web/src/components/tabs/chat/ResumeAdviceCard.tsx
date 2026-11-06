@@ -33,7 +33,7 @@ export function ResumeAdviceCard({ ageMinutes, contextTokens, onSummarize, onFul
         maxWidth: 768,
         margin: '0 auto 8px',
         border: '1px solid var(--color-border)',
-        borderRadius: 10,
+        borderRadius: 'var(--radius-md)',
         background: 'var(--color-elevated)',
         padding: '11px 14px',
         display: 'flex',
@@ -54,13 +54,13 @@ export function ResumeAdviceCard({ ageMinutes, contextTokens, onSummarize, onFul
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         <button
           onClick={onSummarize}
-          style={{ border: 'none', borderRadius: 7, padding: '6px 13px', cursor: 'pointer', background: 'var(--color-accent)', color: '#06140B', font: '600 12.5px var(--font-sans)' }}
+          style={{ border: 'none', borderRadius: 'var(--radius-sm)', padding: '6px 13px', cursor: 'pointer', background: 'var(--color-accent)', color: '#06140B', font: '600 12.5px var(--font-sans)' }}
         >
           Resume from summary
         </button>
         <button
           onClick={onFull}
-          style={{ border: '1px solid var(--color-border)', borderRadius: 7, padding: '6px 13px', cursor: 'pointer', background: 'transparent', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}
+          style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '6px 13px', cursor: 'pointer', background: 'transparent', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}
         >
           Resume full session
         </button>

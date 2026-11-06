@@ -32,7 +32,7 @@ function ConflictPanels({ need, isMobile }: { need: Need; isMobile: boolean }) {
         style={{
           flex: 1,
           border: '1px solid var(--border)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           padding: '10px 11px',
           background: 'var(--pane)',
         }}
@@ -58,7 +58,7 @@ function ConflictPanels({ need, isMobile }: { need: Need; isMobile: boolean }) {
         style={{
           flex: 1,
           border: '1px solid var(--yellowLine)',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           padding: '10px 11px',
           background: 'var(--pane)',
         }}
@@ -103,7 +103,7 @@ function ApprovalCommands({ cmds }: { cmds: string[] }) {
             color: 'var(--tp)',
             background: 'var(--pane)',
             border: '1px solid var(--border)',
-            borderRadius: 7,
+            borderRadius: 'var(--radius-sm)',
             padding: '7px 10px',
             alignSelf: 'flex-start',
           }}
@@ -163,7 +163,7 @@ function NeedCard({
     <div
       style={{
         border: '1px solid var(--border)',
-        borderRadius: 11,
+        borderRadius: 'var(--radius-lg)',
         background: 'var(--elev)',
         overflow: 'hidden',
       }}

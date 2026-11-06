@@ -156,7 +156,7 @@ export function TypeIconBox({ icon, size = 28 }: { icon: string; size?: number }
         flex: 'none',
         width: size,
         height: size,
-        borderRadius: 7,
+        borderRadius: 'var(--radius-sm)',
         background: 'var(--pane)',
         border: '1px solid var(--border)',
         display: 'flex',
@@ -173,8 +173,8 @@ export function TypeIconBox({ icon, size = 28 }: { icon: string; size?: number }
 // 3px progress track + accent fill (spec §6 — thread chip / working only).
 export function ProgressBar({ width }: { width: string }) {
   return (
-    <div style={{ flex: 1, height: 3, borderRadius: 3, background: 'var(--border)', overflow: 'hidden' }}>
-      <div style={{ height: '100%', width, background: 'var(--acc)', borderRadius: 3 }} />
+    <div style={{ flex: 1, height: 3, borderRadius: 'var(--radius-xs)', background: 'var(--border)', overflow: 'hidden' }}>
+      <div style={{ height: '100%', width, background: 'var(--acc)', borderRadius: 'var(--radius-xs)' }} />
     </div>
   );
 }
@@ -234,7 +234,7 @@ export function PillButton({
       title={title}
       style={{
         padding: '7px 13px',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
         background: bg,
         color: fg,
         border: bd,

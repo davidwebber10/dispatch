@@ -38,7 +38,7 @@ function originText(t: EndlessPaneThread): string {
 const label: React.CSSProperties = { font: '600 12px var(--font-sans)', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--color-text-secondary)' };
 const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProperties => ({ fontFamily: 'var(--font-mono)', fontSize: size, color });
 const ellipsis: React.CSSProperties = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
-const card: React.CSSProperties = { background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8 };
+const card: React.CSSProperties = { background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' };
 
 type Open = (t: EndlessPaneThread) => void;
 
@@ -120,7 +120,7 @@ export function ProjectsPanel({ onNavigate }: { onNavigate?: () => void } = {}) 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={label}>Projects</span>
         <button type="button" aria-label="Refresh projects" aria-busy={refreshing} disabled={refreshing} onClick={() => void refresh()}
-          style={{ opacity: refreshing ? 0.7 : 1, width: 28, height: 28, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: refreshing ? 'default' : 'pointer' }}>
+          style={{ opacity: refreshing ? 0.7 : 1, width: 28, height: 28, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: refreshing ? 'default' : 'pointer' }}>
           <ArrowClockwise size={14} className={refreshing ? 'endless-spin' : undefined} />
         </button>
       </div>

@@ -291,14 +291,14 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
               const left = Number(hud.cd.split(',')[k] ?? 0) / 10;
               const empty = l.weapon === 'bomb' && hud.bombs <= 0;
               return (
-                <li key={l.weapon} style={{ minWidth: 92, padding: '5px 8px 6px', border: '1px solid rgba(62,207,106,.3)', borderRadius: 6, background: 'rgba(6,9,8,.75)', opacity: empty ? 0.35 : 1 }}>
+                <li key={l.weapon} style={{ minWidth: 92, padding: '5px 8px 6px', border: '1px solid rgba(62,207,106,.3)', borderRadius: 'var(--radius-sm)', background: 'rgba(6,9,8,.75)', opacity: empty ? 0.35 : 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
                     <span style={{ color: PALE }}>{l.label}</span>
                     <span style={{ color: l.weapon === 'bomb' ? RED : GREEN }}>{l.name}</span>
                   </div>
                   {l.weapon === 'bomb'
                     ? <div aria-label={`A-bombs: ${hud.bombs}`} style={{ marginTop: 3, fontSize: 11, color: RED, letterSpacing: 2 }}>{'●'.repeat(hud.bombs) || '—'}</div>
-                    : <div style={{ marginTop: 4, height: 3, background: 'rgba(62,207,106,.15)', borderRadius: 2 }}><div style={{ width: `${(1 - left) * 100}%`, height: '100%', background: left > 0 ? 'rgba(62,207,106,.5)' : GREEN, borderRadius: 2 }} /></div>}
+                    : <div style={{ marginTop: 4, height: 3, background: 'rgba(62,207,106,.15)', borderRadius: 'var(--radius-xs)' }}><div style={{ width: `${(1 - left) * 100}%`, height: '100%', background: left > 0 ? 'rgba(62,207,106,.5)' : GREEN, borderRadius: 'var(--radius-xs)' }} /></div>}
                 </li>
               );
             })}
@@ -308,7 +308,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
               {LOADOUT.filter((l) => l.weapon !== 'blaster').map((l) => (
                 <button key={l.weapon} type="button" aria-label={`Fire ${l.name}`}
                   onPointerDown={(e) => { e.stopPropagation(); touch(); input.current.trigger = [...(input.current.trigger ?? []), l.weapon]; }}
-                  style={{ height: 46, borderRadius: 10, border: `1px solid ${l.weapon === 'bomb' ? RED : 'rgba(62,207,106,.5)'}`, background: 'rgba(6,9,8,.8)', color: l.weapon === 'bomb' ? RED : GREEN, fontFamily: mono, fontSize: 10.5, touchAction: 'none', opacity: l.weapon === 'bomb' && hud.bombs <= 0 ? 0.35 : 1 }}>
+                  style={{ height: 46, borderRadius: 'var(--radius-md)', border: `1px solid ${l.weapon === 'bomb' ? RED : 'rgba(62,207,106,.5)'}`, background: 'rgba(6,9,8,.8)', color: l.weapon === 'bomb' ? RED : GREEN, fontFamily: mono, fontSize: 10.5, touchAction: 'none', opacity: l.weapon === 'bomb' && hud.bombs <= 0 ? 0.35 : 1 }}>
                   {l.name}{l.weapon === 'bomb' ? ` ${hud.bombs}` : ''}
                 </button>
               ))}

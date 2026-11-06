@@ -17,7 +17,7 @@ export function PaneFrame({ tabId, onClose, onMoveStart }: {
   const iconBtn: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     width: 22, height: 22, flexShrink: 0, padding: 0,
-    background: 'none', border: 'none', borderRadius: 4,
+    background: 'none', border: 'none', borderRadius: 'var(--radius-xs)',
     color: 'var(--color-text-tertiary)',
   };
 

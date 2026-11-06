@@ -6,7 +6,7 @@ import { api } from '../../api/client';
 const label = { fontSize: 11, fontWeight: 600, letterSpacing: 0.4, color: 'var(--color-text-tertiary)' } as const;
 const selectStyle = {
   height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
+  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
 } as const;
 const rowStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } as const;
 

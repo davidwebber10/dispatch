@@ -85,7 +85,7 @@ export function ContextIndicator({ contextTokens, contextWindow, compacting, com
         ) : (
           <>
             {modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
-            <span style={{ width: 28, height: 3, borderRadius: 2, background: 'var(--color-border)', overflow: 'hidden', display: 'inline-block' }}>
+            <span style={{ width: 28, height: 3, borderRadius: 'var(--radius-xs)', background: 'var(--color-border)', overflow: 'hidden', display: 'inline-block' }}>
               <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: barColor }} />
             </span>
             <span>{pct}% context</span>

@@ -91,7 +91,7 @@ export function NeedsAlert() {
           alignItems: 'center',
           gap: 5,
           padding: '5px 10px',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           background: hasNeeds ? 'var(--yellowDim)' : 'var(--elev)',
           border: `1px solid ${hasNeeds ? 'var(--yellowLine)' : 'var(--border)'}`,
           color: hasNeeds ? 'var(--yellow)' : 'var(--tt)',
@@ -119,7 +119,7 @@ export function NeedsAlert() {
             overflowY: 'auto',
             background: 'var(--base)',
             border: '1px solid var(--border)',
-            borderRadius: 12,
+            borderRadius: 'var(--radius-lg)',
             boxShadow: '0 24px 70px -28px rgba(0,0,0,.85)',
             zIndex: 50,
           }}

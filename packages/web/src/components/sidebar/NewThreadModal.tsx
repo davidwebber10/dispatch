@@ -297,18 +297,18 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const rowLabel: React.CSSProperties = { fontSize: m ? 15 : 13, color: 'var(--color-text-secondary)' };
   const rowHint: React.CSSProperties = { fontSize: m ? 12 : 11, color: 'var(--color-text-tertiary)' };
   const control: React.CSSProperties = {
-    background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 9 : 7,
+    background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-sm)',
     color: 'var(--color-text-primary)', boxSizing: 'border-box',
   };
   const controlWidth = m ? 180 : 160;
   const duration = toDuration(autoArchiveMs || DEFAULT_AUTO_ARCHIVE_MS);
-  const gateCard: React.CSSProperties = { padding: '14px 14px 13px', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 10 };
+  const gateCard: React.CSSProperties = { padding: '14px 14px 13px', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)' };
   const gateButton = (disabled: boolean): React.CSSProperties => ({
     marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    background: ACCENT, border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5,
+    background: ACCENT, border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 13.5,
     cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.7 : 1, boxShadow: GLOW,
   });
-  const gateCommand: React.CSSProperties = { marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 7, padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
+  const gateCommand: React.CSSProperties = { marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-sm)', padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
 
   /** The duration control: a number + unit pair, shown only while auto-archive is on. */
   const durationControl = (
@@ -397,7 +397,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               placeholder="sk-or-v1-…"
               value={keyDraft}
               onChange={(e) => setKeyDraft(e.target.value)}
-              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 8, color: 'var(--color-text-primary)', boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
+              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
             />
             {keyError && (
               <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
@@ -436,7 +436,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           {showMode && (
             <Row mobile={m}>
               <span style={rowLabel}>Mode</span>
-              <div style={{ display: 'flex', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 9 : 7, padding: m ? 3 : 2, gap: m ? 3 : 2, width: controlWidth, boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-sm)', padding: m ? 3 : 2, gap: m ? 3 : 2, width: controlWidth, boxSizing: 'border-box' }}>
                 {([['cli', 'CLI'], ['pretty', 'Pretty']] as const).map(([id, title]) => {
                   const disabled = id === 'pretty' ? prettyDisabled : cliDisabled;
                   const on = effectiveMode === id && !disabled;
@@ -446,7 +446,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
                       title={disabled ? (id === 'pretty' ? `${spec.label} has no structured transport yet` : `${spec.label} runs structured-only`) : undefined}
                       onClick={() => { if (!disabled) setMode(id); }}
                       style={{
-                        flex: 1, font: `600 ${m ? 13 : 12}px var(--font-sans)`, borderRadius: m ? 6 : 5, border: 'none',
+                        flex: 1, font: `600 ${m ? 13 : 12}px var(--font-sans)`, borderRadius: m ? 'var(--radius-sm)' : 'var(--radius-sm)', border: 'none',
                         ...(m ? { height: 34 } : { padding: '5px 4px' }),
                         background: on ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-elevated))' : 'transparent',
                         boxShadow: on ? 'inset 0 0 0 1px rgba(62,207,106,.55)' : 'none',
@@ -495,8 +495,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
                 {!m && autoArchive && durationControl}
                 <button type="button" role="switch" aria-checked={autoArchive} aria-label="Auto-archive when idle" onClick={toggleArchive}
-                  style={{ flex: 'none', width: m ? 44 : 34, height: m ? 26 : 20, borderRadius: 13, border: 'none', padding: m ? 3 : 2, cursor: 'pointer', background: autoArchive ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
-                  <span style={{ display: 'block', width: m ? 20 : 16, height: m ? 20 : 16, borderRadius: 10, background: 'var(--color-text-primary)', transform: autoArchive ? `translateX(${m ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
+                  style={{ flex: 'none', width: m ? 44 : 34, height: m ? 26 : 20, borderRadius: 'var(--radius-lg)', border: 'none', padding: m ? 3 : 2, cursor: 'pointer', background: autoArchive ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
+                  <span style={{ display: 'block', width: m ? 20 : 16, height: m ? 20 : 16, borderRadius: 'var(--radius-md)', background: 'var(--color-text-primary)', transform: autoArchive ? `translateX(${m ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
                 </button>
               </div>
             </div>
@@ -513,7 +513,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         <div aria-hidden="true" style={{ flex: 1 }} />
 
         <button type="button" disabled={busy || capabilitiesLoading} onClick={() => void create()}
-          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 12 : 10, color: '#08240F', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
+          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
           Start new thread
         </button>
 
@@ -544,7 +544,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
           <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 6 : 5, maxHeight: 240, overflowY: 'auto', marginTop: m ? -6 : -8 }}>
             {recent.map((s) => (
               <button key={s.id} type="button" disabled={busy || capabilitiesLoading} onClick={() => void create(s.id)}
-                style={{ display: 'flex', flexDirection: 'column', gap: m ? 4 : 3, width: '100%', textAlign: 'left', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 10 : 8, padding: m ? '11px 12px' : '9px 11px', minHeight: m ? 52 : undefined, cursor: busy ? 'default' : 'pointer', flex: 'none' }}>
+                style={{ display: 'flex', flexDirection: 'column', gap: m ? 4 : 3, width: '100%', textAlign: 'left', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-md)', padding: m ? '11px 12px' : '9px 11px', minHeight: m ? 52 : undefined, cursor: busy ? 'default' : 'pointer', flex: 'none' }}>
                 <span style={{ fontSize: m ? 14 : 12.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{s.preview}</span>
                 <span style={{ font: `400 ${m ? 11 : 10.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
                   {timeAgo(new Date(s.mtime).toISOString())} · {s.messageCount}{s.truncated ? '+' : ''} msg{s.messageCount === 1 ? '' : 's'}

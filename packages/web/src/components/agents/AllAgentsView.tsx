@@ -38,7 +38,7 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
         <Stat label="AUTOMATIONS" value={data ? String(data.agentCount) : '—'} />
         <Stat label="RUNNING" value={data ? String(data.runningCount) : '—'} accent={!!data?.runningCount} />
         <Stat label="SPEND" value={data ? money(data.totalSpendUsd) : '—'} />
-        <button onClick={load} title="Refresh" style={{ flexShrink: 0, width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+        <button onClick={load} title="Refresh" style={{ flexShrink: 0, width: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
           <ArrowClockwise size={17} weight="bold" />
         </button>
       </div>
@@ -78,7 +78,7 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
 
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div style={{ flex: 1, minWidth: 0, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '8px 10px' }}>
+    <div style={{ flex: 1, minWidth: 0, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '8px 10px' }}>
       <div style={{ font: '600 9.5px var(--font-mono)', letterSpacing: '0.8px', color: 'var(--color-text-tertiary)' }}>{label}</div>
       <div style={{ marginTop: 3, fontSize: 18, fontWeight: 600, color: accent ? 'var(--color-accent)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
@@ -91,7 +91,7 @@ function Empty({ text, onRetry }: { text: string; onRetry?: () => void }) {
       {text}
       {onRetry && (
         <div style={{ marginTop: 12 }}>
-          <button onClick={onRetry} style={{ padding: '8px 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+          <button onClick={onRetry} style={{ padding: '8px 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
         </div>
       )}
     </div>

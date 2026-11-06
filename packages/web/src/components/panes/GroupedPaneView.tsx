@@ -196,7 +196,7 @@ export function GroupedPaneView({ groupId }: { groupId: string }) {
           transform:   isReorganizing ? 'scale(0.82)' : 'scale(1)',
           transition: 'transform 0.2s ease',
           transformOrigin: 'center center',
-          borderRadius: isReorganizing ? 10 : 0,
+          borderRadius: isReorganizing ? 'var(--radius-md)' : 'var(--radius-xs)',
           // Pointer events on the content are blocked by the overlay below
           // so xterm canvases etc. don't capture during reorganize.
         }}
@@ -241,7 +241,7 @@ export function GroupedPaneView({ groupId }: { groupId: string }) {
                   background: isHov
                     ? 'color-mix(in srgb, var(--color-accent) 20%, transparent)'
                     : 'color-mix(in srgb, var(--color-elevated) 45%, transparent)',
-                  borderRadius: 10,
+                  borderRadius: 'var(--radius-md)',
                   transition: 'border-color .12s ease, background .12s ease',
                   display:        'flex',
                   alignItems:     'center',

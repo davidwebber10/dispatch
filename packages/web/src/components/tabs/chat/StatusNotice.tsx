@@ -98,7 +98,7 @@ export function StatusNotice({ input, renderText, onDismiss }: { input?: string;
         borderStyle: 'solid',
         borderColor: style.border,
         background: style.background,
-        borderRadius: 6,
+        borderRadius: 'var(--radius-sm)',
         padding: '12px 13px',
         minWidth: 0,
       }}
@@ -121,7 +121,7 @@ export function StatusNotice({ input, renderText, onDismiss }: { input?: string;
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 28, height: 28, margin: '-8px -9px -8px 0', padding: 0,
-              border: 'none', background: 'transparent', borderRadius: 6,
+              border: 'none', background: 'transparent', borderRadius: 'var(--radius-sm)',
               color: 'var(--color-text-tertiary)', cursor: 'pointer', flexShrink: 0,
             }}
           >

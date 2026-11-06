@@ -59,7 +59,7 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
         </button>
         {active && (
           <button onClick={() => void api.cancelRun(run.id)}
-            style={{ height: 28, padding: '0 12px', background: '#241313', border: '1px solid #4A1F22', borderRadius: 8, color: '#F0616D', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
+            style={{ height: 28, padding: '0 12px', background: '#241313', border: '1px solid #4A1F22', borderRadius: 'var(--radius-md)', color: '#F0616D', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
         )}
       </div>
 
@@ -108,7 +108,7 @@ function StepRow({ step, timeline }: { step: RunStep; timeline?: boolean }) {
   const { Icon, color } = stepVisual(step);
   if (step.kind === 'todos' && step.todos) {
     return (
-      <div style={{ padding: '8px 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, margin: '4px 0' }}>
+      <div style={{ padding: '8px 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', margin: '4px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <ListChecks size={15} color="var(--color-accent)" weight="bold" />
           <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1px', color: 'var(--color-text-tertiary)' }}>PLAN</span>
@@ -126,7 +126,7 @@ function StepRow({ step, timeline }: { step: RunStep; timeline?: boolean }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 9, padding: isResult ? '8px 10px' : '5px 6px',
-      borderRadius: 7, margin: isResult ? '6px 0 2px' : 0,
+      borderRadius: 'var(--radius-sm)', margin: isResult ? '6px 0 2px' : 0,
       background: isResult ? (step.status === 'error' ? 'rgba(240,97,109,.08)' : 'rgba(62,207,106,.08)') : undefined,
       border: isResult ? `1px solid ${step.status === 'error' ? 'rgba(240,97,109,.3)' : 'rgba(62,207,106,.3)'}` : undefined,
     }}>
@@ -187,4 +187,4 @@ const LiveCursor = () => (
 );
 
 const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, flexShrink: 0 };
-const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 6, fontSize: 11.5, cursor: 'pointer', flexShrink: 0 };
+const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 };

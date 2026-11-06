@@ -464,7 +464,7 @@ function stableId(it: ConvItem): string {
 function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
   return (
     <div style={{ position: 'relative', width: 48, height: 48, flex: 'none' }}>
-      <img src={src} alt="attachment" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--color-border)', display: 'block' }} />
+      <img src={src} alt="attachment" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', display: 'block' }} />
       <button
         type="button"
         onClick={onRemove}
@@ -912,7 +912,7 @@ export function UserBubble({ text, source, grouped = false, relayName }: { text:
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
           color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           padding: '12px 15px',
           font: '500 15.5px var(--font-sans)',
           lineHeight: 1.55,
@@ -1112,7 +1112,7 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
         color: 'var(--color-text-secondary)',
         background: 'var(--color-elevated)',
         border: '1px solid var(--color-border)',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
         padding: '5px 12px',
         cursor: 'pointer',
       }}
@@ -1133,7 +1133,7 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
 function LoadingOlderPill({ show }: { show: boolean }) {
   if (!show) return null;
   return (
-    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
+    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
       <Spinner size={11} /> Loading earlier…
     </div>
   );

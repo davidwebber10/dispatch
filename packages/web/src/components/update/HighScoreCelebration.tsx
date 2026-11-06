@@ -38,7 +38,7 @@ export function HighScoreCelebration() {
           backdropFilter: 'blur(10px) saturate(1.4)',
           WebkitBackdropFilter: 'blur(10px) saturate(1.4)',
           border: '1px solid rgba(255,255,255,.14)',
-          borderRadius: 16,
+          borderRadius: 'var(--radius-xl)',
           padding: '24px 20px',
           boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
           textAlign: 'center',
@@ -58,7 +58,7 @@ export function HighScoreCelebration() {
         <div style={{ marginTop: 18 }}>
           <button
             onClick={close}
-            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }}
+            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }}
           >
             Nice
           </button>

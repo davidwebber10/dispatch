@@ -91,7 +91,7 @@ const chipStyle = (active: boolean): CSSProperties => ({
   gap: 6,
   height: 28,
   padding: '0 11px',
-  borderRadius: 999,
+  borderRadius: 'var(--radius-pill)',
   fontSize: 12,
   whiteSpace: 'nowrap',
   flexShrink: 0,
@@ -109,7 +109,7 @@ const allProjectsButtonStyle = (active: boolean): CSSProperties => ({
   gap: 7,
   height: 30,
   padding: '0 12px',
-  borderRadius: 8,
+  borderRadius: 'var(--radius-md)',
   borderWidth: 1,
   borderStyle: 'solid',
   borderColor: 'var(--color-border)',
@@ -135,7 +135,7 @@ const projectMenuStyle: CSSProperties = {
   borderWidth: 1,
   borderStyle: 'solid',
   borderColor: 'var(--color-border)',
-  borderRadius: 10,
+  borderRadius: 'var(--radius-md)',
   boxShadow: '0 20px 50px rgba(0,0,0,.5)',
   padding: 6,
 };
@@ -149,7 +149,7 @@ const projectMenuRowStyle: CSSProperties = {
   padding: '7px 10px',
   background: 'none',
   border: 'none',
-  borderRadius: 7,
+  borderRadius: 'var(--radius-sm)',
   color: 'var(--color-text-primary)',
   fontSize: 12.5,
   cursor: 'pointer',
@@ -418,7 +418,7 @@ export function BoardView() {
               onClick={() => setProjectFilter(p.id)}
               style={chipStyle(projectFilter === p.id)}
             >
-              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 999, background: CHIP_DOT_COLOR[p.topColumn], flexShrink: 0 }} />
+              <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: 'var(--radius-pill)', background: CHIP_DOT_COLOR[p.topColumn], flexShrink: 0 }} />
               {p.name}
               <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{p.count}</span>
             </button>

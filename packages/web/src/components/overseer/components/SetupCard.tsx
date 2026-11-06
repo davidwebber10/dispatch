@@ -119,7 +119,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
       style={{
         background: 'var(--color-elevated)',
         border: `1px solid ${BORDER}`,
-        borderRadius: 12,
+        borderRadius: 'var(--radius-lg)',
         padding: isMobile ? 16 : 20,
         display: 'flex',
         flexDirection: 'column',
@@ -200,7 +200,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
         style={{
           height: isMobile ? 44 : 38,
           border: 'none',
-          borderRadius: 10,
+          borderRadius: 'var(--radius-md)',
           background: ACCENT,
           color: '#08240F',
           fontWeight: 600,

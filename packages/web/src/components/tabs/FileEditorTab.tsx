@@ -142,7 +142,7 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   // markdown reads "view | edit"; a CSV reads "table | raw" — same two modes underneath.
   const label = (m: 'view' | 'edit') => (csv ? (m === 'view' ? 'table' : 'raw') : m);
   const tab = (m: 'view' | 'edit') => (
-    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 5, border: 'none', cursor: 'pointer', fontSize: 12, textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? '#08240F' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
+    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? '#08240F' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
   );
 
   return (
@@ -151,18 +151,18 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
         <span style={{ fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path}</span>
         {dirty && <span style={{ color: 'var(--color-status-yellow)', fontSize: 11 }}>● unsaved</span>}
         {rich && (
-          <div style={{ display: 'inline-flex', marginLeft: 6, background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, padding: 2 }}>
+          <div style={{ display: 'inline-flex', marginLeft: 6, background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', padding: 2 }}>
             {tab('view')}{tab('edit')}
           </div>
         )}
-        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
+        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
       </div>
       {loadError && !dirty && !fileCache.has(ck)
         ? <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>
             <span>This file could not be read. It may have been deleted, or it is not a regular file.</span>
             <span style={{ color: 'var(--color-text-tertiary)' }}>{loadError}</span>
             <button onClick={() => setRetry((n) => n + 1)}
-              style={{ padding: '4px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 7, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 12 }}>
+              style={{ padding: '4px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 12 }}>
               Retry
             </button>
           </div>

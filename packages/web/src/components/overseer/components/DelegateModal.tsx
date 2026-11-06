@@ -48,7 +48,7 @@ export function DelegateModal() {
           width: 480,
           background: '#18181B',
           border: '1px solid #2F2F35',
-          borderRadius: 13,
+          borderRadius: 'var(--radius-lg)',
           boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
           overflow: 'hidden',
           display: 'flex',
@@ -75,7 +75,7 @@ export function DelegateModal() {
             style={{
               width: 26,
               height: 26,
-              borderRadius: 7,
+              borderRadius: 'var(--radius-sm)',
               background: 'transparent',
               border: '1px solid var(--border)',
               display: 'flex',
@@ -102,7 +102,7 @@ export function DelegateModal() {
               width: '100%',
               background: 'var(--pane)',
               border: '1px solid #2C2C32',
-              borderRadius: 9,
+              borderRadius: 'var(--radius-md)',
               fontSize: 13,
               lineHeight: 1.5,
               padding: '10px 12px',
@@ -148,7 +148,7 @@ export function DelegateModal() {
                     alignItems: 'center',
                     gap: 6,
                     padding: '8px 12px',
-                    borderRadius: 9,
+                    borderRadius: 'var(--radius-md)',
                     background: selected ? 'var(--accDim)' : 'var(--pane)',
                     color: selected ? 'var(--acc)' : 'var(--ts)',
                     border: selected
@@ -183,7 +183,7 @@ export function DelegateModal() {
             onClick={closeDelegate}
             style={{
               padding: '7px 13px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               background: 'transparent',
               color: 'var(--ts)',
               border: '1px solid var(--border)',
@@ -201,7 +201,7 @@ export function DelegateModal() {
             onClick={doDelegate}
             style={{
               padding: '7px 13px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               background: 'var(--acc)',
               color: '#06140B',
               border: '1px solid var(--acc)',

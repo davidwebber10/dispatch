@@ -257,16 +257,16 @@ export function MobileApp() {
             {bottomTab === 'projects' && (
               <>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={projectsView === 'threads' ? 'Search threads' : 'Search projects'}
-                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 16 }} />
+                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 16 }} />
                 {projectsView === 'projects' && <SortMenu
                   value={projectSort}
                   options={PROJECT_SORTS}
                   onChange={(v) => setProjectSort(v as ProjectSort)}
                   isMobile
                   iconSize={18}
-                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
                 />}
-                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 10, color: '#06140B', cursor: 'pointer' }}>
+                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#06140B', cursor: 'pointer' }}>
                   <Plus size={18} weight="bold" />
                 </button>}
               </>
@@ -283,7 +283,7 @@ export function MobileApp() {
               a project (its threads list and a thread), for terminal and Pretty threads alike. */}
           {level >= 1 && !inSettings && project && (
             <button type="button" aria-label="Previews" title="Previews" onClick={() => usePreviews.getState().openSheet(project.id)}
-              style={{ position: 'relative', width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 10, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
+              style={{ position: 'relative', width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <Eye size={18} />
               <PreviewBadge count={unseenHere} />
             </button>
@@ -322,12 +322,12 @@ export function MobileApp() {
             ) : (
             <>
             {/* Projects ⇄ Threads: a segmented switch at the top of the tab. */}
-            <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 12px 2px', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, flexShrink: 0 }}>
+            <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 12px 2px', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', flexShrink: 0 }}>
               {([['projects', 'Projects'], ['threads', 'Threads']] as const).map(([key, label]) => {
                 const on = projectsView === key;
                 return (
                   <button key={key} type="button" role="tab" aria-selected={on} onClick={() => setProjectsView(key)}
-                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px rgba(0,0,0,.35)' : 'none' }}>
+                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px rgba(0,0,0,.35)' : 'none' }}>
                     {label}
                   </button>
                 );
@@ -381,7 +381,7 @@ export function MobileApp() {
           {/* Level 2 — the thread terminal or the agent dashboard */}
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', ['--composer-safe-bottom' as string]: '0px' }}>
             {leaf === 'tab' && leafTabId && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
-              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
+              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 'var(--radius-md)', padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus />
               </div>
             )}

@@ -64,7 +64,7 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
       {compactResult && !compacting && (
         <div
           style={{
-            display: 'flex', alignItems: 'center', gap: 6, marginTop: 14, padding: '8px 10px', borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: 6, marginTop: 14, padding: '8px 10px', borderRadius: 'var(--radius-md)',
             background: compactResult.success ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-status-red) 12%, transparent)',
             fontSize: 12.5,
           }}
@@ -81,11 +81,11 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 8, color: 'var(--color-text-primary)', cursor: 'pointer' }}>Close</button>
+        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Close</button>
         <button
           disabled={compacting}
           onClick={compact}
-          style={{ height: 32, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, background: compacting ? 'var(--color-hover)' : 'var(--color-accent)', border: 'none', borderRadius: 8, color: compacting ? 'var(--color-text-tertiary)' : '#08240F', fontWeight: 600, cursor: compacting ? 'default' : 'pointer' }}
+          style={{ height: 32, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, background: compacting ? 'var(--color-hover)' : 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: compacting ? 'var(--color-text-tertiary)' : '#08240F', fontWeight: 600, cursor: compacting ? 'default' : 'pointer' }}
         >
           {compacting && <Spinner size={12} color="var(--color-text-tertiary)" />}
           {compacting ? 'Compacting…' : 'Compact'}

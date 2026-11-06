@@ -22,7 +22,7 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0 }: {
     <button type="button" title={title} aria-pressed={active} onClick={onClick}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
-        width: 52, height: 44, flexShrink: 0, borderRadius: 9, border: 'none', cursor: 'pointer',
+        width: 52, height: 44, flexShrink: 0, borderRadius: 'var(--radius-md)', border: 'none', cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
         position: 'relative', padding: 0,
         background: active ? 'rgba(62,207,106,0.10)' : hover ? 'var(--color-elevated)' : 'transparent',
@@ -31,14 +31,14 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0 }: {
       <I size={18} weight={active ? 'fill' : 'regular'} />
       <span style={{ font: '400 8.5px var(--font-sans)', letterSpacing: '0.01em' }}>{label}</span>
       {badge > 0 && (
-        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {badge > 99 ? '99+' : badge}
         </span>
       )}
       {/* Active marker: a short bar hugging the rail's left edge, like an editor activity bar. */}
       <span style={{
         position: 'absolute', left: -6, top: '50%', transform: 'translateY(-50%)',
-        width: 3, height: 18, borderRadius: 2, background: active ? 'var(--color-accent)' : 'transparent',
+        width: 3, height: 18, borderRadius: 'var(--radius-xs)', background: active ? 'var(--color-accent)' : 'transparent',
       }} />
     </button>
   );

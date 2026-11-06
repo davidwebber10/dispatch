@@ -60,7 +60,7 @@ export function ThreadAskBanner({ terminalId, onAnswer }: { terminalId: string; 
             background: 'transparent',
             color: 'var(--color-status-yellow)',
             border: '1px solid rgba(232,176,75,.6)',
-            borderRadius: 6,
+            borderRadius: 'var(--radius-sm)',
             padding: '4px 12px',
             fontSize: 12,
             fontWeight: 600,

@@ -44,7 +44,7 @@ function WorkCountPill({ count, queuedCount }: { count: number; queuedCount: num
         alignItems: 'center',
         gap: 4,
         padding: '1px 6px 1px 5px',
-        borderRadius: 999,
+        borderRadius: 'var(--radius-pill)',
         background: 'var(--accDim)',
         border: '1px solid var(--accLine)',
         color: 'var(--acc)',
@@ -78,7 +78,7 @@ function DecisionCountPill({ count }: { count: number }) {
       title={`${count} open decision${count === 1 ? '' : 's'}`}
       style={{
         padding: '1px 6px',
-        borderRadius: 999,
+        borderRadius: 'var(--radius-pill)',
         background: 'var(--yellowDim)',
         border: '1px solid var(--yellowLine)',
         color: 'var(--yellow)',
@@ -115,7 +115,7 @@ export function OverseerMobile({ onBack }: { onBack?: () => void }) {
   const tabBtnBase = {
     flex: 1,
     padding: '8px 0',
-    borderRadius: 8,
+    borderRadius: 'var(--radius-md)',
     border: 'none',
     fontFamily: 'inherit',
     fontSize: 12,

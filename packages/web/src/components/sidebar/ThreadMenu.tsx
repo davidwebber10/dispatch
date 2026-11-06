@@ -19,7 +19,7 @@ const BRANCHABLE: string[] = ['claude-code', 'codex', 'grok'];
 
 export type ThreadMenuAt = { tab: Terminal; x: number; y: number };
 
-const item: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
+const item: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
 
 /**
  * A thread row's options menu (the ⋯ button, right-click, long-press) and the dialogs it
@@ -73,7 +73,7 @@ export function ThreadMenu({ at, onClose, onBranched }: { at: ThreadMenuAt | nul
       {at && createPortal(
         <>
           <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-          <div role="menu" style={{ position: 'fixed', top: at.y, left: Math.min(at.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+          <div role="menu" style={{ position: 'fixed', top: at.y, left: Math.min(at.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
             {isMobile && THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick(setDetailsTarget)} style={item}>Thread details</button>
             )}

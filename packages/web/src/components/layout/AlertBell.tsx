@@ -25,11 +25,11 @@ export function AlertBell({ terminalId, floating = false }: { terminalId: string
       await useTabs.getState().setAlertsEnabled(terminalId, !on);
     } finally { setBusy(false); }
   };
-  const dim = floating ? { w: 46, h: 32, icon: 19, radius: 9, pad: 3 } : { w: 36, h: 24, icon: 15, radius: 6, pad: 2 };
+  const dim = floating ? { w: 46, h: 32, icon: 19, radius: 'var(--radius-md)', pad: 3 } : { w: 36, h: 24, icon: 15, radius: 'var(--radius-sm)', pad: 2 };
   return (
     <div style={{
       display: 'flex', padding: dim.pad,
-      borderRadius: floating ? 11 : 8,
+      borderRadius: floating ? 'var(--radius-lg)' : 'var(--radius-md)',
       background: floating ? 'rgba(22,22,26,0.55)' : 'var(--color-elevated)',
       border: floating ? '1px solid rgba(255,255,255,0.10)' : '1px solid #2C2C32',
       ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px rgba(0,0,0,.6)' } : {}),

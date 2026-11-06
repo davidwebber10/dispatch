@@ -49,7 +49,7 @@ const smallButton: CSSProperties = {
 
 function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?: string }) {
   return (
-    <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 4, padding: '0 4px', lineHeight: 1.5 }}>
+    <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)', padding: '0 4px', lineHeight: 1.5 }}>
       {children}
     </span>
   );
@@ -81,7 +81,7 @@ function OptionRow({ item, option, onAnswer }: { item: CardItem; option: CardOpt
   const live = item.status === 'open';
   const style: CSSProperties = {
     display: 'flex', flexDirection: 'column', gap: 2, width: '100%', textAlign: 'left', fontFamily: 'inherit',
-    padding: '6px 9px', borderRadius: 7, cursor: live ? 'pointer' : 'default',
+    padding: '6px 9px', borderRadius: 'var(--radius-sm)', cursor: live ? 'pointer' : 'default',
     background: recommended ? 'var(--accDim)' : 'var(--pane)',
     border: `1px solid ${recommended ? 'var(--accLine)' : 'var(--border)'}`,
   };
@@ -114,7 +114,7 @@ function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnsw
     <article
       data-ledger-seq={item.seq}
       data-full="true"
-      style={{ display: 'flex', flexDirection: 'column', gap: 7, padding: '10px 12px', borderRadius: 9, background: 'var(--elev)', border: '1px solid var(--border)' }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 7, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--elev)', border: '1px solid var(--border)' }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--ts)' }}>
         <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--tp)' }}>N{item.seq}</span>
@@ -154,7 +154,7 @@ function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnsw
           type="button"
           title={`Add "${answerText(item)}" to the message box`}
           onClick={() => onAnswer?.(answerText(item))}
-          style={{ textAlign: 'left', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: 'var(--tp)', padding: '6px 9px', borderRadius: 7, background: 'var(--accDim)', border: '1px solid var(--accLine)', cursor: 'pointer' }}
+          style={{ textAlign: 'left', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: 'var(--tp)', padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--accDim)', border: '1px solid var(--accLine)', cursor: 'pointer' }}
         >
           {item.kind === 'go' ? 'Approve' : 'Done'}
         </button>

@@ -382,7 +382,11 @@ export class StatusService {
     if (!terminal) return;
     this.turnBoundary({ terminalId, sessionId: terminal.session_id, threadStatus: exitCode === 0 ? 'done' : 'error', phase: 'end' });
     terminalsDb.updatePid(this.db, terminalId, null);
-    this.apply(terminal.session_id, terminalId, exitCode === 0 ? 'done' : 'error');
+    // An idle process ending (a daemon restart, an idle unload) is not activity: counting it
+    // moved every thread with a live process to the top of the list after each update
+    // (2026-11-05). A process that ends mid-turn still counts; that is news about the thread.
+    const midTurn = terminal.status === 'working' || terminal.status === 'needs_input';
+    this.apply(terminal.session_id, terminalId, exitCode === 0 ? 'done' : 'error', undefined, { activity: midTurn });
     this.defer(() => this.broadcaster.broadcast({ type: 'terminal:exit', terminalId, sessionId: terminal.session_id }));
   }
 
@@ -409,7 +413,7 @@ export class StatusService {
     return true;
   }
 
-  private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
+  private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string, opts: { activity?: boolean } = {}): void {
     this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, ?, 'authoritative', ?)
       ON CONFLICT(terminal_id) DO UPDATE SET external_session_id=excluded.external_session_id, status=excluded.status, source=excluded.source, observed_at=excluded.observed_at`)
       .run(terminalId, terminalsDb.getById(this.db, terminalId)?.external_id ?? '', status, new Date().toISOString());
@@ -420,12 +424,12 @@ export class StatusService {
     // Activity means "the thread thought about something": a turn started/ended, it
     // asked for input, went dormant, or errored. 'starting' (SessionStart) is an
     // open/revive edge — attaching to a thread must not make it look recently active.
-    if (status !== 'starting') {
+    if (status !== 'starting' && opts.activity !== false) {
       terminalsDb.touchActivity(this.db, terminalId);
       sessionsDb.touchActivity(this.db, sessionId);
       this.defer(() => this.onActivity?.(terminalId));
-      this.defer(() => this.onWatchStatus?.(terminalId, status));
     }
+    if (status !== 'starting') this.defer(() => this.onWatchStatus?.(terminalId, status));
     // A manual override is a correction to a stale derived status. `apply()` only ever runs
     // in response to a genuine status event, so EVERY call here is real activity — resumes,
     // escalations, settles, errors, all of it — and clears the override. Deliberately not a

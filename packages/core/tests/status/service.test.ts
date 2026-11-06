@@ -432,3 +432,17 @@ describe('StatusService.resetStatus', () => {
     expect(new StatusService(db, broadcaster).resetStatus('nope')).toBe(false);
   });
 });
+
+describe('StatusService process exit and activity', () => {
+  it('an idle process ending (a daemon restart) does not bump last activity; one ending mid-turn does', () => {
+    const svc = new StatusService(db, broadcaster);
+    db.prepare("UPDATE terminals SET last_activity_at='2026-01-01T00:00:00.000Z', status='waiting' WHERE id='term'").run();
+    svc.markExited('term', 0);
+    expect(terminalsDb.getById(db, 'term')!.last_activity_at).toBe('2026-01-01T00:00:00.000Z');
+
+    svc.markWorking('term');
+    db.prepare("UPDATE terminals SET last_activity_at='2026-01-01T00:00:00.000Z' WHERE id='term'").run();
+    svc.markExited('term', 1);
+    expect(terminalsDb.getById(db, 'term')!.last_activity_at).not.toBe('2026-01-01T00:00:00.000Z');
+  });
+});

@@ -72,7 +72,7 @@ function InsightCallout({ content, tokens, ledger, docs }: { content: string; to
   return (
     <div
       style={{
-        borderRadius: 9,
+        borderRadius: 'var(--radius-md)',
         border: `1px solid ${tokens.line}`,
         background: tokens.dim,
         padding: '8px 13px 9px',
@@ -118,7 +118,7 @@ function InsightRail({ content, docs }: { content: string; docs?: DocChips }) {
     <div
       data-testid="insight-rail"
       onClick={() => setOpen((o) => !o)}
-      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px 13px', borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', borderRadius: '0 8px 8px 0', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)', cursor: 'pointer', minWidth: 0 }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px 13px', borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)', cursor: 'pointer', minWidth: 0 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Lightbulb size={12} weight="fill" color="var(--color-accent)" style={{ flex: 'none' }} />

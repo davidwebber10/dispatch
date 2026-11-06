@@ -323,7 +323,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
         <button
           title="Add row"
           onClick={() => commit(insertRow(doc, doc.rows.length))}
-          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: 11 }}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: 11 }}
         >
           <Plus size={12} /> Add row
         </button>
@@ -366,7 +366,7 @@ function CellInput({ draft, setDraft, onCommit, onCancel }: {
         else if (e.key === 'Tab') { e.preventDefault(); onCommit('right'); }
         else if (e.key === 'Escape') { e.preventDefault(); cancelledRef.current = true; onCancel(); }
       }}
-      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 3, color: 'var(--color-text-primary)', font: '400 11.5px var(--font-mono)', padding: '1px 3px', outline: 'none' }}
+      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-primary)', font: '400 11.5px var(--font-mono)', padding: '1px 3px', outline: 'none' }}
     />
   );
 }

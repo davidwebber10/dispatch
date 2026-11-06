@@ -16,7 +16,7 @@ import { useUI } from '../../stores/ui';
 import '../overseer/tokens.css';
 
 const toolbarButton: React.CSSProperties = {
-  height: 32, padding: '0 10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8,
+  height: 32, padding: '0 10px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 'var(--radius-md)',
   border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12.5,
 };
 
@@ -59,14 +59,14 @@ export function ChatMode({ mobile = false }: { mobile?: boolean }) {
           <button type="button" onClick={() => setInspector(true)} style={toolbarButton}><Brain size={15} /> Memory</button>
           <button type="button" aria-pressed={panel} aria-label={needs > 0 ? `Projects, ${needs} need${needs === 1 ? 's' : ''} you` : undefined} onClick={() => setPanel((p) => !p)} style={toolbarButton}>
             <Folders size={15} /> Projects
-            {needs > 0 && <span aria-hidden style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: 'var(--color-status-yellow)', color: 'var(--color-canvas)', font: '600 10.5px/16px var(--font-mono)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{needs}</span>}
+            {needs > 0 && <span aria-hidden style={{ minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-status-yellow)', color: 'var(--color-canvas)', font: '600 10.5px/16px var(--font-mono)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{needs}</span>}
           </button>
         </div>
         {unavailable && (
           <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: mobile ? '8px 16px' : '8px 12px', color: 'var(--color-text-secondary)', fontSize: 13, borderBottom: '1px solid var(--color-border)' }}>
             <span style={{ flex: 1 }}>Chat is unavailable. It may still be starting.</span>
             <button type="button" onClick={() => void useEndless.getState().loadTail().catch(() => {})}
-              style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
+              style={{ padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Try again</button>
           </div>
         )}
         <EndlessColumn mobile={mobile} />

@@ -92,7 +92,7 @@ function ToolLine({ tool, echo }: { tool?: EndlessMessage; echo?: EndlessMessage
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{rest}</span>
       </button>
       {open && (
-        <pre style={{ margin: '6px 0 0 17px', padding: 10, maxHeight: 360, overflow: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, font: '400 12px var(--font-mono)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <pre style={{ margin: '6px 0 0 17px', padding: 10, maxHeight: 360, overflow: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', font: '400 12px var(--font-mono)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {[tool?.text, echo?.text].filter(Boolean).join('\n\n')}
         </pre>
       )}
@@ -119,7 +119,7 @@ function openThread(m: EndlessMessage) {
   void openThreadInPlace(m.project, m.ref);
 }
 
-const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 8, color: 'var(--color-text-primary)' };
+const cardStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left', width: '100%', padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)' };
 /** A button with no look of its own: the card draws it. */
 const bare: React.CSSProperties = { background: 'none', border: 'none', padding: 0, margin: 0, color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' };
 
@@ -145,7 +145,7 @@ function WorkCard({ m }: { m: EndlessMessage }) {
     return (
       <div onClick={tap} style={{ ...cardStyle, minHeight: 44, cursor: m.ref ? 'pointer' : 'default' }}>
         <button type="button" disabled={!m.ref} aria-label={head ? `Open thread ${head[1]}` : 'Open thread'} onClick={(e) => { e.stopPropagation(); tap(); }}
-          style={{ ...bare, display: 'flex', flexShrink: 0, marginTop: 2, borderRadius: 4, cursor: m.ref ? 'pointer' : 'default' }}>
+          style={{ ...bare, display: 'flex', flexShrink: 0, marginTop: 2, borderRadius: 'var(--radius-xs)', cursor: m.ref ? 'pointer' : 'default' }}>
           <Briefcase size={16} />
         </button>
         <span style={{ minWidth: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></span>
@@ -173,7 +173,7 @@ function WorkCard({ m }: { m: EndlessMessage }) {
         <div id={id} style={{ padding: '0 12px 10px', minWidth: 0 }}>
           <div style={{ fontSize: 13.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}><DocText text={m.text} project={m.project} raised /></div>
           {m.ref && (
-            <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 44, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 6, cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
+            <button type="button" onClick={() => openThread(m)} style={{ marginTop: 8, minHeight: 44, padding: '0 10px', background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--color-text-secondary)', font: '500 12.5px var(--font-sans)' }}>Open thread</button>
           )}
         </div>
       )}
@@ -201,7 +201,7 @@ function ReplyRow({ m }: { m: EndlessMessage }) {
 function NoteCard({ m }: { m: EndlessMessage }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ border: '1px dashed var(--color-border)', borderRadius: 8, padding: '8px 12px' }}>
+    <div style={{ border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 12px' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} style={{ ...mono, display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
         <Notebook size={13} /> Imported memories{m.projectName ? ` — ${m.projectName}` : ''}
       </button>
@@ -217,7 +217,7 @@ export const mediaDisplayName = (name: string) => name.replace(/^\d+-\d+-[0-9a-f
 /** A non-image attachment (a PDF, a text file): a chip that opens the saved file. */
 export function FileChip({ name, href }: { name: string; href?: string }) {
   const style: CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 260, height: 30, padding: '0 10px', borderRadius: 8,
+    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: 260, height: 30, padding: '0 10px', borderRadius: 'var(--radius-md)',
     border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)',
     fontSize: 12.5, textDecoration: 'none',
   };
@@ -271,7 +271,7 @@ export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; f
         const echoI = r.kind === 'msg' ? undefined : r.echo?.i;
         return (
           <MessageScroller.Item key={key} messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column' }}>
-            <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 8, outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
+            <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 'var(--radius-md)', outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
               {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : r.kind === 'started' ? <StartedItem tool={r.tool} echo={r.echo} /> : <ToolLine tool={r.tool} echo={r.echo} />}
             </div>
           </MessageScroller.Item>

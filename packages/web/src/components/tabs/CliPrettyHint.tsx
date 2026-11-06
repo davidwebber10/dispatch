@@ -69,7 +69,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         title={tip}
         onClick={() => void switchToPretty()}
         style={{
-          flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 6, border: '1px solid #2C2C32',
+          flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #2C2C32',
           background: 'var(--color-hover)', color: 'var(--color-text-primary)',
           font: '600 11px var(--font-mono, monospace)', letterSpacing: '0.3px',
           cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
@@ -84,7 +84,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         onClick={() => useSettings.getState().setShowPrettyHint(false)}
         style={{
           flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: 20, height: 20, padding: 0, borderRadius: 5, border: 'none',
+          width: 20, height: 20, padding: 0, borderRadius: 'var(--radius-sm)', border: 'none',
           background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer',
         }}
       >

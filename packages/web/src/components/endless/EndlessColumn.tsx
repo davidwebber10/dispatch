@@ -91,9 +91,9 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
     useEndless.getState().retry().catch((err: unknown) => setRetryError(`Retry failed: ${errorText(err)}`));
   };
   return (
-    <div role="alert" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13.5 }}>
+    <div role="alert" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13.5 }}>
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}{retryError && <><br />{retryError}</>}</span>
-      <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
+      <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
       {/* A login problem: log the daemon in from here, then send the message again. */}
       {isClaudeAuthError(text) && <div style={{ flexBasis: '100%' }}><ClaudeLogin onDone={retry} /></div>}
     </div>
@@ -274,7 +274,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         {(project !== null || images.length > 0 || files.length > 0) && (
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             {project !== null && (
-              <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 999, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13 }}>
+              <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13 }}>
                 <Rows size={14} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectName ?? project}</span>
                 <button type="button" aria-label="Remove project" onClick={() => setProject(null)}
@@ -285,7 +285,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
             )}
             {images.map((im, k) => (
               <div key={k} style={{ position: 'relative' }}>
-                <img src={`data:${im.media_type};base64,${im.data}`} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 8 }} />
+                <img src={`data:${im.media_type};base64,${im.data}`} alt="" style={{ width: 56, height: 56, objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
                 <button type="button" aria-label="Remove image" onClick={() => setImages(images.filter((_, j) => j !== k))}
                   style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, padding: 0, borderRadius: '50%', border: 'none', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                   <X size={11} weight="bold" />
@@ -380,7 +380,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
       </MessageScroller.Provider>
       {!atTail && (
         <button type="button" onClick={() => void useEndless.getState().loadTail()}
-          style={{ alignSelf: 'center', margin: '6px 0', padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12 }}>
+          style={{ alignSelf: 'center', margin: '6px 0', padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12 }}>
           Back to latest
         </button>
       )}

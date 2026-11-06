@@ -20,7 +20,7 @@ function homePath(p: string): string {
 }
 
 const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
+const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
 
 export function DetailsPane({ projectId, terminalId }: { projectId: string | null; terminalId: string | null }) {
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId)) ?? null;
