@@ -473,7 +473,8 @@ export function usePageBoundaries(items: ConvItem[]): Set<ConvItem> {
  * Surface-specific hooks into renderTimeline, so one renderer serves every transcript view.
  * Every hook is optional; leaving one out keeps the thread view's own rendering. Used by the
  * Control Plane (overseer/timeline.tsx's controlPlaneTimeline) for its agent cards, its
- * agency notices and its ledger chips.
+ * agency notices and its ledger chips, and by Chat (endless/timeline.tsx's chatTimeline)
+ * for its cards, its doc chips and its per-message anchors.
  */
 export interface TimelineExtensions {
   /** A tool call drawn as a custom card, given its paired result (if any yet). Return
@@ -488,10 +489,16 @@ export interface TimelineExtensions {
    *  turn. A custom row is its own centered row: it is not part of the human's turn, so it
    *  draws no turn separator and does not group with the bubbles around it. */
   userRow?(item: ConvItem): ReactNode | undefined;
-  /** Assistant prose. Default: <AssistantText>. */
-  prose?(text: string): ReactNode;
+  /** Assistant prose, given the item it came from. Default: <AssistantText>. */
+  prose?(text: string, item: ConvItem): ReactNode;
   /** Plain (non-markdown) text inside user bubbles and report_status cards. Default: the text. */
   plainText?(text: string): ReactNode;
+  /** Wraps each drawn unit, given the items it draws in order: one item, a tool call with its
+   *  paired result, or a same-tool run with its results. For a surface that needs its own
+   *  anchor, highlight or label around every message (Chat: per-message scroll ids, the search
+   *  focus outline, the project label and file chips). It never changes the grouping, keys or
+   *  pairing. Default: the node as is. */
+  frame?(items: ConvItem[], node: ReactNode): ReactNode;
 }
 
 /** A staged (pre-send) image preview with an × to drop it before sending. Mirrors the
@@ -551,6 +558,9 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     if (it.kind === 'tool' && it.toolId) toolIds.add(it.toolId);
   }
 
+  // A surface's frame around each drawn unit (ext.frame); identity when it has none.
+  const frame = (covered: ConvItem[], node: React.ReactNode): React.ReactNode => (ext?.frame ? ext.frame(covered, node) : node);
+
   const rows: React.ReactNode[] = [];
   // Whether the previously RENDERED row was part of the human's turn (bubble or attached
   // image). Consecutive user rows group: one YOU label on the first, no separators between.
@@ -609,7 +619,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         flushGroup();
         rows.push(
           <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-            {custom}
+            {frame([it], custom)}
           </MessageScroller.Item>,
         );
         lastRowWasUser = false;
@@ -625,7 +635,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} />
+          {frame([it], <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} />)}
         </MessageScroller.Item>,
       );
       lastRowWasUser = true;
@@ -640,9 +650,11 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       flushGroup();
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
-            <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
-          </div>
+          {frame([it], (
+            <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
+              <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
+            </div>
+          ))}
         </MessageScroller.Item>,
       );
       // Part of the human's turn: a following caption/text send groups under the same YOU.
@@ -654,10 +666,13 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // including the same-tool run grouping. Resolved with the same pairing rule as the
     // single-call path: by id, else by adjacency (marked consumed so it doesn't re-render).
     let custom: React.ReactNode | undefined;
+    // The items the node below draws, for ext.frame: this one, plus a tool call's paired result.
+    let covered: ConvItem[] = [it];
     if (it.kind === 'tool' && ext?.toolCard) {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
       custom = ext.toolCard(it, result);
       if (custom !== undefined && result && !it.toolId) consumed.add(result);
+      if (result) covered = [it, result];
     }
 
     // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
@@ -709,7 +724,8 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
           result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
         }));
         const lastId = stableId(run[run.length - 1]);
-        pushMach(lastId, <ToolGroup pairs={pairs} onViewFile={onViewFile} />);
+        const runItems = pairs.flatMap((p) => (p.result ? [p.tool, p.result] : [p.tool]));
+        pushMach(lastId, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />));
         // Skip past the run's members; their paired results are skipped by the
         // existing `toolIds.has(...)` guard on the 'tool-result' branch.
         i = lastIdx;
@@ -719,7 +735,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
 
     let node: React.ReactNode = null;
     if (custom !== undefined) node = custom;
-    else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '') : <AssistantText text={it.text ?? ''} />;
+    else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '', it) : <AssistantText text={it.text ?? ''} />;
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
     else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
@@ -731,6 +747,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       // twice on every REST-paged tool call: once folded into the tool row's "N lines", then
       // again as a stray "Output · N lines" row directly beneath it.
       if (result && !it.toolId) consumed.add(result);
+      if (result) covered = [it, result];
       if (it.toolName === 'AskUserQuestion') {
         // While still pending (no tool_result yet) the interactive <AskQuestionCard> below
         // (the live overlay) covers it — node stays null and this item renders nothing here,
@@ -757,14 +774,14 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       } else {
         // Generic machinery — routes through pushMach so consecutive calls share one
         // bordered block, and so the header's Hide-tool-calls toggle can drop it.
-        pushMach(id, <ToolCall tool={it} result={result} onViewFile={onViewFile} />);
+        pushMach(id, frame(covered, <ToolCall tool={it} result={result} onViewFile={onViewFile} />));
         continue;
       }
     } else if (it.kind === 'tool-result') {
       if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
       if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
       if (ext?.hideResult?.(it)) continue;               // ...or a surface hides it outright
-      pushMach(id, <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>);
+      pushMach(id, frame([it], <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>));
       continue;
     } else if (it.kind === 'result') node = <ResultFooter item={it} login={it === loginItem} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
@@ -787,7 +804,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // identity). The group's LAST item is untouched by anything prepended before it, so
     // keying there keeps the node — and the reader's scroll position — stable across a page.
     group.key = id;
-    group.nodes.push(<div key={id}>{node}</div>);
+    group.nodes.push(<div key={id}>{frame(covered, node)}</div>);
   }
   flushGroup();
   return rows;

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { foldRows, rowKeyOf, parseSpawn, EndlessRows } from './EndlessMessageRow';
+import { parseSpawn } from './spawn';
+import { ChatTimeline } from './timeline';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import { useUI } from '../../stores/ui';
 import { StartedItem } from './StartedItem';
@@ -32,63 +33,7 @@ beforeEach(() => {
   useDocViewer.setState({ open: null, back: [] });
 });
 
-describe('foldRows', () => {
-  it('pairs a run of tools with the run of results after it, in order', () => {
-    const rows = foldRows([m(0, 'tool', 'Read {}'), m(1, 'tool', 'Grep {}'), m(2, 'echo', 'A'), m(3, 'echo', 'B')]);
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => (r.kind === 'msg' ? r.m.i : [r.tool.i, r.echo?.i]))).toEqual([[0, 2], [1, 3]]);
-  });
-  it('a tool with no result yet stays alone; the run of 1 is unchanged', () => {
-    expect(foldRows([m(0, 'tool', 'Read {}')]).map((r) => r.kind)).toEqual(['tool']);
-    const one = foldRows([m(0, 'tool', 'Read {}'), m(1, 'echo', 'A'), m(2, 'unii', 'hi')]);
-    expect(one.map((r) => r.kind)).toEqual(['tool', 'msg']);
-  });
-  it('a spawn_agent call folds into a started row', () => {
-    expect(foldRows([spawnTool(0, 'Fix PR #2'), spawnEcho(1, 't9', 'Fix PR #2')])[0].kind).toBe('started');
-  });
-});
-
-describe('foldRows runs', () => {
-  it('a run of 2 tools with 1 echo pairs the first and leaves the second alone', () => {
-    const rows = foldRows([m(0, 'tool', 'Read {}'), m(1, 'tool', 'Grep {}'), m(2, 'echo', 'A')]);
-    expect(rows.map((r) => (r.kind === 'msg' ? r.m.i : [r.tool.i, r.echo?.i]))).toEqual([[0, 2], [1, undefined]]);
-  });
-  it('a mixed run keeps the kinds and pairs the echoes in order', () => {
-    const rows = foldRows([m(0, 'tool', 'mcp__memory__zoom {}'), spawnTool(1, 'Fix'), m(2, 'tool', 'Read {}'), m(3, 'echo', 'Z'), spawnEcho(4, 't9', 'Fix'), m(5, 'echo', 'R')]);
-    expect(rows.map((r) => r.kind)).toEqual(['recall', 'started', 'tool']);
-    expect(rows.map((r) => (r.kind === 'msg' ? -1 : r.echo?.i))).toEqual([3, 4, 5]);
-  });
-});
-
-describe('foldRows by tool-call id', () => {
-  const r = (msg: EndlessMessage, ref: string) => ({ ...msg, ref });
-  const shape = (rows: ReturnType<typeof foldRows>) => rows.map((x) => (x.kind === 'msg' ? [x.kind, x.m.i] : [x.kind, x.tool.i, x.echo?.i]));
-  it('pairs a call with its result across a message logged between them', () => {
-    const work = { ...m(1, 'work', '[Fix] report: done'), ref: 't9' };
-    const rows = foldRows([r(spawnTool(0, 'Fix'), 'A'), work, r(spawnEcho(2, 't9', 'Fix'), 'A')]);
-    expect(shape(rows)).toEqual([['started', 0, 2], ['msg', 1]]);
-  });
-  it('a parallel spawn with a missing result does not shift the others', () => {
-    const rows = foldRows([r(spawnTool(0, 'One'), 'A'), r(spawnTool(1, 'Two'), 'B'), r(spawnEcho(2, 't2', 'Two'), 'B')]);
-    expect(shape(rows)).toEqual([['started', 0, undefined], ['started', 1, 2]]);
-  });
-  it('results in reverse order pair by id', () => {
-    const rows = foldRows([r(m(0, 'tool', 'Read {}'), 'A'), r(m(1, 'tool', 'Grep {}'), 'B'), r(m(2, 'echo', 'rb'), 'B'), r(m(3, 'echo', 'ra'), 'A')]);
-    expect(shape(rows)).toEqual([['tool', 0, 3], ['tool', 1, 2]]);
-  });
-  it('a result whose call is not loaded renders as a lone row; ref-less rows keep positional pairing', () => {
-    expect(shape(foldRows([r(m(0, 'echo', 'x'), 'Z')]))).toEqual([['msg', 0]]);
-    expect(shape(foldRows([m(0, 'tool', 'Read {}'), m(1, 'echo', 'A')]))).toEqual([['tool', 0, 1]]);
-  });
-  it('a ref-carrying call never pairs positionally with a ref-less result', () => {
-    expect(shape(foldRows([r(m(0, 'tool', 'Read {}'), 'A'), m(1, 'echo', 'old')]))).toEqual([['tool', 0, undefined], ['msg', 1]]);
-  });
-  it('rowKeyOf maps an echo paired by id to its tool', () => {
-    const msgs = [r(m(0, 'tool', 'Read {}'), 'A'), m(1, 'unii', 'hi'), r(m(2, 'echo', 'ra'), 'A')];
-    expect(rowKeyOf(msgs, 2)).toBe(0);
-    expect(rowKeyOf(msgs, 1)).toBe(1);
-  });
-});
+// The old foldRows pairing cases live in convItems.test.ts (the adapter that replaced it).
 
 describe('parseSpawn', () => {
   it('starting, started, failed', () => {
@@ -145,7 +90,7 @@ describe('report card', () => {
     const setView = vi.fn();
     useUI.setState({ setView } as any);
     const work = { ...m(0, 'work', '[Fix] report: done'), project: 's1', ref: 't9' };
-    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     fireEvent.click(screen.getByRole('button', { name: /\[Fix\] report: done|Fix/ }));
     expect(spy).toHaveBeenCalledWith('s1', 't9');
     expect(setView).not.toHaveBeenCalled();
@@ -156,7 +101,7 @@ describe('doc links in chat', () => {
   it('a markdown link to a doc in a Dispatch reply opens the viewer; an outside link does nothing', () => {
     useEndless.setState({ projects: [{ id: 's1', name: 'studio', folder: '/w/studio' }] as any });
     const reply = { ...m(0, 'unii', '[plan](/w/studio/docs/plan.md:3) and [out](/etc/x.md)'), project: 's1' };
-    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
     expect(fireEvent.click(screen.getByRole('link', { name: 'out' }))).toBe(false);
     expect(useDocViewer.getState().open).toBeNull();
     expect(fireEvent.click(screen.getByRole('link', { name: 'plan' }))).toBe(false);
@@ -165,7 +110,7 @@ describe('doc links in chat', () => {
   it('a report card path opens the doc viewer with the report project', () => {
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md (branch spec/x)'), project: 's1', ref: 't1' };
-    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     fireEvent.click(screen.getByRole('button', { name: 'x.md' }));
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/specs/x.md', branch: 'spec/x' });
     expect(spy).not.toHaveBeenCalled();
@@ -175,7 +120,7 @@ describe('doc links in chat', () => {
     const long = `[Plan] report: Doc: /w/studio/docs/specs/y.md\n${'more words here. '.repeat(20)}`;
     useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/studio' }] as any });
     const work = { ...m(0, 'work', long), project: 's1', ref: 't1' };
-    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     fireEvent.click(screen.getByRole('button', { name: 'y.md' }));
     expect(useDocViewer.getState().open).toEqual({ project: 's7', path: '/w/studio/docs/specs/y.md', branch: null });
     const header = screen.getByRole('button', { name: /Plan/ });
@@ -190,12 +135,12 @@ describe('doc links in chat', () => {
   });
   it('a Dispatch reply path opens the doc viewer with the message project', () => {
     const reply = { ...m(0, 'unii', 'The plan is in `docs/plans/p.md`.'), project: 's1' };
-    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
     fireEvent.click(screen.getByRole('button', { name: 'p.md' }));
     expect(useDocViewer.getState().open).toEqual({ project: 's1', path: 'docs/plans/p.md', branch: null });
   });
   it('a relative path with no project is not a link; tool rows stay plain', () => {
-    render(<MessageScroller.Provider><EndlessRows messages={[m(0, 'unii', 'See docs/a.md'), m(1, 'tool', 'Read {"file_path":"/w/studio/docs/a.md"}')]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[m(0, 'unii', 'See docs/a.md'), m(1, 'tool', 'Read {"file_path":"/w/studio/docs/a.md"}')]} focus={null} /></MessageScroller.Provider>);
     expect(screen.queryByRole('button', { name: 'a.md' })).toBeNull();
   });
   it('a Started card shows up to 2 doc links from its task', () => {
@@ -215,7 +160,7 @@ describe('report cards do not nest buttons', () => {
   it('a short report: the header button opens the thread, a chip opens the doc viewer only', () => {
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md'), project: 's1', ref: 't1' };
-    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const { container } = render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     expect(nested(container)).toBe(0);
     expect(container.querySelector('[role=button]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'x.md' }));
@@ -229,7 +174,7 @@ describe('report cards do not nest buttons', () => {
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     const long = `[Plan] report: Doc: docs/specs/y.md\n${'more words here. '.repeat(20)}`;
     const work = { ...m(0, 'work', long), project: 's1', ref: 't1' };
-    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const { container } = render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     expect(nested(container)).toBe(0);
     expect(container.querySelector('[role=button]')).toBeNull();
     const header = screen.getByRole('button', { name: /Plan/ });
@@ -244,28 +189,28 @@ describe('report cards do not nest buttons', () => {
   });
   it('the keyboard order is the header button, then each chip', () => {
     const work = { ...m(0, 'work', '[Plan] report: see docs/a.md and docs/b.md'), project: 's1', ref: 't1' };
-    const { container } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const { container } = render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     const stops = [...container.querySelectorAll<HTMLElement>('button, [tabindex]')].filter((e) => e.tabIndex >= 0);
     expect(stops.map((e) => e.getAttribute('aria-label'))).toEqual(['Open thread Plan', 'a.md', 'b.md']);
   });
   it('a report card scans its text once, and not again when nothing changed', () => {
     const work = { ...m(0, 'work', '[Plan] report: done. Doc: docs/specs/x.md'), project: 's1', ref: 't1' };
     scans.n = 0;
-    const { rerender } = render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    const { rerender } = render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     expect(scans.n).toBe(1);
-    rerender(<MessageScroller.Provider><EndlessRows messages={[work]} focus={0} /></MessageScroller.Provider>);
+    rerender(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={0} /></MessageScroller.Provider>);
     expect(scans.n).toBe(1);
   });
   it('a short report with no thread: the card is 44 px tall at least and its Open thread button is disabled', () => {
     const work = { ...m(0, 'work', '[Plan] report: done'), project: 's1', ref: null };
-    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     const btn = screen.getByRole('button', { name: 'Open thread Plan' });
     expect(btn).toBeDisabled();
     expect((btn.parentElement as HTMLElement).style.minHeight).toBe('44px');
   });
   it('a short report with a thread: the Open thread button is enabled', () => {
     const work = { ...m(0, 'work', '[Plan] report: done'), project: 's1', ref: 't1' };
-    render(<MessageScroller.Provider><EndlessRows messages={[work]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[work]} focus={null} /></MessageScroller.Provider>);
     expect(screen.getByRole('button', { name: 'Open thread Plan' })).toBeEnabled();
   });
 });
@@ -275,7 +220,7 @@ describe('a pane reload leaves reply rows alone', () => {
     useEndless.setState({ projects: [{ id: 's7', name: 'studio', folder: '/w/studio' }] as any });
     const reply = { ...m(0, 'unii', 'The plan is in `/w/studio/docs/plans/p.md`.'), project: 's1' };
     scans.n = 0;
-    render(<MessageScroller.Provider><EndlessRows messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
     expect(screen.getByRole('button', { name: 'p.md' })).toBeInTheDocument();
     const after = scans.n;
     expect(after).toBeGreaterThan(0);

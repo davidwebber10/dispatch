@@ -754,3 +754,43 @@ describe('Log in to Claude in a Pretty thread', () => {
     expect(loginItemFor('claude-code', [{ kind: 'result', isError: true, text: 'the process exited (1)' }])).toBeNull();
   });
 });
+
+describe('renderTimeline — ext.frame and ext.prose (the hooks Chat uses)', () => {
+  const draw = (items: ConvItem[], ext: Parameters<typeof renderTimeline>[6]) => render(
+    <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+      {renderTimeline(items, () => {}, new Set(), undefined, null, undefined, ext)}
+    </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>,
+  );
+  it('frames each drawn unit with the items it draws: a call with its result, a run with its results', () => {
+    const items: ConvItem[] = [
+      { kind: 'user', text: 'go', uuid: 'u1' },
+      { kind: 'user', text: 'pic', uuid: 'u2' },
+      { kind: 'image', imageUrl: 'data:image/png;base64,AAAA', imageFromUser: true, uuid: 'img' },
+      { kind: 'assistant', text: 'ok', uuid: 'a1' },
+      { kind: 'tool', toolName: 'Bash', toolId: 'b1', toolInput: '{"command":"ls"}', uuid: 'tb' },
+      { kind: 'tool-result', toolId: 'b1', text: 'x', uuid: 'rb' },
+      { kind: 'tool', toolName: 'Read', toolId: 'r1', toolInput: '{}', uuid: 'tr1' },
+      { kind: 'tool', toolName: 'Read', toolId: 'r2', toolInput: '{}', uuid: 'tr2' },
+      { kind: 'tool-result', toolId: 'r1', text: 'one', uuid: 'rr1' },
+      { kind: 'tool-result', toolId: 'gone', text: 'orphan', uuid: 'ro' },
+    ];
+    const seen: string[][] = [];
+    draw(items, { frame: (covered, node) => { seen.push(covered.map((c) => c.uuid!)); return <div data-framed={covered.map((c) => c.uuid).join(',')}>{node}</div>; } });
+    expect(seen).toEqual([['u1'], ['u2'], ['img'], ['a1'], ['tb', 'rb'], ['tr1', 'rr1', 'tr2'], ['ro']]);
+    expect(document.querySelector('[data-framed="u1"]')?.textContent).toContain('go');
+    expect(document.querySelector('[data-framed="a1"]')?.textContent).toContain('ok');
+  });
+  it('frame changes nothing else: same rows, same order, same grouping', () => {
+    const items: ConvItem[] = [{ kind: 'user', text: 'a', uuid: 'u' }, { kind: 'assistant', text: 'b', uuid: 'x' }, { kind: 'assistant', text: 'c', uuid: 'y' }];
+    const plain = draw(items, undefined);
+    const ids = [...plain.container.querySelectorAll('[data-message-id]')].map((e) => e.getAttribute('data-message-id'));
+    plain.unmount();
+    const framed = draw(items, { frame: (_c, node) => <span>{node}</span> });
+    expect([...framed.container.querySelectorAll('[data-message-id]')].map((e) => e.getAttribute('data-message-id'))).toEqual(ids);
+    expect(ids).toEqual(['u', 'y']);
+  });
+  it('prose is given the item its text came from', () => {
+    draw([{ kind: 'assistant', text: 'hello', uuid: 'a7' }], { prose: (text, item) => <p>{`${item.uuid}: ${text}`}</p> });
+    expect(screen.getByText('a7: hello')).toBeInTheDocument();
+  });
+});
