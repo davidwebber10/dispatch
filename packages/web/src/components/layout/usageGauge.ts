@@ -256,3 +256,57 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
   }
   return out;
 }
+
+// --- the rail chip's rings (2026-11-06) -------------------------------------------------------
+
+export interface ChipRing {
+  provider: string;
+  name: string;
+  /** The highest counted live window's percent, or null (a paused tool with no figure yet). */
+  used: number | null;
+  /** Which window `used` is. */
+  type: string | null;
+  tone: RingTone;
+  paused: boolean;
+  stale: boolean;
+  /** "Claude: weekly 12% used, Fable weekly 19% used · as of 11:46 AM" */
+  title: string;
+}
+
+/**
+ * One ring per tool for the rail chip: every provider with a current figure, plus a paused one
+ * without. The ring shows the window closest to its limit; the tooltip lists them all.
+ */
+export function chipRings(s: UsageSummary | null, now: number, zone?: string): ChipRing[] {
+  if (!s) return [];
+  const paused = activePaused(s, now);
+  const seen = new Set<string>();
+  const out: ChipRing[] = [];
+  for (const p of s.providers) {
+    seen.add(p.provider);
+    const peak = peakWindow(p, now);
+    const isPaused = paused.has(p.provider);
+    if (!peak && !isPaused) continue;
+    const name = PROVIDER_NAME[p.provider] ?? p.provider;
+    const parts = COUNTED.filter((t) => liveValue(p.windows[t], now) !== null).map((t) => `${SHORT[t] ?? t} ${liveValue(p.windows[t], now)}% used`);
+    const stale = now - p.asOf > STALE_MS;
+    out.push({
+      provider: p.provider, name, used: peak?.value ?? null, type: peak?.type ?? null,
+      tone: isPaused ? 'red' : peak ? ringTone(peak.value, s.warnPercent) : 'green', paused: isPaused, stale,
+      title: `${name}: ${parts.join(', ') || 'no figure yet'}${isPaused ? ' · paused on a limit' : ''}${stale ? ` · as of ${whenLabel(p.asOf, now, zone)}` : ''}`,
+    });
+  }
+  for (const provider of paused) {
+    if (seen.has(provider)) continue;
+    const name = PROVIDER_NAME[provider] ?? provider;
+    out.push({ provider, name, used: null, type: null, tone: 'red', paused: true, stale: false, title: `${name}: paused on a limit, no figure yet` });
+  }
+  return out;
+}
+
+/** The chip's overall tone: red while any tool is paused, amber when any counted window is at the warning level. */
+export function chipTone(rings: ChipRing[], warn: number): ChipTone {
+  if (rings.some((r) => r.paused)) return 'red';
+  if (rings.some((r) => r.used !== null && r.used >= warn)) return 'amber';
+  return 'normal';
+}

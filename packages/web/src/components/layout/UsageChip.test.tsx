@@ -20,11 +20,14 @@ describe('UsageChip', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  it('rail: two lines, opens the table on click', () => {
+  it('rail: one ring per tool with the figure in its label, opens the sheet on click', () => {
     useUsageLimits.setState({ summary: summary(46) });
     render(<UsageChip variant="rail" />);
     const chip = screen.getByTestId('usage-chip');
-    expect(chip.textContent).toBe('5h 46wk 21');
+    const rings = screen.getAllByTestId('usage-ring');
+    expect(rings.map((r) => r.getAttribute('data-provider'))).toEqual(['claude-code']);
+    expect(rings[0].getAttribute('aria-valuenow')).toBe('46'); // the window closest to its limit
+    expect(rings[0].getAttribute('aria-label')).toBe('Claude: 5-hour 46% used, weekly 21% used');
     expect(chip.getAttribute('data-tone')).toBe('normal');
     fireEvent.click(chip);
     // The ring counts up to the figure: its accessible label carries the figure at once.
@@ -32,16 +35,21 @@ describe('UsageChip', () => {
     expect(screen.getByRole('region', { name: 'Claude' })).toBeInTheDocument();
   });
 
-  it('rail: a tool with no 5-hour window shows only its weekly line', () => {
-    useUsageLimits.setState({ summary: summary(0, { providers: [{ provider: 'claude-code', asOf: Date.now() - 60_000, windows: { seven_day: { usedPercent: 21, resetsAt: Date.now() + 72 * H } } }] }) });
+  it('rail: every tool gets a ring, stacked, Codex included (2026-11-06: the chip used to show Claude alone)', () => {
+    useUsageLimits.setState({ summary: summary(0, { providers: [
+      { provider: 'claude-code', asOf: Date.now() - 60_000, windows: { seven_day: { usedPercent: 21, resetsAt: Date.now() + 72 * H } } },
+      { provider: 'codex', asOf: Date.now() - 60_000, windows: { seven_day: { usedPercent: 2, resetsAt: Date.now() + 72 * H } } },
+    ] }) });
     render(<UsageChip variant="rail" />);
-    expect(screen.getByTestId('usage-chip').textContent).toBe('wk 21');
+    const rings = screen.getAllByTestId('usage-ring');
+    expect(rings.map((r) => [r.getAttribute('data-provider'), r.getAttribute('aria-valuenow')])).toEqual([['claude-code', '21'], ['codex', '2']]);
+    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('Codex: weekly 2% used');
   });
 
-  it('phone: one value, amber at the threshold, red while paused', () => {
+  it('phone: a ring per tool, amber at the threshold, red while paused', () => {
     useUsageLimits.setState({ summary: summary(85) });
     const { rerender } = render(<UsageChip variant="phone" />);
-    expect(screen.getByTestId('usage-chip').textContent).toBe('85%');
+    expect(screen.getByTestId('usage-ring').getAttribute('aria-valuenow')).toBe('85');
     expect(screen.getByTestId('usage-chip').getAttribute('data-tone')).toBe('amber');
     useUsageLimits.setState({ summary: summary(85, { paused: [{ provider: 'claude-code', kind: 'session', earliestResetsAt: Date.now() + H, threads: 2, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: 's', episodeStartedAt: 1 }] }) });
     rerender(<UsageChip variant="phone" />);
