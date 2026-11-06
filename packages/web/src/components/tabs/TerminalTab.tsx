@@ -1016,7 +1016,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             onChange={setMobileInput}
             onSend={sendMobileInput}
             canSend={!!mobileInput}
-            placeholder="Type a message or command…"
+            placeholder="Message or /command"
             onAddFile={() => termFileInputRef.current?.click()}
             menuExtra={(close) => (
               <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>

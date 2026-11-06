@@ -51,7 +51,8 @@ export function PillComposer({
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
-  const key = mobile ? 36 : 32;
+  // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
+  const key = mobile ? 42 : 32;
   const lineH = mobile ? 22 : 21;
   const minH = key;
 
@@ -60,6 +61,8 @@ export function PillComposer({
   const fit = () => {
     const el = own.current;
     if (!el) return;
+    // Empty: one line, whatever the placeholder does (a long one wrapped and grew the box, 2026-11-06).
+    if (!el.value) { el.style.height = `${minH}px`; return; }
     el.style.height = 'auto';
     el.style.height = `${Math.max(minH, Math.min(el.scrollHeight, Math.round(window.innerHeight * MAX_FRACTION)))}px`;
   };
@@ -135,7 +138,7 @@ export function PillComposer({
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
-      padding: 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
+      padding: mobile ? 8 : 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
       border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
     }}>
