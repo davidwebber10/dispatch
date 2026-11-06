@@ -5,6 +5,8 @@ interface AutoArchiveFieldProps {
   enabled: boolean;
   ms: number;
   onChange: (enabled: boolean, ms: number) => void;
+  /** Settings → Harnesses sits it flush inside an already-elevated card. */
+  flush?: boolean;
 }
 
 const UNITS: DurationUnit[] = ['minutes', 'hours', 'days'];
@@ -14,7 +16,7 @@ const UNITS: DurationUnit[] = ['minutes', 'hours', 'days'];
  * the context-menu editor. The stored value is always ms; the unit picker is
  * presentational (toDuration picks the unit that reads most naturally).
  */
-export function AutoArchiveField({ enabled, ms, onChange }: AutoArchiveFieldProps) {
+export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFieldProps) {
   const { value, unit } = toDuration(ms || DEFAULT_AUTO_ARCHIVE_MS);
 
   const input: React.CSSProperties = {
@@ -23,7 +25,7 @@ export function AutoArchiveField({ enabled, ms, onChange }: AutoArchiveFieldProp
   };
 
   return (
-    <div style={{ marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 9 }}>
+    <div style={flush ? undefined : { marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 9 }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
         <Timer size={16} weight="fill" color="var(--color-text-tertiary)" />
         <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)' }}>Auto-archive thread</span>

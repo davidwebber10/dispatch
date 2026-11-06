@@ -827,7 +827,7 @@ export class SessionService {
   }
 
   /**
-   * Branch (fork) a Claude Code thread into a NEW thread. Resolves the source
+   * Branch (fork) an agent thread (Claude Code, Codex, Grok) into a NEW thread. Resolves the source
    * thread's session id, then creates a terminal that forks it on first spawn
    * (config.branchFrom → provider.buildBranchCommand → `claude -r <id> --fork-session`).
    * The original thread is untouched. Throws with `.status = 422` if the source
@@ -2497,11 +2497,12 @@ export class SessionService {
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
         // stored once the process is alive. Without it a relaunch after a daemon restart
         // had no id to resume into and silently began a new conversation.
-        if (!terminal.external_id && !branchFrom && provider.assignsSessionId) assignedSessionId = randomUUID();
+        // A branch of such a provider is named the same way (its fork takes the id).
+        if (!terminal.external_id && provider.assignsSessionId) assignedSessionId = randomUUID();
         cmd = terminal.external_id
           ? provider.buildResumeCommand({ externalSessionId: terminal.external_id, workDir, secretsMcp, statusHooks, model, effort })
           : (branchFrom && provider.buildBranchCommand)
-            ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks })
+            ? provider.buildBranchCommand({ sourceSessionId: branchFrom, workDir, secretsMcp, statusHooks, sessionId: assignedSessionId })
             : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, effort, sessionId: assignedSessionId });
       }
       command = cmd.command;

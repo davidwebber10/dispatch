@@ -407,3 +407,28 @@ describe('StatusService thread-settled hook', () => {
     expect(fired.length).toBe(0);
   });
 });
+
+describe('StatusService.resetStatus', () => {
+  it.each(['working', 'needs_input', 'error'] as const)('clears a stuck %s thread to idle without counting as activity', (stuck) => {
+    const svc = new StatusService(db, broadcaster);
+    const settled: unknown[] = [];
+    svc.addThreadSettledListener((info) => settled.push(info));
+    if (stuck === 'working') svc.markWorking('term');
+    else if (stuck === 'needs_input') svc.markNeedsInput('term');
+    else svc.setTerminalState('term', 'error');
+    const before = terminalsDb.getById(db, 'term')!.last_activity_at;
+    broadcaster.broadcast.mockClear();
+
+    expect(svc.resetStatus('term')).toBe(true);
+
+    expect(terminalsDb.getById(db, 'term')!.status).toBe('waiting');
+    expect(terminalsDb.getById(db, 'term')!.last_activity_at).toBe(before);
+    expect(settled).toEqual([]);
+    expect(statusEvents()).toEqual([expect.objectContaining({ terminalId: 'term', status: 'waiting', threadStatus: 'idle' })]);
+    expect(sessionsDb.getById(db, 'proj')!.status).not.toBe(stuck === 'needs_input' ? 'needs_input' : 'working');
+  });
+
+  it('returns false for an unknown thread', () => {
+    expect(new StatusService(db, broadcaster).resetStatus('nope')).toBe(false);
+  });
+});

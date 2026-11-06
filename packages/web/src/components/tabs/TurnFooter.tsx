@@ -8,9 +8,14 @@
 // strip comes from the live status at once, but the card fetches the new outcome a moment later,
 // and letting go before both are in would resize twice (review round 1). One resize per turn at
 // most, and none when the height is the same.
+//
+// The one exception is the user closing something in the footer (the card's ×) mid-turn: that
+// shrink is asked for, so the hold lets go at once. Holding it left an empty band under the
+// terminal until the turn ended (2026-11-05).
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useDismissedNotices } from '../../stores/dismissedNotices';
 
 export const SETTLE_HOLD_MS = 1500;
 
@@ -55,6 +60,15 @@ export function TurnFooter({ terminalId, children }: { terminalId: string; child
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // This thread's dismissals, as one string so a new one always reads as a change (the store caps
+  // its list, so a count could stay the same while a key comes and another goes).
+  const dismissedHere = useDismissedNotices((st) => st.keys.filter((k) => k.startsWith(`${terminalId}:`)).join('|'));
+  const [prevDismissed, setPrevDismissed] = useState(dismissedHere);
+  if (dismissedHere !== prevDismissed) {
+    setPrevDismissed(dismissedHere);
+    settled.current = null; // released for the rest of this turn
+  }
 
   const s = settled.current;
   const hold = holding && s && s.id === terminalId && s.height > 0 ? s.height : undefined;

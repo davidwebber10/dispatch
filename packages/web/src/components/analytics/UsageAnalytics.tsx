@@ -10,7 +10,7 @@ import { formatCost } from '../../lib/agentStats';
 import { makeSeriesScale, OUTCOME_COLOR, OTHER, SERIES, resolveChartTheme } from './chartTheme';
 import {
   Block, Kpi, NoData, chartTooltip, fmtDay, fmtSeconds, fmtTokens, labelStyle,
-  localDayString, muted, normKey, panel, startOfLocalDay, type ChartTheme,
+  dayRange, localDayString, muted, normKey, panel, startOfLocalDay, type ChartTheme,
 } from './parts';
 import type {
   AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
@@ -60,8 +60,12 @@ interface Stats {
  * Pivot the long series the daemon returns into the wide rows Recharts wants:
  * one row per day, one column per key. The key list comes back sorted, so the
  * caller can hand it straight to `makeSeriesScale` as a colour domain.
+ *
+ * Every day of the range gets a row, zero for every key on a quiet day: from the
+ * range start (`from`, an ISO instant at local midnight), or from the first day
+ * with data when the range is all time, through today.
  */
-function pivot(points: AnalyticsPoint[], keyOf: (p: AnalyticsPoint) => string): { rows: Record<string, string | number>[]; keys: string[] } {
+export function pivot(points: AnalyticsPoint[], keyOf: (p: AnalyticsPoint) => string, from?: string, today: string = localDayString(new Date())): { rows: Record<string, string | number>[]; keys: string[] } {
   const byDay = new Map<string, Record<string, string | number>>();
   const keys = new Set<string>();
   for (const p of points) {
@@ -71,8 +75,17 @@ function pivot(points: AnalyticsPoint[], keyOf: (p: AnalyticsPoint) => string): 
     if (!row) { row = { day: p.day }; byDay.set(p.day, row); }
     row[k] = (Number(row[k]) || 0) + p.value;
   }
-  const rows = [...byDay.values()].sort((a, b) => String(a.day).localeCompare(String(b.day)));
-  return { rows, keys: [...keys].sort() };
+  const sortedKeys = [...keys].sort();
+  const dataDays = [...byDay.keys()].sort();
+  const first = from ? localDayString(new Date(from)) : dataDays[0];
+  if (!first || !sortedKeys.length) return { rows: [], keys: sortedKeys };
+  const last = dataDays.length && dataDays[dataDays.length - 1] > today ? dataDays[dataDays.length - 1] : today;
+  const rows = dayRange(first, last).map((day) => {
+    const row: Record<string, string | number> = { day };
+    for (const k of sortedKeys) row[k] = 0;
+    return Object.assign(row, byDay.get(day));
+  });
+  return { rows, keys: sortedKeys };
 }
 
 /**
@@ -204,23 +217,23 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   const projectScale = useMemo(() => makeSeriesScale(domain?.projectKeys ?? []), [domain?.projectKeys]);
 
   const tokensChart = useMemo(
-    () => (data ? pivot(data.tokensByModel, (p) => normKey(p.key)) : { rows: [], keys: [] }),
-    [data],
+    () => (data ? pivot(data.tokensByModel, (p) => normKey(p.key), from) : { rows: [], keys: [] }),
+    [data, from],
   );
 
   const outputChart = useMemo(
-    () => (data ? pivot(data.outputTotal, () => 'output') : { rows: [], keys: [] }),
-    [data],
+    () => (data ? pivot(data.outputTotal, () => 'output', from) : { rows: [], keys: [] }),
+    [data, from],
   );
 
   const outcomeChart = useMemo(
-    () => (data ? pivot(data.turnsByOutcome, (p) => normKey(p.key)) : { rows: [], keys: [] }),
-    [data],
+    () => (data ? pivot(data.turnsByOutcome, (p) => normKey(p.key), from) : { rows: [], keys: [] }),
+    [data, from],
   );
 
   const durationChart = useMemo(
-    () => (data ? pivot(data.duration, () => 'seconds') : { rows: [], keys: [] }),
-    [data],
+    () => (data ? pivot(data.duration, () => 'seconds', from) : { rows: [], keys: [] }),
+    [data, from],
   );
 
   const calendarCells = useMemo(() => {

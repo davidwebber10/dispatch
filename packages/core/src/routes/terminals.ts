@@ -389,7 +389,15 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     res.json(terminal);
   });
 
-  // POST /api/terminals/:terminalId/branch — fork a Claude Code thread's conversation
+  // POST /api/terminals/:terminalId/reset-status — the user clears a stuck status
+  // (working / needs_input / error) back to idle. See StatusService.resetStatus.
+  router.post('/terminals/:terminalId/reset-status', (req, res) => {
+    if (!statusService) return res.status(503).json({ error: 'Status service unavailable' });
+    if (!statusService.resetStatus(req.params.terminalId)) return res.status(404).json({ error: 'Terminal not found' });
+    res.status(204).end();
+  });
+
+  // POST /api/terminals/:terminalId/branch — fork an agent thread's conversation
   router.post('/terminals/:terminalId/branch', ownerOnlyStrict, (req, res) => {
     try {
       const terminal = sessionService.branchTerminal(req.params.terminalId);

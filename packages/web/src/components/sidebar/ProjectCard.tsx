@@ -19,16 +19,14 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { NewThreadModal } from './NewThreadModal';
 import { RenameProjectModal } from './RenameProjectModal';
-import { RenameThreadModal } from './RenameThreadModal';
-import { AutoArchiveModal } from './AutoArchiveModal';
+import { ThreadMenu, type ThreadMenuAt } from './ThreadMenu';
 import { ThreadLabel } from './ThreadLabel';
 import { SortMenu } from './SortMenu';
 import { useListSort } from '../../stores/listSort';
 import { useSectionCollapse, collapseKey } from '../../stores/sectionCollapse';
 import { sortThreads, sortAgents, sortFiles, THREAD_SORTS, AGENT_SORTS } from '../../lib/listSort';
 import { api } from '../../api/client';
-import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
-import { useHint } from '../../stores/hint';
+import { canReceiveAlerts } from '../../lib/push';
 import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 import { SectionHeader, ShowMoreRow } from './sectionParts';
 import { ArchivedSection } from './ArchivedSection';
@@ -71,7 +69,9 @@ function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
 }
 
-function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; fadeKey?: number; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
+/** One thread in a list. Also rendered by the phone's cross-project Threads view, which
+ *  passes `subtitle` (the project name) so rows from different projects can be told apart. */
+export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, onArchive, onContext }: { tab: Terminal; active: boolean; fadeKey?: number; subtitle?: string; onClick: (e: React.MouseEvent) => void; onMiddle: () => void; onArchive: () => void; onContext: (x: number, y: number) => void }) {
   const [hover, setHover] = useState(false);
   const color = providerColor(tab.type);
   const loading = useTabs((s) => !!s.loading[tab.id]);
@@ -141,7 +141,12 @@ function ThreadRow({ tab, active, fadeKey, onClick, onMiddle, onArchive, onConte
               ? <TerminalWindow size={isMobile ? 17 : 14} weight="fill" color={color} />
               : <span style={{ width: dot, height: dot, borderRadius: '50%', background: color }} />}
       </span>
-      <ThreadLabel tab={tab} />
+      {subtitle ? (
+        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <ThreadLabel tab={tab} />
+          <span style={{ font: '400 11.5px var(--font-mono)', fontWeight: 400, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
+        </span>
+      ) : <ThreadLabel tab={tab} />}
       {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
         <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
@@ -218,10 +223,8 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const highlightId = highlightTabId !== undefined ? highlightTabId : activeTabId;
   const [hover, setHover] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Terminal | null>(null);
-  const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
-  const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'thread'; thread: Terminal } | { kind: 'agent'; agent: AgentSchedule } | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{ tab: Terminal; x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<ThreadMenuAt | null>(null);
   const [projMenu, setProjMenu] = useState<{ x: number; y: number } | null>(null);
   const [projArchive, setProjArchive] = useState(false);
   const [renameProj, setRenameProj] = useState(false);
@@ -283,21 +286,6 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
     try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
-  }
-
-  async function branch(tab: Terminal) {
-    try {
-      const t = await api.branchTerminal(tab.id);
-      await useTabs.getState().loadTabs(session.id);
-      useTabs.getState().markLoading(t.id);
-      onSelectTab(t.id);
-    } catch { /* e.g. 422 if the thread hasn't started a session yet */ }
-  }
-
-  async function toggleAlerts(tab: Terminal) {
-    const on = !(tab.config as { alertsEnabled?: boolean })?.alertsEnabled;
-    if (on) { const err = await ensurePushEnrolled(); if (err) { useHint.getState().show(err); return; } }
-    void useTabs.getState().setAlertsEnabled(tab.id, on);
   }
 
   async function deleteAgent(a: AgentSchedule) {
@@ -509,32 +497,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         </div>
       </div>
 
-      {ctxMenu && createPortal(
-        <>
-          <div onClick={() => setCtxMenu(null)} onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-          <div style={{ position: 'fixed', top: ctxMenu.y, left: Math.min(ctxMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
-            <button onClick={() => { setRenameTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{ctxMenu.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
-            {ctxMenu.tab.type === 'claude-code' && (
-              <button onClick={() => { void branch(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Branch thread</button>
-            )}
-            {THREAD_TYPES.includes(ctxMenu.tab.type) && (
-              <button onClick={() => { setAutoArchiveTarget(ctxMenu.tab); setCtxMenu(null); }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
-                Auto-archive…
-              </button>
-            )}
-            {(ctxMenu.tab.type === 'claude-code' || ctxMenu.tab.type === 'codex') && canReceiveAlerts() && (
-              <button onClick={() => { const t = ctxMenu.tab; setCtxMenu(null); void toggleAlerts(t); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>{(ctxMenu.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
-            )}
-            {ctxMenu.tab.type === 'file' ? (
-              <button onClick={() => { void archive(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Unpin</button>
-            ) : (
-              <button onClick={() => { setArchiveTarget(ctxMenu.tab); setCtxMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive thread</button>
-            )}
-          </div>
-        </>,
-        document.body,
-      )}
+      <ThreadMenu at={ctxMenu} onClose={() => setCtxMenu(null)} onBranched={(t) => onSelectTab(t.id)} />
 
       {projMenu && createPortal(
         <>
@@ -587,21 +550,8 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         onCancel={() => setProjArchive(false)}
       />
 
-      {renameTarget && (
-        <RenameThreadModal
-          terminalId={renameTarget.id}
-          sessionId={session.id}
-          current={renameTarget.label}
-          onClose={() => setRenameTarget(null)}
-        />
-      )}
-
       {renameProj && (
         <RenameProjectModal sessionId={session.id} current={session.name} onClose={() => setRenameProj(false)} />
-      )}
-
-      {autoArchiveTarget && (
-        <AutoArchiveModal tab={autoArchiveTarget} onClose={() => setAutoArchiveTarget(null)} />
       )}
 
       {newThread && (

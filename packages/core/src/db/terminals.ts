@@ -166,6 +166,15 @@ export function setAutoLabel(db: Database.Database, id: string, label: string): 
   return r.changes > 0;
 }
 
+/**
+ * Replace an auto label with a better auto label, but only while it still reads `from`:
+ * a user rename (label_source 'user') or any other relabel since then wins.
+ */
+export function upgradeAutoLabel(db: Database.Database, id: string, from: string, to: string): boolean {
+  const r = db.prepare("UPDATE terminals SET label = ? WHERE id = ? AND label_source = 'auto' AND label = ?").run(to, id, from);
+  return r.changes > 0;
+}
+
 export function updateConfig(db: Database.Database, id: string, config: Record<string, any>): void {
   db.prepare('UPDATE terminals SET config = ? WHERE id = ?').run(JSON.stringify(config), id);
 }

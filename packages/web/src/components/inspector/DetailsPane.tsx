@@ -80,6 +80,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
       <Row label="Status" value={project.status} />
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
         {terminalId && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
+        {terminalId && <button onClick={() => { useTabs.getState().clearLoading(terminalId); void api.resetTerminalStatus(terminalId).then(() => { if (project) void useTabs.getState().loadTabs(project.id); }).catch(() => {}); }} style={btn} title="Clear a stuck working / needs-input / error status">Reset Status</button>}
         {terminalId && <button onClick={() => void api.archiveTerminal(terminalId)} style={btn}>Archive Thread</button>}
       </div>
     </div>

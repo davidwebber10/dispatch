@@ -79,3 +79,22 @@ describe('harness settings — Claude Code agent status summaries', () => {
     expect(readHarnessSettings(d).codex).toBeUndefined();
   });
 });
+
+describe('harness settings — default auto-archive', () => {
+  it('stores a per-harness deadline in ms, and null clears it', () => {
+    const d = db();
+    updateHarnessSettings(d, { 'claude-code': { autoArchiveMs: 86_400_000 }, codex: { autoArchiveMs: 3_600_000 } });
+    expect(readHarnessSettings(d)['claude-code']?.autoArchiveMs).toBe(86_400_000);
+    expect(readHarnessSettings(d).codex?.autoArchiveMs).toBe(3_600_000);
+    updateHarnessSettings(d, { 'claude-code': { autoArchiveMs: null } });
+    expect(readHarnessSettings(d)['claude-code']?.autoArchiveMs).toBeUndefined();
+  });
+
+  it('drops values that are not a whole number of ms between a minute and a year', () => {
+    const d = db();
+    for (const bad of [0, -5, 59_999, 1.5, '86400000', 366 * 86_400_000]) {
+      updateHarnessSettings(d, { codex: { autoArchiveMs: bad } });
+      expect(readHarnessSettings(d).codex?.autoArchiveMs).toBeUndefined();
+    }
+  });
+});

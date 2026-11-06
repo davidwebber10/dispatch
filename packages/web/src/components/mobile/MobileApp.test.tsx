@@ -173,3 +173,17 @@ describe('MobileApp — mobile view mode (Threads vs Board)', () => {
     expect(history.state).toMatchObject({ nav: 2, projectId: 's1', leaf: 'tab', tabId: 't1' });
   });
 });
+
+describe('MobileApp bottom tab — follows the Projects ⇄ Threads switch', () => {
+  it('reads "Projects" on the projects view and "Threads" once switched', () => {
+    localStorage.removeItem('dispatch:mobileProjectsView');
+    seedThreadAt('/', { type: 'shell', config: {} });
+    render(<MobileApp />);
+    const bar = () => screen.getAllByRole('button').filter((b) => !b.getAttribute('role'));
+    expect(bar().some((b) => b.textContent === 'Projects')).toBe(true);
+    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
+    expect(bar().some((b) => b.textContent === 'Threads')).toBe(true);
+    expect(bar().some((b) => b.textContent === 'Projects')).toBe(false);
+    localStorage.removeItem('dispatch:mobileProjectsView');
+  });
+});

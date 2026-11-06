@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CaretRight, ChatCircle, TerminalWindow, ChatsCircle } from '@phosphor-icons/react';
+import { ChatsCircle } from '@phosphor-icons/react';
 import type { Terminal } from '../../api/types';
+import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
-import { providerColor } from '../common/typeIcons';
-import { StatusDot } from '../common/StatusDot';
 import { Spinner } from '../common/Spinner';
-import { timeAgo } from '../../lib/time';
+import { SwipeRow } from '../common/SwipeRow';
+import { ThreadRow } from '../sidebar/ProjectCard';
+import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 
 const FILTER_KEY = 'dispatch:mobileThreadsProject';
 const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
@@ -21,8 +22,8 @@ const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
 export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string }) {
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
-  const loadingMap = useTabs((s) => s.loading);
   const [loading, setLoading] = useState(true);
+  const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
   const [filter, setFilter] = useState<string | null>(() => { try { return localStorage.getItem(FILTER_KEY); } catch { return null; } });
   useEffect(() => { try { if (filter) localStorage.setItem(FILTER_KEY, filter); else localStorage.removeItem(FILTER_KEY); } catch { /* ignore */ } }, [filter]);
 
@@ -49,6 +50,10 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   }, [projects, byProject, active, q, nameOf]);
   const withThreads = projects.filter((p) => (byProject[p.id] ?? []).some((t) => t.type !== 'file' && !t.archivedAt));
 
+  async function archive(t: Terminal) {
+    try { await api.archiveTerminal(t.id); await useTabs.getState().loadTabs(t.sessionId); } catch { /* surfaced via connection state */ }
+  }
+
   const chip = (on: boolean) => ({
     flex: '0 0 auto', height: 30, padding: '0 12px', borderRadius: 999, border: '1px solid var(--color-border)', cursor: 'pointer',
     background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? '#08240F' : 'var(--color-text-secondary)',
@@ -71,31 +76,19 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
             <div style={{ marginTop: 10 }}>{q || active ? 'No threads match.' : 'No threads yet.'}</div>
           </div>
         )}
-        {threads.map((t) => {
-          const color = providerColor(t.type);
-          const structuredClaude = t.type === 'claude-code' && (t.config as { transport?: string })?.transport === 'structured';
-          const working = loadingMap[t.id] || t.status === 'working';
-          const needsAttn = t.status === 'needs_input' || t.status === 'error';
-          return (
-            <button key={t.id} onClick={() => onOpenThread(t.sessionId, t.id)}
-              style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}>
-              <span style={{ width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {structuredClaude ? <ChatCircle size={17} weight="fill" color={color} /> : <TerminalWindow size={17} weight="fill" color={color} />}
-              </span>
-              <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span data-testid="thread-label" style={{ fontSize: 16, fontWeight: 450, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.label}</span>
-                {!active && <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameOf.get(t.sessionId) ?? ''}</span>}
-              </span>
-              {working
-                ? <Spinner size={13} />
-                : needsAttn
-                  ? <StatusDot state={t.status === 'error' ? 'error' : 'needs_input'} size={9} />
-                  : <span style={{ flexShrink: 0, font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(lastActive(t))}</span>}
-              <CaretRight size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
-            </button>
-          );
-        })}
+        {threads.map((t) => (
+          // Same row, ⋯ menu and swipe as a project's thread list. The swipe archives
+          // straight away: it is undoable from the project's Archived section.
+          <SwipeRow key={t.id} actionLabel="Archive" actionColor="var(--color-status-red)" onAction={() => void archive(t)}>
+            <ThreadRow tab={t} active={false} subtitle={active ? undefined : nameOf.get(t.sessionId) ?? ''}
+              onClick={() => onOpenThread(t.sessionId, t.id)}
+              onMiddle={() => onOpenThread(t.sessionId, t.id)}
+              onArchive={() => void archive(t)}
+              onContext={(x, y) => setMenu({ tab: t, x, y })} />
+          </SwipeRow>
+        ))}
       </div>
+      <ThreadMenu at={menu} onClose={() => setMenu(null)} onBranched={(b) => onOpenThread(b.sessionId, b.id)} />
     </div>
   );
 }

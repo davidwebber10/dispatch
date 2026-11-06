@@ -391,13 +391,39 @@ describe('ThreadAutoNamer', () => {
     expect(terminalsDb.getById(db, 't1')!.label).toBe('My login work');
     namer.dispose();
   });
-  it('uses a bounded fallback once and ignores a late model result', async () => {
+  it('shows the prefix fallback after 3s, then a late model title replaces it', async () => {
     makeThread();
+    const { broadcaster, events } = fakeBroadcaster();
     let resolve!: (name: string) => void;
-    const namer = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName: () => new Promise(r => { resolve = r; }) });
+    const namer = new ThreadAutoNamer(db, broadcaster, { getApiKey: async () => 'key', generateModelName: () => new Promise(r => { resolve = r; }) });
     namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(3001);
     expect(terminalsDb.getById(db, 't1')!.label).toBe('Fix login');
+    expect(events).toHaveLength(1);
     resolve('Late title'); await vi.advanceTimersByTimeAsync(1);
+    const row = terminalsDb.getById(db, 't1')!;
+    expect(row.label).toBe('Late title');
+    expect(row.label_source).toBe('auto');
+    expect(events).toHaveLength(2);
+    namer.dispose();
+  });
+  it('a manual rename after the fallback beats a late model title', async () => {
+    makeThread();
+    const { broadcaster, events } = fakeBroadcaster();
+    let resolve!: (name: string) => void;
+    const namer = new ThreadAutoNamer(db, broadcaster, { getApiKey: async () => 'key', generateModelName: () => new Promise(r => { resolve = r; }) });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(3001);
+    terminalsDb.updateLabel(db, 't1', 'My login work');
+    resolve('Late title'); await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('My login work');
+    expect(events).toHaveLength(1);
+    namer.dispose();
+  });
+  it('a late model failure leaves the fallback in place', async () => {
+    makeThread();
+    let reject!: (e: Error) => void;
+    const namer = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName: () => new Promise((_, r) => { reject = r; }) });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(3001);
+    reject(new Error('boom')); await vi.advanceTimersByTimeAsync(1);
     expect(terminalsDb.getById(db, 't1')!.label).toBe('Fix login');
     namer.dispose();
   });
@@ -409,4 +435,20 @@ describe('ThreadAutoNamer', () => {
     expect(terminalsDb.getById(db, 't1')!.label).toBe('Original request'); next.dispose();
   });
 
+  it('a CLI title wins and OpenRouter is never asked; a CLI miss falls through to OpenRouter', async () => {
+    makeThread();
+    const generateModelName = vi.fn().mockResolvedValue('From OpenRouter');
+    const namer = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName, cliTitle: async () => 'From Haiku' });
+    namer.notifyPrompt('t1', 'Fix login'); await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't1')!.label).toBe('From Haiku');
+    expect(generateModelName).not.toHaveBeenCalled();
+    namer.dispose();
+
+    terminalsDb.create(db, { id: 't2', sessionId: 's1', type: 'codex', label: 'Codex', labelSource: 'default' });
+    const next = new ThreadAutoNamer(db, undefined, { getApiKey: async () => 'key', generateModelName, cliTitle: async () => null });
+    next.notifyPrompt('t2', 'Fix logout'); await vi.advanceTimersByTimeAsync(1);
+    expect(terminalsDb.getById(db, 't2')!.label).toBe('From OpenRouter');
+    next.dispose();
+  });
 });
+

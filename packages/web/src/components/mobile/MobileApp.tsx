@@ -1,6 +1,6 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
@@ -374,7 +374,9 @@ export function MobileApp() {
           reclaims the space. Tapping a tab from a project pops back to the root. */}
       {level < 2 && (
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-          {([['projects', 'Projects', Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
+          {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
+              whichever list it opens to. */}
+          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? TerminalWindow : Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
               <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}

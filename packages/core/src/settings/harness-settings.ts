@@ -23,6 +23,8 @@ import { OPENCODE_DEFAULT_MODELS, type OpencodeModel } from '../providers/openco
  *   skipAgentSummaries  claude-code only — preload the agent_summary off-switch into every
  *                 Claude Code thread (providers/claude-agent-summary.ts). Absent ⇒ ON: the
  *                 summaries cost a large share of spend for a status line nobody reads.
+ *   autoArchiveMs every harness — when set, the New Thread modal opens with auto-archive
+ *                 on at this inactivity deadline. Absent ⇒ the toggle starts off.
  */
 export interface HarnessSettings {
   defaultModel?: string;
@@ -30,11 +32,15 @@ export interface HarnessSettings {
   keySecret?: string;
   models?: OpencodeModel[];
   skipAgentSummaries?: boolean;
+  autoArchiveMs?: number;
 }
 
 export type AllHarnessSettings = Partial<Record<AgentType, HarnessSettings>>;
 
 const STATE_KEY = 'harness_settings';
+
+/** Longest auto-archive default accepted: a year. Anything past that is a typo. */
+const MAX_AUTO_ARCHIVE_MS = 365 * 86_400_000;
 
 /** The secret name used when the user never configured one. */
 export const OPENCODE_DEFAULT_KEY_SECRET = 'OPENROUTER_API_KEY';
@@ -73,6 +79,8 @@ function sanitize(raw: unknown): AllHarnessSettings {
     const models = type === 'opencode' ? pickModels(rec.models) : undefined;
     if (models) entry.models = models;
     if (type === 'claude-code' && typeof rec.skipAgentSummaries === 'boolean') entry.skipAgentSummaries = rec.skipAgentSummaries;
+    const archive = rec.autoArchiveMs;
+    if (typeof archive === 'number' && Number.isInteger(archive) && archive >= 60_000 && archive <= MAX_AUTO_ARCHIVE_MS) entry.autoArchiveMs = archive;
     if (Object.keys(entry).length) out[type] = entry;
   }
   return out;
@@ -94,7 +102,7 @@ export function updateHarnessSettings(db: Database.Database, patch: unknown): Al
       if (p === undefined) continue;
       const merged: Record<string, unknown> = { ...(current[type] ?? {}) };
       if (p && typeof p === 'object') {
-        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models', 'skipAgentSummaries'] as const) {
+        for (const field of ['defaultModel', 'defaultMode', 'keySecret', 'models', 'skipAgentSummaries', 'autoArchiveMs'] as const) {
           const v = (p as Record<string, unknown>)[field];
           if (v === undefined) continue;
           if (v === null) delete merged[field];

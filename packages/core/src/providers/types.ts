@@ -85,9 +85,10 @@ export interface SessionProvider {
   /**
    * Build the command to BRANCH (fork) an existing conversation: resume the
    * source session but fork it into a NEW session id, leaving the original
-   * untouched. Undefined for providers that don't support forking.
+   * untouched. Undefined for providers that don't support forking. `sessionId` is the
+   * fork's own id, passed only to providers that assign theirs (`assignsSessionId`).
    */
-  buildBranchCommand?(args: { sourceSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection }): { command: string; args: string[] };
+  buildBranchCommand?(args: { sourceSessionId: string; workDir: string; secretsMcp?: SecretsMcpInjection; statusHooks?: StatusHooksInjection; model?: string; sessionId?: string }): { command: string; args: string[] };
   /**
    * Build the command for an autonomous "runner" launch: the provider is run
    * headlessly with the prompt so it executes the agentic loop to completion
