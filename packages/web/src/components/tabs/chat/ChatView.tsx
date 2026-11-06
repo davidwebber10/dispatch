@@ -139,9 +139,22 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     draftRef.current = next; setDraft(next);
   });
 
+  /**
+   * "Resume full session", by button or by just sending (2026-11-06): a message sent while
+   * the card shows resumes the full session anyway, so the decision is made and the card
+   * goes. Remembered per thread, so switching away and back (in place — see the
+   * dismissedFullIds doc comment above) doesn't bring the card back for THIS resume. Not
+   * persisted: a later resume of the same thread should ask again.
+   */
+  function dismissResumeAdvice() {
+    setAdvice(null);
+    setDismissedFullIds((prev) => (prev.has(terminalId) ? prev : new Set(prev).add(terminalId)));
+  }
+
   function doSend() {
     const v = draft.trim();
     if (!v && stagedImages.length === 0) return;
+    if (advice) dismissResumeAdvice();
     // Text + any staged images go out as ONE turn: a leading text block (when there's a
     // caption) followed by the image blocks. Falls back to a plain string turn when nothing
     // is staged, matching the previous behavior for text-only sends.
@@ -342,13 +355,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   setAdviceError(e?.message ?? String(e));
                 });
               }}
-              onFull={() => {
-                setAdvice(null);
-                // Remember per-thread, so switching away and back (in place — see the
-                // dismissedFullIds doc comment above) doesn't bring the card back for THIS
-                // resume. Not persisted: a later resume of the same thread should ask again.
-                setDismissedFullIds((prev) => (prev.has(terminalId) ? prev : new Set(prev).add(terminalId)));
-              }}
+              onFull={dismissResumeAdvice}
             />
           )}
         </div>

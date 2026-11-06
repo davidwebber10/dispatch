@@ -440,6 +440,18 @@ describe('ChatView — resume-from-summary advice', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
   });
 
+  it('hides the resume choice once a message is sent without a button: the decision is made (2026-11-06)', async () => {
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: true, ageMinutes: 4560, contextTokens: 134_000 });
+    const spy = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as never);
+    render(<ChatView terminalId="t1" />);
+    await screen.findByRole('button', { name: /resume from summary/i });
+    const ta = screen.getByPlaceholderText('Message…');
+    fireEvent.change(ta, { target: { value: 'carry on' } });
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    expect(spy).toHaveBeenCalledWith('t1', 'carry on');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /resume from summary/i })).toBeNull());
+  });
+
   it('does not offer the resume choice when the daemon says not to', async () => {
     vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
     render(<ChatView terminalId="t1" />);
