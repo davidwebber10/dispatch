@@ -4,6 +4,7 @@ import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
 import { SearchSelect } from '../common/SearchSelect';
 import { HarnessStrip } from '../common/HarnessStrip';
+import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
@@ -23,6 +24,8 @@ const GLOW = '0 0 6px 1px rgba(62,207,106,.4)';
 /** Hairlines inside the panel: the control border, and the quieter row divider. */
 const BORDER = '#2C2C32';
 const DIVIDER = '#26262B';
+/** The Account row's last option: not an account, it opens the add-account panel. */
+const ADD_ACCOUNT = '__add__';
 
 const UNITS: { value: DurationUnit; label: string }[] = [
   { value: 'minutes', label: 'min' },
@@ -101,6 +104,11 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const [accountId, setAccountId] = useState<string | null>(null);
   // An older daemon (or a bare test mock) has no accounts route: the modal then offers no account row.
   useEffect(() => { (async () => { try { setAccounts(await api.getAccounts()); } catch { setAccounts(null); } })(); }, []);
+  // "Add account…" (the spec's "pick one, or add a new one"): an inline panel under the Account row.
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [accountLabel, setAccountLabel] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [keySaving, setKeySaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -112,6 +120,40 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const accountProvider: AccountProvider | null = spec.type === 'claude-code' ? 'claude' : spec.type === 'codex' ? 'codex' : null;
   const accountList = accountProvider ? accounts?.[accountProvider] ?? [] : [];
   const effectiveAccountId = accountProvider ? (accountId && accountList.some((a) => a.id === accountId) ? accountId : accounts?.defaults[accountProvider] ?? 'cli') : null;
+
+  /** After a Claude login finished: reload the list and pick the account that was not there before. */
+  async function accountAdded() {
+    const before = new Set(accountList.map((a) => a.id));
+    setAddingAccount(false);
+    try {
+      const v = await api.getAccounts();
+      setAccounts(v);
+      const fresh = accountProvider ? v[accountProvider].find((a) => !before.has(a.id)) : undefined;
+      if (fresh) setAccountId(fresh.id);
+    } catch { /* the list stays as it was; the account is still in Settings → Accounts */ }
+  }
+
+  /**
+   * A new Codex account: make its folder, then open the "Sign in — Codex" thread that runs
+   * `codex login` under it (the same thread Settings → Accounts opens). The modal closes onto that
+   * thread; once the login says it is done, a new thread can pick the account.
+   */
+  async function addCodexAccount() {
+    if (accountBusy) return;
+    setAccountBusy(true);
+    setAccountError(null);
+    try {
+      const a = await api.accountsAddCodex(accountLabel.trim());
+      const t = await api.createTerminal(sessionId, { type: 'shell', label: `Sign in — Codex (${a.label})`, config: { signIn: 'codex', accountId: a.id } });
+      await useTabs.getState().loadTabs(sessionId);
+      useTabs.getState().markLoading(t.id);
+      onCreated(t.id);
+      onClose();
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : 'Could not start the Codex sign-in.');
+      setAccountBusy(false);
+    }
+  }
   const statusFor = useCallback(
     (p: ProviderName | null) => (p === null ? null : providers?.find((s) => s.name === p) ?? null),
     [providers],
@@ -474,15 +516,46 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               </div>
             </Row>
           )}
-          {accountProvider && accountList.length > 1 && (
+          {/* ACCOUNT — every signed-in account of the harness, then "Add account…". Shown as soon
+              as the daemon has the accounts route, even with only the CLI login, so a second
+              login is one pick away. */}
+          {accountProvider && accounts && (
             <Row mobile={m}>
               <span style={rowLabel}>Account</span>
               <div style={{ width: controlWidth }}>
-                <SearchSelect ariaLabel="Account" size={m ? 'lg' : 'md'} value={effectiveAccountId ?? ''}
-                  onChange={(v) => setAccountId(v || null)}
-                  options={accountList.map((a) => ({ value: a.id, label: a.label, hint: a.email ?? (a.isCli ? 'this computer' : undefined) }))} />
+                <SearchSelect ariaLabel="Account" size={m ? 'lg' : 'md'} value={addingAccount ? ADD_ACCOUNT : effectiveAccountId ?? ''}
+                  onChange={(v) => {
+                    if (v === ADD_ACCOUNT) { setAddingAccount(true); setAccountLabel(''); setAccountError(null); return; }
+                    setAddingAccount(false);
+                    setAccountId(v || null);
+                  }}
+                  options={[
+                    ...accountList.map((a) => ({ value: a.id, label: a.label, hint: a.email ?? (a.isCli ? 'this computer' : undefined) })),
+                    { value: ADD_ACCOUNT, label: 'Add account…', hint: `another ${spec.label} login` },
+                  ]} />
               </div>
             </Row>
+          )}
+          {accountProvider && accounts && addingAccount && (
+            <div data-testid="add-account" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: m ? '8px 0 12px' : '10px 2px', borderBottom: `1px solid ${DIVIDER}` }}>
+              <input aria-label="Account name" value={accountLabel} onChange={(e) => setAccountLabel(e.target.value)}
+                placeholder={accountProvider === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'}
+                style={{ ...control, height: m ? 40 : 32, padding: '0 10px', font: `400 ${m ? 15 : 13}px var(--font-sans)`, width: '100%' }} />
+              {accountProvider === 'claude' ? (
+                <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(accountLabel.trim())} onDone={() => void accountAdded()} />
+              ) : (
+                <>
+                  <span style={rowHint}>A "Sign in — Codex" thread opens here. Finish the login in it, then start a thread on the new account.</span>
+                  <button type="button" disabled={accountBusy} onClick={() => void addCodexAccount()}
+                    style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, cursor: accountBusy ? 'default' : 'pointer', opacity: accountBusy ? 0.7 : 1 }}>
+                    {accountBusy ? 'Opening…' : 'Open the sign-in thread'}
+                  </button>
+                </>
+              )}
+              {accountError && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{accountError}</span>}
+              <button type="button" onClick={() => { setAddingAccount(false); setAccountError(null); }}
+                style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Cancel</button>
+            </div>
           )}
           {(models.length > 0 || harness === 'opencode') && (
             <Row mobile={m}>

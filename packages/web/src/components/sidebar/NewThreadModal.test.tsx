@@ -26,6 +26,11 @@ vi.mock('../../api/client', () => ({
     }),
     putHarnessSettings: vi.fn(),
     setSecret: vi.fn().mockResolvedValue({}),
+    // Accounts (2026-11-06): most tests run against a daemon without the route, so no Account row.
+    getAccounts: vi.fn().mockRejectedValue(new Error('no accounts route')),
+    accountsClaudeLogin: vi.fn().mockResolvedValue({ url: 'https://claude.ai/login?x', error: null }),
+    accountsAddCodex: vi.fn().mockResolvedValue({ id: 'cx-2', label: 'Work' }),
+    claudeLoginCode: vi.fn().mockResolvedValue({ status: 'complete' }),
   },
 }));
 
@@ -565,5 +570,60 @@ describe('NewThreadModal — uninstalled CLIs', () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     await waitFor(() => expect(screen.getByRole('button', { name: /start new thread/i })).toBeInTheDocument());
     expect(screen.queryByText(/isn't signed in/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Accounts (multi-account spec 2026-11-06): the Account row offers every signed-in account AND
+ * "Add account…", so a second login is one pick away from the thread that needs it.
+ */
+describe('NewThreadModal accounts', () => {
+  const cliOnly = { claude: [{ id: 'cli', label: 'CLI login', isCli: true, addedAt: null }], codex: [{ id: 'cli', label: 'CLI login', isCli: true, addedAt: null }], defaults: { claude: 'cli', codex: 'cli' } };
+  const pickAccount = (label: RegExp) => {
+    fireEvent.click(screen.getByRole('combobox', { name: 'Account' }));
+    fireEvent.click(screen.getByRole('option', { name: label }));
+  };
+
+  it('shows the Account row with only the CLI login, and offers Add account…', async () => {
+    (api.getAccounts as any).mockResolvedValueOnce(cliOnly);
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    const combo = await screen.findByRole('combobox', { name: 'Account' });
+    expect(combo).toHaveTextContent('CLI login');
+    fireEvent.click(combo);
+    expect(screen.getByRole('option', { name: /Add account/ })).toBeInTheDocument();
+  });
+
+  it('adds a Claude account inline: the login finishes, the new account is picked, and the thread pins it', async () => {
+    (api.getAccounts as any)
+      .mockResolvedValueOnce(cliOnly)
+      .mockResolvedValueOnce({ ...cliOnly, claude: [...cliOnly.claude, { id: 'acc-2', label: 'Work', email: 'w@x.y', isCli: false, addedAt: '2026-11-06' }] });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await screen.findByRole('combobox', { name: 'Account' });
+    pickAccount(/Add account/);
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Work' } });
+    fireEvent.click(screen.getByRole('button', { name: /Log in to the new Claude account/ }));
+    await waitFor(() => expect(api.accountsClaudeLogin).toHaveBeenCalledWith('Work'));
+    fireEvent.change(await screen.findByLabelText('Login code'), { target: { value: 'abc' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit code/ }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Account' })).toHaveTextContent('Work'));
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput().config.accountId).toBe('acc-2');
+  });
+
+  it('adds a Codex account by opening its sign-in thread under the new account', async () => {
+    (api.getAccounts as any).mockResolvedValueOnce(cliOnly);
+    const onCreated = vi.fn(); const onClose = vi.fn();
+    render(<NewThreadModal sessionId="s1" onClose={onClose} onCreated={onCreated} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    await screen.findByRole('combobox', { name: 'Account' });
+    pickAccount(/Add account/);
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Work' } });
+    fireEvent.click(screen.getByRole('button', { name: /Open the sign-in thread/ }));
+    await waitFor(() => expect(api.accountsAddCodex).toHaveBeenCalledWith('Work'));
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput()).toMatchObject({ type: 'shell', config: { signIn: 'codex', accountId: 'cx-2' } });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('t-new'));
+    expect(onClose).toHaveBeenCalled();
   });
 });
