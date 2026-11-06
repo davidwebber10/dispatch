@@ -228,4 +228,4 @@ Open the site in a browser and install it:
 
 ## License
 
-[MIT](LICENSE) © David Webber.
+Open source under the [MIT License](LICENSE). © The Dispatch contributors.
