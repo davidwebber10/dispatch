@@ -80,6 +80,14 @@ describe('<AllThreadsView>', () => {
     const seg = (name: RegExp | string) => screen.getByRole('radio', { name });
     const chips = () => within(screen.getByRole('group', { name: 'Project filter' })).getAllByRole('button').map((b) => b.textContent);
 
+    it('is hidden when no thread was started by an agent, and the list shows everything', () => {
+      localStorage.setItem('dispatch:mobileThreadsStarter', 'agents');
+      useTabs.setState({ byProject: { A: [t('a1', 'A', 'Fix login', '2026-10-28T10:00:00Z'), t('a2', 'A', 'Write docs', '2026-10-28T09:00:00Z')] }, loading: {} } as any);
+      render(<AllThreadsView onOpenThread={() => {}} />);
+      expect(screen.queryByRole('radiogroup', { name: 'Started by' })).toBeNull();
+      expect(labels()).toEqual(['Fix login', 'Write docs']);
+    });
+
     it('opens on Mine and hides agent threads', () => {
       seed();
       render(<AllThreadsView onOpenThread={() => {}} />);

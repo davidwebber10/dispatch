@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PillComposer } from './PillComposer';
 
@@ -37,6 +37,49 @@ describe('PillComposer', () => {
     expect(box.getAttribute('data-stacked')).toBe('true');
     expect(box.style.gridTemplateAreas).toBe('"text text text text" "plus . mic send"');
     expect(screen.getByPlaceholderText('Message…')).toBe(ta); // the same box: typing keeps its focus
+  });
+
+  it('dictation stays on one row, even with text already typed: + · recording bar · send', () => {
+    for (const value of ['', 'already typed']) {
+      const { unmount } = render(<PillComposer {...base} value={value} dictation={dictation({ state: 'recording' })} />);
+      const box = screen.getByTestId('pill-composer');
+      expect(box.getAttribute('data-stacked')).toBeNull();
+      expect(box.style.gridTemplateAreas).toBe('"plus text text send"');
+      unmount();
+    }
+  });
+
+  describe('going to two lines glides instead of jumping (2026-11-06)', () => {
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    afterEach(() => {
+      HTMLElement.prototype.getBoundingClientRect = realRect;
+      delete (HTMLElement.prototype as { animate?: unknown }).animate;
+    });
+    // jsdom lays nothing out: give the box and the text box different places in the two layouts.
+    const fakeLayout = () => {
+      HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+        const box = this.closest('[data-testid="pill-composer"]') as HTMLElement | null;
+        const two = !!box?.hasAttribute('data-stacked');
+        if (this === box) return { left: 0, top: two ? 600 : 640, width: 360, height: two ? 88 : 48 } as DOMRect;
+        if (this.tagName === 'TEXTAREA') return { left: two ? 6 : 46, top: two ? 606 : 646, width: two ? 348 : 230, height: 36 } as DOMRect;
+        return { left: 0, top: 0, width: 36, height: 36 } as DOMRect;
+      };
+    };
+
+    it('the text box slides from its old place and the box grows, once, when the layout switches', () => {
+      fakeLayout();
+      const animate = vi.fn();
+      (HTMLElement.prototype as { animate?: unknown }).animate = animate;
+      const { rerender } = render(<PillComposer {...base} dictation={dictation()} />);
+      expect(animate).not.toHaveBeenCalled();
+      rerender(<PillComposer {...base} value="h" canSend dictation={dictation()} />);
+      const frames = animate.mock.calls.map((c) => c[0][0]);
+      expect(frames).toContainEqual({ transform: 'translate(40px, 40px)' }); // the text box, from the one-row spot
+      expect(frames).toContainEqual({ height: '48px' }); // the box, from one row's height
+      animate.mockClear();
+      rerender(<PillComposer {...base} value="he" canSend dictation={dictation()} />); // typing on: no new layout, no animation
+      expect(animate).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -44,7 +44,86 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
   // dy is the live drag offset (always >= 0). `drag` holds the gesture's bookkeeping.
   const [dy, setDy] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // A tall sheet scrolled up: its header pins to the very top of the screen (2026-11-06). Pinned
+  // below the backdrop's dimmed strip instead, the list scrolled on through that strip, visible
+  // above the handle. Stuck = the panel's top has gone past the header's.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [stuck, setStuck] = useState(false);
+  const onBackdropScroll = () => {
+    const p = panelRef.current, h = headerRef.current;
+    setStuck(!!p && !!h && p.getBoundingClientRect().top < h.getBoundingClientRect().top - 0.5);
+  };
   const drag = useRef<{ id: number; startY: number; lastY: number; lastT: number; v: number } | null>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  // The latest onClose, for the touch listeners below (added once per open).
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  /** A drag (handle or pulled content) has ended: close on a long pull or a fresh flick, else spring back. */
+  const release = (dist: number, v: number, lastT: number, ended: boolean) => {
+    // Capped at the screen: 25% of a 2000px list would be farther than a thumb can drag.
+    const height = Math.min(panelRef.current?.offsetHeight ?? 0, window.innerHeight || Infinity);
+    // A pause before release drops the flick: the speed must be fresh.
+    const fresh = performance.now() - lastT <= FLICK_MAX_AGE_MS;
+    const flick = ended && fresh && v > FLICK_PX_PER_MS && dist >= FLICK_MIN_PX;
+    if (ended && (flick || (height > 0 && dist > height * CLOSE_FRACTION))) { closeRef.current(); return; }
+    setDy(0); // spring back
+  };
+
+  // Pull to close (2026-11-06): with the sheet scrolled all the way up, carrying on downward moves
+  // the sheet itself, as on iOS, and lets go the same way the handle does. Touch only (a mouse has
+  // the handle and Escape). Not from the header (it has its own drag), and not while an inner list
+  // under the finger can still scroll up.
+  useEffect(() => {
+    const el = backdropRef.current;
+    if (!open || !sheet || !el) return;
+    let pulling = false, armed = false, startY = 0, prevY = 0, lastY = 0, lastT = 0, v = 0;
+    const innerCanScrollUp = (t: EventTarget | null) => {
+      for (let n = t as HTMLElement | null; n && n !== el; n = n.parentElement) {
+        if (n.scrollTop > 0 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) return true;
+      }
+      return false;
+    };
+    const onStart = (e: TouchEvent) => {
+      pulling = false;
+      armed = e.touches.length === 1 && !(e.target as HTMLElement | null)?.closest?.('[data-testid="sheet-header"]');
+      prevY = e.touches[0]?.clientY ?? 0;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!armed || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      const now = performance.now();
+      if (!pulling) {
+        // Start once the list is at its top and the finger is moving down; a scroll that reaches
+        // the top mid-gesture hands over from where it is.
+        if (el.scrollTop > 0 || y <= prevY || innerCanScrollUp(e.target)) { prevY = y; return; }
+        pulling = true; startY = prevY; lastY = prevY; lastT = now; v = 0;
+        setDragging(true);
+      }
+      if (e.cancelable) e.preventDefault(); // the sheet moves, not the page (no rubber band)
+      if (now > lastT) v = (y - lastY) / (now - lastT);
+      lastY = y; lastT = now;
+      setDy(Math.max(0, y - startY));
+    };
+    const onEnd = (e: TouchEvent) => {
+      armed = false;
+      if (!pulling) return;
+      pulling = false;
+      setDragging(false);
+      release(Math.max(0, lastY - startY), v, lastT, e.type === 'touchend');
+    };
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, sheet]);
 
   useEffect(() => {
     if (!open || !sheet) return;
@@ -80,14 +159,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
     if (!d || d.id !== e.pointerId) return;
     drag.current = null;
     setDragging(false);
-    const dist = Math.max(0, e.clientY - d.startY);
-    // Capped at the screen: 25% of a 2000px list would be farther than a thumb can drag.
-    const height = Math.min(panelRef.current?.offsetHeight ?? 0, window.innerHeight || Infinity);
-    // A pause before release drops the flick: the speed must be fresh.
-    const fresh = performance.now() - d.lastT <= FLICK_MAX_AGE_MS;
-    const flick = e.type === 'pointerup' && fresh && d.v > FLICK_PX_PER_MS && dist >= FLICK_MIN_PX;
-    if (e.type === 'pointerup' && (flick || (height > 0 && dist > height * CLOSE_FRACTION))) { onClose(); return; }
-    setDy(0); // spring back
+    release(Math.max(0, e.clientY - d.startY), d.v, d.lastT, e.type === 'pointerup');
   };
 
   // Portal to <body>: on mobile this modal's parents (the slide-rail) use a CSS
@@ -108,7 +180,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
     // from the backdrop's top padding instead (48px plus the safe area): a tall sheet
     // opens with that strip showing, and its header is sticky so Close and the handle
     // stay in reach once the backdrop has scrolled.
-    <div onClick={onClose} style={{
+    <div ref={backdropRef} onClick={onClose} onScroll={sheet ? onBackdropScroll : undefined} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex',
       alignItems: 'flex-start', justifyContent: 'center', zIndex: 100,
       overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch',
@@ -140,11 +212,15 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
         {sheet ? (
           // The drag zone: handle plus title row. touch-action:none stops the browser
           // claiming the gesture as a scroll or pull-to-refresh before we see it.
-          <div data-testid="sheet-header"
+          <div data-testid="sheet-header" ref={headerRef} data-stuck={stuck || undefined}
             onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} onLostPointerCapture={onDragEnd}
             style={{
-              position: 'sticky', top: 'calc(env(safe-area-inset-top) + 0px)', zIndex: 1, background: '#18181B', borderRadius: 'var(--radius-2xl) var(--radius-2xl) 0 0',
-              margin: '0 -16px', padding: '8px 16px 0', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', flex: 'none',
+              // The top offset cancels the backdrop's top padding (48px + the safe area), which a
+              // sticky offset counts from, so a stuck header sits at the screen's top edge; it then
+              // pads for the status bar and squares its corners, leaving nothing to show past it.
+              position: 'sticky', top: 'calc(-48px - env(safe-area-inset-top))', zIndex: 1, background: '#18181B',
+              borderRadius: stuck ? 0 : 'var(--radius-2xl) var(--radius-2xl) 0 0',
+              margin: '0 -16px', padding: stuck ? 'calc(8px + env(safe-area-inset-top)) 16px 0' : '8px 16px 0', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', flex: 'none',
             }}>
             <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 'var(--radius-xs)', background: '#3A3A40', margin: '0 auto 2px' }} />
             {(title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>

@@ -36,8 +36,8 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   const [tab, setTab] = useState<'active' | 'archived'>('active');
   const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
   const [filter, setFilter] = useState<string | null>(() => { try { return localStorage.getItem(FILTER_KEY); } catch { return null; } });
-  const [starter, setStarter] = useState<Starter>(readStarter);
-  useEffect(() => { try { localStorage.setItem(STARTER_KEY, starter); } catch { /* ignore */ } }, [starter]);
+  const [chosenStarter, setStarter] = useState<Starter>(readStarter);
+  useEffect(() => { try { localStorage.setItem(STARTER_KEY, chosenStarter); } catch { /* ignore */ } }, [chosenStarter]);
   useEffect(() => { try { if (filter) localStorage.setItem(FILTER_KEY, filter); else localStorage.removeItem(FILTER_KEY); } catch { /* ignore */ } }, [filter]);
 
   useEffect(() => {
@@ -54,6 +54,14 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   const active = filter && nameOf.has(filter) ? filter : null;
   const q = query.trim().toLowerCase();
   const isMine = (t: Terminal) => !isAgentStarted(t.config);
+  // Mine · Agents · All is only worth showing when an agent started something (2026-11-06). Counted
+  // over every active thread, not the search or project, so it doesn't come and go while typing.
+  // Hidden, the list is everything; the saved choice comes back with the first agent thread.
+  const anyAgents = useMemo(
+    () => projects.some((p) => (byProject[p.id] ?? []).some((t) => t.type !== 'file' && !t.archivedAt && isAgentStarted(t.config))),
+    [projects, byProject],
+  );
+  const starter: Starter = anyAgents ? chosenStarter : 'all';
   // Rows in the chosen project that match the search: the base for the counts and the list.
   const matching = useMemo(() => {
     const all: Terminal[] = [];
@@ -102,7 +110,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
         <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
         <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
       </div>
-      {tab === 'active' && (
+      {tab === 'active' && anyAgents && (
         <div role="radiogroup" aria-label="Started by" style={{ display: 'flex', gap: 2, margin: '8px 12px 0', padding: 2, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', background: 'var(--color-elevated)' }}>
           {STARTERS.map((o) => (
             <button key={o.id} type="button" role="radio" aria-checked={starter === o.id} onClick={() => setStarter(o.id)} style={seg(starter === o.id)}>
