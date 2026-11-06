@@ -266,4 +266,45 @@ describe('Modal sheet: always closable', () => {
     down(header, 100, 0);
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  // Pull to close (2026-11-06): at the top of its scroll, pulling the content down moves the sheet.
+  const tStart = (el: Element, y: number, t = 0) => { at(t); fireEvent.touchStart(el, { touches: [{ clientY: y }] }); };
+  const tMove = (el: Element, y: number, t: number) => { at(t); fireEvent.touchMove(el, { touches: [{ clientY: y }] }); };
+  const tEnd = (el: Element, t: number) => { at(t); fireEvent.touchEnd(el, { touches: [] }); };
+
+  it('pulling the content down at the top of the scroll moves the sheet, and a long pull closes it', () => {
+    const { panel, onClose } = renderSheet();
+    const body = screen.getByText('body');
+    tStart(body, 100, 0); tMove(body, 120, 100); tMove(body, 180, 400);
+    expect(panel.style.transform).toBe('translateY(80px)');
+    tMove(body, 260, 900); tEnd(body, 1000);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a short, slow pull springs back', () => {
+    const { panel, onClose } = renderSheet();
+    const body = screen.getByText('body');
+    tStart(body, 100, 0); tMove(body, 130, 600); tEnd(body, 1200);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(panel.style.transform).toBe('translateY(0px)');
+  });
+
+  it('a list scrolled down scrolls as usual: no pull until it is back at the top', () => {
+    const { panel } = renderSheet();
+    const backdrop = panel.parentElement as HTMLElement;
+    backdrop.scrollTop = 200;
+    const body = screen.getByText('body');
+    tStart(body, 100, 0); tMove(body, 180, 100);
+    expect(panel.style.transform).toBe('translateY(0px)');
+    backdrop.scrollTop = 0; // the scroll reached the top mid-gesture: the pull starts from where the finger was (180)
+    tMove(body, 200, 200); tMove(body, 240, 300);
+    expect(panel.style.transform).toBe('translateY(60px)');
+  });
+
+  it('pulling up never moves the sheet', () => {
+    const { panel } = renderSheet();
+    const body = screen.getByText('body');
+    tStart(body, 300, 0); tMove(body, 200, 100);
+    expect(panel.style.transform).toBe('translateY(0px)');
+  });
 });

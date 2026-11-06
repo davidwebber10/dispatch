@@ -84,7 +84,35 @@ export function PillComposer({
   // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:
   // inline, a wrapped message sat between the keys with an odd uneven margin). One grid with
   // named areas, so the text box stays the same element when the layout switches (no lost focus).
-  const stacked = value.length > 0 || recording;
+  // Typing moves the text onto its own full-width line; dictation stays on one row (2026-11-06):
+  // the recording bar takes the text and mic slots between + and send.
+  const stacked = value.length > 0 && !recording;
+
+  // Going to two lines (or back) glides instead of jumping (2026-11-06). A grid's layout can't be
+  // transitioned in CSS, so each piece is measured every render; when the layout switches, the
+  // pieces start where they were and slide to their new places, and the box grows to its new height.
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const was = useRef<{ stacked: boolean; height: number; rects: Map<Element, DOMRect> } | null>(null);
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const rects = new Map<Element, DOMRect>();
+    for (const el of Array.from(box.children)) rects.set(el, el.getBoundingClientRect());
+    const height = box.getBoundingClientRect().height;
+    const prev = was.current;
+    was.current = { stacked, height, rects };
+    if (!prev || prev.stacked === stacked || typeof box.animate !== 'function') return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const timing = { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' };
+    for (const [el, now] of rects) {
+      const then = prev.rects.get(el);
+      if (!then) continue;
+      const dx = then.left - now.left, dy = then.top - now.top;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      (el as HTMLElement).animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], timing);
+    }
+    if (Math.abs(prev.height - height) >= 0.5) box.animate([{ height: `${prev.height}px` }, { height: `${height}px` }], timing);
+  });
   // A mic with dictation not set up says so, with a link to the setting, instead of doing nothing.
   const [micHint, setMicHint] = useState(false);
 
@@ -104,9 +132,9 @@ export function PillComposer({
         <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     )}
-    <div data-testid="pill-composer" data-stacked={stacked || undefined} style={{
+    <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
-      gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : '"plus text mic send"',
+      gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
       padding: 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
       border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
