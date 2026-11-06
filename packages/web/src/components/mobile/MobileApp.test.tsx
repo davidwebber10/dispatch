@@ -74,12 +74,12 @@ describe('MobileApp project header (2026-11-06): the same shape as the thread he
 describe('MobileApp thread header (2026-11-06, option C)', () => {
   const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Thread menu' }));
 
-  it('titles the header with the thread, and its project and mode underneath', () => {
+  it('titles the header with the thread; no project name or Pretty/CLI label underneath (2026-11-06)', () => {
     seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', label: 'Fix the login', config: { transport: 'structured' } } as any);
     render(<MobileApp />);
     const title = screen.getByTestId('thread-title');
     expect(title.textContent).toContain('Fix the login');
-    expect(title.textContent).toContain('Pretty');
+    expect(title.textContent).not.toMatch(/Proj|Pretty|CLI/); // the Back button names the project; the body shows the mode
   });
 
   it('names the account under the thread name once the accounts are known (multi-account)', async () => {
@@ -92,7 +92,7 @@ describe('MobileApp thread header (2026-11-06, option C)', () => {
     // The mount reloads the project's threads; answer with the seed so the thread stays.
     vi.spyOn(api, 'listTerminals').mockImplementation(async () => [seeded] as any);
     render(<MobileApp />);
-    await waitFor(() => expect(screen.getByTestId('thread-title').textContent).toContain('· Work'));
+    await waitFor(() => expect(screen.getByTestId('thread-title').textContent).toContain('Work'));
   });
 
   it('the CLI ⇄ Pretty switch and Previews are in the ⋯ menu, not the header', () => {

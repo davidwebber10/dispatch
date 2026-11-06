@@ -279,8 +279,9 @@ export function MobileApp() {
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
   const unseenHere = usePreviews((s) => unseenPreviews(s.items, project?.id ?? null));
   // In a thread (2026-11-06, header option C): the title is the thread's own name, with its status,
-  // project and mode underneath; Previews and the CLI ⇄ Pretty switch live in the ⋯ menu, which
-  // carries the unseen-previews badge.
+  // status dot and account underneath (no project or Pretty/CLI label since 2026-11-06: the Back
+  // button names the project and the body shows the mode); Previews and the CLI ⇄ Pretty switch
+  // live in the ⋯ menu, which carries the unseen-previews badge.
   const leafTab = level === 2 && leaf === 'tab' && leafTabId ? findTerminal(byProject, leafTabId) : undefined;
   const transport = useTransportSwitch(leafTab ? leafTab.id : null);
   const leafStatus = useThreadStatus((s) => (leafTab ? s.byTerminal[leafTab.id]?.threadStatus : undefined));
@@ -292,7 +293,7 @@ export function MobileApp() {
   const [projectMenu, setProjectMenu] = useState(false);
   const connection = useShownStatus();
   useEffect(() => { void usePreviews.getState().load(); }, []);
-  // The account under the thread name (multi-account, 2026-11-06): "Proj · Pretty · Work".
+  // The account under the thread name (multi-account, 2026-11-06): "Work".
   const accountsView = useAccounts((s) => s.view);
   useEffect(() => { if (leafTab) void useAccounts.getState().load(); }, [leafTab]);
   const leafAccount = threadAccount(accountsView, leafTab);
@@ -360,7 +361,7 @@ export function MobileApp() {
                 <span style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leafTab.label}</span>
                 <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
-                  {project?.name}{transport.applies ? ` · ${transport.current === 'pretty' ? 'Pretty' : 'CLI'}` : ''}{leafAccount ? ` · ${shortAccountLabel(leafAccount.label)}` : ''}
+                  {leafAccount ? shortAccountLabel(leafAccount.label) : ''}
                 </span>
               </div>
             </>
