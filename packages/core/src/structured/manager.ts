@@ -123,6 +123,8 @@ export interface StructuredSpawnOpts {
    */
   resumeId?: string;
   model?: string;
+  /** Codex only: the effort the owner picked earlier (config.effort), sent with each turn. Claude carries it in argv. */
+  effort?: string;
   /**
    * Persona/system prompt for harnesses that inject it out-of-band rather than via argv, e.g.
    * Codex's `thread/start` `developerInstructions` param. Argv-based harnesses (Claude

@@ -280,6 +280,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       turnActive: false,
       cwd: opts.workDir,
       model: opts.model,
+      picked: opts.effort ? { effort: opts.effort } : undefined,
       resumeId: opts.resumeId,
       systemPrompt: opts.systemPrompt,
       toolPolicy: opts.toolPolicy,
