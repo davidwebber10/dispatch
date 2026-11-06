@@ -219,3 +219,20 @@ update.
 5. Counts on the segments ("Mine 12 · Agents 80 · All 92"): yes (recommended) or no?
 6. Remember the choice per device (recommended; same as the project chip) or one choice for all
    devices (needs a server setting)?
+
+## 14. Decisions (2026-11-05) and build notes
+
+The owner took the recommendation for all six questions: Mine is the default; threads that Chat
+started count as Agents; an agent thread that the owner typed into stays in Agents; the "started by"
+word ships in the same PR; the segments show counts; the choice is kept per device.
+
+Where the build differs from the text above:
+
+- The Threads view already has an ACTIVE / ARCHIVED tab strip. The Mine / Agents / All control sits
+  under that strip, above the project chips, and shows on ACTIVE only. The archived list does not
+  split by starter.
+- The counts follow the project chip and the search box, so each count is what a tap will show.
+- The empty-state button switches to the filter that has the matches ("Show 4 agent threads" or
+  "Show 2 of my threads"), not always to All. When the current filter is empty, the result on screen
+  is the same as All.
+- The pressed project chip stays in the chip row even if it has no row in the current filter.
