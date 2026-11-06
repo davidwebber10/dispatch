@@ -79,7 +79,8 @@ describe('Chat composer parity with the other composers', () => {
     Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 34 });
     fireEvent.keyDown(el, { key: 'Enter' });
     await waitFor(() => expect(el.value).toBe(''));
-    await waitFor(() => expect(el.style.height).toBe('34px'));
+    // Empty, the box is exactly one line (32 px on desktop), whatever its placeholder would wrap to.
+    await waitFor(() => expect(el.style.height).toBe('32px'));
   });
 
   it('keeps an unsent draft across a remount (reload)', () => {

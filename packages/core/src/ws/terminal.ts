@@ -178,7 +178,11 @@ export function handleTerminalConnection(
           if (Number.isInteger(parsed.cols) && Number.isInteger(parsed.rows)
             && parsed.cols >= 1 && parsed.cols <= MAX_TERMINAL_COLS && parsed.rows >= 1 && parsed.rows <= MAX_TERMINAL_ROWS) {
             monitor?.suppress(targetId!); // the repaint a resize causes is not activity
-            ptyManager.resize(targetId!, parsed.cols, parsed.rows);
+            const now = parsed.repaint === true ? ptyManager.getSize(targetId!) : null;
+            // `repaint` at the size the terminal already has: no SIGWINCH would follow, so nudge one
+            // (2026-11-06) — a viewer coming back after another device resized it gets a clean screen.
+            if (parsed.repaint === true && now && now.cols === parsed.cols && now.rows === parsed.rows) ptyManager.nudgeRepaint(targetId!);
+            else ptyManager.resize(targetId!, parsed.cols, parsed.rows);
           }
           return;
         }

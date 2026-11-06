@@ -2097,7 +2097,7 @@ export class SessionService {
    *     rejected so an in-flight turn isn't lost (409).
    * A no-op (returns the row unchanged) when the thread is already in the target transport.
    */
-  async switchTransport(terminalId: string, target: 'structured' | 'pty'): Promise<terminalsDb.Terminal> {
+  async switchTransport(terminalId: string, target: 'structured' | 'pty', opts?: { force?: boolean }): Promise<terminalsDb.Terminal> {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) throw transportError(404, 'Terminal not found');
     if (terminal.type !== 'claude-code' && terminal.type !== 'codex') {
@@ -2127,9 +2127,11 @@ export class SessionService {
       const live = this.structuredManagerForTerminal(terminalId);
       if (live?.isAlive(terminalId)) {
         await this.settleStructuredTurn(live, terminalId);
-      } else {
+      } else if (!opts?.force) {
         throw transportError(409, 'This thread is busy — wait for the current turn to finish, then switch');
       }
+      // force (2026-11-06): the user confirmed it — the CLI process is stopped below mid-turn and the
+      // conversation resumes in the other transport from what the CLI had saved.
     }
 
     // Fully tear down the OLD transport (awaiting its exit) BEFORE re-spawning, so its async

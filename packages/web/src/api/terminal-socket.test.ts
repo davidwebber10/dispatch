@@ -29,6 +29,8 @@ test('forwards output, sends raw input, and frames resize as JSON', () => {
 
   sock.resize(120, 40);
   expect(ws.sent).toContain(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
+  sock.resize(120, 40, { repaint: true }); // coming back to the thread: redraw even at the same size
+  expect(ws.sent).toContain(JSON.stringify({ type: 'resize', cols: 120, rows: 40, repaint: true }));
 
   sock.close();
 });

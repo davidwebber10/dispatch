@@ -295,6 +295,7 @@ export function MobileApp() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <PreviewSheet />
+      {transport.confirmUi}
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
         lead={(close, row) => (
           <>
@@ -306,9 +307,10 @@ export function MobileApp() {
             )}
             {transport.applies && (
               <button type="button" style={{ ...row, opacity: transport.canSwitch ? 1 : 0.5 }} disabled={!transport.canSwitch} title={transport.tip}
-                onClick={() => { close(); void transport.switchTo(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
+                onClick={() => { close(); transport.request(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
                 <TerminalWindow size={17} />{transport.current === 'pretty' ? 'Switch to CLI' : 'Switch to Pretty'}
-                {!transport.canSwitch && transport.tip && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-tertiary)' }}>{transport.tip.startsWith('Wait') ? 'mid-turn' : 'after a message'}</span>}
+                {!transport.canSwitch && transport.tip && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-tertiary)' }}>after a message</span>}
+                {transport.canSwitch && transport.midTurn && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-status-yellow)' }}>stops this turn</span>}
               </button>
             )}
             <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />

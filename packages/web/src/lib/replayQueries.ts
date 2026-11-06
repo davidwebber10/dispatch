@@ -11,12 +11,19 @@ type Writer = Pick<Terminal, 'write'>;
  *  right now is a replay. xterm parses writes in order and fires each callback right after its
  *  chunk, so the oldest write without a callback is the one being parsed. A plain counter
  *  bumped at enqueue time gets this wrong when a live write is queued next to a replay. */
+/**
+ * Claude Code's ⏺ bullet (U+23FA) has no glyph in the terminal font, so iOS (and Chrome on a Mac)
+ * fall back to the emoji font and draw a white rounded square (2026-11-06). ● (U+25CF) is the same
+ * width and in every monospace font. Same length, so offsets into the stream are unchanged.
+ */
+export const displayFix = (chunk: string): string => (chunk.includes('\u23FA') ? chunk.replace(/\u23FA/g, '\u25CF') : chunk);
+
 export function createWriteGate(term: Writer) {
   const queue: boolean[] = [];
   return {
     write(chunk: string, replay: boolean, cb?: () => void) {
       queue.push(replay);
-      term.write(chunk, () => { queue.shift(); cb?.(); });
+      term.write(displayFix(chunk), () => { queue.shift(); cb?.(); });
     },
     parsingReplay: () => queue[0] === true,
   };

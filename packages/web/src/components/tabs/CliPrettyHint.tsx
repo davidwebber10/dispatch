@@ -1,11 +1,8 @@
-import { useState } from 'react';
 import { X } from '@phosphor-icons/react';
 import type { Terminal } from '../../api/types';
-import { api } from '../../api/client';
-import { useTabs } from '../../stores/tabs';
-import { useThreadStatus } from '../../stores/threadStatus';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings, CLI_PRETTY_HINT_KEY } from '../../stores/settings';
+import { useTransportSwitch } from '../layout/TransportToggle';
 
 export { CLI_PRETTY_HINT_KEY };
 
@@ -26,36 +23,19 @@ export { CLI_PRETTY_HINT_KEY };
  */
 export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRight?: number }) {
   const dismissed = !useSettings((s) => s.showPrettyHint);
-  const [busy, setBusy] = useState(false);
-  const threadStatus = useThreadStatus((s) => s.byTerminal[tab.id]?.threadStatus);
   const isMobile = useIsMobile();
+  // The shared switch (layout/TransportToggle): mid-turn it asks first, then stops the turn and switches.
+  const { canSwitch, tip, request, confirmUi } = useTransportSwitch(tab.id, tab);
 
   if (dismissed) return null;
 
-  const midTurn = threadStatus === 'working' || threadStatus === 'starting';
-  const canSwitch = !!tab.externalId && !midTurn && !busy;
-  const tip = !tab.externalId
-    ? 'Send a message first to enable switching'
-    : midTurn
-      ? 'Wait for the current turn to finish'
-      : undefined;
-
   // One line on a phone (2026-11-06): the full sentence wrapped to two under the header.
   const short = isMobile;
-  async function switchToPretty() {
-    if (!canSwitch) return;
-    setBusy(true);
-    try {
-      await api.switchTransport(tab.id, 'structured');
-      await useTabs.getState().loadTabs(tab.sessionId);
-    } catch {
-      /* a 409 (busy / no session) leaves the thread as-is */
-    } finally {
-      setBusy(false);
-    }
-  }
+  const switchToPretty = () => request('pretty');
 
   return (
+    <>
+    {confirmUi}
     <div
       data-testid="cli-pretty-hint"
       style={{
@@ -72,7 +52,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         type="button"
         disabled={!canSwitch}
         title={tip}
-        onClick={() => void switchToPretty()}
+        onClick={switchToPretty}
         style={short ? {
           flexShrink: 0, height: 24, padding: '0 4px', border: 'none', background: 'transparent', color: 'var(--color-accent)',
           font: '500 13px var(--font-sans)', cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
@@ -99,5 +79,6 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
         <X size={12} weight="bold" />
       </button>
     </div>
+    </>
   );
 }

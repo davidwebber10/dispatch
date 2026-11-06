@@ -132,6 +132,14 @@ describe('switchTransport — busy handling', () => {
     await expect(svc.switchTransport('t1', 'structured')).rejects.toMatchObject({ status: 409 });
   });
 
+  it('with force (the user confirmed), a busy PTY thread is stopped and restarted structured (2026-11-06)', async () => {
+    seed('t1', { config: { model: 'opus' }, status: 'working' });
+    const t = await svc.switchTransport('t1', 'structured', { force: true });
+    expect(cfg('t1')).toEqual({ model: 'opus', transport: 'structured' });
+    expect(structured.spawns).toEqual(['t1']); // resumed in Pretty
+    expect(t.config).toEqual({ model: 'opus', transport: 'structured' });
+  });
+
   it('interrupts a busy structured thread, awaits the turn boundary, then switches', async () => {
     structured.live.add('t1');
     seed('t1', { config: { transport: 'structured' }, status: 'working' });

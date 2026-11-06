@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { TransportToggle } from './TransportToggle';
 import { useTabs } from '../../stores/tabs';
@@ -38,13 +38,30 @@ describe('TransportToggle', () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured'));
   });
 
-  it('disables AND greys the whole control while a turn is in flight (only switch between turns)', () => {
+  it('mid-turn it still switches, after asking: stop the turn and restart in the other mode (2026-11-06)', async () => {
     seedTab({ type: 'claude-code', externalId: 'e1', config: {} });
     useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    const spy = vi.spyOn(api, 'switchTransport').mockResolvedValue({} as any);
     render(<TransportToggle terminalId="t1" />);
-    expect(screen.getByRole('button', { name: /pretty/i })).toBeDisabled();
-    // The whole group dims so its unavailability reads at a glance, not only on hover.
-    expect(Number(screen.getByRole('group', { name: 'Transport' }).style.opacity)).toBeLessThan(1);
+    const pretty = screen.getByRole('button', { name: /pretty/i });
+    expect(pretty).toBeEnabled();
+    expect(screen.getByRole('group', { name: 'Transport' }).style.opacity).toBe('1');
+    fireEvent.click(pretty);
+    expect(spy).not.toHaveBeenCalled(); // asks first
+    const ask = screen.getByRole('alertdialog', { name: 'Switch to Pretty now?' });
+    expect(ask.textContent).toContain('stops the current turn');
+    fireEvent.click(within(ask).getByRole('button', { name: 'Stop and switch' }));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured', { force: true }));
+  });
+
+  it('between turns it switches straight away, without asking', async () => {
+    seedTab({ type: 'claude-code', externalId: 'e1', config: {} });
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'idle' } } });
+    const spy = vi.spyOn(api, 'switchTransport').mockResolvedValue({} as any);
+    render(<TransportToggle terminalId="t1" />);
+    fireEvent.click(screen.getByRole('button', { name: /pretty/i }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured'));
   });
 
   it('is at full opacity when a switch IS available (between turns)', () => {

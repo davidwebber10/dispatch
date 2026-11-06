@@ -31,13 +31,28 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
   const mimeRef = useRef<string>('audio/webm');
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  // Keep the screen on while recording (2026-11-06): a long dictation let the phone lock, and the
+  // recording was lost. Released when recording ends; the browser drops it when the page hides.
+  const wakeRef = useRef<{ release(): Promise<void> } | null>(null);
+  const lockScreen = useCallback(async () => {
+    try {
+      const wl = (navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
+      if (wl && !wakeRef.current) wakeRef.current = await wl.request('screen');
+    } catch { /* not supported, or refused (low power mode): recording still works */ }
+  }, []);
+  const unlockScreen = useCallback(() => {
+    const w = wakeRef.current;
+    wakeRef.current = null;
+    void w?.release().catch(() => { /* already released */ });
+  }, []);
 
   const teardown = useCallback(() => {
+    unlockScreen();
     try { recorderRef.current?.state === 'recording' && recorderRef.current.stop(); } catch { /* */ }
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
     try { audioCtxRef.current?.close(); } catch { /* */ }
     recorderRef.current = null; streamRef.current = null; analyserRef.current = null; audioCtxRef.current = null;
-  }, []);
+  }, [unlockScreen]);
 
   // Release mic/AudioContext if the component unmounts mid-recording (teardown is stable, so this runs on unmount only).
   useEffect(() => teardown, [teardown]);
@@ -69,8 +84,10 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
         const analyser = ctx.createAnalyser(); analyser.fftSize = 1024;
         src.connect(analyser); analyserRef.current = analyser;
       }
-      rec.start();
+      // One-second slices: what was said is already in hand if the page is interrupted.
+      rec.start(1000);
       setState('recording');
+      void lockScreen();
     } catch (err) {
       teardown();
       // Differentiate the failure: once iOS remembers a "deny" for an installed
@@ -88,7 +105,7 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
       }
       setState('error');
     }
-  }, [teardown]);
+  }, [teardown, lockScreen]);
 
   const cancel = useCallback(() => { teardown(); setError(null); setState('idle'); }, [teardown]);
   const reset = useCallback(() => { setError(null); setState('idle'); }, []);
@@ -101,6 +118,7 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
       rec.onstop = () => resolve(new Blob(chunksRef.current, { type: mime }));
     });
     try { rec.stop(); } catch { /* */ }
+    unlockScreen();
     const blob = await done;
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
     try { audioCtxRef.current?.close(); } catch { /* */ }
@@ -125,7 +143,22 @@ export function useDictation(onTranscript: (text: string) => void): Dictation {
       setError(e instanceof Error ? e.message : 'Transcription failed.');
       setState('error');
     }
-  }, [onTranscript, teardown]);
+  }, [onTranscript, teardown, unlockScreen]);
+
+  // If the phone locks or the app goes to the background anyway, keep what was said: stop and
+  // transcribe it now (it is inserted when the request returns). Coming back takes the wake lock
+  // again in case only the screen dimmed.
+  const confirmRef = useRef(confirm);
+  confirmRef.current = confirm;
+  useEffect(() => {
+    if (state !== 'recording') return;
+    const onVisibility = () => {
+      if (document.hidden) void confirmRef.current();
+      else void lockScreen();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [state, lockScreen]);
 
   const getAnalyser = useCallback(() => analyserRef.current, []);
 
