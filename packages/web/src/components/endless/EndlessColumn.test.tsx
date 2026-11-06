@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vite
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { EndlessColumn } from './EndlessColumn';
 import { ChatMode } from './ChatMode';
-import { foldRows } from './EndlessMessageRow';
 import { useEndless } from '../../stores/endless';
 import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
@@ -57,12 +56,15 @@ beforeEach(() => {
 
 describe('EndlessColumn', () => {
   it('folds a tool call and its result into one row and marks a zoom as recalled', () => {
-    const rows = foldRows(useEndless.getState().messages);
-    expect(rows.map((r) => r.kind)).toEqual(['msg', 'tool', 'recall', 'msg']);
+    const { container } = render(<EndlessColumn />);
+    // One row per message, a result folded into its call: the user turn, Bash, the recall, the reply.
+    expect([...container.querySelectorAll('[data-endless-i]')].map((e) => e.getAttribute('data-endless-i'))).toEqual(['0', '1', '3', '5']);
+    expect(screen.queryByRole('button', { name: /^Output/ })).toBeNull(); // no result drawn on its own
+    expect(screen.getByText('recalled 32+16')).toBeInTheDocument();
   });
 
   it('renders the user bubble with its project, the reply, one tool line, and the recalled line', () => {
-    render(<EndlessColumn />);
+    const { container } = render(<EndlessColumn />);
     expect(screen.getByText('check the exporter')).toBeInTheDocument();
     expect(screen.getByText('salsify')).toBeInTheDocument();
     expect(screen.getByText('The exporter is fine.')).toBeInTheDocument();
@@ -70,7 +72,8 @@ describe('EndlessColumn', () => {
     expect(screen.getByText('recalled 32+16')).toBeInTheDocument();
     expect(screen.queryByText('a.txt')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Bash/ }));
-    expect(screen.getByText(/a\.txt/)).toBeInTheDocument();
+    // The output shelf is syntax-highlighted (the thread view's ToolCall), so the text may span tokens.
+    expect(container.querySelector('pre code')?.textContent).toContain('a.txt');
   });
 
   it('shows live thinking and text while a turn runs', () => {

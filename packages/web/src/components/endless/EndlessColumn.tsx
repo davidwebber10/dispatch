@@ -9,7 +9,9 @@ import { LoadEarlierButton, Thinking } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { ImageViewerHost } from '../ChatImage';
-import { EndlessRows, PendingUserRow, FileChip, rowKeyOf } from './EndlessMessageRow';
+import { PendingUserRow, FileChip } from './EndlessMessageRow';
+import { ChatTimeline } from './timeline';
+import { rowKeyOf } from './convItems';
 import { ProjectMenuSection } from './ProjectPicker';
 
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
@@ -357,7 +359,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               {loaded && messages.length === 0 && !busy && (
                 <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: 14 }}>One chat that never ends. Say something.</div>
               )}
-              <EndlessRows messages={messages} focus={focus} />
+              <ChatTimeline messages={messages} focus={focus} />
               {atTail && pending.map((p) => (
                 <MessageScroller.Item key={`p${p.id}`} messageId={`p${p.id}`} style={{ display: 'flex', flexDirection: 'column' }}>
                   <PendingUserRow text={p.text} projectName={p.projectName} images={p.images} files={p.files} />

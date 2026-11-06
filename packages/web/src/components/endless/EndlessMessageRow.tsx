@@ -1,69 +1,31 @@
-import { useId, useMemo, useState, type CSSProperties } from 'react';
-import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, Wrench, FileText } from '@phosphor-icons/react';
+// Chat's own views: the cards and rows only Chat draws. The list itself renders through the
+// thread view's renderTimeline (endless/timeline.tsx wires these in as its hooks).
+import { createContext, useContext, useId, useMemo, useState, type CSSProperties } from 'react';
+import { useMessageScroller } from '@shadcn/react/message-scroller';
+import { CaretRight, ClockCounterClockwise, Briefcase, Notebook, FileText } from '@phosphor-icons/react';
 import { UserBubble } from '../tabs/chat/ChatView';
 import { InsightText } from '../InsightText';
 import { ChatImage } from '../ChatImage';
-import { endlessMediaUrl } from '../../api/client';
 import { openThreadInPlace } from './openThread';
-import { StartedItem } from './StartedItem';
 import { DocText, openDoc } from './DocText';
 import { projectForPath } from '../../lib/docPaths';
 import { classifyLink } from '../../lib/docLinks';
 import { useEndless } from '../../stores/endless';
-import { SPAWN_TOOL, parseSpawn } from './spawn';
-export { SPAWN_TOOL, parseSpawn };
+import { ZOOM_TOOL } from './convItems';
 import type { EndlessMessage } from '../../api/types';
 
-export type Row =
-  | { kind: 'msg'; m: EndlessMessage }
-  | { kind: 'tool'; tool: EndlessMessage; echo?: EndlessMessage }
-  | { kind: 'recall'; tool: EndlessMessage; echo?: EndlessMessage }
-  | { kind: 'started'; tool: EndlessMessage; echo?: EndlessMessage };
-
-const ZOOM_TOOL = /^mcp__memory__zoom\s/;
-const toolKind = (tool: EndlessMessage): 'recall' | 'started' | 'tool' => (ZOOM_TOOL.test(tool.text) ? 'recall' : SPAWN_TOOL.test(tool.text) ? 'started' : 'tool');
-
 /**
- * A tool call that carries an id (`ref`) pairs with the first later result with the same id, wherever
- * it sits in the list; that result is consumed. Calls and results logged before ids existed have no
- * `ref`: a run of N such calls pairs with the run of up to N results right after it, in order. A `zoom`
- * call is a "recalled" row; a `spawn_agent` call is a Started card.
+ * Which report and note cards are open, by message, for one mounted Chat list (ChatTimeline
+ * provides it). A card's row can remount while Chat stays open: renderTimeline re-keys a turn to
+ * its newest item, so a new message remounts the cards above it. The state outlives that, and
+ * goes with the list.
  */
-export function foldRows(messages: EndlessMessage[]): Row[] {
-  const echoOf = new Map<number, EndlessMessage>(); // tool.i -> its result, paired by id
-  const consumed = new Set<number>();
-  const open = new Map<string, EndlessMessage[]>(); // ref -> calls still waiting, oldest first
-  for (const m of messages) {
-    if (m.kind === 'tool' && m.ref) open.set(m.ref, [...(open.get(m.ref) ?? []), m]);
-    else if (m.kind === 'echo' && m.ref) {
-      const tool = open.get(m.ref)?.shift();
-      if (tool) { echoOf.set(tool.i, m); consumed.add(m.i); }
-    }
-  }
-  const rows: Row[] = [];
-  let k = 0;
-  while (k < messages.length) {
-    const m = messages[k];
-    if (m.kind === 'echo' && consumed.has(m.i)) { k++; continue; }
-    if (m.kind !== 'tool') { rows.push({ kind: 'msg', m }); k++; continue; }
-    if (m.ref) { rows.push({ kind: toolKind(m), tool: m, echo: echoOf.get(m.i) }); k++; continue; }
-    const tools: EndlessMessage[] = [];
-    while (k < messages.length && messages[k].kind === 'tool' && !messages[k].ref && (tools.length === 0 || messages[k].i === tools[tools.length - 1].i + 1)) tools.push(messages[k++]);
-    const echoes: EndlessMessage[] = [];
-    while (k < messages.length && echoes.length < tools.length && messages[k].kind === 'echo' && !messages[k].ref && messages[k].i === (echoes.length ? echoes[echoes.length - 1].i : tools[tools.length - 1].i) + 1) echoes.push(messages[k++]);
-    tools.forEach((tool, n) => rows.push({ kind: toolKind(tool), tool, echo: echoes[n] }));
-  }
-  return rows;
-}
+export const CardOpenContext = createContext<Map<string, boolean> | null>(null);
 
-/** The row key (`messageId` is `m<key>`) that shows message `i`; a folded echo maps to its tool. Null if not loaded. */
-export function rowKeyOf(messages: EndlessMessage[], i: number): number | null {
-  for (const r of foldRows(messages)) {
-    if (r.kind === 'msg') { if (r.m.i === i) return i; continue; }
-    if (r.tool.i === i || r.echo?.i === i) return r.tool.i;
-  }
-  return null;
+function useCardOpen(key: string): [boolean, (f: (open: boolean) => boolean) => void] {
+  const store = useContext(CardOpenContext);
+  const [open, setOpen] = useState(() => store?.get(key) ?? false);
+  return [open, (f) => setOpen((o) => { const next = f(o); store?.set(key, next); return next; })];
 }
 
 function recallLabel(text: string): string {
@@ -77,30 +39,8 @@ function recallLabel(text: string): string {
 
 const mono: React.CSSProperties = { font: '400 12.5px var(--font-mono)', color: 'var(--color-text-tertiary)' };
 
-function ToolLine({ tool, echo }: { tool?: EndlessMessage; echo?: EndlessMessage }) {
-  const [open, setOpen] = useState(false);
-  const head = tool?.text ?? 'result';
-  const name = head.split(' ')[0];
-  const rest = tool ? head.slice(name.length + 1) : '';
-  return (
-    <div style={{ minWidth: 0 }}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
-        style={{ ...mono, display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left' }}>
-        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Wrench size={13} style={{ flexShrink: 0 }} />
-        <span style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }}>{name}</span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{rest}</span>
-      </button>
-      {open && (
-        <pre style={{ margin: '6px 0 0 17px', padding: 10, maxHeight: 360, overflow: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', font: '400 12px var(--font-mono)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {[tool?.text, echo?.text].filter(Boolean).join('\n\n')}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function RecallLine({ tool }: { tool: EndlessMessage }) {
+/** A `mcp__memory__zoom` call: one muted line naming the span it recalled. */
+export function RecallLine({ tool }: { tool: EndlessMessage }) {
   return (
     <div style={{ ...mono, display: 'flex', alignItems: 'center', gap: 6 }}>
       <ClockCounterClockwise size={12} />
@@ -125,15 +65,15 @@ const bare: React.CSSProperties = { background: 'none', border: 'none', padding:
 
 /**
  * A thread report. A short one is one card that opens its thread; a long one folds to the thread
- * name and the first lines, and a tap on the header opens it. The open state is local to the row,
- * so it survives new messages (the row keeps its key).
+ * name and the first lines, and a tap on the header opens it. The open state is kept by message,
+ * so it survives new messages.
  *
  * No control sits inside another: the card box is a plain div (a mouse click anywhere on it taps
  * it), the one real button is the header, and the text with its doc chips sits outside that button.
  * The keyboard reaches the header button, then each chip.
  */
-function WorkCard({ m }: { m: EndlessMessage }) {
-  const [open, setOpen] = useState(false);
+export function WorkCard({ m }: { m: EndlessMessage }) {
+  const [open, setOpen] = useCardOpen(`report:${m.i}`);
   const id = useId();
   const { scrollToMessage } = useMessageScroller();
   const head = REPORT_HEAD.exec(m.text);
@@ -185,7 +125,7 @@ function WorkCard({ m }: { m: EndlessMessage }) {
 const projectsKey = (s: { projects: { id: string; folder: string }[] }) => JSON.stringify(s.projects.map((p) => [p.id, p.folder]));
 
 /** A Dispatch reply: markdown, with each doc path as a doc chip (spec 12.2). */
-function ReplyRow({ m }: { m: EndlessMessage }) {
+export function ChatProse({ m }: { m: EndlessMessage }) {
   const key = useEndless(projectsKey);
   const docs = useMemo(() => {
     const projects = (JSON.parse(key) as [string, string][]).map(([id, folder]) => ({ id, folder }));
@@ -198,8 +138,9 @@ function ReplyRow({ m }: { m: EndlessMessage }) {
   return <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={m.text} scheme="global" variant="rail" docs={docs} /></div>;
 }
 
-function NoteCard({ m }: { m: EndlessMessage }) {
-  const [open, setOpen] = useState(false);
+/** Memories imported from a project: folded to one line, opens to the markdown. */
+export function NoteCard({ m }: { m: EndlessMessage }) {
+  const [open, setOpen] = useCardOpen(`note:${m.i}`);
   return (
     <div style={{ border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 12px' }}>
       <button type="button" onClick={() => setOpen((o) => !o)} style={{ ...mono, display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
@@ -210,8 +151,7 @@ function NoteCard({ m }: { m: EndlessMessage }) {
   );
 }
 
-/** A saved media name is `<time>-<k>-<8 hex>-<the user's name>`; an image has no user name part. */
-const isImageMedia = (name: string) => /\.(png|jpe?g|gif|webp)$/i.test(name);
+/** A saved media name is `<time>-<k>-<8 hex>-<the user's name>`: the name the user gave. */
 export const mediaDisplayName = (name: string) => name.replace(/^\d+-\d+-[0-9a-f]{8}-/, '');
 
 /** A non-image attachment (a PDF, a text file): a chip that opens the saved file. */
@@ -225,33 +165,16 @@ export function FileChip({ name, href }: { name: string; href?: string }) {
   return href ? <a href={href} target="_blank" rel="noreferrer" title={name} style={style}>{inner}</a> : <span title={name} style={style}>{inner}</span>;
 }
 
-function MessageRow({ m }: { m: EndlessMessage }) {
-  if (m.kind === 'user') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        {m.projectName && <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '0.06em', color: 'var(--color-text-tertiary)' }}>{m.projectName}</span>}
-        <UserBubble text={m.text} />
-        {m.media.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {m.media.map((name) => (isImageMedia(name)
-              ? <ChatImage key={name} src={endlessMediaUrl(name)} maxHeight={220} />
-              : <FileChip key={name} name={mediaDisplayName(name)} href={endlessMediaUrl(name)} />))}
-          </div>
-        )}
-      </div>
-    );
-  }
-  if (m.kind === 'unii') return <ReplyRow m={m} />;
-  if (m.kind === 'work') return <WorkCard m={m} />;
-  if (m.kind === 'note') return <NoteCard m={m} />;
-  return <ToolLine echo={m} />;
+/** The project a user message was sent to, above its bubble. */
+export function ProjectLabel({ name }: { name: string }) {
+  return <span style={{ alignSelf: 'flex-end', font: '500 10px var(--font-mono)', letterSpacing: '0.06em', color: 'var(--color-text-tertiary)' }}>{name}</span>;
 }
 
 /** A sent message the daemon has not logged yet, drawn like a logged one. */
 export function PendingUserRow({ text, projectName, images, files = [] }: { text: string; projectName: string | null; images: { media_type: string; data: string }[]; files?: { name: string }[] }) {
   return (
     <div data-pending="true" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-      {projectName && <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '0.06em', color: 'var(--color-text-tertiary)' }}>{projectName}</span>}
+      {projectName && <ProjectLabel name={projectName} />}
       <UserBubble text={text} />
       {(images.length > 0 || files.length > 0) && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -260,23 +183,5 @@ export function PendingUserRow({ text, projectName, images, files = [] }: { text
         </div>
       )}
     </div>
-  );
-}
-
-export function EndlessRows({ messages, focus }: { messages: EndlessMessage[]; focus: number | null }) {
-  return (
-    <>
-      {foldRows(messages).map((r) => {
-        const key = r.kind === 'msg' ? r.m.i : r.tool.i;
-        const echoI = r.kind === 'msg' ? undefined : r.echo?.i;
-        return (
-          <MessageScroller.Item key={key} messageId={`m${key}`} style={{ display: 'flex', flexDirection: 'column' }}>
-            <div data-endless-i={key} data-endless-echo-i={echoI} style={{ borderRadius: 'var(--radius-md)', outline: focus === key || (echoI !== undefined && focus === echoI) ? '1px solid var(--color-accent)' : 'none', outlineOffset: 4 }}>
-              {r.kind === 'msg' ? <MessageRow m={r.m} /> : r.kind === 'recall' ? <RecallLine tool={r.tool} /> : r.kind === 'started' ? <StartedItem tool={r.tool} echo={r.echo} /> : <ToolLine tool={r.tool} echo={r.echo} />}
-            </div>
-          </MessageScroller.Item>
-        );
-      })}
-    </>
   );
 }
