@@ -13,7 +13,7 @@
  * Bun a thread starts loads it and does nothing. If an update renames the anchors, the hook
  * matches nothing and the summaries silently come back (fail-open), never a broken thread.
  *
- * Settings → Harnesses → Claude Code → "Skip agent status summaries" (on by default) decides
+ * Settings → Agents → Claude Code → "Skip agent status summaries" (on by default) decides
  * whether the spawn env carries the preload; the file itself is always written.
  */
 import fs from 'node:fs';

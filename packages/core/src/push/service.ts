@@ -25,7 +25,7 @@ export function vapidSubject(): string {
 /** The stored-subscription cap was reached by a new device. The message is safe to show the caller. */
 export class PushLimitError extends Error {
   constructor(readonly limit: number) {
-    super(`Dispatch already stores ${limit} push subscriptions (the maximum). Remove an old device in Settings > Access, or raise DISPATCH_MAX_PUSH_SUBSCRIPTIONS.`);
+    super(`Dispatch already stores ${limit} push subscriptions (the maximum). Remove an old device in Settings > Notifications, or raise DISPATCH_MAX_PUSH_SUBSCRIPTIONS.`);
   }
 }
 

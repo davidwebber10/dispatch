@@ -37,6 +37,7 @@ import { createServersRouter } from './routes/servers.js';
 import { createSecretsRouter } from './routes/secrets.js';
 import { createHarnessSettingsRouter } from './routes/harness-settings.js';
 import { createTelemetrySettingsRouter } from './routes/telemetry-settings.js';
+import { createDictationSettingsRouter, createCoordinatorSettingsRouter } from './routes/shared-settings.js';
 import { createUsageLimitSettingsRouter } from './routes/usage-limit-settings.js';
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { createSetupRouter } from './routes/setup.js';
@@ -78,12 +79,12 @@ export interface ApiRouteDeps {
   /** For the terminals router. `createApp` leaves it unset, as it always has. */
   terminalsBroadcaster?: EventBroadcaster;
   noCredentialStats: NoCredentialStats;
-  /** One-time sign-in codes (Settings → Access). Absent in `createApp` and on a hosted box, where
+  /** One-time sign-in codes (Settings → Devices & access). Absent in `createApp` and on a hosted box, where
    *  there is no sign-in page to type one on: `POST /api/access/pair-code` then answers 404. */
   pairCodes?: PairCodes;
-  /** Signed-in devices (Settings → Access). Absent in `createApp` and on a hosted box: the device routes then answer 404. */
+  /** Signed-in devices (Settings → Devices & access). Absent in `createApp` and on a hosted box: the device routes then answer 404. */
   devices?: DeviceStore;
-  /** Addresses a phone could use to reach this computer (Settings > Access). Absent in `createApp`: the route then answers empty lists. */
+  /** Addresses a phone could use to reach this computer (Settings > Devices & access). Absent in `createApp`: the route then answers empty lists. */
   reachableAddresses?: () => Promise<Reachable>;
   /** Cookie Path, for clearing a device's own cookie when it revokes itself. */
   cookiePath?: string;
@@ -145,6 +146,8 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/secrets', createSecretsRouter(d.secretsService, d.refreshPtyEnv));
   app.use('/api/settings/harnesses', createHarnessSettingsRouter(d.db, d.secretsService, d.refreshPtyEnv));
   app.use('/api/settings/telemetry', createTelemetrySettingsRouter(d.db));
+  app.use('/api/settings/dictation', createDictationSettingsRouter(d.db));
+  app.use('/api/settings/coordinator', createCoordinatorSettingsRouter(d.db));
   app.use('/api/settings/usage-limits', createUsageLimitSettingsRouter(d.db, { onChange: () => d.usageLimits?.onSettingsChange?.() }));
   app.use('/api/transcribe', createTranscribeRouter(new TranscriptionService(d.secretsService)));
   app.use('/api/setup', createSetupRouter(d.db, d.secretsService));

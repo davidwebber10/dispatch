@@ -1,5 +1,5 @@
 /**
- * OpenRouter's public model catalog, for the Settings → Harnesses → OpenCode "add a model"
+ * OpenRouter's public model catalog, for the Settings → Agents → OpenCode "add a model"
  * search. The catalog is ~450 ids and changes weekly, so it is fetched live (no key
  * needed — it is a public endpoint), cached in memory for an hour, and searched here
  * rather than shipped to the browser whole.

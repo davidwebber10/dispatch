@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
  * The sign-in page (network exposure spec, 7.6): inline, no assets, served with status 401.
  *
  * It is the first thing a phone sees, so it is a splash, not a bare form: the Dispatch mark, one
- * sentence, and two ways in. The main way is a sign-in code from Settings → Access on a device
+ * sentence, and two ways in. The main way is a sign-in code from Settings → Devices & access on a device
  * that is signed in, either scanned as a QR link (`#code=`) or typed; the other is the long
  * access token from `dispatch access`. The form is folded away behind "Enter a code" so the
  * page reads as one step. A `#code=` or `#access=` link signs in on load and shows "Signing in".
@@ -62,7 +62,7 @@ label.show input{width:auto;margin:0;letter-spacing:0}
 <div id="steps">
 <p>Connect this device to your Dispatch. On a device that is already signed in:</p>
 <ol>
-<li>Open <b>Settings → Access</b> and tap <b>Make a code</b>.</li>
+<li>Open <b>Settings → Devices &amp; access</b> and tap <b>Make a code</b>.</li>
 <li>Scan its QR code with this phone's camera and open the link.</li>
 </ol>
 <p>No camera? Type the code instead.</p>

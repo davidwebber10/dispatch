@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-import { row, item, Toggle } from './ui';
+import { sectionLabel, row, item, Toggle, Divider } from './ui';
 
-/** The last row of General: the anonymous usage stats switch (daemon setting). */
+/**
+ * Settings → About & updates: the anonymous usage stats switch (a daemon setting, so all devices).
+ * Renders nothing, divider and heading included, until the daemon answers.
+ */
 export function TelemetrySetting() {
   const [on, setOn] = useState<boolean | null>(null);
   useEffect(() => { api.getTelemetrySetting().then((s) => setOn(s.enabled)).catch(() => setOn(null)); }, []);
@@ -14,9 +17,15 @@ export function TelemetrySetting() {
   };
   if (on === null) return null;
   return (
-    <div style={row}>
-      <span style={item}>Send anonymous usage stats</span>
-      <Toggle on={on} onClick={flip} label="Send anonymous usage stats" />
-    </div>
+    <>
+      <Divider />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <span style={sectionLabel}>USAGE STATS</span>
+        <div style={row}>
+          <span style={item}>Send anonymous usage stats</span>
+          <Toggle on={on} onClick={flip} label="Send anonymous usage stats" />
+        </div>
+      </div>
+    </>
   );
 }

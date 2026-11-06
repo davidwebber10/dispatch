@@ -29,8 +29,8 @@
 //
 // Uses only app-global var(--color-*) tokens (never --tp/--ts/--elev/--acc/--border/--mono,
 // which are scoped to :where(.overseer-root) and resolve to nothing here) plus the mockup's own
-// literal column colors, per the plan's global constraints — same rule BoardCard.tsx and
-// ViewModeMiniature.tsx already follow, and this file reuses their exact palette. `--font-mono` is
+// literal column colors, per the plan's global constraints — the same rule BoardCard.tsx
+// already follows, and this file reuses its exact palette. `--font-mono` is
 // a real app-global token (theme.css, distinct from the forbidden scoped `--mono`), so the count
 // bar's numerals use it for the same monospace treatment the mockup gives them.
 
@@ -43,7 +43,7 @@ import type { BoardCardModel, BoardColumn } from './boardColumn';
 import { api } from '../../api/client';
 import { Spinner } from '../common/Spinner';
 
-// Same four literal colors as ViewModeMiniature.tsx / BoardCard.tsx's accents (kept local —
+// Same four literal colors as BoardCard.tsx's accents (kept local —
 // each board-adjacent file owns its own copy rather than sharing an import, per their comments).
 const BAND_COLOR: Record<BoardColumn, string> = {
   needs_help: '#e8b04b',

@@ -3,7 +3,7 @@ import { Key, Eye, EyeSlash, Copy, Check, Trash } from '@phosphor-icons/react';
 import { useSecrets } from '../../stores/secrets';
 import { api } from '../../api/client';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { pageLabel, summaryLine, ghostBtn, fieldInput, solidBtn, Toggle, SearchInput, HoverRow, IconGhost, Sheet } from './ui';
+import { sectionLabel, summaryLine, ghostBtn, fieldInput, solidBtn, Toggle, SearchInput, HoverRow, IconGhost, Sheet } from './ui';
 
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const mono: React.CSSProperties = { font: '400 11.5px var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -191,7 +191,7 @@ export function SecretsSection() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Key size={13} weight="fill" color="var(--color-text-tertiary)" />
-        <span style={pageLabel}>SECRETS (DOPPLER)</span>
+        <span style={sectionLabel}>SECRETS (DOPPLER)</span>
         <span style={{ flex: 1 }} />
         {connected && (
           <>
@@ -275,7 +275,7 @@ export function SecretsSection() {
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-              <span style={{ ...pageLabel, fontSize: 10, fontWeight: 600 }}>ADD VARIABLE</span>
+              <span style={sectionLabel}>ADD VARIABLE</span>
               {addForm(false)}
             </div>
           ))}

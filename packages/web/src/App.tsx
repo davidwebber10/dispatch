@@ -47,7 +47,7 @@ import { openDecisionCount } from './components/overseer/ledger';
 import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
-import { useSettings } from './stores/settings';
+import { useSettings, loadSharedSettings } from './stores/settings';
 import { useServers } from './stores/servers';
 import { useGroups } from './components/panes/store';
 import { useViewing } from './stores/viewing';
@@ -102,6 +102,7 @@ export default function App() {
     void useAgents.getState().loadSchedules();
     void useUsageLimits.getState().load();
     void useSpinnerWords.getState().load();
+    void loadSharedSettings();
     // Fetch the terminal's code once the app has settled, so the first CLI thread opens without a
     // spinner; it is split out of the startup script (LazyTerminalTab).
     const idle = (cb: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 2500));

@@ -25,7 +25,7 @@ code** button. There are two ways through it.
 
 **With a sign-in code (a phone):**
 
-1. On a device that is already signed in, open **Settings → Access** and tap **Make a code**.
+1. On a device that is already signed in, open **Settings → Devices & access** and tap **Make a code**.
    You get a code like `ABCD-EFGH` and a QR code. The code works once and lasts 5 minutes.
 2. Scan the QR code with the phone's camera and open the link. The phone signs in and the app
    opens. Or open Dispatch on the phone, tap **Enter a code**, and type the code.

@@ -6,7 +6,7 @@ import { useSettings } from '../../stores/settings';
 import { sectionLabel, row, solidBtn, ghostBtn, miniChip } from './ui';
 
 /**
- * Settings → Access: devices that receive push notifications.
+ * Settings → Notifications: devices that receive push notifications (all devices).
  *
  * Each row is a browser or phone that turned notifications on. Revoke removes that one subscription, so
  * the daemon stops sending to it. The list shows the push service host (for example web.push.apple.com),

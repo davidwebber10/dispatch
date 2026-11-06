@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 /**
  * Pairing codes (network exposure spec, 8.1, first slice): a short, one-time secret the owner
- * makes in Settings → Access and types, or scans as a QR link, on another device's sign-in page.
+ * makes in Settings → Devices & access and types, or scans as a QR link, on another device's sign-in page.
  * It stands in for the raw token on `POST /api/access/login`, so the token itself never has to
  * leave this computer or be read over the API.
  *

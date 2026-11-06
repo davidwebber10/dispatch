@@ -3,7 +3,6 @@ import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
-import { useSettings } from '../../stores/settings';
 import { useConnection } from '../../stores/connection';
 import { api } from '../../api/client';
 import * as sock from '../../api/structured-socket';
@@ -147,20 +146,22 @@ describe('MobileApp — Settings as a bottom-rail destination', () => {
     render(<MobileApp />);
     fireEvent.click(screen.getByText('Settings'));
     // The list is the level-0 screen: every section is offered.
-    expect(screen.getByText('Transcription')).toBeInTheDocument();
+    expect(screen.getByText('Dictation')).toBeInTheDocument();
     expect(screen.getByText('Secrets')).toBeInTheDocument();
+    // Grouped as YOU / AGENTS / THIS MAC.
+    for (const g of ['YOU', 'AGENTS', 'THIS MAC']) expect(screen.getByRole('region', { name: g })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText('Transcription'));
+    fireEvent.click(screen.getByText('Dictation'));
     // Drilling in pushes a history entry so back / edge-swipe walk out of it, and the
     // back button labels the screen it returns TO (iOS convention).
-    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'transcription' });
+    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'dictation' });
   });
 });
 
-// The Board mode (Settings → Appearance → Mobile view) swaps the level-0 "Projects" tab's
-// content for BoardMobile — no new bottom tab, so this is the only switch to test.
-describe('MobileApp — mobile view mode (Threads vs Board)', () => {
-  afterEach(() => { useSettings.setState({ mobileViewMode: 'threads' }); });
+// The old per-device "mobile view" setting (Threads vs Board) is gone. A Board choice saved
+// before it was removed must not change what the Projects tab shows.
+describe('MobileApp — an old saved Board view preference', () => {
+  afterEach(() => { localStorage.removeItem('dispatch:mobileViewMode'); });
 
   it("threads mode (default): renders the projects list, not the board", () => {
     useProjects.setState({ sessions: [] });
@@ -171,7 +172,7 @@ describe('MobileApp — mobile view mode (Threads vs Board)', () => {
   });
 
   it('a saved board preference falls back to the projects list', () => {
-    useSettings.setState({ mobileViewMode: 'board' });
+    localStorage.setItem('dispatch:mobileViewMode', JSON.stringify('board'));
     useProjects.setState({ sessions: [] });
     seedThreadAt('/', { type: 'shell', config: {} });
     render(<MobileApp />);
@@ -180,7 +181,7 @@ describe('MobileApp — mobile view mode (Threads vs Board)', () => {
   });
 
   it('a saved board preference still allows opening a thread through Projects', () => {
-    useSettings.setState({ mobileViewMode: 'board' });
+    localStorage.setItem('dispatch:mobileViewMode', JSON.stringify('board'));
     useProjects.setState({ sessions: [{ id: 's1', name: 'dispatch' } as any] });
     seedThreadAt('/', { type: 'shell', config: {} });
     useTabs.setState({

@@ -55,6 +55,9 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
+export interface DictationSettings { provider?: string; model?: string; secretName?: string; saved: boolean }
+export interface CoordinatorSettings { name?: string; saved: boolean }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiPath(path), {
     method: init?.method ?? 'GET',
@@ -216,15 +219,19 @@ export const api = {
   // defaults server-side to claude-code.
   ensureOverseerCoordinator: (sessionId: string, opts?: { model?: string; workerHarness?: string; coordinatorHarness?: string }) =>
     req<{ terminalId: string }>(`/api/sessions/${sessionId}/overseer/coordinator`, { method: 'POST', ...(opts && Object.keys(opts).length ? { body: body(opts) } : {}) }),
-  // The Control Plane worker matrix (per-agent-type harness/model) — plumbing, no UI yet.
-  putOverseerWorkers: (patch: { byType: Record<string, { harness?: string; model?: string } | null> }) =>
-    req<{ byType: Record<string, { harness?: string; model?: string }> }>('/api/settings/harnesses/overseer-workers', { method: 'PUT', body: body(patch) }),
 
   getSetupState: () => req<SetupState>(`/api/setup/state`),
   recheckProviders: (fresh?: boolean) => req<ProviderStatus[]>(`/api/setup/providers${fresh ? '?fresh=1' : ''}`),
 
   // Per-harness settings (server-backed — the daemon needs them at spawn time).
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
+  // Same on every device (daemon-stored). `saved` is false until the first PUT (stores/settings.ts loadSharedSettings).
+  getDictationSettings: () => req<DictationSettings>('/api/settings/dictation'),
+  putDictationSettings: (patch: Partial<Record<'provider' | 'model' | 'secretName', string | null>>) =>
+    req<DictationSettings>('/api/settings/dictation', { method: 'PUT', body: body(patch) }),
+  getCoordinatorSettings: () => req<CoordinatorSettings>('/api/settings/coordinator'),
+  putCoordinatorSettings: (patch: { name: string | null }) =>
+    req<CoordinatorSettings>('/api/settings/coordinator', { method: 'PUT', body: body(patch) }),
   getTelemetrySetting: () => req<{ enabled: boolean }>('/api/settings/telemetry'),
   setTelemetrySetting: (enabled: boolean) => req<{ enabled: boolean }>('/api/settings/telemetry', { method: 'PUT', body: body({ enabled }) }),
   putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null; skipAgentSummaries?: boolean | null; autoArchiveMs?: number | null; spinnerVerbs?: SpinnerVerbs | null; spinnerSets?: SpinnerSet[] | null }>) =>
@@ -388,10 +395,10 @@ export const api = {
     if (!res.ok) throw new ApiError(`GET preview file failed: ${res.status}`, res.status);
     return res.text();
   },
-  // A one-time sign-in code for another device (Settings → Access). 404 on a hosted box, where
+  // A one-time sign-in code for another device (Settings → Devices & access). 404 on a hosted box, where
   // there is no sign-in page to type it on.
   makePairCode: () => req<{ code: string; expiresAt: number }>('/api/access/pair-code', { method: 'POST' }),
-  // Signed-in devices (Settings → Access). 404 on a hosted box.
+  // Signed-in devices (Settings → Devices & access). 404 on a hosted box.
   // Addresses a phone could use to reach this computer (a browser on it only knows `localhost`). Owner only.
   getAccessAddresses: () => req<{ tailscale: string[]; lan: string[] }>('/api/access/addresses'),
   getDevices: () => req<DeviceList>('/api/access/devices'),
@@ -419,7 +426,7 @@ export const api = {
   // Push notifications
   getPushKey: () => req<{ publicKey: string }>('/api/push/key'),
   pushSubscribe: (deviceId: string, subscription: unknown) => req<{ ok: true }>('/api/push/subscribe', { method: 'POST', body: body({ deviceId, subscription }) }),
-  // Stored push subscriptions (Settings → Access). Owner only.
+  // Stored push subscriptions (Settings → Devices & access). Owner only.
   getPushSubscriptions: () => req<{ subscriptions: PushSubscriptionInfo[] }>('/api/push/subscriptions'),
   revokePushSubscription: (deviceId: string) => req<{ ok: true }>(`/api/push/subscriptions/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }),
   pushUnsubscribe: (deviceId: string) => req<{ ok: true }>('/api/push/unsubscribe', { method: 'POST', body: body({ deviceId }) }),

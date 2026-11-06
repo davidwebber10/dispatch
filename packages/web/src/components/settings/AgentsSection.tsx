@@ -3,24 +3,25 @@ import { CheckCircle, WarningCircle, X } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } from '../../api/types';
 import { HARNESSES } from '../../lib/harnesses';
-import { Toggle } from './ui';
+import { Toggle, sectionLabel, summaryLine, Divider } from './ui';
+import { useSettings } from '../../stores/settings';
 import { AutoArchiveField } from '../sidebar/AutoArchiveField';
 import { SpinnerWordsField } from './SpinnerWordsField';
 import { useSpinnerWords } from '../../stores/spinnerWords';
 
 /**
- * Per-harness defaults, stored on the DAEMON (not localStorage) because spawn-time
+ * Settings → Agents (formerly Harnesses): the Control Plane's name, then per-harness defaults. All of it is
+ * the same on every device. Per-harness defaults are stored on the DAEMON (not localStorage) because spawn-time
  * behavior depends on them: the opencode key secret resolves on respawn after a daemon
  * restart with no browser anywhere in the loop. Only settings that act are offered:
  * default model (all), default mode (the two-mode harnesses), and for OpenCode the
- * Doppler secret NAME holding the OpenRouter key — the transcription section's "your key
+ * Doppler secret NAME holding the OpenRouter key — the Dictation section's "your key
  * stays in Doppler" pattern, plus a live present/missing check and a replace-key field —
  * and the MODEL LIST the New Thread picker offers, curated from OpenRouter's catalog.
  * Every harness has a default auto-archive (off, or on at a deadline). Claude Code also has "Skip agent status summaries" (on unless turned off), which the daemon
  * applies to the next thread it starts.
  */
 
-const label = { fontSize: 11, fontWeight: 600, letterSpacing: 0.4, color: 'var(--color-text-tertiary)' } as const;
 const selectStyle = {
   height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
   borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
@@ -40,7 +41,41 @@ const ghostButton = {
 const shortId = (id: string) => (id.startsWith('openrouter/') ? id.slice('openrouter/'.length) : id);
 const formatContext = (n: number | null) => (n ? `${Math.round(n / 1000)}k ctx` : '');
 
-export function HarnessesSection() {
+/** The coordinator's display name (daemon-stored, see stores/settings.ts loadSharedSettings). */
+function ControlPlaneName() {
+  const coordinatorName = useSettings((s) => s.coordinatorName);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <span style={sectionLabel}>CONTROL PLANE</span>
+      <div style={rowStyle}>
+        <label htmlFor="control-plane-name" style={{ fontSize: 13 }}>Name</label>
+        <input
+          id="control-plane-name"
+          value={coordinatorName}
+          onChange={(e) => useSettings.getState().setCoordinatorName(e.target.value)}
+          placeholder="Control Plane"
+          aria-label="Control Plane name"
+          maxLength={60}
+          style={{ ...selectStyle, width: 200, boxSizing: 'border-box' }}
+        />
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Control Plane”.</div>
+    </div>
+  );
+}
+
+export function AgentsSection() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={summaryLine}>ALL DEVICES · everything here is the same on every device.</div>
+      <ControlPlaneName />
+      <Divider />
+      <HarnessDefaults />
+    </div>
+  );
+}
+
+function HarnessDefaults() {
   const [data, setData] = useState<HarnessSettingsResponse | null>(null);
   const [secretNames, setSecretNames] = useState<string[]>([]);
   const [secretsErr, setSecretsErr] = useState('');
@@ -51,7 +86,7 @@ export function HarnessesSection() {
   useEffect(() => {
     api.getHarnessSettings().then(setData).catch(() => setErr('Could not load harness settings.'));
     api.listSecrets().then((s) => setSecretNames(s.map((x) => x.name)))
-      .catch(() => setSecretsErr('Connect Doppler in the Secrets tab to choose a key secret.'));
+      .catch(() => setSecretsErr('Connect Doppler in Settings → Secrets.'));
   }, []);
 
   async function put(patch: Parameters<typeof api.putHarnessSettings>[0]) {
@@ -83,6 +118,7 @@ export function HarnessesSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <span style={sectionLabel}>DEFAULTS PER HARNESS</span>
       <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
         Defaults applied when you open the New Thread modal. The OpenRouter key itself stays in
         Doppler — Dispatch only stores which secret to use.
@@ -98,7 +134,7 @@ export function HarnessesSection() {
         const models: { label: string; model: string | null }[] = h.id === 'opencode' ? data.opencodeModels ?? [] : h.models;
         return (
           <div key={h.id} style={cardStyle}>
-            <span style={label}>{h.label.toUpperCase()}</span>
+            <span style={sectionLabel}>{h.label.toUpperCase()}</span>
 
             <div style={rowStyle}>
               <label htmlFor={`hm-${h.id}`} style={{ fontSize: 13 }}>Default model</label>

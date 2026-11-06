@@ -127,7 +127,7 @@ export function pushErrorMessage(code: string): string {
 }
 
 /**
- * The owner can revoke this device in Settings > Access > Notification devices, or the daemon can drop its row
+ * The owner can revoke this device in Settings > Notifications > Notification devices, or the daemon can drop its row
  * (a 410 from the push service). This browser would still think it is enrolled: its local switch stays on and
  * `ensurePushEnrolled` returns early, so it never receives an alert again and never asks to. This reads the daemon's
  * list, and if this device's row is gone, turns the switch off so the next "on" enrolls again.
