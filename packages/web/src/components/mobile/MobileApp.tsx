@@ -1,11 +1,12 @@
 import { appPath, href } from '../../lib/basePath';
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
 import { UsageChip } from '../layout/UsageChip';
+import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
@@ -120,11 +121,25 @@ export function MobileApp() {
   // The bottom bar's tabs. The Projects tab walks back one screen at a time from a thread
   // (thread → its project → the list), unless the Threads view is showing, where it goes
   // straight back to that list. Any other tab goes to the root with that tab showing.
+  // A thread left for another tab (Thread → Chat) comes back when you tap Threads/Projects again
+  // (2026-11-05), with the same back history it had: project then thread, or just the thread
+  // when it was opened from the Threads view.
+  const parked = useRef<{ projectId: string; tabId: string; viaProject: boolean } | null>(null);
   const onTab = (key: typeof bottomTab) => {
     if (key === 'projects' && bottomTab === 'projects' && level > 0) {
       if (projectsView === 'threads') toRoot();
       else history.back();
       return;
+    }
+    if (key === 'projects' && bottomTab !== 'projects' && level === 0 && parked.current) {
+      const p = parked.current;
+      parked.current = null;
+      setBottomTab('projects');
+      if (byProject[p.projectId]?.some((t) => t.id === p.tabId)) { reopenThread(p); return; }
+    }
+    if (bottomTab === 'projects' && key !== 'projects' && level === 2 && leaf === 'tab' && projectId && leafTabId) {
+      const depth = (history.state as { depth?: number } | null)?.depth ?? 2;
+      parked.current = { projectId, tabId: leafTabId, viaProject: depth >= 2 };
     }
     setBottomTab(key);
     toRoot();
@@ -152,6 +167,13 @@ export function MobileApp() {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
     pushNav({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
+  };
+  const reopenThread = (p: { projectId: string; tabId: string; viaProject: boolean }) => {
+    useProjects.getState().setActive(p.projectId); setProjectId(p.projectId);
+    if (p.viaProject) pushNav({ nav: 1, projectId: p.projectId }, '', href(`/p/${p.projectId}`));
+    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(p.tabId); setLeafTabId(p.tabId); setLeaf('tab'); setLevel(2);
+    setHighlightThreadId(p.tabId);
+    pushNav({ nav: 2, projectId: p.projectId, leaf: 'tab', tabId: p.tabId }, '', href(`/p/${p.projectId}/t/${p.tabId}`));
   };
   // Same pattern from the cross-project Threads view: seed the project, then jump
   // straight to the thread (back returns to the root, still on the Threads view).
@@ -195,6 +217,18 @@ export function MobileApp() {
     openProject(pendingProject);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingProject]);
+
+  // "Open Settings at this section" (the mic's "Set up" link): the Settings tab, then the section.
+  const pendingSettings = useUI((s) => s.pendingSettingsSection);
+  useEffect(() => {
+    if (!pendingSettings) return;
+    useUI.getState().clearSettingsRequest();
+    setBottomTab('settings');
+    toRoot();
+    // After the walk back to the root lands, push the section (one frame for the popstate).
+    setTimeout(() => openSettingsSection(pendingSettings as SettingsSectionKey), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSettings]);
 
   // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
   useEffect(() => {
@@ -283,7 +317,7 @@ export function MobileApp() {
               a project (its threads list and a thread), for terminal and Pretty threads alike. */}
           {level >= 1 && !inSettings && project && (
             <button type="button" aria-label="Previews" title="Previews" onClick={() => usePreviews.getState().openSheet(project.id)}
-              style={{ position: 'relative', width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
+              style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <Eye size={18} />
               <PreviewBadge count={unseenHere} />
             </button>

@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
@@ -19,6 +19,8 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   refreshCodex?: CodexRefresh;
   /** The usage gauge's summary (#127). Without it `/usage-limits/summary` answers 503. */
   summary?: () => UsageSummary;
+  /** Spend one of the provider's banked limit resets (Codex only). The backend's outcome, or null. */
+  useResetCredit?: (provider: string, creditId?: string) => Promise<string | null>;
 } = {}): Router {
   const accountFor = opts.accountFor ?? accountIdFor;
   const router = policyRouter();
@@ -28,6 +30,22 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   router.get('/usage-limits/summary', (_req, res) => {
     if (!opts.summary) { res.status(503).json({ error: 'usage gauge unavailable' }); return; }
     res.json(opts.summary());
+  });
+
+  /**
+   * POST /api/usage-limits/reset-credit { provider, creditId? }: spend one banked limit reset
+   * (2026-11-05): `creditId`, or the one that expires soonest.
+   * It spends something of the account's, so only the owner may.
+   * 200 { outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }, 502 when the
+   * provider could not be asked, 400 for a provider without banked resets.
+   */
+  router.post('/usage-limits/reset-credit', ownerOnlyStrict, async (req, res) => {
+    const provider = typeof req.body?.provider === 'string' ? req.body.provider : '';
+    if (provider !== 'codex' || !opts.useResetCredit) { res.status(400).json({ error: 'this provider has no banked resets' }); return; }
+    const creditId = typeof req.body?.creditId === 'string' && req.body.creditId ? req.body.creditId : undefined;
+    const outcome = await opts.useResetCredit(provider, creditId);
+    if (outcome === null) { res.status(502).json({ error: 'Codex could not be asked' }); return; }
+    res.json({ outcome });
   });
 
   router.get('/usage-limits', (req, res) => {

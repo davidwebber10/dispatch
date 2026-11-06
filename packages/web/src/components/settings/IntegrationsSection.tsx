@@ -170,7 +170,7 @@ export function IntegrationsSection() {
       {isMobile ? (
         <>
           <button onClick={() => setSheet(true)} style={{ ...solidBtn(true), width: '100%', marginTop: 4 }}>Add server</button>
-          <Sheet open={sheet} onClose={() => setSheet(false)} title="ADD A SERVER">{addForm(true)}</Sheet>
+          <Sheet open={sheet} onClose={() => setSheet(false)} title="Add a server">{addForm(true)}</Sheet>
         </>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>

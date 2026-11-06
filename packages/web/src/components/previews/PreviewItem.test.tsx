@@ -21,7 +21,9 @@ describe('<PreviewItem>', () => {
   it('shows the title, context, note, the text with Copy, and a chip per file', async () => {
     render(<PreviewItem preview={base} />);
     expect(screen.getByText('The fix')).toBeInTheDocument();
-    expect(screen.getByText(/Alpha · Worker A ·/)).toBeInTheDocument();
+    expect(screen.getByText('Alpha · Worker A')).toBeInTheDocument();
+    expect(screen.getByTestId('preview-when').textContent).toMatch(/^Today \d/);
+    expect(screen.getByLabelText('New')).toBeInTheDocument(); // not viewed yet
     expect(screen.getByText('after the rebuild')).toBeInTheDocument();
     expect(screen.getByTestId('preview-text')).toHaveTextContent('npm run build');
     fireEvent.click(screen.getByRole('button', { name: 'Copy text' }));
@@ -63,4 +65,15 @@ describe('<PreviewItem>', () => {
     expect(previewFileKind({ mime: 'text/markdown' })).toBe('markdown');
     expect(previewFileKind({ mime: 'application/json' })).toBe('text');
   });
+
+  it('shows images as pictures to tap, and other files as chips', () => {
+    render(<PreviewItem preview={base} />);
+    const thumbs = screen.getByTestId('preview-thumbs');
+    const img = thumbs.querySelector('img')!;
+    expect(img.getAttribute('src')).toContain('/api/previews/pv1/files/0');
+    expect(screen.getByRole('button', { name: 'Open shot.png' })).toBeInTheDocument();
+    expect(thumbs.textContent).not.toContain('report.pdf');
+    expect(screen.getByRole('button', { name: /report\.pdf/ })).toBeInTheDocument();
+  });
 });
+

@@ -6,6 +6,7 @@
  * desktop modal and the mobile full-screen settings screens render identically.
  */
 
+import { Modal } from '../common/Modal';
 import { useState } from 'react';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
@@ -89,17 +90,12 @@ export function IconGhost({ title, onClick, active, danger, children }: { title:
   );
 }
 
+/** The settings' add-item sheet: the app's one shared slide-up sheet (common/Modal), sentence-case title. */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title?: string; children: React.ReactNode }) {
-  if (!open) return null;
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-      <style>{'@keyframes dispatch-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }'}</style>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--color-elevated)', borderRadius: 'var(--radius-xl) var(--radius-xl) 0 0', padding: '16px 16px calc(16px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '85dvh', overflowY: 'auto', animation: 'dispatch-sheet-up .18s ease-out' }}>
-        {title && <span style={{ ...pageLabel, marginBottom: 2 }}>{title}</span>}
-        {children}
-      </div>
-    </div>
+    <Modal open={open} sheet title={title} onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
+    </Modal>
   );
 }
 

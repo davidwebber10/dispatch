@@ -237,6 +237,8 @@ export const api = {
   installProvider: (name: ProviderName) => req<InstallResult>(`/api/setup/install/${name}`, { method: 'POST' }),
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
+  /** Spend one banked limit reset (Codex). Owner only. */
+  useResetCredit: (provider: string, creditId?: string) => req<{ outcome: string }>('/api/usage-limits/reset-credit', { method: 'POST', body: JSON.stringify(creditId ? { provider, creditId } : { provider }) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
   resetTerminalStatus: (id: string) => req<void>(`/api/terminals/${id}/reset-status`, { method: 'POST' }),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),

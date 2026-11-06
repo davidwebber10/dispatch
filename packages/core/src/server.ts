@@ -83,6 +83,8 @@ import { accountIdFor, tokenAccountId } from './limits/account.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { UsageGauge } from './limits/gauge.js';
 import { createCodexRefresh } from './limits/codex-refresh.js';
+import { createCodexPoll } from './limits/codex-poll.js';
+import { createClaudeProbe } from './limits/claude-probe.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
@@ -636,7 +638,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // The usage gauge (#127): the header chip, the paused banner and the one-push-per-window warning.
   // It hears every recorded snapshot and every pause change, and refreshes Codex on its own tick.
   const refreshCodex = createCodexRefresh(limitSnapshots, { accountFor: limitAccount });
-  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex });
+  // With no Codex thread active lately, ask Codex itself (codex-poll.ts), signed in as a thread is.
+  const pollCodex = createCodexPoll({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
+  // Claude's figures for CLI-only use: a tiny background turn when they go stale (claude-probe.ts).
+  const probeClaude = createClaudeProbe({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex, pollCodex, codexCredits: () => pollCodex.credits(), probeClaude });
   limitSnapshots.addRecordListener((provider) => usageGauge.onRecord(provider));
   usageLimits.addChangeListener(() => usageGauge.pausesChanged());
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
@@ -843,7 +849,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
-    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged() },
+    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId) : Promise.resolve(null)) },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 

@@ -1,3 +1,4 @@
+import { HEADER_BOX, HEADER_INNER, HEADER_PAD } from './headerButton';
 import { useState } from 'react';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
@@ -42,7 +43,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
     }
   }
 
-  const dim = floating ? { w: 46, h: 32, radius: 'var(--radius-md)', pad: 3, font: 11 } : { w: 40, h: 24, radius: 'var(--radius-sm)', pad: 2, font: 10.5 };
+  const dim = floating ? { w: 46, h: 32, radius: 'var(--radius-md)', pad: 3, font: 11 } : { w: 40, h: HEADER_INNER, radius: 'var(--radius-sm)', pad: HEADER_PAD, font: 11 };
   const opts: ['cli' | 'pretty', string][] = [['cli', 'CLI'], ['pretty', 'Pretty']];
   const tip = !tab.externalId
     ? 'Send a message first to enable switching'
@@ -57,9 +58,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
       title={tip}
       style={{
         display: 'flex', gap: 2, padding: dim.pad,
-        borderRadius: floating ? 'var(--radius-lg)' : 'var(--radius-md)',
-        background: floating ? 'rgba(22,22,26,0.55)' : 'var(--color-elevated)',
-        border: floating ? '1px solid rgba(255,255,255,0.10)' : '1px solid #2C2C32',
+        ...(floating ? { borderRadius: 'var(--radius-lg)', background: 'rgba(22,22,26,0.55)', border: '1px solid rgba(255,255,255,0.10)' } : HEADER_BOX),
         // Grey the whole control whenever switching is unavailable (mid-turn, or no session
         // yet) — not just during the brief in-flight switch — so "you can't switch right now"
         // is obvious without hovering for the tooltip.

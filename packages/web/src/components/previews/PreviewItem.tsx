@@ -5,6 +5,7 @@ import type { Preview, PreviewFile } from '../../api/types';
 import { api, previewFileUrl } from '../../api/client';
 import { ImageLightbox } from '../ChatImage';
 import { Markdown } from '../Markdown';
+import { Modal } from '../common/Modal';
 
 /**
  * One preview, the same on the phone's sheet and the desktop view: title, context line, note,
@@ -37,13 +38,15 @@ export async function copyText(text: string): Promise<boolean> {
   } catch { return false; }
 }
 
-const timeOf = (iso: string): string => {
+/** "Today 9:46 PM", "Yesterday 9:46 PM", or "Nov 4, 9:46 PM". */
+export const timeOf = (iso: string, now: Date = new Date()): string => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
   const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  return sameDay ? t : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${t}`;
+  if (d.toDateString() === now.toDateString()) return `Today ${t}`;
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return `Yesterday ${t}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${t}`;
 };
 
 const fmtSize = (n: number): string => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
@@ -76,29 +79,17 @@ function TextFileOverlay({ preview, k, onClose }: { preview: Preview; k: number;
     api.previewFileText(preview.id, k).then((t) => { if (on) setBody(t); }).catch(() => { if (on) setError('Could not load the file.'); });
     return () => { on = false; };
   }, [preview.id, k]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
   const kind = previewFileKind(file);
+  // The app's shared slide-up sheet, wide enough to read in; Copy sits above the text.
   return (
-    <div role="dialog" aria-label={file.name} onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 820, maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderRadius: 'var(--radius-xl) var(--radius-xl) 0 0', border: '1px solid var(--color-border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--color-border)' }}>
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600, fontSize: 14 }}>{file.name}</span>
-          {body !== null && <CopyButton text={body} />}
-          <button type="button" aria-label="Close" onClick={onClose} style={{ ...chipStyle, height: 30, width: 30, padding: 0, justifyContent: 'center' }}><X size={14} weight="bold" /></button>
-        </div>
-        <div style={{ overflow: 'auto', padding: '14px 16px calc(14px + env(safe-area-inset-bottom))', minHeight: 120 }}>
-          {error && <div role="alert" style={{ color: 'var(--color-status-red)', fontSize: 13 }}>{error}</div>}
-          {body === null && !error && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading…</div>}
-          {body !== null && (kind === 'markdown'
-            ? <Markdown source={body} />
-            : <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)' }}>{body}</pre>)}
-        </div>
-      </div>
-    </div>
+    <Modal open sheet title={file.name} maxWidth={820} onClose={onClose}>
+      {body !== null && <div style={{ marginBottom: 10 }}><CopyButton text={body} /></div>}
+      {error && <div role="alert" style={{ color: 'var(--color-status-red)', fontSize: 13 }}>{error}</div>}
+      {body === null && !error && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading…</div>}
+      {body !== null && (kind === 'markdown'
+        ? <Markdown source={body} />
+        : <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)' }}>{body}</pre>)}
+    </Modal>
   );
 }
 
@@ -115,16 +106,22 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
     else setReader(k);
   };
 
-  const context = [showProject ? preview.sessionName : null, preview.terminalLabel, timeOf(preview.createdAt)].filter(Boolean).join(' · ');
+  // The thread it came from; the date and time sit on their own beside the title, never cut off.
+  const context = [showProject ? preview.sessionName : null, preview.terminalLabel].filter(Boolean).join(' · ');
+  const when = timeOf(preview.createdAt);
 
   return (
     <div data-testid="preview-item" data-unseen={unseen ? 'true' : undefined}
       style={{ display: 'flex', flexDirection: 'column', gap: 9, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        {unseen && <span aria-label="New" title="New" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-accent)', marginTop: 7, flexShrink: 0 }} />}
+        {unseen && <span aria-label="New" title="Not viewed yet" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', marginTop: 6, flexShrink: 0 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{preview.title}</div>
-          {context && <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', marginTop: 2 }}>{context}</div>}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{preview.title}</span>
+            {when && <span data-testid="preview-when" style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: unseen ? 'var(--color-accent)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{when}</span>}
+          </div>
+          {/* One short line: a long thread name is cut, never wrapped. */}
+          {context && <div title={context} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{context}</div>}
         </div>
         {onDelete && (
           <button type="button" aria-label="Delete preview" title="Delete" onClick={() => onDelete(preview.id)}
@@ -140,17 +137,31 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
           <div><CopyButton text={preview.text} label="Copy text" /></div>
         </div>
       )}
-      {preview.files.length > 0 && (
+      {/* Images are shown as pictures (tap to open); other files are compact chips. */}
+      {preview.files.some((f) => previewFileKind(f) === 'image') && (
+        <div data-testid="preview-thumbs" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
+          {preview.files.map((f, k) => previewFileKind(f) !== 'image' ? null : (
+            <button key={k} type="button" onClick={() => open(k)} aria-label={`Open ${f.name}`} title={`${f.name} · ${fmtSize(f.size)}`}
+              style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 0, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left', minWidth: 0 }}>
+              <img src={previewFileUrl(preview.id, k)} alt="" loading="lazy"
+                style={{ width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' }} />
+              <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {preview.files.some((f) => previewFileKind(f) !== 'image') && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {preview.files.map((f, k) => {
             const kind = previewFileKind(f);
+            if (kind === 'image') return null;
             const I = KIND_ICON[kind];
             const external = kind === 'pdf' || kind === 'html';
             return (
               <button key={k} type="button" onClick={() => open(k)} title={`${f.name} · ${fmtSize(f.size)}`} style={chipStyle}>
                 <I size={16} style={{ flexShrink: 0 }} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                {external ? <ArrowSquareOut size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} /> : kind !== 'image' ? <Code size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} /> : null}
+                {external ? <ArrowSquareOut size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} /> : <Code size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />}
               </button>
             );
           })}

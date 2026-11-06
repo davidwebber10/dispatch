@@ -122,7 +122,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
         '@keyframes dispatch-modal-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }'
         + ' @media (prefers-reduced-motion: reduce) { [data-testid="sheet-panel"] { animation: none !important; transition: none !important; } }'
       }</style>}
-      <div ref={panelRef} data-testid={sheet ? 'sheet-panel' : undefined} onClick={(e) => e.stopPropagation()} style={sheet ? {
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} data-testid={sheet ? 'sheet-panel' : undefined} onClick={(e) => e.stopPropagation()} style={sheet ? {
         width: '100%', marginTop: 'auto', flexShrink: 0, boxSizing: 'border-box',
         background: '#18181B', borderTop: '1px solid #2F2F35', borderRadius: 'var(--radius-2xl) var(--radius-2xl) 0 0',
         padding: '0 16px calc(16px + env(safe-area-inset-bottom))',

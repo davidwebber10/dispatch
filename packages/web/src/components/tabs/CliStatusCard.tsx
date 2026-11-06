@@ -5,6 +5,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { DismissableStatusNotice } from './chat/StatusNotice';
 import { reportStatusKey } from './chat/reportStatus';
 import { useDismissedNotices } from '../../stores/dismissedNotices';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 /**
  * The latest DECLARED turn outcome (`config.lastOutcome`, stamped by report_status),
@@ -26,6 +27,7 @@ import { useDismissedNotices } from '../../stores/dismissedNotices';
  *   a reload.
  */
 export function CliStatusCard({ tab }: { tab: Terminal }) {
+  const isMobile = useIsMobile();
   const threadStatus = useThreadStatus((s) => s.byTerminal[tab.id]?.threadStatus);
   const [outcome, setOutcome] = useState<unknown>((tab.config as Record<string, unknown> | undefined)?.lastOutcome);
   const working = threadStatus === 'working' || threadStatus === 'starting';
@@ -55,9 +57,10 @@ export function CliStatusCard({ tab }: { tab: Terminal }) {
       data-testid="cli-status-card"
       data-last-turn={working ? 'true' : undefined}
       title={working ? 'Last turn' : undefined}
-      style={{ padding: '6px 12px 8px', flexShrink: 0, opacity: working ? 0.55 : undefined }}
+      style={{ padding: isMobile ? '6px 8px 8px' : '6px 12px 8px', flexShrink: 0, opacity: working ? 0.55 : undefined }}
     >
-      <DismissableStatusNotice scope={tab.id} input={input} />
+      {/* On a phone it sits between the terminal card and the composer: same 8px sides, same radius. */}
+      <DismissableStatusNotice scope={tab.id} input={input} radius={isMobile ? 'var(--radius-xl)' : undefined} />
     </div>
   );
 }

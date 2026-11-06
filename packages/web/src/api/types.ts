@@ -477,7 +477,9 @@ export interface UpdateProgress {
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
 export interface ClaudeLoginSession { id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string }
 /** One usage-limit window; `usedPercent` is null when the provider gave a reset time but no figure. */
-export interface LimitWindow { usedPercent: number | null; resetsAt: number | null }
+/** The daemon's run-out estimate for a window (core limits/forecast.ts): the recent pace projected to 100%. */
+export interface LimitForecast { runsOutAt: number | null; lastsUntilReset: boolean; basisHours: number }
+export interface LimitWindow { usedPercent: number | null; resetsAt: number | null; forecast?: LimitForecast }
 /** GET /api/usage-limits — the account's limit figures for a thread's provider, plus its pause. */
 export interface ThreadUsageLimits {
   provider: string;
@@ -488,7 +490,11 @@ export interface ThreadUsageLimits {
 }
 
 /** One provider in the usage gauge (#127): the current account's windows, percents as integers. */
-export interface UsageSummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow> }
+/** Banked limit resets the account can spend (Codex's reset credits). */
+export interface ResetCredit { id: string; expiresAt: number | null; title: string | null }
+/** Soonest-expiring first; `available` can exceed the list (the backend caps it). */
+export interface ResetCredits { available: number; nextExpiresAt: number | null; credits?: ResetCredit[] }
+export interface UsageSummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow>; resetCredits?: ResetCredits }
 /** Threads of one provider stopped on a limit, for the paused banner. */
 export interface UsagePausedGroup {
   provider: string;

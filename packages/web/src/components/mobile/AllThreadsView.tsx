@@ -8,6 +8,7 @@ import { Spinner } from '../common/Spinner';
 import { SwipeRow } from '../common/SwipeRow';
 import { ThreadRow } from '../sidebar/ProjectCard';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
+import { ArchivedThreadsList } from './ArchivedThreadsList';
 
 const FILTER_KEY = 'dispatch:mobileThreadsProject';
 const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
@@ -23,6 +24,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'active' | 'archived'>('active');
   const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
   const [filter, setFilter] = useState<string | null>(() => { try { return localStorage.getItem(FILTER_KEY); } catch { return null; } });
   useEffect(() => { try { if (filter) localStorage.setItem(FILTER_KEY, filter); else localStorage.removeItem(FILTER_KEY); } catch { /* ignore */ } }, [filter]);
@@ -60,15 +62,27 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
     fontSize: 13, fontWeight: on ? 600 : 500, whiteSpace: 'nowrap' as const, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis',
   });
 
+  // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
+  const tabBtn = (on: boolean): React.CSSProperties => ({
+    padding: '8px 2px 7px', background: 'transparent', border: 'none', cursor: 'pointer', marginBottom: -1,
+    borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
+    color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: '700 12.5px var(--font-mono)', letterSpacing: '1px',
+  });
+  const chipProjects = tab === 'archived' ? projects : withThreads;
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div role="tablist" aria-label="Thread list" style={{ display: 'flex', gap: 18, padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
+        <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
+        <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
+      </div>
       <div role="group" aria-label="Project filter" style={{ display: 'flex', gap: 6, padding: '8px 12px 6px', overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
         <button type="button" aria-pressed={active === null} onClick={() => setFilter(null)} style={chip(active === null)}>All</button>
-        {withThreads.map((p) => (
+        {chipProjects.map((p) => (
           <button key={p.id} type="button" aria-pressed={active === p.id} onClick={() => setFilter(p.id)} style={chip(active === p.id)}>{p.name}</button>
         ))}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
+        {tab === 'archived' ? <ArchivedThreadsList project={active} query={query} onOpenThread={onOpenThread} /> : <>
         {loading && !threads.length && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>}
         {!loading && !threads.length && (
           <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5, lineHeight: 1.6 }}>
@@ -87,6 +101,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
               onContext={(x, y) => setMenu({ tab: t, x, y })} />
           </SwipeRow>
         ))}
+        </>}
       </div>
       <ThreadMenu at={menu} onClose={() => setMenu(null)} onBranched={(b) => onOpenThread(b.sessionId, b.id)} />
     </div>

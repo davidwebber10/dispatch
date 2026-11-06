@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
@@ -219,4 +219,20 @@ describe('MobileApp bottom tab bar on a thread', () => {
     expect(back).not.toHaveBeenCalled();
     localStorage.removeItem('dispatch:mobileProjectsView');
   });
+
+  it('Thread → Chat → Threads comes back to that thread, with its project under it in the back history', () => {
+    localStorage.removeItem('dispatch:mobileProjectsView');
+    seedThreadAt('/p/s1/t/t1', { type: 'shell', config: {} });
+    vi.spyOn(history, 'go').mockImplementation(() => {});
+    render(<MobileApp />);
+    fireEvent.click(tab('Chat'));
+    act(() => { window.dispatchEvent(new PopStateEvent('popstate', { state: { nav: 0, depth: 0 } })); }); // the walk back landed
+    const push = vi.spyOn(history, 'pushState');
+    fireEvent.click(tab('Projects'));
+    expect(push.mock.calls.map((c) => c[0])).toEqual([
+      expect.objectContaining({ nav: 1, projectId: 's1' }),
+      expect.objectContaining({ nav: 2, projectId: 's1', leaf: 'tab', tabId: 't1' }),
+    ]);
+  });
 });
+

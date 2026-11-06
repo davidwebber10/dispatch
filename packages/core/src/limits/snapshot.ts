@@ -22,9 +22,12 @@ export interface ProviderLimits {
   figureAt?: Record<string, number>;
 }
 
+import { addSamples, type ProviderHistory, type Sample } from './forecast.js';
+
 const KEY = 'usage_limit_snapshots';
 // Full precision (to 6 decimals, which only removes float noise): 0.9996 is 99.96, not 100. Display rounding happens later.
 const pct = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v * 1e8) / 1e6)) : null);
+const HISTORY_KEY = 'usage_limit_history';
 const ms = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v * 1000 : null);
 
 /**
@@ -68,12 +71,21 @@ export function parseCodexRateLimits(rl: any): { windows: LimitWindows; plan?: s
 export class LimitSnapshots {
   private byProvider: Record<string, ProviderLimits> = {};
   private recordListeners: ((provider: string) => void)[] = [];
+  /** A short per-limit history for the run-out estimate (forecast.ts). */
+  private historyByProvider: Record<string, ProviderHistory> = {};
 
   /** Told after a report changed a provider's snapshot (the usage gauge, #127). */
   addRecordListener(fn: (provider: string) => void): void { this.recordListeners.push(fn); }
 
   constructor(private readonly db: Database.Database) {
     try { this.byProvider = JSON.parse(appState.get(db, KEY) ?? '{}') ?? {}; } catch { this.byProvider = {}; }
+    try { this.historyByProvider = JSON.parse(appState.get(db, HISTORY_KEY) ?? '{}') ?? {}; } catch { this.historyByProvider = {}; }
+  }
+
+  /** The provider's samples per limit, only for exactly `account`. */
+  history(provider: string, account: string): Record<string, Sample[]> {
+    const h = this.historyByProvider[provider];
+    return h && h.account === account ? h.windows : {};
   }
 
   /** The provider's snapshot, only if it came from exactly `account` (an unknown id '' is an account of its own). */
@@ -110,6 +122,8 @@ export class LimitSnapshots {
     // asOf moves only for a real new figure (the first report of an account starts it at `now` either way).
     this.byProvider[provider] = { account, asOf: realFigure || !prior ? now : prior.asOf, plan: plan ?? prior?.plan, windows: merged, figureAt };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
+    this.historyByProvider[provider] = addSamples(this.historyByProvider[provider], account, windows, now);
+    try { appState.set(this.db, HISTORY_KEY, JSON.stringify(this.historyByProvider)); } catch (err) { console.warn('[usage-limit] could not save the history:', err); }
     for (const fn of this.recordListeners) {
       try { fn(provider); } catch (err) { console.warn('[usage-limit] a snapshot listener failed:', err); }
     }

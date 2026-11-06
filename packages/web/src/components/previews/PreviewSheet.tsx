@@ -1,34 +1,39 @@
 import { useEffect } from 'react';
-import { Sheet } from '../settings/ui';
+import { Modal } from '../common/Modal';
 import { usePreviews } from '../../stores/previews';
 import { useProjects } from '../../stores/projects';
 import { PreviewItem } from './PreviewItem';
 
 /**
  * The project's previews in a bottom sheet (the phone's Previews key next to esc, and the
- * thread header's Previews button; desktop can open it too). Everything shown is marked seen.
+ * thread header's Previews button; desktop can open it too). Everything shown is marked seen when
+ * the sheet closes.
  */
 export function PreviewSheet() {
   const sessionId = usePreviews((s) => s.sheet);
   const items = usePreviews((s) => s.items);
   const loaded = usePreviews((s) => s.loaded);
   const projectName = useProjects((s) => s.sessions.find((x) => x.id === sessionId)?.name ?? null);
+  // Load on open; mark seen on CLOSE, not open, so the unviewed dots show while you look.
   useEffect(() => {
     if (!sessionId) return;
     void usePreviews.getState().load();
-    void usePreviews.getState().markAllSeen(sessionId);
+    return () => { void usePreviews.getState().markAllSeen(sessionId); };
   }, [sessionId]);
   if (!sessionId) return null;
   const mine = items.filter((p) => p.sessionId === sessionId);
   return (
-    <Sheet open onClose={() => usePreviews.getState().closeSheet()} title={projectName ? `PREVIEWS · ${projectName.toUpperCase()}` : 'PREVIEWS'}>
+    // The shared slide-up sheet (common/Modal), like Usage and Thread details.
+    <Modal open sheet title={projectName ? `Previews · ${projectName}` : 'Previews'} onClose={() => usePreviews.getState().closeSheet()}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 6 }}>
       {mine.length === 0 && (
         <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0 14px' }}>
           {loaded ? 'Nothing here yet. A thread can hand you files and text with its preview tool.' : 'Loading…'}
         </div>
       )}
       {mine.map((p) => <PreviewItem key={p.id} preview={p} showProject={false} onDelete={(id) => void usePreviews.getState().remove(id)} />)}
-    </Sheet>
+      </div>
+    </Modal>
   );
 }
 

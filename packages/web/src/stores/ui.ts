@@ -51,6 +51,10 @@ export const useUI = create<{
   pendingOpenProject: string | null;
   requestOpenProject: (id: string) => void;
   clearOpenProject: () => void;
+  /** Cross-shell "open Settings at this section" intent (the mic's "Set up" link). */
+  pendingSettingsSection: string | null;
+  requestSettings: (section: string) => void;
+  clearSettingsRequest: () => void;
 }>((set, get) => ({
   view: loadView(),
   setView: (requested) => { const view = requested === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
@@ -71,4 +75,7 @@ export const useUI = create<{
   pendingOpenProject: null,
   requestOpenProject: (id) => set({ pendingOpenProject: id }),
   clearOpenProject: () => set({ pendingOpenProject: null }),
+  pendingSettingsSection: null,
+  requestSettings: (section) => { saveView('settings'); set({ view: 'settings', pendingSettingsSection: section }); },
+  clearSettingsRequest: () => set({ pendingSettingsSection: null }),
 }));

@@ -60,7 +60,8 @@ const STATE_STYLES: Record<'done' | 'needs_you' | 'blocked', StateStyle> = {
  *  (2026-10-27: the cards are tall and a long thread stacks many of them; once read they are
  *  clutter). The card itself is stateless — the caller decides what "closed" means; see
  *  <DismissableStatusNotice> for the persisted default every surface uses. */
-export function StatusNotice({ input, renderText, onDismiss }: { input?: string; renderText?: (text: string) => ReactNode; onDismiss?: () => void }) {
+/** `radius`: a card is lg; beside the phone's terminal card and composer (both xl) it matches them. */
+export function StatusNotice({ input, renderText, onDismiss, radius = 'var(--radius-lg)' }: { input?: string; renderText?: (text: string) => ReactNode; onDismiss?: () => void; radius?: string }) {
   const rs = parseReportStatus(input);
   if (!rs) return null;
 
@@ -98,7 +99,7 @@ export function StatusNotice({ input, renderText, onDismiss }: { input?: string;
         borderStyle: 'solid',
         borderColor: style.border,
         background: style.background,
-        borderRadius: 'var(--radius-sm)',
+        borderRadius: radius,
         padding: '12px 13px',
         minWidth: 0,
       }}
@@ -148,11 +149,11 @@ export function StatusNotice({ input, renderText, onDismiss }: { input?: string;
  * identically-worded "Done" in another. Renders nothing once dismissed. Used from the plain
  * render functions (renderTimeline / renderStream) that cannot call hooks themselves.
  */
-export function DismissableStatusNotice({ scope, input, renderText }: { scope?: string; input?: string; renderText?: (text: string) => ReactNode }) {
+export function DismissableStatusNotice({ scope, input, renderText, radius }: { scope?: string; input?: string; renderText?: (text: string) => ReactNode; radius?: string }) {
   const key = reportStatusKey(input);
   const sc = scope ?? 'global';
   const dismissed = useDismissedNotices((s) => key != null && s.keys.includes(`${sc}:${key}`));
   const dismiss = useDismissedNotices((s) => s.dismiss);
   if (dismissed) return null;
-  return <StatusNotice input={input} renderText={renderText} onDismiss={key ? () => dismiss(sc, key) : undefined} />;
+  return <StatusNotice input={input} renderText={renderText} radius={radius} onDismiss={key ? () => dismiss(sc, key) : undefined} />;
 }
