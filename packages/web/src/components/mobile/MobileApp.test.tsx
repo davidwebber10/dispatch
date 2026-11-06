@@ -57,49 +57,70 @@ afterEach(() => {
   window.history.pushState({}, '', '/');
 });
 
-describe('MobileApp header — CLI ⇄ Pretty transport switch', () => {
-  it('renders the TransportToggle for a Pretty (structured) claude-code thread', () => {
+describe('MobileApp thread header (2026-11-06, option C)', () => {
+  const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Thread menu' }));
+
+  it('titles the header with the thread, and its project and mode underneath', () => {
+    seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', label: 'Fix the login', config: { transport: 'structured' } } as any);
+    render(<MobileApp />);
+    const title = screen.getByTestId('thread-title');
+    expect(title.textContent).toContain('Fix the login');
+    expect(title.textContent).toContain('Pretty');
+  });
+
+  it('the CLI ⇄ Pretty switch and Previews are in the ⋯ menu, not the header', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj' } as any] });
     seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: { transport: 'structured' } });
     render(<MobileApp />);
-    const group = screen.getByRole('group', { name: 'Transport' });
-    expect(group).toBeInTheDocument();
-    // Both segments are offered, so the thread can be switched back to CLI from a phone.
-    expect(screen.getByRole('button', { name: /^CLI$/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Pretty$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
+    openMenu();
+    expect(screen.getByRole('button', { name: /Switch to CLI/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Previews/ })).toBeInTheDocument();
   });
 
-  it('renders it for a CLI claude-code thread too (both transports get the switch)', () => {
+  it('a CLI thread offers Switch to Pretty', () => {
     seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: {} });
     render(<MobileApp />);
-    expect(screen.getByRole('group', { name: 'Transport' })).toBeInTheDocument();
+    openMenu();
+    expect(screen.getByRole('button', { name: /Switch to Pretty/ })).toBeInTheDocument();
   });
 
-  it('renders nothing for a non-AI (shell) thread — TransportToggle self-gates', () => {
+  it('a shell thread has no mode to switch', () => {
     seedThreadAt('/p/s1/t/t1', { type: 'shell', externalId: 'e1', config: {} });
     render(<MobileApp />);
-    expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
+    openMenu();
+    expect(screen.queryByRole('button', { name: /Switch to/ })).not.toBeInTheDocument();
   });
 
-  it('renders nothing on the project list (no thread selected)', () => {
+  it('no thread menu on the project list', () => {
     seedThreadAt('/', { type: 'claude-code', externalId: 'e1', config: { transport: 'structured' } });
     render(<MobileApp />);
-    expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thread menu' })).not.toBeInTheDocument();
   });
 });
 
-describe('MobileApp — Grok thread chrome', () => {
-  beforeEach(() => { useConnection.setState({ status: 'open' }); });
-
-  it('hides the Connected overlay on a Grok thread so it does not sit on the TUI header', () => {
-    seedThreadAt('/p/s1/t/t1', { type: 'grok', externalId: 'e1', config: {} });
+describe('MobileApp — connection label on a thread', () => {
+  it('a healthy connection shows no label', () => {
+    useConnection.setState({ status: 'open', everOpen: true } as any);
+    seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: {} });
     render(<MobileApp />);
     expect(screen.queryByText('Connected')).not.toBeInTheDocument();
   });
 
-  it('keeps the Connected overlay on a Claude CLI thread', () => {
-    seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: {} });
-    render(<MobileApp />);
-    expect(screen.getByText('Connected')).toBeInTheDocument();
+  it('a real drop shows Reconnecting, but not on a Grok thread', () => {
+    vi.useFakeTimers();
+    try {
+      useConnection.setState({ status: 'closed', everOpen: true } as any);
+      seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: {} });
+      const { unmount } = render(<MobileApp />);
+      act(() => { vi.advanceTimersByTime(1600); });
+      expect(screen.getByText('Disconnected')).toBeInTheDocument();
+      unmount();
+      seedThreadAt('/p/s1/t/t1', { type: 'grok', externalId: 'e1', config: {} });
+      render(<MobileApp />);
+      act(() => { vi.advanceTimersByTime(1600); });
+      expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
   });
 });
 
