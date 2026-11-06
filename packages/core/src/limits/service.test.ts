@@ -17,6 +17,7 @@ let wakes: { id: string; text: string }[];
 let labels: { id: string; label: string }[];
 let notes: { id: string; text: string; deliver: boolean }[];
 let wakeError: Error | null;
+let wakeVia: 'pty' | 'structured' | undefined; // what the wake callback reports (the transport it went through)
 let svc: UsageLimitService;
 
 function thread(id: string, status = 'scheduled', archived = false): void {
@@ -30,10 +31,10 @@ const session = { kind: 'session' as const, resetsAt: RESET, message: "You've hi
 beforeEach(() => {
   db = new Database(':memory:');
   initSchema(db);
-  clock = T0; wakes = []; labels = []; notes = []; wakeError = null;
+  clock = T0; wakes = []; labels = []; notes = []; wakeError = null; wakeVia = undefined;
   svc = new UsageLimitService({
     db, now: () => clock, zone: ZONE,
-    wake: (id, text) => { if (wakeError) throw wakeError; wakes.push({ id, text }); },
+    wake: (id, text) => { if (wakeError) throw wakeError; wakes.push({ id, text }); return wakeVia; },
     markPaused: (id, label) => labels.push({ id, label }),
     note: (id, text, opts) => notes.push({ id, text, deliver: opts.deliver }),
   });
@@ -125,6 +126,7 @@ describe('tick / wake', () => {
   // second stop must continue the chain, or a limit with no reset time retries every 30 minutes forever.
   describe('a turn-complete signal after a resumed turn that hit the limit again', () => {
     const noReset = { kind: 'usage' as const, resetsAt: null, message: 'limit' };
+    beforeEach(() => { wakeVia = 'pty'; }); // the wake went through the terminal
     it('keeps the attempt count and the start of the chain, up to the cap', () => {
       thread('a');
       svc.park('a', 'codex', noReset);
@@ -159,6 +161,34 @@ describe('tick / wake', () => {
       clock += 60 * MIN;                          // no banner followed: the turn was a success
       svc.park('a', 'codex', noReset);
       expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0, parked_at: clock });
+    });
+    it('a chat (structured) thread keeps no chain: a finished turn, then a new limit, starts at zero', () => {
+      wakeVia = 'structured';
+      thread('a');
+      svc.park('a', 'claude-code', noReset);
+      clock += 32 * MIN; svc.tick();
+      expect(parksDb.get(db, 'a')).toMatchObject({ state: 'woken', attempts: 1 });
+      svc.onTurnSettled('a');                     // the resumed turn finished ok
+      clock += 30_000;                            // a new limit within the 2 minutes
+      svc.park('a', 'claude-code', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0, parked_at: clock });
+    });
+    it('a wake whose transport is not reported keeps no chain either (the safe default)', () => {
+      wakeVia = undefined;
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0 });
+    });
+    it('a failed turn end (onTurnEnded) on a terminal thread keeps the chain too', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnEnded('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 1 });
     });
     it('the owner taking over ends the chain', () => {
       thread('a');
@@ -271,7 +301,7 @@ describe('restart', () => {
     const monday = Date.UTC(2026, 9, 26, 13, 0);
     svc.park('a', 'claude-code', { kind: 'weekly', resetsAt: monday, message: 'w' });
     svc.stop();
-    const again = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: (id, t) => wakes.push({ id, text: t }), markPaused: () => {}, note: () => {} });
+    const again = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: (id, t) => { wakes.push({ id, text: t }); }, markPaused: () => {}, note: () => {} });
     clock = monday - 60 * MIN; again.tick();
     expect(wakes).toEqual([]);
     clock = monday + 2 * MIN; again.tick();

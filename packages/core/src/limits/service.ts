@@ -45,7 +45,7 @@ export interface UsageLimitDeps {
   /** Show the thread as paused (the dormant state, with this label). */
   markPaused(terminalId: string, label: string): void;
   /** Send the resume message. Throws when it cannot be delivered. */
-  wake(terminalId: string, text: string): void;
+  wake(terminalId: string, text: string): void | 'pty' | 'structured';
   /** One line for Chat. `deliver` also wakes Chat to read it. */
   note(terminalId: string, text: string, opts: { deliver: boolean }): void;
   /** How to wake Chat's own paused turn (park key CHAT_ID). Without it a Chat park is dropped. */
@@ -62,6 +62,8 @@ export class UsageLimitService {
   private timer: NodeJS.Timeout | null = null;
   private lastWake = new Map<string, number>();
   private cleared = new Map<string, { attempts: number; parked_at: number; at: number }>();
+  /** Threads whose last wake went through the terminal (typed into the CLI), not a chat stream. Only those keep a retry chain. */
+  private wokeViaTerminal = new Set<string>();
   private touchListeners: ((terminalId: string) => void)[] = [];
   private changeListeners: (() => void)[] = [];
 
@@ -157,7 +159,7 @@ export class UsageLimitService {
       this.lastWake.set(row.provider, now);
       const attempts = row.attempts + 1;
       try {
-        if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
+        if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else if (this.d.wake(row.terminal_id, RESUME_TEXT) === 'pty') this.wokeViaTerminal.add(row.terminal_id); else this.wokeViaTerminal.delete(row.terminal_id);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
         changed = true;
         for (const fn of this.wakeListeners) this.safe(() => fn(row.terminal_id));
@@ -196,11 +198,18 @@ export class UsageLimitService {
     this.removePark(terminalId);
   }
 
+  /**
+   * Remember the chain of a woken row that a turn-complete signal is about to clear, for a terminal
+   * thread only: its signal cannot tell a good turn from one that hit the limit again, and the banner
+   * is read a few seconds later. A chat thread reports the limit itself (the row is kept, nothing is
+   * cleared), so for it a finished turn is a finished turn and a new limit starts at zero.
+   */
   private rememberChain(row: parksDb.ParkRow): void {
+    if (!this.wokeViaTerminal.has(row.terminal_id)) return;
     this.cleared.set(row.terminal_id, { attempts: row.attempts, parked_at: row.parked_at, at: this.now() });
   }
 
-  private removePark(terminalId: string): void { if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
+  private removePark(terminalId: string): void { this.wokeViaTerminal.delete(terminalId); if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
 
   /** At boot: the status of every thread was reset, so show the parked ones as paused again. A stopped (capped) row of an archived or missing thread is dropped too. */
   restore(): void {

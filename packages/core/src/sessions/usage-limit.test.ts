@@ -217,4 +217,20 @@ describe('usage-limit wake into a Codex terminal thread', () => {
     svc.resumeAfterUsageLimit('cx', 'go');
     expect(marked).toEqual(['cx']);
   });
+
+  it('the wake reports the transport it used, and only a terminal wake keeps the retry chain', () => {
+    seed('st', { type: 'claude-code', config: { transport: 'structured' } });
+    structured.live.add('st');
+    expect(svc.resumeAfterUsageLimit('st', 'go')).toBe('structured');
+    expect(svc.resumeAfterUsageLimit('cx', 'go')).toBe('pty');
+    // Through the real wiring: wake -> settle -> a limit within the keep window.
+    const noReset = { kind: 'usage' as const, resetsAt: null, message: 'm' };
+    for (const [id, expected] of [['cx', 1], ['st', 0]] as const) {
+      lim.park(id, id === 'cx' ? 'codex' : 'claude-code', noReset);
+      clock += 32 * 60_000; lim.tick();
+      lim.onTurnSettled(id); clock += 8_000;
+      lim.park(id, id === 'cx' ? 'codex' : 'claude-code', noReset);
+      expect(parksDb.get(db, id)!.attempts, id).toBe(expected);
+    }
+  });
 });

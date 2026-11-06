@@ -60,7 +60,8 @@ warning push. The red banner and the auto-resume still work.
   scrolled out of the window, and a fence line the CLI prefixes with a gutter mark quote nothing.
 - **A Codex terminal turn that hits the limit again also reports "turn complete".** Codex writes a
   `task_complete` event with the limit error for such a turn. The service remembers the retry chain
-  for 2 minutes after a woken thread's turn-complete signal, so the stop read a few seconds later
+  for 2 minutes after the turn-complete signal of a thread it woke through its terminal (a chat thread
+  reports the limit itself and keeps no such memory), so the stop read a few seconds later
   continues the attempt count (5 wakes, then it stops) instead of restarting at zero.
 - **Another Codex wording is not detected:** a real session file holds a workspace spend cap stop
   ("You hit your spend cap set by the owner of your workspace ..."), which the terminal reader does

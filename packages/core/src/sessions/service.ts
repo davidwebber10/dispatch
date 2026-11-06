@@ -149,7 +149,7 @@ export class SessionService {
   private resuming: string | null = null;
   setUsageLimitService(svc: UsageLimitService): void { this.usageLimits = svc; }
   /** Send the usage-limit auto-resume text. Unlike every other send it keeps the park's attempt count. */
-  resumeAfterUsageLimit(terminalId: string, text: string): void {
+  resumeAfterUsageLimit(terminalId: string, text: string): 'pty' | 'structured' {
     this.resuming = terminalId;
     try {
       const sent = this.sendThreadMessage(terminalId, text, undefined, 'daemon');
@@ -157,6 +157,7 @@ export class SessionService {
       // so mark the thread working here, as the HTTP message route does. Without the working edge the
       // turn end is not a settle, and the woken pause row would never clear.
       if (sent.transport === 'pty') this.wakeWorkingMarker?.(terminalId);
+      return sent.transport;
     } finally { this.resuming = null; }
   }
   private wakeWorkingMarker?: (terminalId: string) => void;
