@@ -78,7 +78,8 @@ test('the cap keeps the newest N files, hiding the oldest behind Show more', () 
   expect(screen.getByText('Show 2 more')).toBeInTheDocument();
 });
 
-test('the default (custom) mode still leaves threads in server order', () => {
+test('the custom mode still leaves threads in server order', () => {
+  useListSort.setState({ threads: { [SID]: 'custom' } } as any);
   useTabs.setState({ byProject: { [SID]: [thread(1), thread(2), file(1), file(2)] }, loading: {} } as any);
   renderCard();
   expect(rowIds().filter((id) => id!.startsWith('t'))).toEqual(['t01', 't02']); // untouched

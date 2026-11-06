@@ -13,7 +13,7 @@ test('option lists carry the exact labels and defaults', () => {
   expect(THREAD_SORTS.map(([v]) => v)).toEqual(['needs', 'active', 'newest', 'oldest', 'name', 'custom']);
   expect(THREAD_SORTS.find(([v]) => v === 'name')![1]).toBe('Name (A–Z)');
   expect(AGENT_SORTS.map(([v]) => v)).toEqual(['next', 'updated', 'newest', 'oldest', 'name']);
-  expect(DEFAULT_THREAD_SORT).toBe('custom');
+  expect(DEFAULT_THREAD_SORT).toBe('active');
   expect(DEFAULT_AGENT_SORT).toBe('next');
 });
 

@@ -54,6 +54,7 @@ test('the sort button appears once there are two threads', () => {
 });
 
 test('choosing Name (A-Z) reorders the rendered rows', () => {
+  useListSort.setState({ threads: { [SID]: 'custom' } } as any);
   useTabs.setState({ byProject: { [SID]: [term('a', 'zeta', '2026-01-01T00:00:00.000Z'), term('b', 'alpha', '2026-02-01T00:00:00.000Z')] }, loading: {} } as any);
   renderCard();
   const before = rowIds();
@@ -94,6 +95,7 @@ test('a successful drop under custom sort renders rows in the dropped order', as
   // byProject back to the beforeEach default of []. Match it to the state set above so it's
   // a no-op refresh instead of a competing write.
   vi.spyOn(api, 'listTerminals').mockResolvedValue(initial as any);
+  useListSort.setState({ threads: { [SID]: 'custom' } } as any);
   renderCard();
   expect(useListSort.getState().threadSort(SID)).toBe('custom');
   expect(rowIds()).toEqual(['a', 'b']);
