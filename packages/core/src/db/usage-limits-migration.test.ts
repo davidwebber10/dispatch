@@ -14,8 +14,10 @@ describe('usage_limit_parks.detected_at migration', () => {
     db.prepare("INSERT INTO usage_limit_parks VALUES ('t', 'claude-code', 'session', NULL, 5, 'm', 0, 1, 'parked', 1234, 1234)").run();
     initSchema(db);
     expect(parksDb.get(db, 't')!.detected_at).toBe(1234);
+    expect(parksDb.get(db, 't')!.cleared_at).toBeNull(); // migration 017
     initSchema(db); // idempotent
     expect(parksDb.get(db, 't')!.detected_at).toBe(1234);
+    expect(parksDb.get(db, 't')!.cleared_at).toBeNull();
     db.close();
   });
 });

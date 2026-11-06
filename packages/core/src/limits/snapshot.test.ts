@@ -88,6 +88,12 @@ describe('LimitSnapshots', () => {
     s.record('claude-code', 'a', { seven_day: { usedPercent: 9, resetsAt: NOW + 8 * 3600_000 } }, NOW + 4 * 3600_000);
     expect(Object.keys(s.get('claude-code', 'a')!.figureAt ?? {})).toEqual(['seven_day']); // the old five_hour is far past its reset
   });
+  it('Claude ingestion keeps full precision: 0.9996 is 99.96, not 100', () => {
+    const w = parseClaudeRateLimit({ unifiedWindows: { five_hour: { utilization: 0.9996, resetsAt: 1781931600 }, seven_day: { utilization: 1, resetsAt: 1781931600 }, seven_day_opus: { utilization: 0.464, resetsAt: 1781931600 } } });
+    expect(w.five_hour.usedPercent).toBe(99.96);
+    expect(w.seven_day.usedPercent).toBe(100);
+    expect(w.seven_day_opus.usedPercent).toBe(46.4); // no float noise
+  });
   it('a different account replaces the old snapshot and the old one is never shown as current', () => {
     const { s } = fresh();
     s.record('claude-code', 'old', { five_hour: { usedPercent: 99, resetsAt: NOW + 1000 } }, NOW);

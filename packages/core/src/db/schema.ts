@@ -459,4 +459,10 @@ function initializeSchema(db: Database.Database): void {
     if (!cols.some((c) => c.name === 'detected_at')) db.exec('ALTER TABLE usage_limit_parks ADD COLUMN detected_at INTEGER');
     db.exec('UPDATE usage_limit_parks SET detected_at = parked_at WHERE detected_at IS NULL');
   });
+  // When a limit with no read reset time was seen to clear. Kept until the limit is detected again, so the reading
+  // that showed it clear expiring (or a restart) cannot turn the chip red again.
+  migrate(db, '017-usage-park-cleared-at', () => {
+    const cols = db.prepare('PRAGMA table_info(usage_limit_parks)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'cleared_at')) db.exec('ALTER TABLE usage_limit_parks ADD COLUMN cleared_at INTEGER');
+  });
 }

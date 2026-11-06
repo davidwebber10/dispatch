@@ -23,7 +23,8 @@ export interface ProviderLimits {
 }
 
 const KEY = 'usage_limit_snapshots';
-const pct = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v * 1000) / 10)) : null);
+// Full precision (to 6 decimals, which only removes float noise): 0.9996 is 99.96, not 100. Display rounding happens later.
+const pct = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v * 1e8) / 1e6)) : null);
 const ms = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v * 1000 : null);
 
 /**

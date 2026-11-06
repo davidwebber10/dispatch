@@ -17,6 +17,8 @@ export interface ParkRow {
   parked_at: number;
   /** When a limit was last detected for this row (renewed on every detection). Clearing figures must be newer. */
   detected_at: number;
+  /** When a limit with no read reset time was seen to clear. Null until then, and again after a new detection. */
+  cleared_at: number | null;
   updated_at: number;
 }
 
@@ -24,12 +26,12 @@ export function get(db: Database.Database, terminalId: string): ParkRow | null {
   return (db.prepare('SELECT * FROM usage_limit_parks WHERE terminal_id = ?').get(terminalId) as ParkRow | undefined) ?? null;
 }
 
-export function upsert(db: Database.Database, row: Omit<ParkRow, 'updated_at' | 'detected_at'> & { detected_at?: number }, now: number): void {
+export function upsert(db: Database.Database, row: Omit<ParkRow, 'updated_at' | 'detected_at' | 'cleared_at'> & { detected_at?: number }, now: number): void {
   db.prepare(`
     INSERT INTO usage_limit_parks (terminal_id, provider, kind, resets_at, wake_at, message, parsed, attempts, state, parked_at, detected_at, updated_at)
     VALUES (@terminal_id, @provider, @kind, @resets_at, @wake_at, @message, @parsed, @attempts, @state, @parked_at, @detected_at, @now)
     ON CONFLICT(terminal_id) DO UPDATE SET provider = @provider, kind = @kind, resets_at = @resets_at, wake_at = @wake_at,
-      message = @message, parsed = @parsed, attempts = @attempts, state = @state, parked_at = @parked_at, detected_at = @detected_at, updated_at = @now
+      message = @message, parsed = @parsed, attempts = @attempts, state = @state, parked_at = @parked_at, detected_at = @detected_at, cleared_at = NULL, updated_at = @now
   `).run({ ...row, detected_at: row.detected_at ?? row.parked_at, now });
 }
 
@@ -40,6 +42,11 @@ export function setState(db: Database.Database, terminalId: string, state: ParkS
 /** The last wake try failed to send, so the limit is taken as over: stamp the time on a row that never had a readable reset. A reset that was read is kept. */
 export function markLimitOver(db: Database.Database, terminalId: string, now: number): void {
   db.prepare('UPDATE usage_limit_parks SET resets_at = COALESCE(resets_at, ?) WHERE terminal_id = ?').run(now, terminalId);
+}
+
+/** Keep the evidence that the limit cleared, for the detection it was seen under. A newer detection has replaced the row's detected_at, so it is not marked. */
+export function markCleared(db: Database.Database, terminalId: string, detectedAt: number, at: number): void {
+  db.prepare('UPDATE usage_limit_parks SET cleared_at = ? WHERE terminal_id = ? AND detected_at = ?').run(at, terminalId, detectedAt);
 }
 
 export function remove(db: Database.Database, terminalId: string): boolean {

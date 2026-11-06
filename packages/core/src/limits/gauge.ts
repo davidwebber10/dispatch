@@ -150,6 +150,17 @@ export class UsageGauge {
    */
   private rowEnd(r: parksDb.ParkRow): number | null {
     if (r.resets_at !== null) return r.resets_at;
+    // Seen to clear under this detection: it stays clear (the clearing reading expiring or a restart changes nothing) until a new detection.
+    if (r.cleared_at !== null && r.cleared_at > r.detected_at) return r.cleared_at;
+    const end = this.freshClearEnd(r);
+    if (end !== null) {
+      try { parksDb.markCleared(this.d.db, r.terminal_id, r.detected_at, end); } catch (err) { console.warn('[usage-gauge] could not keep the cleared mark:', err); }
+    }
+    return end;
+  }
+
+  /** The time of the reading that shows the row's limit clear, or null. */
+  private freshClearEnd(r: parksDb.ParkRow): number | null {
     const s = this.providerSummary(r.provider);
     if (!s) return null;
     const now = this.now();
@@ -159,6 +170,8 @@ export class UsageGauge {
     const figures = Object.entries(s.windows).filter(([type, w]) => (named ? type === named : COUNTED.has(type)) && live(w, now));
     // Any such live window at the limit holds it, old reading or not. Compared unrounded.
     if (figures.some(([type]) => (s.raw[type] ?? 0) >= 100)) return null;
+    // A weekly limit may really have been a per-model one ("Opus weekly limit" reads as weekly): any weekly window at the limit holds it too.
+    if (r.kind === 'weekly' && Object.entries(s.windows).some(([type, w]) => type.startsWith('seven_day') && COUNTED.has(type) && live(w, now) && (s.raw[type] ?? 0) >= 100)) return null;
     // A new reading is a window whose own figure was read after the detection: a kept or carried-forward old figure is not one.
     const times = figures.map(([type]) => s.figureAt[type] ?? s.asOf).filter((at) => at > r.detected_at);
     return times.length ? Math.max(...times) : null;

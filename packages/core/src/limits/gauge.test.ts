@@ -5,7 +5,7 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
 import * as gaugeSettings from './gauge-settings.js';
-import { LimitSnapshots } from './snapshot.js';
+import { LimitSnapshots, parseClaudeRateLimit } from './snapshot.js';
 import { UsageGauge } from './gauge.js';
 import { CHAT_ID, UsageLimitService } from './service.js';
 
@@ -203,6 +203,56 @@ describe('summary', () => {
       snaps.record('claude-code', account, { seven_day: { usedPercent: 12, resetsAt: WEEK } }, clock);
       expect(gauge.summary().paused[0].activeUntil).toBe(clock);
     });
+  });
+
+  it('99.96% read through the real Claude parser is below the limit; 100% is not', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    const ingest = (utilization: number, at: number) => { clock = at; snaps.record('claude-code', account, parseClaudeRateLimit({ unifiedWindows: { five_hour: { utilization, resetsAt: Math.floor(RESET / 1000) } } }), at); };
+    ingest(1, T0 + MIN);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    ingest(0.9996, T0 + 2 * MIN);
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 2 * MIN);
+  });
+
+  it('once cleared it stays cleared: the reading expiring, or a restart, does not turn it red again, and a new detection does', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    // The clearing reading's window passes its reset, and the snapshot later drops it.
+    clock = RESET + 2 * 3600_000;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 3, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 5 * MIN);
+    // A restart (a new gauge and snapshots over the same db) keeps it too.
+    gauge.stop();
+    snaps = new LimitSnapshots(db);
+    gauge = make();
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 5 * MIN);
+    // A new detection of the limit starts over: red again until a fresh reading.
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: clock + MIN });
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('a weekly limit (even one that was really the Opus window) is held while any seven_day window is at 100%', () => {
+    thread('a');
+    park('a', { kind: 'weekly', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    // Fresh weekly reading under 100%, but Opus weekly is the one at the limit.
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 40, resetsAt: WEEK }, seven_day_opus: { usedPercent: 100, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = T0 + 10 * MIN;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 40, resetsAt: WEEK }, seven_day_opus: { usedPercent: 60, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('an unknown-kind Codex stop keeps the any-window rule', () => {
+    thread('c', 'codex');
+    park('c', { provider: 'codex', kind: 'usage', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    snaps.record('codex', account, { seven_day: { usedPercent: 12, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
   });
 
   it('figures from before the latest detection do not clear a renewed limit, only newer ones', () => {
