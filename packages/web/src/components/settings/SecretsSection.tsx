@@ -271,7 +271,7 @@ export function SecretsSection() {
           {!readOnly && (isMobile ? (
             <>
               <button onClick={() => setSheet(true)} style={{ ...solidBtn(true), width: '100%', marginTop: 4 }}>Add variable</button>
-              <Sheet open={sheet} onClose={() => setSheet(false)} title="ADD VARIABLE">{addForm(true)}</Sheet>
+              <Sheet open={sheet} onClose={() => setSheet(false)} title="Add variable">{addForm(true)}</Sheet>
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>

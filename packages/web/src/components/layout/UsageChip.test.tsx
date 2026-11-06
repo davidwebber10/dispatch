@@ -27,8 +27,15 @@ describe('UsageChip', () => {
     expect(chip.textContent).toBe('5h 46wk 21');
     expect(chip.getAttribute('data-tone')).toBe('normal');
     fireEvent.click(chip);
-    expect(screen.getByRole('dialog', { name: 'Usage limits' }).textContent).toContain('46% used');
-    expect(screen.getByTestId('usage-table').textContent).toContain('CLI threads do not.');
+    // The ring counts up to the figure: its accessible label carries the figure at once.
+    expect(screen.getByRole('dialog', { name: 'Usage limits' }).querySelector('[role="img"]')!.getAttribute('aria-label')).toContain('46% of 5-hour used');
+    expect(screen.getByRole('region', { name: 'Claude' })).toBeInTheDocument();
+  });
+
+  it('rail: a tool with no 5-hour window shows only its weekly line', () => {
+    useUsageLimits.setState({ summary: summary(0, { providers: [{ provider: 'claude-code', asOf: Date.now() - 60_000, windows: { seven_day: { usedPercent: 21, resetsAt: Date.now() + 72 * H } } }] }) });
+    render(<UsageChip variant="rail" />);
+    expect(screen.getByTestId('usage-chip').textContent).toBe('wk 21');
   });
 
   it('phone: one value, amber at the threshold, red while paused', () => {
@@ -40,7 +47,7 @@ describe('UsageChip', () => {
     rerender(<UsageChip variant="phone" />);
     expect(screen.getByTestId('usage-chip').getAttribute('data-tone')).toBe('red');
     fireEvent.click(screen.getByTestId('usage-chip'));
-    expect(screen.getByTestId('usage-table').textContent).toContain('Claude agents paused: session limit');
+    expect(screen.getByTestId('usage-rings').textContent).toContain('Claude agents paused: session limit');
   });
 
   it('recolors when the threshold changes live', () => {

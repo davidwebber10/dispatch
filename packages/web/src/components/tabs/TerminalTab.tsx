@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, Eye, Keyboard, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, Keyboard, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
@@ -18,11 +17,11 @@ import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
 import { inputMenuRow } from '../dictation/InputActionsMenu';
 import { PillComposer } from '../composer/PillComposer';
+import { Modal } from '../common/Modal';
 import { UploadTray, useInboxUploads } from '../composer/UploadTray';
 import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
 import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
-import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
 
@@ -223,8 +222,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const [keysOpen, setKeysOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
-  const previewProject = cachedProject ?? meta?.sessionId ?? null;
-  const previewUnseen = usePreviews((s) => unseenPreviews(s.items, previewProject));
   const grokFlush = isMobile && termType === 'grok';
   const termFontSize = useSettings((s) => s.fontSize);
   const termScrollback = useSettings((s) => s.scrollback);
@@ -1031,11 +1028,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
                     <span style={{ width: 18, textAlign: 'center', font: '600 16px var(--font-mono)', color: 'var(--color-accent)' }}>/</span> Slash commands
                   </button>
                 )}
-                {previewProject && (
-                  <button type="button" style={inputMenuRow()} onClick={() => { close(); usePreviews.getState().openSheet(previewProject); }}>
-                    <Eye size={18} weight={previewUnseen ? 'fill' : 'regular'} color={previewUnseen ? 'var(--color-accent)' : undefined} /> Previews{previewUnseen ? ` (${previewUnseen})` : ''}
-                  </button>
-                )}
                 {/* Spelling help for the box: on for prose, off for a run of shell commands. */}
                 <button type="button" aria-label="Autocorrect" aria-pressed={ptyAutocorrect} style={inputMenuRow()}
                   onClick={() => setPtyAutocorrect(!ptyAutocorrect)}>
@@ -1055,70 +1047,49 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         </div>
       )}
       {/* Keys sheet: tap as many as needed (arrows through a menu, say); Done or the backdrop closes it. */}
-      {isMobile && keysOpen && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-          <div onClick={() => setKeysOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
-          <div role="dialog" aria-label="Keys" style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 'var(--radius-xl)', borderTopRightRadius: 'var(--radius-xl)', maxHeight: '72vh', overflowY: 'auto', padding: '12px 12px calc(14px + env(safe-area-inset-bottom))', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>Keys</span>
-              <button type="button" onClick={() => setKeysOpen(false)} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 14, cursor: 'pointer' }}>Done</button>
-            </div>
-            {sheetKeysFor(meta?.type).map((g) => (
-              <div key={g.title} style={{ marginTop: 10 }}>
-                <div style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', margin: '0 2px 6px' }}>{g.title.toUpperCase()}</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(76px, 1fr))', gap: 8 }}>
-                  {g.keys.map((k) => (
-                    <button key={k.label} type="button" title={k.title} aria-label={k.title}
-                      onClick={() => sockRef.current?.send(k.seq)}
-                      style={{ ...SOFT_KEY, minWidth: 0, height: 48, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 13px var(--font-sans)' : '500 15px var(--font-mono)' }}>
-                      {k.Icon ? <k.Icon size={20} weight="bold" /> : k.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
-      {/* Slash-command sheet. Portaled to <body> so position:fixed isn't trapped
-          by the mobile slide-rail's transform (which would shift it off-screen). */}
-      {isMobile && slashOpen && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-          <div onClick={closeSlash} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
-          <div style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 'var(--radius-xl)', borderTopRightRadius: 'var(--radius-xl)', maxHeight: '72vh', display: 'flex', flexDirection: 'column', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 10px' }}>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
-                <MagnifyingGlass size={17} color="var(--color-text-secondary)" />
-                <input
-                  value={slashQuery} onChange={(e) => setSlashQuery(e.target.value)}
-                  placeholder="Search slash commands…"
-                  autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
-                  style={{ flex: 1, minWidth: 0, height: '100%', background: 'none', border: 'none', outline: 'none', color: 'var(--color-text-primary)', fontSize: 16 }}
-                />
-              </div>
-              <button onClick={closeSlash} title="Close" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
-                <X size={18} weight="bold" />
-              </button>
-            </div>
-            <div style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '2px 0 8px' }}>
-              {slashResults.map((c) => (
-                <button key={c.cmd}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => { sockRef.current?.send(c.seq); closeSlash(); }}
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, width: '100%', textAlign: 'left', padding: '11px 18px', background: 'none', border: 'none', cursor: 'pointer' }}>
-                  <span style={{ font: '600 15px var(--font-mono)', color: 'var(--color-accent)' }}>{c.cmd}</span>
-                  <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{c.desc}</span>
+      {/* Keys: the shared slide-up sheet. Tap as many as needed (arrows through a menu, say). */}
+      <Modal open={isMobile && keysOpen} sheet title="Keys" onClose={() => setKeysOpen(false)}>
+        {sheetKeysFor(meta?.type).map((g) => (
+          <div key={g.title} style={{ marginBottom: 12 }}>
+            <div style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', margin: '0 2px 6px' }}>{g.title.toUpperCase()}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(76px, 1fr))', gap: 8 }}>
+              {g.keys.map((k) => (
+                <button key={k.label} type="button" title={k.title} aria-label={k.title}
+                  onClick={() => sockRef.current?.send(k.seq)}
+                  style={{ ...SOFT_KEY, minWidth: 0, height: 48, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 13px var(--font-sans)' : '500 15px var(--font-mono)' }}>
+                  {k.Icon ? <k.Icon size={20} weight="bold" /> : k.label}
                 </button>
               ))}
-              {slashResults.length === 0 && (
-                <div style={{ padding: '20px 18px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matching commands</div>
-              )}
             </div>
           </div>
-        </div>,
-        document.body,
-      )}
+        ))}
+      </Modal>
+      {/* Slash-command sheet. Portaled to <body> so position:fixed isn't trapped
+          by the mobile slide-rail's transform (which would shift it off-screen). */}
+      {/* Slash commands: the shared slide-up sheet. */}
+      <Modal open={isMobile && slashOpen} sheet title="Slash commands" onClose={closeSlash}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 12px', marginBottom: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
+          <MagnifyingGlass size={17} color="var(--color-text-secondary)" />
+          <input
+            value={slashQuery} onChange={(e) => setSlashQuery(e.target.value)}
+            placeholder="Search slash commands…"
+            autoCapitalize="off" autoCorrect="off" autoComplete="off" spellCheck={false}
+            style={{ flex: 1, minWidth: 0, height: '100%', background: 'none', border: 'none', outline: 'none', color: 'var(--color-text-primary)', fontSize: 16 }}
+          />
+        </div>
+        {slashResults.map((c) => (
+          <button key={c.cmd}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { sockRef.current?.send(c.seq); closeSlash(); }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, width: '100%', textAlign: 'left', padding: '11px 4px', background: 'none', border: 'none', cursor: 'pointer' }}>
+            <span style={{ font: '600 15px var(--font-mono)', color: 'var(--color-accent)' }}>{c.cmd}</span>
+            <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{c.desc}</span>
+          </button>
+        ))}
+        {slashResults.length === 0 && (
+          <div style={{ padding: '20px 4px', color: 'var(--color-text-tertiary)', fontSize: 13 }}>No matching commands</div>
+        )}
+      </Modal>
       <DocViewer owner={terminalId} />
     </div>
   );

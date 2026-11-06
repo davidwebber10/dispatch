@@ -18,6 +18,9 @@ export const COUNTED = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'sev
 const WINDOW_NAME: Record<string, string> = {
   five_hour: 'Session (5h)', seven_day: 'Weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_overage_included: 'Fable weekly',
 };
+import { forecast, type Forecast } from './forecast.js';
+import type { ResetCredits } from './codex-poll.js';
+
 const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex' };
 const WEEKLY_KINDS = new Set(['weekly', 'fable', 'opus', 'sonnet']);
 /** The usage window each limit kind is about. `usage` (a limit the CLI did not name) has none: any counted window then counts. */
@@ -34,12 +37,18 @@ const DEFAULTS = {
   codexActiveMs: 10 * MIN,
   /** Two reset times this close are the same limit window (the CLI's reset time jitters by seconds). */
   sameWindowMs: 10 * MIN,
+  /** With no active Codex thread, ask Codex directly at most this often. */
+  codexPollMs: 5 * MIN,
+  /** Claude figures older than this get a background probe (a Pretty thread's turns keep them fresher). */
+  claudeStaleMs: 5 * MIN,
+  /** ...but only while something was active this recently: an idle machine is not probed. */
+  claudeIdleMs: 30 * MIN,
   /** A null reset time keeps its alert key this long. */
   nullResetTtlMs: 7 * 24 * 60 * MIN,
 };
 
-export interface SummaryWindow { usedPercent: number | null; resetsAt: number | null }
-export interface SummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow> }
+export interface SummaryWindow { usedPercent: number | null; resetsAt: number | null; forecast?: Forecast | null }
+export interface SummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow>; resetCredits?: ResetCredits }
 export interface PausedGroup {
   provider: string;
   kind: string;
@@ -87,6 +96,12 @@ export interface GaugeDeps {
   accountFor: (provider: string) => string;
   /** Codex writes its limits into the session file: read the newest for one thread (throttled by its owner). */
   refreshCodex?: (terminalId: string, externalId: string | null) => void;
+  /** Ask Codex itself for its limits (codex-poll.ts): used when no Codex thread was active lately. */
+  pollCodex?: () => Promise<boolean>;
+  /** Codex's banked limit resets, from the last direct read. */
+  codexCredits?: () => ResetCredits | null;
+  /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
+  probeClaude?: () => Promise<boolean>;
   now?: () => number;
   /** The zone the push shows the reset time in. Default: this machine. */
   zone?: string;
@@ -129,11 +144,15 @@ export class UsageGauge {
     if (!s) return null;
     const windows: Record<string, SummaryWindow> = {};
     const raw: Record<string, number | null> = {}; // the unrounded figures: 99.6 shows as 100 but is not at the limit
+    const history = this.d.snapshots.history(provider, s.account);
+    const now = this.now();
     for (const [type, w] of Object.entries(s.windows as LimitWindows)) {
       raw[type] = w.usedPercent;
-      windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt };
+      const f = forecast(history[type], w, now);
+      windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt, ...(f ? { forecast: f } : {}) };
     }
-    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw };
+    const credits = provider === 'codex' ? this.d.codexCredits?.() ?? null : null;
+    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw, ...(credits && credits.available > 0 ? { resetCredits: credits } : {}) };
   }
 
   /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
@@ -322,14 +341,46 @@ export class UsageGauge {
     this.flush();
   }
 
-  /** 60 s: refresh Codex from its most recently active thread: one active in the last 10 minutes, or one still working (a long turn writes no activity stamp). */
+  private lastCodexPoll = -Infinity;
+  private codexPolling = false;
+  private lastClaudeProbe = -Infinity;
+  private claudeProbing = false;
+
+  /**
+   * Keep Claude's figures current without a Pretty thread: when the last report is older than
+   * claudeStaleMs and some thread was active within claudeIdleMs, run one probe (at most one per
+   * claudeStaleMs). A Pretty thread in use keeps the figures fresh, so then it never runs.
+   */
+  private maybeProbeClaude(): void {
+    if (!this.d.probeClaude || this.claudeProbing) return;
+    const now = this.now();
+    if (now - this.lastClaudeProbe < this.o.claudeStaleMs) return;
+    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code'));
+    if (s && now - s.asOf < this.o.claudeStaleMs) return;
+    const since = new Date(now - this.o.claudeIdleMs).toISOString();
+    const active = this.d.db.prepare('SELECT 1 FROM terminals WHERE archived_at IS NULL AND last_activity_at >= ? LIMIT 1').get(since);
+    if (!active) return;
+    this.lastClaudeProbe = now;
+    this.claudeProbing = true;
+    void this.d.probeClaude().catch(() => false).finally(() => { this.claudeProbing = false; });
+  }
+
+  /**
+   * 60 s: refresh Codex from its most recently active thread (one active in the last 10 minutes,
+   * or one still working: a long turn writes no activity stamp); otherwise ask Codex itself, at
+   * most every codexPollMs (Codex was missing from the sheet whenever no Codex thread was busy).
+   */
   tick(): void {
-    if (!this.d.refreshCodex) return;
+    this.maybeProbeClaude();
     const since = new Date(this.now() - this.o.codexActiveMs).toISOString();
     const row = this.d.db.prepare(
       "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND (status = 'working' OR last_activity_at >= ?) ORDER BY last_activity_at DESC LIMIT 1",
     ).get(since) as { id: string; external_id: string } | undefined;
-    if (row) this.d.refreshCodex(row.id, row.external_id);
+    if (row && this.d.refreshCodex) { this.d.refreshCodex(row.id, row.external_id); return; }
+    if (!this.d.pollCodex || this.codexPolling || this.now() - this.lastCodexPoll < this.o.codexPollMs) return;
+    this.lastCodexPoll = this.now();
+    this.codexPolling = true;
+    void this.d.pollCodex().catch(() => false).finally(() => { this.codexPolling = false; });
   }
 
   // --- the throttled broadcast --------------------------------------------------------------

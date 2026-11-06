@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { Composer } from './EndlessColumn';
 import { useEndless } from '../../stores/endless';
 import { useSettings } from '../../stores/settings';
+import { useUI } from '../../stores/ui';
 
 // The Chat composer is the shared PillComposer: + (Project, Add file) | text | mic | send.
 
@@ -28,13 +29,16 @@ describe('Chat composer: + menu', () => {
     expect(click).toHaveBeenCalled();
   });
 
-  it('the mic sits on the right, greyed out with a pointer to Settings until transcription is set up', () => {
+  it('a mic without dictation set up says so and links to Settings → Transcription', () => {
     useSettings.setState({ sttProvider: '', sttModel: '', sttSecretName: '' } as never);
+    const requestSettings = vi.spyOn(useUI.getState(), 'requestSettings');
     render(<Composer />);
-    const mic = screen.getByRole('button', { name: 'Dictate' });
-    expect(mic).toBeDisabled();
-    expect(mic.getAttribute('title')).toContain('Settings → Transcription');
-    // Dictate is no longer in the + menu: the mic is its one place.
+    fireEvent.click(screen.getByRole('button', { name: 'Dictate' }));
+    expect(screen.getByRole('note')).toHaveTextContent("Dictation isn't set up yet.");
+    fireEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    expect(requestSettings).toHaveBeenCalledWith('transcription');
+    expect(screen.queryByRole('note')).toBeNull();
+    // Dictate is not in the + menu: the mic is its one place.
     fireEvent.click(screen.getByRole('button', { name: 'More input options' }));
     expect(screen.queryAllByRole('button', { name: /Dictate/ })).toHaveLength(1);
   });

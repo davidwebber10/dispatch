@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Paperclip, Microphone } from '@phosphor-icons/react';
+import { Modal } from '../common/Modal';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface Props {
   onAddFile: () => void;
@@ -29,37 +31,49 @@ export { rowBtn as inputMenuRow };
 export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictateHint, triggerStyle, extra }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // On a phone the menu is the app's shared slide-up sheet; on desktop a small menu above the +.
+  const isMobile = useIsMobile();
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const onDoc = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  }, [open, isMobile]);
+
+  const rows = (
+    <>
+      {extra?.(() => setOpen(false))}
+      <button type="button" style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
+        <Paperclip size={18} /> Add file
+      </button>
+      {onDictate && (
+        <button type="button" style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
+          <Microphone size={18} /> Dictate
+        </button>
+      )}
+      {onDictate && dictateDisabled && dictateHint && (
+        <div style={{ padding: '2px 12px 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>{dictateHint}</div>
+      )}
+    </>
+  );
 
   return (
     <div ref={wrapRef} style={{ position: 'relative', flexShrink: 0 }}>
       <button type="button" aria-label="More input options" onClick={() => setOpen((o) => !o)} style={{ ...trigger, ...triggerStyle }}>
         <Plus size={20} weight="bold" />
       </button>
-      {open && (
+      {isMobile ? (
+        <Modal open={open} sheet onClose={() => setOpen(false)}>
+          <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{rows}</div>
+        </Modal>
+      ) : open && (
         <div style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, minWidth: 200, padding: 6,
           background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)',
           boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)', zIndex: 40,
         }}>
-          {extra?.(() => setOpen(false))}
-          <button type="button" style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
-            <Paperclip size={18} /> Add file
-          </button>
-          {onDictate && (
-            <button type="button" style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
-              <Microphone size={18} /> Dictate
-            </button>
-          )}
-          {onDictate && dictateDisabled && dictateHint && (
-            <div style={{ padding: '2px 12px 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>{dictateHint}</div>
-          )}
+          {rows}
         </div>
       )}
     </div>

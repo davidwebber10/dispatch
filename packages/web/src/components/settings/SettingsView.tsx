@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SETTINGS_SECTIONS, settingsSection, type SettingsSectionKey } from './sections';
 import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
@@ -19,6 +19,13 @@ const CONN = {
  */
 export function SettingsView() {
   const [tab, setTab] = useState<SettingsSectionKey>('general');
+  // A link elsewhere asked for a section (the mic's "Set up"): open it once.
+  const pendingSection = useUI((s) => s.pendingSettingsSection);
+  useEffect(() => {
+    if (!pendingSection || !settingsSection(pendingSection as SettingsSectionKey)) return;
+    setTab(pendingSection as SettingsSectionKey);
+    useUI.getState().clearSettingsRequest();
+  }, [pendingSection]);
   const status = useConnection((s) => s.status);
   const servers = useServers((s) => s.servers);
   const version = useUpdate((s) => s.currentVersion);

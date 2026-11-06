@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { ArrowUp, Microphone, Stop } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { useUI } from '../../stores/ui';
 
 /**
  * The one message composer (2026-11-05, modelled on ChatGPT's): a rounded box holding
@@ -80,9 +81,22 @@ export function PillComposer({
   const recording = dictation.state === 'recording' || dictation.state === 'transcribing';
   const failed = dictation.state === 'error';
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
+  // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:
+  // inline, a wrapped message sat between the keys with an odd uneven margin). One grid with
+  // named areas, so the text box stays the same element when the layout switches (no lost focus).
+  const stacked = value.length > 0 || recording;
+  // A mic with dictation not set up says so, with a link to the setting, instead of doing nothing.
+  const [micHint, setMicHint] = useState(false);
 
   return (
     <>
+    {micHint && !sttConfigured && (
+      <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 6px 8px', fontSize: 13 }}>
+        <span style={{ flex: 1, minWidth: 0, color: 'var(--color-text-secondary)' }}>Dictation isn't set up yet.</span>
+        <button type="button" onClick={() => { setMicHint(false); useUI.getState().requestSettings('transcription'); }} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Set up</button>
+        <button type="button" onClick={() => setMicHint(false)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+      </div>
+    )}
     {failed && (
       <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0 6px 8px', fontSize: 13, lineHeight: 1.4 }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-status-red)' }}>{dictation.error}</span>
@@ -90,18 +104,22 @@ export function PillComposer({
         <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     )}
-    <div data-testid="pill-composer" style={{
-      display: 'flex', alignItems: 'flex-end', gap: 4, padding: 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
+    <div data-testid="pill-composer" data-stacked={stacked || undefined} style={{
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
+      gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : '"plus text mic send"',
+      padding: 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
       border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
     }}>
-      <InputActionsMenu
-        onAddFile={onAddFile}
-        extra={menuExtra}
-        triggerStyle={{ ...circle, background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
-      />
+      <div style={{ gridArea: 'plus' }}>
+        <InputActionsMenu
+          onAddFile={onAddFile}
+          extra={menuExtra}
+          triggerStyle={{ ...circle, background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
+        />
+      </div>
       {recording ? (
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', minHeight: key }}><DictationControl dictation={dictation} /></div>
+        <div style={{ gridArea: 'text', minWidth: 0, display: 'flex', alignItems: 'center', minHeight: key, padding: '0 4px' }}><DictationControl dictation={dictation} /></div>
       ) : (
         <textarea
           {...textareaProps}
@@ -118,32 +136,32 @@ export function PillComposer({
           }}
           /* 16px on a phone: anything smaller makes iOS zoom the page on focus. */
           style={{
-            flex: 1, minWidth: 0, minHeight: minH, height: minH, margin: 0, resize: 'none', overflowY: 'auto',
+            gridArea: 'text', width: '100%', minWidth: 0, minHeight: minH, height: minH, margin: 0, resize: 'none', overflowY: 'auto',
             border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)',
             font: `400 ${mobile ? 16 : 14.5}px var(--font-sans)`, lineHeight: `${lineH}px`,
-            padding: `${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
+            padding: stacked ? `${(minH - lineH) / 2}px 8px 2px` : `${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
           }}
         />
       )}
       {!recording && (
-        <button type="button" aria-label="Dictate" disabled={!sttConfigured}
+        <button type="button" aria-label="Dictate"
           title={sttConfigured ? 'Dictate' : 'Dictation: set up in Settings → Transcription'}
           onMouseDown={(e) => e.preventDefault() /* keep the keyboard up */}
-          onClick={() => void dictation.start()}
-          style={{ ...circle, background: 'transparent', color: sttConfigured ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', cursor: sttConfigured ? 'pointer' : 'default', opacity: sttConfigured ? 1 : 0.5 }}>
+          onClick={() => { if (sttConfigured) void dictation.start(); else setMicHint((v) => !v); }}
+          style={{ ...circle, gridArea: 'mic', background: 'transparent', color: sttConfigured ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', cursor: 'pointer', opacity: sttConfigured ? 1 : 0.5 }}>
           <Microphone size={mobile ? 21 : 18} />
         </button>
       )}
       {stopMode ? (
         <button type="button" aria-label="Stop" title="Stop" onClick={onStop}
-          style={{ ...circle, background: 'var(--color-text-primary)', color: 'var(--color-base)', cursor: 'pointer' }}>
+          style={{ ...circle, gridArea: 'send', background: 'var(--color-text-primary)', color: 'var(--color-base)', cursor: 'pointer' }}>
           <Stop size={mobile ? 15 : 13} weight="fill" />
         </button>
       ) : (
         <button type="button" aria-label={sendLabel} title={sendLabel} disabled={!canSend}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSend}
-          style={{ ...circle, background: canSend ? 'var(--color-accent)' : 'var(--color-hover, rgba(255,255,255,.08))', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
+          style={{ ...circle, gridArea: 'send', background: canSend ? 'var(--color-accent)' : 'var(--color-hover, rgba(255,255,255,.08))', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
           <ArrowUp size={mobile ? 20 : 17} weight="bold" />
         </button>
       )}

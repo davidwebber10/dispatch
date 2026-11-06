@@ -20,6 +20,8 @@ const BRANCHABLE: string[] = ['claude-code', 'codex', 'grok'];
 export type ThreadMenuAt = { tab: Terminal; x: number; y: number };
 
 const item: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
+/** A row in the phone's sheet: finger-sized. */
+const sheetItem: React.CSSProperties = { ...item, padding: '13px 12px', fontSize: 15, borderRadius: 'var(--radius-md)' };
 
 /**
  * A thread row's options menu (the ⋯ button, right-click, long-press) and the dialogs it
@@ -68,36 +70,48 @@ export function ThreadMenu({ at, onClose, onBranched }: { at: ThreadMenuAt | nul
 
   const pick = (fn: (tab: Terminal) => void) => () => { if (!at) return; const t = at.tab; onClose(); fn(t); };
 
+  // The menu's rows, the same in the sheet and the desktop menu.
+  const menuItems = (at: ThreadMenuAt) => (
+    <>
+            {isMobile && THREAD_TYPES.includes(at.tab.type) && (
+              <button onClick={pick(setDetailsTarget)} style={isMobile ? sheetItem : item}>Thread details</button>
+            )}
+            <button onClick={pick(setRenameTarget)} style={isMobile ? sheetItem : item}>{at.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
+            {BRANCHABLE.includes(at.tab.type) && (
+              <button onClick={pick((t) => void branch(t))} style={isMobile ? sheetItem : item}>Branch thread</button>
+            )}
+            {THREAD_TYPES.includes(at.tab.type) && (
+              <button onClick={pick(reload)} style={isMobile ? sheetItem : item}>Reload thread</button>
+            )}
+            {THREAD_TYPES.includes(at.tab.type) && (
+              <button onClick={pick((t) => void resetStatus(t))} style={isMobile ? sheetItem : item}>Reset status</button>
+            )}
+            {THREAD_TYPES.includes(at.tab.type) && (
+              <button onClick={pick(setAutoArchiveTarget)} style={isMobile ? sheetItem : item}>Auto-archive…</button>
+            )}
+            {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && canReceiveAlerts() && (
+              <button onClick={pick((t) => void toggleAlerts(t))} style={isMobile ? sheetItem : item}>{(at.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
+            )}
+            {at.tab.type === 'file' ? (
+              <button onClick={pick((t) => void archive(t))} style={isMobile ? sheetItem : item}>Unpin</button>
+            ) : (
+              <button onClick={pick(setArchiveTarget)} style={{ ...(isMobile ? sheetItem : item), color: 'var(--color-status-red)' }}>Archive thread</button>
+            )}
+    </>
+  );
+
   return (
     <>
-      {at && createPortal(
+      {/* On a phone: the app's shared slide-up sheet, with bigger rows. On desktop: a small menu at the click. */}
+      {isMobile ? (
+        <Modal open={!!at} sheet title={at?.tab.label} onClose={onClose}>
+          {at && <div role="menu" style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{menuItems(at)}</div>}
+        </Modal>
+      ) : at && createPortal(
         <>
           <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div role="menu" style={{ position: 'fixed', top: at.y, left: Math.min(at.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
-            {isMobile && THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(setDetailsTarget)} style={item}>Thread details</button>
-            )}
-            <button onClick={pick(setRenameTarget)} style={item}>{at.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
-            {BRANCHABLE.includes(at.tab.type) && (
-              <button onClick={pick((t) => void branch(t))} style={item}>Branch thread</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(reload)} style={item}>Reload thread</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick((t) => void resetStatus(t))} style={item}>Reset status</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(setAutoArchiveTarget)} style={item}>Auto-archive…</button>
-            )}
-            {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && canReceiveAlerts() && (
-              <button onClick={pick((t) => void toggleAlerts(t))} style={item}>{(at.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
-            )}
-            {at.tab.type === 'file' ? (
-              <button onClick={pick((t) => void archive(t))} style={item}>Unpin</button>
-            ) : (
-              <button onClick={pick(setArchiveTarget)} style={{ ...item, color: 'var(--color-status-red)' }}>Archive thread</button>
-            )}
+            {menuItems(at)}
           </div>
         </>,
         document.body,

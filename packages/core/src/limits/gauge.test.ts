@@ -530,3 +530,60 @@ describe('Codex refresh tick', () => {
     expect(refreshed).toEqual([]);
   });
 });
+
+describe('direct Codex poll and the run-out forecast', () => {
+  it('asks Codex itself when no Codex thread was active, at most every 5 minutes', async () => {
+    gauge.stop();
+    const polls: number[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, zone: ZONE, broadcast: () => {}, pollCodex: async () => { polls.push(clock); return true; } });
+    g.tick();
+    await Promise.resolve();
+    clock = T0 + 2 * MIN; g.tick(); await Promise.resolve();
+    expect(polls).toEqual([T0]);
+    clock = T0 + 6 * MIN; g.tick(); await Promise.resolve();
+    expect(polls).toEqual([T0, T0 + 6 * MIN]);
+    g.stop();
+  });
+
+  it('adds a forecast from the recent pace once there is enough history in the window', () => {
+    claude(10, 20);
+    expect(gauge.summary().providers[0].windows.five_hour.forecast).toBeUndefined(); // one sample is not a pace
+    clock = T0 + 60 * MIN;
+    claude(30, 22); // 20 points in an hour: 70 left takes 3.5 h, after the 1:10 AM reset
+    const f = gauge.summary().providers[0].windows.five_hour.forecast!;
+    expect(f.basisHours).toBe(1);
+    expect(f.lastsUntilReset).toBe(true);
+    expect(f.runsOutAt).toBe(clock + 3.5 * 60 * MIN);
+  });
+});
+
+describe('background Claude probe', () => {
+  const probeGauge = (probes: number[]) => new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, zone: ZONE, broadcast: () => {}, probeClaude: async () => { probes.push(clock); return true; } });
+  const activeThread = (at: number) => { thread('k1'); db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(at).toISOString(), 'k1'); };
+
+  it('probes when the figures are stale and something was active, at most every 5 minutes', async () => {
+    gauge.stop();
+    const probes: number[] = [];
+    const g = probeGauge(probes);
+    activeThread(clock - 2 * MIN);
+    g.tick(); await Promise.resolve();
+    clock += 2 * MIN; g.tick(); await Promise.resolve();
+    expect(probes).toEqual([T0]);
+    clock = T0 + 6 * MIN; g.tick(); await Promise.resolve();
+    expect(probes).toHaveLength(2);
+    g.stop();
+  });
+
+  it('does not probe while a Pretty thread keeps the figures fresh, or when nothing has been active', async () => {
+    gauge.stop();
+    const probes: number[] = [];
+    const g = probeGauge(probes);
+    g.tick(); await Promise.resolve(); // idle machine
+    expect(probes).toEqual([]);
+    activeThread(clock);
+    claude(10, 20); // just reported
+    g.tick(); await Promise.resolve();
+    expect(probes).toEqual([]);
+    g.stop();
+  });
+});

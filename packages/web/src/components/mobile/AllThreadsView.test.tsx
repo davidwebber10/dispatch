@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { api } from '../../api/client';
 import { AllThreadsView } from './AllThreadsView';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
@@ -66,4 +67,21 @@ describe('<AllThreadsView>', () => {
     }
     vi.unstubAllGlobals();
   });
+
+  it('the Archived tab lists every project\'s archived threads, newest first, and Restore reopens one', async () => {
+    const archived = (id: string, sessionId: string, label: string, at: string) => ({ ...t(id, sessionId, label, at), archivedAt: at });
+    vi.spyOn(api, 'listArchivedTerminals').mockImplementation(async (sid: string) => (sid === 'A'
+      ? [archived('x1', 'A', 'Old login fix', '2026-10-20T10:00:00Z')]
+      : [archived('x2', 'B', 'Shipped v1', '2026-10-25T10:00:00Z')]) as any);
+    vi.spyOn(api, 'restoreTerminal').mockResolvedValue({ id: 'x1' } as any);
+    const open = vi.fn();
+    render(<AllThreadsView onOpenThread={open} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'ARCHIVED' }));
+    const list = await screen.findByTestId('archived-threads');
+    expect([...list.querySelectorAll('[data-archived-id]')].map((r) => r.getAttribute('data-archived-id'))).toEqual(['x2', 'x1']);
+    expect(list.textContent).toContain('Beta · archived');
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Old login fix' }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith('A', 'x1'));
+  });
 });
+

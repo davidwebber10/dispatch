@@ -26,4 +26,17 @@ describe('PillComposer', () => {
     render(<PillComposer {...base} value="hi" canSend dictation={dictation()} />);
     expect(screen.getByRole('button', { name: 'Send' }).style.background).toBe('var(--color-accent)');
   });
+
+  it('once there is text it gets its own full-width line above the + / mic / send row', () => {
+    const { rerender } = render(<PillComposer {...base} dictation={dictation()} />);
+    const box = screen.getByTestId('pill-composer');
+    expect(box.getAttribute('data-stacked')).toBeNull();
+    expect(box.style.gridTemplateAreas).toBe('"plus text mic send"');
+    const ta = screen.getByPlaceholderText('Message…');
+    rerender(<PillComposer {...base} value="hello" canSend dictation={dictation()} />);
+    expect(box.getAttribute('data-stacked')).toBe('true');
+    expect(box.style.gridTemplateAreas).toBe('"text text text text" "plus . mic send"');
+    expect(screen.getByPlaceholderText('Message…')).toBe(ta); // the same box: typing keeps its focus
+  });
 });
+

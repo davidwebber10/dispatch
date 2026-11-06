@@ -102,6 +102,8 @@ export interface ApiRouteDeps {
     refreshCodex?: CodexRefresh;
     /** Applies a settings PUT live: the gauge rebroadcasts with the new threshold. */
     onSettingsChange?: () => void;
+    /** Spend a banked limit reset (Codex). */
+    useResetCredit?: (provider: string, creditId?: string) => Promise<string | null>;
   };
 }
 
@@ -158,7 +160,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
   app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
-  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary }));
+  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, useResetCredit: d.usageLimits.useResetCredit }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
 }

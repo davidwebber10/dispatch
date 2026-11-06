@@ -1,8 +1,10 @@
+import { HEADER_BOX } from './headerButton';
 import { useEffect, useRef, useState } from 'react';
 import { useNow } from '../../hooks/useNow';
 import { useUsageLimits } from '../../stores/usageLimits';
 import type { UsageSummary } from '../../api/types';
-import { Sheet } from '../settings/ui';
+import { Modal } from '../common/Modal';
+import { UsageRings } from './UsageRings';
 import { chipModel, usageTables, bannerText, TONE_COLOR, CLI_NOTE } from './usageGauge';
 
 /** Every provider's windows, resets and "As of", plus any pause. The popover, the phone sheet and Settings share it. */
@@ -62,13 +64,16 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     return (
       <>
         <button type="button" data-testid="usage-chip" data-tone={m.tone} aria-label={m.title} title={m.title} onClick={() => setOpen(true)}
-          style={{ height: 36, minWidth: 44, flexShrink: 0, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, background: 'var(--color-elevated)', border: `1px solid ${m.tone === 'normal' ? '#2C2C32' : color}`, borderRadius: 'var(--radius-md)', color, font: '600 13px var(--font-mono)', cursor: 'pointer', opacity }}>
-          {m.mark && <span style={{ fontSize: 10, opacity: 0.8 }}>{m.mark}</span>}
-          {m.peak}
+          style={{ ...HEADER_BOX, minWidth: 44, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3, ...(m.tone === 'normal' ? {} : { borderColor: color }), color, font: '600 13px var(--font-mono)', cursor: 'pointer' }}>
+          {/* Stale figures dim the figure, not the button: the header's controls keep one weight. */}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3, opacity }}>
+            {m.mark && <span style={{ fontSize: 10, opacity: 0.8 }}>{m.mark}</span>}
+            {m.peak}
+          </span>
         </button>
-        <Sheet open={open} onClose={() => setOpen(false)} title="USAGE LIMITS">
-          <UsageTable summary={summary} now={now} />
-        </Sheet>
+        <Modal open={open} sheet title="Usage" onClose={() => setOpen(false)}>
+          <UsageRings summary={summary} now={now} />
+        </Modal>
       </>
     );
   }
@@ -78,13 +83,14 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
       <button type="button" data-testid="usage-chip" data-tone={m.tone} aria-label={m.title} title={m.title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
         style={{ width: 52, padding: '4px 0', borderRadius: 'var(--radius-md)', border: `1px solid ${m.tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, color, opacity, font: '500 10px var(--font-mono)', lineHeight: '13px' }}>
         {m.mark && <span style={{ fontSize: 8.5, opacity: 0.8 }}>{m.mark}</span>}
-        <span style={{ whiteSpace: 'nowrap' }}>5h {m.five}</span>
+        {/* Only a tool that reports a 5-hour window gets the line (neither Claude nor Codex did on 2026-11-05). */}
+        {m.five !== '–' && <span style={{ whiteSpace: 'nowrap' }}>5h {m.five}</span>}
         <span style={{ whiteSpace: 'nowrap' }}>wk {m.week}</span>
       </button>
       {open && (
-        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 300, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: '#1B1B1E', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>
-          <div style={{ font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)', marginBottom: 10 }}>USAGE LIMITS</div>
-          <UsageTable summary={summary} now={now} />
+        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Usage</div>
+          <UsageRings summary={summary} now={now} />
         </div>
       )}
     </div>

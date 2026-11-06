@@ -125,3 +125,22 @@ describe('GET /api/usage-limits/summary (#127)', () => {
     expect(r.body).toEqual(body);
   });
 });
+
+describe('POST /api/usage-limits/reset-credit', () => {
+  const withReset = (useResetCredit: (p: string) => Promise<string | null>) => {
+    const a = express(); a.use(express.json());
+    a.use('/api', createUsageLimitsRouter(db, snaps, { accountFor: () => account, useResetCredit }));
+    return a;
+  };
+  it('spends one banked Codex reset and answers the outcome', async () => {
+    const spent: string[] = [];
+    const res = await request(withReset(async (p) => { spent.push(p); return 'reset'; })).post('/api/usage-limits/reset-credit').send({ provider: 'codex' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ outcome: 'reset' });
+    expect(spent).toEqual(['codex']);
+  });
+  it('400 for a provider without banked resets, 502 when Codex could not be asked', async () => {
+    expect((await request(withReset(async () => 'reset')).post('/api/usage-limits/reset-credit').send({ provider: 'claude-code' })).status).toBe(400);
+    expect((await request(withReset(async () => null)).post('/api/usage-limits/reset-credit').send({ provider: 'codex' })).status).toBe(502);
+  });
+});

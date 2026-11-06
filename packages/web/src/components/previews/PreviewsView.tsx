@@ -4,19 +4,16 @@ import { PreviewItem } from './PreviewItem';
 
 /**
  * The desktop rail's Previews view: the full history across projects, newest first, grouped
- * by day, each with its project, thread and time. Opening it marks everything seen.
+ * by day, each with its project, thread and time. Leaving it marks everything seen.
  */
 export function PreviewsView() {
   const items = usePreviews((s) => s.items);
   const loaded = usePreviews((s) => s.loaded);
+  // Load on open; mark everything seen on LEAVING the view, so the unviewed dots show while you look.
   useEffect(() => {
     void usePreviews.getState().load();
-    void usePreviews.getState().markAllSeen();
+    return () => { void usePreviews.getState().markAllSeen(); };
   }, []);
-  // A preview that arrives while the view is open is marked seen too: the user is looking at it.
-  useEffect(() => {
-    if (items.some((p) => !p.seenAt)) void usePreviews.getState().markAllSeen();
-  }, [items]);
   const groups = useMemo(() => {
     const out: { day: string; items: typeof items }[] = [];
     for (const p of items) {

@@ -369,7 +369,7 @@ test('the keys live in a sheet behind the +: no always-on row, and Clear input e
   fireEvent.click(within(sheet).getByTitle('Escape'));
   expect(created[0].send).toHaveBeenLastCalledWith('\x1b');
   expect(screen.getByRole('dialog', { name: 'Keys' })).toBeInTheDocument(); // stays open between taps
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
 });
 
@@ -1196,7 +1196,7 @@ test('a Grok thread on the normal buffer still pages the PTY (it is a TUI either
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
   const sheet = await openKeys();
   await waitFor(() => expect(within(sheet).getByTitle('Page up')).toBeInTheDocument()); // the grok keys: meta has loaded
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
 
   instances[0].buffer.active.type = 'normal';
   instances[0].buffer.active.baseY = 40;

@@ -147,3 +147,86 @@ export function bannerText(g: UsagePausedGroup, now: number, zone?: string): str
   const capped = g.capped > 0 ? `, ${g.capped} stopped after 5 tries` : '';
   return `${who} paused: ${kind}, ${when}${count}${capped}`;
 }
+
+// --- the ring sheet (2026-11-05) -----------------------------------------------------------
+
+/** Ring colors: green, then yellow from 30 points below the warning, red from the warning. */
+export type RingTone = 'green' | 'yellow' | 'red';
+export const RING_COLOR: Record<RingTone, string> = { green: 'var(--color-accent)', yellow: 'var(--color-status-yellow)', red: 'var(--color-status-red)' };
+export const yellowFrom = (warn: number) => Math.max(10, warn - 30);
+export const ringTone = (used: number, warn: number): RingTone => (used >= warn ? 'red' : used >= yellowFrom(warn) ? 'yellow' : 'green');
+
+export interface RingRow { type: string; label: string; left: number | null; tone: RingTone; reset: string | null; estimate: string | null; estimateTitle: string | null }
+export interface RingModel {
+  provider: string;
+  name: string;
+  plan?: string;
+  /** The window closest to running out: the ring. */
+  main: RingRow;
+  /** Every window, the main one first. */
+  rows: RingRow[];
+  asOf: string;
+  stale: boolean;
+  paused: boolean;
+  /** Banked resets the tool can spend now (Codex), or 0. */
+  credits: number;
+  /** Each banked reset, soonest to expire first: its id and when it expires. */
+  creditList: { id: string; expires: string | null; soon: boolean }[];
+}
+
+const SHORT: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_overage_included: 'Fable weekly' };
+
+/**
+ * The run-out estimate: a short label for the row ("out ~Thu 3:00 PM", "lasts to reset") and the
+ * full sentence for its tooltip. Null without enough history.
+ */
+export function estimateLabel(w: LimitWindow, now: number, zone?: string): { short: string; long: string } | null {
+  const f = w.forecast;
+  if (!f) return null;
+  const basis = f.basisHours >= 24 ? 'last 24 h' : `last ${f.basisHours} h`;
+  if (f.lastsUntilReset || f.runsOutAt === null) return { short: 'lasts to reset', long: `At the ${basis} pace it lasts until the reset (estimate)` };
+  if (f.runsOutAt <= now) return { short: 'used up', long: 'Used up' };
+  const when = whenLabel(f.runsOutAt, now, zone);
+  return { short: `out ~${when}`, long: `At the ${basis} pace it runs out around ${when} (estimate)` };
+}
+
+/** When a banked reset expires: "today 3:00 PM", "tomorrow 3:00 PM", "Fri 3:00 PM", or "Dec 4". */
+export function expiryLabel(ms: number, now: number, zone?: string): string {
+  const day = (t: number) => new Date(t).toLocaleDateString('en-CA', { timeZone: zone });
+  const time = new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: zone });
+  if (day(ms) === day(now)) return `today ${time}`;
+  if (day(ms) === day(now + 24 * 3600_000)) return `tomorrow ${time}`;
+  if (ms - now < 6 * 24 * 3600_000) return `${new Date(ms).toLocaleDateString('en-US', { weekday: 'short', timeZone: zone })} ${time}`;
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: zone });
+}
+
+/** One ring per provider that has a current figure, closest-to-empty limit on the ring. */
+export function ringModels(s: UsageSummary | null, now: number, zone?: string): RingModel[] {
+  if (!s) return [];
+  const paused = new Set(s.paused.map((g) => g.provider));
+  const out: RingModel[] = [];
+  for (const p of s.providers) {
+    const types = [...COUNTED.filter((t) => p.windows[t]), ...Object.keys(p.windows).filter((t) => !(COUNTED as readonly string[]).includes(t) && t !== 'overage')];
+    const rows: RingRow[] = types.map((t) => {
+      const w = p.windows[t];
+      const used = liveValue(w, now);
+      const est = used === null ? null : estimateLabel(w, now, zone);
+      return {
+        type: t, label: SHORT[t] ?? TYPE_LABEL[t] ?? t,
+        left: used === null ? null : Math.max(0, 100 - used),
+        tone: used === null ? 'green' : ringTone(used, s.warnPercent),
+        reset: w.resetsAt !== null && w.resetsAt > now ? `resets ${whenLabel(w.resetsAt, now, zone)}` : null,
+        estimate: est?.short ?? null, estimateTitle: est?.long ?? null,
+      };
+    }).filter((r) => r.left !== null);
+    if (!rows.length) continue;
+    rows.sort((a, b) => (a.left as number) - (b.left as number));
+    out.push({
+      provider: p.provider, name: PROVIDER_NAME[p.provider] ?? p.provider, plan: p.plan,
+      main: rows[0], rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
+      credits: p.resetCredits?.available ?? 0,
+      creditList: (p.resetCredits?.credits ?? []).map((c) => ({ id: c.id, expires: c.expiresAt === null ? null : expiryLabel(c.expiresAt, now, zone), soon: c.expiresAt !== null && c.expiresAt - now < 48 * 3600_000 })),
+    });
+  }
+  return out;
+}
