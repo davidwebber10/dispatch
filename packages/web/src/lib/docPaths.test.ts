@@ -64,6 +64,9 @@ describe('findDocPaths is linear', () => {
     ['a long word, then 200 paths', 'x'.repeat(50000) + ' (a.md)'.repeat(200), 200],
     ['50000 @', '@'.repeat(50000), 0],
     ['25000 @.', '@.'.repeat(25000), 0],
+    ['one word of 50000 dotted letters', 'a.'.repeat(25000) + 'b', 0],
+    ['10000 dotted words', ' x.y.z'.repeat(10000), 0],
+    ['5000 paths with folders', ' src/a.py'.repeat(5000), 5000],
   ])('%s', (_name, text, count) => {
     const { n, ms } = timed(text);
     expect(n).toBe(count);
