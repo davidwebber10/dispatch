@@ -149,10 +149,20 @@ export class SessionService {
   private resuming: string | null = null;
   setUsageLimitService(svc: UsageLimitService): void { this.usageLimits = svc; }
   /** Send the usage-limit auto-resume text. Unlike every other send it keeps the park's attempt count. */
-  resumeAfterUsageLimit(terminalId: string, text: string): void {
+  resumeAfterUsageLimit(terminalId: string, text: string): 'pty' | 'structured' {
     this.resuming = terminalId;
-    try { this.sendThreadMessage(terminalId, text, undefined, 'daemon'); } finally { this.resuming = null; }
+    try {
+      const sent = this.sendThreadMessage(terminalId, text, undefined, 'daemon');
+      // A structured send flips to working off its own stream events; a PTY write has no such signal,
+      // so mark the thread working here, as the HTTP message route does. Without the working edge the
+      // turn end is not a settle, and the woken pause row would never clear.
+      if (sent.transport === 'pty') this.wakeWorkingMarker?.(terminalId);
+      return sent.transport;
+    } finally { this.resuming = null; }
   }
+  private wakeWorkingMarker?: (terminalId: string) => void;
+  /** How a daemon wake into a CLI (PTY) thread marks it working; set by the server wiring. */
+  setWakeWorkingMarker(fn: (terminalId: string) => void): void { this.wakeWorkingMarker = fn; }
   /** Anyone else sending to a thread, or the owner typing in it, ends its pause. */
   private noteThreadTouched(terminalId: string, source?: string, logAs?: string): void {
     // Only the owner's own message (tagged source 'user') takes over; notices, recaps, watches and

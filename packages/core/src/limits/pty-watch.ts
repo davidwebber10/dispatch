@@ -2,7 +2,7 @@
 // Finds a usage-limit banner in a CLI (PTY) thread's output. A TUI repaints the screen, and an
 // agent can quote the banner in prose, so a match counts only after the terminal stays quiet:
 // any new output that is not the banner itself restarts the wait.
-import { detectBannerLimit, textAfterBanner, type UsageLimit } from './detect.js';
+import { detectBannerLimit, detectCodexBannerLimit, textAfterBanner, textAfterCodexBanner, type UsageLimit } from './detect.js';
 
 const WINDOW = 2048;
 /** A reported banner is ignored again until its reset has passed by this much (repaints). */
@@ -15,10 +15,38 @@ const MAX_TRAILING_LETTERS = 120;
 const MAX_BUSY_RETRIES = 6;
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b\([A-Za-z]/g;
 
+/** One CLI's banner: how to find it, and how much screen may follow it before it counts as a quote. */
+export interface PtyDetector {
+  provider: string;
+  detect(output: string, now: number): UsageLimit | null;
+  /** Letters and digits on the screen after the last banner. */
+  textAfter(output: string): number;
+  maxTrailing: number;
+}
+
+/**
+ * The banners of the CLIs that stop on a usage limit in a terminal. Claude's prompt box is small.
+ * Codex repaints a taller footer (model line, context left, composer hint) under its banner, so it
+ * is allowed more letters after it.
+ */
+export const PTY_DETECTORS: PtyDetector[] = [
+  { provider: 'claude-code', detect: detectBannerLimit, textAfter: textAfterBanner, maxTrailing: MAX_TRAILING_LETTERS },
+  { provider: 'codex', detect: detectCodexBannerLimit, textAfter: textAfterCodexBanner, maxTrailing: 250 },
+];
+
 export interface PtyLimitWatcherDeps {
   isIdle(terminalId: string): boolean;
-  onLimit(terminalId: string, limit: UsageLimit): void;
+  /** `provider` names the CLI whose banner it was (a PtyDetector.provider). The caller parks only a terminal of that type. */
+  onLimit(terminalId: string, limit: UsageLimit, provider: string): void;
   confirmMs?: number;
+  /** Default: PTY_DETECTORS. */
+  detectors?: PtyDetector[];
+  /**
+   * The CLI a terminal runs (its type). When given, a terminal is read only for that CLI's banner and
+   * a terminal of any other type (a shell, an unknown one) is not read at all. Without it every
+   * detector reads every terminal.
+   */
+  providerOf?(terminalId: string): string | undefined;
 }
 
 export class PtyLimitWatcher {
@@ -26,18 +54,31 @@ export class PtyLimitWatcher {
   private pending = new Map<string, NodeJS.Timeout>();
   private reported = new Map<string, { message: string; until: number }>();
 
-  constructor(private readonly d: PtyLimitWatcherDeps) {}
+  private readonly detectors: PtyDetector[];
+
+  constructor(private readonly d: PtyLimitWatcherDeps) { this.detectors = d.detectors ?? PTY_DETECTORS; }
+
+  /** The first detector for this terminal's CLI that finds a banner in `output`. */
+  private find(terminalId: string, output: string, now: number): { limit: UsageLimit; detector: PtyDetector } | null {
+    const provider = this.d.providerOf?.(terminalId);
+    const detectors = this.d.providerOf ? (provider ? this.detectors.filter((x) => x.provider === provider) : []) : this.detectors;
+    for (const detector of detectors) {
+      const limit = detector.detect(output, now);
+      if (limit) return { limit, detector };
+    }
+    return null;
+  }
 
   feed(terminalId: string, chunk: string): void {
     const tail = ((this.tails.get(terminalId) ?? '') + chunk).slice(-WINDOW);
     this.tails.set(terminalId, tail);
     if (this.pending.has(terminalId)) {
       // The banner painted again, or blank screen codes: still quiet. Anything else: not quiet.
-      if (!detectBannerLimit(chunk, Date.now()) && chunk.replace(ANSI, '').trim()) this.arm(terminalId);
+      if (!this.find(terminalId, chunk, Date.now()) && chunk.replace(ANSI, '').trim()) this.arm(terminalId);
       return;
     }
-    const limit = detectBannerLimit(tail, Date.now());
-    if (limit && !this.isRepaint(terminalId, limit)) this.arm(terminalId);
+    const hit = this.find(terminalId, tail, Date.now());
+    if (hit && !this.isRepaint(terminalId, hit.limit)) this.arm(terminalId);
   }
 
   private isRepaint(terminalId: string, limit: UsageLimit): boolean {
@@ -52,8 +93,9 @@ export class PtyLimitWatcher {
       this.pending.delete(terminalId);
       const tail = this.tails.get(terminalId) ?? '';
       // Read the whole banner now: chunks may have split it, so the first look can lack the time.
-      const limit = detectBannerLimit(tail, Date.now());
-      if (!limit || textAfterBanner(tail) > MAX_TRAILING_LETTERS || this.isRepaint(terminalId, limit)) { this.tails.delete(terminalId); return; }
+      const hit = this.find(terminalId, tail, Date.now());
+      if (!hit || hit.detector.textAfter(tail) > hit.detector.maxTrailing || this.isRepaint(terminalId, hit.limit)) { this.tails.delete(terminalId); return; }
+      const { limit, detector } = hit;
       // A repaint resets the monitor's idle clock: wait again instead of dropping a real stop.
       if (!this.d.isIdle(terminalId)) {
         if (retries < MAX_BUSY_RETRIES) this.arm(terminalId, retries + 1);
@@ -62,7 +104,7 @@ export class PtyLimitWatcher {
       }
       this.tails.delete(terminalId);
       this.reported.set(terminalId, { message: limit.message, until: (limit.resetsAt ?? Date.now() + UNKNOWN_RESET_MS) + REPAINT_GRACE_MS });
-      this.d.onLimit(terminalId, limit);
+      this.d.onLimit(terminalId, limit, detector.provider);
     }, this.d.confirmMs ?? 5000));
   }
 

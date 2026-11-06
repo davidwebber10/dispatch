@@ -32,6 +32,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
+import { pauseLabel } from '../limits/detect.js';
 import * as readline from 'readline';
 import type {
   IStructuredManager,
@@ -173,6 +174,8 @@ interface GrokSession {
   loading: boolean;
   /** True from prompt-send until the translator (or the response fallback) settles the turn. */
   turnActive: boolean;
+  /** True once the running turn ended as a usage-limit pause: a prompt call that is then rejected adds no second outcome. */
+  limitSettled: boolean;
   /** Resolves once session/new|load has bound a sessionId; sends chain on it. */
   ready: Promise<void>;
   /** The agent's report_status declaration for the CURRENT turn (see manager.ts). */
@@ -205,6 +208,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       model: opts.model,
       loading: false,
       turnActive: false,
+      limitSettled: false,
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) {
@@ -308,6 +312,13 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
           session.turnActive = false;
           this.emit('failed', session.terminalId);
           break;
+        case 'usage-limit':
+          // A usage limit is a pause, not a failure: the limit service parks the thread and wakes it.
+          session.turnActive = false;
+          session.limitSettled = true;
+          this.emit('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.emit('usage-limit', session.terminalId, action.limit);
+          break;
         case 'busy':
           this.emit('busy', session.terminalId);
           break;
@@ -389,16 +400,22 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     if (this.sessions.get(session.terminalId) !== session) return;
     if (!session.conn.alive || !session.sessionId) { this.emit('failed', session.terminalId); return; }
     session.turnActive = true;
+    session.limitSettled = false;
     this.emit('busy', session.terminalId);
     let result: unknown;
     try {
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
     } catch (err) {
       if (this.sessions.get(session.terminalId) !== session) return;
+      if (session.limitSettled) { session.turnActive = false; return; } // the turn already ended as a pause
+      const limit = session.translator.takePendingLimit(); // the retries ran out on a usage limit, then the call failed
       session.translator.abortTurn(); // the failed turn's prose must not join the next turn's texts
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
-      this.emit('failed', session.terminalId);
+      if (limit) {
+        this.emit('scheduled', session.terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+        this.emit('usage-limit', session.terminalId, limit);
+      } else this.emit('failed', session.terminalId);
       return;
     }
     // Response-driven boundary: OpenCode sends no turn_completed update — the prompt

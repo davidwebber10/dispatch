@@ -20,6 +20,7 @@
 
 import type { PendingPermission, PermissionDecision } from './manager.js';
 import { looksLikeQuestion } from '../status/question.js';
+import { detectGrokLimit, type UsageLimit } from '../limits/detect.js';
 
 /** A Grok JSON-RPC frame (notification OR server→client request — `id` present ⇒ request). */
 export interface GrokFrame {
@@ -41,6 +42,7 @@ export type GrokAction =
   | { kind: 'event'; event: unknown }
   | { kind: 'busy' }
   | { kind: 'failed' }
+  | { kind: 'usage-limit'; limit: UsageLimit } // the turn ended on a usage limit: a pause, not a failure
   | { kind: 'idle'; summary?: string }
   | { kind: 'needs-help'; ask: string; summary: string }
   | {
@@ -101,6 +103,7 @@ export class GrokTranslator {
    * either, so endedTurnTexts is cleared too.
    */
   abortTurn(): void {
+    this.pendingLimit = null;
     this.turnTexts = [];
     this.endedTurnTexts = [];
     this.lastAgentText = '';
@@ -110,6 +113,19 @@ export class GrokTranslator {
     this.nextBlockIndex = 0;
     this.usageReportedThisTurn = false;
   }
+  /**
+   * A usage limit this turn reported (Grok's `retry_state` `exhausted`, see limits/detect.ts), read at the
+   * turn boundary. Grok only: OpenCode's limit output is not confirmed, so its dialect never sets this.
+   */
+  private pendingLimit: UsageLimit | null = null;
+
+  /** The limit the running turn hit, once (the manager reads it when the prompt call itself fails). */
+  takePendingLimit(): UsageLimit | null {
+    const limit = this.pendingLimit;
+    this.pendingLimit = null;
+    return limit;
+  }
+
   /** tool_call ids whose tool_result has already been emitted (updates repeat per status). */
   private resultEmitted = new Set<string>();
   /** The ACP session's real model id (models.currentModelId), kept to stamp usage-bearing
@@ -152,6 +168,10 @@ export class GrokTranslator {
         return action;
       });
       case 'usage_update': return this.usageUpdate(update, replay);
+      case 'retry_state':
+        // Grok only. Its retries running out on a 429 is the limit; a retry still going is not.
+        if (!replay && this.dialect === 'grok') this.pendingLimit = detectGrokLimit(update, Date.now()) ?? this.pendingLimit;
+        return [];
       default: return []; // model_changed, available_commands_update, hook_execution, … — ignored
     }
   }
@@ -259,9 +279,10 @@ export class GrokTranslator {
 
   private turnCompleted(update: any): GrokAction[] {
     const usage = update?.usage ?? {};
+    if (this.dialect === 'grok') this.pendingLimit = this.pendingLimit ?? detectGrokLimit(update, Date.now());
     return this.finishTurn({
       subtype: 'grok_turn',
-      isError: update?.stop_reason === 'error' || update?.stop_reason === 'refusal',
+      isError: update?.stop_reason === 'error' || update?.stop_reason === 'refusal' || this.pendingLimit !== null,
       durationMs: typeof usage.apiDurationMs === 'number' ? usage.apiDurationMs : undefined,
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
@@ -358,7 +379,10 @@ export class GrokTranslator {
     // `summary` is ALWAYS carried (even '') — its presence tells the idle listener "the agent
     // answered for this turn", never to fall back to the Claude ring walk (see the
     // wirePermissionMembrane idle handler's comment on Codex, which Grok shares).
-    out.push(t.isError ? { kind: 'failed' } : looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle', summary: text });
+    // A usage limit read this turn is a pause the limit service wakes after the reset, not a failure.
+    const limit = this.pendingLimit;
+    this.pendingLimit = null;
+    out.push(limit ? { kind: 'usage-limit', limit } : t.isError ? { kind: 'failed' } : looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle', summary: text });
     return out;
   }
 

@@ -48,6 +48,23 @@ rl.on('line', (line) => {
       global.pendingFinish = finish;
       return;
     }
+    if (MODE === 'rate-limit') {
+      // The real order of a Grok free-usage stop: retries run out, the turn ends "rate_limit", the call returns.
+      notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true, reason: "API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You've used all the included free usage for model grok-4.7 for now. Usage resets over a rolling 24-hour window." } });
+      notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'rate_limit' } });
+      return finish('end_turn');
+    }
+    if (MODE === 'rate-limit-then-rpc-error') {
+      // The turn ended "rate_limit" and THEN the prompt call was rejected: one stop, not two.
+      notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true, reason: 'API error (status 429 Too Many Requests): subscription:free-usage-exhausted' } });
+      notify('_x.ai/session_notification', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'rate_limit' } });
+      return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Rate limited' } });
+    }
+    if (MODE === 'rate-limit-rpc') {
+      // The retries ran out and the call itself failed.
+      notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'retry_state', type: 'exhausted', attempts: 0, is_rate_limited: true, reason: 'API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You\\'ve used all the included free usage.' } });
+      return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Rate limited' } });
+    }
     if (MODE === 'echo-prompt') {
       // Echo the RECEIVED prompt array back as prose, so a test can assert exactly what
       // wire shape toPrompt produced (e.g. an ACP image block, not a text marker).
@@ -147,6 +164,64 @@ describe('GrokStructuredSessionManager', () => {
     m.sendMessage('t1', 'second', 'user');
     await idle;
     expect(m.getTurnTexts('t1')).toEqual(['Done.']);
+  });
+
+  it('a free-usage stop emits usage-limit once, and neither idle nor failed', async () => {
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'rate-limit' } }));
+    const seen: string[] = [];
+    for (const e of ['idle', 'failed', 'needs-help']) m.on(e, () => seen.push(e));
+    const limits: any[] = [];
+    m.on('usage-limit', (tid, limit) => limits.push({ tid, limit }));
+    m.sendMessage('t1', 'hi', 'user');
+    await until<void>((resolve) => { const tick = () => (limits.length ? resolve() : setTimeout(tick, 10)); tick(); });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(limits).toHaveLength(1);
+    expect(limits[0].tid).toBe('t1');
+    expect(limits[0].limit).toMatchObject({ kind: 'usage', resetsAt: null });
+    expect(seen).toEqual([]);
+  });
+
+  it("a usage-limit stop sends 'scheduled' with the pause label first, so the turn closes (both paths)", async () => {
+    for (const mode of ['rate-limit', 'rate-limit-rpc']) {
+      const m = makeManager();
+      m.spawn(`t-${mode}`, spawnOpts({ env: { FAKE_MODE: mode } }));
+      const order: string[] = [];
+      let label = '';
+      m.on('scheduled', (_tid, l) => { order.push('scheduled'); label = l; });
+      m.on('usage-limit', () => order.push('usage-limit'));
+      m.sendMessage(`t-${mode}`, 'hi', 'user');
+      await until<void>((resolve) => { const tick = () => (order.includes('usage-limit') ? resolve() : setTimeout(tick, 10)); tick(); });
+      expect(order, mode).toEqual(['scheduled', 'usage-limit']);
+      expect(label, mode).toMatch(/^Paused: usage limit, reset time unknown/);
+    }
+  });
+
+  it('a rate_limit turn end followed by a rejected prompt call is one pause, not a pause and a failure', async () => {
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'rate-limit-then-rpc-error' } }));
+    const seen: string[] = [];
+    for (const e of ['idle', 'failed', 'needs-help']) m.on(e, () => seen.push(e));
+    const limits: any[] = [];
+    m.on('usage-limit', (_tid, l) => limits.push(l));
+    m.sendMessage('t1', 'hi', 'user');
+    await until<void>((resolve) => { const tick = () => (limits.length ? resolve() : setTimeout(tick, 10)); tick(); });
+    await new Promise((r) => setTimeout(r, 150));
+    expect(limits).toHaveLength(1);
+    expect(seen).toEqual([]);
+    expect((m.getEvents('t1') as any[]).filter((e) => e?.type === 'result' && e?.is_error === true)).toHaveLength(1);
+  });
+
+  it('a failed prompt call after the retries ran out is a usage-limit pause, not a failure', async () => {
+    const m = makeManager();
+    m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'rate-limit-rpc' } }));
+    const seen: string[] = [];
+    m.on('failed', () => seen.push('failed'));
+    const limit = until<any>((resolve) => m.on('usage-limit', (_tid, l) => resolve(l)));
+    m.sendMessage('t1', 'hi', 'user');
+    expect((await limit).kind).toBe('usage');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(seen).toEqual([]);
   });
 
   it('sendMessage → user echo + busy, streamed events, then idle with the turn summary', async () => {

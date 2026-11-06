@@ -122,3 +122,105 @@ describe('PtyLimitWatcher', () => {
   });
 });
 
+
+describe('PtyLimitWatcher with the Codex banner', () => {
+  const codexBanner = "■ You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.\r\n";
+  let got: { id: string; provider?: string; kind: string }[];
+  let cw: PtyLimitWatcher;
+  beforeEach(() => {
+    got = [];
+    cw = new PtyLimitWatcher({ isIdle: () => idle, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000 });
+  });
+  afterEach(() => { cw.forget('c1'); });
+
+  it('names the provider whose banner it was, once the terminal is quiet', () => {
+    cw.feed('c1', codexBanner);
+    quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'codex', kind: 'usage' }]);
+  });
+  it('a Claude banner is reported as claude-code', () => {
+    cw.feed('c1', banner);
+    quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'claude-code', kind: 'session' }]);
+  });
+  it('the Codex prompt box left after the banner does not count as more talk', () => {
+    cw.feed('c1', codexBanner + '\r\n  gpt-6-astra high · ~/Developer/Projects/app            100% context left\r\n› Ask Codex to do anything\r\n');
+    quiet();
+    expect(got).toHaveLength(1);
+  });
+  it('a quoted Codex banner followed by prose never parks', () => {
+    cw.feed('c1', codexBanner);
+    cw.feed('c1', 'That is the message the CLI prints. After it the agent stops and waits for you to send a message. ' + 'The daemon reads the time and wakes the thread by itself when it is over. '.repeat(8) + '\r\n');
+    quiet(10000);
+    expect(got).toEqual([]);
+  });
+  it('a Codex banner in the middle of a sentence never parks', () => {
+    cw.feed('c1', "In the docs, Codex prints: You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM. And that is all.\r\n");
+    quiet(10000);
+    expect(got).toEqual([]);
+  });
+  it('reports a repainted Codex banner once', () => {
+    cw.feed('c1', codexBanner); cw.feed('c1', codexBanner);
+    quiet();
+    cw.feed('c1', codexBanner);
+    quiet();
+    expect(got).toHaveLength(1);
+  });
+
+  it('a wrapped Codex banner is not claimed by the Claude detector', () => {
+    const wrapped = "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.\r\n";
+    // Claude's detector reads "You've hit your usage limit." at a line end as its own banner, so a terminal is read only for its own CLI.
+    const typed = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'codex' });
+    typed.feed('c1', wrapped); quiet();
+    expect(got).toEqual([{ id: 'c1', provider: 'codex', kind: 'usage' }]);
+    typed.forget('c1');
+    // The same wrapped text quoted in a Claude thread is not a Claude stop.
+    got.length = 0;
+    const claude = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'claude-code' });
+    claude.feed('c2', wrapped); quiet(10000);
+    expect(got).toEqual([]);
+    claude.forget('c2');
+  });
+  it('a banner quoted inside a multi-line fenced block never parks; a real stop after the fence does', () => {
+    const typed = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'codex' });
+    typed.feed('f1', '```\r\nExample output:\r\n\r\n' + codexBanner + '\r\n```\r\n');
+    quiet(10000);
+    expect(got).toEqual([]);
+    typed.feed('f1', codexBanner);
+    quiet();
+    expect(got).toEqual([{ id: 'f1', provider: 'codex', kind: 'usage' }]);
+    typed.forget('f1');
+  });
+  it('a block still being printed when the banner text appears is closed before the quiet wait ends: no park', () => {
+    const typed = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'codex' });
+    typed.feed('f2', '```\r\nExample:\r\n' + codexBanner);
+    quiet(2000);
+    typed.feed('f2', '```\r\n'); // the closing fence arrives: the text was inside the block
+    quiet(10000);
+    expect(got).toEqual([]);
+    typed.forget('f2');
+  });
+  it('a Claude stop below a quoted Codex message still parks', () => {
+    const claude = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: () => 'claude-code' });
+    claude.feed('c3', "You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n");
+    claude.feed('c3', banner);
+    quiet();
+    expect(got).toEqual([{ id: 'c3', provider: 'claude-code', kind: 'session' }]);
+    claude.forget('c3');
+  });
+  it('a terminal of one CLI is only read for that CLI\'s banner', () => {
+    const typed: Record<string, string | undefined> = { cl: 'claude-code', cx: 'codex', sh: 'shell' };
+    const tw = new PtyLimitWatcher({ isIdle: () => true, onLimit: (id, l, provider) => got.push({ id, provider, kind: l.kind }), confirmMs: 5000, providerOf: (id) => typed[id] });
+    tw.feed('cl', codexBanner);   // Codex text in a Claude thread
+    tw.feed('cx', banner);        // Claude text in a Codex thread
+    tw.feed('sh', codexBanner);   // a plain shell
+    tw.feed('sh', banner);
+    quiet(10000);
+    expect(got).toEqual([]);
+    tw.feed('cx', codexBanner);
+    tw.feed('cl', banner);
+    quiet();
+    expect(got.map((g) => `${g.id}:${g.provider}`).sort()).toEqual(['cl:claude-code', 'cx:codex']);
+    for (const id of Object.keys(typed)) tw.forget(id);
+  });
+});

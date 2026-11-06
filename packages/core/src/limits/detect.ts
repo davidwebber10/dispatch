@@ -160,9 +160,46 @@ const BANNER_RESET = String.raw`resets(?:\s+(?:at\s+)?(?:(?:${DAYS.join('|')})[a
 /** "You've hit|reached your <label> limit", then optionally "· resets <time>". Fable's credits screen has no time: it must end the line or go straight to its own advice, so a sentence that merely quotes it never matches. */
 const BANNER = new RegExp(String.raw`you['’]ve (?:hit|reached) your\s+[\w\s.-]{0,30}?limit(?:\s*[·∙•|-]\s*${BANNER_RESET}|(?=\s*[.!]?\s*(?:[\r\n]|$)|[.!]\s+(?:Switch|Run|Buy|Set|\/)))`, 'i');
 
+/** Every Claude banner match in `clean`, leaving out Codex messages that look like Claude's timeless wording (a Codex quote must not hide a real stop below it). */
+function claudeBanners(clean: string): RegExpExecArray[] {
+  return [...clean.matchAll(new RegExp(BANNER.source, 'gi'))].filter((m) => !isCodexMessageAt(clean, m.index!) && !insideFence(clean, m.index!));
+}
+
+/**
+ * True when `index` sits between an opening code fence and its closing fence, which comes AFTER it.
+ * A fence line is three or more backticks or tildes at the start of a line (blank space allowed). A
+ * block closes at the next line of the same character, at least as long as the opener, with nothing
+ * after it. A fence that never closes in the scanned text quotes nothing (the CLI may have cut the
+ * block: a collapsed tool preview), and neither does a closing fence whose opener scrolled out of the
+ * window. Lines the TUI prefixes ("⎿ ```", "> ```") are not fence lines.
+ */
+function insideFence(clean: string, index: number): boolean {
+  const lines: { text: string; start: number; end: number }[] = [];
+  let at = 0;
+  for (const raw of clean.split('\n')) {
+    lines.push({ text: raw.replace(/\r$/, ''), start: at, end: at + raw.length });
+    at += raw.length + 1;
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^[ \t]*(`{3,}|~{3,})/.exec(lines[i].text);
+    if (!open) continue;
+    const mark = open[1];
+    // A backtick fence's info string cannot hold a backtick (that would be inline code).
+    if (mark[0] === '`' && lines[i].text.slice(open[0].length).includes('`')) continue;
+    const closer = new RegExp(`^[ \\t]*\\${mark[0]}{${mark.length},}[ \\t]*$`);
+    let j = i + 1;
+    while (j < lines.length && !closer.test(lines[j].text)) j++;
+    if (j >= lines.length) continue; // never closed: quotes nothing
+    if (index > lines[i].start && index < lines[j].end) return true;
+    i = j; // the next block starts after this one closed
+  }
+  return false;
+}
+
 /** The Claude banner in CLI (PTY) output. Needs the "· resets" shape, so prose about limits is ignored. */
 export function detectBannerLimit(output: string, now: number): UsageLimit | null {
-  const m = BANNER.exec(output.replace(ANSI, ''));
+  const clean = output.replace(ANSI, '');
+  const m = claudeBanners(clean)[0];
   if (!m) return null;
   const message = m[0].trim();
   return { kind: kindFromText(message), resetsAt: parseResetTime(message, now)?.at ?? null, message };
@@ -175,13 +212,104 @@ export function textAfterBanner(output: string): number {
   const clean = output.replace(ANSI, '');
   let start = -1;
   let end = -1;
-  const re = new RegExp(BANNER.source, 'gi');
-  for (let m = re.exec(clean); m; m = re.exec(clean)) { start = m.index; end = m.index + m[0].length; }
+  for (const m of claudeBanners(clean)) { start = m.index!; end = m.index! + m[0].length; }
   if (end < 0) return 0;
   const letters = (t: string) => (t.match(/[A-Za-z0-9]/g) ?? []).length;
   // Words before the banner on its own line also mean a quote: a real stop line is only the banner.
   const lead = clean.slice(clean.lastIndexOf('\n', start) + 1, start);
   return letters(clean.slice(end)) + (letters(lead) > 3 ? 1000 : 0);
+}
+
+/**
+ * Codex CLI's usage-limit stop, as the TUI prints it (inline mode keeps it in the scrollback). The
+ * wording is the set of templates inside the codex binary: "You've hit your usage limit. Upgrade to
+ * Plus to continue using Codex (...), or try again at <time>.", the Pro / credits / admin variants,
+ * and "You've hit your usage limit for <model>. Switch to another model now, or try again at <time>."
+ */
+// Only the CLI's own sentences count: the opening, an optional " for <model>", a full stop, then the
+// start of its advice (or the end of the line). Prose that merely begins with the opening words
+// ("You've hit your usage limit is the text we search for") does not match. The CLI wraps its text, so
+// any run of whitespace, line breaks included, may sit between the words.
+const CODEX_BANNER = /you['’]ve\s+hit\s+your\s+usage\s+limit(?:\s+for\s+[\s\S]{1,40}?)?\.(?=[ \t]*$|\s+(?:upgrade|visit|to\s+get|switch|try\s+again|or\s+try))/gim;
+/** True when the text at `index` is a Codex usage-limit message, which the Claude banner pattern must leave alone ("You've hit your usage limit." at a line end looks like Claude's timeless wording). */
+function isCodexMessageAt(clean: string, index: number): boolean {
+  const re = new RegExp(CODEX_BANNER.source, 'iym');
+  re.lastIndex = index;
+  return re.test(clean);
+}
+const CODEX_RETRY = /try again (at|in)\s+([^.]{3,60}?)\s*(?:\.|$)/i;
+
+/** The Codex banner's last real occurrence in `clean` (screen codes already gone): where it starts, where its sentence ends, and its words. Words before it on its line mean it was quoted in prose. */
+function findCodexBanner(clean: string): { start: number; end: number; text: string; retry: RegExpExecArray | null } | null {
+  let found: { start: number; end: number; text: string; retry: RegExpExecArray | null } | null = null;
+  for (const m of clean.matchAll(CODEX_BANNER)) {
+    const lineStart = clean.lastIndexOf('\n', m.index!) + 1;
+    const lead = clean.slice(lineStart, m.index!);
+    // Only the CLI's own error mark may come before the message on its line. A quote marker ("> ", "• ",
+    // "- "), a word, or a code fence ahead of it, or on the line above, means it is being quoted.
+    if (!/^[ \t]*(?:■[ \t]*)?$/.test(lead)) continue;
+    if (insideFence(clean, m.index!)) continue;
+    // The CLI wraps its text: read the sentence run across line breaks.
+    const flat = clean.slice(m.index!, m.index! + 700).replace(/\s+/g, ' ');
+    const retry = CODEX_RETRY.exec(flat);
+    let end: number;
+    let text: string;
+    if (retry) {
+      text = flat.slice(0, retry.index + retry[0].length);
+      end = m.index! + endOfFlat(clean.slice(m.index!, m.index! + 700), text.length);
+    } else {
+      end = clean.indexOf('\n', m.index!);
+      end = end < 0 ? clean.length : end;
+      text = flat.slice(0, Math.max(m[0].length, end - m.index!)).trim();
+    }
+    found = { start: m.index!, end, text, retry };
+  }
+  return found;
+}
+
+/** The offset in `raw` (with its original line breaks) after `n` characters of its whitespace-collapsed form. */
+function endOfFlat(raw: string, n: number): number {
+  let flat = 0;
+  let prevSpace = false;
+  for (let i = 0; i < raw.length; i++) {
+    const space = /\s/.test(raw[i]);
+    if (!(space && prevSpace)) flat++;
+    prevSpace = space;
+    if (flat >= n) return i + 1;
+  }
+  return raw.length;
+}
+
+/** The Codex banner in CLI (PTY) output, or null. Prose that only mentions the words is not matched. */
+export function detectCodexBannerLimit(output: string, now: number): UsageLimit | null {
+  const found = findCodexBanner(output.replace(ANSI, ''));
+  if (!found) return null;
+  const resetsAt = found.retry ? (parseResetTime(`try again ${found.retry[1]} ${found.retry[2]}`, now)?.at ?? null) : null;
+  return { kind: kindFromText(found.text), resetsAt, message: found.text.slice(0, 400) };
+}
+
+/** Letters and digits on the screen after the last Codex banner (the same test as textAfterBanner). */
+export function textAfterCodexBanner(output: string): number {
+  const clean = output.replace(ANSI, '');
+  const found = findCodexBanner(clean);
+  if (!found) return 0;
+  return (clean.slice(found.end).match(/[A-Za-z0-9]/g) ?? []).length;
+}
+
+/**
+ * A Grok (ACP) stop on its usage limit. Grok sends `retry_state` `exhausted` with
+ * `is_rate_limited: true` when its retries ran out on a 429, and the turn then ends with
+ * `turn_completed` `stop_reason: "rate_limit"`. The free tier's message says "Usage resets over a
+ * rolling 24-hour window": there is no clock time to read, so the reset is null. A `retrying` update
+ * (the CLI is still retrying) is not a stop.
+ */
+export function detectGrokLimit(update: any, now: number): UsageLimit | null {
+  if (!update || typeof update !== 'object') return null;
+  const reason = typeof update.reason === 'string' ? update.reason : '';
+  const exhausted = update.sessionUpdate === 'retry_state' && update.type === 'exhausted' && update.is_rate_limited === true;
+  const turnStop = update.sessionUpdate === 'turn_completed' && update.stop_reason === 'rate_limit';
+  if (!exhausted && !turnStop) return null;
+  return { kind: kindFromText(reason), resetsAt: parseResetTime(reason, now)?.at ?? null, message: reason.trim() || 'usage limit reached' };
 }
 
 const KIND_NAME: Record<LimitKind, string> = { session: 'session limit', weekly: 'weekly limit', fable: 'Fable limit', opus: 'Opus limit', sonnet: 'Sonnet limit', usage: 'usage limit' };

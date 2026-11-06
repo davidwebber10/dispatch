@@ -31,6 +31,13 @@ const DEFAULTS = {
   /** Retry delay after a wake that could not be sent. */
   sendRetryMs: 5 * MIN,
   tickMs: 30_000,
+  /**
+   * How long the chain of a woken thread is remembered after a turn-complete signal cleared it. A CLI
+   * thread reports the end of a resumed turn that hit the limit again the same way as a good one; its
+   * banner is read a few seconds later (quiet wait, busy retries). A stop inside this window continues
+   * the chain instead of starting at zero, so a limit with no reset time cannot retry forever.
+   */
+  chainKeepMs: 2 * MIN,
 };
 
 export interface UsageLimitDeps {
@@ -38,7 +45,7 @@ export interface UsageLimitDeps {
   /** Show the thread as paused (the dormant state, with this label). */
   markPaused(terminalId: string, label: string): void;
   /** Send the resume message. Throws when it cannot be delivered. */
-  wake(terminalId: string, text: string): void;
+  wake(terminalId: string, text: string): void | 'pty' | 'structured';
   /** One line for Chat. `deliver` also wakes Chat to read it. */
   note(terminalId: string, text: string, opts: { deliver: boolean }): void;
   /** How to wake Chat's own paused turn (park key CHAT_ID). Without it a Chat park is dropped. */
@@ -54,6 +61,9 @@ export class UsageLimitService {
   private readonly now: () => number;
   private timer: NodeJS.Timeout | null = null;
   private lastWake = new Map<string, number>();
+  private cleared = new Map<string, { attempts: number; parked_at: number; at: number }>();
+  /** Threads whose last wake went through the terminal (typed into the CLI), not a chat stream. Only those keep a retry chain. */
+  private wokeViaTerminal = new Set<string>();
   private touchListeners: ((terminalId: string) => void)[] = [];
   private changeListeners: (() => void)[] = [];
 
@@ -62,6 +72,10 @@ export class UsageLimitService {
   private changed(): void {
     for (const fn of this.changeListeners) this.safe(fn);
   }
+
+  /** Told after the service wakes a thread (the CLI watcher forgets the banner it reported, so a repeat stop is seen). The park row and its attempt count stay. */
+  addWakeListener(fn: (terminalId: string) => void): void { this.wakeListeners.push(fn); }
+  private wakeListeners: ((terminalId: string) => void)[] = [];
 
   /** Told whenever the owner messages or stops a thread (the CLI watcher drops pending detection). */
   addTouchListener(fn: (terminalId: string) => void): void { this.touchListeners.push(fn); }
@@ -93,7 +107,7 @@ export class UsageLimitService {
   /** The thread stopped on a usage limit. Stores it, labels it, and (first stop of a chain) tells Chat. */
   park(terminalId: string, provider: string, limit: UsageLimit): void {
     const now = this.now();
-    const prior = parksDb.get(this.d.db, terminalId);
+    const prior = parksDb.get(this.d.db, terminalId) ?? this.takeCleared(terminalId, now);
     const attempts = prior?.attempts ?? 0;
     const parsed = limit.resetsAt !== null;
     const fallbackMs = isWeeklyKind(limit.kind) ? this.o.fallbackWeeklyMs : this.o.fallbackSessionMs;
@@ -120,6 +134,13 @@ export class UsageLimitService {
     }
   }
 
+  /** The chain of a woken thread whose row a turn-complete signal just cleared, if it is still inside the keep window. Used once. */
+  private takeCleared(terminalId: string, now: number): { attempts: number; parked_at: number; state: 'woken' } | null {
+    const c = this.cleared.get(terminalId);
+    this.cleared.delete(terminalId);
+    return c && now - c.at <= this.o.chainKeepMs ? { attempts: c.attempts, parked_at: c.parked_at, state: 'woken' } : null;
+  }
+
   /** Wake every parked thread whose time has come, at most one per provider per stagger gap. */
   tick(): void {
     if (this.wakeDue(this.now())) this.changed();
@@ -138,9 +159,10 @@ export class UsageLimitService {
       this.lastWake.set(row.provider, now);
       const attempts = row.attempts + 1;
       try {
-        if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
+        if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else if (this.d.wake(row.terminal_id, RESUME_TEXT) === 'pty') this.wokeViaTerminal.add(row.terminal_id); else this.wokeViaTerminal.delete(row.terminal_id);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
         changed = true;
+        for (const fn of this.wakeListeners) this.safe(() => fn(row.terminal_id));
         this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
@@ -161,18 +183,33 @@ export class UsageLimitService {
   }
 
   /** The owner sent the thread a message or typed in it: they took over, so no auto-resume. */
-  onUserMessage(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
+  onUserMessage(terminalId: string): void { this.cleared.delete(terminalId); this.removePark(terminalId); this.touched(terminalId); }
   /** The thread was stopped, archived or deleted. */
-  onStopped(terminalId: string): void { this.removePark(terminalId); this.touched(terminalId); }
+  onStopped(terminalId: string): void { this.cleared.delete(terminalId); this.removePark(terminalId); this.touched(terminalId); }
   /** A turn ended in a failure: a resumed thread is done with its chain; a waiting one stays parked. */
   onTurnEnded(terminalId: string): void {
     const row = parksDb.get(this.d.db, terminalId);
-    if (row && row.state === 'woken') this.removePark(terminalId);
+    if (row && row.state === 'woken') { this.rememberChain(row); this.removePark(terminalId); }
   }
   /** A turn finished normally: the thread moved on, so any pause (woken, waiting or capped) is over. */
-  onTurnSettled(terminalId: string): void { this.removePark(terminalId); }
+  onTurnSettled(terminalId: string): void {
+    const row = parksDb.get(this.d.db, terminalId);
+    if (row && row.state === 'woken') this.rememberChain(row);
+    this.removePark(terminalId);
+  }
 
-  private removePark(terminalId: string): void { if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
+  /**
+   * Remember the chain of a woken row that a turn-complete signal is about to clear, for a terminal
+   * thread only: its signal cannot tell a good turn from one that hit the limit again, and the banner
+   * is read a few seconds later. A chat thread reports the limit itself (the row is kept, nothing is
+   * cleared), so for it a finished turn is a finished turn and a new limit starts at zero.
+   */
+  private rememberChain(row: parksDb.ParkRow): void {
+    if (!this.wokeViaTerminal.has(row.terminal_id)) return;
+    this.cleared.set(row.terminal_id, { attempts: row.attempts, parked_at: row.parked_at, at: this.now() });
+  }
+
+  private removePark(terminalId: string): void { this.wokeViaTerminal.delete(terminalId); if (parksDb.remove(this.d.db, terminalId)) this.changed(); }
 
   /** At boot: the status of every thread was reset, so show the parked ones as paused again. A stopped (capped) row of an archived or missing thread is dropped too. */
   restore(): void {

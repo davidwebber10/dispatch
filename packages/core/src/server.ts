@@ -625,6 +625,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.wakeAfterLimit() },
   });
   sessionService.setUsageLimitService(usageLimits);
+  sessionService.setWakeWorkingMarker((id) => statusService.markWorking(id, 'Thinking…'));
   // The account's limit figures for the Details panel: Claude from its stream, Codex from its session file (routes/usage-limits.ts).
   const limitSnapshots = new LimitSnapshots(db);
   // A headless box signs in with an injected token (the CLI's own file does not change), so that token is the account.
@@ -771,12 +772,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Wire PTY data through the monitor (busy/idle + status-bar HUD) and, for
   // autonomous agent-runner terminals, through the structured stream parser
   // (live steps + transcript capture + outcome telemetry).
-  // CLI (PTY) Claude threads: the usage-limit banner, once the terminal has gone quiet.
+  // CLI (PTY) Claude and Codex threads: the usage-limit banner, once the terminal has gone quiet.
+  // A banner parks only a terminal of the CLI that prints it (a Codex banner quoted in a Claude
+  // thread, or in a plain shell, is not a stop).
+  const ptyTypes = new Map<string, string>(); // terminal id -> type, read once per terminal (this runs on every output chunk)
   const ptyLimits = new PtyLimitWatcher({
     isIdle: (id) => terminalMonitor.getStatus(id)?.activity !== 'busy',
-    onLimit: (id, limit) => {
+    providerOf: (id) => {
+      let type = ptyTypes.get(id);
+      if (type === undefined) {
+        type = terminalsDb.getById(db, id)?.type;
+        if (type !== undefined) ptyTypes.set(id, type);
+      }
+      return type;
+    },
+    onLimit: (id, limit, provider) => {
       const t = terminalsDb.getById(db, id);
-      if (t && !t.archived_at && t.type === 'claude-code') usageLimits.park(id, t.type, limit);
+      if (t && !t.archived_at && t.type === provider) usageLimits.park(id, t.type, limit);
     },
   });
   ptyManager.on('data', (id: string, data: Buffer) => {
@@ -784,8 +796,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     agentService.onRunnerData(id, data);
     ptyLimits.feed(id, data.toString('utf8'));
   });
-  ptyManager.on('exit', (id: string) => ptyLimits.forget(id));
+  ptyManager.on('exit', (id: string) => { ptyLimits.forget(id); ptyTypes.delete(id); });
   usageLimits.addTouchListener((id) => ptyLimits.forget(id));
+  // A wake clears the watcher's memory of the thread: a banner with no reset time is otherwise ignored for 35 minutes as a repaint, but the retry comes at 30, so a repeat stop right after a wake would be missed.
+  usageLimits.addWakeListener((id) => ptyLimits.forget(id));
 
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));

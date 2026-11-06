@@ -17,6 +17,7 @@ let wakes: { id: string; text: string }[];
 let labels: { id: string; label: string }[];
 let notes: { id: string; text: string; deliver: boolean }[];
 let wakeError: Error | null;
+let wakeVia: 'pty' | 'structured' | undefined; // what the wake callback reports (the transport it went through)
 let svc: UsageLimitService;
 
 function thread(id: string, status = 'scheduled', archived = false): void {
@@ -30,10 +31,10 @@ const session = { kind: 'session' as const, resetsAt: RESET, message: "You've hi
 beforeEach(() => {
   db = new Database(':memory:');
   initSchema(db);
-  clock = T0; wakes = []; labels = []; notes = []; wakeError = null;
+  clock = T0; wakes = []; labels = []; notes = []; wakeError = null; wakeVia = undefined;
   svc = new UsageLimitService({
     db, now: () => clock, zone: ZONE,
-    wake: (id, text) => { if (wakeError) throw wakeError; wakes.push({ id, text }); },
+    wake: (id, text) => { if (wakeError) throw wakeError; wakes.push({ id, text }); return wakeVia; },
     markPaused: (id, label) => labels.push({ id, label }),
     note: (id, text, opts) => notes.push({ id, text, deliver: opts.deliver }),
   });
@@ -118,6 +119,87 @@ describe('tick / wake', () => {
     expect(notes).toHaveLength(notesBefore);
     clock = later + 2 * MIN; svc.tick();
     expect(wakes).toHaveLength(2);
+  });
+  // A Codex terminal thread has no stream: its "turn complete" hook fires when a resumed turn ends, and
+  // Codex reports a turn that stopped on the limit the same way (its task_complete carries the error).
+  // The settle clears the woken row, and the banner parks the thread again a few seconds later. That
+  // second stop must continue the chain, or a limit with no reset time retries every 30 minutes forever.
+  describe('a turn-complete signal after a resumed turn that hit the limit again', () => {
+    const noReset = { kind: 'usage' as const, resetsAt: null, message: 'limit' };
+    beforeEach(() => { wakeVia = 'pty'; }); // the wake went through the terminal
+    it('keeps the attempt count and the start of the chain, up to the cap', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      const startedAt = parksDb.get(db, 'a')!.parked_at;
+      for (let i = 1; i <= 5; i++) {
+        clock += 31 * MIN + 30_000; svc.tick();
+        expect(wakes).toHaveLength(i);
+        svc.onTurnSettled('a');                  // the hook: the turn ended (it hit the limit)
+        expect(parksDb.get(db, 'a')).toBeNull();
+        clock += 8_000;                          // the watcher confirms the banner
+        svc.park('a', 'codex', noReset);
+        expect(parksDb.get(db, 'a')).toMatchObject({ attempts: i >= 5 ? 5 : i, parked_at: startedAt });
+      }
+      expect(parksDb.get(db, 'a')!.state).toBe('capped');
+      clock += 24 * 60 * MIN; svc.tick();
+      expect(wakes).toHaveLength(5);              // gave up: not every 30 minutes forever
+    });
+    it('does not post a second "paused" note for the continued chain', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      const before = notes.length;
+      svc.onTurnSettled('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(notes.slice(before).filter((n) => n.text.includes('Paused'))).toEqual([]);
+    });
+    it('a turn that really finished, with no limit after it, starts a fresh chain at the next stop', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a');
+      clock += 60 * MIN;                          // no banner followed: the turn was a success
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0, parked_at: clock });
+    });
+    it('a chat (structured) thread keeps no chain: a finished turn, then a new limit, starts at zero', () => {
+      wakeVia = 'structured';
+      thread('a');
+      svc.park('a', 'claude-code', noReset);
+      clock += 32 * MIN; svc.tick();
+      expect(parksDb.get(db, 'a')).toMatchObject({ state: 'woken', attempts: 1 });
+      svc.onTurnSettled('a');                     // the resumed turn finished ok
+      clock += 30_000;                            // a new limit within the 2 minutes
+      svc.park('a', 'claude-code', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0, parked_at: clock });
+    });
+    it('a wake whose transport is not reported keeps no chain either (the safe default)', () => {
+      wakeVia = undefined;
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0 });
+    });
+    it('a failed turn end (onTurnEnded) on a terminal thread keeps the chain too', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnEnded('a'); clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 1 });
+    });
+    it('the owner taking over ends the chain', () => {
+      thread('a');
+      svc.park('a', 'codex', noReset);
+      clock += 32 * MIN; svc.tick();
+      svc.onTurnSettled('a');
+      svc.onUserMessage('a');
+      clock += 8_000;
+      svc.park('a', 'codex', noReset);
+      expect(parksDb.get(db, 'a')).toMatchObject({ attempts: 0 });
+    });
   });
   it('stops at the cap and tells Chat, waking Chat', () => {
     thread('a');
@@ -219,7 +301,7 @@ describe('restart', () => {
     const monday = Date.UTC(2026, 9, 26, 13, 0);
     svc.park('a', 'claude-code', { kind: 'weekly', resetsAt: monday, message: 'w' });
     svc.stop();
-    const again = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: (id, t) => wakes.push({ id, text: t }), markPaused: () => {}, note: () => {} });
+    const again = new UsageLimitService({ db, now: () => clock, zone: ZONE, wake: (id, t) => { wakes.push({ id, text: t }); }, markPaused: () => {}, note: () => {} });
     clock = monday - 60 * MIN; again.tick();
     expect(wakes).toEqual([]);
     clock = monday + 2 * MIN; again.tick();

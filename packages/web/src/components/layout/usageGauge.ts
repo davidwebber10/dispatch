@@ -9,7 +9,7 @@ export const COUNTED = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_s
 const WEEKLY = COUNTED.filter((t) => t !== 'five_hour');
 /** Figures older than this render dimmed: CLI threads never report, so the last figure can be old. */
 export const STALE_MS = 30 * 60_000;
-export const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex' };
+export const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex', grok: 'Grok' };
 const MARK: Record<string, string> = { 'claude-code': 'C', codex: 'X' };
 export const CLI_NOTE = 'Only Pretty threads and Chat report usage. CLI threads do not.';
 
