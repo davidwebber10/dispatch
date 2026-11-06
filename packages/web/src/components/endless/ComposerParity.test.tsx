@@ -57,15 +57,17 @@ describe('Chat composer parity with the other composers', () => {
     await waitFor(() => expect(send).toHaveBeenCalledWith('', null, [expect.objectContaining({ media_type: 'image/png' })], []));
   });
 
-  it('grows with the text up to 200px, then scrolls', () => {
+  it('grows with the text up to half the window, then scrolls', () => {
+    Object.defineProperty(window, 'innerHeight', { value: 900, configurable: true });
     render(<Composer />);
     const el = box();
     Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 90 });
     fireEvent.change(el, { target: { value: 'a\nb\nc\nd' } });
     expect(el.style.height).toBe('90px');
-    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 500 });
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 2000 });
     fireEvent.change(el, { target: { value: 'x'.repeat(50) } });
-    expect(el.style.height).toBe('200px');
+    expect(el.style.height).toBe('450px');
+    expect(el.style.overflowY).toBe('auto');
   });
 
   it('shrinks back after a send', async () => {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { createPortal } from 'react-dom';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, Eye, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, X, Eye, Keyboard, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
@@ -16,13 +16,13 @@ import { copyText } from '../../lib/clipboard';
 import { isMacLike } from '../../lib/hostkeys';
 import { useSettings } from '../../stores/settings';
 import { useDictation } from '../../hooks/useDictation';
-import { DictationControl } from '../dictation/DictationControl';
-import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { inputMenuRow } from '../dictation/InputActionsMenu';
+import { PillComposer } from '../composer/PillComposer';
+import { UploadTray, useInboxUploads } from '../composer/UploadTray';
 import { createWriteGate, suppressReplayedQueries } from '../../lib/replayQueries';
 import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
-import { PreviewBadge } from '../previews/PreviewSheet';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
 
@@ -132,6 +132,58 @@ const CODEX_SLASH: SlashCmd[] = [
   { cmd: '/resume', seq: '/resume\r', desc: 'Resume a conversation' },
   { cmd: '/quit', seq: '/quit\r', desc: 'Quit Codex' },
 ];
+// Clears what is typed in an agent's prompt (2026-11-05: text sometimes lands in Claude Code's
+// box and has to go). Per line: Ctrl+E to its end, Ctrl+U to cut it, Backspace to join the
+// line above; repeated so a multi-line prompt empties too. On an empty prompt every key is a
+// no-op. Not Ctrl+C or a double Esc: on an empty prompt those exit or open the rewind menu.
+const CLEAR_INPUT: SoftKey = { label: 'Clear input', seq: '\x05\x15\x7f'.repeat(30), title: 'Clear the typed input' };
+const LEFT_RIGHT: SoftKey[] = [
+  { label: 'Left', seq: '\x1b[D', title: 'Left', Icon: CaretLeft },
+  { label: 'Right', seq: '\x1b[C', title: 'Right', Icon: CaretRight },
+];
+const TAB: SoftKey = { label: 'tab', seq: '\t', title: 'Tab' };
+
+/** The Keys sheet behind the composer's +: the old row's keys, then more per harness. */
+function sheetKeysFor(type?: string): { title: string; keys: SoftKey[] }[] {
+  const { actions } = keysFor(type);
+  const nav = [...actions, ...LEFT_RIGHT.filter((k) => !actions.some((a) => a.label === k.label))];
+  if (type === 'shell') {
+    return [
+      { title: 'Keys', keys: nav },
+      { title: 'Control', keys: [
+        { label: '⌃D', seq: '\x04', title: 'Ctrl-D (end of input)' },
+        { label: '⌃L', seq: '\x0c', title: 'Ctrl-L (clear screen)' },
+        { label: '⌃R', seq: '\x12', title: 'Ctrl-R (history search)' },
+        { label: '⌃Z', seq: '\x1a', title: 'Ctrl-Z (suspend)' },
+        { label: '⌃A', seq: '\x01', title: 'Ctrl-A (line start)' },
+        { label: '⌃E', seq: '\x05', title: 'Ctrl-E (line end)' },
+        { label: 'Clear line', seq: '\x05\x15', title: 'Clear the typed line' },
+      ] },
+    ];
+  }
+  if (type === 'grok') return [{ title: 'Keys', keys: [...nav, TAB, { label: '⌃C', seq: '\x03', title: 'Ctrl-C' }] }];
+  if (type === 'codex') {
+    return [
+      { title: 'Keys', keys: [...nav, TAB] },
+      { title: 'Codex', keys: [
+        CLEAR_INPUT,
+        { label: '⌃T', seq: '\x14', title: 'Ctrl-T (transcript)' },
+        { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt; twice quits)' },
+      ] },
+    ];
+  }
+  return [
+    { title: 'Keys', keys: [...nav, TAB] },
+    { title: 'Claude Code', keys: [
+      CLEAR_INPUT,
+      { label: 'Mode', seq: '\x1b[Z', title: 'Shift-Tab (cycle permission mode)' },
+      { label: '⌃R', seq: '\x12', title: 'Ctrl-R (history search)' },
+      { label: '⌃B', seq: '\x02', title: 'Ctrl-B (run in background)' },
+      { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt; twice quits)' },
+    ] },
+  ];
+}
+
 function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
   if (type === 'codex') return { actions: CODEX_ACTIONS, slash: CODEX_SLASH };
   if (type === 'grok') return { actions: GROK_ACTIONS, slash: [] };
@@ -168,6 +220,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     setMobileInput((mobileInput ? mobileInput + ' ' : '') + text);
   });
   const [slashOpen, setSlashOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const isMobile = useIsMobile();
   const previewProject = cachedProject ?? meta?.sessionId ?? null;
@@ -865,16 +918,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     } catch { /* terminal not fully initialised (e.g. jsdom) */ }
   }, [termFontSize, termScrollback]);
 
-  async function uploadImage(file: File) {
-    if (!meta) return;
-    setNote(`Uploading ${file.name}…`);
-    try {
-      const res = await api.uploadInbox(meta.sessionId, file);
-      await api.sendFileReference(terminalId, res.path, 'agent-context');
-      setNote(`Sent ${file.name}`);
-    } catch { setNote('Upload failed'); }
-    setTimeout(() => setNote(''), 2500);
-  }
+  // Picked, dropped and pasted images upload to the project inbox with a progress tile each
+  // (UploadTray); once one lands, its path goes to the agent as context.
+  const uploader = useInboxUploads(meta?.sessionId, async (res) => { await api.sendFileReference(terminalId, res.path, 'agent-context'); });
+  const uploadImage = (file: File) => uploader.start(file);
   function onFiles(files: FileList | null) {
     if (files) for (const f of Array.from(files)) void uploadImage(f);
   }
@@ -892,7 +939,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     clearMobileInput();
   }
 
-  const { actions: softActions, slash: slashCmds } = keysFor(meta?.type);
+  const { slash: slashCmds } = keysFor(meta?.type);
   const slashFilter = slashQuery.trim().toLowerCase();
   const slashResults = slashFilter
     ? slashCmds.filter((c) => c.cmd.toLowerCase().includes(slashFilter) || c.desc.toLowerCase().includes(slashFilter))
@@ -952,92 +999,87 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           the status channel — surface it as a strip so it isn't invisible in the terminal. It sits
           under the terminal with the footer (a CLI AI thread's outcome card), where a Pretty thread
           shows them, in a footer that holds its height during a turn (see TurnFooter). */}
+      {uploader.uploads.length > 0 && (
+        <div style={{ padding: '6px 10px 0', background: isMobile ? 'var(--color-pane)' : undefined, flexShrink: 0 }}>
+          <UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} />
+        </div>
+      )}
       <TurnFooter terminalId={terminalId}>
         <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
         {footer}
       </TurnFooter>
       {isMobile && (
-        <>
-          {/* A row of action keys, a "/" that opens the searchable slash-command sheet,
-              and the autocorrect toggle. The row scrolls left/right rather than dividing
-              the width evenly: the key count varies by agent type, and squeezing eight
-              keys onto a phone leaves each one too narrow to hit. Every key keeps its
-              own width and overflow scrolls. */}
-          <div style={{ display: 'flex', gap: 6, padding: '6px 8px', background: 'var(--color-pane)', flexShrink: 0, overflowX: 'auto', overflowY: 'hidden', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
-            {/* Previews, left of esc: what the thread handed the user to look at or copy. The one
-                way to read a string off a terminal thread on a phone (its text cannot be selected). */}
-            {previewProject && (
-              <button type="button" title="Previews" aria-label="Previews"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => usePreviews.getState().openSheet(previewProject)}
-                style={{ ...SOFT_KEY, position: 'relative', color: previewUnseen ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
-                <Eye size={18} weight={previewUnseen ? 'fill' : 'bold'} />
-                <PreviewBadge count={previewUnseen} />
-              </button>
+        /* The shared composer (composer/PillComposer.tsx). The keys that used to sit in an
+           always-on row above it (2026-11-05) are in a Keys sheet behind the +, with more per
+           harness, which gives the terminal that line back. */
+        <div style={{ padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', flexShrink: 0 }}>
+          <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
+          <PillComposer
+            value={mobileInput}
+            onChange={setMobileInput}
+            onSend={sendMobileInput}
+            canSend={!!mobileInput}
+            placeholder="Type a message or command…"
+            onAddFile={() => termFileInputRef.current?.click()}
+            menuExtra={(close) => (
+              <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>
+                <button type="button" style={inputMenuRow()} onClick={() => { close(); setKeysOpen(true); }}>
+                  <Keyboard size={18} /> Keys
+                </button>
+                {slashCmds.length > 0 && (
+                  <button type="button" style={inputMenuRow()} onClick={() => { close(); setSlashQuery(''); setSlashOpen(true); }}>
+                    <span style={{ width: 18, textAlign: 'center', font: '600 16px var(--font-mono)', color: 'var(--color-accent)' }}>/</span> Slash commands
+                  </button>
+                )}
+                {previewProject && (
+                  <button type="button" style={inputMenuRow()} onClick={() => { close(); usePreviews.getState().openSheet(previewProject); }}>
+                    <Eye size={18} weight={previewUnseen ? 'fill' : 'regular'} color={previewUnseen ? 'var(--color-accent)' : undefined} /> Previews{previewUnseen ? ` (${previewUnseen})` : ''}
+                  </button>
+                )}
+                {/* Spelling help for the box: on for prose, off for a run of shell commands. */}
+                <button type="button" aria-label="Autocorrect" aria-pressed={ptyAutocorrect} style={inputMenuRow()}
+                  onClick={() => setPtyAutocorrect(!ptyAutocorrect)}>
+                  <span style={{ width: 18, textAlign: 'center', font: '600 13px var(--font-mono)', color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>Aa</span>
+                  Autocorrect {ptyAutocorrect ? 'on' : 'off'}
+                </button>
+              </div>
             )}
-            {softActions.map((k) => (
-              <button key={k.label} title={k.title}
-                onMouseDown={(e) => e.preventDefault() /* don't steal focus / dismiss the keyboard */}
-                onClick={() => sockRef.current?.send(k.seq) /* fire on tap, not on press */}
-                style={{ ...SOFT_KEY, color: 'var(--color-text-primary)', font: '500 14px var(--font-mono)' }}>
-                {k.Icon ? <k.Icon size={18} weight="bold" /> : k.label}
-              </button>
+            dictation={dictation}
+            sttConfigured={sttConfigured}
+            /* Prose, not a shell prompt: spelling help defaults on (the menu's toggle turns it
+               off). autoCapitalize stays off so `git`, `rg` and paths are not capitalised, and
+               autoComplete stays off so form autofill never offers a value. */
+            textareaProps={{ autoCapitalize: 'off', autoComplete: 'off', autoCorrect: ptyAutocorrect ? 'on' : 'off', spellCheck: ptyAutocorrect }}
+            mobile
+          />
+        </div>
+      )}
+      {/* Keys sheet: tap as many as needed (arrows through a menu, say); Done or the backdrop closes it. */}
+      {isMobile && keysOpen && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+          <div onClick={() => setKeysOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
+          <div role="dialog" aria-label="Keys" style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '72vh', overflowY: 'auto', padding: '12px 12px calc(14px + env(safe-area-inset-bottom))', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>Keys</span>
+              <button type="button" onClick={() => setKeysOpen(false)} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 14, cursor: 'pointer' }}>Done</button>
+            </div>
+            {sheetKeysFor(meta?.type).map((g) => (
+              <div key={g.title} style={{ marginTop: 10 }}>
+                <div style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', margin: '0 2px 6px' }}>{g.title.toUpperCase()}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(76px, 1fr))', gap: 8 }}>
+                  {g.keys.map((k) => (
+                    <button key={k.label} type="button" title={k.title} aria-label={k.title}
+                      onClick={() => sockRef.current?.send(k.seq)}
+                      style={{ ...SOFT_KEY, minWidth: 0, height: 48, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 13px var(--font-sans)' : '500 15px var(--font-mono)' }}>
+                      {k.Icon ? <k.Icon size={20} weight="bold" /> : k.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
-            {slashCmds.length > 0 && (
-              <button title="Slash commands"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => { setSlashQuery(''); setSlashOpen(true); }}
-                style={{ ...SOFT_KEY, color: 'var(--color-accent)', font: '600 17px var(--font-mono)' }}>
-                /
-              </button>
-            )}
-            {/* Autocorrect toggle. Accent when on, muted when off — the same on/off
-                language the rest of the app uses, and it reads at a glance mid-typing. */}
-            <button
-              title={ptyAutocorrect ? 'Autocorrect on — tap to turn off' : 'Autocorrect off — tap to turn on'}
-              aria-label="Autocorrect"
-              aria-pressed={ptyAutocorrect}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setPtyAutocorrect(!ptyAutocorrect)}
-              style={{ ...SOFT_KEY, color: ptyAutocorrect ? 'var(--color-accent)' : 'var(--color-text-tertiary)', font: '600 14px var(--font-mono)', textDecoration: ptyAutocorrect ? 'none' : 'line-through' }}>
-              Aa
-            </button>
           </div>
-          <form
-            onSubmit={(e) => { e.preventDefault(); sendMobileInput(); }}
-            style={{ display: 'flex', gap: 8, padding: '2px 8px 8px', background: 'var(--color-pane)', flexShrink: 0, alignItems: 'center', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))' }}
-          >
-            <InputActionsMenu
-              onAddFile={() => termFileInputRef.current?.click()}
-              onDictate={() => void dictation.start()}
-              dictateDisabled={!sttConfigured}
-              dictateHint="Set up in Settings → Transcription"
-            />
-            <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
-            {dictation.state !== 'idle' ? (
-              <DictationControl dictation={dictation} />
-            ) : (
-              <input
-                value={mobileInput}
-                onChange={(e) => setMobileInput(e.target.value)}
-                placeholder="Type a message or command…"
-                /* Prose, not a shell prompt — most of what gets typed here is an English
-                   message to the agent, so spelling help is ON by default. It is a
-                   toggle rather than a constant because a run of shell commands is
-                   exactly when it gets in the way; the "Aa" key in the row above flips it.
-                   autoCapitalize stays OFF either way so `git`, `rg` and paths aren't
-                   capitalised, and autoComplete stays OFF so browser form-autofill
-                   never offers a value. */
-                autoCapitalize="off" autoComplete="off"
-                autoCorrect={ptyAutocorrect ? 'on' : 'off'} spellCheck={ptyAutocorrect}
-                enterKeyHint="send"
-                /* 16px font avoids iOS auto-zoom on focus */
-                style={{ flex: 1, minWidth: 0, height: 40, padding: '0 13px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16 }}
-              />
-            )}
-            <button type="submit" style={{ height: 40, padding: '0 18px', flexShrink: 0, background: 'var(--color-accent)', color: '#06140B', border: 'none', borderRadius: 12, fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>Send</button>
-          </form>
-        </>
+        </div>,
+        document.body,
       )}
       {/* Slash-command sheet. Portaled to <body> so position:fixed isn't trapped
           by the mobile slide-rail's transform (which would shift it off-screen). */}

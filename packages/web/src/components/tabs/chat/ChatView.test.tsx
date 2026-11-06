@@ -568,16 +568,17 @@ test('the Pretty composer always spell-checks and autocorrects, and never auto-c
   expect(ta.getAttribute('autocapitalize')).toBe('off');
 });
 
-test('the Pretty composer keeps the single-row layout: textarea one key tall, arrow send key', async () => {
-  // David kept the OLD composer in the 2026-08 redesign ("I like the old composer but I
-  // like the new button as an arrow") — only the send glyph changed. Pin that layout.
+test('the Pretty composer is the shared ChatGPT-style composer: + | text | mic | round up-arrow send', async () => {
+  // 2026-11-05: David asked for every composer to look like ChatGPT's (it replaced the
+  // 2026-08 single-row layout he had kept until then).
   render(<ChatView terminalId="t1" />);
   const ta = await screen.findByPlaceholderText('Message…');
-  expect(ta.style.minHeight).toBe('34px');
-  expect(ta.style.lineHeight).toBe('22px');
-  expect(ta.style.padding).toBe('6px 4px');
+  expect(screen.getByTestId('pill-composer')).toContainElement(ta);
+  expect(screen.getByRole('button', { name: 'More input options' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Dictate' })).toBeInTheDocument();
   const send = screen.getByTitle('Send');
-  expect(send.style.height).toBe('34px');
+  expect(send.style.borderRadius).toBe('50%');
+  expect(ta.style.minHeight).toBe(send.style.height); // one line is exactly one key tall
 });
 
 // The composer key is dual-purpose: it offers Stop only in the one state where there is

@@ -3,7 +3,8 @@ import { Plus, Paperclip, Microphone } from '@phosphor-icons/react';
 
 interface Props {
   onAddFile: () => void;
-  onDictate: () => void;
+  /** Omitted when the host shows its own mic (the shared PillComposer): no Dictate row. */
+  onDictate?: () => void;
   dictateDisabled?: boolean;
   dictateHint?: string;
   /** Host-supplied override so the trigger can mirror the adjacent send button's footprint. */
@@ -51,10 +52,12 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
           <button type="button" style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
             <Paperclip size={18} /> Add file
           </button>
-          <button type="button" style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
-            <Microphone size={18} /> Dictate
-          </button>
-          {dictateDisabled && dictateHint && (
+          {onDictate && (
+            <button type="button" style={rowBtn(dictateDisabled)} disabled={dictateDisabled} onClick={() => { setOpen(false); onDictate(); }}>
+              <Microphone size={18} /> Dictate
+            </button>
+          )}
+          {onDictate && dictateDisabled && dictateHint && (
             <div style={{ padding: '2px 12px 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>{dictateHint}</div>
           )}
         </div>
