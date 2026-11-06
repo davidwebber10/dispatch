@@ -136,9 +136,11 @@ export function UsageRings({ summary, now }: { summary: UsageSummary | null; now
       setCreditNote({ provider: m.provider, ok: false, text: e instanceof Error ? e.message : 'Could not use a reset' });
     }
   };
-  if (!summary || rings.length === 0) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
+  if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
+      {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
         <ToolCard key={m.provider} m={m} warn={summary.warnPercent} onUseCredit={onUseCredit}
           note={creditNote?.provider === m.provider ? creditNote : null} />

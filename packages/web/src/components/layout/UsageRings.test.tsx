@@ -47,6 +47,15 @@ describe('usage rings', () => {
     expect(claude.textContent).toContain('Resets'); // the reset line, capitalised under its bar
   });
 
+  // The chip turns red for a paused tool with no figures (#131), so its sheet must still name the pause.
+  it('a pause with no figures still shows its line under "No figures reported yet"', () => {
+    const paused = { provider: 'codex', kind: 'session', earliestResetsAt: now + H, threads: 2, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: 's', episodeStartedAt: now - H, latestStartedAt: now - H, activeUntil: now + H };
+    render(<UsageRings summary={summary({ providers: [], paused: [paused] })} now={now} />);
+    const sheet = screen.getByTestId('usage-rings');
+    expect(sheet.textContent).toContain('No figures reported yet');
+    expect(sheet.textContent).toContain('Codex agents paused: session limit');
+  });
+
   it('a tool with no current figure gets no ring', () => {
     const s = summary({ providers: [{ provider: 'codex', asOf: now, windows: { seven_day: { usedPercent: null, resetsAt: now + H } } }] });
     render(<UsageRings summary={s} now={now} />);

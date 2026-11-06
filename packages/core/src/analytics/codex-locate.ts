@@ -1,9 +1,6 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-
-export function codexSessionsRoot(): string { return path.join(os.homedir(), '.codex', 'sessions'); }
-export function codexArchivedRoot(): string { return path.join(os.homedir(), '.codex', 'archived_sessions'); }
+import { codexSessionsRoot, codexArchivedRoot } from '../platform/codex-home.js';
 
 /**
  * Find a Codex transcript from the thread id Dispatch stores.

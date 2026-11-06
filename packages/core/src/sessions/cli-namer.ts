@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { detectProvider, resolveBin, type ProviderName } from '../setup/detect.js';
 import { TITLE_SYSTEM_PROMPT, titleUserMessage, cleanTitle } from './model-namer.js';
+import { codexHome } from '../platform/codex-home.js';
 
 /**
  * Thread titles from the user's own signed-in harness CLIs, cheapest model first:
@@ -26,10 +27,11 @@ export const CLAUDE_TITLE_MODEL = 'claude-haiku-5-5';
  */
 export const CODEX_TITLE_MODELS = ['gpt-6.1-terra', 'gpt-5.6-terra'] as const;
 export const CODEX_TITLE_MODEL = CODEX_TITLE_MODELS[CODEX_TITLE_MODELS.length - 1];
-const CODEX_MODELS_CACHE = path.join(os.homedir(), '.codex', 'models_cache.json');
+/** Codex's model list, under its home ($CODEX_HOME, default ~/.codex). Resolved per call. */
+export const codexModelsCachePath = (): string => path.join(codexHome(), 'models_cache.json');
 
 /** The first preferred model Codex lists as available; the last preference when the list can't be read. */
-export function pickCodexTitleModel(cachePath: string = CODEX_MODELS_CACHE): string {
+export function pickCodexTitleModel(cachePath: string = codexModelsCachePath()): string {
   try {
     const listed = new Set((JSON.parse(fs.readFileSync(cachePath, 'utf-8')).models ?? [])
       .filter((m: { visibility?: string }) => m?.visibility !== 'hide')

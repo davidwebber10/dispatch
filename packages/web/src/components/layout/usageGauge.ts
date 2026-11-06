@@ -44,7 +44,7 @@ export function activePaused(s: UsageSummary, now: number): Set<string> {
 
 export interface ChipModel {
   provider: string;
-  /** `C` or `X`, only when more than one provider has figures. */
+  /** `C` or `X`, only when more than one provider has figures or is paused. */
   mark: string | null;
   tone: ChipTone;
   stale: boolean;
@@ -60,15 +60,20 @@ export interface ChipModel {
 const dash = (v: number | null) => (v === null ? '–' : String(v));
 
 /**
- * The chip, or null when no provider has reported anything yet (a placeholder on a fresh
- * install is noise). Shows one provider: a paused one first (red), else the one with the
- * highest counted window. Amber when any counted window is at or above the threshold.
+ * The chip, or null when no provider has reported anything yet and none is paused (a
+ * placeholder on a fresh install is noise). Shows one provider: a paused one first (red), else
+ * the one with the highest counted window. Amber when any counted window is at or above the threshold.
  */
 export function chipModel(s: UsageSummary | null, now: number): ChipModel | null {
-  if (!s || s.providers.length === 0) return null;
+  if (!s) return null;
   const paused = activePaused(s, now);
+  // A paused provider with no figures yet is still a candidate, with every percent unknown, so a
+  // paused Codex never hides behind a normal Claude chip. `asOf: now` keeps it from reading stale.
+  const candidates: UsageSummaryProvider[] = [...s.providers];
+  for (const p of paused) if (!candidates.some((c) => c.provider === p)) candidates.push({ provider: p, asOf: now, windows: {} });
+  if (candidates.length === 0) return null;
   const score = (p: UsageSummaryProvider) => (paused.has(p.provider) ? 1000 : 0) + (peakWindow(p, now)?.value ?? -1);
-  const pick = s.providers.reduce((a, b) => (score(b) > score(a) ? b : a));
+  const pick = candidates.reduce((a, b) => (score(b) > score(a) ? b : a));
   const peak = peakWindow(pick, now);
   const five = liveValue(pick.windows.five_hour, now);
   const week = peakWindow(pick, now, WEEKLY);
@@ -83,7 +88,7 @@ export function chipModel(s: UsageSummary | null, now: number): ChipModel | null
   if (stale) title += `. As of ${whenLabel(pick.asOf, now)}`;
   return {
     provider: pick.provider,
-    mark: s.providers.length > 1 ? MARK[pick.provider] ?? pick.provider.slice(0, 1).toUpperCase() : null,
+    mark: candidates.length > 1 ? MARK[pick.provider] ?? pick.provider.slice(0, 1).toUpperCase() : null,
     tone: red ? 'red' : amber ? 'amber' : 'normal',
     stale,
     five: dash(five),

@@ -56,7 +56,7 @@ afterEach(() => { gauge.stop(); vi.useRealTimers(); db.close(); });
 
 describe('summary', () => {
   it('is empty with no snapshot, and never carries the account id', () => {
-    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
+    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, epoch: expect.any(String), rev: expect.any(Number), warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
     claude(46.4, 21);
     const s = gauge.summary();
     expect(s.providers).toEqual([{ provider: 'claude-code', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
@@ -414,6 +414,13 @@ describe('threshold push', () => {
     expect(pushes).toHaveLength(2);
   });
 
+  it('still matches an alert key written by the 3.11 rounded format', () => {
+    const rounded = Math.round(RESET / (10 * MIN)) * 10 * MIN;
+    db.prepare("INSERT INTO app_state (key, value) VALUES ('usage_limit_alerts', ?)").run(JSON.stringify({ [`claude-code|acct-A|five_hour|${rounded}`]: rounded }));
+    claude(85, 21);
+    expect(pushes).toHaveLength(0);
+  });
+
   it('never pushes for overage, and names a weekly day', () => {
     claude(10, 88, { overage: { usedPercent: 99, resetsAt: WEEK } });
     expect(pushes).toEqual([{ title: 'Claude usage at 88%', body: 'Weekly window, resets Mon 9:00 AM.', tag: 'usage-claude-code-seven_day' }]);
@@ -499,21 +506,59 @@ describe('broadcast', () => {
   it('a settings change sends at once with the new threshold', () => {
     gaugeSettings.set(db, { warnPercent: 90 });
     gauge.settingsChanged();
-    expect(events).toEqual([{ type: 'usage-limits', at: T0, warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
+    expect(events).toEqual([{ type: 'usage-limits', at: T0, epoch: expect.any(String), rev: expect.any(Number), warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
   });
 });
 
 describe('Codex refresh tick', () => {
-  it('refreshes from the most recently active Codex thread, only within 10 minutes', () => {
+  const codex = (id: string, ext: string, at: number, status = 'waiting') =>
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run(ext, new Date(at).toISOString(), status, id);
+
+  it('refreshes the recently active Codex threads, newest first, only within 10 minutes', () => {
     thread('c1', 'codex'); thread('c2', 'codex'); thread('k', 'claude-code');
-    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e1', new Date(T0 - 5 * MIN).toISOString(), 'c1');
-    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e2', new Date(T0 - 2 * MIN).toISOString(), 'c2');
+    codex('c1', 'e1', T0 - 5 * MIN);
+    codex('c2', 'e2', T0 - 2 * MIN);
     db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ? WHERE id = ?').run('e3', new Date(T0).toISOString(), 'k');
     gauge.tick();
-    expect(refreshed).toEqual(['c2']);
+    expect(refreshed).toEqual(['c2', 'c1']);
     clock = T0 + 20 * MIN;
+    refreshed = [];
     gauge.tick();
-    expect(refreshed).toEqual(['c2']);
+    expect(refreshed).toEqual([]);
+  });
+
+  // Review finding 1: a Codex turn longer than 10 minutes writes no activity, and was never polled.
+  it('keeps polling a working Codex thread whose last activity is old', () => {
+    thread('long', 'codex'); thread('recent', 'codex');
+    codex('long', 'eL', T0 - 45 * MIN, 'working');
+    codex('recent', 'eR', T0 - 1 * MIN);
+    gauge.tick();
+    expect(refreshed).toEqual(['long', 'recent']);
+  });
+
+  it('refreshes a bounded set', () => {
+    for (let i = 0; i < 10; i++) { thread(`c${i}`, 'codex'); codex(`c${i}`, `e${i}`, T0 - i * 1000, 'working'); }
+    gauge.tick();
+    expect(refreshed).toEqual(['c0', 'c1', 'c2', 'c3']);
+  });
+
+  // Review of #131: a fixed set of 4 starved the 5th working thread. Least recently polled goes first.
+  it('rotates: with 6 working threads, every one is polled within 2 ticks', () => {
+    for (let i = 0; i < 6; i++) { thread(`w${i}`, 'codex'); codex(`w${i}`, `e${i}`, T0 - i * 1000, 'working'); }
+    gauge.tick();
+    expect(refreshed).toEqual(['w0', 'w1', 'w2', 'w3']);
+    clock += MIN;
+    gauge.tick();
+    expect(new Set(refreshed)).toEqual(new Set(['w0', 'w1', 'w2', 'w3', 'w4', 'w5']));
+    expect(refreshed.slice(4, 6)).toEqual(['w4', 'w5']);
+  });
+
+  it('stuck working rows never crowd out a live thread for more than a few ticks', () => {
+    // The stuck rows rank above the live one by activity, so a fixed top 4 never reaches it.
+    for (let i = 0; i < 8; i++) { thread(`s${i}`, 'codex'); codex(`s${i}`, `es${i}`, T0 - 20 * MIN - i * 1000, 'working'); }
+    thread('live', 'codex'); codex('live', 'eLive', T0 - 90 * MIN, 'working');
+    for (let t = 0; t < 3; t++) { gauge.tick(); clock += MIN; }
+    expect(refreshed).toContain('live');
   });
 
   it('keeps polling a Codex thread that is still working, however old its last activity', () => {
@@ -523,11 +568,100 @@ describe('Codex refresh tick', () => {
     gauge.tick();
     expect(refreshed).toEqual(['c1']);
   });
+
   it('does not poll an archived working thread', () => {
     thread('c1', 'codex');
     db.prepare("UPDATE terminals SET external_id = 'e1', status = 'working', archived_at = 'x' WHERE id = 'c1'").run();
     gauge.tick();
     expect(refreshed).toEqual([]);
+  });
+
+  it('asks Codex directly only when no Codex thread is a candidate', async () => {
+    gauge.stop();
+    const polls: number[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
+      refreshCodex: (id) => { refreshed.push(id); }, pollCodex: async () => { polls.push(clock); return true; } });
+    thread('c1', 'codex'); codex('c1', 'e1', T0 - MIN);
+    g.tick(); await Promise.resolve();
+    expect(refreshed).toEqual(['c1']);
+    expect(polls).toEqual([]);
+    clock = T0 + 20 * MIN;
+    g.tick(); await Promise.resolve();
+    expect(polls).toEqual([clock]);
+    g.stop();
+  });
+
+  it('a refresh that throws does not stop the others or the broadcast', () => {
+    thread('c1', 'codex'); thread('c2', 'codex');
+    codex('c1', 'e1', T0 - MIN); codex('c2', 'e2', T0 - 2 * MIN);
+    gauge.stop();
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: (e) => events.push(e),
+      refreshCodex: (id) => { if (id === 'c1') throw new Error('boom'); refreshed.push(id); } });
+    g.tick();
+    vi.advanceTimersByTime(5000);
+    expect(refreshed).toEqual(['c2']);
+    expect(events).toHaveLength(1);
+  });
+});
+
+// Review finding 4: an account switch changes the summary with no new record. The tick must notice.
+describe('account switch', () => {
+  it('the next tick broadcasts the new account\'s summary', () => {
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    account = 'acct-B';
+    gauge.tick();
+    vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(2);
+    expect(events[1].providers).toEqual([]);
+  });
+
+  it('works without a Codex refresher, and an unchanged tick sends nothing', () => {
+    snaps = new LimitSnapshots(db);
+    const mine: any[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: (e) => mine.push(e) });
+    snaps.addRecordListener((p) => g.onRecord(p));
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    g.tick(); vi.advanceTimersByTime(5000);
+    expect(mine).toHaveLength(1);
+    account = 'acct-B';
+    g.tick(); vi.advanceTimersByTime(5000);
+    expect(mine).toHaveLength(2);
+    g.stop();
+  });
+});
+
+// Review finding 5: a client must be able to tell an older GET answer from a newer socket event.
+describe('summary revision', () => {
+  it('rises on every summary, even with the clock standing still, and survives a restart', () => {
+    const a = gauge.summary().rev;
+    const b = gauge.summary().rev;
+    expect(b).toBeGreaterThan(a);
+    // A new daemon starts from the clock, so a client holding the old daemon's revision still updates.
+    clock += 1000;
+    const g2 = make();
+    expect(g2.summary().rev).toBeGreaterThan(b);
+    g2.stop();
+  });
+
+  // Codex re-review of #131: a client tells a restarted daemon apart by its epoch, not its revision.
+  it('carries one epoch per daemon instance, the same on every summary', () => {
+    const e1 = gauge.summary().epoch;
+    expect(e1).toMatch(/^[0-9a-f-]{36}$/);
+    expect(gauge.summary().epoch).toBe(e1);
+    const g2 = make();
+    expect(g2.summary().epoch).not.toBe(e1);
+    g2.stop();
+  });
+
+  it('is carried on the broadcast but never makes an unchanged payload resend', () => {
+    claude(46, 21);
+    vi.advanceTimersByTime(5000);
+    gauge.pausesChanged();
+    expect(events).toHaveLength(1);
+    expect(typeof events[0].rev).toBe('number');
   });
 });
 
