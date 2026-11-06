@@ -20,6 +20,7 @@ describe.each(cases)('a repeat stop after a wake ($name)', ({ type, text }) => {
   let db: Database.Database;
   let svc: UsageLimitService;
   let w: PtyLimitWatcher;
+  let first: parksDb.ParkRow;
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(Date.UTC(2026, 9, 24, 4, 31));
@@ -44,6 +45,7 @@ describe.each(cases)('a repeat stop after a wake ($name)', ({ type, text }) => {
     w.feed('t1', text);
     vi.advanceTimersByTime(5000);
     expect(parksDb.get(db, 't1')).toMatchObject({ state: 'parked', attempts: 0, parsed: 0 });
+    first = parksDb.get(db, 't1')!;
     // The retry: 30 minutes plus the buffer.
     vi.advanceTimersByTime(32 * MIN);
     svc.tick();
@@ -53,6 +55,10 @@ describe.each(cases)('a repeat stop after a wake ($name)', ({ type, text }) => {
     w.feed('t1', text);
     vi.advanceTimersByTime(5000);
     expect(parksDb.get(db, 't1')).toMatchObject({ state: 'parked', attempts: 1 });
+    // The chain keeps its start; the detection time is the new stop (the chip's clearing figures must be newer than it).
+    const again = parksDb.get(db, 't1')!;
+    expect(again.parked_at).toBe(first.parked_at);
+    expect(again.detected_at).toBeGreaterThan(first.detected_at);
   });
   it('a repaint of the banner before any wake is still one stop', () => {
     w.feed('t1', text);
