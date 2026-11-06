@@ -5,6 +5,8 @@ import type { HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } fro
 import { HARNESSES } from '../../lib/harnesses';
 import { Toggle } from './ui';
 import { AutoArchiveField } from '../sidebar/AutoArchiveField';
+import { SpinnerWordsField } from './SpinnerWordsField';
+import { useSpinnerWords } from '../../stores/spinnerWords';
 
 /**
  * Per-harness defaults, stored on the DAEMON (not localStorage) because spawn-time
@@ -53,7 +55,11 @@ export function HarnessesSection() {
   }, []);
 
   async function put(patch: Parameters<typeof api.putHarnessSettings>[0]) {
-    try { setData(await api.putHarnessSettings(patch)); setErr(''); }
+    try {
+      const next = await api.putHarnessSettings(patch);
+      setData(next); setErr('');
+      useSpinnerWords.getState().set(next.settings?.['claude-code']?.spinnerVerbs ?? null);
+    }
     catch { setErr('Could not save — is the daemon reachable?'); }
   }
 
@@ -150,6 +156,11 @@ export function HarnessesSection() {
                   Applies to threads started after the change.
                 </div>
               </div>
+            )}
+
+            {h.type === 'claude-code' && (
+              <SpinnerWordsField value={s.spinnerVerbs} onSave={(v) => void put({ 'claude-code': { spinnerVerbs: v } })}
+                sets={s.spinnerSets ?? []} onSaveSets={(sets) => void put({ 'claude-code': { spinnerSets: sets } })} />
             )}
 
             {h.id === 'opencode' && (
