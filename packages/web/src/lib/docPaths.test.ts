@@ -30,6 +30,19 @@ describe('findDocPaths', () => {
     expect(paths('github.com/acme/widgets.git and raw.example.org/x/y.json')).toEqual([]);
     expect(paths('about 1.5x faster, 10/12.5 and 0.95')).toEqual([]);
   });
+  it('email addresses are not paths, with any domain ending', () => {
+    expect(paths('write to jo@example.cloud or jo.smith@mail.example.tech and a@b.co.uk, jo@example.com/readme.txt, jo@host.pl, jo@host.rs, jo@host.sh and jo@host.md')).toEqual([]);
+    expect(paths('node_modules/@types/node/index.d.ts and packages/@acme/web/src/a.ts')).toEqual([['node_modules/@types/node/index.d.ts', null], ['packages/@acme/web/src/a.ts', null]]);
+  });
+  it('a web address with any domain ending is not a path', () => {
+    expect(paths('www.example.cloud/a.html, example.tech/docs/x.json and foo.bar/baz.txt')).toEqual([]);
+    expect(paths('build.v2/out.json and v2.1/out.json and ./app.config/x.json')).toEqual([['build.v2/out.json', null], ['v2.1/out.json', null], ['./app.config/x.json', null]]);
+  });
+  it('7z and long extensions are paths; an absurd one is left alone, not cut', () => {
+    expect(paths('backup/data.7z and data.7z')).toEqual([['backup/data.7z', null], ['data.7z', null]]);
+    expect(paths('profiles/dev.mobileprovision')).toEqual([['profiles/dev.mobileprovision', null]]);
+    expect(paths(`docs/a.${'x'.repeat(40)}`)).toEqual([]);
+  });
   it('code that looks like a file name is not a path', () => {
     expect(paths('call `console.log` and res.json(data), then process.env.HOME and Math.max')).toEqual([]);
     expect(paths('open package.json (the manifest)')).toEqual([['package.json', null]]);
@@ -90,23 +103,71 @@ describe('projectForPath', () => {
 describe('resolveProjectPath', () => {
   const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'sb', folder: '/w/sandbox' }, { id: 'a1', folder: '/x/shared' }, { id: 'a2', folder: '/y/shared' }];
   it('a relative path that starts with another known project folder name belongs to that project', () => {
-    expect(resolveProjectPath('sandbox/team-requests/board.md', 'd', projects)).toEqual({ project: 'sb', path: 'team-requests/board.md' });
+    expect(resolveProjectPath('sandbox/team-requests/board.md', 'd', projects)).toEqual({ project: 'sb', path: 'team-requests/board.md', rel: 'team-requests/board.md' });
   });
   it('a relative path with no such prefix stays with the message project', () => {
-    expect(resolveProjectPath('docs/a.md', 'd', projects)).toEqual({ project: 'd', path: 'docs/a.md' });
+    expect(resolveProjectPath('docs/a.md', 'd', projects)).toEqual({ project: 'd', path: 'docs/a.md', rel: 'docs/a.md' });
+    expect(resolveProjectPath('./docs/a.md', 'd', projects)).toEqual({ project: 'd', path: 'docs/a.md', rel: 'docs/a.md' });
   });
   it('the message project\'s own folder name is not stripped', () => {
-    expect(resolveProjectPath('dispatch/x/a.py', 'd', projects)).toEqual({ project: 'd', path: 'dispatch/x/a.py' });
+    expect(resolveProjectPath('dispatch/x/a.py', 'd', projects)).toEqual({ project: 'd', path: 'dispatch/x/a.py', rel: 'dispatch/x/a.py' });
   });
-  it('a bare folder-name prefix with no file part, or two projects with the same folder name, stays as it is', () => {
-    expect(resolveProjectPath('sandbox', 'd', projects)).toEqual({ project: 'd', path: 'sandbox' });
-    expect(resolveProjectPath('shared/a.py', 'd', projects)).toEqual({ project: 'd', path: 'shared/a.py' });
+  it('a bare folder-name prefix with no file part stays as it is', () => {
+    expect(resolveProjectPath('sandbox', 'd', projects)).toEqual({ project: 'd', path: 'sandbox', rel: 'sandbox' });
   });
-  it('an absolute path and a path with no message project follow projectForPath', () => {
-    expect(resolveProjectPath('/w/sandbox/a.py', 'd', projects)).toEqual({ project: 'sb', path: '/w/sandbox/a.py' });
+  it('an absolute path gives the path inside the project too', () => {
+    expect(resolveProjectPath('/w/sandbox/a/b.py', 'd', projects)).toEqual({ project: 'sb', path: '/w/sandbox/a/b.py', rel: 'a/b.py' });
     expect(resolveProjectPath('docs/a.md', null, projects)).toBeNull();
-    expect(resolveProjectPath('sandbox/a.md', null, projects)).toEqual({ project: 'sb', path: 'a.md' });
+    expect(resolveProjectPath('sandbox/a.md', null, projects)).toEqual({ project: 'sb', path: 'a.md', rel: 'a.md' });
     expect(resolveProjectPath('/elsewhere/a.py', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('/w/sandbox', 'd', projects)).toBeNull();
+  });
+});
+
+describe('resolveProjectPath refuses a way out of the project', () => {
+  const projects = [{ id: 'd', folder: '/w/dispatch' }];
+  it('a ".." that leaves the project gives no project', () => {
+    expect(resolveProjectPath('/w/dispatch/../../etc/passwd.txt', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('/w/dispatch/docs/../../secret.py', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('../secret.py', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('docs/../../secret.py', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('./../secret.py', 'd', projects)).toBeNull();
+  });
+  it('a ".." that stays inside the project is stepped out of the path', () => {
+    expect(resolveProjectPath('docs/x/../a.py', 'd', projects)).toEqual({ project: 'd', path: 'docs/a.py', rel: 'docs/a.py' });
+    expect(resolveProjectPath('/w/dispatch/docs/x/../a.py', 'd', projects)).toEqual({ project: 'd', path: '/w/dispatch/docs/a.py', rel: 'docs/a.py' });
+  });
+  it('a path that goes up to the project folder itself is no file', () => {
+    expect(resolveProjectPath('docs/..', 'd', projects)).toBeNull();
+  });
+  it('projectForPath does not follow ".." out of a folder either', () => {
+    expect(projectForPath('/w/dispatch/../x/a.md', null, projects)).toBeNull();
+  });
+});
+
+describe('duplicate project folder names', () => {
+  it('two other projects with the same folder name: no project (no guess)', () => {
+    const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'a1', folder: '/x/shared' }, { id: 'a2', folder: '/y/shared' }];
+    expect(resolveProjectPath('shared/a.py', 'd', projects)).toBeNull();
+    expect(resolveProjectPath('shared/a.py', null, projects)).toBeNull();
+  });
+  it('a path that is not ambiguous still works next to a duplicate', () => {
+    const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'a1', folder: '/x/shared' }, { id: 'a2', folder: '/y/shared' }];
+    expect(resolveProjectPath('src/a.py', 'd', projects)).toEqual({ project: 'd', path: 'src/a.py', rel: 'src/a.py' });
+  });
+  it('the same folder in two projects: an absolute path goes to the message project, or to none', () => {
+    const projects = [{ id: 'p1', folder: '/w/app' }, { id: 'p2', folder: '/w/app' }];
+    expect(resolveProjectPath('/w/app/a.py', 'p2', projects)).toEqual({ project: 'p2', path: '/w/app/a.py', rel: 'a.py' });
+    expect(resolveProjectPath('/w/app/a.py', null, projects)).toBeNull();
+    expect(resolveProjectPath('/w/app/a.py', 'other', projects)).toBeNull();
+  });
+  it('a nested project: the longest folder wins', () => {
+    const projects = [{ id: 'o', folder: '/w/app' }, { id: 'i', folder: '/w/app/web' }];
+    expect(resolveProjectPath('/w/app/web/a.py', 'o', projects)).toEqual({ project: 'i', path: '/w/app/web/a.py', rel: 'a.py' });
+  });
+  it('a folder name that is the last part of another folder name is not a match', () => {
+    const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'x', folder: '/w/old-sandbox' }];
+    expect(resolveProjectPath('sandbox/a.py', 'd', projects)).toEqual({ project: 'd', path: 'sandbox/a.py', rel: 'sandbox/a.py' });
   });
 });
 

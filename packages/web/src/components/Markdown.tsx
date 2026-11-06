@@ -142,7 +142,7 @@ export interface DocChips {
 const LINKS_ONLY: DocChips = { onOpen: () => {}, accept: () => false, link: (href) => classifyLink(href, { project: null, projects: [] }) };
 
 /** Quick test: no "name.ext" in the HTML, no file path in it. */
-const DOC_EXT = /\w\.[a-z]/i;
+const DOC_EXT = /\w\.(?:[a-z]|7z)/i;
 /** Text inside these stays plain: a link already goes somewhere, a code block is code, a button or a form field is a control. */
 const DOC_SKIP = new Set(['A', 'PRE', 'BUTTON', 'SCRIPT', 'STYLE', 'TEXTAREA', 'OPTION']);
 /** Text inside a non-HTML element (SVG, MathML) stays plain too: a chip button is HTML only. */

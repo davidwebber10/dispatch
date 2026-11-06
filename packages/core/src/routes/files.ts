@@ -10,7 +10,7 @@ import * as sessionsDb from '../db/sessions.js';
 import { rowToSession } from '../types.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { platform } from '../platform/index.js';
-import { insideRealRoot } from '../files/confine.js';
+import { insideRealRoot, within } from '../files/confine.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
 
@@ -306,8 +306,11 @@ export function createFilesRouter(db: Database.Database): Router {
 
     const resolved = resolveRead(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
-    // An absolute path is the documented read escape hatch; a relative one stays in the project, symlinks included.
-    if (!path.isAbsolute(requestedPath) && !insideRealRoot(session.workingDir, resolved)) {
+    // An absolute path to a place outside the project is the documented read escape hatch. A relative path, or an
+    // absolute path that names a place inside the project, stays in the project, symlinks included: a link inside the
+    // project cannot be a way to a file outside it.
+    const named = !path.isAbsolute(requestedPath) || within(path.resolve(session.workingDir), resolved);
+    if (named && !insideRealRoot(session.workingDir, resolved)) {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
 

@@ -4,12 +4,12 @@
 
 export interface DocSpan { start: number; end: number; path: string; branch: string | null }
 
-// A path: absolute or relative, made of path characters, ending in a file extension (a letter, then
-// letters or digits; "7z" too). Not part of a URL, not a stem of a longer name ("a.md/x" gives no "a.md"), and not
+// A path: absolute or relative, made of path characters, ending in a file extension (a letter, then up to 31
+// letters or digits; "7z" too; a longer one is left alone, never cut). Not part of a URL, not a stem of a longer name ("a.md/x" gives no "a.md"), and not
 // after an "@" or "~" of the same word (so a run of "@" cannot make the regex try every
 // start). Trailing punctuation is not part of the path. The filters below remove what the regex cannot:
 // domains, email addresses, and bare words such as "e.g." or "Node.js".
-const PATH = /(?<![\w:/.@~-])((?:\/|\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.(?:[a-z][a-z0-9]{0,9}|7z))(?![\w/-]|\.\w)/gi;
+const PATH = /(?<![\w:/.@~-])((?:\/|\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.(?:[a-z][a-z0-9]{0,31}|7z))(?![\w/-]|\.\w)/gi;
 /** Top-level domains: "example.com", "socket.io" or "www.x.org/a.html" is a site, not a file. Not .sh, .py, .rs, .ts, .md, .cc. */
 const TLD = new Set(['com', 'org', 'net', 'io', 'dev', 'app', 'ai', 'co', 'edu', 'gov', 'info', 'biz', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'me', 'tv']);
 /** A name with no folder in it is a file only with one of these extensions: "extract.py" is, "e.g." and "v3.5" are not. */
@@ -18,22 +18,31 @@ const BARE_EXT = new Set((
   'js mjs cjs jsx ts tsx mts cts py pyi ipynb rb go rs java kt kts swift c h cc cpp hpp cs php pl lua r sql sh bash zsh ps1 bat ' +
   'csv tsv xlsx xls xlsm parquet avro orc db sqlite sqlite3 ' +
   'png jpg jpeg gif webp avif bmp pdf zip tar gz tgz bz2 xz 7z docx doc pptx ppt rtf pkl pickle npy npz ' +
-  'tf hcl proto graphql gql vue svelte patch diff dockerfile makefile'
+  'tf hcl proto graphql gql vue svelte patch diff'
 ).split(' '));
 /** Well-known project names that end like a file: "Node.js" is not a script. */
 const NOT_FILES = new Set(['node.js', 'next.js', 'vue.js', 'react.js', 'nuxt.js', 'express.js', 'three.js', 'd3.js', 'chart.js', 'p5.js', 'ember.js', 'backbone.js', 'angular.js', 'nest.js', 'deno.js']);
 
-/** True when a matched path is a file path, not a domain, a version, an abbreviation or a product name. */
+/** True when a first folder looks like a host name ("example.cloud", "www.site.tech"): dotted, ends in letters that are not a file type. */
+function looksLikeHost(first: string): boolean {
+  if (!first.includes('.') || /^\.{0,2}$/.test(first)) return false;
+  const last = first.slice(first.lastIndexOf('.') + 1).toLowerCase();
+  if (TLD.has(last)) return true;
+  return /^[a-z]{2,}$/.test(last) && !BARE_EXT.has(last) && !BINARY_EXT.has(last) && !IMAGE_EXT.has(last);
+}
+
+/** True when a matched path is a file path, not an email address, a domain, a version, an abbreviation or a product name. */
 function isFilePath(path: string, next: string): boolean {
   const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
   if (TLD.has(ext)) return false;
   const slash = path.indexOf('/');
+  const first = slash < 0 ? path : path.slice(0, slash);
+  // "jo@example.sh": an "@" inside the first word is an email address. A leading "@" is a package scope ("@types/node").
+  if (first.indexOf('@') > 0) return false;
   // A bare name followed by "(" is a call ("res.json(data)"), not a file.
   if (slash < 0) return BARE_EXT.has(ext) && !NOT_FILES.has(path.toLowerCase()) && next !== '(';
-  // "www.example.com/about.html": a first folder that is a domain makes the whole thing a web address.
-  const first = path.slice(0, slash);
-  if (first.includes('.') && !/^\.{0,2}$/.test(first) && TLD.has(first.slice(first.lastIndexOf('.') + 1).toLowerCase())) return false;
-  return true;
+  // "www.example.com/about.html": a first folder that is a host name makes the whole thing a web address.
+  return !looksLikeHost(first);
 }
 
 /** The "(branch NAME)" right after a path (sticky: it reads at `lastIndex` only). */
@@ -81,34 +90,67 @@ export function fileKind(path: string): FileKind {
   return BINARY_EXT.has(ext) ? 'binary' : 'text';
 }
 
-/**
- * The project a doc path belongs to: an absolute path belongs to the registered project whose folder
- * holds it (the longest match); a relative path uses the message's project; else none (no link).
- */
-export function projectForPath(p: string, messageProject: string | null, projects: { id: string; folder: string }[]): string | null {
-  if (!p.startsWith('/')) return messageProject;
-  const hit = projects
-    .filter((x) => x.folder && (p === x.folder || p.startsWith(x.folder.replace(/\/$/, '') + '/')))
-    .sort((a, b) => b.folder.length - a.folder.length)[0];
-  return hit?.id ?? null;
+const strip = (folder: string) => folder.replace(/\/+$/, '');
+type Projects = { id: string; folder: string }[];
+
+/** A path's parts with "." and ".." stepped out. Null when a ".." leads above the start. */
+function stepOut(parts: string[]): string[] | null {
+  const out: string[] = [];
+  for (const seg of parts) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { if (!out.length) return null; out.pop(); continue; }
+    out.push(seg);
+  }
+  return out;
 }
 
 /**
- * The project and the project-relative path of a file path in a message. An absolute path is as in
- * projectForPath. A relative path that starts with the folder name of another known project
- * ("sandbox/notes/board.md") belongs to that project, with that name removed; else the message project.
- * Two projects with the same folder name, or the message project's own name, leave the path as it is.
+ * The project folder that holds a normal absolute path: the longest one. Two projects with the very
+ * same folder: the message project if it is one of them, else none (no guess).
  */
-export function resolveProjectPath(p: string, messageProject: string | null, projects: { id: string; folder: string }[]): { project: string; path: string } | null {
+function ownerOf(abs: string, messageProject: string | null, projects: Projects): { id: string; folder: string } | null {
+  const hits = projects.filter((x) => x.folder && (abs === strip(x.folder) || abs.startsWith(strip(x.folder) + '/')));
+  if (!hits.length) return null;
+  const longest = Math.max(...hits.map((h) => strip(h.folder).length));
+  const top = hits.filter((h) => strip(h.folder).length === longest);
+  return top.length === 1 ? top[0] : top.find((h) => h.id === messageProject) ?? null;
+}
+
+/**
+ * The project a doc path belongs to: an absolute path belongs to the registered project whose folder
+ * holds it (the longest match, ".." stepped out first, so no path leaves the folder); a relative path
+ * uses the message's project; else none (no link).
+ */
+export function projectForPath(p: string, messageProject: string | null, projects: Projects): string | null {
+  if (!p.startsWith('/')) return messageProject;
+  const parts = stepOut(p.split('/'));
+  return parts ? ownerOf('/' + parts.join('/'), messageProject, projects)?.id ?? null : null;
+}
+
+/**
+ * The project and the paths of a file path in a message. `path` is the path with "." and ".." stepped
+ * out (absolute stays absolute; for a doc). `rel` is the path inside the project (for a file tab or a
+ * download: a relative path is the one the server also checks for symlinks). A path that leaves its
+ * project through ".." has no project. An absolute path goes to the longest project folder that holds it.
+ * A relative path that starts with the folder name of another known project ("sandbox/notes/board.md")
+ * belongs to that project, with that name removed; two such projects: no project, no guess. The message
+ * project's own folder name is not removed. Else the message project.
+ */
+export function resolveProjectPath(p: string, messageProject: string | null, projects: Projects): { project: string; path: string; rel: string } | null {
+  const parts = stepOut(p.split('/'));
+  if (!parts || !parts.length) return null;
   if (p.startsWith('/')) {
-    const project = projectForPath(p, messageProject, projects);
-    return project ? { project, path: p } : null;
+    const abs = '/' + parts.join('/');
+    const owner = ownerOf(abs, messageProject, projects);
+    if (!owner) return null;
+    const rel = abs.slice(strip(owner.folder).length + 1);
+    return rel ? { project: owner.id, path: abs, rel } : null;
   }
-  const slash = p.indexOf('/');
-  if (slash > 0) {
-    const first = p.slice(0, slash);
-    const owners = projects.filter((x) => x.id !== messageProject && x.folder && x.folder.replace(/\/+$/, '').split('/').pop() === first);
-    if (owners.length === 1 && p.length > slash + 1) return { project: owners[0].id, path: p.slice(slash + 1) };
+  if (parts.length > 1) {
+    const owners = projects.filter((x) => x.id !== messageProject && x.folder && strip(x.folder).split('/').pop() === parts[0]);
+    if (owners.length > 1) return null;
+    if (owners.length === 1) { const rest = parts.slice(1).join('/'); return { project: owners[0].id, path: rest, rel: rest }; }
   }
-  return messageProject ? { project: messageProject, path: p } : null;
+  const rel = parts.join('/');
+  return messageProject ? { project: messageProject, path: rel, rel } : null;
 }

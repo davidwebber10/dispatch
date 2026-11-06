@@ -142,6 +142,34 @@ describe('file chips in a Chat reply (any file type)', () => {
     await act(async () => {});
     expect(tab).toHaveBeenCalledWith('s2', 'team-requests/run.py', { focus: false });
   });
+  it('an absolute path opens as the path inside the project', async () => {
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    show('See /w/dispatch/scripts/extract.py');
+    fireEvent.click(screen.getByRole('button', { name: 'extract.py' }));
+    await act(async () => {});
+    expect(tab).toHaveBeenCalledWith('s1', 'scripts/extract.py', { focus: false });
+  });
+  it('a path that leaves the project draws no chip', () => {
+    show('Read /w/dispatch/../../etc/secret.py and ../secret.py and docs/../../x.py and /w/dispatch/a/../../../b.txt');
+    expect(document.querySelectorAll('.doc-chip')).toHaveLength(0);
+  });
+  it('two projects with one folder name: no chip for a path that starts with it', () => {
+    useEndless.setState({ projects: [...projects, { id: 's3', name: 'a', folder: '/x/shared' }, { id: 's4', name: 'b', folder: '/y/shared' }] as any });
+    const reply = { ...m(0, 'unii', 'Files: shared/a.py and src/b.py'), project: 's1' };
+    render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
+    expect([...document.querySelectorAll('.doc-chip')].map((c) => c.textContent)).toEqual(['b.py']);
+  });
+  it('a .7z path draws a chip and downloads', async () => {
+    const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();
+    show('Backup is backup/data.7z now.');
+    fireEvent.click(screen.getByRole('button', { name: 'data.7z' }));
+    await act(async () => {});
+    expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=backup%2Fdata.7z', 'data.7z');
+  });
+  it('email addresses and bare domains draw no chip', () => {
+    show('Mail jo@example.cloud or jo@host.sh, or open example.tech/docs/x.json and www.example.cloud/a.html.');
+    expect(document.querySelectorAll('.doc-chip')).toHaveLength(0);
+  });
   it('URLs, domains, versions and abbreviations draw no chip', () => {
     show('Released v3.19.0, e.g. at https://example.com/a/b.html and example.com, with Node.js; mail me@example.com.');
     expect(document.querySelectorAll('.doc-chip')).toHaveLength(0);

@@ -16,7 +16,7 @@ export function docLinks(text: string, messageProject: string | null, projects: 
 /** Open a file path from Chat: a doc in the doc viewer, other files as openChipFile says. The chip never checks the file first. */
 export function openDoc(path: string, branch: string | null, messageProject: string | null): void {
   const target = resolveProjectPath(path, messageProject, useEndless.getState().projects);
-  if (target) void openChipFile({ project: target.project, path: target.path, branch, nav: 'chat' });
+  if (target) void openChipFile({ project: target.project, path: target.path, rel: target.rel, branch, nav: 'chat' });
 }
 
 /** One file chip (board ChatStates S6): the file name, the full path in its title. A click never reaches the card under it. */

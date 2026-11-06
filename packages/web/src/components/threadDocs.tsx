@@ -24,7 +24,7 @@ export function threadDocChips(project: string | null, projects: Projects, origi
     accept: (p) => resolveProjectPath(p, project, projects) !== null,
     onOpen: (p, b) => {
       const target = resolveProjectPath(p, project, projects);
-      if (target) void openChipFile({ project: target.project, path: target.path, branch: b, nav: navFor(origin), origin });
+      if (target) void openChipFile({ project: target.project, path: target.path, rel: target.rel, branch: b, nav: navFor(origin), origin });
     },
     link: (href) => classifyLink(href, { project, projects, from }),
   };

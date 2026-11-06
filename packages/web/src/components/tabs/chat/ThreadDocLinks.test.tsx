@@ -101,4 +101,14 @@ describe('file chips in a thread reply (any file type)', () => {
     expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=data%2Fout.xlsx', 'out.xlsx');
     expect(useUI.getState().pendingOpenThread).toBeNull();
   });
+  it('an absolute path opens as the path inside the project; a path that leaves it is no chip', async () => {
+    items = say(`Wrote ${FOLDER}/scripts/run.py, and ${FOLDER}/../other/x.py, and ../y.py`);
+    const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    mount('codex');
+    await screen.findByText('Wrote', { exact: false });
+    const chips = document.querySelectorAll<HTMLElement>('.doc-chip');
+    expect([...chips].map((c) => c.textContent)).toEqual(['run.py']);
+    fireEvent.click(chips[0]);
+    expect(tab).toHaveBeenCalledWith('s1', 'scripts/run.py', { focus: true });
+  });
 });

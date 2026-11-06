@@ -17,19 +17,21 @@ export type FileNav = 'threads' | 'chat' | 'stay';
  * A text or code file, a CSV or an image opens a file tab (the file tab already shows each of them).
  * Any other binary (xlsx, parquet, pdf, zip, ...) has no viewer, so it downloads from the project.
  */
-export async function openChipFile(o: { project: string; path: string; branch: string | null; nav: FileNav; origin?: string }): Promise<void> {
-  const { project, path, branch, nav, origin } = o;
+export async function openChipFile(o: { project: string; path: string; rel: string; branch: string | null; nav: FileNav; origin?: string }): Promise<void> {
+  // `path` is for the doc route (it checks the path itself); a file tab and a download get `rel`, the path inside
+  // the project, which the file routes confine to the project, symlinks included.
+  const { project, path, rel, branch, nav, origin } = o;
   const kind = fileKind(path);
   if (kind === 'doc') {
     useDocViewer.getState().show({ project, path, branch, origin });
     return;
   }
   if (kind === 'binary') {
-    try { await saveFileAs(api.downloadUrl(project, path), path.split('/').pop() || path); }
+    try { await saveFileAs(api.downloadUrl(project, rel), rel.split('/').pop() || rel); }
     catch (err) { window.alert(`Download failed: ${err instanceof Error ? err.message : String(err)}`); }
     return;
   }
-  const id = await openFileTab(project, path, { focus: nav === 'threads' });
+  const id = await openFileTab(project, rel, { focus: nav === 'threads' });
   if (nav === 'chat' && id) {
     useUI.getState().requestOpenThread({ sessionId: project, terminalId: id });
     useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name

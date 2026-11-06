@@ -137,6 +137,45 @@ describe('path safety and read limits', () => {
   });
 });
 
+describe('read cannot follow a symlink out of the project', () => {
+  let workDir: string;
+  let outside: string;
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-rd-'));
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-rdout-'));
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'top secret');
+    fs.writeFileSync(path.join(workDir, 'ok.txt'), 'fine');
+    fs.mkdirSync(path.join(workDir, 'docs'));
+    fs.symlinkSync(outside, path.join(workDir, 'link'));
+    fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(workDir, 'leaf.txt'));
+  });
+  afterEach(() => { fs.rmSync(workDir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  const read = (app: express.Express, p: string) => request(app).get('/api/sessions/s1/files/read').query({ path: p });
+
+  it('a relative path through a linked folder or to a linked file is refused', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, 'link/secret.txt')).status).toBe(403);
+    expect((await read(app, 'leaf.txt')).status).toBe(403);
+    expect((await read(app, 'docs/../../secret.txt')).status).toBe(403);
+  });
+  it('an absolute path inside the project that goes through a symlink out of it is refused too', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, path.join(workDir, 'link', 'secret.txt'))).status).toBe(403);
+    expect((await read(app, path.join(workDir, 'leaf.txt'))).status).toBe(403);
+    expect((await read(app, path.join(workDir, 'docs', '..', 'link', 'secret.txt'))).status).toBe(403);
+  });
+  it('a real file inside the project reads, by a relative or an absolute path', async () => {
+    const app = makeApp(workDir);
+    expect((await read(app, 'ok.txt')).body.content).toBe('fine');
+    expect((await read(app, path.join(workDir, 'ok.txt'))).body.content).toBe('fine');
+  });
+  it('an absolute path outside the project still reads (the View button for an agent that edits another repo)', async () => {
+    const res = await read(makeApp(workDir), path.join(outside, 'secret.txt'));
+    expect(res.status).toBe(200);
+    expect(res.body.content).toBe('top secret');
+  });
+});
+
 describe('symlinked folders cannot lead delete or rename outside the project', () => {
   let workDir: string;
   let outside: string;
