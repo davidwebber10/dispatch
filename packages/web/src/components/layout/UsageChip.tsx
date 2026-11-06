@@ -82,7 +82,6 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={m.tone} aria-label={m.title} title={m.title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
         style={{ width: 52, padding: '4px 0', borderRadius: 'var(--radius-md)', border: `1px solid ${m.tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, color, opacity, font: '500 10px var(--font-mono)', lineHeight: '13px' }}>
-        {m.mark && <span style={{ fontSize: 8.5, opacity: 0.8 }}>{m.mark}</span>}
         {/* Only a tool that reports a 5-hour window gets the line (neither Claude nor Codex did on 2026-11-05). */}
         {m.five !== '–' && <span style={{ whiteSpace: 'nowrap' }}>5h {m.five}</span>}
         <span style={{ whiteSpace: 'nowrap' }}>wk {m.week}</span>
