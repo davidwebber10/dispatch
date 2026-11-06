@@ -66,3 +66,38 @@ it('errors (no upload) when transcription is not configured', async () => {
   expect(result.current.error).toMatch(/Settings/i);
   expect(api.transcribe).not.toHaveBeenCalled();
 });
+
+describe('keeping a long dictation (2026-11-06)', () => {
+  const setHidden = (h: boolean) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => h });
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+
+  it('holds a screen wake lock while recording and lets it go when recording ends', async () => {
+    const release = vi.fn().mockResolvedValue(undefined);
+    const request = vi.fn().mockResolvedValue({ release });
+    (navigator as any).wakeLock = { request };
+    const { result } = renderHook(() => useDictation(vi.fn()));
+    await act(async () => { await result.current.start(); });
+    expect(request).toHaveBeenCalledWith('screen');
+    await act(async () => { await result.current.confirm(); });
+    expect(release).toHaveBeenCalled();
+    delete (navigator as any).wakeLock;
+  });
+
+  it('records fine where wake lock is not supported', async () => {
+    delete (navigator as any).wakeLock;
+    const { result } = renderHook(() => useDictation(vi.fn()));
+    await act(async () => { await result.current.start(); });
+    expect(result.current.state).toBe('recording');
+  });
+
+  it('if the phone locks mid-recording, what was said is transcribed, not lost', async () => {
+    const onTranscript = vi.fn();
+    const { result } = renderHook(() => useDictation(onTranscript));
+    await act(async () => { await result.current.start(); });
+    await act(async () => { setHidden(true); });
+    await waitFor(() => expect(onTranscript).toHaveBeenCalledWith('spoken text'));
+    setHidden(false);
+  });
+});
