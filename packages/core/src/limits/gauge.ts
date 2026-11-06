@@ -130,6 +130,8 @@ export class UsageGauge {
   private timer: NodeJS.Timeout | null = null;
   private pending: NodeJS.Timeout | null = null;
   private lastSent = '';
+  /** The soonest `runsOutAt` still ahead when last sent, or null. Once the clock passes it, send again (see send). */
+  private resendAt: number | null = null;
   private rev = 0;
   private readonly epoch = randomUUID();
   /** When the tick last asked to refresh each Codex thread, for the least-recently-polled rotation. */
@@ -463,6 +465,11 @@ export class UsageGauge {
    * no fixed grain holds it still. A real change still sends: a new figure moves `usedPercent` or
    * `asOf`, and the pace's basis or a flip of `lastsUntilReset` is in the key. Every send carries
    * the fresh `runsOutAt`.
+   *
+   * A client shows "used up" once a held `runsOutAt` is past. So once the clock passes the soonest
+   * one sent, send again with no other change. With no new figure the projection only moves later,
+   * and faster as the span grows, so an idle episode resends a few times, not every tick. A window
+   * already at 100% is used up for real and never sets this.
    */
   private send(): void {
     let summary: UsageSummary;
@@ -480,8 +487,17 @@ export class UsageGauge {
       windows: Object.fromEntries(Object.entries(p.windows).map(([k, w]) => [k, window(w)])),
     }));
     const key = JSON.stringify({ ...stable, providers });
-    if (key === this.lastSent) return;
+    const now = summary.at;
+    if (key === this.lastSent && (this.resendAt === null || now < this.resendAt)) return;
     this.lastSent = key;
+    this.resendAt = null;
+    for (const p of summary.providers) {
+      for (const w of Object.values(p.windows)) {
+        const f = w.forecast;
+        if (!f || f.lastsUntilReset || f.runsOutAt === null || f.runsOutAt <= now || (w.usedPercent ?? 0) >= 100) continue;
+        if (this.resendAt === null || f.runsOutAt < this.resendAt) this.resendAt = f.runsOutAt;
+      }
+    }
     this.d.broadcast(summary as unknown as Record<string, unknown>);
   }
 }

@@ -84,8 +84,10 @@ export function acceptSummary(cur: Position, inc: { epoch: string | null; rev: n
 
 export const useUsageLimits = create<UsageLimitsState>((set, get) => {
   /**
-   * Bumped only when a load starts. A load's answer that carries no rev is dropped when a newer
-   * load started after it: nothing else orders it. An answer with a rev is ordered by acceptSummary.
+   * Bumped only when a load starts. A load's answer is dropped when a newer load started after it,
+   * whatever its rev. The newer load will answer, and the older one may come from a daemon that
+   * is gone: the boot GET reaches A, A restarts, the reconnect GET goes to B, and A answers first.
+   * With no epoch held yet, nothing else would stop A landing, and B would then be dropped.
    */
   let loadSeq = 0;
   const take = (p: Parsed | null) => {
@@ -109,7 +111,7 @@ export const useUsageLimits = create<UsageLimitsState>((set, get) => {
         const answer = (await api.getUsageSummary()) as unknown as Record<string, unknown>;
         const p = parse(answer);
         if (!p) return;
-        if (p.rev === null && seq !== loadSeq) return; // a newer load started, and this one has no rev to order it
+        if (seq !== loadSeq) return; // a newer load started: its answer replaces this one
         const held = get().epoch;
         if (held !== heldAtStart && p.epoch !== held) return;
         take(p);

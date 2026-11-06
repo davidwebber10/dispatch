@@ -670,6 +670,47 @@ describe('idle tick with a forecast', () => {
   });
 });
 
+// N18 (#131 round 3): runsOutAt is not in the key, so an idle client would keep a run-out time the
+// clock has passed and show "used up". The gauge resends once the soonest one sent is past.
+describe('idle resend when the sent run-out time passes', () => {
+  // One window with a far reset: 10% at T0, then `last` at T0 + 40 min. At 70 it runs out at T0 + 60 min.
+  const five = (pct: number) => snaps.record('claude-code', account, { five_hour: { usedPercent: pct, resetsAt: WEEK } }, clock);
+  const held = () => events[events.length - 1].providers[0].windows.five_hour.forecast;
+  const idle = (minutes: number, each?: () => void) => {
+    for (let i = 0; i < minutes; i++) { clock += MIN; gauge.tick(); vi.advanceTimersByTime(5000); each?.(); }
+  };
+  const start = (last: number) => { five(10); clock = T0 + 40 * MIN; five(last); vi.advanceTimersByTime(5000); };
+
+  it('an idle client never holds a past runsOutAt for more than one tick', () => {
+    start(70);
+    expect(held()).toMatchObject({ runsOutAt: T0 + 60 * MIN, lastsUntilReset: false });
+    idle(6 * 60, () => {
+      const f = held();
+      if (!f.lastsUntilReset && f.runsOutAt !== null) expect(f.runsOutAt).toBeGreaterThan(clock - MIN);
+    });
+    // The first resend came on the tick the sent time passed, with a later run-out time.
+    expect(events[1].at).toBe(T0 + 60 * MIN);
+    expect(events[1].providers[0].windows.five_hour.forecast.runsOutAt).toBeGreaterThan(T0 + 60 * MIN);
+  });
+
+  it('idle resends stay bounded: a handful in six hours, not one a minute', () => {
+    start(70);
+    idle(6 * 60);
+    // About one per basis hour, plus the run-out resends, which space out as the pace slows.
+    expect(events.length).toBeGreaterThan(2);
+    expect(events.length).toBeLessThanOrEqual(15);
+  });
+
+  it('a window already at 100% does not resend', () => {
+    start(99.6); // shows 100, and the unrounded figure still runs out a few seconds later
+    expect(events).toHaveLength(1);
+    expect(events[0].providers[0].windows.five_hour.usedPercent).toBe(100);
+    expect(held().runsOutAt).toBeGreaterThan(clock);
+    idle(45); // the basis stays 1 hour, so nothing else changes
+    expect(events).toHaveLength(1);
+  });
+});
+
 // Review finding 5: a client must be able to tell an older GET answer from a newer socket event.
 describe('summary revision', () => {
   it('rises on every summary, even with the clock standing still, and survives a restart', () => {
