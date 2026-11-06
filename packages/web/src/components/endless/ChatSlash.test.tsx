@@ -11,7 +11,7 @@ beforeAll(() => {
   (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = Noop;
 });
 
-let put: ReturnType<typeof vi.spyOn>;
+let put: ReturnType<typeof vi.fn>;
 let send: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   localStorage.clear();
@@ -22,7 +22,8 @@ beforeEach(() => {
     turn: { status: 'idle', error: null }, projects: [], pending: [], send, stop: vi.fn().mockResolvedValue(undefined),
   } as never);
   vi.spyOn(api, 'endlessSettings').mockResolvedValue({ model: null, effort: null, defaultModel: 'opus' });
-  put = vi.spyOn(api, 'setEndlessSettings').mockImplementation(async (c) => ({ model: c.model === undefined ? null : c.model, effort: (c.effort as string | null | undefined) ?? null, defaultModel: 'opus' }));
+  put = vi.fn(async (c: { model?: string | null; effort?: string | null }) => ({ model: c.model === undefined ? null : c.model, effort: c.effort ?? null, defaultModel: 'opus' }));
+  vi.spyOn(api, 'setEndlessSettings').mockImplementation(put as never);
 });
 
 const box = () => screen.getByPlaceholderText('Message Dispatch…') as HTMLTextAreaElement;

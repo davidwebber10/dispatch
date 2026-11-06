@@ -14,11 +14,11 @@ beforeAll(() => {
 });
 
 function thread(type: Terminal['type'], config: Record<string, unknown> = {}): Terminal {
-  return { id: 't1', sessionId: 's1', type, label: 'T', pid: 1, externalId: 'e', workingDir: '/w', status: 'idle', createdAt: '', config: { transport: 'structured', ...config }, archivedAt: null, sortOrder: 0 };
+  return { id: 't1', sessionId: 's1', type, label: 'T', pid: 1, externalId: 'e', workingDir: '/w', status: 'waiting', createdAt: '', config: { transport: 'structured', ...config }, archivedAt: null, sortOrder: 0 };
 }
 
-let send: ReturnType<typeof vi.spyOn>;
-let settings: ReturnType<typeof vi.spyOn>;
+let send: ReturnType<typeof vi.fn>;
+let settings: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.restoreAllMocks();
   // The live ws reports the model the CLI runs.
@@ -26,8 +26,10 @@ beforeEach(() => {
     setTimeout(() => h.onEvent?.({ type: 'system', subtype: 'init', model: 'claude-sonnet-5-5' }), 0);
     return { close: () => {} } as any;
   });
-  send = vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as never);
-  settings = vi.spyOn(api, 'setThreadSettings').mockResolvedValue({ terminal: thread('claude-code'), applied: 'now' });
+  send = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(api, 'sendStructuredMessage').mockImplementation(send as never);
+  settings = vi.fn().mockResolvedValue({ terminal: thread('claude-code'), applied: 'now' });
+  vi.spyOn(api, 'setThreadSettings').mockImplementation(settings as never);
   vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
   useTabs.setState({ byProject: { s1: [thread('claude-code', { model: 'sonnet' })] } } as never);
 });
