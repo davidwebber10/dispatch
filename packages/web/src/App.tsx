@@ -279,7 +279,7 @@ export default function App() {
                 />}
               main={
                 showAgent
-                  ? <AgentPane />
+                  ? <AgentPane onClose={() => useAgentUI.getState().blur()} />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                       {/* The panel toggles flank the tab strip — the old TopBar's
