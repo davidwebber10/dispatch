@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { CheckCircle, WarningCircle } from '@phosphor-icons/react';
 import { Spinner } from './common/Spinner';
 import { ContextDetailModal } from './ContextDetailModal';
@@ -30,6 +30,8 @@ export interface ContextIndicatorProps {
   /** The thread, so the popup can show its usage limits. */
   terminalId?: string;
   compact: () => void;
+  /** The model/effort picker (composer/ModelPicker). When given it shows in place of the model name. */
+  modelControl?: ReactNode;
 }
 
 /**
@@ -38,7 +40,7 @@ export interface ContextIndicatorProps {
  * assistant turn (contextTokens undefined), so it renders nothing until then —
  * except a compaction's own compacting/result state, which can still flash.
  */
-export function ContextIndicator({ contextTokens, contextWindow, compacting, compactResult, model, terminalId, compact }: ContextIndicatorProps) {
+export function ContextIndicator({ contextTokens, contextWindow, compacting, compactResult, model, terminalId, compact, modelControl }: ContextIndicatorProps) {
   const [open, setOpen] = useState(false);
   const [flash, setFlash] = useState(false);
 
@@ -52,13 +54,14 @@ export function ContextIndicator({ contextTokens, contextWindow, compacting, com
     return () => clearTimeout(t);
   }, [compactResult]);
 
-  if (contextTokens === undefined && !compacting && !flash) return null;
+  if (contextTokens === undefined && !compacting && !flash) return modelControl ? <>{modelControl}</> : null;
 
   const pct = Math.min(100, Math.round(((contextTokens ?? 0) / (contextWindow ?? contextWindowFor(model))) * 100));
   const barColor = pct >= 90 ? 'var(--color-status-red)' : pct >= 75 ? 'var(--color-status-yellow)' : 'var(--color-accent)';
 
   return (
     <>
+      {modelControl && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>{modelControl}<span aria-hidden="true" style={{ color: 'var(--color-text-tertiary)', font: '400 11px var(--font-mono)' }}>·</span></span>}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -84,7 +87,7 @@ export function ContextIndicator({ contextTokens, contextWindow, compacting, com
           )
         ) : (
           <>
-            {modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
+            {!modelControl && modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
             <span style={{ width: 28, height: 3, borderRadius: 'var(--radius-xs)', background: 'var(--color-border)', overflow: 'hidden', display: 'inline-block' }}>
               <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: barColor }} />
             </span>

@@ -42,13 +42,15 @@ export interface PillComposerProps {
   mobile?: boolean;
   /** The ↑'s accessible name and tooltip (Control Plane: "Send directive"). */
   sendLabel?: string;
+  /** Drawn just above the box: the "/" menu's list, its notice and its sheet (composer/slash/useSlashMenu). */
+  slash?: ReactNode;
 }
 
 const MAX_FRACTION = 0.5;
 
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra,
-  dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
+  dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send', slash,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
@@ -135,6 +137,8 @@ export function PillComposer({
         <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     )}
+    <div style={{ position: 'relative' }}>
+    {slash}
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
@@ -196,6 +200,7 @@ export function PillComposer({
           <ArrowUp size={mobile ? 20 : 17} weight="bold" />
         </button>
       )}
+    </div>
     </div>
     </>
   );

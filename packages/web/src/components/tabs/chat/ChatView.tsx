@@ -28,6 +28,10 @@ import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../Workin
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
+import { ThreadModelControl, applyThreadSettings, useThreadSettings } from '../../composer/ThreadModelControl';
+import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../../stores/pickerRequest';
+import { textToSend } from '../../../lib/slashEscape';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
@@ -152,7 +156,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   }
 
   function doSend() {
-    const v = draft.trim();
+    // A command typed in the box (/model, /compact…) is Dispatch's to run, never the model's.
+    if (slash.interceptSend()) return;
+    const v = textToSend(draft);
     if (!v && stagedImages.length === 0) return;
     if (advice) dismissResumeAdvice();
     // Text + any staged images go out as ONE turn: a leading text block (when there's a
@@ -236,6 +242,26 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     // api.stopTerminal, which kills the process.
     api.interrupt(terminalId).catch(() => { /* best-effort — nothing live to interrupt */ });
   }
+  // The "/" menu (composer/slash): Dispatch's own commands for this thread. /model and /effort open the
+  // picker in the status row, or change at once with a value.
+  const thread = useThreadSettings(terminalId);
+  const slashHarness = thread.harness ?? 'claude-code';
+  const slash = useSlashMenu({
+    surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, model: thread.model, effort: thread.effort, mobile: isMobile,
+    run: async (name, args) => {
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({
+          harness: slashHarness, name, args,
+          openPicker: () => usePickerRequest.getState().request(`thread:${terminalId}`),
+          apply: (change) => applyThreadSettings(terminalId, change),
+        });
+      }
+      if (name === 'compact') { await api.compactTerminal(terminalId); return; }
+      if (name === 'stop') { await api.interrupt(terminalId); return; }
+      if (name === 'cli') { await api.switchTransport(terminalId, 'pty'); return; }
+      if (name === 'restart') { await api.relaunchTerminal(terminalId); return; }
+    },
+  });
   // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
   // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
 
@@ -411,9 +437,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             textareaRef={taRef}
             /* Prose only, so spelling help is on. autoCapitalize stays off so a path or a
                command name pasted mid-message is not altered. */
-            textareaProps={{ onPaste, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
+            textareaProps={{ onPaste, onKeyDown: slash.onKeyDown, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
             dragActive={dragActive}
             mobile={isMobile}
+            menuExtra={slash.plusRow}
+            slash={slash.overlay}
           />
         </div>
 
@@ -424,7 +452,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
           )}
           <span style={{ marginLeft: 'auto' }} />
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} modelControl={<ThreadModelControl terminalId={terminalId} liveModel={model} mobile={isMobile} />} />
         </div>
       </div>
       <DocViewer owner={terminalId} />

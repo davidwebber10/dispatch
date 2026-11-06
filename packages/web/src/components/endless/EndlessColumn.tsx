@@ -16,6 +16,10 @@ import { ProjectMenuSection } from './ProjectPicker';
 
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
 import { PillComposer } from '../composer/PillComposer';
+import { ModelControl } from '../composer/ModelPicker';
+import { useSlashMenu, runModelEffortCommand } from '../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../stores/pickerRequest';
+import { useChatSettings } from './useChatSettings';
 import { useDictation } from '../../hooks/useDictation';
 import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
@@ -156,6 +160,19 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
   };
+
+  // The "/" menu: Chat's short list (/model, /effort, /stop). The model and effort are one Chat-wide setting.
+  const chat = useChatSettings();
+  const slash = useSlashMenu({
+    surface: 'chat', harness: 'claude-code', value: text, setValue: setText, model: chat.settings?.model ?? null, effort: chat.settings?.effort ?? null, mobile,
+    run: async (name, args) => {
+      if (name === 'stop') { await useEndless.getState().stop(); return; }
+      if (!chat.settings) throw new Error('Chat settings are not available on this daemon.');
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({ harness: 'claude-code', name, args, openPicker: () => usePickerRequest.getState().request('chat'), apply: chat.apply });
+      }
+    },
+  });
 
   // Clear the draft the moment the send starts, not after it ends. The wait can last seconds on a
   // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
@@ -312,19 +329,26 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         <PillComposer
           value={text}
           onChange={setText}
-          onSend={() => void submit()}
+          onSend={() => { if (slash.interceptSend()) return; void submit(); }}
           canSend={canSend}
           stopMode={stopMode}
           onStop={stop}
           placeholder="Message Dispatch…"
           onAddFile={() => fileRef.current?.click()}
-          menuExtra={(close) => <ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} />}
+          menuExtra={(close) => (<>{slash.plusRow(close)}<ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} /></>)}
+          slash={slash.overlay}
           dictation={dictation}
           sttConfigured={sttConfigured}
           textareaRef={taRef}
-          textareaProps={{ 'aria-label': 'Message', onPaste }}
+          textareaProps={{ 'aria-label': 'Message', onPaste, onKeyDown: slash.onKeyDown }}
           mobile={mobile}
         />
+        {/* The model and effort of all of Chat: the button opens the picker. */}
+        {chat.settings && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <ModelControl owner="chat" harness="claude-code" model={chat.settings.model} effort={chat.settings.effort} defaultModel={chat.settings.defaultModel} mobile={mobile} onApply={chat.apply} />
+          </div>
+        )}
       </div>
     </div>
   );

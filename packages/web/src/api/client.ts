@@ -3,7 +3,7 @@ import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { Preview, SpinnerVerbs, SpinnerSet } from './types';
+import type { Preview, SpinnerVerbs, SpinnerSet, ChatSettings } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -120,6 +120,10 @@ export const api = {
   claudeLoginStart: () => req<ClaudeLoginSession>('/api/claude-auth/login', { method: 'POST' }),
   claudeLoginCode: (code: string) => req<ClaudeLoginSession>('/api/claude-auth/login/code', { method: 'POST', body: body({ code }) }),
   endlessState: () => req<EndlessState>('/api/endless/state'),
+  /** Chat-wide model and effort (slash menu). null = the default. A change applies from the next turn. */
+  endlessSettings: () => req<ChatSettings>('/api/endless/settings'),
+  setEndlessSettings: (change: { model?: string | null; effort?: string | null }) =>
+    req<ChatSettings>('/api/endless/settings', { method: 'PUT', body: body(change) }),
   endlessSearch: (q: string, project: string | null) =>
     req<{ results: EndlessSearchHit[] }>(`/api/endless/search?q=${encodeURIComponent(q)}${project ? `&project=${encodeURIComponent(project)}` : ''}`),
   endlessView: () => req<EndlessView>('/api/endless/view'),
@@ -205,6 +209,11 @@ export const api = {
     req<Terminal>(`/api/terminals/${terminalId}/autonomy`, { method: 'POST', body: body({ mode }) }),
   // Graceful interrupt: stop the current turn WITHOUT killing the thread.
   interrupt: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/interrupt`, { method: 'POST' }),
+  // Change a Pretty thread's model and/or effort (picker, typed /model). Saved first, then applied to the
+  // live agent. `applied`: 'now', 'after-turn' (Claude waits for a turn in flight) or 'next-start'.
+  // model: null resets a Claude thread to its default. 400 bad value, 409 Grok/OpenCode or a CLI thread.
+  setThreadSettings: (terminalId: string, change: { model?: string | null; effort?: string }) =>
+    req<{ terminal: Terminal; applied: 'now' | 'after-turn' | 'next-start' }>(`/api/terminals/${terminalId}/settings`, { method: 'PATCH', body: body(change) }),
   // Trigger native Claude Code compaction on the thread's current context.
   compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
   // Should the Pretty view offer to summarize before resuming this thread?
