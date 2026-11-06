@@ -28,7 +28,7 @@ describe('UsageChip', () => {
     expect(chip.getAttribute('data-tone')).toBe('normal');
     fireEvent.click(chip);
     // The ring counts up to the figure: its accessible label carries the figure at once.
-    expect(screen.getByRole('dialog', { name: 'Usage limits' }).querySelector('[role="img"]')!.getAttribute('aria-label')).toContain('46% of 5-hour used');
+    expect(screen.getByRole('dialog', { name: 'Usage limits' }).querySelector('[role="meter"]')!.getAttribute('aria-label')).toContain('5-hour: 46% used');
     expect(screen.getByRole('region', { name: 'Claude' })).toBeInTheDocument();
   });
 
