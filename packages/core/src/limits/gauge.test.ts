@@ -134,6 +134,34 @@ describe('summary', () => {
     expect(gauge.summary().paused[0].activeUntil).toBe(clock + 3);
   });
 
+  it('a null-percentage update after the limit hit does not clear it: the kept 20% is an old reading', () => {
+    thread('a');
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 20, resetsAt: RESET } }, T0); // last reading, before the limit
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN }); // the limit hits
+    clock = T0 + 15 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET } }, clock); // a report with a reset time and no figure
+    expect(snaps.get('claude-code', account)!.windows.five_hour.usedPercent).toBe(20); // the old figure is kept
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Another window's real figure does not turn the old 20% into a new reading either.
+    clock = T0 + 16 * MIN;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 100, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // A genuine new reading under 100% after the detection does clear it, stamped with its own time.
+    clock = T0 + 20 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('a carried old figure under 100% never clears by itself, only with a new real figure on some window', () => {
+    thread('a');
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 20, resetsAt: RESET } }, T0);
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN });
+    clock = T0 + 20 * MIN;
+    // A new real figure arrives on the weekly window only: it is a genuine new reading under 100%.
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
   it('figures from before the latest detection do not clear a renewed limit, only newer ones', () => {
     thread('a');
     // The chain began at T0; the limit was detected again at T0 + 10 min (a resume that hit it again).

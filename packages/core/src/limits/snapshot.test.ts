@@ -63,6 +63,31 @@ describe('LimitSnapshots', () => {
     s.record('claude-code', 'a', { five_hour: { usedPercent: null, resetsAt: NOW + 99_000 } }, NOW + 6);
     expect(s.get('claude-code', 'a')!.windows.five_hour?.usedPercent).toBeNull();
   });
+  it('a kept window keeps the time of its figure, and a report with no real figure does not move asOf', () => {
+    const { s } = fresh();
+    s.record('claude-code', 'a', { five_hour: { usedPercent: 20, resetsAt: NOW + 1000 } }, NOW);
+    s.record('claude-code', 'a', { five_hour: { usedPercent: null, resetsAt: NOW + 1000 } }, NOW + 5);
+    const g = s.get('claude-code', 'a')!;
+    expect(g.windows.five_hour?.usedPercent).toBe(20);
+    expect(g.figureAt?.five_hour).toBe(NOW); // the 20% was read at NOW, not at NOW + 5
+    expect(g.asOf).toBe(NOW);
+  });
+  it('a real figure stamps its own window and moves asOf; windows carried forward keep their older time', () => {
+    const { s } = fresh();
+    s.record('claude-code', 'a', { five_hour: { usedPercent: 20, resetsAt: NOW + 1000 } }, NOW);
+    s.record('claude-code', 'a', { seven_day: { usedPercent: 50, resetsAt: NOW + 5000 } }, NOW + 10);
+    const g = s.get('claude-code', 'a')!;
+    expect(g.figureAt).toEqual({ five_hour: NOW, seven_day: NOW + 10 });
+    expect(g.asOf).toBe(NOW + 10);
+  });
+  it('a new window with no figure has no figure time, and a dropped window loses its time', () => {
+    const { s } = fresh();
+    s.record('claude-code', 'a', { five_hour: { usedPercent: 20, resetsAt: NOW + 1000 } }, NOW);
+    s.record('claude-code', 'a', { five_hour: { usedPercent: null, resetsAt: NOW + 99_000 } }, NOW + 5); // a different window: the old figure is gone
+    expect(s.get('claude-code', 'a')!.figureAt?.five_hour).toBeUndefined();
+    s.record('claude-code', 'a', { seven_day: { usedPercent: 9, resetsAt: NOW + 8 * 3600_000 } }, NOW + 4 * 3600_000);
+    expect(Object.keys(s.get('claude-code', 'a')!.figureAt ?? {})).toEqual(['seven_day']); // the old five_hour is far past its reset
+  });
   it('a different account replaces the old snapshot and the old one is never shown as current', () => {
     const { s } = fresh();
     s.record('claude-code', 'old', { five_hour: { usedPercent: 99, resetsAt: NOW + 1000 } }, NOW);

@@ -119,14 +119,14 @@ export class UsageGauge {
   settings(): gaugeSettings.UsageLimitSettings { return gaugeSettings.get(this.d.db); }
 
   /** The current account's windows for one provider, percents rounded to integers. Null with no snapshot. */
-  private providerSummary(provider: string): (SummaryProvider & { account: string }) | null {
+  private providerSummary(provider: string): (SummaryProvider & { account: string; figureAt: Record<string, number> }) | null {
     const s = this.d.snapshots.get(provider, this.d.accountFor(provider));
     if (!s) return null;
     const windows: Record<string, SummaryWindow> = {};
     for (const [type, w] of Object.entries(s.windows as LimitWindows)) {
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt };
     }
-    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows };
+    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {} };
   }
 
   /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
@@ -144,11 +144,14 @@ export class UsageGauge {
   private rowEnd(r: parksDb.ParkRow): number | null {
     if (r.resets_at !== null) return r.resets_at;
     const s = this.providerSummary(r.provider);
-    if (!s || s.asOf <= r.detected_at) return null;
+    if (!s) return null;
     const now = this.now();
     const figures = Object.entries(s.windows).filter(([type, w]) => COUNTED.has(type) && live(w, now));
-    if (figures.length === 0 || figures.some(([, w]) => w.usedPercent! >= 100)) return null;
-    return s.asOf;
+    // Any live window at the limit holds it, old reading or not.
+    if (figures.some(([, w]) => w.usedPercent! >= 100)) return null;
+    // A new reading is a window whose own figure was read after the detection: a kept or carried-forward old figure is not one.
+    const times = figures.map(([type]) => s.figureAt[type] ?? s.asOf).filter((at) => at > r.detected_at);
+    return times.length ? Math.max(...times) : null;
   }
 
   /** Paused threads grouped by provider, from the park rows in `parked` or `capped`. */
@@ -184,7 +187,7 @@ export class UsageGauge {
     const providers: SummaryProvider[] = [];
     for (const p of PROVIDERS) {
       const s = this.providerSummary(p);
-      if (s) { const { account: _account, ...rest } = s; providers.push(rest); }
+      if (s) { const { account: _account, figureAt: _figureAt, ...rest } = s; providers.push(rest); }
     }
     const settings = this.settings();
     return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };

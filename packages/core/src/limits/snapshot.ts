@@ -8,7 +8,19 @@ import * as appState from '../db/app-state.js';
 export interface LimitWindow { usedPercent: number | null; resetsAt: number | null }
 /** Windows keyed by the provider's own limit type (`five_hour`, `seven_day`, `seven_day_overage_included`, ...). Unknown types are kept under their raw name. */
 export type LimitWindows = Record<string, LimitWindow>;
-export interface ProviderLimits { account: string; asOf: number; plan?: string; windows: LimitWindows }
+export interface ProviderLimits {
+  account: string;
+  /** When the newest real figure arrived. A report with a reset time and no figure does not move it. */
+  asOf: number;
+  plan?: string;
+  windows: LimitWindows;
+  /**
+   * When each window's figure was read. A window kept or carried forward from an earlier report keeps its
+   * old time, so an old reading is never mistaken for a new one. Missing on a snapshot saved by 3.11.0:
+   * then every figure counts as read at `asOf`.
+   */
+  figureAt?: Record<string, number>;
+}
 
 const KEY = 'usage_limit_snapshots';
 const pct = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? Math.min(100, Math.max(0, Math.round(v * 1000) / 10)) : null);
@@ -81,12 +93,21 @@ export class LimitSnapshots {
     const prior = this.get(provider, account);
     if (prior && now < prior.asOf) return false;
     const merged: LimitWindows = replace ? {} : { ...(prior?.windows ?? {}) };
+    // Figure times: carried forward for kept windows, now for a real new figure, none for a window with no figure.
+    const figureAt: Record<string, number> = {};
+    if (!replace) for (const type of Object.keys(merged)) { const at = prior?.figureAt?.[type] ?? prior?.asOf; if (at !== undefined && merged[type].usedPercent !== null) figureAt[type] = at; }
+    let realFigure = false;
     for (const [type, w] of Object.entries(windows)) {
       const old = prior?.windows[type];
-      merged[type] = w.usedPercent === null && old && old.resetsAt === w.resetsAt ? old : w;
+      const keep = w.usedPercent === null && old && old.resetsAt === w.resetsAt;
+      merged[type] = keep ? old : w;
+      if (keep) { const at = prior?.figureAt?.[type] ?? prior?.asOf; if (at !== undefined && old.usedPercent !== null) figureAt[type] = at; else delete figureAt[type]; }
+      else if (w.usedPercent !== null) { figureAt[type] = now; realFigure = true; }
+      else delete figureAt[type];
     }
-    for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) delete merged[type];
-    this.byProvider[provider] = { account, asOf: now, plan: plan ?? prior?.plan, windows: merged };
+    for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) { delete merged[type]; delete figureAt[type]; }
+    // asOf moves only for a real new figure (the first report of an account starts it at `now` either way).
+    this.byProvider[provider] = { account, asOf: realFigure || !prior ? now : prior.asOf, plan: plan ?? prior?.plan, windows: merged, figureAt };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
     for (const fn of this.recordListeners) {
       try { fn(provider); } catch (err) { console.warn('[usage-limit] a snapshot listener failed:', err); }
