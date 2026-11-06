@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chipModel, usageTables, liveValue, STALE_MS, ringModels } from './usageGauge';
+import { chipModel, usageTables, liveValue, STALE_MS, ringModels, chipRings, entryName } from './usageGauge';
 import type { UsageSummary, UsageSummaryProvider } from '../../api/types';
 
 const NOW = Date.UTC(2026, 10, 5, 17, 0);
@@ -143,5 +143,19 @@ describe('the usage read\'s windows and money (2026-11-06)', () => {
     expect(m).toHaveLength(1);
     expect(m[0].rows).toEqual([]);
     expect(m[0].creditBalance).toBe('5 credits');
+  });
+});
+
+describe('accounts (multi-account spec 2026-11-06)', () => {
+  it('names an entry by tool alone, or by tool and account when the tool has several; rings and cards get one entry each', () => {
+    const a = { ...claude(10, 20), accountId: 'cli', label: 'CLI login' };
+    const b = { ...claude(30, 40), accountId: 'w1', label: 'Work' };
+    const c = { ...codex(5, 6), accountId: 'cli', label: 'CLI login' };
+    const s = sum([a, b, c]);
+    expect(entryName(a, s.providers)).toBe('Claude · CLI login');
+    expect(entryName(c, s.providers)).toBe('Codex');
+    expect(ringModels(s, NOW, 'UTC').map((m) => [m.accountId, m.name])).toEqual([['cli', 'Claude · CLI login'], ['w1', 'Claude · Work'], ['cli', 'Codex']]);
+    expect(chipRings(s, NOW).map((r) => `${r.provider}|${r.accountId}`)).toEqual(['claude-code|cli', 'claude-code|w1', 'codex|cli']);
+    expect(usageTables(s, NOW, 'UTC').map((t) => t.name)).toEqual(['Claude · CLI login', 'Claude · Work', 'Codex']);
   });
 });

@@ -79,7 +79,7 @@ describe('usage rings', () => {
     expect(screen.getByText(/the one expiring (today|tomorrow)/)).toBeInTheDocument();
     expect(spend).not.toHaveBeenCalled(); // confirmation first
     fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Use a banked reset?' })).getByRole('button', { name: 'Use one' }));
-    await waitFor(() => expect(spend).toHaveBeenCalledWith('codex', 'soon')); // the one that would lapse first
+    await waitFor(() => expect(spend).toHaveBeenCalledWith('codex', 'soon', 'cli')); // the one that would lapse first, for this account
     expect(await within(codex).findByText('Reset used: the limit is back to zero.')).toBeInTheDocument();
     spend.mockRestore();
   });

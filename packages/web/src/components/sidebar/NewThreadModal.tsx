@@ -11,6 +11,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { DEFAULT_AUTO_ARCHIVE_MS, fromDuration, toDuration, type DurationUnit } from '../../lib/autoArchive';
 import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, ProviderName, ProviderStatus } from '../../api/types';
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness as Harnesses } from '../../lib/harnesses';
+import type { AccountsView, AccountProvider } from '../../api/types';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -95,6 +96,11 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   // Per-harness defaults + the opencode key status, from the daemon. `null` until loaded;
   // the modal works without it (defaults simply don't apply, the key step stays hidden).
   const [harnessSettings, setHarnessSettings] = useState<HarnessSettingsResponse | null>(null);
+  // Accounts per harness (multi-account spec 2026-11-06): the thread runs on the chosen one for its whole life.
+  const [accounts, setAccounts] = useState<AccountsView | null>(null);
+  const [accountId, setAccountId] = useState<string | null>(null);
+  // An older daemon (or a bare test mock) has no accounts route: the modal then offers no account row.
+  useEffect(() => { (async () => { try { setAccounts(await api.getAccounts()); } catch { setAccounts(null); } })(); }, []);
   const [keyDraft, setKeyDraft] = useState('');
   const [keySaving, setKeySaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -103,6 +109,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const [signingIn, setSigningIn] = useState(false);
 
   const spec = harnesses.find((h) => h.id === harness)!;
+  const accountProvider: AccountProvider | null = spec.type === 'claude-code' ? 'claude' : spec.type === 'codex' ? 'codex' : null;
+  const accountList = accountProvider ? accounts?.[accountProvider] ?? [] : [];
+  const effectiveAccountId = accountProvider ? (accountId && accountList.some((a) => a.id === accountId) ? accountId : accounts?.defaults[accountProvider] ?? 'cli') : null;
   const statusFor = useCallback(
     (p: ProviderName | null) => (p === null ? null : providers?.find((s) => s.name === p) ?? null),
     [providers],
@@ -140,7 +149,8 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     [],
   );
   const models = modelsFor(spec, harnessSettings);
-  const prettyDisabled = !spec.modes.includes('pretty');
+  // A Codex Pretty thread runs on the shared app-server, which cannot take a per-thread login: an added Codex account is CLI-mode only.
+  const prettyDisabled = !spec.modes.includes('pretty') || (accountProvider === 'codex' && effectiveAccountId !== 'cli');
   const cliDisabled = !spec.modes.includes('cli');
   // A stale pick from a previously-selected harness must never survive onto one that
   // doesn't offer it (Grok is pretty-only; the shell is cli-only).
@@ -277,6 +287,9 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
       if (showMode && effectiveMode === 'pretty') config.transport = 'structured';
       if (harness !== 'terminal' && model) config.model = model;
       if (autoArchive) { config.autoArchive = true; config.autoArchiveMs = autoArchiveMs; }
+      // Pinned at creation once there is a choice, so a later change of the default never moves a
+      // resumed thread to another account. With only the CLI login there is nothing to pin.
+      if (accountProvider && effectiveAccountId && accountList.length > 1) config.accountId = effectiveAccountId;
 
       const t = await api.createTerminal(sessionId, {
         type: spec.type,
@@ -458,6 +471,16 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
                     </button>
                   );
                 })}
+              </div>
+            </Row>
+          )}
+          {accountProvider && accountList.length > 1 && (
+            <Row mobile={m}>
+              <span style={rowLabel}>Account</span>
+              <div style={{ width: controlWidth }}>
+                <SearchSelect ariaLabel="Account" size={m ? 'lg' : 'md'} value={effectiveAccountId ?? ''}
+                  onChange={(v) => setAccountId(v || null)}
+                  options={accountList.map((a) => ({ value: a.id, label: a.label, hint: a.email ?? (a.isCli ? 'this computer' : undefined) }))} />
               </div>
             </Row>
           )}

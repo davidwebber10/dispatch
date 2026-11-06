@@ -45,6 +45,8 @@ import { createFilesRouter } from './routes/files.js';
 import { createGitRouter } from './routes/git.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
+import { createAccountsRouter } from './routes/accounts.js';
+import type { AccountsStore } from './auth/accounts.js';
 import { createStateRouter } from './routes/state.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
 import { createPushRouter } from './routes/push.js';
@@ -65,6 +67,8 @@ export interface ApiRouteDeps {
   rolesService: RolesService;
   authRequestService: AuthRequestService;
   claudeLogin: ClaudeLoginService;
+  /** Accounts per harness (multi-account spec). Absent in a bare createApp: the routes are not mounted. */
+  accounts?: AccountsStore;
   secretsService: SecretsService;
   integrationsService: IntegrationsService;
   pushService: PushService;
@@ -104,7 +108,7 @@ export interface ApiRouteDeps {
     /** Applies a settings PUT live: the gauge rebroadcasts with the new threshold. */
     onSettingsChange?: () => void;
     /** Spend a banked limit reset (Codex). */
-    useResetCredit?: (provider: string, creditId?: string) => Promise<string | null>;
+    useResetCredit?: (provider: string, creditId?: string, accountId?: string) => Promise<string | null>;
   };
 }
 
@@ -155,6 +159,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/sessions/:id/git', createGitRouter(d.db));
   app.use('/api/auth-requests', createAuthRouter(d.authRequestService));
   app.use('/api/claude-auth', createClaudeAuthRouter(d.claudeLogin));
+  if (d.accounts) app.use('/api/accounts', createAccountsRouter(d.accounts, d.claudeLogin));
   app.use('/api/state', createStateRouter(d.db));
   app.use('/api/integrations', createIntegrationsRouter(d.integrationsService));
   app.use('/api/push', createPushRouter(d.pushService));

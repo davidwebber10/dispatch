@@ -16,7 +16,7 @@ const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRad
  * The daemon keeps the token and gives it to Chat and to every Claude thread; `onDone`
  * then retries the failed turn.
  */
-export function ClaudeLogin({ onDone }: { onDone: () => void }) {
+export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude' }: { onDone: () => void; start?: () => Promise<{ url: string | null; error: string | null }>; buttonLabel?: string }) {
   const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending'>('idle');
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -26,7 +26,7 @@ export function ClaudeLogin({ onDone }: { onDone: () => void }) {
     setError(null);
     setPhase('starting');
     try {
-      const s = await api.claudeLoginStart();
+      const s = await (startFlow ?? api.claudeLoginStart)();
       if (!s.url) throw new Error(s.error ?? 'Claude did not give a login link');
       setUrl(s.url);
       setPhase('code');
@@ -58,7 +58,7 @@ export function ClaudeLogin({ onDone }: { onDone: () => void }) {
     return (
       <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 6 }}>
         <button type="button" onClick={() => void start()} disabled={phase === 'starting'} style={btn}>
-          {phase === 'starting' ? 'Starting login…' : 'Log in to Claude'}
+          {phase === 'starting' ? 'Starting login…' : buttonLabel}
         </button>
         {error && <span style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{error}</span>}
       </span>

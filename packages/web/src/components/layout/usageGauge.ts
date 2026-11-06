@@ -104,8 +104,18 @@ export const TONE_COLOR: Record<ChipTone, string> = {
   red: 'var(--color-status-red)',
 };
 
+/** The display name of one summary entry: the tool, plus the account when the tool has more than one. */
+export function entryName(p: UsageSummaryProvider, all: UsageSummaryProvider[]): string {
+  const tool = PROVIDER_NAME[p.provider] ?? p.provider;
+  const siblings = all.filter((x) => x.provider === p.provider);
+  return siblings.length > 1 && p.label ? `${tool} · ${p.label}` : tool;
+}
+/** One key per entry: an older daemon sends no accountId, which counts as the CLI login. */
+export const entryKey = (p: Pick<UsageSummaryProvider, 'provider' | 'accountId'>): string => `${p.provider}|${p.accountId ?? 'cli'}`;
+
 export interface ProviderTable {
   provider: string;
+  accountId: string;
   name: string;
   plan?: string;
   rows: { label: string; value: string; tone: ChipTone }[];
@@ -126,7 +136,7 @@ export function usageTables(s: UsageSummary | null, now: number, zone?: string):
       const tone: ChipTone = counted && v !== null && v >= s.warnPercent ? (paused.has(p.provider) ? 'red' : 'amber') : 'normal';
       return { label: TYPE_LABEL[t] ?? t, value: windowLabel(p.windows[t], now, zone), tone };
     });
-    return { provider: p.provider, name: PROVIDER_NAME[p.provider] ?? p.provider, plan: p.plan, rows, asOf: `As of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS };
+    return { provider: p.provider, accountId: p.accountId ?? 'cli', name: entryName(p, s.providers), plan: p.plan, rows, asOf: `As of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS };
   });
 }
 
@@ -164,6 +174,7 @@ export const ringTone = (used: number, warn: number): RingTone => (used >= warn 
 export interface RingRow { type: string; label: string; left: number | null; tone: RingTone; reset: string | null; estimate: string | null; estimateTitle: string | null }
 export interface RingModel {
   provider: string;
+  accountId: string;
   name: string;
   plan?: string;
   /** The window closest to running out: the ring. */
@@ -246,7 +257,7 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
     if (!rows.length && !p.spend && !p.creditBalance) continue;
     rows.sort((a, b) => (a.left as number) - (b.left as number));
     out.push({
-      provider: p.provider, name: PROVIDER_NAME[p.provider] ?? p.provider, plan: p.plan,
+      provider: p.provider, accountId: p.accountId ?? 'cli', name: entryName(p, s.providers), plan: p.plan,
       main: rows[0] ?? { type: 'none', label: 'no limit', left: 100, tone: 'green', reset: null, estimate: null, estimateTitle: null },
       rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
       credits: p.resetCredits?.available ?? 0,
@@ -261,6 +272,7 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
 
 export interface ChipRing {
   provider: string;
+  accountId: string;
   name: string;
   /** The highest counted live window's percent, or null (a paused tool with no figure yet). */
   used: number | null;
@@ -285,13 +297,14 @@ export function chipRings(s: UsageSummary | null, now: number, zone?: string): C
   for (const p of s.providers) {
     seen.add(p.provider);
     const peak = peakWindow(p, now);
-    const isPaused = paused.has(p.provider);
+    // A pause is per tool (not per account yet): it reddens the tool's CLI-login ring.
+    const isPaused = paused.has(p.provider) && (p.accountId ?? 'cli') === 'cli';
     if (!peak && !isPaused) continue;
-    const name = PROVIDER_NAME[p.provider] ?? p.provider;
+    const name = entryName(p, s.providers);
     const parts = COUNTED.filter((t) => liveValue(p.windows[t], now) !== null).map((t) => `${SHORT[t] ?? t} ${liveValue(p.windows[t], now)}% used`);
     const stale = now - p.asOf > STALE_MS;
     out.push({
-      provider: p.provider, name, used: peak?.value ?? null, type: peak?.type ?? null,
+      provider: p.provider, accountId: p.accountId ?? 'cli', name, used: peak?.value ?? null, type: peak?.type ?? null,
       tone: isPaused ? 'red' : peak ? ringTone(peak.value, s.warnPercent) : 'green', paused: isPaused, stale,
       title: `${name}: ${parts.join(', ') || 'no figure yet'}${isPaused ? ' · paused on a limit' : ''}${stale ? ` · as of ${whenLabel(p.asOf, now, zone)}` : ''}`,
     });
@@ -299,7 +312,7 @@ export function chipRings(s: UsageSummary | null, now: number, zone?: string): C
   for (const provider of paused) {
     if (seen.has(provider)) continue;
     const name = PROVIDER_NAME[provider] ?? provider;
-    out.push({ provider, name, used: null, type: null, tone: 'red', paused: true, stale: false, title: `${name}: paused on a limit, no figure yet` });
+    out.push({ provider, accountId: 'cli', name, used: null, type: null, tone: 'red', paused: true, stale: false, title: `${name}: paused on a limit, no figure yet` });
   }
   return out;
 }

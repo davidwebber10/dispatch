@@ -28,7 +28,7 @@ describe('MobileSettingsList', () => {
 
   it('stays in sync with the desktop page by sharing one registry', () => {
     // Guards against a section being added to one shell but not the other.
-    expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['appearance', 'notifications', 'dictation', 'agents', 'usage', 'integrations', 'secrets', 'tools', 'devices', 'servers', 'about']);
+    expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['appearance', 'notifications', 'dictation', 'agents', 'accounts', 'usage', 'integrations', 'secrets', 'tools', 'devices', 'servers', 'about']);
   });
 
   it('resolves the keys from before the reorganisation', () => {

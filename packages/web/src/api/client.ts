@@ -1,5 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
+import type { AccountsView, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { Preview, SpinnerVerbs, SpinnerSet } from './types';
@@ -246,7 +247,7 @@ export const api = {
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   /** Spend one banked limit reset (Codex). Owner only. */
-  useResetCredit: (provider: string, creditId?: string) => req<{ outcome: string }>('/api/usage-limits/reset-credit', { method: 'POST', body: JSON.stringify(creditId ? { provider, creditId } : { provider }) }),
+  useResetCredit: (provider: string, creditId?: string, accountId?: string) => req<{ outcome: string }>('/api/usage-limits/reset-credit', { method: 'POST', body: JSON.stringify({ provider, ...(creditId ? { creditId } : {}), ...(accountId ? { accountId } : {}) }) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
   resetTerminalStatus: (id: string) => req<void>(`/api/terminals/${id}/reset-status`, { method: 'POST' }),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),
@@ -385,6 +386,12 @@ export const api = {
     const qs = params.toString();
     return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
   },
+  // Accounts per harness (multi-account spec 2026-11-06).
+  getAccounts: () => req<AccountsView>('/api/accounts'),
+  accountsClaudeLogin: (label: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label }) }),
+  accountsAddCodex: (label: string) => req<{ id: string; label: string }>('/api/accounts/codex', { method: 'POST', body: body({ label }) }),
+  accountsSetDefault: (provider: AccountProvider, id: string) => req<Record<AccountProvider, string>>(`/api/accounts/${provider}/default`, { method: 'PUT', body: body({ id }) }),
+  accountsRemove: (provider: AccountProvider, id: string) => req<void>(`/api/accounts/${provider}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // Previews: what threads handed the user to look at or copy.
   listPreviews: (sessionId?: string, limit = 200) =>
     req<{ previews: Preview[]; unseen: number }>(sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/previews?limit=${limit}` : `/api/previews?limit=${limit}`),

@@ -75,7 +75,7 @@ describe('createClaudeUsageReader', () => {
     const denied = createClaudeUsageReader({ snapshots: snaps, accountFor: () => 'a', token: async () => 'tok', fetch: f, log: (l) => log.push(l) });
     expect(await denied()).toBe(false);
     expect(await denied()).toBe(false);
-    expect(log).toEqual(['[usage] Claude usage read failed: HTTP 401']); // said once, not every 2 minutes
+    expect(log).toEqual(['[usage] Claude usage read failed (cli): HTTP 401']); // said once, not every 2 minutes
     expect(snaps.get('claude-code', 'a')).toBeNull();
   });
 });

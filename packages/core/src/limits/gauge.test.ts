@@ -59,7 +59,7 @@ describe('summary', () => {
     expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, epoch: expect.any(String), rev: expect.any(Number), warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
     claude(46.4, 21);
     const s = gauge.summary();
-    expect(s.providers).toEqual([{ provider: 'claude-code', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
+    expect(s.providers).toEqual([{ provider: 'claude-code', accountId: 'cli', label: 'Claude', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
     expect(JSON.stringify(s)).not.toContain('acct-A');
   });
 
@@ -848,6 +848,35 @@ describe('background Claude probe', () => {
     claude(10, 20); // just reported
     g.tick(); await Promise.resolve();
     expect(probes).toEqual([]);
+    g.stop();
+  });
+});
+
+describe('accounts (multi-account spec 2026-11-06)', () => {
+  it('lists one entry per account with its label, reads Claude usage per account, and asks Codex per account that no thread refreshed', async () => {
+    gauge.stop();
+    const reads: string[] = [];
+    const polls: string[] = [];
+    const g = new UsageGauge({
+      db, snapshots: snaps, accountFor: (p, id) => `${account}:${id ?? 'cli'}`, now: () => clock, zone: ZONE, broadcast: () => {},
+      accounts: () => [
+        { provider: 'claude-code', accountId: 'cli', label: 'CLI login' }, { provider: 'claude-code', accountId: 'w1', label: 'Work' },
+        { provider: 'codex', accountId: 'cli', label: 'CLI login' }, { provider: 'codex', accountId: 'p9', label: 'Personal' },
+      ],
+      readClaudeUsage: async (id) => { reads.push(id ?? 'cli'); return true; },
+      refreshCodex: () => false,
+      pollCodex: async (id) => { polls.push(id ?? 'cli'); return true; },
+    });
+    thread('k1'); db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock).toISOString(), 'k1');
+    g.tick(); await Promise.resolve();
+    expect(reads.sort()).toEqual(['cli', 'w1']);
+    expect(polls.sort()).toEqual(['cli', 'p9']);
+    snaps.record('claude-code', `${account}:cli`, { seven_day: { usedPercent: 10, resetsAt: WEEK } }, clock, undefined, true, undefined, 'cli');
+    snaps.record('claude-code', `${account}:w1`, { seven_day: { usedPercent: 55, resetsAt: WEEK } }, clock, 'Max', true, undefined, 'w1');
+    const s = g.summary();
+    expect(s.providers.map((p) => [p.provider, p.accountId, p.label, p.plan, p.windows.seven_day.usedPercent])).toEqual([
+      ['claude-code', 'cli', 'CLI login', undefined, 10], ['claude-code', 'w1', 'Work', 'Max', 55],
+    ]);
     g.stop();
   });
 });

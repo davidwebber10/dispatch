@@ -500,6 +500,10 @@ export interface ResetCredit { id: string; expiresAt: number | null; title: stri
 export interface ResetCredits { available: number; nextExpiresAt: number | null; credits?: ResetCredit[] }
 export interface UsageSummaryProvider {
   provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow>; resetCredits?: ResetCredits;
+  /** The Dispatch account (multi-account spec 2026-11-06): `cli` for the CLI's own login. An older daemon sends none. */
+  accountId?: string;
+  /** The account's name, for the card and the ring. */
+  label?: string;
   /** Extra usage this month in minor units (cents): spent, and the monthly cap when there is one (Claude). */
   spend?: { usedMinor: number; limitMinor: number | null; currency: string };
   /** A prepaid credit balance in the tool's own units (Codex). */
@@ -556,3 +560,8 @@ export interface Preview {
   createdAt: string;
   seenAt: string | null;
 }
+
+/** Accounts per harness (multi-account spec 2026-11-06). `cli` is the CLI's own login on the daemon's computer. */
+export type AccountProvider = 'claude' | 'codex';
+export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean }
+export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }

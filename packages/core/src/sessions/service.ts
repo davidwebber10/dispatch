@@ -188,6 +188,9 @@ export class SessionService {
   private statusContext: StatusContext | null = null;
   /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
   private toolsAwareness?: () => string | null;
+  /** The per-thread account env (multi-account spec 2026-11-06): the thread's Claude token or Codex home. Set by the server wiring. */
+  private accountEnv?: (type: string, config: Record<string, unknown>) => Record<string, string>;
+  setAccountEnv(fn: (type: string, config: Record<string, unknown>) => Record<string, string>): void { this.accountEnv = fn; }
   /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
   clock: () => number = () => Date.now();
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
@@ -2529,7 +2532,9 @@ export class SessionService {
 
     // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
     // them for the top-level command. Everything but `plugins` links back to the real home.
-    const spawnEnv: Record<string, string> = { [TERMINAL_ID_ENV_VAR]: terminalId };
+    // The account overlay first, so a thread's own Claude token or Codex home rides every launch
+    // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
+    const spawnEnv: Record<string, string> = { ...(this.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -2928,9 +2933,11 @@ export class SessionService {
         : {}),
       // Codex keeps {} (the shared app-server env must hold nothing per thread); every other
       // harness gets its own key in the env of its own process.
+      // Codex keeps {} (the shared app-server env must hold nothing per thread), so a Codex Pretty
+      // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...(this.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
     });
     if (sk) this.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);

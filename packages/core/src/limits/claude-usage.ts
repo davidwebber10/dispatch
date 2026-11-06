@@ -128,12 +128,26 @@ export async function readClaudeToken(opts: TokenSourceOpts = {}): Promise<strin
   return live[0]?.token ?? file?.token ?? kc?.token ?? null;
 }
 
+/** Who a Claude token belongs to (`/api/oauth/profile`): email, account id and plan name. Null when it cannot be asked. */
+export async function fetchClaudeProfile(token: string, f: typeof fetch = fetch): Promise<{ email?: string; accountUuid?: string; plan?: string } | null> {
+  const r = await getJson(f, PROFILE_URL, token);
+  if (!r || r.status !== 200 || !r.body) return null;
+  const acct = r.body.account ?? {};
+  const org = r.body.organization ?? {};
+  return {
+    ...(typeof acct.email === 'string' ? { email: acct.email } : {}),
+    ...(typeof acct.uuid === 'string' ? { accountUuid: acct.uuid } : {}),
+    ...(typeof org.plan_display_name === 'string' ? { plan: org.plan_display_name } : {}),
+  };
+}
+
 // --- the reader ------------------------------------------------------------------------------
 
 export interface ClaudeUsageDeps {
   snapshots: LimitSnapshots;
-  accountFor: (provider: string) => string;
-  token: () => Promise<string | null>;
+  accountFor: (provider: string, accountId?: string) => string;
+  /** The token of one Dispatch account (`cli`: the CLI's own login). */
+  token: (accountId: string) => Promise<string | null>;
   fetch?: typeof fetch;
   now?: () => number;
   log?: (line: string) => void;
@@ -151,34 +165,36 @@ async function getJson(f: typeof fetch, url: string, token: string): Promise<{ s
   } catch { return null; } finally { clearTimeout(t); }
 }
 
-/** One read: fetch the usage (and, hourly, the plan name), record it. True when figures were recorded. */
-export function createClaudeUsageReader(d: ClaudeUsageDeps): () => Promise<boolean> {
+/** One read for one account: fetch the usage (and, hourly, the plan name), record it. True when figures were recorded. */
+export function createClaudeUsageReader(d: ClaudeUsageDeps): (accountId?: string) => Promise<boolean> {
   const now = d.now ?? Date.now;
   const f = d.fetch ?? fetch;
   const log = d.log ?? ((l: string) => console.log(l));
-  let profile: { key: string; at: number; plan?: string } | null = null;
-  let lastFailure = '';
-  return async () => {
-    const token = await d.token();
+  const profiles = new Map<string, { at: number; plan?: string }>();
+  const lastFailure = new Map<string, string>();
+  return async (accountId = 'cli') => {
+    const token = await d.token(accountId);
     if (!token) return false;
     const r = await getJson(f, USAGE_URL, token);
     if (!r || r.status !== 200 || !r.body) {
       const why = r ? `HTTP ${r.status}` : 'no answer';
-      if (why !== lastFailure) { log(`[usage] Claude usage read failed: ${why}`); lastFailure = why; }
+      if (why !== lastFailure.get(accountId)) { log(`[usage] Claude usage read failed (${accountId}): ${why}`); lastFailure.set(accountId, why); }
       return false;
     }
-    lastFailure = '';
+    lastFailure.delete(accountId);
     const { windows, extras } = parseClaudeUsage(r.body);
     if (!Object.keys(windows).length) return false;
     const key = createHash('sha256').update(token).digest('hex').slice(0, 12);
     const t = now();
-    if (!profile || profile.key !== key || t - profile.at > PROFILE_TTL_MS) {
+    let profile = profiles.get(key);
+    if (!profile || t - profile.at > PROFILE_TTL_MS) {
       const p = await getJson(f, PROFILE_URL, token);
       const plan = typeof p?.body?.organization?.plan_display_name === 'string' ? p.body.organization.plan_display_name : undefined;
-      profile = { key, at: t, plan: plan ?? profile?.plan };
+      profile = { at: t, plan: plan ?? profile?.plan };
+      profiles.set(key, profile);
     }
     // The body lists every window the account has: replace, so a window that went away does not linger.
-    d.snapshots.record('claude-code', d.accountFor('claude-code'), windows, t, profile.plan, true, extras);
+    d.snapshots.record('claude-code', d.accountFor('claude-code', accountId), windows, t, profile.plan, true, extras, accountId);
     return true;
   };
 }

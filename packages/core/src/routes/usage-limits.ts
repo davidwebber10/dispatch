@@ -6,7 +6,7 @@ import * as parksDb from '../db/usage-limits.js';
 import { accountIdFor } from '../limits/account.js';
 import type { LimitSnapshots } from '../limits/snapshot.js';
 import { createCodexRefresh, type CodexRefresh, type CodexRefreshOpts } from '../limits/codex-refresh.js';
-import type { UsageSummary } from '../limits/gauge.js';
+import { accountIdOf, type UsageSummary } from '../limits/gauge.js';
 
 const REPORTING = new Set(['claude-code', 'codex']);
 
@@ -19,8 +19,8 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   refreshCodex?: CodexRefresh;
   /** The usage gauge's summary (#127). Without it `/usage-limits/summary` answers 503. */
   summary?: () => UsageSummary;
-  /** Spend one of the provider's banked limit resets (Codex only). The backend's outcome, or null. */
-  useResetCredit?: (provider: string, creditId?: string) => Promise<string | null>;
+  /** Spend one of the account's banked limit resets (Codex only). The backend's outcome, or null. */
+  useResetCredit?: (provider: string, creditId?: string, accountId?: string) => Promise<string | null>;
 } = {}): Router {
   const accountFor = opts.accountFor ?? accountIdFor;
   const router = policyRouter();
@@ -43,7 +43,8 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
     const provider = typeof req.body?.provider === 'string' ? req.body.provider : '';
     if (provider !== 'codex' || !opts.useResetCredit) { res.status(400).json({ error: 'this provider has no banked resets' }); return; }
     const creditId = typeof req.body?.creditId === 'string' && req.body.creditId ? req.body.creditId : undefined;
-    const outcome = await opts.useResetCredit(provider, creditId);
+    const accountId = typeof req.body?.accountId === 'string' && req.body.accountId ? req.body.accountId : 'cli';
+    const outcome = await opts.useResetCredit(provider, creditId, accountId);
     if (outcome === null) { res.status(502).json({ error: 'Codex could not be asked' }); return; }
     res.json({ outcome });
   });
@@ -54,12 +55,14 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
     if (!term) { res.status(404).json({ error: 'thread not found' }); return; }
     const provider = term.type;
     const supported = REPORTING.has(provider);
-    if (provider === 'codex') refreshCodex(term.id, term.external_id);
+    const accountId = accountIdOf(term.config);
+    if (provider === 'codex') refreshCodex(term.id, term.external_id, accountId);
     const park = parksDb.get(db, term.id);
     res.json({
       provider,
+      accountId,
       supported,
-      snapshot: supported ? snapshots.get(provider, accountFor(provider)) : null,
+      snapshot: supported ? snapshots.get(provider, accountFor(provider, accountId), accountId) : null,
       paused: park && park.state !== 'woken' ? { kind: park.kind, resetsAt: park.resets_at, capped: park.state === 'capped' } : null,
     });
   });

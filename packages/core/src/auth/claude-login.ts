@@ -132,6 +132,10 @@ export class ClaudeLoginService {
   }
 
   onChange(cb: () => void): void { this.onChangeCb = cb; }
+  /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). */
+  onAccountToken: ((token: string, label: string) => void) | null = null;
+  /** The label of the account the live attempt is for, or null for the single saved login. */
+  private accountLabel: string | null = null;
 
   // --- token storage ------------------------------------------------------
   getToken(): string | null {
@@ -177,6 +181,17 @@ export class ClaudeLoginService {
    * leave them submitting a code against a session that no longer existed.
    */
   async start(): Promise<LoginSession> {
+    this.accountLabel = null;
+    return this.startLogin();
+  }
+
+  /** The same flow, but the captured token becomes a NEW account with this label (onAccountToken). */
+  async startForAccount(label: string): Promise<LoginSession> {
+    this.accountLabel = label.trim() || 'Claude account';
+    return this.startLogin();
+  }
+
+  private async startLogin(): Promise<LoginSession> {
     const pending = this.live;
     if (pending && pending.session.status === 'awaiting_code' && pending.session.url) {
       return { ...pending.session };
@@ -275,7 +290,9 @@ export class ClaudeLoginService {
       }
       const token = extractToken(live.buf.slice(from));
       if (token) {
-        this.saveToken(token);
+        if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel);
+        else this.saveToken(token);
+        this.accountLabel = null;
         live.session.status = 'complete';
         live.session.url = null;
         try { live.proc.kill(); } catch { /* already gone */ }

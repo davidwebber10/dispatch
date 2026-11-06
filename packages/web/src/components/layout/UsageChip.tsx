@@ -17,7 +17,7 @@ export function UsageTable({ summary, now }: { summary: UsageSummary | null; now
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {tables.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {tables.map((t) => (
-        <div key={t.provider} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div key={`${t.provider}|${t.accountId}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text-primary)' }}>{t.name}</span>
             {t.plan && <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{t.plan}</span>}
@@ -54,7 +54,7 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
   const used = ring.used ?? 0;
   const Mark = HARNESS_MARK[MARK_KEY[ring.provider] ?? ''];
   return (
-    <span data-testid="usage-ring" data-provider={ring.provider} data-tone={ring.tone} role="meter" aria-label={ring.title}
+    <span data-testid="usage-ring" data-provider={ring.provider} data-account={ring.accountId} data-tone={ring.tone} role="meter" aria-label={ring.title}
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={ring.used ?? undefined}
       style={{ position: 'relative', width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: ring.stale ? 0.55 : 1 }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
@@ -97,7 +97,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
       <>
         <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} onClick={() => setOpen(true)}
           style={{ ...HEADER_BOX, minWidth: 44, padding: '0 7px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, ...(tone === 'normal' ? {} : { borderColor: color }), cursor: 'pointer' }}>
-          {rings.map((r) => <ProviderRing key={r.provider} ring={r} size={24} />)}
+          {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={24} />)}
         </button>
         <Modal open={open} sheet title="Usage" onClose={() => setOpen(false)}>
           <UsageRings summary={summary} now={now} />
@@ -110,7 +110,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
         style={{ width: 52, padding: '6px 0', borderRadius: 'var(--radius-md)', border: `1px solid ${tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        {rings.map((r) => <ProviderRing key={r.provider} ring={r} size={30} />)}
+        {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
       </button>
       {open && (
         <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>

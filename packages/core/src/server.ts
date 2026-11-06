@@ -80,13 +80,19 @@ import { startInterimRecapLoop } from './sessions/interim-recap.js';
 import { UsageLimitService, CHAT_ID, isChatTurnId } from './limits/service.js';
 import { PtyLimitWatcher } from './limits/pty-watch.js';
 import { LimitSnapshots, parseClaudeRateLimit } from './limits/snapshot.js';
-import { accountIdFor, tokenAccountId } from './limits/account.js';
+import { accountIdFor, tokenAccountId, codexAccountId, codexLoginChangedAt } from './limits/account.js';
+
+/** A thread's own account id from its config JSON, or null when it names none. */
+function threadAccountId(config: string | null | undefined): string | null {
+  try { const c = JSON.parse(config || '{}'); return typeof c?.accountId === 'string' && c.accountId ? c.accountId : null; } catch { return null; }
+}
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
 import { UsageGauge } from './limits/gauge.js';
 import { createCodexRefresh } from './limits/codex-refresh.js';
 import { createCodexPoll } from './limits/codex-poll.js';
 import { createClaudeProbe } from './limits/claude-probe.js';
-import { createClaudeUsageReader, readClaudeToken } from './limits/claude-usage.js';
+import { createClaudeUsageReader, readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
+import { AccountsStore } from './auth/accounts.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
@@ -636,22 +642,60 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // The account's limit figures for the Details panel: Claude from its stream, Codex from its session file (routes/usage-limits.ts).
   const limitSnapshots = new LimitSnapshots(db);
   // A headless box signs in with an injected token (the CLI's own file does not change), so that token is the account.
-  const limitAccount = (provider: string): string => (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
+  // Which login an account is on, so a figure from one login is never shown as current after a switch
+  // (limits/account.ts). `cli`: the CLI's own file or keychain; an added Claude account: its token;
+  // an added Codex account: the auth.json in its own folder.
+  // Accounts per harness (multi-account spec 2026-11-06); wired to the login flow below.
+  const accounts = new AccountsStore(dataDir);
+  const limitAccount = (provider: string, accountId = 'cli'): string => {
+    if (accountId !== 'cli') {
+      if (provider === 'claude-code') return tokenAccountId(accounts.claudeToken(accountId)) || `acct:${accountId}`;
+      const dir = accounts.codexHome(accountId);
+      return (dir && codexAccountId({ ...process.env, CODEX_HOME: dir })) || `acct:${accountId}`;
+    }
+    return (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
+  };
   for (const m of [structuredManager, endlessManager]) {
-    m.on('rate-limit', (_id: string, info: unknown) => limitSnapshots.record('claude-code', limitAccount('claude-code'), parseClaudeRateLimit(info), Date.now()));
+    m.on('rate-limit', (id: string, info: unknown) => {
+      // A thread with no account of its own runs on the daemon's default env, so its figures belong to the Claude default account.
+      const acc = threadAccountId(terminalsDb.getById(db, id)?.config) ?? accounts.defaultId('claude');
+      limitSnapshots.record('claude-code', limitAccount('claude-code', acc), parseClaudeRateLimit(info), Date.now(), undefined, false, undefined, acc);
+    });
   }
   // The usage gauge (#127): the header chip, the paused banner and the one-push-per-window warning.
   // It hears every recorded snapshot and every pause change, and refreshes Codex on its own tick.
-  const refreshCodex = createCodexRefresh(limitSnapshots, { accountFor: limitAccount });
-  // With no Codex thread active lately, ask Codex itself (codex-poll.ts), signed in as a thread is.
-  const pollCodex = createCodexPoll({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
+  // Per account (multi-account spec 2026-11-06): the CLI login reads as before; an added Claude
+  // account reads with its own token; an added Codex account reads under its own CODEX_HOME.
+  const codexEnvFor = (accountId: string): Record<string, string> => {
+    const dir = accountId === 'cli' ? null : accounts.codexHome(accountId);
+    return { ...inheritedEnv(), ...titleSpawnEnv, ...(dir ? { CODEX_HOME: dir } : {}) };
+  };
+  const codexRootsFor = (accountId: string) => {
+    const dir = accountId === 'cli' ? null : accounts.codexHome(accountId);
+    return dir ? { sessions: path.join(dir, 'sessions'), archived: path.join(dir, 'archived_sessions') } : null;
+  };
+  const refreshCodex = createCodexRefresh(limitSnapshots, {
+    accountFor: limitAccount, rootsFor: codexRootsFor,
+    codexLoginChangedAt: (accountId) => { const dir = accountId === 'cli' ? null : accounts.codexHome(accountId); return codexLoginChangedAt(dir ? { ...process.env, CODEX_HOME: dir } : process.env); },
+  });
+  // With no Codex thread of an account active lately, ask Codex itself (codex-poll.ts), signed in as a thread is.
+  const pollCodex = createCodexPoll({ snapshots: limitSnapshots, accountFor: limitAccount, env: codexEnvFor });
   // Claude's figures for CLI-only use: a tiny background turn when they go stale (claude-probe.ts).
   const probeClaude = createClaudeProbe({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
   // Claude's usage as claude.ai shows it (claude-usage.ts): every window, Fable included, and the extra-usage
-  // spend, read with the login the daemon already holds. The tiny turn above is the fallback when the read fails.
-  const readClaudeUsage = createClaudeUsageReader({ snapshots: limitSnapshots, accountFor: limitAccount, token: () => readClaudeToken({ saved: () => titleSpawnEnv.CLAUDE_CODE_OAUTH_TOKEN || claudeLogin.getToken() }) });
-  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex, pollCodex, codexCredits: () => pollCodex.credits(), probeClaude, readClaudeUsage });
-  limitSnapshots.addRecordListener((provider) => usageGauge.onRecord(provider));
+  // spend. `cli` reads with the CLI's own login (file or keychain); an added account with its saved token.
+  // The tiny turn above is the fallback when the CLI login's read fails.
+  const readClaudeUsage = createClaudeUsageReader({
+    snapshots: limitSnapshots, accountFor: limitAccount,
+    token: async (accountId) => (accountId === 'cli' ? readClaudeToken({}) : accounts.claudeToken(accountId)),
+  });
+  const accountRefs = () => [
+    ...accounts.list('claude').map((a) => ({ provider: 'claude-code', accountId: a.id, label: a.label })),
+    ...accounts.list('codex').map((a) => ({ provider: 'codex', accountId: a.id, label: a.label })),
+  ];
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, accounts: accountRefs, refreshCodex, pollCodex, codexCredits: (accountId) => pollCodex.credits(accountId), probeClaude, readClaudeUsage });
+  accounts.onChange(() => usageGauge.accountsChanged());
+  limitSnapshots.addRecordListener((provider, accountId) => usageGauge.onRecord(provider, accountId));
   usageLimits.addChangeListener(() => usageGauge.pausesChanged());
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
   // Chat through its own manager. An owner action on Chat ends its pause.
@@ -679,6 +723,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // Accounts per harness (multi-account spec 2026-11-06). The single saved login of earlier
+  // versions becomes the account `saved`; a login started for a new account lands here, and the
+  // profile call fills in its email, account id and plan.
+  accounts.migrateSavedClaudeToken(claudeLogin.getToken());
+  claudeLogin.onAccountToken = (token, label) => {
+    const a = accounts.addClaude({ token, label });
+    void fetchClaudeProfile(token).then((p) => { if (p) accounts.updateClaude(a.id, { email: p.email, accountUuid: p.accountUuid, plan: p.plan, ...(label.trim() ? {} : { label: p.email ?? a.label }) }); }).catch(() => {});
+  };
+  sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
   const osConnections = new OsConnectionsProvider();
   const toolsBase = path.join(dataDir, 'tools');
@@ -850,14 +903,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes (the one list, shared with createApp)
   mountApiRoutes(app, {
     db, sessionService, statusService, agentService, rolesService, authRequestService,
-    claudeLogin, secretsService, integrationsService, pushService, ledgerService,
+    claudeLogin, accounts, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
     broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
     reachableAddresses: async () => {
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
-    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId) : Promise.resolve(null)) },
+    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 

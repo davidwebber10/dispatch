@@ -1,10 +1,11 @@
 import type { ComponentType } from 'react';
-import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info } from '@phosphor-icons/react';
+import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { AppearanceSection } from './AppearanceSection';
 import { NotificationsSection } from './NotificationsSection';
 import { DictationSection } from './DictationSection';
 import { AgentsSection } from './AgentsSection';
+import { AccountsSection } from './AccountsSection';
 import { UsageLimitsSection } from './UsageLimitsSection';
 import { IntegrationsSection } from './IntegrationsSection';
 import { SecretsSection } from './SecretsSection';
@@ -25,7 +26,7 @@ import { AboutSection } from './AboutSection';
  */
 export type SettingsSectionKey =
   | 'appearance' | 'notifications' | 'dictation'
-  | 'agents' | 'usage' | 'integrations' | 'secrets' | 'tools'
+  | 'agents' | 'accounts' | 'usage' | 'integrations' | 'secrets' | 'tools'
   | 'devices' | 'servers' | 'about';
 
 export type SettingsGroup = 'YOU' | 'AGENTS' | 'THIS MAC';
@@ -46,6 +47,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push on this device, which alerts, devices', icon: Bell, Component: NotificationsSection },
   { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider and key', icon: Microphone, Component: DictationSection },
   { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults per harness, Control Plane, working words', icon: Robot, Component: AgentsSection },
+  { key: 'accounts', group: 'AGENTS', label: 'Accounts', blurb: 'Signed-in accounts per harness, the default for new threads', icon: UserCircle, Component: AccountsSection },
   { key: 'usage', group: 'AGENTS', label: 'Usage limits', blurb: 'Warning level, paused banner, current figures', icon: Gauge, Component: UsageLimitsSection },
   { key: 'integrations', group: 'AGENTS', label: 'Integrations', blurb: 'MCP integrations your agents can use', icon: PlugsConnected, Component: IntegrationsSection },
   { key: 'secrets', group: 'AGENTS', label: 'Secrets', blurb: 'Doppler environment variables', icon: Key, Component: SecretsSection },

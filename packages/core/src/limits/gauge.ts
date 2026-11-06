@@ -33,6 +33,10 @@ const LIMITED_WINDOW: Partial<Record<LimitKind, string>> = {
   session: 'five_hour', weekly: 'seven_day', opus: 'seven_day_opus', sonnet: 'seven_day_sonnet', fable: 'seven_day_fable',
 };
 const ALERTS_KEY = 'usage_limit_alerts';
+/** A thread's Dispatch account from its config JSON; `cli` when it names none. */
+export function accountIdOf(config: string | null | undefined): string {
+  try { const c = JSON.parse(config || '{}'); return typeof c?.accountId === 'string' && c.accountId ? c.accountId : 'cli'; } catch { return 'cli'; }
+}
 const MIN = 60_000;
 const DEFAULTS = {
   /** At most one broadcast per this gap (trailing edge). A pause or settings change skips the wait. */
@@ -57,7 +61,10 @@ const DEFAULTS = {
 };
 
 export interface SummaryWindow { usedPercent: number | null; resetsAt: number | null; forecast?: Forecast | null }
-export interface SummaryProvider extends ProviderExtras { provider: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow>; resetCredits?: ResetCredits }
+/** One account of one tool in the summary. `accountId` is `cli` for the CLI's own login; `label` names the account for the sheet and the rings. */
+export interface SummaryProvider extends ProviderExtras { provider: string; accountId: string; label: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow>; resetCredits?: ResetCredits }
+/** An account the gauge tracks (multi-account spec 2026-11-06). */
+export interface AccountRef { provider: string; accountId: string; label: string }
 export interface PausedGroup {
   provider: string;
   kind: string;
@@ -112,17 +119,19 @@ export interface GaugeDeps {
   snapshots: LimitSnapshots;
   broadcast: (event: Record<string, unknown>) => void;
   push?: PushTarget | null;
-  accountFor: (provider: string) => string;
+  accountFor: (provider: string, accountId?: string) => string;
+  /** Every account of every tool, `cli` first per tool. Default: one `cli` account per tool. */
+  accounts?: () => AccountRef[];
   /** Codex writes its limits into the session file: read the newest for one thread (throttled by its owner). */
-  refreshCodex?: (terminalId: string, externalId: string | null) => boolean;
-  /** Ask Codex itself for its limits (codex-poll.ts): used when no Codex thread was active lately. */
-  pollCodex?: () => Promise<boolean>;
+  refreshCodex?: (terminalId: string, externalId: string | null, accountId?: string) => boolean;
+  /** Ask Codex itself for one account's limits (codex-poll.ts): used when no thread of that account gave a newer figure. */
+  pollCodex?: (accountId?: string) => Promise<boolean>;
   /** Codex's banked limit resets, from the last direct read. */
-  codexCredits?: () => ResetCredits | null;
+  codexCredits?: (accountId?: string) => ResetCredits | null;
   /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
   probeClaude?: () => Promise<boolean>;
-  /** Read the account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
-  readClaudeUsage?: () => Promise<boolean>;
+  /** Read one Claude account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
+  readClaudeUsage?: (accountId?: string) => Promise<boolean>;
   now?: () => number;
   /** The zone the push shows the reset time in. Default: this machine. */
   zone?: string;
@@ -166,21 +175,26 @@ export class UsageGauge {
   settings(): gaugeSettings.UsageLimitSettings { return gaugeSettings.get(this.d.db); }
 
   /** The current account's windows for one provider, percents rounded to integers. Null with no snapshot. */
-  private providerSummary(provider: string): (SummaryProvider & { account: string; figureAt: Record<string, number>; raw: Record<string, number | null> }) | null {
-    const s = this.d.snapshots.get(provider, this.d.accountFor(provider));
+  /** Every account the gauge tracks; without an accounts source, the CLI login of each tool. */
+  private accountRefs(): AccountRef[] {
+    return this.d.accounts?.() ?? PROVIDERS.map((p) => ({ provider: p, accountId: 'cli', label: PROVIDER_NAME[p] ?? p }));
+  }
+
+  private providerSummary(provider: string, accountId = 'cli', label?: string): (SummaryProvider & { account: string; figureAt: Record<string, number>; raw: Record<string, number | null> }) | null {
+    const s = this.d.snapshots.get(provider, this.d.accountFor(provider, accountId), accountId);
     if (!s) return null;
     const windows: Record<string, SummaryWindow> = {};
     const raw: Record<string, number | null> = {}; // the unrounded figures: 99.6 shows as 100 but is not at the limit
-    const history = this.d.snapshots.history(provider, s.account);
+    const history = this.d.snapshots.history(provider, s.account, accountId);
     const now = this.now();
     for (const [type, w] of Object.entries(s.windows as LimitWindows)) {
       raw[type] = w.usedPercent;
       const f = forecast(history[type], w, now);
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt, ...(f ? { forecast: f } : {}) };
     }
-    const credits = provider === 'codex' ? this.d.codexCredits?.() ?? null : null;
+    const credits = provider === 'codex' ? this.d.codexCredits?.(accountId) ?? null : null;
     return {
-      provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw,
+      provider, accountId, label: label ?? PROVIDER_NAME[provider] ?? provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw,
       ...(credits && credits.available > 0 ? { resetCredits: credits } : {}),
       ...(s.spend ? { spend: s.spend } : {}),
       ...(s.creditBalance ? { creditBalance: s.creditBalance } : {}),
@@ -259,8 +273,8 @@ export class UsageGauge {
 
   summary(): UsageSummary {
     const providers: SummaryProvider[] = [];
-    for (const p of PROVIDERS) {
-      const s = this.providerSummary(p);
+    for (const a of this.accountRefs()) {
+      const s = this.providerSummary(a.provider, a.accountId, a.label);
       if (s) { const { account: _account, figureAt: _figureAt, raw: _raw, ...rest } = s; providers.push(rest); }
     }
     const settings = this.settings();
@@ -318,8 +332,8 @@ export class UsageGauge {
   }
 
   /** Windows of `provider` at or above the threshold that have not alerted yet in their window. Marks them alerted. */
-  private crossings(provider: string): { type: string; w: SummaryWindow }[] {
-    const s = this.providerSummary(provider);
+  private crossings(provider: string, accountId = 'cli'): { type: string; w: SummaryWindow }[] {
+    const s = this.providerSummary(provider, accountId);
     if (!s) return [];
     const warn = this.settings().warnPercent;
     const now = this.now();
@@ -345,21 +359,23 @@ export class UsageGauge {
     return `${new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'short' }).format(new Date(ms))} ${time}`;
   }
 
-  private sendPushes(provider: string, list: { type: string; w: SummaryWindow }[]): void {
+  private sendPushes(provider: string, list: { type: string; w: SummaryWindow }[], accountId = 'cli'): void {
     if (!list.length || !this.settings().pushOnWarn || !this.d.push) return;
+    const label = this.accountRefs().find((a) => a.provider === provider && a.accountId === accountId)?.label;
+    const who = accountId === 'cli' || !label ? (PROVIDER_NAME[provider] ?? provider) : `${PROVIDER_NAME[provider] ?? provider} (${label})`;
     for (const { type, w } of list) {
       // Template only: no model content ever goes into a push.
-      const title = `${PROVIDER_NAME[provider] ?? provider} usage at ${w.usedPercent}%`;
+      const title = `${who} usage at ${w.usedPercent}%`;
       const body = `${WINDOW_NAME[type] ?? type} window${w.resetsAt === null ? '' : `, resets ${this.clock(w.resetsAt)}`}.`;
-      this.d.push.notifyAccount({ title, body, tag: `usage-${provider}-${type}` }).catch((err) => console.warn('[usage-gauge] push failed:', err));
+      this.d.push.notifyAccount({ title, body, tag: accountId === 'cli' ? `usage-${provider}-${type}` : `usage-${provider}-${accountId}-${type}` }).catch((err) => console.warn('[usage-gauge] push failed:', err));
     }
   }
 
   // --- inputs -------------------------------------------------------------------------------
 
-  /** A provider's snapshot changed: alert on a new crossing, then broadcast (throttled). */
-  onRecord(provider: string): void {
-    this.sendPushes(provider, this.crossings(provider));
+  /** An account's snapshot changed: alert on a new crossing, then broadcast (throttled). */
+  onRecord(provider: string, accountId = 'cli'): void {
+    this.sendPushes(provider, this.crossings(provider, accountId), accountId);
     this.schedule();
   }
 
@@ -371,14 +387,18 @@ export class UsageGauge {
    * is marked alerted for its current window. Then broadcast at once, so every client recolors.
    */
   settingsChanged(): void {
-    for (const p of PROVIDERS) this.crossings(p);
+    for (const a of this.accountRefs()) this.crossings(a.provider, a.accountId);
     this.flush();
   }
 
-  private lastCodexPoll = -Infinity;
-  private codexPolling = false;
+  /** The accounts changed (one added or removed): broadcast at once. */
+  accountsChanged(): void { this.flush(); }
+
+  private lastCodexPoll = new Map<string, number>();
+  private codexPolling = new Set<string>();
   private lastClaudeProbe = -Infinity;
-  private lastClaudeRead = -Infinity;
+  private lastClaudeRead = new Map<string, number>();
+  private claudeReading = new Set<string>();
   private claudeProbing = false;
 
   /**
@@ -387,30 +407,35 @@ export class UsageGauge {
    * claudeStaleMs). A Pretty thread in use keeps the figures fresh, so then it never runs.
    */
   private maybeProbeClaude(): void {
-    if (this.claudeProbing) return;
     const now = this.now();
     const since = new Date(now - this.o.claudeIdleMs).toISOString();
     const active = this.d.db.prepare('SELECT 1 FROM terminals WHERE archived_at IS NULL AND last_activity_at >= ? LIMIT 1').get(since);
     if (!active) return;
-    // The usage read is one request: run it on its own clock, whatever the stream reports (a Pretty
-    // thread's events keep `asOf` fresh but carry no Fable window and no spend).
-    if (this.d.readClaudeUsage && now - this.lastClaudeRead >= this.o.claudeUsageMs) {
-      this.lastClaudeRead = now;
-      this.claudeProbing = true;
-      void this.d.readClaudeUsage().catch(() => false)
-        .then((ok) => { if (!ok) this.fallbackProbe(now); })
-        .finally(() => { this.claudeProbing = false; });
+    // The usage read is one request per account: run it on its own clock, whatever the stream
+    // reports (a Pretty thread's events keep `asOf` fresh but carry no Fable window and no spend).
+    if (this.d.readClaudeUsage) {
+      for (const a of this.accountRefs()) {
+        if (a.provider !== 'claude-code' || this.claudeReading.has(a.accountId)) continue;
+        if (now - (this.lastClaudeRead.get(a.accountId) ?? -Infinity) < this.o.claudeUsageMs) continue;
+        this.lastClaudeRead.set(a.accountId, now);
+        this.claudeReading.add(a.accountId);
+        const id = a.accountId;
+        void this.d.readClaudeUsage(id).catch(() => false)
+          .then((ok) => { if (!ok && id === 'cli') this.fallbackProbe(now); })
+          .finally(() => { this.claudeReading.delete(id); });
+      }
       return;
     }
-    if (!this.d.readClaudeUsage) this.fallbackProbe(now);
+    if (!this.claudeProbing) this.fallbackProbe(now);
   }
 
   /** The tiny Claude turn, only when the figures are stale: at most one per claudeStaleMs. */
   private fallbackProbe(now: number): void {
     if (!this.d.probeClaude) return;
     if (now - this.lastClaudeProbe < this.o.claudeStaleMs) return;
-    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code'));
+    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', 'cli'), 'cli');
     if (s && now - s.asOf < this.o.claudeStaleMs) return;
+    if (this.claudeProbing) return;
     this.lastClaudeProbe = now;
     this.claudeProbing = true;
     void this.d.probeClaude().catch(() => false).finally(() => { this.claudeProbing = false; });
@@ -425,9 +450,10 @@ export class UsageGauge {
   tick(): void {
     try {
       this.maybeProbeClaude();
-      // Threads first; when none gave a newer figure (none active, or their files hold nothing new,
-      // as after a restart that stamps activity), ask Codex directly.
-      if (!this.refreshCodexThreads()) this.maybePollCodex();
+      // Threads first; every Codex account that got no newer figure from a thread (none active, or
+      // their files hold nothing new, as after a restart that stamps activity) is asked directly.
+      const recorded = this.refreshCodexThreads();
+      this.maybePollCodex(recorded);
     } finally {
       this.schedule();
     }
@@ -441,40 +467,46 @@ export class UsageGauge {
    * order. True only when some read recorded a newer figure; false with no candidate thread, no
    * refresher, or reads that found nothing new: then Codex is asked directly.
    */
-  private refreshCodexThreads(): boolean {
+  private refreshCodexThreads(): Set<string> {
+    const recorded = new Set<string>();
     const refresh = this.d.refreshCodex;
-    if (!refresh) return false;
+    if (!refresh) return recorded;
     const since = new Date(this.now() - this.o.codexActiveMs).toISOString();
     const rows = this.d.db.prepare(
-      `SELECT id, external_id FROM terminals
+      `SELECT id, external_id, config FROM terminals
        WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL
          AND (status = 'working' OR last_activity_at >= ?)
        ORDER BY (status = 'working') DESC, last_activity_at DESC`,
-    ).all(since) as { id: string; external_id: string }[];
+    ).all(since) as { id: string; external_id: string; config: string | null }[];
     // Forget threads that are no longer candidates, so the map stays as small as the set.
     const ids = new Set(rows.map((r) => r.id));
     for (const id of this.polledAt.keys()) if (!ids.has(id)) this.polledAt.delete(id);
-    if (!rows.length) return false;
+    if (!rows.length) return recorded;
     // A stable sort keeps the SQL order among equal poll times.
     const picked = rows
       .map((row, i) => ({ row, i, at: this.polledAt.get(row.id) ?? 0 })) // 0: never polled, goes first
       .sort((a, b) => (a.at - b.at) || (a.i - b.i))
       .slice(0, this.o.codexRefreshMax);
     const now = this.now();
-    let recorded = false;
     for (const { row } of picked) {
       this.polledAt.set(row.id, now);
-      try { if (refresh(row.id, row.external_id)) recorded = true; } catch (err) { console.warn('[usage-gauge] Codex refresh failed:', err); }
+      const accountId = accountIdOf(row.config);
+      try { if (refresh(row.id, row.external_id, accountId)) recorded.add(accountId); } catch (err) { console.warn('[usage-gauge] Codex refresh failed:', err); }
     }
     return recorded;
   }
 
-  /** No Codex thread active lately: ask Codex itself (codex-poll.ts), at most every codexPollMs. */
-  private maybePollCodex(): void {
-    if (!this.d.pollCodex || this.codexPolling || this.now() - this.lastCodexPoll < this.o.codexPollMs) return;
-    this.lastCodexPoll = this.now();
-    this.codexPolling = true;
-    void this.d.pollCodex().catch(() => false).finally(() => { this.codexPolling = false; });
+  /** Every Codex account no thread refreshed: ask Codex itself (codex-poll.ts), at most every codexPollMs per account. */
+  private maybePollCodex(recorded: Set<string>): void {
+    if (!this.d.pollCodex) return;
+    for (const a of this.accountRefs()) {
+      if (a.provider !== 'codex' || recorded.has(a.accountId) || this.codexPolling.has(a.accountId)) continue;
+      if (this.now() - (this.lastCodexPoll.get(a.accountId) ?? -Infinity) < this.o.codexPollMs) continue;
+      this.lastCodexPoll.set(a.accountId, this.now());
+      this.codexPolling.add(a.accountId);
+      const id = a.accountId;
+      void this.d.pollCodex(id).catch(() => false).finally(() => { this.codexPolling.delete(id); });
+    }
   }
 
   // --- the throttled broadcast --------------------------------------------------------------

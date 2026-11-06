@@ -3,6 +3,7 @@
 // thread, so there is one snapshot per provider, tagged with the account that reported it.
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
+import { CLI_ACCOUNT_ID } from '../auth/accounts.js';
 
 /** One limit window. `usedPercent` is null when the provider gave a reset time but no figure. */
 export interface LimitWindow { usedPercent: number | null; resetsAt: number | null }
@@ -77,27 +78,32 @@ export function parseCodexRateLimits(rl: any): { windows: LimitWindows; plan?: s
 
 export class LimitSnapshots {
   private byProvider: Record<string, ProviderLimits> = {};
-  private recordListeners: ((provider: string) => void)[] = [];
+  private recordListeners: ((provider: string, accountId: string) => void)[] = [];
   /** A short per-limit history for the run-out estimate (forecast.ts). */
   private historyByProvider: Record<string, ProviderHistory> = {};
 
-  /** Told after a report changed a provider's snapshot (the usage gauge, #127). */
-  addRecordListener(fn: (provider: string) => void): void { this.recordListeners.push(fn); }
+  /** Told after a report changed a provider's snapshot (the usage gauge, #127), with the account it was for. */
+  addRecordListener(fn: (provider: string, accountId: string) => void): void { this.recordListeners.push(fn); }
+
+  /** The store key: the CLI login keeps the bare provider key (what earlier versions saved); an added account gets its own. */
+  private static key(provider: string, accountId: string): string {
+    return accountId === CLI_ACCOUNT_ID ? provider : `${provider}@${accountId}`;
+  }
 
   constructor(private readonly db: Database.Database) {
     try { this.byProvider = JSON.parse(appState.get(db, KEY) ?? '{}') ?? {}; } catch { this.byProvider = {}; }
     try { this.historyByProvider = JSON.parse(appState.get(db, HISTORY_KEY) ?? '{}') ?? {}; } catch { this.historyByProvider = {}; }
   }
 
-  /** The provider's samples per limit, only for exactly `account`. */
-  history(provider: string, account: string): Record<string, Sample[]> {
-    const h = this.historyByProvider[provider];
+  /** The provider's samples per limit, only for exactly `account`. `accountId` picks the Dispatch account (multi-account spec). */
+  history(provider: string, account: string, accountId: string = CLI_ACCOUNT_ID): Record<string, Sample[]> {
+    const h = this.historyByProvider[LimitSnapshots.key(provider, accountId)];
     return h && h.account === account ? h.windows : {};
   }
 
   /** The provider's snapshot, only if it came from exactly `account` (an unknown id '' is an account of its own). */
-  get(provider: string, account: string): ProviderLimits | null {
-    const s = this.byProvider[provider];
+  get(provider: string, account: string, accountId: string = CLI_ACCOUNT_ID): ProviderLimits | null {
+    const s = this.byProvider[LimitSnapshots.key(provider, accountId)];
     return s && s.account === account ? s : null;
   }
 
@@ -108,9 +114,10 @@ export class LimitSnapshots {
    * Merged windows more than an hour past their reset are dropped, so a type reported once does not linger.
    * Returns false when the report was ignored.
    */
-  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false, extras?: ProviderExtras): boolean {
+  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false, extras?: ProviderExtras, accountId: string = CLI_ACCOUNT_ID): boolean {
     if (!replace && Object.keys(windows).length === 0) return false;
-    const prior = this.get(provider, account);
+    const key = LimitSnapshots.key(provider, accountId);
+    const prior = this.get(provider, account, accountId);
     if (prior && now < prior.asOf) return false;
     const merged: LimitWindows = replace ? {} : { ...(prior?.windows ?? {}) };
     // Figure times: carried forward for kept windows, now for a real new figure, none for a window with no figure.
@@ -127,17 +134,17 @@ export class LimitSnapshots {
     }
     for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) { delete merged[type]; delete figureAt[type]; }
     // asOf moves only for a real new figure (the first report of an account starts it at `now` either way).
-    this.byProvider[provider] = {
+    this.byProvider[key] = {
       account, asOf: realFigure || !prior ? now : prior.asOf, plan: plan ?? prior?.plan, windows: merged, figureAt,
       // Extras carry forward until a report brings new ones (a stream event has none; the usage read has them).
       ...((extras?.spend ?? prior?.spend) ? { spend: extras?.spend ?? prior?.spend } : {}),
       ...((extras?.creditBalance ?? prior?.creditBalance) ? { creditBalance: extras?.creditBalance ?? prior?.creditBalance } : {}),
     };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
-    this.historyByProvider[provider] = addSamples(this.historyByProvider[provider], account, windows, now);
+    this.historyByProvider[key] = addSamples(this.historyByProvider[key], account, windows, now);
     try { appState.set(this.db, HISTORY_KEY, JSON.stringify(this.historyByProvider)); } catch (err) { console.warn('[usage-limit] could not save the history:', err); }
     for (const fn of this.recordListeners) {
-      try { fn(provider); } catch (err) { console.warn('[usage-limit] a snapshot listener failed:', err); }
+      try { fn(provider, accountId); } catch (err) { console.warn('[usage-limit] a snapshot listener failed:', err); }
     }
     return true;
   }

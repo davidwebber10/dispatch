@@ -72,9 +72,9 @@ export function codexRequest(env: () => Record<string, string>, method: string, 
 
 export interface CodexPollDeps {
   snapshots: LimitSnapshots;
-  accountFor: (provider: string) => string;
-  /** The env a thread is spawned with, overlaid on the daemon's own. */
-  env: () => Record<string, string>;
+  accountFor: (provider: string, accountId?: string) => string;
+  /** The env a thread of this account is spawned with (CODEX_HOME for an added account), overlaid on the daemon's own. */
+  env: (accountId: string) => Record<string, string>;
   now?: () => number;
   /** Injectable for tests: the app-server's `account/rateLimits/read` result, or null. */
   read?: () => Promise<any | null>;
@@ -83,25 +83,27 @@ export interface CodexPollDeps {
 }
 
 export interface CodexPoll {
-  /** Read Codex's live limits and record them. True when figures were recorded. */
-  (): Promise<boolean>;
-  /** The banked resets from the last read; null until a read reported them. */
-  credits(): ResetCredits | null;
+  /** Read one account's live limits and record them. True when figures were recorded. */
+  (accountId?: string): Promise<boolean>;
+  /** The banked resets from the account's last read; null until a read reported them. */
+  credits(accountId?: string): ResetCredits | null;
   /**
    * Spend one banked reset, then read the limits again: `creditId`, or by default the one that
    * expires soonest (so none lapses unused). The backend's outcome, or null when it could not be asked.
    */
-  useCredit(creditId?: string): Promise<string | null>;
+  useCredit(creditId?: string, accountId?: string): Promise<string | null>;
 }
 
 export function createCodexPoll(d: CodexPollDeps): CodexPoll {
   const now = d.now ?? Date.now;
-  const read = d.read ?? (() => codexRequest(d.env, 'account/rateLimits/read'));
-  const consume = d.consume ?? ((idempotencyKey: string, creditId: string | null) => codexRequest(d.env, 'account/rateLimitResetCredit/consume', creditId ? { idempotencyKey, creditId } : { idempotencyKey }));
-  let credits: ResetCredits | null = null;
-  const poll = (async () => {
-    const res = await read();
-    if (res) credits = parseResetCredits(res) ?? credits;
+  const envFor = (accountId: string) => () => d.env(accountId);
+  const read = (accountId: string) => (d.read ? d.read() : codexRequest(envFor(accountId), 'account/rateLimits/read'));
+  const consume = (accountId: string, idempotencyKey: string, creditId: string | null) =>
+    d.consume ? d.consume(idempotencyKey, creditId) : codexRequest(envFor(accountId), 'account/rateLimitResetCredit/consume', creditId ? { idempotencyKey, creditId } : { idempotencyKey });
+  const credits = new Map<string, ResetCredits>();
+  const poll = (async (accountId = 'cli') => {
+    const res = await read(accountId);
+    if (res) { const c = parseResetCredits(res); if (c) credits.set(accountId, c); }
     const rl = res?.rateLimitsByLimitId?.codex ?? res?.rateLimits;
     const { windows, plan } = parseCodexRateLimits(toSessionShape(rl));
     if (!Object.keys(windows).length) return false;
@@ -109,15 +111,15 @@ export function createCodexPoll(d: CodexPollDeps): CodexPoll {
     const c = rl?.credits;
     const balance = c && typeof c === 'object' && c.hasCredits ? Number(c.balance) : NaN;
     const extras = Number.isFinite(balance) ? { creditBalance: { balance, unlimited: c.unlimited === true } } : undefined;
-    d.snapshots.record('codex', d.accountFor('codex'), windows, now(), plan, true, extras);
+    d.snapshots.record('codex', d.accountFor('codex', accountId), windows, now(), plan, true, extras, accountId);
     return true;
   }) as CodexPoll;
-  poll.credits = () => credits;
-  poll.useCredit = async (creditId?: string) => {
-    const pick = creditId ?? credits?.credits[0]?.id ?? null;
-    const res = await consume(randomUUID(), pick);
+  poll.credits = (accountId = 'cli') => credits.get(accountId) ?? null;
+  poll.useCredit = async (creditId?: string, accountId = 'cli') => {
+    const pick = creditId ?? credits.get(accountId)?.credits[0]?.id ?? null;
+    const res = await consume(accountId, randomUUID(), pick);
     if (!res) return null;
-    await poll();
+    await poll(accountId);
     return typeof res.outcome === 'string' ? res.outcome : JSON.stringify(res.outcome ?? 'done');
   };
   return poll;

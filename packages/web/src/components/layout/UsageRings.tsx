@@ -136,7 +136,7 @@ export function UsageRings({ summary, now }: { summary: UsageSummary | null; now
     setConfirmFor(null);
     if (!m) return;
     try {
-      const { outcome } = await api.useResetCredit(m.provider, m.creditList[0]?.id);
+      const { outcome } = await api.useResetCredit(m.provider, m.creditList[0]?.id, m.accountId);
       const [ok, text] = OUTCOME[outcome] ?? [false, `Codex answered: ${outcome}`];
       setCreditNote({ provider: m.provider, ok, text });
     } catch (e) {
@@ -149,7 +149,7 @@ export function UsageRings({ summary, now }: { summary: UsageSummary | null; now
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
-        <ToolCard key={m.provider} m={m} warn={summary.warnPercent} onUseCredit={onUseCredit}
+        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} onUseCredit={onUseCredit}
           note={creditNote?.provider === m.provider ? creditNote : null} />
       ))}
       <ConfirmModal
