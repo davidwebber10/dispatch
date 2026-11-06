@@ -10,6 +10,8 @@ Dispatch has one owner per daemon. It has no user accounts and no per-person per
 - The access token (`dispatch access`) gives a shell on the computer as the account that runs
   the daemon, and read access to every secret the daemon holds.
 - Do not share one daemon, or its token, between people. Each person runs their own daemon.
+- In WSL2, a browser on the Windows side signs in once like any other device. Dispatch cannot tell
+  it from traffic that a Windows portproxy forwards, so it does not trust that address (except for your own `tailscale serve`; see network-access.md).
 - To stop a device, run `dispatch access rotate`. It signs out every device at once.
 - For how requests are accepted from other devices, see [network-access.md](network-access.md).
 

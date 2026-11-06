@@ -9,7 +9,7 @@ who can use it, how to sign in another device, and how to use the API from a scr
 |---|---|
 | A browser, agent, hook or `dispatch` command on the computer that runs Dispatch | No |
 | Your own devices on Tailscale (same Tailscale account), direct or through `tailscale serve` | No |
-| Windows browser at `localhost` when Dispatch runs in WSL2 | No |
+| Windows browser at `localhost` when Dispatch runs in WSL2 | Yes, once per browser (see [WSL2](#wsl2)) |
 | Any other device (another laptop on the same Wi-Fi, a coworker on a shared tailnet, a public tunnel) | Yes, once per browser |
 
 A request from this computer is trusted only when the `Host` header also names this computer
@@ -99,6 +99,27 @@ them in the Tailscale admin console. To list a phone here, open the Wi-Fi (LAN) 
 the Tailscale address.
 
 Up to 100 devices are kept. The least recently active ones drop off first.
+
+## WSL2
+
+When Dispatch runs in WSL2, traffic from the Windows host (your Windows browser at `localhost`,
+and anything a `netsh interface portproxy` rule forwards from the LAN or Wi-Fi) arrives from the
+same Windows address. Dispatch cannot tell your own browser from forwarded traffic, so it does
+not trust that address. Every such browser signs in once, as a phone does. Nothing else changes:
+a portproxy rule, LAN and Wi-Fi access, and Tailscale all keep working.
+
+To sign in your Windows browser, run `dispatch access` in WSL and paste the token on the sign-in
+page, or run `dispatch access --link localhost:3456` and open the link it prints. The browser
+keeps its cookie for 400 days. A cookie from before this change still works.
+
+Failed sign-in tries from the Windows side share one budget (10 a minute), so a wrong try
+from one browser can delay another by a minute.
+
+Still trusted without a sign-in: a program inside WSL (agents, hooks, the `dispatch` command),
+and your own Tailscale devices, including `tailscale serve` on Windows (same Tailscale account). Someone on your LAN who
+already knows your Tailscale login, this machine's Tailscale name and the tailnet address of one
+of your devices could imitate `tailscale serve` through a portproxy; remove the portproxy if you
+do not need it.
 
 ## Scripts and other tools
 
@@ -208,7 +229,8 @@ other accounts on the same computer cannot read them.
   local. Give it its own sign-in, or do not use it.
 - Anything running as your own user can read the token file. Agents run as you.
 - Other accounts on the same computer can still reach Dispatch over loopback.
-- WSL2 with a `netsh interface portproxy` rule to the LAN: that traffic arrives like the Windows
-  host and is not protected. Remove the rule and use Tailscale.
+- WSL2: a caller that reaches Dispatch from the Windows side signs in (see [WSL2](#wsl2)). Dispatch
+  cannot tell your Windows browser from other traffic that Windows forwards, so it does not trust
+  it, except your own `tailscale serve`.
 
 See `docs/superpowers/specs/2026-10-22-network-exposure-design.md` for the full design.

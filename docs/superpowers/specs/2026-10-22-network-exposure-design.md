@@ -308,13 +308,11 @@ daemon sees the phone's tailnet address).
 **What this means for the design.**
 
 - The gate runs inside WSL and needs no Windows change.
-- Phase 1 treats the gateway peer like a loopback peer (same known-host rule). The
-  only WSL users still at risk after Phase 1 are those who added a portproxy to
-  the LAN on purpose: a LAN attacker can come through it from the gateway address
-  and send a known `Host`. See residual R-2 (section 7.12).
-- Phase 2 offers a `127.0.0.1` listen on WSL after the WSL test confirms the
-  Windows browser still connects. That closes R-2 and removes the need for the
-  gateway rule.
+- Phase 1 treated the gateway peer like a loopback peer (same known-host rule). That left
+  portproxy users open (R-2). The WSL sign-in change removed the rule: the gateway peer
+  signs in, except for `tailscale serve`, and a LAN caller that forges those headers is still a
+  residual (section 7.12).
+- Phase 2 no longer needs a `127.0.0.1` listen on WSL for R-2: sign-in mostly closes it (section 7.12).
 
 ### 6.2 macOS
 
@@ -574,12 +572,27 @@ Not in the table: an unknown user behind another reverse proxy or tunnel
 - **R-1. A host added with `allow-host`.** The daemon trusts it like `localhost`,
   so the proxy behind that name must have its own sign-in. `tailscale funnel` is
   not affected: it gets the sign-in page.
-- **R-2. WSL with a LAN portproxy.** Traffic through a Windows portproxy arrives
-  from the gateway address, the same as the Windows browser, and the attacker
-  controls `Host`. Only users who added a portproxy on purpose are affected
-  (Dispatch never documents one). Phase 2 closes it with a `127.0.0.1` listen on
-  WSL. The release note tells these users to remove the portproxy and use
-  Tailscale.
+- **R-2. WSL with a LAN portproxy.** MOSTLY CLOSED by the WSL sign-in change (decision 2026-11-03,
+  option A; `fix/wsl-signin`). Traffic through a Windows portproxy arrives from the gateway
+  address, the same as the Windows browser, and the attacker controls `Host`. Instead of the
+  `127.0.0.1` listen that Phase 2 planned, the daemon no longer treats the gateway peer as
+  local. The owner wanted WSL not to be more closed than the Mac, so the listen address, the
+  portproxy and LAN or Wi-Fi access are unchanged; those callers sign in once with a code or the
+  token, as a phone does. The Windows browser cannot be told from forwarded traffic, so it signs
+  in once too. A cookie from before the change keeps working. The gateway peer is still trusted
+  for one case: `tailscale serve` on Windows (owner's login, `ts.net` or tailnet-IP `Host`,
+  owner-device `X-Forwarded-For`, which the gateway path always requires, because a real
+  `tailscale serve` sets it), so Tailscale keeps working.
+  Limits that remain: (a) a LAN attacker who knows the owner's Tailscale login, the machine's
+  Tailscale name and the tailnet address of one of the owner's devices can forge those headers
+  through a portproxy, the same class of limit as R-6, so R-2 is not closed against that attacker;
+  (a2) sign-in tries from the gateway share one budget (10 failures a minute), because a portproxy
+  lets the caller choose `X-Forwarded-For`; a LAN caller can delay the Windows browser's sign-in
+  by a minute; (b) a Windows forwarder that reaches the daemon through WSL's localhost relay arrives as
+  loopback and is trusted like any local program, so it needs its own sign-in. Untested on a
+  real WSL machine; covered by gate and route tests only.
+  **Accepted by the owner on 2026-11-03:** limits (a) and (b) stay as they are. No stricter mode,
+  no code change, documented only (same treatment as R-6).
 - **R-3. Other OS users on the same machine.** Loopback is trusted (4.2).
 - **R-4. A LAN that uses `100.64.0.0/10`** with a route more specific than
   Tailscale's, plus an attacker who takes the address of the owner's own device
@@ -696,7 +709,8 @@ sentence) are not built.
   override `DISPATCH_BIND` that the CLI passes through (`cli/src/index.ts:634-649`).
 - `loopback` listens on `127.0.0.1` and `::1` directly on macOS and Linux; the
   loopback guards are then not needed (`loopback-guard.ts`). On WSL it listens on
-  `127.0.0.1` only, because of the `::1` relay hang (6.1).
+  `127.0.0.1` only, because of the `::1` relay hang (6.1). It is an opt-in on WSL: sign-in
+  mostly closes R-2 (7.12), so no WSL user is forced to a closed listen address.
 - The local callers that use `localhost` (the CLI and both MCP servers, section
   3.2) change to `127.0.0.1`, so they never depend on `localhost` resolving to
   `::1` first.

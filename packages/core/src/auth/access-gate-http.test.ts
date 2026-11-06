@@ -13,10 +13,12 @@ import { createPairCodes } from './pair-code.js';
 let dir: string;
 let peer: string;
 
-function build(basePath = '', pairCodes?: ReturnType<typeof createPairCodes>) {
+const WSL_GATEWAY = '172.20.0.1';
+
+function build(basePath = '', pairCodes?: ReturnType<typeof createPairCodes>, gateway?: string) {
   const getToken = createTokenSource(dir);
   const gate = createAccessGate({
-    getToken, isGatewayPeer: () => false, config: createAccessConfig(dir),
+    getToken, isGatewayPeer: (a) => !!gateway && a === gateway, config: createAccessConfig(dir),
     tailscale: { self: async () => null, isOwnerPeer: async () => false },
     basePath, pairCodes,
   });
@@ -76,6 +78,51 @@ describe('refusals', () => {
       .set('Origin', 'http://evil.example').set('Content-Type', 'text/plain');
     expect(r.status).toBe(403);
     expect(r.body).toEqual({ error: 'origin_refused' });
+  });
+});
+
+describe('WSL gateway peer signs in like any other device (R-2)', () => {
+  test('a portproxied page request gets the sign-in page, not the app, even with Host localhost', async () => {
+    peer = WSL_GATEWAY;
+    const { app } = build('', undefined, WSL_GATEWAY);
+    const r = await request(app).get('/page').set('Host', 'localhost:3456').set('Accept', 'text/html');
+    expect(r.status).toBe(401);
+    expect(r.text).toContain('id="t"');
+    expect((await request(app).get('/api/x').set('Host', 'localhost:3456')).status).toBe(401);
+  });
+  test('one code signs it in once, and the cookie then passes', async () => {
+    peer = WSL_GATEWAY;
+    const pairCodes = createPairCodes();
+    const { app } = build('', pairCodes, WSL_GATEWAY);
+    const { code } = pairCodes.issue();
+    const r = await request(app).post('/api/access/login').set('Host', 'localhost:3456').send({ code });
+    expect(r.status).toBe(200);
+    const cookie = String(r.headers['set-cookie']).split(';')[0];
+    expect((await request(app).get('/api/x').set('Host', 'localhost:3456').set('Cookie', cookie)).status).toBe(200);
+    const again = await request(app).post('/api/access/login').set('Host', 'localhost:3456').send({ code });
+    expect(again.status).toBe(401);
+  });
+  test('a cookie issued before the upgrade still passes', async () => {
+    peer = WSL_GATEWAY;
+    const { app, getToken } = build('', undefined, WSL_GATEWAY);
+    const cookie = `${COOKIE_NAME}=${cookieValue(getToken())}`;
+    expect((await request(app).get('/api/x').set('Host', 'localhost:3456').set('Cookie', cookie)).status).toBe(200);
+  });
+  test('failed tries from the gateway share one budget, whatever X-Forwarded-For says', async () => {
+    peer = WSL_GATEWAY;
+    const { app, getToken } = build('', undefined, WSL_GATEWAY);
+    const login = (xff: string | undefined, token: string) => {
+      const r = request(app).post('/api/access/login').set('Host', 'localhost:3456');
+      return (xff ? r.set('X-Forwarded-For', xff) : r).send({ token });
+    };
+    for (let i = 0; i < 10; i++) await login(`203.0.113.${i}`, 'nope');
+    expect((await login('203.0.113.99', 'nope')).status).toBe(429);
+    expect((await login(undefined, getToken())).status).toBe(429);
+  });
+  test('loopback on WSL still passes with no sign-in', async () => {
+    peer = '127.0.0.1';
+    const { app } = build('', undefined, WSL_GATEWAY);
+    expect((await request(app).get('/api/x').set('Host', 'localhost:3456')).status).toBe(200);
   });
 });
 
