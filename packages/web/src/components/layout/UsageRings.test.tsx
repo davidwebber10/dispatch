@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import { api } from '../../api/client';
 import { UsageRings } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
@@ -75,11 +75,30 @@ describe('usage rings', () => {
     spend.mockRestore();
   });
 
-  it('the numbers count up to their figures when the sheet opens, and the bar fills to match', async () => {
-    render(<UsageRings summary={summary()} now={now} />);
-    const claude = screen.getByRole('region', { name: 'Claude' });
-    await waitFor(() => expect(claude.textContent).toContain('82% used')); // counted up from 0
-    expect(claude.textContent).toContain('21% used');
+  // The count-up reads performance.now() and the frame time. Under jsdom those are two clocks with
+  // different origins, so on a slow CI runner the count sat at 0 for longer than waitFor waits.
+  // Faking both on one clock makes the test step through the animation by hand.
+  it('the numbers count up to their figures when the sheet opens, and the bar fills to match', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] });
+    try {
+      render(<UsageRings summary={summary()} now={now} />);
+      const claude = screen.getByRole('region', { name: 'Claude' });
+      const shown = () => [...claude.textContent!.matchAll(/(\d+)% used/g)].map((m) => Number(m[1]));
+      // The fill is the bar's one child that is not a threshold mark.
+      const fill = () => within(claude).getAllByRole('meter')[0].querySelector<HTMLElement>(':scope > div:not([aria-hidden])')?.style.width;
+      expect(shown()).toEqual([0, 0]); // starts from 0
+      expect(fill()).toBeUndefined(); // no fill yet
+      act(() => { vi.advanceTimersByTime(200); });
+      const [five, week] = shown();
+      expect(five).toBeGreaterThan(0);
+      expect(five).toBeLessThan(82);
+      expect(week).toBeLessThan(21);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(shown()).toEqual([82, 21]);
+      expect(fill()).toBe('82%');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the warning level is marked on each bar: yellow 30 points before it, red at it', () => {
