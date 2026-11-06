@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { AllThreadsView } from './AllThreadsView';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
+import { useAccounts } from '../../stores/accounts';
 
 const t = (id: string, sessionId: string, label: string, lastActivityAt: string, over: Record<string, unknown> = {}) =>
   ({ id, sessionId, type: 'claude-code', label, status: 'idle', config: {}, createdAt: lastActivityAt, lastActivityAt, archivedAt: null, ...over }) as any;
@@ -16,12 +17,17 @@ beforeEach(() => {
     B: [t('b1', 'B', 'Ship v2', '2026-10-28T11:00:00Z'), t('b2', 'B', 'Archived', '2026-10-28T13:00:00Z', { archivedAt: 'x' })],
   }, loading: {} } as any);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
+  // An older daemon has no accounts route: the Account section stays away unless a test adds one.
+  useAccounts.setState({ view: null, loading: false });
+  vi.spyOn(api, 'getAccounts').mockRejectedValue(new Error('no accounts route'));
 });
 
 // The filters sit behind the Filters button (2026-11-06): every render here opens the panel, so the
 // tests below can reach the Started-by switch and the project chips.
 const openFilters = () => { const b = screen.queryByRole('button', { name: /^Filters/ }); if (b && b.getAttribute('aria-expanded') !== 'true') fireEvent.click(b); };
-const render = (ui: React.ReactElement) => { const r = rtlRender(ui); openFilters(); return r; };
+// The sheet's sections start folded (2026-11-06); a section's header names it and its current pick.
+const openSection = (title: string) => { const b = screen.queryByRole('button', { name: new RegExp(`^${title}: `) }); if (b && b.getAttribute('aria-expanded') !== 'true') fireEvent.click(b); };
+const render = (ui: React.ReactElement) => { const r = rtlRender(ui); openFilters(); openSection('Project'); return r; };
 
 // Rows are the project view's ThreadRow (data-thread-id); its label carries the name as aria-label.
 const labels = () => Array.from(document.querySelectorAll('[data-thread-id]')).map((row) => row.querySelector('span[aria-label]')?.getAttribute('aria-label'));
@@ -272,3 +278,99 @@ describe('<AllThreadsView>', () => {
   });
 });
 
+
+describe('the filter sheet (2026-11-06): folded sections for Project, Account, Harness and Model', () => {
+  const rows = (title: string) => within(screen.getByRole('group', { name: `${title} filter` })).getAllByRole('button').map((b) => b.getAttribute('aria-label'));
+  const seed = () => useTabs.setState({ byProject: {
+    A: [t('a1', 'A', 'Fix login', '2026-10-28T10:00:00Z', { config: { model: 'opus', accountId: 'work' } }),
+      t('a2', 'A', 'Codex work', '2026-10-28T09:00:00Z', { type: 'codex' })],
+    B: [t('b1', 'B', 'Ship v2', '2026-10-28T11:00:00Z', { type: 'codex', config: { model: 'gpt-6-astra' } })],
+  } } as any);
+
+  it('sections start folded and name the current pick; tapping one opens its list with a count per choice', () => {
+    seed();
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    const header = screen.getByRole('button', { name: 'Project: All projects' });
+    expect(header).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('group', { name: 'Project filter' })).toBeNull();
+    fireEvent.click(header);
+    expect(rows('Project')).toEqual(['All projects', 'Alpha', 'Beta']);
+    expect(screen.getByRole('button', { name: 'Alpha' }).textContent).toContain('2');
+    expect(screen.getByRole('button', { name: 'Harness: All harnesses' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Model: All models' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Account: / })).toBeNull(); // no accounts route
+  });
+
+  it('Harness filters by the thread type, shows as a pill, and the header names the pick', () => {
+    seed();
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    openSection('Harness');
+    expect(rows('Harness')).toEqual(['All harnesses', 'Codex', 'Claude Code']);
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    expect(labels()).toEqual(['Ship v2', 'Codex work']);
+    expect(screen.getByRole('button', { name: 'Harness: Codex' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Filters, 1 on' }));
+    const applied = screen.getByTestId('applied-filters');
+    expect(applied.textContent).toContain('HarnessCodex');
+    fireEvent.click(within(applied).getByRole('button', { name: 'Remove Harness filter' }));
+    expect(labels()).toHaveLength(3);
+  });
+
+  it('Model lists the catalog names, Default for a thread without one, and is remembered', () => {
+    seed();
+    const { unmount } = rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    openSection('Model');
+    expect(rows('Model')).toEqual(['All models', '6 Astra', 'Default', 'Opus']);
+    fireEvent.click(screen.getByRole('button', { name: 'Opus' }));
+    expect(labels()).toEqual(['Fix login']);
+    expect(JSON.parse(localStorage.getItem('dispatch:mobileThreadsFacets')!)).toEqual({ account: null, harness: null, model: 'opus' });
+    unmount();
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual(['Fix login']);
+  });
+
+  it('Account appears once the accounts are known and filters by the account a thread runs on', async () => {
+    seed();
+    vi.spyOn(api, 'getAccounts').mockResolvedValue({
+      claude: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, addedAt: null }, { id: 'work', label: 'Work', isCli: false, addedAt: '2026-11-06' }],
+      codex: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, addedAt: null }],
+      defaults: { claude: 'cli', codex: 'cli' },
+    } as any);
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    fireEvent.click(await screen.findByRole('button', { name: 'Account: All accounts' }));
+    expect(rows('Account')).toEqual(['All accounts', 'CLI login', 'Work']);
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    expect(labels()).toEqual(['Fix login']);
+    expect(screen.getByRole('button', { name: 'Account: Work' })).toBeInTheDocument();
+  });
+
+  it('counts are faceted: a harness pick narrows what the project rows count', () => {
+    seed();
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    openSection('Harness');
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    openSection('Project');
+    expect(screen.getByRole('button', { name: 'Alpha' }).textContent).toContain('1');
+    expect(screen.getByRole('button', { name: 'Beta' }).textContent).toContain('1');
+    expect(screen.getByRole('button', { name: /^Show 2 threads$/ })).toBeInTheDocument();
+  });
+
+  it('Reset clears every filter at once', () => {
+    seed();
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    openFilters();
+    openSection('Harness');
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    openSection('Project');
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }));
+    expect(labels()).toEqual(['Ship v2']);
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(labels()).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
+  });
+});
