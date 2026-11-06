@@ -75,3 +75,21 @@ test('the menu escapes the card by rendering into document.body', () => {
   expect(container.querySelector('[data-testid="sort-menu-panel"]')).toBeNull();
   expect(document.body.querySelector('[data-testid="sort-menu-panel"]')).not.toBeNull();
 });
+
+test('the menu has the menu role, with menuitem options', () => {
+  renderMenu();
+  fireEvent.click(screen.getByLabelText('Sort'));
+  expect(screen.getByRole('menu')).toBeInTheDocument();
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+});
+
+test('Escape closes only the menu: it stops before a listener behind it', () => {
+  renderMenu();
+  const behind = vi.fn();
+  window.addEventListener('keydown', behind);
+  fireEvent.click(screen.getByLabelText('Sort'));
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(behind).not.toHaveBeenCalled();
+  window.removeEventListener('keydown', behind);
+});

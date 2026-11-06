@@ -1,4 +1,4 @@
-import { Play } from '@phosphor-icons/react';
+import { Play, X } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import { useAgents } from '../../stores/agents';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -50,7 +50,9 @@ const LegendDot = ({ color, children }: { color: string; children: React.ReactNo
   </span>
 );
 
-export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => void; onOpenRun: (runId: string) => void; onBack?: () => void }) {
+// onClose is passed on desktop only: it dismisses the pane and returns to the tabs that were open.
+// The phone layout has its own back button in the shell header, so it passes nothing.
+export function AgentDashboard({ onEdit, onOpenRun, onBack, onClose }: { onEdit: () => void; onOpenRun: (runId: string) => void; onBack?: () => void; onClose?: () => void }) {
   const schedule = useAgents((s) => s.schedules.find((x) => x.id === s.selectedId)) ?? null;
   const runs = useAgents((s) => s.runs);
   const isMobile = useIsMobile();
@@ -77,6 +79,12 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack }: { onEdit: () => vo
           <button onClick={() => void api.runScheduleNow(schedule.id)} style={green}><Play size={13} weight="fill" /> Run now</button>
           <button onClick={onEdit} style={ghost}>Edit</button>
           <button onClick={() => void toggleEnabled()} style={ghost}>{schedule.enabled ? 'Disable' : 'Enable'}</button>
+          {onClose && (
+            <button onClick={onClose} aria-label="Close automation" title="Close (Esc)"
+              style={{ width: 30, height: 30, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>
+              <X size={14} weight="bold" />
+            </button>
+          )}
         </div>
       </div>
       <div style={{ color: 'var(--color-text-secondary)', fontSize: 12.5, margin: '8px 0 20px' }}>

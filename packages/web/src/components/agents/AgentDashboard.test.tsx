@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react';
-import { test, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { test, expect, beforeEach, vi } from 'vitest';
 import { AgentDashboard } from './AgentDashboard';
 import { useAgents } from '../../stores/agents';
 
@@ -35,4 +35,14 @@ test('shows a schedule with no creator record as Unknown', () => {
   useAgents.setState({ schedules: [sched({})], selectedId: 'a1', runs: [] });
   render(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} />);
   expect(screen.getByTestId('schedule-creator')).toHaveTextContent('Unknown');
+});
+
+test('shows a Close button only when the pane can be closed', () => {
+  useAgents.setState({ schedules: [sched({})], selectedId: 'a1', runs: [] });
+  const { rerender } = render(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} />);
+  expect(screen.queryByRole('button', { name: 'Close automation' })).toBeNull();
+  const onClose = vi.fn();
+  rerender(<AgentDashboard onEdit={() => {}} onOpenRun={() => {}} onClose={onClose} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Close automation' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
