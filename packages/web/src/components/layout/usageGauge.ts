@@ -2,10 +2,10 @@
 // staleness, the popover table, and the paused banner's copy. (Not `usageChip.ts`: beside
 // `UsageChip.tsx` that name collides on a case-insensitive disk.)
 import type { LimitWindow, UsageSummary, UsageSummaryProvider, UsagePausedGroup } from '../../api/types';
-import { TYPE_LABEL, whenLabel, windowLabel } from '../inspector/usageLimits';
+import { TYPE_LABEL, HIDDEN_TYPES, whenLabel, windowLabel } from '../inspector/usageLimits';
 
 /** Windows that count toward the warning. Not `overage` (usage credit). Codex has the first two. */
-export const COUNTED = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_overage_included'] as const;
+export const COUNTED = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_fable'] as const;
 const WEEKLY = COUNTED.filter((t) => t !== 'five_hour');
 /** Figures older than this render dimmed: CLI threads never report, so the last figure can be old. */
 export const STALE_MS = 30 * 60_000;
@@ -118,7 +118,7 @@ export function usageTables(s: UsageSummary | null, now: number, zone?: string):
   if (!s) return [];
   const paused = activePaused(s, now);
   return s.providers.map((p) => {
-    const known = Object.keys(TYPE_LABEL).filter((t) => p.windows[t]);
+    const known = Object.keys(TYPE_LABEL).filter((t) => p.windows[t] && !HIDDEN_TYPES.has(t));
     const unknown = Object.keys(p.windows).filter((t) => !(t in TYPE_LABEL)).sort();
     const rows = [...known, ...unknown].map((t) => {
       const v = liveValue(p.windows[t], now);
@@ -177,9 +177,28 @@ export interface RingModel {
   credits: number;
   /** Each banked reset, soonest to expire first: its id and when it expires. */
   creditList: { id: string; expires: string | null; soon: boolean }[];
+  /** "Extra usage $2.51 of $1,000.00 this month" (Claude), or null. */
+  spend: string | null;
+  /** "83,273 credits" (Codex's prepaid balance), or null. */
+  creditBalance: string | null;
 }
 
-const SHORT: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_overage_included: 'Fable weekly' };
+/** Money in minor units as "$2.51"; other currencies by their code. */
+export function moneyLabel(minor: number, currency: string): string {
+  const v = minor / 100;
+  try { return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(v); } catch { return `${v.toFixed(2)} ${currency}`; }
+}
+export function spendLabel(sp: UsageSummaryProvider['spend']): string | null {
+  if (!sp) return null;
+  const used = moneyLabel(sp.usedMinor, sp.currency);
+  return sp.limitMinor ? `Extra usage ${used} of ${moneyLabel(sp.limitMinor, sp.currency)} this month` : `Extra usage ${used} this month`;
+}
+export function creditBalanceLabel(cb: UsageSummaryProvider['creditBalance']): string | null {
+  if (!cb) return null;
+  return cb.unlimited ? 'Unlimited credits' : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(cb.balance)} credits`;
+}
+
+const SHORT: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_fable: 'Fable weekly' };
 
 /**
  * The run-out estimate: a short label for the row ("out ~Thu 3:00 PM", "lasts to reset") and the
@@ -211,7 +230,7 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
   const paused = new Set(s.paused.map((g) => g.provider));
   const out: RingModel[] = [];
   for (const p of s.providers) {
-    const types = [...COUNTED.filter((t) => p.windows[t]), ...Object.keys(p.windows).filter((t) => !(COUNTED as readonly string[]).includes(t) && t !== 'overage')];
+    const types = [...COUNTED.filter((t) => p.windows[t]), ...Object.keys(p.windows).filter((t) => !(COUNTED as readonly string[]).includes(t) && !HIDDEN_TYPES.has(t))];
     const rows: RingRow[] = types.map((t) => {
       const w = p.windows[t];
       const used = liveValue(w, now);
@@ -224,12 +243,14 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
         estimate: est?.short ?? null, estimateTitle: est?.long ?? null,
       };
     }).filter((r) => r.left !== null);
-    if (!rows.length) continue;
+    if (!rows.length && !p.spend && !p.creditBalance) continue;
     rows.sort((a, b) => (a.left as number) - (b.left as number));
     out.push({
       provider: p.provider, name: PROVIDER_NAME[p.provider] ?? p.provider, plan: p.plan,
-      main: rows[0], rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
+      main: rows[0] ?? { type: 'none', label: 'no limit', left: 100, tone: 'green', reset: null, estimate: null, estimateTitle: null },
+      rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
       credits: p.resetCredits?.available ?? 0,
+      spend: spendLabel(p.spend), creditBalance: creditBalanceLabel(p.creditBalance),
       creditList: (p.resetCredits?.credits ?? []).map((c) => ({ id: c.id, expires: c.expiresAt === null ? null : expiryLabel(c.expiresAt, now, zone), soon: c.expiresAt !== null && c.expiresAt - now < 48 * 3600_000 })),
     });
   }

@@ -29,7 +29,7 @@ const make = () => {
     db, snapshots: snaps, accountFor: () => account, now: () => clock, zone: ZONE,
     broadcast: (e) => events.push(e),
     push: { notifyAccount: async (i) => { pushes.push(i); } },
-    refreshCodex: (id) => refreshed.push(id),
+    refreshCodex: (id) => { refreshed.push(id); return true; },
   });
   snaps.addRecordListener((p) => g.onRecord(p));
   return g;
@@ -175,7 +175,7 @@ describe('summary', () => {
   });
 
   describe('a limit with no reset time clears only on the window that hit it', () => {
-    const KINDS: [string, string, string][] = [['session', 'five_hour', 'seven_day'], ['weekly', 'seven_day', 'five_hour'], ['opus', 'seven_day_opus', 'five_hour'], ['sonnet', 'seven_day_sonnet', 'five_hour'], ['fable', 'seven_day_overage_included', 'five_hour']];
+    const KINDS: [string, string, string][] = [['session', 'five_hour', 'seven_day'], ['weekly', 'seven_day', 'five_hour'], ['opus', 'seven_day_opus', 'five_hour'], ['sonnet', 'seven_day_sonnet', 'five_hour'], ['fable', 'seven_day_fable', 'five_hour']];
     it.each(KINDS)('%s limit: a fresh figure under 100%% on %s clears; on %s it does not', (kind, limited, other) => {
       thread('a');
       park('a', { kind: kind as any, resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
@@ -580,7 +580,7 @@ describe('Codex refresh tick', () => {
     gauge.stop();
     const polls: number[] = [];
     const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
-      refreshCodex: (id) => { refreshed.push(id); }, pollCodex: async () => { polls.push(clock); return true; } });
+      refreshCodex: (id) => { refreshed.push(id); return true; }, pollCodex: async () => { polls.push(clock); return true; } });
     thread('c1', 'codex'); codex('c1', 'e1', T0 - MIN);
     g.tick(); await Promise.resolve();
     expect(refreshed).toEqual(['c1']);
@@ -591,12 +591,24 @@ describe('Codex refresh tick', () => {
     g.stop();
   });
 
+  it('asks Codex directly when the active threads\' files held nothing newer (2026-11-06: a restart stamps activity, the figure stayed days old)', async () => {
+    gauge.stop();
+    const polls: number[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
+      refreshCodex: (id) => { refreshed.push(id); return false; }, pollCodex: async () => { polls.push(clock); return true; } });
+    thread('c1', 'codex'); codex('c1', 'e1', T0 - MIN);
+    g.tick(); await Promise.resolve();
+    expect(refreshed).toEqual(['c1']);
+    expect(polls).toEqual([clock]);
+    g.stop();
+  });
+
   it('a refresh that throws does not stop the others or the broadcast', () => {
     thread('c1', 'codex'); thread('c2', 'codex');
     codex('c1', 'e1', T0 - MIN); codex('c2', 'e2', T0 - 2 * MIN);
     gauge.stop();
     const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: (e) => events.push(e),
-      refreshCodex: (id) => { if (id === 'c1') throw new Error('boom'); refreshed.push(id); } });
+      refreshCodex: (id) => { if (id === 'c1') throw new Error('boom'); refreshed.push(id); return true; } });
     g.tick();
     vi.advanceTimersByTime(5000);
     expect(refreshed).toEqual(['c2']);
@@ -798,6 +810,31 @@ describe('background Claude probe', () => {
     expect(probes).toEqual([T0]);
     clock = T0 + 6 * MIN; g.tick(); await Promise.resolve();
     expect(probes).toHaveLength(2);
+    g.stop();
+  });
+
+  it('with a usage reader, reads every 2 minutes while active even when the stream keeps asOf fresh, and probes only when the read fails', async () => {
+    gauge.stop();
+    const reads: number[] = [];
+    const probes: number[] = [];
+    let readOk = true;
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, zone: ZONE, broadcast: () => {},
+      readClaudeUsage: async () => { reads.push(clock); return readOk; }, probeClaude: async () => { probes.push(clock); return true; } });
+    activeThread(clock);
+    claude(10, 20); // a Pretty thread just reported: the read still runs (it carries Fable and the spend)
+    g.tick(); await Promise.resolve(); await Promise.resolve();
+    expect(reads).toEqual([T0]);
+    expect(probes).toEqual([]);
+    clock = T0 + MIN; g.tick(); await Promise.resolve();
+    expect(reads).toEqual([T0]); // not yet 2 minutes
+    clock = T0 + 2 * MIN; g.tick(); await Promise.resolve();
+    expect(reads).toEqual([T0, T0 + 2 * MIN]);
+    // The read fails (token expired): the tiny turn runs instead, but only once the figures are stale.
+    readOk = false;
+    clock = T0 + 4 * MIN; g.tick(); await Promise.resolve(); await Promise.resolve();
+    expect(probes).toEqual([]); // figures are 4 minutes old: not stale yet
+    clock = T0 + 6 * MIN; g.tick(); await Promise.resolve(); await Promise.resolve();
+    expect(probes).toEqual([T0 + 6 * MIN]);
     g.stop();
   });
 

@@ -30,9 +30,16 @@ export const TYPE_LABEL: Record<string, string> = {
   seven_day: 'Weekly',
   seven_day_opus: 'Opus',
   seven_day_sonnet: 'Sonnet',
-  seven_day_overage_included: 'Fable',
-  overage: 'Usage credit',
+  seven_day_fable: 'Fable',
+  seven_day_overage_included: 'Weekly incl. extra',
+  overage: 'Extra usage',
 };
+/**
+ * Windows no display shows (2026-11-06). `seven_day_overage_included` comes from the CLI stream and is
+ * not a model window: it used to be labelled Fable, but it read 11% beside claude.ai's 18% Fable. The
+ * true Fable window is `seven_day_fable`, from the daemon's usage read. `overage` is shown as money.
+ */
+export const HIDDEN_TYPES = new Set(['seven_day_overage_included', 'overage']);
 
 export interface LimitRows { rows: { label: string; value: string }[]; asOf: string | null; paused: string | null }
 
@@ -43,7 +50,7 @@ export function limitRows(d: ThreadUsageLimits, now: number, zone?: string): Lim
   if (!s) return { rows: [{ label: 'Usage limits', value: 'Not reported yet' }], asOf: null, paused };
   const rows: { label: string; value: string }[] = [];
   // Known types in the CLI's own order, then any other type under its raw name (never a guess).
-  const known = Object.keys(TYPE_LABEL).filter((t) => s.windows[t]);
+  const known = Object.keys(TYPE_LABEL).filter((t) => s.windows[t] && !HIDDEN_TYPES.has(t));
   const unknown = Object.keys(s.windows).filter((t) => !(t in TYPE_LABEL)).sort();
   for (const t of [...known, ...unknown]) rows.push({ label: TYPE_LABEL[t] ?? t, value: windowLabel(s.windows[t], now, zone) });
   if (rows.length === 0) rows.push({ label: 'Usage limits', value: 'Not reported yet' });

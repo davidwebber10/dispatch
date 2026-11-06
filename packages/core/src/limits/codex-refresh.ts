@@ -15,7 +15,8 @@ export interface CodexRefreshOpts {
   codexRoots?: { sessions?: string; archived?: string };
 }
 
-export type CodexRefresh = (terminalId: string, externalId: string | null) => void;
+/** True when the read recorded a figure (false: throttled, no file, nothing newer, or another account's figures). */
+export type CodexRefresh = (terminalId: string, externalId: string | null) => boolean;
 
 export function createCodexRefresh(snapshots: LimitSnapshots, opts: CodexRefreshOpts = {}): CodexRefresh {
   const now = opts.now ?? Date.now;
@@ -24,14 +25,17 @@ export function createCodexRefresh(snapshots: LimitSnapshots, opts: CodexRefresh
   const lastRead = new Map<string, number>();
   return (terminalId, externalId) => {
     const t = now();
-    if (!externalId || t - (lastRead.get(terminalId) ?? 0) < CODEX_REFRESH_MS) return;
+    if (!externalId || t - (lastRead.get(terminalId) ?? 0) < CODEX_REFRESH_MS) return false;
     lastRead.set(terminalId, t);
     const file = locateCodexTranscript(externalId, opts.codexRoots);
     const found = file ? readCodexRateLimits(file) : null;
-    if (!found) return;
+    if (!found) return false;
     // Figures written before the login file last changed may belong to another account: do not claim them.
-    if (!found.at || found.at < loginChangedAt()) return;
+    if (!found.at || found.at < loginChangedAt()) return false;
     const { windows, plan } = parseCodexRateLimits(found.rateLimits);
-    snapshots.record('codex', accountFor('codex'), windows, found.at, plan, true);
+    // A figure no newer than the held one records nothing (snapshot.record ignores it): the caller then asks Codex directly.
+    const held = snapshots.get('codex', accountFor('codex'));
+    if (held && found.at <= held.asOf) return false;
+    return snapshots.record('codex', accountFor('codex'), windows, found.at, plan, true);
   };
 }

@@ -8,7 +8,14 @@ import * as appState from '../db/app-state.js';
 export interface LimitWindow { usedPercent: number | null; resetsAt: number | null }
 /** Windows keyed by the provider's own limit type (`five_hour`, `seven_day`, `seven_day_overage_included`, ...). Unknown types are kept under their raw name. */
 export type LimitWindows = Record<string, LimitWindow>;
-export interface ProviderLimits {
+/** Money and credit figures that ride with a snapshot: Claude's extra-usage spend, Codex's credit balance. */
+export interface ProviderExtras {
+  /** Extra usage this month, in minor units of `currency` (cents): what is spent, and the monthly cap when there is one. */
+  spend?: { usedMinor: number; limitMinor: number | null; currency: string };
+  /** A prepaid credit balance (Codex), in the provider's own units. */
+  creditBalance?: { balance: number; unlimited: boolean };
+}
+export interface ProviderLimits extends ProviderExtras {
   account: string;
   /** When the newest real figure arrived. A report with a reset time and no figure does not move it. */
   asOf: number;
@@ -101,7 +108,7 @@ export class LimitSnapshots {
    * Merged windows more than an hour past their reset are dropped, so a type reported once does not linger.
    * Returns false when the report was ignored.
    */
-  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false): boolean {
+  record(provider: string, account: string, windows: LimitWindows, now: number, plan?: string, replace = false, extras?: ProviderExtras): boolean {
     if (!replace && Object.keys(windows).length === 0) return false;
     const prior = this.get(provider, account);
     if (prior && now < prior.asOf) return false;
@@ -120,7 +127,12 @@ export class LimitSnapshots {
     }
     for (const [type, w] of Object.entries(merged)) if (w.resetsAt !== null && w.resetsAt < now - 3600_000) { delete merged[type]; delete figureAt[type]; }
     // asOf moves only for a real new figure (the first report of an account starts it at `now` either way).
-    this.byProvider[provider] = { account, asOf: realFigure || !prior ? now : prior.asOf, plan: plan ?? prior?.plan, windows: merged, figureAt };
+    this.byProvider[provider] = {
+      account, asOf: realFigure || !prior ? now : prior.asOf, plan: plan ?? prior?.plan, windows: merged, figureAt,
+      // Extras carry forward until a report brings new ones (a stream event has none; the usage read has them).
+      ...((extras?.spend ?? prior?.spend) ? { spend: extras?.spend ?? prior?.spend } : {}),
+      ...((extras?.creditBalance ?? prior?.creditBalance) ? { creditBalance: extras?.creditBalance ?? prior?.creditBalance } : {}),
+    };
     try { appState.set(this.db, KEY, JSON.stringify(this.byProvider)); } catch (err) { console.warn('[usage-limit] could not save the snapshot:', err); }
     this.historyByProvider[provider] = addSamples(this.historyByProvider[provider], account, windows, now);
     try { appState.set(this.db, HISTORY_KEY, JSON.stringify(this.historyByProvider)); } catch (err) { console.warn('[usage-limit] could not save the history:', err); }

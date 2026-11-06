@@ -32,7 +32,7 @@ it('shows session, weekly, and the as-of line under THREAD DETAILS', async () =>
 });
 
 it('shows the Fable row only when reported, and the pause line', async () => {
-  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false }, snapshot: { ...claude.snapshot!, windows: { ...claude.snapshot!.windows, seven_day_overage_included: { usedPercent: 5, resetsAt: FUTURE } } } });
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ ...claude, paused: { kind: 'session', resetsAt: FUTURE, capped: false }, snapshot: { ...claude.snapshot!, windows: { ...claude.snapshot!.windows, seven_day_fable: { usedPercent: 5, resetsAt: FUTURE } } } });
   render(<DetailsPane projectId="p1" terminalId="t1" />);
   expect(await screen.findByText('Fable')).toBeTruthy();
   expect(screen.getByText(/^Paused: session limit, resumes /)).toBeTruthy();

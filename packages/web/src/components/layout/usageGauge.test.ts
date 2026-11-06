@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chipModel, usageTables, liveValue, STALE_MS } from './usageGauge';
+import { chipModel, usageTables, liveValue, STALE_MS, ringModels } from './usageGauge';
 import type { UsageSummary, UsageSummaryProvider } from '../../api/types';
 
 const NOW = Date.UTC(2026, 10, 5, 17, 0);
@@ -105,9 +105,9 @@ describe('usageTables', () => {
   it('lists every provider with plan, labelled rows in CLI order, and As of', () => {
     const t = usageTables(sum([claude(82, 21, { overage: { usedPercent: 3, resetsAt: NOW + H } }), codex(10, 5)]), NOW, 'UTC');
     expect(t.map((x) => x.name)).toEqual(['Claude', 'Codex']);
-    expect(t[0].rows.map((r) => r.label)).toEqual(['Session (5h)', 'Weekly', 'Usage credit']);
+    // The overage window is money, shown by the ring sheet's spend line, not a percent row (2026-11-06).
+    expect(t[0].rows.map((r) => r.label)).toEqual(['Session (5h)', 'Weekly']);
     expect(t[0].rows[0]).toEqual({ label: 'Session (5h)', value: '82% used, resets 7:00 PM', tone: 'amber' });
-    expect(t[0].rows[2].tone).toBe('normal');
     expect(t[0].asOf).toBe('As of 4:59 PM');
     expect(t[1].plan).toBe('plus');
   });
@@ -119,5 +119,29 @@ describe('liveValue', () => {
     expect(liveValue({ usedPercent: 46, resetsAt: NOW }, NOW)).toBeNull();
     expect(liveValue({ usedPercent: null, resetsAt: NOW + 1 }, NOW)).toBeNull();
     expect(liveValue(undefined, NOW)).toBeNull();
+  });
+});
+
+describe('the usage read\'s windows and money (2026-11-06)', () => {
+  it('ringModels shows Fable from seven_day_fable, hides the CLI\'s seven_day_overage_included, and carries spend and credits', () => {
+    const p = claude(10, 11, { seven_day_fable: { usedPercent: 18, resetsAt: NOW + H }, seven_day_overage_included: { usedPercent: 11, resetsAt: NOW + H } });
+    (p as any).spend = { usedMinor: 251, limitMinor: 100000, currency: 'USD' };
+    const c = codex(2, 0);
+    (c as any).creditBalance = { balance: 83272.63, unlimited: false };
+    const m = ringModels(sum([p, c]), NOW, 'UTC');
+    expect(m[0].rows.map((r) => r.label)).toEqual(expect.arrayContaining(['5-hour', 'weekly', 'Fable weekly']));
+    expect(m[0].rows.map((r) => r.type)).not.toContain('seven_day_overage_included');
+    expect(m[0].spend).toBe('Extra usage $2.51 of $1,000.00 this month');
+    expect(m[1].creditBalance).toBe('83,273 credits');
+    expect(m[1].spend).toBeNull();
+  });
+  it('a provider with only money and no live window still gets a card', () => {
+    const c = codex(2, 0);
+    c.windows = {};
+    (c as any).creditBalance = { balance: 5, unlimited: false };
+    const m = ringModels(sum([c]), NOW, 'UTC');
+    expect(m).toHaveLength(1);
+    expect(m[0].rows).toEqual([]);
+    expect(m[0].creditBalance).toBe('5 credits');
   });
 });

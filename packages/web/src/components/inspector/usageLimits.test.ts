@@ -17,11 +17,11 @@ describe('limitRows', () => {
     expect(r.paused).toBeNull();
     expect(r.rows.map((x) => x.label)).not.toContain('Fable');
   });
-  it('labels rows by the CLI names: Fable for seven_day_overage_included, Opus/Sonnet only when reported, raw name for an unknown type', () => {
+  it('labels rows by type: Fable is seven_day_fable (the usage read); the CLI stream\'s seven_day_overage_included and the overage window are hidden; an unknown type keeps its raw name', () => {
     const w = (x: number) => ({ usedPercent: x, resetsAt: at('2026-10-29T19:41:00Z') });
     const r = limitRows({ provider: 'claude-code', supported: true, paused: null, snapshot: { asOf: NOW, windows: {
-      seven_day_future: w(9), seven_day_overage_included: w(50), seven_day_sonnet: w(20), seven_day_opus: w(5), seven_day: w(24), five_hour: w(62), overage: w(1) } } }, NOW, Z);
-    expect(r.rows.map((x) => x.label)).toEqual(['Session (5h)', 'Weekly', 'Opus', 'Sonnet', 'Fable', 'Usage credit', 'seven_day_future']);
+      seven_day_future: w(9), seven_day_overage_included: w(50), seven_day_fable: w(17), seven_day_sonnet: w(20), seven_day_opus: w(5), seven_day: w(24), five_hour: w(62), overage: w(1) } } }, NOW, Z);
+    expect(r.rows.map((x) => x.label)).toEqual(['Session (5h)', 'Weekly', 'Opus', 'Sonnet', 'Fable', 'seven_day_future']);
   });
   it('shows the pause in the same words as the pause label', () => {
     const base = { provider: 'claude-code', supported: true, snapshot: null } as const;

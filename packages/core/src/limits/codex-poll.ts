@@ -105,7 +105,11 @@ export function createCodexPoll(d: CodexPollDeps): CodexPoll {
     const rl = res?.rateLimitsByLimitId?.codex ?? res?.rateLimits;
     const { windows, plan } = parseCodexRateLimits(toSessionShape(rl));
     if (!Object.keys(windows).length) return false;
-    d.snapshots.record('codex', d.accountFor('codex'), windows, now(), plan, true);
+    // The prepaid balance ("credits") rides along: the owner asked to see it next to the windows.
+    const c = rl?.credits;
+    const balance = c && typeof c === 'object' && c.hasCredits ? Number(c.balance) : NaN;
+    const extras = Number.isFinite(balance) ? { creditBalance: { balance, unlimited: c.unlimited === true } } : undefined;
+    d.snapshots.record('codex', d.accountFor('codex'), windows, now(), plan, true, extras);
     return true;
   }) as CodexPoll;
   poll.credits = () => credits;

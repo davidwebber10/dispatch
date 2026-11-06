@@ -10,14 +10,18 @@ import * as parksDb from '../db/usage-limits.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as gaugeSettings from './gauge-settings.js';
 import { CHAT_ID } from './service.js';
-import type { LimitSnapshots, LimitWindows } from './snapshot.js';
+import type { LimitSnapshots, LimitWindows, ProviderExtras } from './snapshot.js';
 import type { LimitKind } from './detect.js';
 
 export const PROVIDERS = ['claude-code', 'codex'] as const;
 /** Windows that count toward the warning. Not `overage` (usage credit). Codex has the first two. */
-export const COUNTED = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_overage_included']);
+export const COUNTED = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_fable']);
+// `seven_day_overage_included` comes from the CLI stream and is not a model window (2026-11-06: it
+// used to be labelled Fable, but it sat at 11% beside claude.ai's 18% Fable here, and at 8% beside a
+// 35% weekly elsewhere). It is not counted and the web hides it. The real Fable window is
+// `seven_day_fable`, from the usage read (claude-usage.ts).
 const WINDOW_NAME: Record<string, string> = {
-  five_hour: 'Session (5h)', seven_day: 'Weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_overage_included: 'Fable weekly',
+  five_hour: 'Session (5h)', seven_day: 'Weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_fable: 'Fable weekly', seven_day_overage_included: 'Weekly incl. extra',
 };
 import { forecast, type Forecast } from './forecast.js';
 import type { ResetCredits } from './codex-poll.js';
@@ -26,7 +30,7 @@ const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 
 const WEEKLY_KINDS = new Set(['weekly', 'fable', 'opus', 'sonnet']);
 /** The usage window each limit kind is about. `usage` (a limit the CLI did not name) has none: any counted window then counts. */
 const LIMITED_WINDOW: Partial<Record<LimitKind, string>> = {
-  session: 'five_hour', weekly: 'seven_day', opus: 'seven_day_opus', sonnet: 'seven_day_sonnet', fable: 'seven_day_overage_included',
+  session: 'five_hour', weekly: 'seven_day', opus: 'seven_day_opus', sonnet: 'seven_day_sonnet', fable: 'seven_day_fable',
 };
 const ALERTS_KEY = 'usage_limit_alerts';
 const MIN = 60_000;
@@ -44,6 +48,8 @@ const DEFAULTS = {
   codexPollMs: 5 * MIN,
   /** Claude figures older than this get a background probe (a Pretty thread's turns keep them fresher). */
   claudeStaleMs: 5 * MIN,
+  /** The usage read (claude-usage.ts) is one cheap request: run it this often while something is active. */
+  claudeUsageMs: 2 * MIN,
   /** ...but only while something was active this recently: an idle machine is not probed. */
   claudeIdleMs: 30 * MIN,
   /** A null reset time keeps its alert key this long. */
@@ -51,7 +57,7 @@ const DEFAULTS = {
 };
 
 export interface SummaryWindow { usedPercent: number | null; resetsAt: number | null; forecast?: Forecast | null }
-export interface SummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow>; resetCredits?: ResetCredits }
+export interface SummaryProvider extends ProviderExtras { provider: string; plan?: string; asOf: number; windows: Record<string, SummaryWindow>; resetCredits?: ResetCredits }
 export interface PausedGroup {
   provider: string;
   kind: string;
@@ -108,13 +114,15 @@ export interface GaugeDeps {
   push?: PushTarget | null;
   accountFor: (provider: string) => string;
   /** Codex writes its limits into the session file: read the newest for one thread (throttled by its owner). */
-  refreshCodex?: (terminalId: string, externalId: string | null) => void;
+  refreshCodex?: (terminalId: string, externalId: string | null) => boolean;
   /** Ask Codex itself for its limits (codex-poll.ts): used when no Codex thread was active lately. */
   pollCodex?: () => Promise<boolean>;
   /** Codex's banked limit resets, from the last direct read. */
   codexCredits?: () => ResetCredits | null;
   /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
   probeClaude?: () => Promise<boolean>;
+  /** Read the account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
+  readClaudeUsage?: () => Promise<boolean>;
   now?: () => number;
   /** The zone the push shows the reset time in. Default: this machine. */
   zone?: string;
@@ -171,7 +179,12 @@ export class UsageGauge {
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt, ...(f ? { forecast: f } : {}) };
     }
     const credits = provider === 'codex' ? this.d.codexCredits?.() ?? null : null;
-    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw, ...(credits && credits.available > 0 ? { resetCredits: credits } : {}) };
+    return {
+      provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw,
+      ...(credits && credits.available > 0 ? { resetCredits: credits } : {}),
+      ...(s.spend ? { spend: s.spend } : {}),
+      ...(s.creditBalance ? { creditBalance: s.creditBalance } : {}),
+    };
   }
 
   /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
@@ -365,6 +378,7 @@ export class UsageGauge {
   private lastCodexPoll = -Infinity;
   private codexPolling = false;
   private lastClaudeProbe = -Infinity;
+  private lastClaudeRead = -Infinity;
   private claudeProbing = false;
 
   /**
@@ -373,14 +387,30 @@ export class UsageGauge {
    * claudeStaleMs). A Pretty thread in use keeps the figures fresh, so then it never runs.
    */
   private maybeProbeClaude(): void {
-    if (!this.d.probeClaude || this.claudeProbing) return;
+    if (this.claudeProbing) return;
     const now = this.now();
-    if (now - this.lastClaudeProbe < this.o.claudeStaleMs) return;
-    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code'));
-    if (s && now - s.asOf < this.o.claudeStaleMs) return;
     const since = new Date(now - this.o.claudeIdleMs).toISOString();
     const active = this.d.db.prepare('SELECT 1 FROM terminals WHERE archived_at IS NULL AND last_activity_at >= ? LIMIT 1').get(since);
     if (!active) return;
+    // The usage read is one request: run it on its own clock, whatever the stream reports (a Pretty
+    // thread's events keep `asOf` fresh but carry no Fable window and no spend).
+    if (this.d.readClaudeUsage && now - this.lastClaudeRead >= this.o.claudeUsageMs) {
+      this.lastClaudeRead = now;
+      this.claudeProbing = true;
+      void this.d.readClaudeUsage().catch(() => false)
+        .then((ok) => { if (!ok) this.fallbackProbe(now); })
+        .finally(() => { this.claudeProbing = false; });
+      return;
+    }
+    if (!this.d.readClaudeUsage) this.fallbackProbe(now);
+  }
+
+  /** The tiny Claude turn, only when the figures are stale: at most one per claudeStaleMs. */
+  private fallbackProbe(now: number): void {
+    if (!this.d.probeClaude) return;
+    if (now - this.lastClaudeProbe < this.o.claudeStaleMs) return;
+    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code'));
+    if (s && now - s.asOf < this.o.claudeStaleMs) return;
     this.lastClaudeProbe = now;
     this.claudeProbing = true;
     void this.d.probeClaude().catch(() => false).finally(() => { this.claudeProbing = false; });
@@ -395,6 +425,8 @@ export class UsageGauge {
   tick(): void {
     try {
       this.maybeProbeClaude();
+      // Threads first; when none gave a newer figure (none active, or their files hold nothing new,
+      // as after a restart that stamps activity), ask Codex directly.
       if (!this.refreshCodexThreads()) this.maybePollCodex();
     } finally {
       this.schedule();
@@ -406,7 +438,8 @@ export class UsageGauge {
    * recently polled go first, so a 5th working thread, or a live one behind rows stuck at
    * `working`, gets its turn within a few ticks. Ties go to working, then newest activity. Each
    * read records only a figure newer than the held one, so the newest report wins whatever the
-   * order. False when there is no candidate thread (or no refresher): then Codex is asked directly.
+   * order. True only when some read recorded a newer figure; false with no candidate thread, no
+   * refresher, or reads that found nothing new: then Codex is asked directly.
    */
   private refreshCodexThreads(): boolean {
     const refresh = this.d.refreshCodex;
@@ -428,11 +461,12 @@ export class UsageGauge {
       .sort((a, b) => (a.at - b.at) || (a.i - b.i))
       .slice(0, this.o.codexRefreshMax);
     const now = this.now();
+    let recorded = false;
     for (const { row } of picked) {
       this.polledAt.set(row.id, now);
-      try { refresh(row.id, row.external_id); } catch (err) { console.warn('[usage-gauge] Codex refresh failed:', err); }
+      try { if (refresh(row.id, row.external_id)) recorded = true; } catch (err) { console.warn('[usage-gauge] Codex refresh failed:', err); }
     }
-    return true;
+    return recorded;
   }
 
   /** No Codex thread active lately: ask Codex itself (codex-poll.ts), at most every codexPollMs. */

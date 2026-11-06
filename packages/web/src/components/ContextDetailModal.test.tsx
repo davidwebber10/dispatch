@@ -13,7 +13,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it('shows the same limit rows as the Details pane, with the as-of line and the pause', async () => {
   vi.spyOn(api, 'getUsageLimits').mockResolvedValue(claude(
-    { five_hour: { usedPercent: 62, resetsAt: FUTURE }, seven_day: { usedPercent: 24, resetsAt: FUTURE }, seven_day_overage_included: { usedPercent: 5, resetsAt: FUTURE }, seven_day_future: { usedPercent: 1, resetsAt: FUTURE } },
+    { five_hour: { usedPercent: 62, resetsAt: FUTURE }, seven_day: { usedPercent: 24, resetsAt: FUTURE }, seven_day_fable: { usedPercent: 5, resetsAt: FUTURE }, seven_day_future: { usedPercent: 1, resetsAt: FUTURE } },
     { kind: 'session', resetsAt: FUTURE, capped: false },
   ));
   render(<ContextDetailModal {...base} terminalId="t1" />);

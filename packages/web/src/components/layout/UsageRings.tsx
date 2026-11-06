@@ -85,6 +85,13 @@ function ToolCard({ m, warn, onUseCredit, note }: { m: RingModel; warn: number; 
           style={{ marginLeft: 'auto', font: '400 11px var(--font-mono)', color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>{m.asOf}</span>
       </div>
       {rows.map((r, i) => <LimitRow key={r.type} toolName={m.name} row={r} warn={warn} first={i === 0} />)}
+      {/* Money and credits (2026-11-06): Claude's extra-usage spend this month, Codex's prepaid balance. */}
+      {(m.spend || m.creditBalance) && (
+        <div data-testid="usage-money" style={{ borderTop: rows.length ? '1px solid var(--color-border)' : 'none', padding: '11px 0', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {m.spend && <div style={{ fontSize: 13.5, color: 'var(--color-text-secondary)' }}>{m.spend}</div>}
+          {m.creditBalance && <div style={{ fontSize: 13.5, color: 'var(--color-text-secondary)' }}>{m.creditBalance}</div>}
+        </div>
+      )}
       {m.credits > 0 && (
         <div style={{ borderTop: '1px solid var(--color-border)', padding: '11px 0' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

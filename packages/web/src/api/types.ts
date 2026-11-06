@@ -498,7 +498,13 @@ export interface ThreadUsageLimits {
 export interface ResetCredit { id: string; expiresAt: number | null; title: string | null }
 /** Soonest-expiring first; `available` can exceed the list (the backend caps it). */
 export interface ResetCredits { available: number; nextExpiresAt: number | null; credits?: ResetCredit[] }
-export interface UsageSummaryProvider { provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow>; resetCredits?: ResetCredits }
+export interface UsageSummaryProvider {
+  provider: string; plan?: string; asOf: number; windows: Record<string, LimitWindow>; resetCredits?: ResetCredits;
+  /** Extra usage this month in minor units (cents): spent, and the monthly cap when there is one (Claude). */
+  spend?: { usedMinor: number; limitMinor: number | null; currency: string };
+  /** A prepaid credit balance in the tool's own units (Codex). */
+  creditBalance?: { balance: number; unlimited: boolean };
+}
 /** Threads of one provider stopped on a limit, for the paused banner. */
 export interface UsagePausedGroup {
   provider: string;

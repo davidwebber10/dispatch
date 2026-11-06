@@ -86,6 +86,7 @@ import { UsageGauge } from './limits/gauge.js';
 import { createCodexRefresh } from './limits/codex-refresh.js';
 import { createCodexPoll } from './limits/codex-poll.js';
 import { createClaudeProbe } from './limits/claude-probe.js';
+import { createClaudeUsageReader, readClaudeToken } from './limits/claude-usage.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
@@ -646,7 +647,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const pollCodex = createCodexPoll({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
   // Claude's figures for CLI-only use: a tiny background turn when they go stale (claude-probe.ts).
   const probeClaude = createClaudeProbe({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
-  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex, pollCodex, codexCredits: () => pollCodex.credits(), probeClaude });
+  // Claude's usage as claude.ai shows it (claude-usage.ts): every window, Fable included, and the extra-usage
+  // spend, read with the login the daemon already holds. The tiny turn above is the fallback when the read fails.
+  const readClaudeUsage = createClaudeUsageReader({ snapshots: limitSnapshots, accountFor: limitAccount, token: () => readClaudeToken({ saved: () => titleSpawnEnv.CLAUDE_CODE_OAUTH_TOKEN || claudeLogin.getToken() }) });
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, refreshCodex, pollCodex, codexCredits: () => pollCodex.credits(), probeClaude, readClaudeUsage });
   limitSnapshots.addRecordListener((provider) => usageGauge.onRecord(provider));
   usageLimits.addChangeListener(() => usageGauge.pausesChanged());
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
