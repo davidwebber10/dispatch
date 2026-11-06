@@ -86,7 +86,9 @@ export function ConversationStream() {
   const coordinatorAnswer = useOverseer((s) => s.coordinatorAnswer);
   const replyToCoordinatorQuestion = useOverseer((s) => s.replyToCoordinatorQuestion);
   const denyCoordinatorQuestion = useOverseer((s) => s.denyCoordinatorQuestion);
-  const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore);
+  // "Older messages exist" starts true and is only corrected once a coordinator's transcript loads, so
+  // a project with no coordinator yet (the setup card) has nothing to page: gate on the coordinator.
+  const coordinatorHasMore = useOverseer((s) => s.coordinatorHasMore && !!s.coordinatorId);
   const coordinatorLoadingOlder = useOverseer((s) => s.coordinatorLoadingOlder);
   const coordinatorLoadOlder = useOverseer((s) => s.coordinatorLoadOlder);
   const coordinatorApiRetry = useOverseer((s) => s.coordinatorApiRetry);

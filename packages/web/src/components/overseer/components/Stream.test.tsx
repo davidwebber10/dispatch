@@ -160,6 +160,14 @@ describe('ConversationStream — coordinator message header', () => {
 // sticking in the field (unstuck only by a window resize) — stranding hasMore:true history.
 // ChatView gained an explicit LoadEarlierButton in 0b8e106; this is the Control Plane's parity.
 describe('ConversationStream — Load earlier messages button', () => {
+  it('is hidden for a project with no coordinator yet (the setup card): there is nothing to page', () => {
+    const loadOlder = vi.fn();
+    useOverseer.setState({ coordinatorId: null, setupNeeded: true, coordinatorItems: [], coordinatorHasMore: true, coordinatorLoadingOlder: false, coordinatorLoadOlder: loadOlder });
+    render(<ConversationStream />);
+    expect(screen.queryByText('Load earlier messages')).not.toBeInTheDocument();
+    expect(loadOlder).not.toHaveBeenCalled();
+  });
+
   it('renders when older history exists and pages on click', () => {
     const loadOlder = vi.fn();
     useOverseer.setState({
