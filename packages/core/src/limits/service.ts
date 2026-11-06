@@ -102,7 +102,7 @@ export class UsageLimitService {
     parksDb.upsert(this.d.db, {
       terminal_id: terminalId, provider, kind: limit.kind, resets_at: limit.resetsAt, wake_at: wakeAt,
       message: limit.message.slice(0, 1000), parsed: parsed ? 1 : 0, attempts,
-      state: capped ? 'capped' : 'parked', parked_at: prior?.parked_at ?? now,
+      state: capped ? 'capped' : 'parked', parked_at: prior?.parked_at ?? now, detected_at: now,
     }, now);
     this.changed();
     const label = pauseLabel(limit.kind, limit.resetsAt, now, this.d.zone, fallbackMs);
@@ -144,8 +144,9 @@ export class UsageLimitService {
         this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);
-        parksDb.markLimitOver(this.d.db, row.terminal_id, now); // a failed send is not the limit: the chip may leave red
         if (attempts >= this.o.maxAttempts) {
+          // The last try failed to send: that is not the limit, so a row with no read reset is taken as over (the chip may leave red; the banner still lists it).
+          parksDb.markLimitOver(this.d.db, row.terminal_id, now);
           parksDb.setState(this.d.db, row.terminal_id, 'capped', attempts, row.wake_at, now);
           changed = true;
           this.safe(() => this.d.markPaused(row.terminal_id, `Stopped: ${limitName(row.kind)}, auto-resume gave up after ${attempts} tries`));

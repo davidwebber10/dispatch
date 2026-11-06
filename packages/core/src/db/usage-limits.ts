@@ -13,7 +13,10 @@ export interface ParkRow {
   parsed: number;
   attempts: number;
   state: ParkState;
+  /** The start of the chain: kept across a resume that hits the limit again. */
   parked_at: number;
+  /** When a limit was last detected for this row (renewed on every detection). Clearing figures must be newer. */
+  detected_at: number;
   updated_at: number;
 }
 
@@ -21,20 +24,20 @@ export function get(db: Database.Database, terminalId: string): ParkRow | null {
   return (db.prepare('SELECT * FROM usage_limit_parks WHERE terminal_id = ?').get(terminalId) as ParkRow | undefined) ?? null;
 }
 
-export function upsert(db: Database.Database, row: Omit<ParkRow, 'updated_at'>, now: number): void {
+export function upsert(db: Database.Database, row: Omit<ParkRow, 'updated_at' | 'detected_at'> & { detected_at?: number }, now: number): void {
   db.prepare(`
-    INSERT INTO usage_limit_parks (terminal_id, provider, kind, resets_at, wake_at, message, parsed, attempts, state, parked_at, updated_at)
-    VALUES (@terminal_id, @provider, @kind, @resets_at, @wake_at, @message, @parsed, @attempts, @state, @parked_at, @now)
+    INSERT INTO usage_limit_parks (terminal_id, provider, kind, resets_at, wake_at, message, parsed, attempts, state, parked_at, detected_at, updated_at)
+    VALUES (@terminal_id, @provider, @kind, @resets_at, @wake_at, @message, @parsed, @attempts, @state, @parked_at, @detected_at, @now)
     ON CONFLICT(terminal_id) DO UPDATE SET provider = @provider, kind = @kind, resets_at = @resets_at, wake_at = @wake_at,
-      message = @message, parsed = @parsed, attempts = @attempts, state = @state, parked_at = @parked_at, updated_at = @now
-  `).run({ ...row, now });
+      message = @message, parsed = @parsed, attempts = @attempts, state = @state, parked_at = @parked_at, detected_at = @detected_at, updated_at = @now
+  `).run({ ...row, detected_at: row.detected_at ?? row.parked_at, now });
 }
 
 export function setState(db: Database.Database, terminalId: string, state: ParkState, attempts: number, wakeAt: number, now: number): void {
   db.prepare('UPDATE usage_limit_parks SET state = ?, attempts = ?, wake_at = ?, updated_at = ? WHERE terminal_id = ?').run(state, attempts, wakeAt, now, terminalId);
 }
 
-/** A wake was tried, so the limit is taken as over: stamp the time on a row that never had a readable reset. A reset that was read is kept. */
+/** The last wake try failed to send, so the limit is taken as over: stamp the time on a row that never had a readable reset. A reset that was read is kept. */
 export function markLimitOver(db: Database.Database, terminalId: string, now: number): void {
   db.prepare('UPDATE usage_limit_parks SET resets_at = COALESCE(resets_at, ?) WHERE terminal_id = ?').run(now, terminalId);
 }

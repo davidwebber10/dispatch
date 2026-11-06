@@ -7,7 +7,7 @@ import * as parksDb from '../db/usage-limits.js';
 import * as gaugeSettings from './gauge-settings.js';
 import { LimitSnapshots } from './snapshot.js';
 import { UsageGauge } from './gauge.js';
-import { CHAT_ID } from './service.js';
+import { CHAT_ID, UsageLimitService } from './service.js';
 
 const ZONE = 'America/Indianapolis';
 const T0 = Date.UTC(2026, 10, 5, 4, 0); // 23:00 local, Nov 4
@@ -119,6 +119,33 @@ describe('summary', () => {
     // Another provider's figures say nothing about this one.
   });
 
+  it('no real below-limit figure means unknown: an empty snapshot, only null percentages, or only windows past their reset', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, {}, clock, undefined, true); // a snapshot with no windows
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET }, seven_day: { usedPercent: null, resetsAt: WEEK } }, clock + 1, undefined, true);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 10, resetsAt: clock - 1 } }, clock + 2, undefined, true); // past its reset: not a live figure
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // A live figure under 100% on any counted window does clear it.
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock + 3, undefined, true);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock + 3);
+  });
+
+  it('figures from before the latest detection do not clear a renewed limit, only newer ones', () => {
+    thread('a');
+    // The chain began at T0; the limit was detected again at T0 + 10 min (a resume that hit it again).
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 + 10 * MIN });
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock); // newer than the chain, older than the detection
+    clock = T0 + 12 * MIN;
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
   it('another provider\'s figures do not clear it', () => {
     thread('a');
     park('a', { resets_at: null, parsed: 0, parked_at: T0 });
@@ -180,6 +207,27 @@ describe('archived threads and the push switch', () => {
     gauge.pausesChanged();
     expect(events).toHaveLength(n); // same figures: no new event just for a new stamp
     expect(gauge.summary().at).toBe(clock);
+  });
+});
+
+describe('the chip across failed wakes (D1, D2)', () => {
+  it('an earlier failed send leaves the chip red (no end time); the last failed send ends it', () => {
+    thread('a');
+    const svc = new UsageLimitService({
+      db, now: () => clock, zone: ZONE,
+      wake: () => { throw new Error('no pty'); }, markPaused: () => {}, note: () => {},
+    });
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    for (let i = 1; i <= 4; i++) {
+      clock = parksDb.get(db, 'a')!.wake_at + 1;
+      svc.tick();
+      expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    }
+    clock = parksDb.get(db, 'a')!.wake_at + 1;
+    svc.tick();
+    const g = gauge.summary().paused[0];
+    expect(g.capped).toBe(1); // the banner still lists it
+    expect(g.activeUntil).toBe(clock); // the chip may leave red
   });
 });
 

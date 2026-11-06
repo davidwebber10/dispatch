@@ -452,4 +452,11 @@ function initializeSchema(db: Database.Database): void {
     if (!cols.some((c) => c.name === 'label')) db.exec('ALTER TABLE push_subscriptions ADD COLUMN label TEXT');
     if (!cols.some((c) => c.name === 'last_sent_at')) db.exec('ALTER TABLE push_subscriptions ADD COLUMN last_sent_at TEXT');
   });
+  // The time a usage limit was last detected for a park row. `parked_at` stays the chain's start (a resume that hits
+  // the limit again keeps the chain and its attempt count), so clearing figures are compared with this instead.
+  migrate(db, '016-usage-park-detected-at', () => {
+    const cols = db.prepare('PRAGMA table_info(usage_limit_parks)').all() as { name: string }[];
+    if (!cols.some((c) => c.name === 'detected_at')) db.exec('ALTER TABLE usage_limit_parks ADD COLUMN detected_at INTEGER');
+    db.exec('UPDATE usage_limit_parks SET detected_at = parked_at WHERE detected_at IS NULL');
+  });
 }

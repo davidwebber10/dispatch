@@ -134,14 +134,21 @@ export class UsageGauge {
     return parksDb.listPaused(this.d.db).filter((r) => r.terminal_id === CHAT_ID || !terminalsDb.getById(this.d.db, r.terminal_id)?.archived_at);
   }
 
-  /** When one paused row's limit ends: its read reset, else when fresh figures showed the window clear, else null (unknown, still holding). */
+  /**
+   * When one paused row's limit ends: its read reset, else when fresh figures showed the window clear,
+   * else null (unknown, still holding). Fresh means taken after the limit was last detected for the
+   * row (a resume that hits it again renews that), and clear means at least one live counted window
+   * with a real figure and none of them at 100%. No figure, a null percentage, or only windows past
+   * their reset is unknown, never clear.
+   */
   private rowEnd(r: parksDb.ParkRow): number | null {
     if (r.resets_at !== null) return r.resets_at;
     const s = this.providerSummary(r.provider);
-    if (!s || s.asOf <= r.parked_at) return null;
+    if (!s || s.asOf <= r.detected_at) return null;
     const now = this.now();
-    const full = Object.entries(s.windows).some(([type, w]) => COUNTED.has(type) && live(w, now) && w.usedPercent! >= 100);
-    return full ? null : s.asOf;
+    const figures = Object.entries(s.windows).filter(([type, w]) => COUNTED.has(type) && live(w, now));
+    if (figures.length === 0 || figures.some(([, w]) => w.usedPercent! >= 100)) return null;
+    return s.asOf;
   }
 
   /** Paused threads grouped by provider, from the park rows in `parked` or `capped`. */

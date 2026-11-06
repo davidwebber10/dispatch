@@ -371,14 +371,30 @@ describe('change listener (#127)', () => {
     expect(n).toBe(1);
   });
 
-  it('a failed wake takes the limit as over: an unknown reset is stamped with the wake time', () => {
+  it('an earlier failed wake leaves an unknown reset alone; only the last failed try stamps it as over', () => {
     thread('a');
     svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
-    expect(parksDb.get(db, 'a')!.resets_at).toBeNull();
     wakeError = new Error('no pty');
+    for (let i = 1; i <= 4; i++) {
+      clock = parksDb.get(db, 'a')!.wake_at + 1;
+      svc.tick();
+      expect(parksDb.get(db, 'a')).toMatchObject({ state: 'parked', attempts: i, resets_at: null });
+    }
     clock = parksDb.get(db, 'a')!.wake_at + 1;
-    svc.tick();
-    expect(parksDb.get(db, 'a')).toMatchObject({ state: 'parked', resets_at: clock });
+    svc.tick(); // the fifth and last try
+    expect(parksDb.get(db, 'a')).toMatchObject({ state: 'capped', attempts: 5, resets_at: clock });
+  });
+
+  it('a renewed limit keeps the chain (parked_at, attempts) but records its own detection time', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    const first = parksDb.get(db, 'a')!;
+    expect(first.detected_at).toBe(T0);
+    clock = RESET + 91_000;
+    svc.tick(); // woken, attempts 1
+    clock += 10 * MIN;
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: clock + 60 * MIN, message: 'again' });
+    expect(parksDb.get(db, 'a')).toMatchObject({ parked_at: T0, attempts: 1, detected_at: clock, state: 'parked' });
   });
 
   it('a failed wake keeps a reset that was read', () => {

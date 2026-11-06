@@ -102,4 +102,80 @@ describe('UsageLimitsSection', () => {
     act(() => { useUsageLimits.setState({ summary: { warnPercent: 90, providers: [], paused: [] } }); });
     await waitFor(() => expect(level().value).toBe('90'));
   });
+
+  describe('races with another device', () => {
+    const sw = () => screen.getByRole('switch', { name: 'Push alert at the warning level' });
+    const deferred = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+    const broadcast = (warnPercent: number, pushOnWarn: boolean) => act(() => { useUsageLimits.setState({ summary: { warnPercent, pushOnWarn, providers: [], paused: [] } }); });
+
+    it('a delayed GET does not overwrite a newer broadcast (90 and push off beat 80 and push on)', async () => {
+      const get = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      vi.spyOn(api, 'getUsageLimitSettings').mockReturnValue(get.promise);
+      render(<UsageLimitsSection />);
+      broadcast(90, false);
+      await waitFor(() => expect(level().value).toBe('90'));
+      await waitFor(() => expect(sw().getAttribute('aria-checked')).toBe('false'));
+      await act(async () => { get.resolve({ warnPercent: 80, pushOnWarn: true }); });
+      expect(level().value).toBe('90');
+      expect(sw().getAttribute('aria-checked')).toBe('false');
+      // The next click steps from the newer value.
+      const put = vi.spyOn(api, 'setUsageLimitSettings').mockImplementation(async (p) => ({ warnPercent: p.warnPercent ?? 90, pushOnWarn: false }));
+      fireEvent.click(screen.getByLabelText('Raise the warning level'));
+      await waitFor(() => expect(put).toHaveBeenCalledWith({ warnPercent: 95 }));
+    });
+
+    it('a broadcast already in the store when Settings opens beats a GET that answers later with older values', async () => {
+      useUsageLimits.setState({ summary: { warnPercent: 90, pushOnWarn: false, providers: [], paused: [] } });
+      const get = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      vi.spyOn(api, 'getUsageLimitSettings').mockReturnValue(get.promise);
+      render(<UsageLimitsSection />);
+      await act(async () => { get.resolve({ warnPercent: 80, pushOnWarn: true }); });
+      expect(level().value).toBe('90');
+      expect(sw().getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('a PUT answered after a newer broadcast does not install its values', async () => {
+      const put = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      vi.spyOn(api, 'setUsageLimitSettings').mockReturnValue(put.promise);
+      render(<UsageLimitsSection />);
+      await waitFor(() => expect(level().value).toBe('80'));
+      fireEvent.click(screen.getByLabelText('Raise the warning level'));
+      await waitFor(() => expect(level().value).toBe('85'));
+      broadcast(95, false); // another device changed both while our PUT was in flight
+      await waitFor(() => expect(level().value).toBe('95'));
+      await act(async () => { put.resolve({ warnPercent: 85, pushOnWarn: true }); });
+      expect(level().value).toBe('95');
+      expect(sw().getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('a failed PUT after a newer broadcast does not roll back over it', async () => {
+      const put = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      vi.spyOn(api, 'setUsageLimitSettings').mockReturnValue(put.promise);
+      render(<UsageLimitsSection />);
+      await waitFor(() => expect(level().value).toBe('80'));
+      fireEvent.click(screen.getByLabelText('Raise the warning level'));
+      await waitFor(() => expect(level().value).toBe('85'));
+      broadcast(95, false);
+      await waitFor(() => expect(level().value).toBe('95'));
+      await act(async () => { put.reject(new Error('500')); });
+      expect(level().value).toBe('95');
+      expect(sw().getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('the first of two quick saves answering last does not undo the second', async () => {
+      const first = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      const second = deferred<{ warnPercent: number; pushOnWarn: boolean }>();
+      const put = vi.spyOn(api, 'setUsageLimitSettings').mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      render(<UsageLimitsSection />);
+      await waitFor(() => expect(level().value).toBe('80'));
+      fireEvent.click(screen.getByLabelText('Raise the warning level'));
+      await waitFor(() => expect(level().value).toBe('85'));
+      fireEvent.click(screen.getByLabelText('Raise the warning level'));
+      await waitFor(() => expect(level().value).toBe('90'));
+      expect(put).toHaveBeenCalledTimes(2);
+      await act(async () => { second.resolve({ warnPercent: 90, pushOnWarn: true }); });
+      await act(async () => { first.resolve({ warnPercent: 85, pushOnWarn: true }); });
+      expect(level().value).toBe('90');
+    });
+  });
 });
