@@ -10,6 +10,7 @@ import * as terminalsDb from '../db/terminals.js';
 import * as gaugeSettings from './gauge-settings.js';
 import { CHAT_ID } from './service.js';
 import type { LimitSnapshots, LimitWindows } from './snapshot.js';
+import type { LimitKind } from './detect.js';
 
 export const PROVIDERS = ['claude-code', 'codex'] as const;
 /** Windows that count toward the warning. Not `overage` (usage credit). Codex has the first two. */
@@ -19,6 +20,10 @@ const WINDOW_NAME: Record<string, string> = {
 };
 const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex' };
 const WEEKLY_KINDS = new Set(['weekly', 'fable', 'opus', 'sonnet']);
+/** The usage window each limit kind is about. `usage` (a limit the CLI did not name) has none: any counted window then counts. */
+const LIMITED_WINDOW: Partial<Record<LimitKind, string>> = {
+  session: 'five_hour', weekly: 'seven_day', opus: 'seven_day_opus', sonnet: 'seven_day_sonnet', fable: 'seven_day_overage_included',
+};
 const ALERTS_KEY = 'usage_limit_alerts';
 const MIN = 60_000;
 const DEFAULTS = {
@@ -119,14 +124,16 @@ export class UsageGauge {
   settings(): gaugeSettings.UsageLimitSettings { return gaugeSettings.get(this.d.db); }
 
   /** The current account's windows for one provider, percents rounded to integers. Null with no snapshot. */
-  private providerSummary(provider: string): (SummaryProvider & { account: string; figureAt: Record<string, number> }) | null {
+  private providerSummary(provider: string): (SummaryProvider & { account: string; figureAt: Record<string, number>; raw: Record<string, number | null> }) | null {
     const s = this.d.snapshots.get(provider, this.d.accountFor(provider));
     if (!s) return null;
     const windows: Record<string, SummaryWindow> = {};
+    const raw: Record<string, number | null> = {}; // the unrounded figures: 99.6 shows as 100 but is not at the limit
     for (const [type, w] of Object.entries(s.windows as LimitWindows)) {
+      raw[type] = w.usedPercent;
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt };
     }
-    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {} };
+    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw };
   }
 
   /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
@@ -146,9 +153,12 @@ export class UsageGauge {
     const s = this.providerSummary(r.provider);
     if (!s) return null;
     const now = this.now();
-    const figures = Object.entries(s.windows).filter(([type, w]) => COUNTED.has(type) && live(w, now));
-    // Any live window at the limit holds it, old reading or not.
-    if (figures.some(([, w]) => w.usedPercent! >= 100)) return null;
+    // The window the limit was about: only a reading of that window can clear it (another window under 100% says nothing).
+    // A limit the CLI did not name (kind usage) has no window, so any counted window counts, as before.
+    const named = LIMITED_WINDOW[r.kind];
+    const figures = Object.entries(s.windows).filter(([type, w]) => (named ? type === named : COUNTED.has(type)) && live(w, now));
+    // Any such live window at the limit holds it, old reading or not. Compared unrounded.
+    if (figures.some(([type]) => (s.raw[type] ?? 0) >= 100)) return null;
     // A new reading is a window whose own figure was read after the detection: a kept or carried-forward old figure is not one.
     const times = figures.map(([type]) => s.figureAt[type] ?? s.asOf).filter((at) => at > r.detected_at);
     return times.length ? Math.max(...times) : null;
@@ -187,7 +197,7 @@ export class UsageGauge {
     const providers: SummaryProvider[] = [];
     for (const p of PROVIDERS) {
       const s = this.providerSummary(p);
-      if (s) { const { account: _account, figureAt: _figureAt, ...rest } = s; providers.push(rest); }
+      if (s) { const { account: _account, figureAt: _figureAt, raw: _raw, ...rest } = s; providers.push(rest); }
     }
     const settings = this.settings();
     return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };

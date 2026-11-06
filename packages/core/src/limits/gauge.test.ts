@@ -121,7 +121,7 @@ describe('summary', () => {
 
   it('no real below-limit figure means unknown: an empty snapshot, only null percentages, or only windows past their reset', () => {
     thread('a');
-    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0 }); // kind usage: the window is unknown, any window counts
     clock = T0 + 5 * MIN;
     snaps.record('claude-code', account, {}, clock, undefined, true); // a snapshot with no windows
     expect(gauge.summary().paused[0].activeUntil).toBeNull();
@@ -152,14 +152,57 @@ describe('summary', () => {
     expect(gauge.summary().paused[0].activeUntil).toBe(clock);
   });
 
-  it('a carried old figure under 100% never clears by itself, only with a new real figure on some window', () => {
+  it('when the limited window is unknown (kind usage), a new real figure on any window clears it, an old carried one does not', () => {
     thread('a');
     snaps.record('claude-code', account, { five_hour: { usedPercent: 20, resetsAt: RESET } }, T0);
-    park('a', { resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN });
+    park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN });
     clock = T0 + 20 * MIN;
     // A new real figure arrives on the weekly window only: it is a genuine new reading under 100%.
     snaps.record('claude-code', account, { seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
     expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('99.6% is below the limit even though it displays as 100%; 100.0% is not', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 100, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = T0 + 2 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 99.6, resetsAt: RESET } }, clock);
+    expect(gauge.summary().providers[0].windows.five_hour.usedPercent).toBe(100); // shown rounded
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock); // but it is not at the limit
+  });
+
+  describe('a limit with no reset time clears only on the window that hit it', () => {
+    const KINDS: [string, string, string][] = [['session', 'five_hour', 'seven_day'], ['weekly', 'seven_day', 'five_hour'], ['opus', 'seven_day_opus', 'five_hour'], ['sonnet', 'seven_day_sonnet', 'five_hour'], ['fable', 'seven_day_overage_included', 'five_hour']];
+    it.each(KINDS)('%s limit: a fresh figure under 100%% on %s clears; on %s it does not', (kind, limited, other) => {
+      thread('a');
+      park('a', { kind: kind as any, resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { [other]: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull(); // another window's reading says nothing about this limit
+      clock = T0 + 6 * MIN;
+      snaps.record('claude-code', account, { [limited]: { usedPercent: null, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull(); // a blank update is not a reading
+      clock = T0 + 7 * MIN;
+      snaps.record('claude-code', account, { [limited]: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    });
+    it('the limited window still at the limit keeps it red, whatever the other windows say', () => {
+      thread('a');
+      park('a', { kind: 'opus', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { seven_day_opus: { usedPercent: 100, resetsAt: WEEK }, five_hour: { usedPercent: 3, resetsAt: RESET } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    });
+    it('kind usage (the window could not be named) keeps the any-window rule', () => {
+      thread('a');
+      park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { seven_day: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    });
   });
 
   it('figures from before the latest detection do not clear a renewed limit, only newer ones', () => {
