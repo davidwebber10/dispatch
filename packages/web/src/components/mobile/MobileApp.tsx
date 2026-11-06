@@ -106,28 +106,52 @@ export function MobileApp() {
 
   const project = projects.find((p) => p.id === projectId) ?? null;
 
+  // Every entry this screen pushes records how many steps it sits above the root, so "back to
+  // the root" is exact: a thread opened from the Threads view is ONE step up (no project entry
+  // between), one opened from a project is two.
+  const pushNav = (state: Record<string, unknown>, title: string, url: string) => {
+    const depth = ((history.state as { depth?: number } | null)?.depth ?? 0) + 1;
+    history.pushState({ ...state, depth }, title, url);
+  };
+  const toRoot = () => {
+    const depth = (history.state as { depth?: number } | null)?.depth ?? level;
+    if (depth > 0) history.go(-depth);
+  };
+  // The bottom bar's tabs. The Projects tab walks back one screen at a time from a thread
+  // (thread → its project → the list), unless the Threads view is showing, where it goes
+  // straight back to that list. Any other tab goes to the root with that tab showing.
+  const onTab = (key: typeof bottomTab) => {
+    if (key === 'projects' && bottomTab === 'projects' && level > 0) {
+      if (projectsView === 'threads') toRoot();
+      else history.back();
+      return;
+    }
+    setBottomTab(key);
+    toRoot();
+  };
+
   // Navigation is backed by the History API so the browser back button and the
   // iOS edge-swipe-back gesture move up the stack (projects ← project ← thread).
   const openProject = (id: string) => {
     useProjects.getState().setActive(id); setProjectId(id); setLevel(1);
     setHighlightThreadId(null); // opened fresh → no thread highlighted
-    history.pushState({ nav: 1, projectId: id }, '', href(`/p/${id}`));
+    pushNav({ nav: 1, projectId: id }, '', href(`/p/${id}`));
   };
   const openThread = (tabId: string) => {
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     setHighlightThreadId(tabId); // so backing out of THIS thread highlights its row (then fades)
-    history.pushState({ nav: 2, projectId, leaf: 'tab', tabId }, '', href(`/p/${projectId}/t/${tabId}`));
+    pushNav({ nav: 2, projectId, leaf: 'tab', tabId }, '', href(`/p/${projectId}/t/${tabId}`));
   };
   const openAgent = (id: string) => {
     useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2);
-    history.pushState({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', href(`/p/${projectId}/a/${id}`));
+    pushNav({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', href(`/p/${projectId}/a/${id}`));
   };
   // Opening an agent from the cross-project Agents tab: seed the project context
   // first (openAgent derives its URL from it), then jump straight to the agent.
   const openAgentFromList = (pid: string, scheduleId: string) => {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
-    history.pushState({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
+    pushNav({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
   };
   // Same pattern from the cross-project Threads view: seed the project, then jump
   // straight to the thread (back returns to the root, still on the Threads view).
@@ -135,13 +159,13 @@ export function MobileApp() {
     useProjects.getState().setActive(pid); setProjectId(pid);
     useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
     setHighlightThreadId(tabId);
-    history.pushState({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', href(`/p/${pid}/t/${tabId}`));
+    pushNav({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', href(`/p/${pid}/t/${tabId}`));
   };
   // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
   // so the entry only carries enough state for back/popstate to restore it.
   const openSettingsSection = (key: SettingsSectionKey) => {
     setSettingsKey(key); setLevel(1);
-    history.pushState({ nav: 1, settingsSection: key }, '', location.pathname);
+    pushNav({ nav: 1, settingsSection: key }, '', location.pathname);
   };
   const back = () => history.back();
 
@@ -185,11 +209,11 @@ export function MobileApp() {
     if (init.projectId) { useProjects.getState().setActive(init.projectId); void useTabs.getState().loadTabs(init.projectId); }
     if (init.leaf === 'tab' && init.tabId) { useAgentUI.getState().blur(); setLeafTabId(init.tabId); useTabs.getState().setActiveTab(init.tabId); }
     if (init.leaf === 'agent' && init.agentId) useAgentUI.getState().selectAgent(init.agentId);
-    history.replaceState({ nav: 0 }, '', href('/'));
-    if (init.level >= 1 && init.projectId) history.pushState({ nav: 1, projectId: init.projectId }, '', href(`/p/${init.projectId}`));
+    history.replaceState({ nav: 0, depth: 0 }, '', href('/'));
+    if (init.level >= 1 && init.projectId) pushNav({ nav: 1, projectId: init.projectId }, '', href(`/p/${init.projectId}`));
     if (init.level === 2 && init.projectId) {
       const url = init.leaf === 'agent' ? `/p/${init.projectId}/a/${init.agentId}` : `/p/${init.projectId}/t/${init.tabId}`;
-      history.pushState({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
+      pushNav({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
     }
     const onPop = (e: PopStateEvent) => {
       const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: SettingsSectionKey };
@@ -281,7 +305,7 @@ export function MobileApp() {
         )}
       </header>
       {/* Agents paused on a usage limit (#127): one line under the header, wraps to two. */}
-      <UsageBanner compact onOpenChat={() => { setBottomTab('chat'); if (level > 0) history.back(); }} />
+      <UsageBanner compact onOpenChat={() => onTab('chat')} />
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
         <div style={{ display: 'flex', width: '100%', height: '100%', transform: `translateX(-${level * 100}%)`, transition: 'transform .28s cubic-bezier(.4,0,.2,1)' }}>
@@ -355,7 +379,7 @@ export function MobileApp() {
           </div>
 
           {/* Level 2 — the thread terminal or the agent dashboard */}
-          <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', ['--composer-safe-bottom' as string]: '0px' }}>
             {leaf === 'tab' && leafTabId && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
               <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 8, padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus />
@@ -369,17 +393,17 @@ export function MobileApp() {
       </div>
 
       {/* Bottom tab bar — Projects / Chat / Analytics / Settings. Automations
-          is hidden on mobile (desktop only). Visible at the root AND
-          inside a project (level 1); only the thread/agent screen (level 2)
-          reclaims the space. Tapping a tab from a project pops back to the root. */}
-      {level < 2 && (
+          is hidden on mobile (desktop only). Visible on every screen, a thread or
+          agent included (2026-11-05: the thread composer lost its key row, which
+          paid for the space). Tapping a tab pops back to the root. */}
+      {(
         <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
               whichever list it opens to. */}
           {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? TerminalWindow : Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
             const on = bottomTab === key;
             return (
-              <button key={key} onClick={() => { setBottomTab(key); if (level > 0) history.back(); }}
+              <button key={key} onClick={() => onTab(key)}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 0 6px', background: 'none', border: 'none', cursor: 'pointer', color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
                 <Icon size={23} weight={on ? 'fill' : 'regular'} />
                 <span style={{ fontSize: 11, fontWeight: on ? 600 : 500 }}>{label}</span>

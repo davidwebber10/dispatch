@@ -4,8 +4,7 @@ import { Composer } from './EndlessColumn';
 import { useEndless } from '../../stores/endless';
 import { useSettings } from '../../stores/settings';
 
-// The Chat composer's left control is a + that opens up to Add file / Dictate, like the
-// thread composers (it used to be a bare paperclip).
+// The Chat composer is the shared PillComposer: + (Project, Add file) | text | mic | send.
 
 let saved: ReturnType<typeof useEndless.getState>;
 beforeEach(() => {
@@ -19,7 +18,7 @@ afterEach(() => {
 });
 
 describe('Chat composer: + menu', () => {
-  it('opens to Add file and Dictate; Add file opens the file picker', () => {
+  it('the + opens Add file, which opens the file picker', () => {
     render(<Composer />);
     expect(screen.queryByRole('button', { name: 'Attach a file' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'More input options' }));
@@ -29,11 +28,14 @@ describe('Chat composer: + menu', () => {
     expect(click).toHaveBeenCalled();
   });
 
-  it('Dictate is off, with a pointer to Settings, until transcription is set up', () => {
+  it('the mic sits on the right, greyed out with a pointer to Settings until transcription is set up', () => {
     useSettings.setState({ sttProvider: '', sttModel: '', sttSecretName: '' } as never);
     render(<Composer />);
+    const mic = screen.getByRole('button', { name: 'Dictate' });
+    expect(mic).toBeDisabled();
+    expect(mic.getAttribute('title')).toContain('Settings → Transcription');
+    // Dictate is no longer in the + menu: the mic is its one place.
     fireEvent.click(screen.getByRole('button', { name: 'More input options' }));
-    expect(screen.getByRole('button', { name: /Dictate/ })).toBeDisabled();
-    expect(screen.getByText('Set up in Settings → Transcription')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button', { name: /Dictate/ })).toHaveLength(1);
   });
 });

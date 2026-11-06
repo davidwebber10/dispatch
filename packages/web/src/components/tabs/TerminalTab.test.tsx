@@ -1,4 +1,4 @@
-import { render, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, waitFor, act, fireEvent, screen, within } from '@testing-library/react';
 import { vi, test, expect, beforeEach, afterEach, type Mock } from 'vitest';
 
 // A minimal fake xterm Terminal that models just enough async behaviour to make
@@ -140,6 +140,13 @@ const meta = (startOffset: number, over: Partial<FakeMeta> = {}): FakeMeta =>
   ({ startOffset, totalWritten: 10_000_000, complete: false, ...over });
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** The phone composer's + menu, then its Keys sheet (2026-11-05: the key row moved there). */
+async function openKeys() {
+  fireEvent.click(await screen.findByRole('button', { name: 'More input options' }));
+  fireEvent.click(screen.getByRole('button', { name: /Keys/ }));
+  return screen.getByRole('dialog', { name: 'Keys' });
+}
 
 beforeEach(() => {
   instances.length = 0;
@@ -305,6 +312,7 @@ test('the "Aa" key turns the composer\'s spelling help off, and leaves capitalis
   const { getByPlaceholderText, getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
 
+  fireEvent.click(getByLabelText('More input options')); // the toggle lives in the + menu now
   const toggle = getByLabelText('Autocorrect');
   expect(toggle.getAttribute('aria-pressed')).toBe('true');
 
@@ -319,19 +327,50 @@ test('the "Aa" key turns the composer\'s spelling help off, and leaves capitalis
   expect(useSettings.getState().ptyAutocorrect).toBe(false);
 });
 
-test('the soft-key row scrolls horizontally instead of squeezing its keys', async () => {
+test('the mobile composer wraps and grows with its text up to half the screen, and Return sends', async () => {
   isMobileMock.mockReturnValue(true);
-  const { factory } = makeSocketFactory();
-
-  const { getByLabelText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  const { factory, created } = makeSocketFactory();
+  const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  const box = getByPlaceholderText('Type a message or command…') as HTMLTextAreaElement;
+  expect(box.tagName).toBe('TEXTAREA');
 
-  const row = getByLabelText('Autocorrect').parentElement!;
-  expect(row.style.overflowX).toBe('auto');
-  expect(row.style.flexWrap).toBe('nowrap');
-  // Each key holds its own width — `flex: 1 1 0` would divide the row evenly and
-  // shrink every key below a hittable size once the count grows.
-  expect(getByLabelText('Autocorrect').style.flex).toBe('0 0 auto');
+  Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+  let content = 120;
+  Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => content });
+  act(() => { fireEvent.change(box, { target: { value: 'a few wrapped lines' } }); });
+  expect(box.style.height).toBe('120px');
+  content = 2000; // far past half the screen: capped, and the box scrolls
+  act(() => { fireEvent.change(box, { target: { value: 'a very long message '.repeat(80) } }); });
+  expect(box.style.height).toBe('400px');
+  expect(box.style.overflowY).toBe('auto');
+
+  act(() => { fireEvent.keyDown(box, { key: 'Enter', shiftKey: true }); });
+  expect(created[0].send).not.toHaveBeenCalled();
+  act(() => { fireEvent.keyDown(box, { key: 'Enter' }); });
+  expect(created[0].send).toHaveBeenCalledWith('a very long message '.repeat(80));
+  expect(box.value).toBe('');
+});
+
+test('the keys live in a sheet behind the +: no always-on row, and Clear input empties the prompt', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  expect(screen.queryByTitle('Escape')).toBeNull(); // no key row under the terminal
+
+  const sheet = await openKeys();
+  for (const title of ['Escape', 'Enter', 'Up', 'Down', 'Left', 'Right', 'Tab', 'Clear the typed input']) {
+    expect(within(sheet).getByTitle(title)).toBeInTheDocument();
+  }
+  fireEvent.click(within(sheet).getByTitle('Clear the typed input'));
+  // End of line, cut the line, join the line above; repeated so a multi-line prompt empties too.
+  expect(created[0].send).toHaveBeenCalledWith('\x05\x15\x7f'.repeat(30));
+  fireEvent.click(within(sheet).getByTitle('Escape'));
+  expect(created[0].send).toHaveBeenLastCalledWith('\x1b');
+  expect(screen.getByRole('dialog', { name: 'Keys' })).toBeInTheDocument(); // stays open between taps
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
+  expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
 });
 
 // ---- scroll-to-top rebuild: triggers once, at the next step ----
@@ -1154,7 +1193,10 @@ test('a Grok thread on the normal buffer still pages the PTY (it is a TUI either
   const { factory, created } = makeSocketFactory();
   const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(created).toHaveLength(1));
-  await waitFor(() => expect(document.body.textContent).toContain('PgUp'));
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  const sheet = await openKeys();
+  await waitFor(() => expect(within(sheet).getByTitle('Page up')).toBeInTheDocument()); // the grok keys: meta has loaded
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Done' }));
 
   instances[0].buffer.active.type = 'normal';
   instances[0].buffer.active.baseY = 40;
@@ -1166,13 +1208,15 @@ test('a Grok thread on the normal buffer still pages the PTY (it is a TUI either
   expect(instances[0].scrolledLines).toBe(0);
 });
 
-test('a Grok thread offers Page Up / Page Down on the mobile key row', async () => {
+test('a Grok thread offers Page Up / Page Down in the Keys sheet', async () => {
   isMobileMock.mockReturnValue(true);
   vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'grok', workingDir: '/p/x', pid: 1, status: 'working' } as any);
   const { factory } = makeSocketFactory();
-  const { findByTitle } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
-  expect(await findByTitle('Page up')).toBeTruthy();
-  expect(await findByTitle('Page down')).toBeTruthy();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  const sheet = await openKeys();
+  expect(await within(sheet).findByTitle('Page up')).toBeTruthy();
+  expect(within(sheet).getByTitle('Page down')).toBeTruthy();
 });
 
 test('returning to the foreground refits and notifies the PTY so a TUI redraws', async () => {

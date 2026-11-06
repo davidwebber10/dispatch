@@ -187,3 +187,36 @@ describe('MobileApp bottom tab — follows the Projects ⇄ Threads switch', () 
     localStorage.removeItem('dispatch:mobileProjectsView');
   });
 });
+
+describe('MobileApp bottom tab bar on a thread', () => {
+  const tab = (name: string) => screen.getAllByRole('button').find((b) => b.textContent === name)!;
+
+  it('stays on the thread screen, and another tab goes all the way back to the root', () => {
+    seedThreadAt('/p/s1/t/t1', { type: 'shell', config: {} });
+    const go = vi.spyOn(history, 'go').mockImplementation(() => {});
+    render(<MobileApp />);
+    fireEvent.click(tab('Chat'));
+    expect(go).toHaveBeenCalledWith(-2); // thread and project entries above the root
+  });
+
+  it('Projects walks back one screen at a time: thread → its project → the list', () => {
+    localStorage.removeItem('dispatch:mobileProjectsView');
+    seedThreadAt('/p/s1/t/t1', { type: 'shell', config: {} });
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    render(<MobileApp />);
+    fireEvent.click(tab('Projects'));
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+
+  it('with the Threads view on, the tab goes straight back to the thread list', () => {
+    localStorage.setItem('dispatch:mobileProjectsView', 'threads');
+    seedThreadAt('/p/s1/t/t1', { type: 'shell', config: {} });
+    const go = vi.spyOn(history, 'go').mockImplementation(() => {});
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    render(<MobileApp />);
+    fireEvent.click(tab('Threads'));
+    expect(go).toHaveBeenCalledWith(-2);
+    expect(back).not.toHaveBeenCalled();
+    localStorage.removeItem('dispatch:mobileProjectsView');
+  });
+});

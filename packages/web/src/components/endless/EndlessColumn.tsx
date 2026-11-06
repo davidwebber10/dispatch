@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { PaperPlaneRight, Rows, Stop, X } from '@phosphor-icons/react';
+import { Rows, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
 import { useDraft, appendToDraft } from '../../hooks/useDraft';
@@ -11,13 +11,9 @@ import { WorkingIndicator } from '../WorkingIndicator';
 import { ImageViewerHost } from '../ChatImage';
 import { EndlessRows, PendingUserRow, FileChip, rowKeyOf } from './EndlessMessageRow';
 import { ProjectMenuSection } from './ProjectPicker';
-import { modLabel } from '../../lib/hostkeys';
 
-/** The Control Plane composer's 32px send / stop key. */
-const sendKey: React.CSSProperties = { flex: 'none', width: 32, height: 32, padding: 0, borderRadius: 8, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' };
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
-import { InputActionsMenu } from '../dictation/InputActionsMenu';
-import { DictationControl } from '../dictation/DictationControl';
+import { PillComposer } from '../composer/PillComposer';
 import { useDictation } from '../../hooks/useDictation';
 import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
@@ -207,9 +203,6 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
       }
     }
   };
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); }
-  };
   // Picked, dropped and pasted files all take this path. An image the model can see becomes an
   // image block; a document Chat takes (PDF, TXT, MD, CSV, JSON) is sent as base64 for the daemon
   // to save and name by path. Anything else is named in a notice, never dropped without a word.
@@ -272,20 +265,6 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     setDragActive(false);
     if (e.dataTransfer.files?.length) void addFiles(e.dataTransfer.files);
   };
-  // Grow with the text up to 200px, then scroll. Runs on every text change, so a paste, a
-  // draft restore and the clear after a send all resize the box.
-  const fit = () => {
-    const el = taRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  };
-  useLayoutEffect(fit, [text]);
-  // A resize re-wraps the text, so it changes the height with the text unchanged.
-  useEffect(() => {
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
 
   return (
     <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
@@ -326,43 +305,24 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
         {attachNotice && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
-        {/* The Control Plane composer's box (overseer/components/Composer.tsx): one rounded, elevated
-            row of + | textarea | send, then a hint row. The + opens up to Project, Add file and
-            Dictate on desktop and phone alike; Chat keeps its own send, attachment and stop logic. */}
-        <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '7px 8px 7px 9px' }}>
-          <InputActionsMenu
-            onAddFile={() => fileRef.current?.click()}
-            onDictate={() => void dictation.start()}
-            dictateDisabled={!sttConfigured}
-            dictateHint="Set up in Settings → Transcription"
-            triggerStyle={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: 'var(--color-hover, rgba(255,255,255,.05))' }}
-            extra={(close) => <ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} />}
-          />
-          <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
-          {dictation.state !== 'idle' ? (
-            <div style={{ flex: 1, minWidth: 0 }}><DictationControl dictation={dictation} /></div>
-          ) : (
-          <textarea ref={taRef} aria-label="Message" value={text} rows={1} enterKeyHint="send" onPaste={onPaste} placeholder="Message Dispatch…"
-            onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
-            style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '7px 2px', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.5, font: 'inherit' }} />
-          )}
-          {stopMode ? (
-            <button type="button" aria-label="Stop" title="Stop" onClick={stop}
-              style={{ ...sendKey, background: 'color-mix(in srgb, var(--color-status-red) 20%, transparent)', color: 'var(--color-status-red)', cursor: 'pointer' }}>
-              <Stop size={16} weight="fill" />
-            </button>
-          ) : (
-            <button type="button" aria-label="Send" title="Send" disabled={!canSend} onClick={() => void submit()}
-              style={{ ...sendKey, background: canSend ? 'var(--color-accent)' : 'var(--color-pane)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default' }}>
-              <PaperPlaneRight size={16} weight="fill" />
-            </button>
-          )}
-        </div>
-        {!mobile && (
-          <div style={{ display: 'flex', marginTop: -2 }}>
-            <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
-          </div>
-        )}
+        {/* The shared composer (composer/PillComposer.tsx). The + holds Project and Add file. */}
+        <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
+        <PillComposer
+          value={text}
+          onChange={setText}
+          onSend={() => void submit()}
+          canSend={canSend}
+          stopMode={stopMode}
+          onStop={stop}
+          placeholder="Message Dispatch…"
+          onAddFile={() => fileRef.current?.click()}
+          menuExtra={(close) => <ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} />}
+          dictation={dictation}
+          sttConfigured={sttConfigured}
+          textareaRef={taRef}
+          textareaProps={{ 'aria-label': 'Message', onPaste }}
+          mobile={mobile}
+        />
       </div>
     </div>
   );

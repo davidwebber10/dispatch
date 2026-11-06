@@ -1,17 +1,16 @@
 // Overseer view — directive composer (spec §6 "Composer", §7, §9).
 //
-// Layout: outer container (flex:none, border-top) > input row ("+" | textarea | send)
+// Layout: outer container (flex:none, border-top) > the shared PillComposer (+ | text | mic | ↑)
 //         + hint row (right-aligned "⌘↵ send" / "Ctrl+↵ send" per host OS, desktop only).
 // Draft text: owned locally via useDraft(coordinatorProject) — NOT a store field, so
 //   each project's Dispatch tab keeps its own draft (mirrors the agent ChatView's
 //   per-terminal draft). Store: composerImages, sendDirective(text), openDelegate.
-// Interactions: ⌘/Ctrl+Enter → sendDirective + clear draft; autosizing textarea (rows 1, max 120px).
+// Interactions: Enter → sendDirective + clear draft; the box grows to half the window, then scrolls.
 // A click on the pinned decision card appends its answer to the draft (store.addToDraft): the box
 //   takes the focus and a hint under it says what was added; the user presses Enter to send.
 // Mobile: shorter placeholder ("Fire a directive…"); hint row is omitted.
 
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { Paperclip } from '@phosphor-icons/react';
 import { Icon } from '../atoms';
 import { useOverseer, useComposerImages, coordinatorMatchesView } from '../store';
 import { useProjects } from '../../../stores/projects';
@@ -19,8 +18,8 @@ import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { api } from '../../../api/client';
 import { useDictation } from '../../../hooks/useDictation';
-import { DictationControl } from '../../dictation/DictationControl';
-import { InputActionsMenu } from '../../dictation/InputActionsMenu';
+import { PillComposer } from '../../composer/PillComposer';
+import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
 import { modLabel } from '../../../lib/hostkeys';
@@ -132,81 +131,37 @@ export function Composer() {
     textareaRef.current?.focus();
     useOverseer.getState().draftFocused();
   }, [draftHint]);
-  const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
 
   // Mirror the agent ChatView attach UX: upload each pick to the project inbox, then
   // send an IMAGE on as a real base64 block buffered for the next directive (the model
   // SEES it); a non-image appends a path-reference line to the composer text.
+  // Each upload shows a progress tile with a cancel (composer/UploadTray.tsx).
+  const uploader = useInboxUploads(coordinatorProject, async (res, f) => {
+    if (MODEL_IMAGE_MIME.has(f.type)) {
+      const data = await fileToBase64(f);
+      addComposerImage({ type: 'image', source: { type: 'base64', media_type: f.type, data } });
+    } else {
+      const cur = composerRef.current;
+      const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+      composerRef.current = next;
+      setComposer(next);
+    }
+  });
+  const startUpload = uploader.start;
   const attachFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || !files.length || !coordinatorProject) return;
-      for (const f of Array.from(files)) {
-        setUploadNote(`Uploading ${f.name}…`);
-        try {
-          const res = await api.uploadInbox(coordinatorProject, f);
-          if (MODEL_IMAGE_MIME.has(f.type)) {
-            const data = await fileToBase64(f);
-            addComposerImage({ type: 'image', source: { type: 'base64', media_type: f.type, data } });
-            setUploadNote(`Attached ${f.name}`);
-          } else {
-            const cur = composerRef.current;
-            const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
-            composerRef.current = next;
-            setComposer(next);
-            setUploadNote(`Attached ${f.name}`);
-          }
-        } catch {
-          setUploadNote(`Upload failed: ${f.name}`);
-        }
-      }
-      setTimeout(() => setUploadNote(''), 2500);
+      for (const f of Array.from(files)) startUpload(f);
     },
-    [coordinatorProject, addComposerImage, setComposer],
+    [coordinatorProject, startUpload],
   );
 
-  // Auto-size: collapse to measure, then expand to content (max-height CSS caps at 120px).
-  const autosize = useCallback((el: HTMLTextAreaElement) => {
-    el.style.height = 'auto';
-    el.style.height = el.scrollHeight + 'px';
-  }, []);
-
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      autosize(e.currentTarget);
-      setComposer(e.currentTarget.value);
-    },
-    [autosize, setComposer],
-  );
-
-  const resetHeight = useCallback(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      // Don't submit mid-IME-composition: CJK candidate selection commits with Enter, so
-      // firing the directive there would swallow the composition (important for CJK input).
-      if (e.nativeEvent.isComposing) return;
-      // Enter (without Shift) submits — this also covers the ⌘/Ctrl+Enter hint; Shift+Enter
-      // inserts a newline. Mirrors the agent ChatView composer's submit behavior.
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendDirective(composer);
-        clearComposer();
-        resetHeight();
-      }
-    },
-    [sendDirective, composer, clearComposer, resetHeight],
-  );
-
+  // Return and the ↑ both land here (PillComposer handles the keys, Shift+Return and IME).
   const handleSend = useCallback(() => {
     sendDirective(composer);
     clearComposer();
-    resetHeight();
-  }, [sendDirective, composer, clearComposer, resetHeight]);
+  }, [sendDirective, composer, clearComposer]);
 
   // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
   // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
@@ -247,11 +202,10 @@ export function Composer() {
       }}
     >
       {/* drag cue / upload status text (drag cue takes precedence while dragging) */}
-      {(dragActive || uploadNote) && (
-        <div style={{ maxWidth: 1200, margin: '0 auto 6px', fontSize: 11, color: dragActive ? 'var(--acc)' : 'var(--tt)' }}>
-          {dragActive ? 'Drop image to attach' : uploadNote}
-        </div>
+      {dragActive && (
+        <div style={{ maxWidth: 1200, margin: '0 auto 6px', fontSize: 11, color: 'var(--acc)' }}>Drop image to attach</div>
       )}
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}><UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} /></div>
 
       {/* staged image thumbnails — each removable via its × (hidden behind the drag cue) */}
       {!dragActive && imageCount > 0 && (
@@ -268,91 +222,32 @@ export function Composer() {
         </div>
       )}
 
-      {/* input row (border + tint shift to accent while a file is dragged over). Capped +
-          centered to line up with the message column above (Stream.tsx) — same convention
-          as the agent ChatView's composer (packages/web/src/components/tabs/chat/ChatView.tsx). */}
-      <div
-        style={{
-          maxWidth: 1200,
-          margin: '0 auto',
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 8,
-          background: dragActive ? 'color-mix(in srgb, var(--acc) 10%, var(--elev))' : 'var(--elev)',
-          border: dragActive ? '1px solid var(--acc)' : '1px solid var(--border)',
-          borderRadius: 12,
-          padding: '7px 8px 7px 9px',
-          transition: 'border-color .12s, background .12s',
-        }}
-      >
-        {/* attach → upload to inbox; images ride along with the next directive as a real block.
-            Mobile: paperclip becomes a "+" flyout (Add file / Dictate). Desktop: unchanged. */}
-        {isMobile ? (
-          <InputActionsMenu
-            onAddFile={() => fileInputRef.current?.click()}
-            onDictate={() => void dictation.start()}
-            dictateDisabled={!sttConfigured}
-            dictateHint="Set up in Settings → Transcription"
-            triggerStyle={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: 'var(--hover, rgba(255,255,255,.05))' }}
-          />
-        ) : (
-          <label
-            title="Attach file"
-            style={{ flex: 'none', width: 32, height: 32, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--hover, rgba(255,255,255,.05))', color: 'var(--ts)' }}
-          >
-            <Paperclip size={16} />
-            <input type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
-          </label>
-        )}
-        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
-
-        {/* autosizing textarea — swapped for the recording UI while dictating (mobile) */}
-        {isMobile && dictation.state !== 'idle' ? (
-          <DictationControl dictation={dictation} />
-        ) : (
-          <textarea
-            ref={textareaRef}
-            rows={1}
+      {/* The shared composer (composer/PillComposer.tsx): + | text | mic | ↑. Images ride along
+          with the next directive as real blocks; other files go to the inbox and add a path line.
+          Capped and centred to line up with the message column above (Stream.tsx). The session
+          menu (⋯) sits beside it on desktop; on mobile OverseerMobile.tsx puts it in the header. */}
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <PillComposer
             value={composer}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onPaste={onPaste}
+            onChange={setComposer}
+            onSend={handleSend}
+            /* Not while an upload runs: its image would miss this directive. */
+            canSend={canSend && !uploader.busy}
+            stopMode={stopMode}
+            onStop={doStop}
             placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Control Plane…'}
-            enterKeyHint="send"
-
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none', color: 'var(--tp)', fontSize: 13.5, lineHeight: 1.5, maxHeight: 120, padding: '7px 2px', fontFamily: 'inherit', overflow: 'auto' }}
+            onAddFile={() => fileInputRef.current?.click()}
+            dictation={dictation}
+            sttConfigured={sttConfigured}
+            textareaRef={textareaRef}
+            textareaProps={{ onPaste }}
+            dragActive={dragActive}
+            mobile={isMobile}
+            sendLabel="Send directive"
           />
-        )}
-
-        {/* send → sendDirective; over an empty composer mid-turn the key is a STOP
-            (red-tinted so an active brake never reads as a dead Send) — parity with
-            the agent ChatView composer. Disabled-grey when there is nothing to send. */}
-        <button
-          onClick={stopMode ? doStop : handleSend}
-          disabled={!stopMode && !canSend}
-          title={stopMode ? 'Stop' : 'Send directive'}
-          aria-label={stopMode ? 'Stop' : 'Send directive'}
-          style={{
-            flex: 'none',
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            background: stopMode ? 'color-mix(in srgb, var(--color-status-red) 20%, transparent)' : canSend ? 'var(--acc)' : 'var(--pane)',
-            color: stopMode ? 'var(--color-status-red)' : canSend ? '#06140B' : 'var(--tt)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: stopMode || canSend ? 'pointer' : 'default',
-            border: 'none',
-            transition: 'background .15s',
-          }}
-        >
-          <Icon name={stopMode ? 'ph-stop' : 'ph-paper-plane-right'} weight="fill" size={16} />
-        </button>
-        {/* session menu (⋯) — Restart / New session / Previous sessions. Opens upward:
-            the composer sits at the bottom of the pane. Desktop only — on mobile,
-            OverseerMobile.tsx already mounts the menu in its header, so mounting it
-            here too would show it twice. */}
+        </div>
         {showSessionMenu && !isMobile && (
           <CoordinatorMenu terminalId={coordinatorId} sessionId={coordinatorProject} scheme="scoped" direction="up" />
         )}

@@ -300,6 +300,29 @@ export const api = {
     return (await res.json()) as InboxUpload;
   },
 
+  /**
+   * uploadInbox with progress and a cancel (2026-11-05: the composers' upload tray). XHR, not
+   * fetch: fetch reports no upload progress. Same request, cookies included (same origin).
+   * `abort()` rejects the promise with an AbortError.
+   */
+  uploadInboxTracked: (sessionId: string, file: File, onProgress: (fraction: number) => void): { promise: Promise<InboxUpload>; abort: () => void } => {
+    const xhr = new XMLHttpRequest();
+    const promise = new Promise<InboxUpload>((resolve, reject) => {
+      xhr.open('POST', apiPath(`/api/sessions/${sessionId}/files/inbox`));
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(`upload failed: ${xhr.status}`)); return; }
+        try { resolve(JSON.parse(xhr.responseText) as InboxUpload); } catch { reject(new Error('upload failed: bad response')); }
+      };
+      xhr.onerror = () => reject(new Error('upload failed: network'));
+      xhr.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'));
+      const fd = new FormData();
+      fd.append('file', file);
+      xhr.send(fd);
+    });
+    return { promise, abort: () => xhr.abort() };
+  },
+
   // Voice dictation — upload recorded audio; the daemon resolves the key + calls the provider.
   transcribe: async (
     blob: Blob,

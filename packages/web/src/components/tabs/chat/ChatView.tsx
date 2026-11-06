@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { ArrowUp, CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
+import { CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
 import type { ConvItem, PermissionQuestion } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
@@ -17,8 +17,8 @@ import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useSettings, useDispatchName } from '../../../stores/settings';
 import { useDictation } from '../../../hooks/useDictation';
-import { DictationControl } from '../../dictation/DictationControl';
-import { InputActionsMenu } from '../../dictation/InputActionsMenu';
+import { PillComposer } from '../../composer/PillComposer';
+import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { InsightText } from '../../InsightText';
 import { ThreadDocsContext, useThreadDocs, useThreadDocChips } from '../../threadDocs';
 import { DocViewer } from '../../endless/DocViewer';
@@ -135,7 +135,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // Mirror the draft in a ref so the async upload loop appends to the latest value
   // (across awaits / multiple files) without clobbering what's already there.
   const draftRef = useRef(draft); draftRef.current = draft;
-  const [uploadNote, setUploadNote] = useState('');
   const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
   // Images picked / dropped / PASTED are STAGED here as real base64 content blocks and ride
   // out with the next doSend() as ONE turn — instead of each firing its own message the moment
@@ -167,7 +166,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       send(v);
     }
     clearDraft();
-    requestAnimationFrame(() => { if (taRef.current) taRef.current.style.height = 'auto'; });
   }
 
   // Upload each picked file to the project inbox. An IMAGE is then STAGED as a REAL base64
@@ -175,29 +173,22 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // turn — and it echoes back + renders inline via the foundation's parser. A non-image keeps
   // the path-reference line in the draft so the user sends the path alongside their message
   // (the agent can Read it).
+  // Each upload shows a progress tile with a cancel (composer/UploadTray.tsx).
+  const uploader = useInboxUploads(sessionId, async (res, f) => {
+    if (MODEL_IMAGE_MIME.has(f.type)) {
+      const data = await fileToBase64(f);
+      const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
+      setStagedImages((prev) => [...prev, block]);
+    } else {
+      const cur = draftRef.current;
+      const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
+      draftRef.current = next;
+      setDraft(next);
+    }
+  });
   async function attachFiles(files: FileList | null) {
     if (!files || !files.length || !sessionId) return;
-    for (const f of Array.from(files)) {
-      setUploadNote(`Uploading ${f.name}…`);
-      try {
-        const res = await api.uploadInbox(sessionId, f);
-        if (MODEL_IMAGE_MIME.has(f.type)) {
-          const data = await fileToBase64(f);
-          const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
-          setStagedImages((prev) => [...prev, block]);
-          setUploadNote(`Attached ${f.name}`);
-        } else {
-          const cur = draftRef.current;
-          const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
-          draftRef.current = next;
-          setDraft(next);
-          setUploadNote(`Attached ${f.name}`);
-        }
-      } catch {
-        setUploadNote(`Upload failed: ${f.name}`);
-      }
-    }
-    setTimeout(() => setUploadNote(''), 2500);
+    for (const f of Array.from(files)) uploader.start(f);
   }
 
   // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
@@ -248,8 +239,6 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   }
   // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
   // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
-  const keySize = isMobile ? 44 : 34;
-  const taPad = Math.max(6, (keySize - 22) / 2); // center the 22px text line against the keys
 
   // Paint-settle gate (back-port of the Control Plane Stream's reveal latch): the scroller
   // stays visibility:hidden until the open/reconnect replay burst settles, so the reader
@@ -390,13 +379,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         onDragEnter={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, env(safe-area-inset-bottom))' }}
+        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}
       >
-        {(dragActive || uploadNote) && (
-          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: dragActive ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>
-            {dragActive ? 'Drop image to attach' : uploadNote}
-          </div>
+        {dragActive && (
+          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-accent)' }}>Drop image to attach</div>
         )}
+        <div style={{ maxWidth: 768, margin: '0 auto' }}><UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} /></div>
         {/* Staged image thumbnails — each removable via its ×; they send with the next message.
             Hidden behind the drag cue so the two don't fight for the same strip. */}
         {!dragActive && stagedImages.length > 0 && (
@@ -412,77 +400,28 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             )}
           </div>
         )}
-        {/* Composer: the pre-redesign single-row layout, kept by David's explicit call
-            ("I like the old composer but I like the new button as an arrow") — only the
-            send glyph adopted the redesign's ↑. */}
-        <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', alignItems: 'flex-end', gap: 8, background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)', border: dragActive ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', borderRadius: 12, padding: '8px 8px 8px 8px', transition: 'border-color .12s, background .12s' }}>
-          {isMobile ? (
-            <InputActionsMenu
-              onAddFile={() => fileInputRef.current?.click()}
-              onDictate={() => void dictation.start()}
-              dictateDisabled={!sttConfigured}
-              dictateHint="Set up in Settings → Transcription"
-              triggerStyle={{ width: keySize, height: keySize, borderRadius: 9, border: 'none', background: 'var(--color-hover)' }}
-            />
-          ) : (
-            <label
-              title="Attach file"
-              style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'var(--color-hover)', color: 'var(--color-text-secondary)' }}
-            >
-              <Paperclip size={17} />
-              <input
-                type="file"
-                multiple
-                style={{ display: 'none' }}
-                onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }}
-              />
-            </label>
-          )}
-          {/* hidden input the mobile + menu triggers (routes through the same attachFiles) */}
-          <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
-          {isMobile && dictation.state !== 'idle' ? (
-            <DictationControl dictation={dictation} />
-          ) : (
-            <>
-          <textarea
-            ref={taRef}
+        {/* The shared composer (composer/PillComposer.tsx): + | text | mic | ↑, on desktop and phone. */}
+        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
+        <div style={{ maxWidth: 768, margin: '0 auto' }}>
+          <PillComposer
             value={draft}
-            onChange={(e) => { setDraft(e.target.value); const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 180) + 'px'; }}
-            onKeyDown={(e) => {
-              // Don't submit mid-IME-composition: CJK candidate selection commits with Enter,
-              // and firing the send there would swallow the composition (Control Plane parity).
-              if (e.nativeEvent.isComposing) return;
-              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-            }}
-            onPaste={onPaste}
+            onChange={setDraft}
+            onSend={doSend}
+            /* Not while an upload runs: its image would miss this message. */
+            canSend={canSend && !uploader.busy}
+            stopMode={stopMode}
+            onStop={doStop}
             placeholder="Message…"
-            rows={1}
-            /* Prose only — the Pretty composer never carries shell input, so spelling
-               help is always on here and gets no toggle. autoCapitalize stays off so a
-               path or a command name pasted mid-message is not altered. */
-            autoCapitalize="off" autoCorrect="on" spellCheck
-            /* iOS renders the return key as a blue Send action key (Enter already sends
-               here — the hint makes the keyboard say so). */
-            enterKeyHint="send"
-            /* One-line box is 22px line + 6px padding = 34px, matching the attach/send
-               keys. Without this the UA textarea is shorter than the keys and flex-end
-               drops the placeholder below their optical center. */
-            style={{ flex: 1, resize: 'none', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', font: '400 15px var(--font-sans)', lineHeight: '22px', maxHeight: 180, minHeight: keySize, padding: `${taPad}px 4px`, margin: 0, overflowY: 'auto' }}
+            onAddFile={() => fileInputRef.current?.click()}
+            dictation={dictation}
+            sttConfigured={sttConfigured}
+            textareaRef={taRef}
+            /* Prose only, so spelling help is on. autoCapitalize stays off so a path or a
+               command name pasted mid-message is not altered. */
+            textareaProps={{ onPaste, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
+            dragActive={dragActive}
+            mobile={isMobile}
           />
-          <button
-            onClick={stopMode ? doStop : doSend}
-            disabled={!stopMode && !canSend}
-            title={stopMode ? 'Stop' : 'Send'}
-            aria-label={stopMode ? 'Stop' : 'Send'}
-            /* Stop is red-tinted rather than reusing the disabled key's grey, so an ACTIVE
-               brake never reads as a dead Send. padding:0 is load-bearing on a fixed-width
-               icon button — see plusBtn in sidebar/ProjectCard.tsx. */
-            style={{ flexShrink: 0, width: keySize, height: keySize, padding: 0, borderRadius: 9, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (stopMode || canSend) ? 'pointer' : 'default', background: stopMode ? 'color-mix(in srgb, var(--color-status-red) 20%, transparent)' : canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: stopMode ? 'var(--color-status-red)' : canSend ? '#06140B' : 'var(--color-text-tertiary)', transition: 'background .15s' }}
-          >
-            {stopMode ? <Stop size={isMobile ? 17 : 14} weight="fill" /> : <ArrowUp size={isMobile ? 19 : 16} weight="bold" />}
-          </button>
-            </>
-          )}
         </div>
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
