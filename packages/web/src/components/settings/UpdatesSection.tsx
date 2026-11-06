@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from '../update/useApplyUpdate';
 import { STEP_LABEL } from '../update/UpdateProgress';
@@ -24,6 +24,11 @@ export function UpdatesSection() {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [checkError, setCheckError] = useState(false);
+
+  // Opening Updates refreshes what it shows (2026-11-05): the stored release can be one behind when
+  // a newer one shipped since the daemon's last check. Quiet — the daemon reuses a check from the
+  // last minute, and a failure leaves what is shown.
+  useEffect(() => { void useUpdate.getState().check().catch(() => {}); }, []);
 
   async function check() {
     setChecking(true); setChecked(false); setCheckError(false);
