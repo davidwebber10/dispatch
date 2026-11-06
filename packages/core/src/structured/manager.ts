@@ -738,7 +738,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         resolve({ ok: false, error: 'The CLI did not answer the change in time.' });
       }, timeoutMs);
       timer.unref?.();
-      (s.controlWaiters ??= new Map()).set(requestId, (reply) => { clearTimeout(timer); resolve(reply); });
+      (s.controlWaiters ??= new Map()).set(requestId, (reply: ApplyResult) => { clearTimeout(timer); resolve(reply); });
       this.write(terminalId, { type: 'control_request', request_id: requestId, request });
     });
   }
