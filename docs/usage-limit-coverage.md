@@ -53,9 +53,18 @@ warning push. The red banner and the auto-resume still work.
   and the turn then ends with a normal `end_turn`, the stored limit stays set until the next turn
   boundary (`grok-translate.ts`, `pendingLimit`). A rate-limited turn ends with `stop_reason: "rate_limit"`
   in every captured stop, so this was not seen to happen, and it was left as is.
-- **Fenced blocks:** text inside a fenced code block (an odd number of lines starting with three
-  backticks or tildes before it) is a quote and never parks, for the Claude and the Codex wording. The
-  watcher sees only a window of recent output, so a fence that opened before that window is not known.
+- **Fenced blocks:** limit text is a quote only when it sits between an opening fence and a matching
+  closing fence that comes after it (three or more backticks or tildes at the start of a line; the
+  closing fence uses the same character, is at least as long, and has nothing after it). A fence that
+  never closes in the window (a collapsed tool preview cut the block), a closing fence whose opener
+  scrolled out of the window, and a fence line the CLI prefixes with a gutter mark quote nothing.
+- **A Codex terminal turn that hits the limit again also reports "turn complete".** Codex writes a
+  `task_complete` event with the limit error for such a turn. The service remembers the retry chain
+  for 2 minutes after a woken thread's turn-complete signal, so the stop read a few seconds later
+  continues the attempt count (5 wakes, then it stops) instead of restarting at zero.
+- **Another Codex wording is not detected:** a real session file holds a workspace spend cap stop
+  ("You hit your spend cap set by the owner of your workspace ..."), which the terminal reader does
+  not match. Codex chat reads it from the error code.
 - **A wake that redraws the screen can park a thread again.** If the resumed CLI repaints the old
   banner from its scrollback right after the wake, the watcher can read it as a new stop. Left for a
   later change.
