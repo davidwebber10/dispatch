@@ -212,8 +212,13 @@ const CODEX_RETRY = /try again (at|in)\s+([^.]{3,60}?)\s*(?:\.|$)/i;
 function findCodexBanner(clean: string): { start: number; end: number; text: string; retry: RegExpExecArray | null } | null {
   let found: { start: number; end: number; text: string; retry: RegExpExecArray | null } | null = null;
   for (const m of clean.matchAll(CODEX_BANNER)) {
-    const lead = clean.slice(clean.lastIndexOf('\n', m.index!) + 1, m.index!);
-    if ((lead.match(/[A-Za-z0-9]/g) ?? []).length > 3) continue;
+    const lineStart = clean.lastIndexOf('\n', m.index!) + 1;
+    const lead = clean.slice(lineStart, m.index!);
+    // Only the CLI's own error mark may come before the message on its line. A quote marker ("> ", "• ",
+    // "- "), a word, or a code fence ahead of it, or on the line above, means it is being quoted.
+    if (!/^[ \t]*(?:■[ \t]*)?$/.test(lead)) continue;
+    const prevLine = clean.slice(clean.lastIndexOf('\n', Math.max(0, lineStart - 2)) + 1, Math.max(0, lineStart - 1));
+    if (/^\s*(```|~~~)/.test(prevLine)) continue;
     // The CLI wraps its text: read the sentence run across line breaks.
     const flat = clean.slice(m.index!, m.index! + 700).replace(/\s+/g, ' ');
     const retry = CODEX_RETRY.exec(flat);

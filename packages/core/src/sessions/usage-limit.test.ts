@@ -11,6 +11,7 @@ import { SessionService } from './service.js';
 import type { IStructuredManager } from '../structured/manager.js';
 import { UsageLimitService } from '../limits/service.js';
 import * as parksDb from '../db/usage-limits.js';
+import { StatusService } from '../status/service.js';
 
 // Harness mirrors switch-transport.test.ts: a real sqlite db with stub managers, so the
 // transport DISPATCH in sendThreadMessage is exercised for real without spawning a process.
@@ -164,5 +165,56 @@ describe('usage-limit wiring', () => {
     parksDb.setState(db, 't3', 'capped', 5, RESET, clock);
     svc.removeTerminal('t3');
     expect(parksDb.get(db, 't3')).toBeNull();
+  });
+});
+
+// A daemon wake into a CLI (PTY) thread: a structured thread flips to working off its own stream, but
+// a PTY write has no such signal, so the wake must mark the thread working itself (as the HTTP message
+// route does). Without it the thread's turn end is not a working -> idle edge, the settled listener
+// never fires, and the woken pause row never clears.
+describe('usage-limit wake into a Codex terminal thread', () => {
+  const T0 = Date.UTC(2026, 9, 24, 4, 31);
+  const RESET = Date.UTC(2026, 9, 24, 5, 10);
+  let clock = T0;
+  let lim: UsageLimitService;
+  let status: StatusService;
+  beforeEach(() => {
+    clock = T0;
+    status = new StatusService(db, { broadcast: () => {} } as any);
+    lim = new UsageLimitService({
+      db, now: () => clock, zone: 'America/Indianapolis',
+      wake: (id, text) => svc.resumeAfterUsageLimit(id, text),
+      markPaused: (id) => terminalsDb.updateStatus(db, id, 'scheduled'),
+      note: () => {},
+    });
+    svc.setUsageLimitService(lim);
+    svc.setWakeWorkingMarker((id) => status.markWorking(id, 'Thinking…'));
+    status.addThreadSettledListener(({ terminalId }) => lim.onTurnSettled(terminalId));
+    seed('cx', { type: 'codex' });
+    pty.alive.add('cx');
+  });
+  afterEach(() => lim.stop());
+
+  it('types the resume text, marks the thread working, and the turn end clears the woken row', () => {
+    lim.park('cx', 'codex', { kind: 'usage', resetsAt: RESET, message: 'm' });
+    expect(terminalsDb.getById(db, 'cx')!.status).toBe('scheduled');
+    clock = RESET + 2 * 60_000; lim.tick();
+    expect(pty.writes.map((w) => w.id)).toEqual(['cx']);
+    expect(parksDb.get(db, 'cx')).toMatchObject({ state: 'woken', attempts: 1 });
+    expect(terminalsDb.getById(db, 'cx')!.status).toBe('working');
+    // The Codex turn ends.
+    status.ingest('codex', 'cx', { type: 'agent-turn-complete', 'turn-id': 'c1' });
+    expect(parksDb.get(db, 'cx')).toBeNull();
+  });
+  it('a structured thread is not marked by the wake (its own stream does that)', () => {
+    seed('st', { type: 'claude-code', config: { transport: 'structured' } });
+    structured.live.add('st');
+    const marked: string[] = [];
+    svc.setWakeWorkingMarker((id) => marked.push(id));
+    svc.resumeAfterUsageLimit('st', 'go');
+    expect(structured.sent.map((m) => m.id)).toEqual(['st']);
+    expect(marked).toEqual([]);
+    svc.resumeAfterUsageLimit('cx', 'go');
+    expect(marked).toEqual(['cx']);
   });
 });

@@ -625,6 +625,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     chat: { isBusy: () => endless.turns.status !== 'idle', wake: () => endless.wakeAfterLimit() },
   });
   sessionService.setUsageLimitService(usageLimits);
+  sessionService.setWakeWorkingMarker((id) => statusService.markWorking(id, 'Thinking…'));
   // The account's limit figures for the Details panel: Claude from its stream, Codex from its session file (routes/usage-limits.ts).
   const limitSnapshots = new LimitSnapshots(db);
   // A headless box signs in with an injected token (the CLI's own file does not change), so that token is the account.
@@ -797,6 +798,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   });
   ptyManager.on('exit', (id: string) => { ptyLimits.forget(id); ptyTypes.delete(id); });
   usageLimits.addTouchListener((id) => ptyLimits.forget(id));
+  // A wake clears the watcher's memory of the thread: a banner with no reset time is otherwise ignored for 35 minutes as a repaint, but the retry comes at 30, so a repeat stop right after a wake would be missed.
+  usageLimits.addWakeListener((id) => ptyLimits.forget(id));
 
   function rollupSession(sessionId: string) {
     const status = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));

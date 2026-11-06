@@ -182,6 +182,21 @@ describe('GrokStructuredSessionManager', () => {
     expect(seen).toEqual([]);
   });
 
+  it("a usage-limit stop sends 'scheduled' with the pause label first, so the turn closes (both paths)", async () => {
+    for (const mode of ['rate-limit', 'rate-limit-rpc']) {
+      const m = makeManager();
+      m.spawn(`t-${mode}`, spawnOpts({ env: { FAKE_MODE: mode } }));
+      const order: string[] = [];
+      let label = '';
+      m.on('scheduled', (_tid, l) => { order.push('scheduled'); label = l; });
+      m.on('usage-limit', () => order.push('usage-limit'));
+      m.sendMessage(`t-${mode}`, 'hi', 'user');
+      await until<void>((resolve) => { const tick = () => (order.includes('usage-limit') ? resolve() : setTimeout(tick, 10)); tick(); });
+      expect(order, mode).toEqual(['scheduled', 'usage-limit']);
+      expect(label, mode).toMatch(/^Paused: usage limit, reset time unknown/);
+    }
+  });
+
   it('a rate_limit turn end followed by a rejected prompt call is one pause, not a pause and a failure', async () => {
     const m = makeManager();
     m.spawn('t1', spawnOpts({ env: { FAKE_MODE: 'rate-limit-then-rpc-error' } }));

@@ -63,6 +63,10 @@ export class UsageLimitService {
     for (const fn of this.changeListeners) this.safe(fn);
   }
 
+  /** Told after the service wakes a thread (the CLI watcher forgets the banner it reported, so a repeat stop is seen). The park row and its attempt count stay. */
+  addWakeListener(fn: (terminalId: string) => void): void { this.wakeListeners.push(fn); }
+  private wakeListeners: ((terminalId: string) => void)[] = [];
+
   /** Told whenever the owner messages or stops a thread (the CLI watcher drops pending detection). */
   addTouchListener(fn: (terminalId: string) => void): void { this.touchListeners.push(fn); }
   private touched(terminalId: string): void {
@@ -141,6 +145,7 @@ export class UsageLimitService {
         if (isChat) { if (!this.d.chat!.wake()) throw new Error('Chat is busy'); } else this.d.wake(row.terminal_id, RESUME_TEXT);
         parksDb.setState(this.d.db, row.terminal_id, 'woken', attempts, row.wake_at, now);
         changed = true;
+        for (const fn of this.wakeListeners) this.safe(() => fn(row.terminal_id));
         this.d.note(row.terminal_id, `[${name}] resumed after the ${limitName(row.kind)} (attempt ${attempts} of ${this.o.maxAttempts}).`, { deliver: false });
       } catch (err) {
         console.warn(`[usage-limit] could not wake ${row.terminal_id}:`, err instanceof Error ? err.message : err);

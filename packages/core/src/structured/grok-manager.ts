@@ -32,6 +32,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
+import { pauseLabel } from '../limits/detect.js';
 import * as readline from 'readline';
 import type {
   IStructuredManager,
@@ -315,6 +316,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
           // A usage limit is a pause, not a failure: the limit service parks the thread and wakes it.
           session.turnActive = false;
           session.limitSettled = true;
+          this.emit('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
           this.emit('usage-limit', session.terminalId, action.limit);
           break;
         case 'busy':
@@ -410,8 +412,10 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       session.translator.abortTurn(); // the failed turn's prose must not join the next turn's texts
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
-      if (limit) this.emit('usage-limit', session.terminalId, limit);
-      else this.emit('failed', session.terminalId);
+      if (limit) {
+        this.emit('scheduled', session.terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+        this.emit('usage-limit', session.terminalId, limit);
+      } else this.emit('failed', session.terminalId);
       return;
     }
     // Response-driven boundary: OpenCode sends no turn_completed update — the prompt

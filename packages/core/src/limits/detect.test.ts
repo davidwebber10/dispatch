@@ -221,6 +221,16 @@ describe('detectCodexBannerLimit (Codex CLI threads)', () => {
     expect(textAfterBanner(screen)).toBeLessThan(5);
     expect(textAfterBanner("You've hit your usage limit.\r\nUpgrade to Plus to continue using Codex, or try again at 9:15 AM.\r\n")).toBe(0);
   });
+  it('a banner quoted after a markdown marker or inside a code fence is not a stop', () => {
+    const msg = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
+    for (const quoted of [`> ${msg}`, `• ${msg}`, `- ${msg}`, `\`\`\`${msg}`, `\`\`\`\r\n${msg}\r\n\`\`\``]) {
+      expect(detectCodexBannerLimit(quoted, NOW), quoted).toBeNull();
+    }
+  });
+  it('no prefix, indentation and the error mark are accepted', () => {
+    const msg = "You've hit your usage limit. Upgrade to Plus to continue using Codex, or try again at 9:15 AM.";
+    for (const ok of [msg, `■ ${msg}`, `  ■ ${msg}`, `  ${msg}`, `\x1b[31m■\x1b[0m ${msg}`]) expect(detectCodexBannerLimit(ok, NOW), ok).not.toBeNull();
+  });
   it('finds the banner when the CLI wraps inside the opening words', () => {
     for (const wrapped of [
       "You've hit your usage\r\n  limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 9:15 AM.",

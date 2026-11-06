@@ -42,6 +42,20 @@ time. The thread retries every 30 minutes, up to 5 times. A `retry_state` with `
 only a retry and does not pause. Grok reports no account quota figures, so there is no chip entry or
 warning push. The red banner and the auto-resume still work.
 
+## Known limits
+
+- **The Codex terminal screen is simulated, not captured.** The wording is confirmed from the binary,
+  but the TUI was never seen on a real stop. If the TUI draws the message with cursor moves instead of
+  printed text, the stripped screen can lose the spaces and the stop is missed. Only the CLI error mark
+  before the message, or no mark, is accepted; a message after "> ", "- ", a bullet or a code fence is
+  treated as a quote.
+- **Grok keeps a limit it saw after a normal turn end.** If a `retry_state` `exhausted` frame arrives
+  and the turn then ends with a normal `end_turn`, the stored limit stays set until the next turn
+  boundary (`grok-translate.ts`, `pendingLimit`). A rate-limited turn ends with `stop_reason: "rate_limit"`
+  in every captured stop, so this was not seen to happen, and it was left as is.
+- **A repeat stop right after a wake** is seen: a wake clears the terminal watcher's memory of the
+  thread, and the service keeps the attempt count (5 wakes without a finished turn, then it stops).
+
 ## Not covered
 
 - Grok terminal: the Grok TUI logs "agent response failed", but its screen text was never captured.
