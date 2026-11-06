@@ -2084,6 +2084,17 @@ export class SessionService {
       throw transportError(409, 'Only a Pretty thread can change its model here. In the CLI, type /model in the terminal.');
     }
 
+    // "Default" on an overseer, an agent or a role thread is its tier model, not the CLI's own default:
+    // the spawn would put the tier back on the next start, so the live change must agree with it.
+    {
+      let cur: Record<string, any> = {};
+      try { cur = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+      if (change.model === null && (cur.role || cur.agentType)) {
+        const tier = modelFor({ role: cur.role, agentType: cur.agentType } as never);
+        if (tier) change = { ...change, model: tier };
+      }
+    }
+
     // Save first (read-merge-write: never clobber the other keys). Remember what was there.
     const prev: Record<string, unknown> = {};
     this.mergeSettingsConfig(terminalId, change, prev);

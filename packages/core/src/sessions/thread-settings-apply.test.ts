@@ -125,6 +125,13 @@ describe('setThreadSettings', () => {
     expect(cfg('c1')).toMatchObject({ role: 'coordinator', model: 'opus' });
   });
 
+  it('Default on an overseer is its tier model, so the live change and the next start agree', async () => {
+    seed('c1', { config: { role: 'coordinator', model: 'opus' } });
+    await svc.setThreadSettings('c1', { model: null });
+    expect(claude.applied[0].change).toEqual({ model: 'sonnet' }); // MODEL_FOR_TYPE.coordinator
+    expect(cfg('c1').model).toBe('sonnet');
+  });
+
   it('works on a Codex thread without waiting for a turn', async () => {
     seed('x1', { type: 'codex' });
     codex.turnOpen = true;
