@@ -56,6 +56,12 @@ export const codexProvider: SessionProvider = {
     return { command: 'codex', args: [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
   },
 
+  // Branch = `codex fork <id>`: a new session seeded with the source's history, the
+  // original rollout untouched. Same permission/TUI flags as resume, ahead of the subcommand.
+  buildBranchCommand({ sourceSessionId, secretsMcp, statusHooks }) {
+    return { command: 'codex', args: [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), 'fork', sourceSessionId] };
+  },
+
   buildStatusHooks({ serverUrl, terminalId, codexHelperPath }) {
     // Codex `notify` runs a program on turn completion, appending the event JSON
     // as the final argv arg. The helper forwards it to the events route, which

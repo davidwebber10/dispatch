@@ -13,7 +13,11 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- "black", not "black-translucent": with a translucent bar the page runs under the
+         status bar, and iOS 26 paints its scroll-edge blur/gradient over our header there.
+         With an opaque bar, the page starts below it and safe-area-inset-top becomes 0.
+         iOS reads this when the app is added to the Home Screen, so re-add it to see the change. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Dispatch" />
     <meta name="mobile-web-app-capable" content="yes" />
 

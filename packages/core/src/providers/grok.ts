@@ -102,6 +102,14 @@ export const grokProvider: SessionProvider = {
     return { command: 'grok', args: [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), ...modelArgs(model), '--resume', externalSessionId] };
   },
 
+  // Branch = resume the source with `--fork-session`; `--session-id` names the fork, so the
+  // id Dispatch assigned is the one a later relaunch resumes (as for a new thread).
+  buildBranchCommand({ sourceSessionId, secretsMcp, sessionId }) {
+    const args = [...FULL_PERMISSIONS, ...rulesArgs(secretsMcp), '--resume', sourceSessionId, '--fork-session'];
+    if (sessionId) args.push('--session-id', sessionId);
+    return { command: 'grok', args };
+  },
+
   buildStructuredCommand({ secretsMcp, appendSystemPrompt, model, grokPluginDir }) {
     // Grok "Pretty" speaks ACP over `grok agent stdio`. Resume rides OUT-OF-BAND
     // (`session/load` over JSON-RPC, applied by GrokStructuredSessionManager via

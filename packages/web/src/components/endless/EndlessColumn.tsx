@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { MessageScroller, useMessageScroller } from '@shadcn/react/message-scroller';
-import { ArrowUp, Paperclip, Rows, Stop, X } from '@phosphor-icons/react';
+import { PaperPlaneRight, Rows, Stop, X } from '@phosphor-icons/react';
 import { useEndless } from '../../stores/endless';
 import { useProjects } from '../../stores/projects';
 import { useDraft, appendToDraft } from '../../hooks/useDraft';
@@ -10,8 +10,16 @@ import { InsightText } from '../InsightText';
 import { WorkingIndicator } from '../WorkingIndicator';
 import { ImageViewerHost } from '../ChatImage';
 import { EndlessRows, PendingUserRow, FileChip, rowKeyOf } from './EndlessMessageRow';
-import { ProjectPicker, iconBtn } from './ProjectPicker';
+import { ProjectMenuSection } from './ProjectPicker';
+import { modLabel } from '../../lib/hostkeys';
+
+/** The Control Plane composer's 32px send / stop key. */
+const sendKey: React.CSSProperties = { flex: 'none', width: 32, height: 32, padding: 0, borderRadius: 8, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' };
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
+import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { DictationControl } from '../dictation/DictationControl';
+import { useDictation } from '../../hooks/useDictation';
+import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64, chatDocType, CHAT_ACCEPT, CHAT_DOC_MAX_BYTES } from '../../lib/image-attach';
 
@@ -99,7 +107,14 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
 export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   // The unsent text survives a reload, like the other composers' drafts.
   const [text, setText] = useDraft('chat');
-  const textRef = useRef(text); textRef.current = text; // the latest text, for the clear after an awaited send
+  // The composer's left control is a + that opens up to Add file / Dictate (the thread
+  // composers' InputActionsMenu). A confirmed transcript is added to the end of the draft.
+  const textRef = useRef(text); textRef.current = text; // the latest text: the clear after an awaited send, and dictation
+  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
+  const dictation = useDictation((spoken) => {
+    const cur = textRef.current;
+    setText(cur.trim() ? `${cur.replace(/\s+$/, '')} ${spoken}` : spoken);
+  });
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [dragActive, setDragActive] = useState(false); // drives the drop-target cue
   const [images, setImages] = useState<EndlessImage[]>([]);
@@ -137,6 +152,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
   const busy = useEndless((s) => s.turn.status === 'waiting' || s.turn.status === 'running');
   // The key is Stop only while a turn runs and the draft is empty: a message typed during a
   // turn still goes to the running process.
+  const canSend = (!!text.trim() || images.length > 0 || files.length > 0) && !sendingNow && !reading;
   const stopMode = busy && !text.trim() && images.length === 0 && files.length === 0 && !sendingNow && !reading && !settling;
   const stop = () => {
     setSendError(null);
@@ -310,25 +326,43 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         )}
         {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
         {attachNotice && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
-        <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-          <ProjectPicker value={project} onChange={setProject} mobile={mobile} />
-          <button type="button" aria-label="Attach a file" onClick={() => fileRef.current?.click()} style={iconBtn}><Paperclip size={18} /></button>
+        {/* The Control Plane composer's box (overseer/components/Composer.tsx): one rounded, elevated
+            row of + | textarea | send, then a hint row. The + opens up to Project, Add file and
+            Dictate on desktop and phone alike; Chat keeps its own send, attachment and stop logic. */}
+        <div data-testid="composer-row" style={{ display: 'flex', alignItems: 'flex-end', gap: 8, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, padding: '7px 8px 7px 9px' }}>
+          <InputActionsMenu
+            onAddFile={() => fileRef.current?.click()}
+            onDictate={() => void dictation.start()}
+            dictateDisabled={!sttConfigured}
+            dictateHint="Set up in Settings → Transcription"
+            triggerStyle={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: 'var(--color-hover, rgba(255,255,255,.05))' }}
+            extra={(close) => <ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} />}
+          />
           <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
+          {dictation.state !== 'idle' ? (
+            <div style={{ flex: 1, minWidth: 0 }}><DictationControl dictation={dictation} /></div>
+          ) : (
           <textarea ref={taRef} aria-label="Message" value={text} rows={1} enterKeyHint="send" onPaste={onPaste} placeholder="Message Dispatch…"
             onChange={(e) => setText(e.target.value)} onKeyDown={onKey}
-            style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.4, font: 'inherit' }} />
+            style={{ flex: 1, minWidth: 0, resize: 'none', maxHeight: 200, overflowY: 'auto', padding: '7px 2px', border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)', fontSize: 16, lineHeight: 1.5, font: 'inherit' }} />
+          )}
           {stopMode ? (
             <button type="button" aria-label="Stop" title="Stop" onClick={stop}
-              style={{ ...iconBtn, background: 'color-mix(in srgb, var(--color-status-red) 20%, transparent)', border: 'none', color: 'var(--color-status-red)' }}>
+              style={{ ...sendKey, background: 'color-mix(in srgb, var(--color-status-red) 20%, transparent)', color: 'var(--color-status-red)', cursor: 'pointer' }}>
               <Stop size={16} weight="fill" />
             </button>
           ) : (
-            <button type="button" aria-label="Send" disabled={(!text.trim() && images.length === 0) || sendingNow || reading} onClick={() => void submit()}
-              style={{ ...iconBtn, background: 'var(--color-accent)', border: 'none', color: '#06140B' }}>
-              <ArrowUp size={18} weight="bold" />
+            <button type="button" aria-label="Send" title="Send" disabled={!canSend} onClick={() => void submit()}
+              style={{ ...sendKey, background: canSend ? 'var(--color-accent)' : 'var(--color-pane)', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default' }}>
+              <PaperPlaneRight size={16} weight="fill" />
             </button>
           )}
         </div>
+        {!mobile && (
+          <div style={{ display: 'flex', marginTop: -2 }}>
+            <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
+          </div>
+        )}
       </div>
     </div>
   );

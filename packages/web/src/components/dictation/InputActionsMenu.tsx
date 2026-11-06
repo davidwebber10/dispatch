@@ -8,6 +8,8 @@ interface Props {
   dictateHint?: string;
   /** Host-supplied override so the trigger can mirror the adjacent send button's footprint. */
   triggerStyle?: React.CSSProperties;
+  /** Extra rows above Add file (Chat's project choice). Gets `close` to shut the flyout. */
+  extra?: (close: () => void) => React.ReactNode;
 }
 
 const trigger = {
@@ -21,7 +23,9 @@ const rowBtn = (disabled?: boolean) => ({
   cursor: disabled ? 'default' : 'pointer', textAlign: 'left' as const, borderRadius: 8,
 });
 
-export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictateHint, triggerStyle }: Props) {
+export { rowBtn as inputMenuRow };
+
+export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictateHint, triggerStyle, extra }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -43,6 +47,7 @@ export function InputActionsMenu({ onAddFile, onDictate, dictateDisabled, dictat
           background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12,
           boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)', zIndex: 40,
         }}>
+          {extra?.(() => setOpen(false))}
           <button type="button" style={rowBtn()} onClick={() => { setOpen(false); onAddFile(); }}>
             <Paperclip size={18} /> Add file
           </button>

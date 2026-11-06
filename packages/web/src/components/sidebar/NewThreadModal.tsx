@@ -171,8 +171,16 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     if (m) setModel(m);
     const prefMode = harnessSettings.settings?.[h.type]?.defaultMode;
     if (prefMode && h.modes.includes(prefMode)) setMode(prefMode);
+    applyArchiveDefault(h, harnessSettings);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when settings land
   }, [harnessSettings]);
+
+  /** The harness's saved auto-archive default: on at its deadline, or off when unset. */
+  function applyArchiveDefault(h: Harnesses, hs: HarnessSettingsResponse | null) {
+    const ms = hs?.settings?.[h.type]?.autoArchiveMs;
+    setAutoArchive(ms !== undefined);
+    setAutoArchiveMs(ms ?? DEFAULT_AUTO_ARCHIVE_MS);
+  }
 
   function selectHarness(h: Harnesses) {
     // Every card selects, including one whose CLI is missing — selecting it is how you
@@ -188,6 +196,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
     // Each harness opens on its OWN default, mirroring the model reset above — carrying
     // claude's pretty default onto codex would silently change codex's transport.
     else setMode(defaultModeFor(h));
+    applyArchiveDefault(h, harnessSettings);
   }
 
   /**

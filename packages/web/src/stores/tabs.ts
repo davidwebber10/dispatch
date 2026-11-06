@@ -23,6 +23,7 @@ interface TabsState {
   autoNamed: Record<string, AutoNameEntry>;
   setTabDirty: (id: string, dirty: boolean) => void;
   markLoading: (id: string) => void;
+  clearLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
   consumeAutoName: (id: string) => { from: string; to: string } | null;
   reorder: (projectId: string, orderedIds: string[]) => Promise<boolean>;
@@ -115,6 +116,12 @@ export const useTabs = create<TabsState>((set, get) => ({
       delete next[id];
       set({ loading: next });
     }, 5000);
+  },
+  clearLoading: (id) => {
+    if (!get().loading[id]) return;
+    const next = { ...get().loading };
+    delete next[id];
+    set({ loading: next });
   },
   byProject: {},
   openTabIds: [],

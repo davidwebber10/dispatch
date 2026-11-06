@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { SETTLE_HOLD_MS, TurnFooter } from './TurnFooter';
 import { useThreadStatus } from '../../stores/threadStatus';
+import { useDismissedNotices } from '../../stores/dismissedNotices';
 
 const setStatus = (threadStatus: string, id = 't1') =>
   act(() => { useThreadStatus.setState({ byTerminal: { [id]: { threadStatus } } } as any); });
@@ -81,3 +82,24 @@ test('a height measured for one thread is never held for another', () => {
   expect(footer.style.height).toBe('');
   expect(footer.style.minHeight).toBe('');
 });
+
+test('closing the card mid-turn lets go of the hold at once, so no empty band stays under the terminal', () => {
+  act(() => { useDismissedNotices.setState({ keys: [] } as any); });
+  setStatus('idle');
+  const { rerender } = render(<Footer show />);
+  const footer = screen.getByTestId('turn-footer');
+  footer.getBoundingClientRect = () => ({ height: 64.5 }) as DOMRect;
+  rerender(<Footer show />);
+  setStatus('working');
+  rerender(<Footer show />);
+  expect(footer.style.height).toBe('64.5px');
+
+  act(() => { useDismissedNotices.getState().dismiss('t1', 'outcome-1'); });
+  rerender(<Footer show={false} />); // the × removed the card
+  expect(footer.style.height).toBe('');
+
+  // Another thread's dismissal does not touch this footer's hold.
+  act(() => { useDismissedNotices.getState().dismiss('other', 'x'); });
+  expect(footer.style.height).toBe('');
+});
+

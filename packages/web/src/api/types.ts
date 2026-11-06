@@ -343,7 +343,7 @@ export interface SetupState { firstRun: boolean; providers: ProviderStatus[]; ta
 // crosses this wire: `opencodeKey` carries the Doppler secret NAME and a presence boolean.
 /** One entry of the OpenCode picker list: an OpenCode-namespaced OpenRouter id plus its label. */
 export interface OpencodeModel { label: string; model: string }
-export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; models?: OpencodeModel[]; skipAgentSummaries?: boolean }
+export interface HarnessSettingsEntry { defaultModel?: string; defaultMode?: 'cli' | 'pretty'; keySecret?: string; models?: OpencodeModel[]; skipAgentSummaries?: boolean; autoArchiveMs?: number }
 export interface HarnessSettingsResponse {
   settings: Partial<Record<string, HarnessSettingsEntry>>;
   opencodeKey: { secret: string; present: boolean };

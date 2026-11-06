@@ -85,6 +85,8 @@ import { UsageGauge } from './limits/gauge.js';
 import { createCodexRefresh } from './limits/codex-refresh.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
+import { inheritedEnv } from './platform/inherited-env.js';
+import { claudeTitleGenerator, codexTitleGenerator, firstTitle } from './sessions/cli-namer.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
@@ -544,9 +546,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Name once from the first submitted user prompt; transcript activity is a legacy
   // fallback. The shared broadcaster publishes the same tab refresh as manual rename.
+  // Titles: Claude Haiku via `claude -p`, then Codex, on the user's own sign-ins, and only
+  // then OpenRouter (cli-namer.ts). The CLIs run under the thread spawn env (set by
+  // refreshPtyEnv below), so Dispatch's saved Claude token signs them in like a thread.
   let resolveOpenRouterKey: (() => Promise<string | null>) | null = null;
+  let titleSpawnEnv: Record<string, string> = {};
+  const titleCliDeps = { env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) };
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+    cliTitle: firstTitle([claudeTitleGenerator(titleCliDeps), codexTitleGenerator(titleCliDeps)]),
   });
 
   // Determine actual server URL after port is known
@@ -724,6 +732,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // The sign-in check that gates new threads asks the CLI under the same env, so
     // Dispatch's saved Claude token counts even when the CLI's own login has expired.
     setProviderProbeEnv(spawnEnv);
+    titleSpawnEnv = spawnEnv;
     ptyManager.setDefaultEnv(spawnEnv);
     structuredManager.setDefaultEnv(spawnEnv);
     endlessManager.setDefaultEnv(spawnEnv);

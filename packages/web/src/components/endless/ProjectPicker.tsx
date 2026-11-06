@@ -1,59 +1,34 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Rows } from '@phosphor-icons/react';
+import { useState } from 'react';
+import { CaretRight, Rows } from '@phosphor-icons/react';
 import { useProjects } from '../../stores/projects';
 
-export const iconBtn: React.CSSProperties = { width: 36, height: 36, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
-
-/** The composer's project button and its flyout. Opens upward; the parent shows the chosen project as a pill. */
-export function ProjectPicker({ value, onChange, mobile = false }: { value: string | null; onChange: (id: string | null) => void; mobile?: boolean }) {
+/**
+ * The project choice as a section of the composer's + menu (2026-11-05: Chat uses the Control
+ * Plane composer, whose only left control is the +). A "Project" row that opens a list in place;
+ * picking one (or "No project") sets it and shuts the menu.
+ */
+export function ProjectMenuSection({ value, onChange, close, mobile = false }: { value: string | null; onChange: (id: string | null) => void; close: () => void; mobile?: boolean }) {
   const sessions = useProjects((s) => s.sessions);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const uid = useId();
-  const root = useRef<HTMLDivElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
   const items = [...sessions].sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
-
-  const close = (refocus: boolean) => { setOpen(false); if (refocus) trigger.current?.focus(); };
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
-    const onEsc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); trigger.current?.focus(); } };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onEsc);
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onEsc); };
-  }, [open]);
-  useEffect(() => { if (open) menu.current?.focus(); }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const el = menu.current?.querySelector(`[data-index="${active}"]`);
-    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
-  }, [open, active]);
-
-  const toggle = () => {
-    if (!open) setActive(Math.max(0, items.findIndex((s) => s.id === value)));
-    setOpen(!open);
-  };
-  const choose = (id: string) => { onChange(id); close(true); };
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(items.length - 1, a + 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
-    else if (e.key === 'Enter' && items[active]) { e.preventDefault(); choose(items[active].id); }
-  };
-
+  const current = sessions.find((s) => s.id === value)?.name ?? null;
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', font: '500 14px var(--font-sans)', cursor: 'pointer', textAlign: 'left', borderRadius: 8 };
+  const pick = (id: string | null) => { onChange(id); close(); };
   return (
-    <div ref={root} style={{ position: 'relative', flexShrink: 0 }}>
-      <button ref={trigger} type="button" aria-label="Choose project" aria-haspopup="menu" aria-expanded={open} onClick={toggle} style={iconBtn}><Rows size={18} /></button>
+    <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} style={row}>
+        <Rows size={18} />
+        <span style={{ flex: 1, minWidth: 0 }}>Project</span>
+        <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>{current ?? 'Any'}</span>
+        <CaretRight size={13} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s', color: 'var(--color-text-tertiary)' }} />
+      </button>
       {open && (
-        <div ref={menu} role="menu" aria-label="Projects" tabIndex={-1} aria-activedescendant={items[active] ? `${uid}-${items[active].id}` : undefined} onKeyDown={onKey}
-          style={{ position: 'absolute', left: 0, bottom: 'calc(100% + 6px)', zIndex: 20, width: 240, maxWidth: 'calc(100vw - 32px)', maxHeight: 280, overflowY: 'auto', padding: 4, outline: 'none', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
-          {items.length === 0 && <div style={{ padding: '8px 10px', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No projects</div>}
-          {items.map((s, k) => (
-            <button key={s.id} id={`${uid}-${s.id}`} data-index={k} type="button" role="menuitemradio" aria-checked={s.id === value} tabIndex={-1} onClick={() => choose(s.id)} onMouseEnter={() => setActive(k)}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', minHeight: mobile ? 44 : undefined, padding: '7px 10px', border: 'none', borderRadius: 7, textAlign: 'left', cursor: 'pointer', fontSize: 13.5, color: 'var(--color-text-primary)', background: k === active ? 'var(--color-hover, rgba(255,255,255,0.08))' : 'transparent' }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-              {s.id === value && <span aria-hidden="true" style={{ color: 'var(--color-accent)' }}>✓</span>}
+        <div role="menu" aria-label="Projects" style={{ maxHeight: 240, overflowY: 'auto', padding: '2px 0 2px 8px' }}>
+          {[{ id: null as string | null, name: 'No project' }, ...items.map((s) => ({ id: s.id as string | null, name: s.name }))].map((it) => (
+            <button key={it.id ?? '__none'} type="button" role="menuitemradio" aria-checked={it.id === value} onClick={() => pick(it.id)}
+              style={{ ...row, minHeight: mobile ? 44 : undefined, padding: '8px 10px', fontSize: 13.5, fontWeight: 400, color: it.id === null ? 'var(--color-text-secondary)' : 'var(--color-text-primary)' }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</span>
+              {it.id === value && <span aria-hidden="true" style={{ color: 'var(--color-accent)' }}>✓</span>}
             </button>
           ))}
         </div>

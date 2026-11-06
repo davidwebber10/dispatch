@@ -55,6 +55,22 @@ export function startOfLocalDay(daysAgo: number): Date {
   return d;
 }
 
+/**
+ * Every local day from `first` through `last` ('YYYY-MM-DD', inclusive), in order. A chart
+ * draws only the rows it is given, so without this a day with no turns simply vanished from
+ * the axis and the days either side of it read as adjacent.
+ */
+export function dayRange(first: string, last: string): string[] {
+  const [y, m, d] = first.split('-').map(Number);
+  const cur = new Date(y, m - 1, d);
+  const out: string[] = [];
+  for (let day = localDayString(cur); day <= last && out.length < 5000; day = localDayString(cur)) {
+    out.push(day);
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
 /** Empty model/outcome keys are real rows with an unknown key, not missing rows. */
 export function normKey(k: string): string { return k === '' ? 'unknown' : k; }
 

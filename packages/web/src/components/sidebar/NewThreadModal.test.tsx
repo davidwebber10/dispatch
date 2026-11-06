@@ -79,6 +79,19 @@ describe('NewThreadModal', () => {
     expect(lastInput().config).toBeUndefined();
   });
 
+  it('opens with the harness\'s saved auto-archive default switched on at its deadline', async () => {
+    (api.getHarnessSettings as any).mockResolvedValueOnce({
+      settings: { 'claude-code': { autoArchiveMs: 86_400_000 } },
+      opencodeKey: { secret: 'OPENROUTER_API_KEY', present: true },
+      opencodeModels: [],
+    });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Auto-archive when idle' })).toHaveAttribute('aria-checked', 'true'));
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(lastInput().config).toMatchObject({ autoArchive: true, autoArchiveMs: 86_400_000 });
+  });
+
   it('carries transport:structured when Pretty mode is chosen for Claude', async () => {
     render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Pretty mode' }));

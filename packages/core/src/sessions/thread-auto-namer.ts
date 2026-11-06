@@ -7,6 +7,9 @@ import { cleanName, deriveThreadRaw, resolveTranscriptPath, userPromptText, fall
 import { generateThreadName } from './model-namer.js';
 import type { EventBroadcaster } from '../ws/events.js';
 
+/** How long the model title may take before the prompt-prefix name is shown in its place. */
+const FALLBACK_AFTER_MS = 3000;
+
 /** Terminal types eligible for auto-naming, mapped to thread-namer's transcript kind. */
 const KIND_BY_TYPE: Record<string, 'claude' | 'codex'> = {
   'claude-code': 'claude',
@@ -29,6 +32,11 @@ export interface ThreadAutoNamerOptions {
   getApiKey?: () => Promise<string | null>;
   /** Injectable model-title generator, for tests. Default: model-namer's generateThreadName. */
   generateModelName?: (apiKey: string, conversationText: string) => Promise<string | null>;
+  /**
+   * Titles from the user's signed-in CLIs, tried BEFORE OpenRouter (cli-namer.ts: Claude
+   * Haiku, then Codex). Null from it falls through to the OpenRouter key path above.
+   */
+  cliTitle?: (conversationText: string) => Promise<string | null>;
 }
 
 /**
@@ -45,6 +53,7 @@ export class ThreadAutoNamer {
   private readonly readFile: (p: string) => Promise<string>;
   private readonly getApiKey?: () => Promise<string | null>;
   private readonly generateModelName: (apiKey: string, conversationText: string) => Promise<string | null>;
+  private readonly cliTitle?: (conversationText: string) => Promise<string | null>;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private disposed = false;
   private readonly inFlight = new Set<string>();
@@ -58,6 +67,7 @@ export class ThreadAutoNamer {
     this.readFile = opts?.readFile ?? ((p: string) => fs.promises.readFile(p, 'utf-8'));
     this.getApiKey = opts?.getApiKey;
     this.generateModelName = opts?.generateModelName ?? generateThreadName;
+    this.cliTitle = opts?.cliTitle;
   }
 
   /** Capture the first submitted human prompt before any harness adds setup context. */
@@ -158,24 +168,35 @@ export class ThreadAutoNamer {
       // The await is safe against double-naming: the `timers` entry blocks
       // re-entry for this terminal until `finally` below, and setAutoLabel's
       // label_source='default' SQL guard still lets a concurrent user rename win.
+      //
+      // The model gets FALLBACK_AFTER_MS to answer before the prefix name is shown,
+      // so a thread never sits on its default label. That is a display deadline,
+      // not a cancel: the Doppler key fetch plus GLM routinely takes 2-4s, and
+      // dropping a late title (as this once did) left almost every thread named
+      // after its raw prompt. A late title replaces the fallback in place, unless
+      // the label changed meanwhile (upgradeAutoLabel's SQL guard).
       let name = fallback;
-      if (this.getApiKey) {
-        let expired = false;
+      let late: Promise<string | null> | undefined;
+      if (this.getApiKey || this.cliTitle) {
+        const modelName = (async () => {
+          const fromCli = this.cliTitle ? cleanName((await this.cliTitle(raw).catch(() => null)) ?? '') : null;
+          if (fromCli || this.disposed || !this.getApiKey) return fromCli;
+          const key = await this.getApiKey();
+          if (!key || this.disposed) return null;
+          return cleanName((await this.generateModelName(key, raw)) ?? '');
+        })().catch(() => null);
+        const TIMED_OUT = Symbol('timed-out');
         let deadline: ReturnType<typeof setTimeout> | undefined;
-        try {
-          name = await Promise.race([
-            (async () => {
-              const key = await this.getApiKey!();
-              if (!key || expired || this.disposed) return fallback;
-              return cleanName((await this.generateModelName(key, raw)) ?? '') ?? fallback;
-            })(),
-            new Promise<string>((resolve) => {
-              deadline = setTimeout(() => { expired = true; resolve(fallback); }, 3000);
-              deadline.unref?.();
-            }),
-          ]);
-        } catch { /* use the prompt fallback */ }
-        finally { if (deadline) clearTimeout(deadline); }
+        const first = await Promise.race([
+          modelName,
+          new Promise<typeof TIMED_OUT>((resolve) => {
+            deadline = setTimeout(() => resolve(TIMED_OUT), FALLBACK_AFTER_MS);
+            deadline.unref?.();
+          }),
+        ]);
+        if (deadline) clearTimeout(deadline);
+        if (first === TIMED_OUT) late = modelName;
+        else name = first ?? fallback;
       }
       if (this.disposed || !this.db.open) return;
 
@@ -183,6 +204,14 @@ export class ThreadAutoNamer {
       if (!applied) return; // a user rename won the race
 
       this.broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: row.session_id });
+
+      if (late) {
+        const upgraded = await late;
+        if (!upgraded || upgraded === name || this.disposed || !this.db.open) return;
+        if (terminalsDb.upgradeAutoLabel(this.db, terminalId, name, upgraded)) {
+          this.broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: row.session_id });
+        }
+      }
     } catch (err) {
       this.bumpAttempts(terminalId);
       console.debug('[ThreadAutoNamer] attempt failed', terminalId, err);

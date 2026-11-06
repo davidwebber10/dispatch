@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import type { HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } from '../../api/types';
 import { HARNESSES } from '../../lib/harnesses';
 import { Toggle } from './ui';
+import { AutoArchiveField } from '../sidebar/AutoArchiveField';
 
 /**
  * Per-harness defaults, stored on the DAEMON (not localStorage) because spawn-time
@@ -13,7 +14,7 @@ import { Toggle } from './ui';
  * Doppler secret NAME holding the OpenRouter key — the transcription section's "your key
  * stays in Doppler" pattern, plus a live present/missing check and a replace-key field —
  * and the MODEL LIST the New Thread picker offers, curated from OpenRouter's catalog.
- * Claude Code also has "Skip agent status summaries" (on unless turned off), which the daemon
+ * Every harness has a default auto-archive (off, or on at a deadline). Claude Code also has "Skip agent status summaries" (on unless turned off), which the daemon
  * applies to the next thread it starts.
  */
 
@@ -124,6 +125,14 @@ export function HarnessesSection() {
                 </select>
               </div>
             )}
+
+            {/* Off unless set: the New Thread modal opens with auto-archive on at this deadline. */}
+            <AutoArchiveField
+              enabled={s.autoArchiveMs !== undefined}
+              ms={s.autoArchiveMs ?? 0}
+              flush
+              onChange={(on, ms) => void put({ [h.type]: { autoArchiveMs: on ? ms : null } })}
+            />
 
             {h.type === 'claude-code' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

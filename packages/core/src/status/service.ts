@@ -386,6 +386,29 @@ export class StatusService {
     this.defer(() => this.broadcaster.broadcast({ type: 'terminal:exit', terminalId, sessionId: terminal.session_id }));
   }
 
+  /**
+   * The user's "Reset status": a thread stuck on working / needs_input / error is set back
+   * to idle. A correction, not an event, so unlike apply() it does not count as activity
+   * (no lastActivityAt bump, no auto-archive restart, no re-sort), does not fire settled
+   * listeners (no "finished" push) or peer watches, and leaves the board override alone.
+   * The thread's next real event replaces it as usual. False when the thread is unknown.
+   */
+  resetStatus(terminalId: string): boolean {
+    if (!this.db.open) return false;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return false;
+    this.transition(() => {
+      this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, 'idle', 'authoritative', ?)
+        ON CONFLICT(terminal_id) DO UPDATE SET status='idle', source=excluded.source, observed_at=excluded.observed_at`)
+        .run(terminalId, terminal.external_id ?? '', new Date().toISOString());
+      terminalsDb.updateStatus(this.db, terminalId, TO_TERMINAL.idle);
+      logLifecycle(this.db, { terminalId, type: 'status.reset', observedAt: new Date().toISOString() }, 'applied');
+      this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: TO_TERMINAL.idle, threadStatus: 'idle', activity: null }));
+      this.aggregateSession(terminal.session_id);
+    });
+    return true;
+  }
+
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string): void {
     this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, ?, 'authoritative', ?)
       ON CONFLICT(terminal_id) DO UPDATE SET external_session_id=excluded.external_session_id, status=excluded.status, source=excluded.source, observed_at=excluded.observed_at`)

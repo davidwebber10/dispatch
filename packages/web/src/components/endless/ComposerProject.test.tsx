@@ -28,70 +28,45 @@ afterEach(() => {
   });
 });
 
-const open = () => fireEvent.click(screen.getByRole('button', { name: 'Choose project' }));
+// The project choice lives in the composer's + menu (2026-11-05: Chat uses the Control Plane composer).
+const open = () => {
+  fireEvent.click(screen.getByRole('button', { name: 'More input options' }));
+  fireEvent.click(screen.getByRole('button', { name: /^Project/ }));
+};
 
 describe('Composer project picker', () => {
-  it('opens a menu of projects, most recent first, and picking one shows a pill', () => {
+  it('the + menu opens a Project list, most recent first, and picking one shows a pill', () => {
     render(<Composer />);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     open();
     const items = within(screen.getByRole('menu')).getAllByRole('menuitemradio');
-    expect(items.map((i) => i.textContent)).toEqual(['recent', 'salsify']);
-    fireEvent.click(items[1]);
+    expect(items.map((i) => i.textContent)).toEqual(['No project✓', 'recent', 'salsify']); // none chosen yet
+    fireEvent.click(items[2]);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(screen.getByTestId('project-pill')).toHaveTextContent('salsify');
     open();
     expect(screen.getByRole('menuitemradio', { name: 'salsify' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('the x removes the pill', () => {
+  it('the x removes the pill, and so does No project', () => {
     render(<Composer />);
     open();
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'recent' }));
     fireEvent.click(screen.getByRole('button', { name: 'Remove project' }));
     expect(screen.queryByTestId('project-pill')).not.toBeInTheDocument();
-  });
-
-  it('Escape closes the menu and an outside click closes it', () => {
-    render(<Composer />);
-    open();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    open();
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-  });
-
-  it('arrow keys move and Enter selects', () => {
-    render(<Composer />);
-    open();
-    const menu = screen.getByRole('menu');
-    fireEvent.keyDown(menu, { key: 'ArrowDown' });
-    fireEvent.keyDown(menu, { key: 'Enter' });
-    expect(screen.getByTestId('project-pill')).toHaveTextContent('salsify');
-  });
-
-  it('aria-activedescendant follows the arrow keys', () => {
-    render(<Composer />);
-    open();
-    const menu = screen.getByRole('menu');
-    const items = within(menu).getAllByRole('menuitemradio');
-    expect(menu).toHaveAttribute('aria-activedescendant', items[0].id);
-    fireEvent.keyDown(menu, { key: 'ArrowDown' });
-    expect(menu).toHaveAttribute('aria-activedescendant', items[1].id);
-    fireEvent.keyDown(menu, { key: 'ArrowUp' });
-    expect(menu).toHaveAttribute('aria-activedescendant', items[0].id);
-  });
-
-  it('returns focus to the trigger after Escape and after a selection', () => {
-    render(<Composer />);
-    const trigger = screen.getByRole('button', { name: 'Choose project' });
-    open();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    expect(trigger).toHaveFocus();
     open();
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'recent' }));
-    expect(trigger).toHaveFocus();
+    open();
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'No project' }));
+    expect(screen.queryByTestId('project-pill')).not.toBeInTheDocument();
+  });
+
+  it('an outside click closes the + menu', () => {
+    render(<Composer />);
+    open();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument();
   });
 
   it('sends the pill project, then the pill is gone', async () => {

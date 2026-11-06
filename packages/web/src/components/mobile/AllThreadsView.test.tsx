@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { AllThreadsView } from './AllThreadsView';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
@@ -17,7 +17,8 @@ beforeEach(() => {
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as any);
 });
 
-const labels = () => screen.queryAllByTestId('thread-label').map((el) => el.textContent);
+// Rows are the project view's ThreadRow (data-thread-id); its label carries the name as aria-label.
+const labels = () => Array.from(document.querySelectorAll('[data-thread-id]')).map((row) => row.querySelector('span[aria-label]')?.getAttribute('aria-label'));
 
 describe('<AllThreadsView>', () => {
   it('lists every thread of every project, newest activity first, without file tabs or archived threads', () => {
@@ -51,5 +52,18 @@ describe('<AllThreadsView>', () => {
     render(<AllThreadsView onOpenThread={open} />);
     fireEvent.click(screen.getByText('Ship v2'));
     expect(open).toHaveBeenCalledWith('B', 'b1');
+  });
+
+  it('rows carry the same ⋯ menu as a project, with Branch, Reload and Thread details for agent threads', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
+    useTabs.setState({ byProject: { A: [t('c1', 'A', 'Codex work', '2026-10-28T10:00:00Z', { type: 'codex' })], B: [] } } as any);
+    render(<AllThreadsView onOpenThread={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Thread options' }));
+    const menu = screen.getByRole('menu');
+    for (const name of ['Thread details', 'Rename thread', 'Branch thread', 'Reload thread', 'Archive thread']) {
+      expect(within(menu).getByRole('button', { name })).toBeInTheDocument();
+    }
+    vi.unstubAllGlobals();
   });
 });

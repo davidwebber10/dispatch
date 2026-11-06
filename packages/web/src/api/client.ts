@@ -226,7 +226,7 @@ export const api = {
   getHarnessSettings: () => req<HarnessSettingsResponse>('/api/settings/harnesses'),
   getTelemetrySetting: () => req<{ enabled: boolean }>('/api/settings/telemetry'),
   setTelemetrySetting: (enabled: boolean) => req<{ enabled: boolean }>('/api/settings/telemetry', { method: 'PUT', body: body({ enabled }) }),
-  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null; skipAgentSummaries?: boolean | null }>) =>
+  putHarnessSettings: (patch: Record<string, Partial<Record<'defaultModel' | 'defaultMode' | 'keySecret', string | null>> & { models?: OpencodeModel[] | null; skipAgentSummaries?: boolean | null; autoArchiveMs?: number | null }>) =>
     req<HarnessSettingsResponse>('/api/settings/harnesses', { method: 'PUT', body: body(patch) }),
   /** Search OpenRouter's public catalog (daemon-cached) for the OpenCode "add a model" box. */
   searchOpencodeCatalog: (q: string) =>
@@ -238,6 +238,7 @@ export const api = {
   updateTerminal: (id: string, fields: { label?: string; config?: Record<string, unknown> }) =>
     req<Terminal>(`/api/terminals/${id}`, { method: 'PATCH', body: body(fields) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
+  resetTerminalStatus: (id: string) => req<void>(`/api/terminals/${id}/reset-status`, { method: 'POST' }),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),
   // Launch a QUEUED worker (status='queued') now — moves it from the Queued bucket into live work.
   startTerminal: (id: string) => req<void>(`/api/terminals/${id}/start`, { method: 'POST' }),
