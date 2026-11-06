@@ -1,4 +1,4 @@
-import { test, expect } from 'vitest';
+import { test, expect, describe, it } from 'vitest';
 import { Terminal } from '@xterm/xterm';
 import { createWriteGate, suppressReplayedQueries } from './replayQueries';
 
@@ -117,4 +117,15 @@ test('typed input is never filtered', async () => {
   (term as any).input('ls\r', true);
   await p;
   expect(replies).toContain('ls\r');
+});
+
+describe('displayFix (2026-11-06)', () => {
+  it("swaps Claude Code's ⏺ bullet for ●, same length, and leaves everything else", async () => {
+    const { displayFix, createWriteGate } = await import('./replayQueries');
+    expect(displayFix('⏺ Bash(ls)\r\n⏺ done')).toBe('● Bash(ls)\r\n● done');
+    expect(displayFix('plain \x1b[1mtext\x1b[0m')).toBe('plain \x1b[1mtext\x1b[0m');
+    const written: string[] = [];
+    createWriteGate({ write: (c: string, cb?: () => void) => { written.push(c); cb?.(); } } as never).write('⏺ hi', false);
+    expect(written).toEqual(['● hi']);
+  });
 });

@@ -613,7 +613,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // a size to the server. Without it, currentSize() would report xterm's 80×24
     // default and the server would resize the pty to a size nobody renders at.
     let fitted = false;
-    const applyFit = (opts?: { alwaysNotify?: boolean }) => {
+    const applyFit = (opts?: { alwaysNotify?: boolean; repaint?: boolean }) => {
       const el = hostRef.current;
       // Skip while backgrounded: iOS reports a collapsed visual viewport and a
       // fit here would tell Grok it is 10×8. We refit on the way back instead.
@@ -626,7 +626,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       const changed = term.cols !== lastCols || term.rows !== lastRows;
       if (changed || opts?.alwaysNotify) {
         lastCols = term.cols; lastRows = term.rows;
-        sockRef.current?.resize(term.cols, term.rows);
+        sockRef.current?.resize(term.cols, term.rows, opts?.repaint ? { repaint: true } : undefined);
       }
       rowMeasureRef.current();
     };
@@ -689,12 +689,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     window.addEventListener('resize', scheduleFit);
     const vv = window.visualViewport;
     vv?.addEventListener('resize', scheduleFit);
+    // Coming back also asks for a full redraw (2026-11-06): another device may have resized the
+    // same terminal meanwhile, and the TUI's frames drawn at that width left this screen scrambled.
     const onForeground = () => {
       if (document.hidden) return;
       // iOS applies the restored layout a frame after visibilitychange.
-      requestAnimationFrame(() => { if (!disposed) applyFit({ alwaysNotify: true }); });
+      requestAnimationFrame(() => { if (!disposed) applyFit({ alwaysNotify: true, repaint: true }); });
     };
     document.addEventListener('visibilitychange', onForeground);
+    window.addEventListener('focus', onForeground);
     window.addEventListener('pageshow', onForeground);
 
     // --- Sub-pixel smooth touch scrolling (mobile) ---
@@ -890,6 +893,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       window.removeEventListener('resize', scheduleFit);
       vv?.removeEventListener('resize', scheduleFit);
       document.removeEventListener('visibilitychange', onForeground);
+      window.removeEventListener('focus', onForeground);
       window.removeEventListener('pageshow', onForeground);
       // If a rebuild is mid-flight at unmount time, abort it first so its 10s
       // stall timer is cleared here rather than firing up to 10s after unmount.

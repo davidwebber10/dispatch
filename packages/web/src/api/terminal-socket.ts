@@ -155,7 +155,8 @@ export function openTerminalSocket(opts: Opts) {
 
   return {
     send: (input: string) => post(input),
-    resize: (cols: number, rows: number) => post(JSON.stringify({ type: 'resize', cols, rows })),
+    // `repaint`: also redraw at an unchanged size (coming back to a thread another device resized).
+    resize: (cols: number, rows: number, opts?: { repaint?: boolean }) => post(JSON.stringify({ type: 'resize', cols, rows, ...(opts?.repaint ? { repaint: true } : {}) })),
     /** Change the replay window used by FUTURE reconnects of this socket. Call it
      *  after the view has been rebuilt at a larger size so a later reconnect
      *  restores that size instead of shrinking the history back down. */
