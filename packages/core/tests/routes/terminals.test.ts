@@ -482,4 +482,43 @@ describe('terminal routes', () => {
         .expect(404);
     });
   });
+
+  /** Multi-account (2026-11-06): move a thread to another signed-in account. */
+  describe('PATCH /api/terminals/:terminalId/account', () => {
+    const directory = { has: (_type: string, id: string) => ['cli', 'work'].includes(id), defaultId: () => 'cli' };
+
+    it('pins config.accountId without clobbering the rest of the config', async () => {
+      (app as any)._sessionService.setAccountDirectory(directory);
+      const created = await request(app)
+        .post(`/api/sessions/${sessionId}/terminals`)
+        .send({ type: 'claude-code', label: 'q', config: { transport: 'structured', model: 'opus' } })
+        .expect(201);
+      const res = await request(app).patch(`/api/terminals/${created.body.id}/account`).send({ accountId: 'work' }).expect(200);
+      expect(res.body.config).toEqual({ transport: 'structured', model: 'opus', spawnDepth: 0, accountId: 'work' });
+    });
+
+    it('refuses an unknown account, a thread with no account, and a Codex Pretty thread off cli', async () => {
+      (app as any)._sessionService.setAccountDirectory(directory);
+      const cc = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'claude-code' }).expect(201);
+      await request(app).patch(`/api/terminals/${cc.body.id}/account`).send({ accountId: 'nope' }).expect(404);
+      await request(app).patch(`/api/terminals/${cc.body.id}/account`).send({}).expect(400);
+      const sh = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'shell' }).expect(201);
+      await request(app).patch(`/api/terminals/${sh.body.id}/account`).send({ accountId: 'work' }).expect(409);
+      const cx = await request(app).post(`/api/sessions/${sessionId}/terminals`).send({ type: 'codex', config: { transport: 'structured' } }).expect(201);
+      await request(app).patch(`/api/terminals/${cx.body.id}/account`).send({ accountId: 'work' }).expect(409);
+      await request(app).patch('/api/terminals/nope/account').send({ accountId: 'work' }).expect(404);
+    });
+
+    it('a Codex thread that changes account drops its resume handle (the session lives in the old login)', async () => {
+      (app as any)._sessionService.setAccountDirectory(directory);
+      terminalsDb.create(db, { id: 'cx-acc', sessionId, type: 'codex', label: 'c', skipPermissions: true, externalId: 'old-session' });
+      const res = await request(app).patch('/api/terminals/cx-acc/account').send({ accountId: 'work' }).expect(200);
+      expect(res.body.externalId).toBeNull();
+      expect(res.body.config.accountId).toBe('work');
+      // Claude Code keeps its session: the CLI stores it by folder, not by login.
+      terminalsDb.create(db, { id: 'cc-acc', sessionId, type: 'claude-code', label: 'c', skipPermissions: true, externalId: 'keep-me' });
+      const r2 = await request(app).patch('/api/terminals/cc-acc/account').send({ accountId: 'work' }).expect(200);
+      expect(r2.body.externalId).toBe('keep-me');
+    });
+  });
 });

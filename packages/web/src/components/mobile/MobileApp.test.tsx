@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
@@ -65,6 +65,19 @@ describe('MobileApp thread header (2026-11-06, option C)', () => {
     const title = screen.getByTestId('thread-title');
     expect(title.textContent).toContain('Fix the login');
     expect(title.textContent).toContain('Pretty');
+  });
+
+  it('names the account under the thread name once the accounts are known (multi-account)', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue({
+      claude: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, addedAt: null }, { id: 'work', label: 'Work', isCli: false, addedAt: '2026-11-06' }],
+      codex: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, addedAt: null }],
+      defaults: { claude: 'cli', codex: 'cli' },
+    } as any);
+    seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', label: 'Fix the login', config: { transport: 'structured', accountId: 'work' } } as any);
+    // The mount reloads the project's threads; answer with the seed so the thread stays.
+    vi.spyOn(api, 'listTerminals').mockImplementation(async () => [seeded] as any);
+    render(<MobileApp />);
+    await waitFor(() => expect(screen.getByTestId('thread-title').textContent).toContain('· Work'));
   });
 
   it('the CLI ⇄ Pretty switch and Previews are in the ⋯ menu, not the header', () => {

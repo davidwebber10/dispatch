@@ -9,6 +9,7 @@ import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
+import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
 import { Eye, DotsThree } from '@phosphor-icons/react';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 import { useTransportSwitch } from '../layout/TransportToggle';
@@ -288,6 +289,10 @@ export function MobileApp() {
   const [threadMenu, setThreadMenu] = useState<ThreadMenuAt | null>(null);
   const connection = useShownStatus();
   useEffect(() => { void usePreviews.getState().load(); }, []);
+  // The account under the thread name (multi-account, 2026-11-06): "Proj · Pretty · Work".
+  const accountsView = useAccounts((s) => s.view);
+  useEffect(() => { if (leafTab) void useAccounts.getState().load(); }, [leafTab]);
+  const leafAccount = threadAccount(accountsView, leafTab);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
@@ -351,7 +356,7 @@ export function MobileApp() {
                 <span style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leafTab.label}</span>
                 <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
-                  {project?.name}{transport.applies ? ` · ${transport.current === 'pretty' ? 'Pretty' : 'CLI'}` : ''}
+                  {project?.name}{transport.applies ? ` · ${transport.current === 'pretty' ? 'Pretty' : 'CLI'}` : ''}{leafAccount ? ` · ${shortAccountLabel(leafAccount.label)}` : ''}
                 </span>
               </div>
             </>

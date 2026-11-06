@@ -92,7 +92,7 @@ import { createCodexRefresh } from './limits/codex-refresh.js';
 import { createCodexPoll } from './limits/codex-poll.js';
 import { createClaudeProbe } from './limits/claude-probe.js';
 import { createClaudeUsageReader, readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
-import { AccountsStore } from './auth/accounts.js';
+import { AccountsStore, type AccountProvider } from './auth/accounts.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
@@ -732,6 +732,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     void fetchClaudeProfile(token).then((p) => { if (p) accounts.updateClaude(a.id, { email: p.email, accountUuid: p.accountUuid, plan: p.plan, ...(label.trim() ? {} : { label: p.email ?? a.label }) }); }).catch(() => {});
   };
   sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
+  const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
+  sessionService.setAccountDirectory({
+    has: (type, id) => { const p = providerOfType(type); return p ? accounts.has(p, id) : false; },
+    defaultId: (type) => { const p = providerOfType(type); return p ? accounts.defaultId(p) : 'cli'; },
+  });
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
   const osConnections = new OsConnectionsProvider();
   const toolsBase = path.join(dataDir, 'tools');

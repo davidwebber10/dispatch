@@ -353,6 +353,22 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
   });
 
+  // PATCH /api/terminals/:terminalId/account { accountId, force? } — move the thread to another
+  // signed-in account (multi-account, 2026-11-06): pins config.accountId server-side (a merge, the
+  // generic PATCH clobbers config) and restarts a running thread so the login applies. Changing
+  // whose credentials a thread spends is owner work: web page or token, never a thread key.
+  router.patch('/terminals/:terminalId/account', requireOwnerProof, async (req, res) => {
+    const { accountId, force } = req.body ?? {};
+    if (typeof accountId !== 'string' || !accountId) return res.status(400).json({ error: 'accountId is required' });
+    try {
+      const terminal = await sessionService.switchAccount(req.params.terminalId, accountId, { force: force === true });
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json(terminal);
+    } catch (e: any) {
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
+    }
+  });
+
   // POST /api/terminals/:terminalId/input { data } — write raw bytes to the live PTY.
   router.post('/terminals/:terminalId/input', ownerOnlyStrict, (req, res) => {
     const data = req.body?.data;

@@ -214,6 +214,11 @@ export const api = {
   // `force`: switch a working CLI thread anyway (the user confirmed stopping its turn).
   switchTransport: (terminalId: string, transport: 'structured' | 'pty', opts?: { force?: boolean }) =>
     req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport, ...(opts?.force ? { force: true } : {}) }) }),
+  // Move a Claude Code / Codex thread to another signed-in account (multi-account): pins
+  // config.accountId server-side and restarts a running thread. 404 unknown account, 409 when the
+  // thread type has no accounts, is a Codex Pretty thread off cli, or is busy (then `force`).
+  switchAccount: (terminalId: string, accountId: string, opts?: { force?: boolean }) =>
+    req<Terminal>(`/api/terminals/${terminalId}/account`, { method: 'PATCH', body: body({ accountId, ...(opts?.force ? { force: true } : {}) }) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   // opts apply only when this call CREATES the coordinator (setup card / first directive).
   // `coordinatorHarness` picks which harness backs the coordinator itself (Phase 2); absent

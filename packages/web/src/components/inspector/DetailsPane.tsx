@@ -5,6 +5,8 @@ import { useActivity } from '../../stores/activity';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import type { Terminal } from '../../api/types';
 import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
+import { useAccounts, threadAccount } from '../../stores/accounts';
+import { AccountSwitchModal } from '../common/AccountSwitchModal';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -28,6 +30,11 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : null));
   const [term, setTerm] = useState<Terminal | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
+  // The account the thread runs on (multi-account, 2026-11-06), with a switch.
+  const accountsView = useAccounts((s) => s.view);
+  useEffect(() => { void useAccounts.getState().load(); }, []);
+  const account = threadAccount(accountsView, tab ?? term);
+  const [switching, setSwitching] = useState(false);
   // Limits belong to the account: refetch when a turn updates the thread's numbers.
   const limitsRows = useUsageLimits(terminalId, `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`);
 
@@ -71,6 +78,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
           {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}
           {term?.pid != null && <Row label="PID" value={String(term.pid)} mono />}
           {status && <Row label="Status" value={status} />}
+          {account && <Row label="Account" value={account.pinned ? account.label : `${account.label} (default)`} />}
         </>
       )}
       <div style={{ ...label, margin: '14px 0 8px' }}>PROJECT</div>
@@ -81,8 +89,10 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
         {terminalId && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
         {terminalId && <button onClick={() => { useTabs.getState().clearLoading(terminalId); void api.resetTerminalStatus(terminalId).then(() => { if (project) void useTabs.getState().loadTabs(project.id); }).catch(() => {}); }} style={btn} title="Clear a stuck working / needs-input / error status">Reset Status</button>}
+        {terminalId && account && <button onClick={() => setSwitching(true)} style={btn}>Switch Account</button>}
         {terminalId && <button onClick={() => void api.archiveTerminal(terminalId)} style={btn}>Archive Thread</button>}
       </div>
+      {switching && (tab ?? term) && <AccountSwitchModal tab={(tab ?? term)!} onClose={() => setSwitching(false)} />}
     </div>
   );
 }

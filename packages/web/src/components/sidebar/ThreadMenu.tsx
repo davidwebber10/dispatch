@@ -9,6 +9,7 @@ import { THREAD_TYPES } from '../../lib/harnesses';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameThreadModal } from './RenameThreadModal';
 import { AutoArchiveModal } from './AutoArchiveModal';
+import { AccountSwitchModal } from '../common/AccountSwitchModal';
 import { Modal } from '../common/Modal';
 import { DetailsPane } from '../inspector/DetailsPane';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -36,6 +37,7 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
   const [renameTarget, setRenameTarget] = useState<Terminal | null>(null);
   const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Terminal | null>(null);
+  const [accountTarget, setAccountTarget] = useState<Terminal | null>(null);
   // Desktop shows the same details in its right-hand panel; a phone has no panel.
   const isMobile = useIsMobile();
 
@@ -92,6 +94,9 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
             {THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick(setAutoArchiveTarget)} style={isMobile ? sheetItem : item}>Auto-archive…</button>
             )}
+            {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && (
+              <button onClick={pick(setAccountTarget)} style={isMobile ? sheetItem : item}>Switch account…</button>
+            )}
             {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && canReceiveAlerts() && (
               <button onClick={pick((t) => void toggleAlerts(t))} style={isMobile ? sheetItem : item}>{(at.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
             )}
@@ -140,6 +145,9 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
 
       {autoArchiveTarget && (
         <AutoArchiveModal tab={autoArchiveTarget} onClose={() => setAutoArchiveTarget(null)} />
+      )}
+      {accountTarget && (
+        <AccountSwitchModal tab={accountTarget} onClose={() => setAccountTarget(null)} />
       )}
     </>
   );

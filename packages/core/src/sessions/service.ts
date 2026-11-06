@@ -191,6 +191,9 @@ export class SessionService {
   /** The per-thread account env (multi-account spec 2026-11-06): the thread's Claude token or Codex home. Set by the server wiring. */
   private accountEnv?: (type: string, config: Record<string, unknown>) => Record<string, string>;
   setAccountEnv(fn: (type: string, config: Record<string, unknown>) => Record<string, string>): void { this.accountEnv = fn; }
+  /** The accounts a thread type can run on (multi-account): validates a switch, and names the default an unpinned thread uses. */
+  private accountDirectory?: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string };
+  setAccountDirectory(d: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string }): void { this.accountDirectory = d; }
   /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
   clock: () => number = () => Date.now();
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
@@ -2158,6 +2161,59 @@ export class SessionService {
     // transport, resuming `external_id` (structured `-r`/backfill or PTY resume) either way.
     this.spawnTerminal(terminalId);
 
+    return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
+  }
+
+  /**
+   * Move a Claude Code or Codex thread to another account (2026-11-06): pin `config.accountId`
+   * and, when the thread is running, restart it so the new login's env applies. The spawn env is
+   * the only place an account acts, so a stopped or queued thread just takes the new pin.
+   * A Codex login's sessions live in its own folder, so a Codex thread that changes account
+   * cannot resume its session: its resume handle is dropped and the next spawn starts fresh
+   * (the Dispatch history stays). A Codex Pretty thread runs on the shared app-server, which
+   * has one login, so it may only run as `cli`.
+   */
+  async switchAccount(terminalId: string, accountId: string, opts?: { force?: boolean }): Promise<terminalsDb.Terminal> {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw transportError(404, 'Terminal not found');
+    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') {
+      throw transportError(409, 'Only a Claude Code or Codex thread runs on an account');
+    }
+    if (typeof accountId !== 'string' || !accountId) throw transportError(400, 'accountId is required');
+    if (this.accountDirectory && !this.accountDirectory.has(terminal.type, accountId)) throw transportError(404, 'Unknown account');
+
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    const current: 'structured' | 'pty' = config.transport === 'structured' ? 'structured' : 'pty';
+    if (terminal.type === 'codex' && current === 'structured' && accountId !== 'cli') {
+      throw transportError(409, 'A Codex Pretty thread runs on the CLI login only. Switch it to CLI mode first.');
+    }
+    if (config.accountId === accountId) return terminalsDb.rowToTerminal(terminal); // already there — idempotent
+    const previous: string = typeof config.accountId === 'string' ? config.accountId : this.accountDirectory?.defaultId(terminal.type) ?? 'cli';
+
+    const alive = current === 'pty' ? this.ptyManager.isAlive(terminalId) : !!this.structuredManagerFor(terminal.type)?.isAlive(terminalId);
+    if (alive && terminal.status === 'working') {
+      const live = this.structuredManagerForTerminal(terminalId);
+      if (live?.isAlive(terminalId)) await this.settleStructuredTurn(live, terminalId);
+      else if (!opts?.force) throw transportError(409, 'This thread is busy — wait for the current turn to finish, then switch');
+    }
+    if (alive) {
+      await this.killCurrentTransport(terminal.type, terminalId, current);
+      this.revokeAllKeys(terminalId);
+    }
+
+    // Read-merge-write, like setAutoArchive: never clobber the other keys.
+    const fresh = terminalsDb.getById(this.db, terminalId);
+    let merged: Record<string, any> = {};
+    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
+    merged.accountId = accountId;
+    terminalsDb.updateConfig(this.db, terminalId, merged);
+    if (terminal.type === 'codex' && previous !== accountId && terminal.external_id) terminalsDb.updateExternalId(this.db, terminalId, null);
+
+    if (alive) {
+      terminalsDb.updatePid(this.db, terminalId, null);
+      this.spawnTerminal(terminalId);
+    }
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
