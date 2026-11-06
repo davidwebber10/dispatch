@@ -5,7 +5,9 @@ import { getRunningVersion } from './version.js';
 import { collectPendingNotes, MAX_NOTES, type GitHubRelease } from './notes.js';
 
 const DEFAULT_REPO = 'davidwebber10/dispatch';
-const DEFAULT_INTERVAL_MS = 45 * 60 * 1000; // 45 min — within the requested 30-60 min window
+// 15 min (was 45): a release that lands soon after the last check is not shown as the latest for
+// long. Four unauthenticated calls an hour, well inside GitHub's 60.
+const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 
 export interface CheckForUpdateOptions {
   currentVersion?: string;

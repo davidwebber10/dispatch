@@ -1,7 +1,8 @@
 import { expect, test, beforeEach, vi } from 'vitest';
 
 const getUpdateState = vi.fn();
-vi.mock('../api/client', () => ({ api: { getUpdateState: () => getUpdateState() } }));
+const checkUpdate = vi.fn();
+vi.mock('../api/client', () => ({ api: { getUpdateState: () => getUpdateState(), checkUpdate: () => checkUpdate() } }));
 
 import { useUpdate } from './update';
 
@@ -89,4 +90,14 @@ test('failed update stops progress and keeps an actionable error for every conne
   expect(useUpdate.getState().failure).toBe('Build failed. See update.log.');
   useUpdate.getState().applyEvent({ type: 'update:in-progress' });
   expect(useUpdate.getState().failure).toBeNull();
+});
+
+test('a check keeps the release notes: it reloads the full state instead of taking the bare answer', async () => {
+  const notes = [{ version: 'v1.3.0', url: 'u', publishedAt: 'p', body: 'what changed' }];
+  checkUpdate.mockResolvedValue({ available: true, version: 'v1.3.0', url: 'u', publishedAt: 'p', currentVersion: '1.2.0' });
+  getUpdateState.mockResolvedValue({ available: true, version: 'v1.3.0', url: 'u', publishedAt: 'p', currentVersion: '1.2.0', notes, currentNotes: null });
+  await useUpdate.getState().check();
+  expect(checkUpdate).toHaveBeenCalled();
+  expect(useUpdate.getState().available?.version).toBe('v1.3.0');
+  expect(useUpdate.getState().notes).toEqual(notes);
 });

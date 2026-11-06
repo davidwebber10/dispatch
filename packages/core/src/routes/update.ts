@@ -23,6 +23,8 @@ export interface CreateUpdateRouterOptions {
   applyFn?: (repoDir: string) => void;
   /** Test seam: replace the real GitHub release poll. */
   checkFn?: (db: Database.Database, broadcaster: EventBroadcaster) => Promise<void>;
+  /** Test seam: how long apply/check wait on GitHub (default CHECK_WAIT_MS). */
+  checkWaitMs?: number;
   /**
    * Test seam / override: the OS control plane to ask on a hosted box. Defaults
    * to reading the environment, where `null` means "ordinary local daemon" and
@@ -39,6 +41,11 @@ export interface CreateUpdateRouterOptions {
   updateLogPath?: string;
 }
 
+/** A check younger than this is fresh enough to show. */
+export const FRESH_MS = 60_000;
+/** The longest a request waits on GitHub before going on with what is stored. */
+export const CHECK_WAIT_MS = 6_000;
+
 export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: string, db: Database.Database, opts?: CreateUpdateRouterOptions): Router {
   const router = policyRouter();
   const apply = opts?.applyFn ?? ((dir: string) => applyUpdate(dir, reason => broadcaster.broadcast({ type: 'update:failed', reason })));
@@ -49,6 +56,24 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
   const hostedCheck = opts?.hostedCheckFn ?? checkHostedUpdate;
   const dataDir = opts?.dataDir ?? platform.dataDir();
   const updateLogPath = opts?.updateLogPath ?? path.join(platform.logDir(), 'update.log');
+
+  /**
+   * Ask GitHub again unless it was asked in the last FRESH_MS, waiting at most CHECK_WAIT_MS
+   * (2026-11-05). The stored release is what Settings and the update prompt show, but the update
+   * itself goes to the newest tag on origin. When a second release came out after the last check,
+   * the screen showed the older version's notes while the newer one was installed.
+   * The window spares GitHub's unauthenticated limit (60 calls an hour) when Settings is reopened.
+   */
+  const freshCheck = async () => {
+    const last = Date.parse(appState.get(db, 'last_checked_ts') ?? '');
+    if (Number.isFinite(last) && Date.now() - last < FRESH_MS) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      check(db, broadcaster).catch(() => {}),
+      new Promise<void>((r) => { timer = setTimeout(r, opts?.checkWaitMs ?? CHECK_WAIT_MS); }),
+    ]);
+    clearTimeout(timer);
+  };
 
   // GET /api/update/progress — the running (or last) update's step, error and output tail,
   // from the updater's status file (update/progress.ts). The update window polls it.
@@ -68,7 +93,7 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
       res.json({ ...state, url: null, publishedAt: null, hosted: true });
       return;
     }
-    await check(db, broadcaster);
+    await freshCheck();
     const tag = appState.get(db, 'latest_release_tag');
     const currentVersion = getRunningVersion();
     const available = !!tag && isNewerVersion(tag, currentVersion);
@@ -115,6 +140,9 @@ export function createUpdateRouter(broadcaster: EventBroadcaster, repoDir: strin
       });
       return;
     }
+    // Refresh the stored release first, so the version and notes on screen are the ones being
+    // installed (the check broadcasts update:available, and every client reloads them).
+    await freshCheck();
     markUpdateStarted(dataDir);
     broadcaster.broadcast({ type: 'update:in-progress' });
     apply(repoDir);

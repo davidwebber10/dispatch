@@ -25,7 +25,8 @@ afterEach(() => {
 function app(broadcaster: EventBroadcaster, gitExec: GitExec, applyFn: (repoDir: string) => void, opts?: Partial<CreateUpdateRouterOptions>) {
   const a = express();
   a.use(express.json());
-  a.use('/api/update', createUpdateRouter(broadcaster, '/repo', db, { gitExec, applyFn, ...opts }));
+  // A no-op release check unless a test brings its own: apply and check refresh from GitHub first.
+  a.use('/api/update', createUpdateRouter(broadcaster, '/repo', db, { gitExec, applyFn, checkFn: async () => {}, ...opts }));
   return a;
 }
 
@@ -263,5 +264,34 @@ describe('GET /api/update/progress', () => {
     const a = app(broadcaster, fakeGit(CLEAN_AND_FF_ABLE), () => {}, { dataDir: dir, updateLogPath: path.join(dir, 'update.log') });
     expect((await request(a).post('/api/update/apply').send({})).body).toEqual({ ok: true });
     expect((await request(a).get('/api/update/progress')).body).toMatchObject({ state: 'running', step: 'pull' });
+  });
+});
+
+describe('the stored release is refreshed before it is shown or installed (2026-11-05)', () => {
+  const bc = (): EventBroadcaster => ({ broadcast: vi.fn() });
+
+  it('apply asks GitHub again first, so the notes on screen are the version being installed', async () => {
+    const order: string[] = [];
+    const checkFn = vi.fn(async () => { order.push('check'); });
+    const applyFn = vi.fn(() => { order.push('apply'); });
+    const res = await request(app(bc(), fakeGit(CLEAN_AND_FF_ABLE), applyFn, { checkFn })).post('/api/update/apply');
+    expect(res.status).toBe(200);
+    expect(order).toEqual(['check', 'apply']);
+  });
+
+  it('a check made in the last minute is reused, not repeated', async () => {
+    appState.set(db, 'last_checked_ts', new Date().toISOString());
+    const checkFn = vi.fn(async () => {});
+    await request(app(bc(), fakeGit(CLEAN_AND_FF_ABLE), vi.fn(), { checkFn })).post('/api/update/check');
+    await request(app(bc(), fakeGit(CLEAN_AND_FF_ABLE), vi.fn(), { checkFn })).post('/api/update/apply');
+    expect(checkFn).not.toHaveBeenCalled();
+  });
+
+  it('a GitHub that does not answer does not hold the update up for long', async () => {
+    const checkFn = vi.fn(() => new Promise<void>(() => {})); // never settles
+    const applyFn = vi.fn();
+    const res = await request(app(bc(), fakeGit(CLEAN_AND_FF_ABLE), applyFn, { checkFn, checkWaitMs: 50 })).post('/api/update/apply');
+    expect(res.status).toBe(200);
+    expect(applyFn).toHaveBeenCalled();
   });
 });

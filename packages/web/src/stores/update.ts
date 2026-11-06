@@ -90,8 +90,11 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   load: async () => {
     set(fromDto(await api.getUpdateState()));
   },
+  // Ask GitHub now, then reload the full state: the check's own answer carries no notes, so setting
+  // from it blanked the release notes and "what's new" whenever no newer release turned up.
   check: async () => {
-    set(fromDto(await api.checkUpdate()));
+    await api.checkUpdate();
+    set(fromDto(await api.getUpdateState()));
   },
   applyEvent: (e) => {
     if (e.type === 'update:available' && typeof e.version === 'string') {
