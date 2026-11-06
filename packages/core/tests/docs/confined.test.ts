@@ -30,6 +30,17 @@ const checked = () => {
 const text = (r: Awaited<ReturnType<typeof readConfined>>) => (r.kind === 'file' ? r.bytes.toString('utf8') : null);
 
 describe('readConfined', () => {
+  it('a parent folder swapped for a link before the open and put back after it is refused', async () => {
+    const real = checked();
+    const dir = path.join(project, 'docs');
+    const r = await readConfined(project, real, MAX, {
+      beforeOpen: () => { fs.renameSync(dir, `${dir}.bak`); fs.symlinkSync(path.join(outside, 'docs'), dir); },
+      afterOpen: () => { fs.rmSync(dir); fs.renameSync(`${dir}.bak`, dir); },
+    });
+    expect(text(r)).not.toBe('outside secret');
+    expect(r.kind).toBe('changed');
+  });
+
   it('reads a regular file inside the project, with its mtime', async () => {
     const r = await readConfined(project, checked(), MAX);
     expect(r.kind).toBe('file');

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { openChipFile } from './openChipFile';
 import * as openFileTabMod from './openFileTab';
 import * as saveFiles from './saveFiles';
+import { api } from '../api/client';
 import { useDocViewer } from '../stores/docViewer';
 import { useUI } from '../stores/ui';
 
@@ -70,5 +71,34 @@ describe('openChipFile', () => {
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
     await openChipFile({ project: 's1', path: 'a.parquet', rel: 'a.parquet', branch: null, nav: 'chat' });
     expect(alert).toHaveBeenCalledWith(expect.stringContaining('download failed: 404'));
+  });
+  describe('a file type the app does not know is checked before the tab shows it', () => {
+    it('a binary file (the server says so) downloads and opens no tab', async () => {
+      const tab = vi.spyOn(openFileTabMod, 'openFileTab');
+      const sniff = vi.spyOn(api, 'sniffFile').mockResolvedValue({ binary: true });
+      const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();
+      await openChipFile({ project: 's1', path: 'models/x.pt', rel: 'models/x.pt', branch: null, nav: 'chat' });
+      expect(sniff).toHaveBeenCalledWith('s1', 'models/x.pt');
+      expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=models%2Fx.pt', 'x.pt');
+      expect(tab).not.toHaveBeenCalled();
+    });
+    it('a text file opens the tab', async () => {
+      const tab = vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue('ft1');
+      vi.spyOn(api, 'sniffFile').mockResolvedValue({ binary: false });
+      await openChipFile({ project: 's1', path: 'notes/x.weird', rel: 'notes/x.weird', branch: null, nav: 'threads' });
+      expect(tab).toHaveBeenCalledWith('s1', 'notes/x.weird', { focus: true });
+    });
+    it('a failed check opens the tab, which shows its own error', async () => {
+      const tab = vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue('ft1');
+      vi.spyOn(api, 'sniffFile').mockRejectedValue(new Error('403'));
+      await openChipFile({ project: 's1', path: 'a.weird', rel: 'a.weird', branch: null, nav: 'threads' });
+      expect(tab).toHaveBeenCalled();
+    });
+    it('a known text type is not checked', async () => {
+      vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue('ft1');
+      const sniff = vi.spyOn(api, 'sniffFile');
+      await openChipFile({ project: 's1', path: 'a.py', rel: 'a.py', branch: null, nav: 'threads' });
+      expect(sniff).not.toHaveBeenCalled();
+    });
   });
 });

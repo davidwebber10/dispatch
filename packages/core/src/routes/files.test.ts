@@ -185,6 +185,17 @@ describe('read cannot follow a symlink out of the project', () => {
       expect(JSON.stringify(abs.body)).not.toContain('top secret');
     } finally { spy.mockRestore(); }
   });
+  it('sniff=1: reads only the start of the file and says whether it is binary (a NUL byte); no sniff changes nothing', async () => {
+    fs.writeFileSync(path.join(workDir, 'model.pt'), Buffer.from([0x80, 0x02, 0x00, 0x01, 0x7a]));
+    const app = makeApp(workDir);
+    const sniffed = await request(app).get('/api/sessions/s1/files/read').query({ path: 'model.pt', sniff: '1' });
+    expect(sniffed.body).toEqual({ content: '', path: 'model.pt', binary: true });
+    const text = await request(app).get('/api/sessions/s1/files/read').query({ path: 'ok.txt', sniff: '1' });
+    expect(text.body).toEqual({ content: '', path: 'ok.txt', binary: false });
+    const plain = await request(app).get('/api/sessions/s1/files/read').query({ path: 'model.pt' });
+    expect(plain.body.binary).toBeUndefined();
+    expect(plain.body.content.length).toBeGreaterThan(0);
+  });
   it('a real file inside the project reads, by a relative or an absolute path', async () => {
     const app = makeApp(workDir);
     expect((await read(app, 'ok.txt')).body.content).toBe('fine');
@@ -194,6 +205,86 @@ describe('read cannot follow a symlink out of the project', () => {
     const res = await read(makeApp(workDir), path.join(outside, 'secret.txt'));
     expect(res.status).toBe(200);
     expect(res.body.content).toBe('top secret');
+  });
+});
+
+describe('a swap between the check and the open never leaks an outside file', () => {
+  let workDir: string;
+  let outside: string;
+  const get = (app: express.Express, route: string, p: string) => request(app).get(`/api/sessions/s1/files/${route}`).query({ path: p }).buffer(true).parse((res, cb) => {
+    const chunks: Buffer[] = [];
+    res.on('data', (c: Buffer) => chunks.push(c));
+    res.on('end', () => cb(null, Buffer.concat(chunks)));
+  });
+  const bodyText = (r: request.Response) => (Buffer.isBuffer(r.body) ? r.body.toString('utf8') : JSON.stringify(r.body));
+  beforeEach(() => {
+    workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-sw-'));
+    outside = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-swout-'));
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'top secret');
+    fs.mkdirSync(path.join(outside, 'docs'));
+    fs.writeFileSync(path.join(outside, 'docs', 'a.py'), 'top secret');
+    fs.writeFileSync(path.join(workDir, 'archive.zip'), 'inside zip');
+    fs.writeFileSync(path.join(workDir, 'pic.png'), 'inside png');
+    fs.mkdirSync(path.join(workDir, 'docs'));
+    fs.writeFileSync(path.join(workDir, 'docs', 'a.py'), 'inside');
+  });
+  afterEach(() => { vi.restoreAllMocks(); fs.rmSync(workDir, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+
+  /** Replace `rel` with a symlink to `target` (and back). */
+  const swapIn = (rel: string, target: string) => { const p = path.join(workDir, rel); fs.renameSync(p, `${p}.bak`); fs.symlinkSync(target, p); };
+  const swapOut = (rel: string) => { const p = path.join(workDir, rel); fs.rmSync(p, { force: true }); fs.renameSync(`${p}.bak`, p); };
+
+  it('a download whose file becomes a link to an outside file is refused', async () => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => { swapIn('archive.zip', path.join(outside, 'secret.txt')); return (realOpen as any)(p, ...rest); }) as any);
+    const res = await get(makeApp(workDir), 'download', 'archive.zip');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it('an image whose file becomes a link to an outside file is refused', async () => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation(((p: any, ...rest: any[]) => { swapIn('pic.png', path.join(outside, 'secret.txt')); return (realOpen as any)(p, ...rest); }) as any);
+    const res = await get(makeApp(workDir), 'image', 'pic.png');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it('a download and a read of an unchanged file still work', async () => {
+    const app = makeApp(workDir);
+    const dl = await get(app, 'download', 'archive.zip');
+    expect(dl.status).toBe(200);
+    expect(bodyText(dl)).toBe('inside zip');
+    expect(dl.headers['content-disposition']).toContain('archive.zip');
+    expect(JSON.parse(bodyText(await get(app, 'read', 'docs/a.py'))).content).toBe('inside');
+  });
+  it.each(['read', 'download'])('%s: a parent folder swapped for a link to an outside folder after the realpath, and put back after the open, is refused', async (route) => {
+    const realRealpath = fs.promises.realpath.bind(fs.promises);
+    const realOpen = fs.promises.open.bind(fs.promises);
+    let swapped = false;
+    vi.spyOn(fs.promises, 'realpath').mockImplementation((async (p: any, ...rest: any[]) => {
+      const r = await (realRealpath as any)(p, ...rest);
+      if (!swapped && String(r).endsWith(path.join('docs', 'a.py'))) { swapped = true; swapIn('docs', path.join(outside, 'docs')); }
+      return r;
+    }) as any);
+    vi.spyOn(fs.promises, 'open').mockImplementation((async (p: any, ...rest: any[]) => {
+      const fh = await (realOpen as any)(p, ...rest);
+      if (swapped) { swapOut('docs'); swapped = false; }
+      return fh;
+    }) as any);
+    const res = await get(makeApp(workDir), route, 'docs/a.py');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
+  });
+  it.each(['read', 'download'])('%s: a parent folder swapped just before the open and put back after it is refused', async (route) => {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementation((async (p: any, ...rest: any[]) => {
+      swapIn('docs', path.join(outside, 'docs'));
+      const fh = await (realOpen as any)(p, ...rest);
+      swapOut('docs');
+      return fh;
+    }) as any);
+    const res = await get(makeApp(workDir), route, 'docs/a.py');
+    expect(res.status).toBe(403);
+    expect(bodyText(res)).not.toContain('top secret');
   });
 });
 

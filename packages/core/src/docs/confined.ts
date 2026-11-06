@@ -12,15 +12,17 @@
  *   resolve inside `realRoot`. On any mismatch the file is closed and refused.
  * - The bytes come from the descriptor only, at most `max` + 1, so a file that grew is too large.
  *
- * A known limit: the check-time `lstat` runs as a separate path lookup after `locate`. A same-user
- * process that swaps a parent folder out before that `lstat` and back between the open and the
- * realpath re-check can still make the read return an outside file. Path-only checks cannot close
- * that window in Node. The threat model (the attacker is a process of the same user, who can already
- * read that file) makes this low severity.
+ * Every folder on the way is pinned (`pinChain`) and looked at again after the open, and the file by path
+ * must be the very file the descriptor holds: a parent folder swapped for a link before the open and put
+ * back after it is refused. A known limit remains (see files/confinedOpen.ts): a same-user process that
+ * flips a folder to a link and back twice, in step with these checks, can still win. Path-only checks
+ * cannot close that in Node. The threat model (the attacker is a process of the same user, who can
+ * already read that file) makes this low severity.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { leadsOut } from '../overseer/source-file.js';
+import { pinChain, sameChain } from '../files/confinedOpen.js';
 
 const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
 
@@ -46,6 +48,10 @@ export async function readConfined(realRoot: string, real: string, max: number, 
   if (checked.isDirectory()) return { kind: 'folder' };
   if (!checked.isFile()) return { kind: 'not_file' };
   if (checked.size > max) return { kind: 'too_large', size: checked.size };
+  // Every folder on the way is a real folder now, and must still be the same one after the open (a folder swapped
+  // for a link before the open and put back after it gives another file at `real`; see files/confinedOpen.ts).
+  const pins = await pinChain(real);
+  if (!pins) return { kind: 'outside' }; // a link or an unreadable folder on the way: not a real path inside the project
 
   await hooks.beforeOpen?.();
 
@@ -63,6 +69,12 @@ export async function readConfined(realRoot: string, real: string, max: number, 
     const st = await fh.stat();
     if (!st.isFile()) return { kind: 'changed' };
     if (st.dev !== checked.dev || st.ino !== checked.ino) return { kind: 'changed' };
+    if (!(await sameChain(pins))) return { kind: 'changed' };
+    try {
+      const now = await fs.promises.lstat(real);
+      if (now.isSymbolicLink() || now.dev !== st.dev || now.ino !== st.ino) return { kind: 'changed' };
+    } catch { return { kind: 'changed' }; }
+    if (!(await sameChain(pins))) return { kind: 'changed' };
     let again: string;
     try { again = await fs.promises.realpath(real); } catch { return { kind: 'changed' }; }
     if (leadsOut(path.relative(realRoot, again))) return { kind: 'outside' };

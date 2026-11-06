@@ -7,9 +7,9 @@ export interface DocSpan { start: number; end: number; path: string; branch: str
 // A path: absolute or relative, made of path characters, ending in a file extension (a letter, then up to 31
 // letters or digits; "7z" too; a longer one is left alone, never cut). Not part of a URL, not a stem of a longer name ("a.md/x" gives no "a.md"), and not
 // after an "@" or "~" of the same word (so a run of "@" cannot make the regex try every
-// start). Trailing punctuation is not part of the path. The filters below remove what the regex cannot:
+// start), and not after a backslash (a Windows path is no chip at all, never a chip for its last part). Trailing punctuation is not part of the path. The filters below remove what the regex cannot:
 // domains, email addresses, and bare words such as "e.g." or "Node.js".
-const PATH = /(?<![\w:/.@~-])((?:\/|\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.(?:[a-z][a-z0-9]{0,31}|7z))(?![\w/-]|\.\w)/gi;
+const PATH = /(?<![\w:/.@~\\-])((?:\/|\.{0,2}\/)?[\w.@-]+(?:\/[\w.@-]+)*\.(?:[a-z][a-z0-9]{0,31}|7z))(?![\w/-]|\.\w)/gi;
 /** Top-level domains: "example.com", "socket.io" or "www.x.org/a.html" is a site, not a file. Not .sh, .py, .rs, .ts, .md, .cc. */
 const TLD = new Set(['com', 'org', 'net', 'io', 'dev', 'app', 'ai', 'co', 'edu', 'gov', 'info', 'biz', 'xyz', 'us', 'uk', 'de', 'fr', 'ca', 'me', 'tv']);
 /** A name with no folder in it is a file only with one of these extensions: "extract.py" is, "e.g." and "v3.5" are not. */
@@ -22,15 +22,32 @@ const BARE_EXT = new Set((
 ).split(' '));
 /** A bare name is a file with a text extension above, a picture type, or a binary type of 3 or more letters ("x.a", "x.o" and "x.so" are not). */
 const isBareExt = (ext: string) => BARE_EXT.has(ext) || IMAGE_EXT.has(ext) || (ext.length >= 3 && BINARY_EXT.has(ext));
+/** True for a file type the app shows as text: a text or code type from the list above (not a picture or a binary type). */
+export function isKnownTextExt(path: string): boolean {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  return BARE_EXT.has(ext) && !IMAGE_EXT.has(ext) && !BINARY_EXT.has(ext);
+}
 /** Well-known project names that end like a file: "Node.js" is not a script. */
 const NOT_FILES = new Set(['node.js', 'next.js', 'vue.js', 'react.js', 'nuxt.js', 'express.js', 'three.js', 'd3.js', 'chart.js', 'p5.js', 'ember.js', 'backbone.js', 'angular.js', 'nest.js', 'deno.js']);
 
-/** True when a first folder looks like a host name ("example.cloud", "www.site.tech"): dotted, ends in letters that are not a file type. */
+/** Domain endings of web addresses: the common ones, all country codes, and the usual newer ones. A dotted first folder that ends in one is a host name. */
+const HOST_TLD = new Set((
+  'com org net io dev app ai co edu gov info biz xyz mil int name pro cloud tech online site store shop blog page link live website space bar club ' +
+  'agency solutions systems network digital studio design media news email world today life work zone team group ' +
+  'ac ad ae af ag al am ao ar as at au aw ax az ba bb bd be bf bg bh bi bj bm bn bo br bs bt bw by bz ca cd cf cg ch ci ck cl cm cn cr cu cv cw cx cy cz ' +
+  'de dj dk dm do dz ec ee eg er es et eu fi fj fk fm fo fr ga gd ge gf gg gh gi gl gm gn gp gq gr gt gu gw gy hk hn hr ht hu id ie il im in iq ir is it ' +
+  'je jm jo jp ke kg kh ki km kn kp kr kw ky kz la lb lc li lk lr ls lt lu lv ly ma mc md me mg mh mk ml mm mn mo mp mq mr ms mt mu mv mw mx my mz ' +
+  'na nc ne nf ng ni nl no np nr nu nz om pa pe pf pg ph pk pl pm pn pr ps pt pw py qa re ro rs ru rw sa sb sc sd se sg sh si sk sl sm sn so sr ss st sv sx sy sz ' +
+  'tc td tf tg th tj tk tl tm tn to tr tt tv tw tz ua ug uk us uy uz va vc ve vg vi vn vu wf ws ye yt za zm zw'
+).split(' '));
+
+/** True when a first folder looks like a host name ("www.example.org", "example.fr"): dotted, and starting with www or ending in a domain ending that is not a file type. */
 function looksLikeHost(first: string): boolean {
   if (!first.includes('.') || /^\.{0,2}$/.test(first)) return false;
-  const last = first.slice(first.lastIndexOf('.') + 1).toLowerCase();
-  if (TLD.has(last)) return true;
-  return /^[a-z]{2,}$/.test(last) && !isBareExt(last);
+  const labels = first.toLowerCase().split('.');
+  const last = labels[labels.length - 1];
+  if (labels[0] === 'www') return true;
+  return HOST_TLD.has(last) && !isBareExt(last);
 }
 
 /** True when a matched path is a file path, not an email address, a domain, a version, an abbreviation or a product name. */

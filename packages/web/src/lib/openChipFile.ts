@@ -1,5 +1,5 @@
 import { api } from '../api/client';
-import { fileKind } from './docPaths';
+import { fileKind, isKnownTextExt } from './docPaths';
 import { openFileTab } from './openFileTab';
 import { saveFileAs } from './saveFiles';
 import { useDocViewer } from '../stores/docViewer';
@@ -15,7 +15,8 @@ export type FileNav = 'threads' | 'chat' | 'stay';
 /**
  * What a click on a file chip does, by kind of file. A doc (.md, .markdown, .txt) opens the doc viewer.
  * A text or code file, a CSV or an image opens a file tab (the file tab already shows each of them).
- * Any other binary (xlsx, parquet, pdf, zip, ...) has no viewer, so it downloads from the project.
+ * Any other binary (xlsx, parquet, pdf, zip, ...) has no viewer, so it downloads from the project. A file type the app does
+ * not know (".pt", ".bin2") is checked first: the server says if the start of the file is binary, and then it downloads.
  */
 export async function openChipFile(o: { project: string; path: string; rel: string; branch: string | null; nav: FileNav; origin?: string }): Promise<void> {
   // `path` is for the doc route (it checks the path itself); a file tab and a download get `rel`, the path inside
@@ -26,7 +27,11 @@ export async function openChipFile(o: { project: string; path: string; rel: stri
     useDocViewer.getState().show({ project, path, branch, origin });
     return;
   }
-  if (kind === 'binary') {
+  let binary = kind === 'binary';
+  if (kind === 'text' && !isKnownTextExt(rel)) {
+    try { binary = (await api.sniffFile(project, rel)).binary; } catch { /* the file tab shows its own error */ }
+  }
+  if (binary) {
     try { await saveFileAs(api.downloadUrl(project, rel), rel.split('/').pop() || rel); }
     catch (err) { window.alert(`Download failed: ${err instanceof Error ? err.message : String(err)}`); }
     return;

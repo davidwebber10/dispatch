@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findDocPaths, docName, projectForPath, resolveProjectPath, fileKind } from './docPaths';
+import { findDocPaths, docName, projectForPath, resolveProjectPath, fileKind, isKnownTextExt } from './docPaths';
 
 const paths = (t: string) => findDocPaths(t).map((s) => [s.path, s.branch]);
 
@@ -42,6 +42,22 @@ describe('findDocPaths', () => {
     expect(paths('archive.rar model.onnx photo.heic mod.wasm data.feather clip.webm and x.a, y.o, z.pt')).toEqual([
       ['archive.rar', null], ['model.onnx', null], ['photo.heic', null], ['mod.wasm', null], ['data.feather', null], ['clip.webm', null],
     ]);
+  });
+  it('a dotted folder name that is not a web address is a folder: my.module/x.py is a path', () => {
+    expect(paths('see my.module/x.py and pkg.dist/x.js and app.v3/main.ts')).toEqual([['my.module/x.py', null], ['pkg.dist/x.js', null], ['app.v3/main.ts', null]]);
+    expect(paths('www.example.org/a.html and example.fr/a.txt and x.example.cloud/a.json and docs.example.dev/a.md')).toEqual([]);
+  });
+  it('a Windows drive or network path gives no chip at all, never a chip for its last part', () => {
+    expect(paths('Open C:\\other\\scripts\\extract.py now')).toEqual([]);
+    expect(paths('Open C:/other/scripts/extract.py now')).toEqual([]);
+    expect(paths('Open c:\\Users\\me\\notes.md and \\\\server\\share\\dir\\a.py and "D:\\x y\\z.json"')).toEqual([]);
+    expect(paths('C:\\other\\a.py then scripts/ok.py')).toEqual([['scripts/ok.py', null]]);
+  });
+  it('a WSL path is a normal absolute path: it chips when a project holds it', () => {
+    expect(paths('/mnt/c/other/scripts/extract.py')).toEqual([['/mnt/c/other/scripts/extract.py', null]]);
+    const projects = [{ id: 'w', folder: '/mnt/c/work/app' }];
+    expect(resolveProjectPath('/mnt/c/other/scripts/extract.py', 'w', projects)).toBeNull();
+    expect(resolveProjectPath('/mnt/c/work/app/scripts/extract.py', 'w', projects)).toEqual({ project: 'w', path: '/mnt/c/work/app/scripts/extract.py', rel: 'scripts/extract.py' });
   });
   it('7z and long extensions are paths; an absurd one is left alone, not cut', () => {
     expect(paths('backup/data.7z and data.7z')).toEqual([['backup/data.7z', null], ['data.7z', null]]);
@@ -180,6 +196,13 @@ describe('duplicate project folder names', () => {
   it('a folder name that is the last part of another folder name is not a match', () => {
     const projects = [{ id: 'd', folder: '/w/dispatch' }, { id: 'x', folder: '/w/old-sandbox' }];
     expect(resolveProjectPath('sandbox/a.py', 'd', projects)).toEqual({ project: 'd', path: 'sandbox/a.py', rel: 'sandbox/a.py' });
+  });
+});
+
+describe('isKnownTextExt', () => {
+  it('known text and code types only', () => {
+    for (const f of ['a.py', 'a.TS', 'x/b.json', 'c.csv', 'd.sql', 'e.md']) expect(isKnownTextExt(f)).toBe(true);
+    for (const f of ['models/x.pt', 'a.unknown', 'a.pdf', 'a.png', 'noext']) expect(isKnownTextExt(f)).toBe(false);
   });
 });
 

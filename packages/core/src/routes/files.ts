@@ -11,6 +11,7 @@ import { rowToSession } from '../types.js';
 import { revealClientFrom } from '../files/reveal.js';
 import { platform } from '../platform/index.js';
 import { insideRealRoot, within } from '../files/confine.js';
+import { openInside } from '../files/confinedOpen.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
 
@@ -316,23 +317,33 @@ export function createFilesRouter(db: Database.Database): Router {
 
     try {
       // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
-      // then check the OPEN descriptor (not the path), so a swap after the check changes nothing, and
-      // read at most the cap plus one byte so a file that grows meanwhile is still bounded.
-      // A path that is checked against the project (`named`) is opened by its real path, with O_NOFOLLOW, and the open
-      // descriptor must be the file seen at check time and still inside the project. A symlink swapped in after the
-      // containment check is never followed (same pattern as docs/confined.ts).
-      let target = resolved;
-      let checked: fs.Stats | null = null;
+      // then check the OPEN descriptor (not the path), and read at most the cap plus one byte so a file that
+      // grows meanwhile is still bounded.
+      // A path that is checked against the project (`named`) goes through openInside: it is opened by its real path with
+      // O_NOFOLLOW, every folder on the way is pinned and looked at again after the open, and the descriptor must be the
+      // file at that path. A link or a folder swapped in after the containment check is not followed. The limit is
+      // written in files/confinedOpen.ts (no fd-anchored walk exists in Node).
+      let fh: fs.promises.FileHandle;
+      let st: fs.Stats;
       if (named) {
-        try { target = await fs.promises.realpath(resolved); checked = await fs.promises.lstat(target); } catch { target = resolved; }
+        const o = await openInside(session.workingDir, resolved);
+        if (o.kind === 'outside') return res.status(403).json({ error: 'Path traversal not allowed' });
+        if (o.kind === 'missing') throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+        fh = o.fh;
+        st = o.st;
+      } else {
+        fh = await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        st = await fh.stat();
       }
-      const fh = await fs.promises.open(target, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (named ? (fs.constants.O_NOFOLLOW ?? 0) : 0));
       try {
-        const st = await fh.stat();
-        if (named && ((checked && (st.dev !== checked.dev || st.ino !== checked.ino)) || !insideRealRoot(session.workingDir, target))) {
-          return res.status(403).json({ error: 'Path traversal not allowed' });
-        }
         if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
+        // ?sniff=1 (file chips): read the first 8 KB only and say whether the file is binary (it has a NUL byte).
+        // The chip downloads such a file instead of opening it as text. No content comes back.
+        if (req.query.sniff === '1') {
+          const probe = Buffer.alloc(8192);
+          const { bytesRead } = await fh.read(probe, 0, probe.length, 0);
+          return res.json({ content: '', path: requestedPath, binary: probe.subarray(0, bytesRead).includes(0) });
+        }
         if (st.size > MAX_READ_BYTES) return res.status(413).json({ error: `File is larger than ${MAX_READ_BYTES / (1024 * 1024)} MB` });
         const buf = Buffer.alloc(MAX_READ_BYTES + 1);
         let n = 0;
@@ -345,7 +356,6 @@ export function createFilesRouter(db: Database.Database): Router {
         res.json({ content: buf.toString('utf-8', 0, n), path: requestedPath });
       } finally { await fh.close(); }
     } catch (err: any) {
-      if (named && err?.code === 'ELOOP') return res.status(403).json({ error: 'Path traversal not allowed' });
       res.status(400).json({ error: clientMessage(err) });
     }
   });
@@ -366,7 +376,7 @@ export function createFilesRouter(db: Database.Database): Router {
     '.avif': 'image/avif',
     '.bmp': 'image/bmp',
   };
-  router.get('/image', (req, res) => {
+  router.get('/image', async (req, res) => {
     const session = (req as any).session;
     const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
@@ -379,16 +389,20 @@ export function createFilesRouter(db: Database.Database): Router {
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      const stat = fs.statSync(resolved);
-      if (!stat.isFile()) return res.status(404).json({ error: 'Not a file' });
+      // The bytes come from the descriptor openInside checked, never from a second look at the path.
+      const o = await openInside(session.workingDir, resolved);
+      if (o.kind === 'outside') return res.status(403).json({ error: 'Path traversal not allowed' });
+      if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
+      if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
       res.setHeader('Content-Type', mime);
-      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('Content-Length', String(o.st.size));
       // Hardening: stop MIME sniffing, and sandbox the response so a (theoretically)
       // script-bearing SVG can't execute if the byte URL is navigated to directly.
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Security-Policy', 'sandbox');
-      const stream = fs.createReadStream(resolved);
+      const stream = o.fh.createReadStream({ autoClose: true });
       stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
+      res.on('close', () => stream.destroy());
       stream.pipe(res);
     } catch (err: any) {
       res.status(404).json({ error: clientMessage(err) });
@@ -399,7 +413,7 @@ export function createFilesRouter(db: Database.Database): Router {
   // Binary-safe sibling of /read (text-only JSON) and /image (inline images only): forces a
   // browser "Save As"/download of ANY file type via Content-Disposition: attachment. Uses the
   // STRICT resolveSafe sandbox — same guard as the directory listing this is triggered from.
-  router.get('/download', (req, res) => {
+  router.get('/download', async (req, res) => {
     const session = (req as any).session;
     const requestedPath = queryPath(req.query.path);
     if (!requestedPath) return res.status(400).json({ error: 'Missing path parameter' });
@@ -409,8 +423,11 @@ export function createFilesRouter(db: Database.Database): Router {
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      const stat = fs.statSync(resolved);
-      if (!stat.isFile()) return res.status(404).json({ error: 'Not a file' });
+      // The bytes come from the descriptor openInside checked, never from a second look at the path.
+      const o = await openInside(session.workingDir, resolved);
+      if (o.kind === 'outside') return res.status(403).json({ error: 'Path traversal not allowed' });
+      if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
+      if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
 
       const name = path.basename(resolved);
       // Sanitize for the header: drop anything outside printable ASCII (this also kills CR/LF
@@ -418,14 +435,15 @@ export function createFilesRouter(db: Database.Database): Router {
       const asciiName = name.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
 
       res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Length', String(stat.size));
+      res.setHeader('Content-Length', String(o.st.size));
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,
       );
-      const stream = fs.createReadStream(resolved);
+      const stream = o.fh.createReadStream({ autoClose: true });
       stream.on('error', () => { if (!res.headersSent) res.status(400).end(); else res.destroy(); });
+      res.on('close', () => stream.destroy());
       stream.pipe(res);
     } catch (err: any) {
       res.status(404).json({ error: clientMessage(err) });

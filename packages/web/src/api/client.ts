@@ -279,6 +279,11 @@ export const api = {
   listFiles: (sessionId: string, p = '.') => req<FileEntry[]>(`/api/sessions/${sessionId}/files?path=${encodeURIComponent(p)}`),
   // Every file path under the working dir (git-visible + gitignored hidden paths) — feeds Files search.
   listFilesFlat: (sessionId: string) => req<{ files: string[]; truncated: boolean }>(`/api/sessions/${sessionId}/files/flat`),
+  /** Is the file binary? Reads only the start of it (file chips use this for a file type the app does not know). */
+  sniffFile: async (sessionId: string, p: string): Promise<{ binary: boolean }> => {
+    const r = await req<{ binary?: boolean }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}&sniff=1`);
+    return { binary: !!r.binary };
+  },
   readFile: (sessionId: string, p: string) => req<{ content: string; path: string }>(`/api/sessions/${sessionId}/files/read?path=${encodeURIComponent(p)}`),
   // Byte-route URL for an image file (sandboxed to the session working dir). Sync URL
   // builder (no fetch) so it can feed an <img src> directly; the route streams raw bytes.
