@@ -468,8 +468,11 @@ export class UsageGauge {
    *
    * A client shows "used up" once a held `runsOutAt` is past. So once the clock passes the soonest
    * one sent, send again with no other change. With no new figure the projection only moves later,
-   * and faster as the span grows, so an idle episode resends a few times, not every tick. A window
-   * already at 100% is used up for real and never sets this.
+   * and faster as the span grows. The next run-out is the span times (points left / points gained)
+   * ahead, so a typical idle episode resends a few times, not every tick. Near saturation it can
+   * resend every tick (once a minute) until that gap passes a minute: from 0 to 99.4% in an hour,
+   * that is the first 105 idle minutes, and about 220 sends in six hours. A window already at 100%
+   * is used up for real and never sets this.
    */
   private send(): void {
     let summary: UsageSummary;

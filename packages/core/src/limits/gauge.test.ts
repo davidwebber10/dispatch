@@ -701,6 +701,21 @@ describe('idle resend when the sent run-out time passes', () => {
     expect(events.length).toBeLessThanOrEqual(15);
   });
 
+  // The bound is not "a handful" near saturation. The next run-out is span * left / gained ahead:
+  // 0 to 99.4 in an hour puts it 0.6 / 99.4 * span away, under a minute until the span passes
+  // about 166 minutes. Until then every tick resends. This pins that worst case.
+  it('near saturation an idle client gets one resend a minute until the run-out is a minute out', () => {
+    five(0); clock = T0 + 60 * MIN; five(99.4); vi.advanceTimersByTime(5000);
+    expect(events).toHaveLength(1);
+    expect(events[0].providers[0].windows.five_hour.usedPercent).toBe(99); // shown as 99, so not "used up for real"
+    idle(105);
+    expect(events).toHaveLength(106); // every idle tick so far was a resend
+    idle(6 * 60 - 105);
+    // After that the resends space out: still far more than the typical case, and under one a tick.
+    expect(events.length).toBeGreaterThan(200);
+    expect(events.length).toBeLessThan(240);
+  });
+
   it('a window already at 100% does not resend', () => {
     start(99.6); // shows 100, and the unrounded figure still runs out a few seconds later
     expect(events).toHaveLength(1);
