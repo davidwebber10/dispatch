@@ -50,6 +50,10 @@ describe.each(cases)('a repeat stop after a wake ($name)', ({ type, text }) => {
     vi.advanceTimersByTime(32 * MIN);
     svc.tick();
     expect(parksDb.get(db, 't1')).toMatchObject({ state: 'woken', attempts: 1 });
+    // Figures showed the limit clear while the thread was woken: that evidence belongs to the old detection.
+    const woken = parksDb.get(db, 't1')!;
+    parksDb.markCleared(db, 't1', woken.detected_at, Date.now());
+    expect(parksDb.get(db, 't1')!.cleared_at).not.toBeNull();
     // The thread hits the same limit again, 2 minutes after the wake.
     vi.advanceTimersByTime(2 * MIN);
     w.feed('t1', text);
@@ -59,6 +63,7 @@ describe.each(cases)('a repeat stop after a wake ($name)', ({ type, text }) => {
     const again = parksDb.get(db, 't1')!;
     expect(again.parked_at).toBe(first.parked_at);
     expect(again.detected_at).toBeGreaterThan(first.detected_at);
+    expect(again.cleared_at).toBeNull(); // a new detection voids the old "cleared" evidence
   });
   it('a repaint of the banner before any wake is still one stop', () => {
     w.feed('t1', text);
