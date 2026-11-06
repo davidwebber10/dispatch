@@ -5,7 +5,7 @@
 // STATUS registries below (see spec §10 "production notes"). Keep derivation in
 // data.ts — the store stays a plain state bag.
 
-import type { ConvItem, PermissionQuestion } from '../../api/types';
+import type { ConvItem } from '../../api/types';
 
 export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 'design-reviewer' | 'code-reviewer';
 // 'scheduled' = a LIVE thread that ended its turn by calling a wake-scheduler tool
@@ -16,15 +16,9 @@ export type AgentType = 'planner' | 'implementer' | 'researcher' | 'reviewer' | 
 // prompt; this ThreadStatus='waiting' = "needs your input") — 'scheduled' needs neither a
 // human nor a "done" read; it's just asleep.
 export type ThreadStatus = 'working' | 'waiting' | 'done' | 'error' | 'queued' | 'scheduled';
-export type MessageKind = 'user' | 'overseer' | 'note' | 'image' | 'agentCard' | 'answeredQuestion'
-  // Render-parity kinds (see live.convItemsToStream): the coordinator's own tool work,
-  // thinking, declared status, turn footers and background-task notices — rendered with
-  // the SAME components the agent ChatView uses, so the two surfaces can't drift apart
-  // block-by-block again.
-  | 'machinery' | 'thinking' | 'status' | 'footer' | 'notice';
+export type MessageKind = 'user' | 'overseer' | 'note';
 
-// The coordinator tool call an 'agentCard' StreamMessage was built from (spec: agent-card
-// increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
+// The coordinator tool call an agent card was built from (spec: agent-card increment). Mirrors the agency-mcp tool names 1:1 so the card's action label reads as a
 // plain-English past tense of the tool the coordinator just called.
 export type AgentCardAction = 'spawned' | 'queued' | 'messaged' | 'started';
 
@@ -101,7 +95,9 @@ export interface Mission {
   key: string;                // === name
 }
 
-// A conversation message (factory: m(kind,who,text,time,i)).
+// A conversation message of the vestigial mock scenarios (data.ts buildScenario; factory:
+// m(kind,who,text,time,i)). The LIVE Control Plane no longer uses it: its transcript stays
+// ConvItem[] (RenderVals.items) and renders through the thread view's renderTimeline.
 export interface StreamMessage {
   kind: MessageKind;
   who: string | null;         // "You" | "Overseer" | null (notes)
@@ -111,58 +107,19 @@ export interface StreamMessage {
   isUser: boolean;
   isOverseer: boolean;
   isNote: boolean;
-  // image (kind 'image') — a picture posted into the coordinator stream: an image an
-  // agent/tool emitted, or one the coordinator posts via the `post_image` MCP tool.
-  // These mirror the source 'image' ConvItem (see live.convItemsToStream); `imageUrl` is
-  // already a renderable src (data-URI or byte-route URL). Optional so the m() factory and
-  // every existing StreamMessage stay valid without change.
-  isImage?: boolean;
-  imageUrl?: string;
-  imageAlt?: string;
-  // error (transient) — a failed-to-send notice surfaced inline so a swallowed send
-  // failure is VISIBLE (mirrors the agent chat's red "Failed to send message" footer).
-  // Optional so the m() factory and every existing StreamMessage stay valid without change.
-  isError?: boolean;
-  // agentCard (kind 'agentCard') — the coordinator called spawn_agent/queue_agent/
-  // message_agent/start_agent on one of its own typed agents (see live.convItemsToStream,
-  // which pairs the tool_use + tool_result ConvItems into this). Rendered as a tappable
-  // AgentCard (overseer/components/AgentCard.tsx) instead of plain text; tapping it opens
-  // that agent's lightbox via drillInto(agentId). agentType/agentMission are undefined for
-  // message_agent/start_agent when the originating spawn/queue call isn't in view.
-  isAgentCard?: boolean;
-  agentId?: string;
-  agentName?: string;
+}
+
+// One of the coordinator's OWN spawn_agent/queue_agent/message_agent/start_agent calls,
+// paired with its result (live.agencyCards) and drawn as a tappable AgentCard
+// (overseer/components/AgentCard.tsx) in the timeline; tapping it opens that agent's
+// lightbox via drillInto(agentId). agentType/mission are undefined for message_agent/
+// start_agent when the originating spawn/queue call isn't in the window.
+export interface AgentCardInfo {
+  agentId: string;
+  name: string;
   agentType?: AgentType;
-  agentMission?: string;
-  agentAction?: AgentCardAction;
-  // answeredQuestion (kind 'answeredQuestion') — an AskUserQuestion tool_use/tool_result pair
-  // from the coordinator's OWN history (see live.convItemsToStream). Rendered as a collapsed,
-  // expandable <AnsweredQuestionCard> so an answered question stays visible in the stream
-  // instead of vanishing once the live coordinatorPending overlay clears — see Stream.tsx.
-  isAnsweredQuestion?: boolean;
-  questions?: PermissionQuestion[];
-  resultText?: string;
-  // machinery (kind 'machinery') — a consecutive run of the coordinator's OWN generic
-  // tool calls + results, carried as the raw ConvItems and rendered by the shared
-  // <MachineryStrip> (components/tabs/chat/MachineryStrip.tsx) with the agent
-  // ChatView's ToolCall/ToolGroup pieces. Optional so m() and every existing
-  // StreamMessage stay valid without change — same pattern as the flags above.
-  isMachinery?: boolean;
-  machineryItems?: ConvItem[];
-  // thinking (kind 'thinking') — a reasoning block; `text` carries the thought,
-  // rendered collapsed-with-preview by the shared <Thinking>.
-  isThinking?: boolean;
-  // status (kind 'status') — the coordinator's own report_status call; `statusInput`
-  // is the raw tool-argument JSON, rendered by the shared <StatusNotice>.
-  isStatus?: boolean;
-  statusInput?: string;
-  // footer (kind 'footer') — the turn's `result` bookkeeping (cost/tokens/duration),
-  // rendered by the shared <ResultFooter>; `footerItem` is the raw ConvItem.
-  isFooter?: boolean;
-  footerItem?: ConvItem;
-  // notice (kind 'notice') — a background-task completion line; `text` carries the
-  // summary, rendered by the shared <TaskNotice>.
-  isNotice?: boolean;
+  mission?: string;
+  action: AgentCardAction;
 }
 
 // An action button on a need card (factory: btn(label, primary)).
@@ -234,7 +191,13 @@ export interface RenderVals {
   ribbon: Ribbon;
   needs: Need[];
   missions: Mission[];
-  stream: StreamMessage[];
+  // The coordinator transcript (project-gated: empty while another project's coordinator is
+  // still loaded), drawn through the thread view's renderTimeline (see Stream.tsx).
+  items: ConvItem[];
+  // First-run / empty conversation: draw the canned greeting above the (empty) list.
+  showGreeting: boolean;
+  // The last directive send that FAILED, drawn as an error pill below the list.
+  sendError: string | null;
   busy: boolean;              // coordinator turn in flight → show the WorkingIndicator
   drillDetail: ThreadDetail | null;
   hasNeeds: boolean;

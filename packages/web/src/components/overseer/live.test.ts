@@ -1,6 +1,6 @@
 // Overseer membrane — escalation Need derivation (the real approve/deny/answer cards).
 import { describe, it, expect } from 'vitest';
-import { convItemsToStream, groupByMission, isStructuredWorker, mapStatus, needsFromThreads, terminalToAgentThread } from './live';
+import { agencyCards, groupByMission, isOrphanAgencyResult, isStructuredWorker, mapStatus, needsFromThreads, terminalToAgentThread } from './live';
 import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPE } from './types';
 
@@ -120,193 +120,93 @@ describe('non-Claude structured workers (Control Plane Phase 2 selector)', () =>
   });
 });
 
-describe('convItemsToStream — message attribution', () => {
-  const img = (imageFromUser?: boolean): ConvItem => ({ kind: 'image', imageUrl: 'data:image/png;base64,AAAA', imageFromUser });
+// ---- Agent cards: the pure pre-pass behind the Control Plane's toolCard hook ----
+// (Ported from the old convItemsToStream agent-card cases. The rest of those cases —
+// attribution, answered questions, machinery, thinking/status/footer/notice — are now
+// renderTimeline's own behaviour and are covered by rendering, in timeline.test.tsx.)
+describe('agencyCards — agency calls paired into agent cards', () => {
+  const call = (toolId: string, toolName: string, args: Record<string, unknown> = {}): ConvItem => ({ kind: 'tool', toolId, toolName, toolInput: JSON.stringify(args) });
+  const res = (toolId: string, body: unknown, isError = false): ConvItem => ({ kind: 'tool-result', toolId, text: typeof body === 'string' ? body : JSON.stringify(body), ...(isError ? { isError } : {}) });
 
-  it('attributes a human-attached image to "You" (right-aligned), not Dispatch (BUG 3)', () => {
-    const [msg] = convItemsToStream([img(true)]);
-    expect(msg.isImage).toBe(true);
-    expect(msg.isUser).toBe(true);
-    expect(msg.who).toBe('You');
-    expect(msg.isOverseer).toBe(false);
+  it('REGRESSION: a bare spawn_agent + result becomes a card', () => {
+    const cards = agencyCards([call('s1', 'spawn_agent', { agentType: 'implementer' }), res('s1', { agentId: 'a9', label: 'Fixer' })]);
+    expect(cards.get('s1')).toEqual({ agentId: 'a9', name: 'Fixer', agentType: 'implementer', mission: undefined, action: 'spawned' });
   });
 
-  it('keeps an agent/tool/coordinator image unattributed (renders as a Dispatch turn)', () => {
-    const [msg] = convItemsToStream([img(false)]);
-    expect(msg.isImage).toBe(true);
-    expect(msg.isUser).toBe(false);
-    expect(msg.who).toBeNull();
+  it('mcp__dispatch__spawn_agent + result become a card with name, type and mission', () => {
+    const cards = agencyCards([
+      call('s1', 'mcp__dispatch__spawn_agent', { agentType: 'researcher' }),
+      res('s1', { agentId: 'a1', label: 'Digger', mission: 'Delta' }),
+    ]);
+    expect(cards.get('s1')).toEqual({ agentId: 'a1', name: 'Digger', agentType: 'researcher', mission: 'Delta', action: 'spawned' });
   });
 
-  it('maps user text → You and assistant text → Dispatch', () => {
-    const stream = convItemsToStream([
-      { kind: 'user', text: 'do the thing' },
-      { kind: 'assistant', text: 'on it' },
+  it('queue_agent → "queued"; a spawn with no label reads "Agent"', () => {
+    const cards = agencyCards([call('q1', 'queue_agent', { agentType: 'planner' }), res('q1', { agentId: 'a3' })]);
+    expect(cards.get('q1')).toMatchObject({ agentId: 'a3', name: 'Agent', agentType: 'planner', action: 'queued' });
+  });
+
+  it('a later mcp__dispatch__message_agent card backfills name/type/mission from the namespaced spawn', () => {
+    const cards = agencyCards([
+      call('s1', 'mcp__dispatch__spawn_agent', { agentType: 'reviewer' }),
+      res('s1', { agentId: 'a2', label: 'Checker', mission: 'Audit' }),
+      call('m1', 'mcp__dispatch__message_agent', { agentId: 'a2', text: 'go' }),
+      res('m1', { ok: true, agentId: 'a2' }),
     ]);
-    expect(stream.map((m) => [m.isUser, m.isOverseer, m.text])).toEqual([
-      [true, false, 'do the thing'],
-      [false, true, 'on it'],
+    expect(cards.get('m1')).toEqual({ agentId: 'a2', name: 'Checker', agentType: 'reviewer', mission: 'Audit', action: 'messaged' });
+  });
+
+  it('a start_agent whose spawn is outside the window shows the bare id with no type', () => {
+    const cards = agencyCards([call('st1', 'start_agent', { agentId: 'zz' }), res('st1', { ok: true, agentId: 'zz' })]);
+    expect(cards.get('st1')).toEqual({ agentId: 'zz', name: 'zz', agentType: undefined, mission: undefined, action: 'started' });
+  });
+
+  it('draws nothing (null) for a call still waiting on its result, or one whose result is not JSON / has no agentId', () => {
+    const cards = agencyCards([
+      call('p1', 'spawn_agent'),
+      call('p2', 'spawn_agent'), res('p2', 'not json'),
+      call('p3', 'spawn_agent'), res('p3', { ok: true }),
     ]);
+    expect(cards.get('p1')).toBeNull();
+    expect(cards.get('p2')).toBeNull();
+    expect(cards.get('p3')).toBeNull();
+  });
+
+  it('an errored agency call has no card — it draws as an ordinary tool row with its error', () => {
+    const cards = agencyCards([call('e1', 'spawn_agent'), res('e1', 'spawn failed: no such type', true)]);
+    expect(cards.has('e1')).toBe(false);
+  });
+
+  it('complete_agent and every non-agency tool are left to the default rendering', () => {
+    const cards = agencyCards([
+      call('c1', 'mcp__dispatch__complete_agent', { agentId: 'a1' }), res('c1', { ok: true, agentId: 'a1' }),
+      call('b1', 'Bash', { command: 'ls' }), res('b1', 'ok'),
+      call('tu-3', 'AskUserQuestion', { questions: [{ question: 'Proceed?', options: ['Yes'] }] }),
+    ]);
+    expect(cards.size).toBe(0);
+  });
+
+  it('does not confuse an AskUserQuestion result with an agency result in the same window', () => {
+    const cards = agencyCards([
+      call('tu-3', 'AskUserQuestion', { questions: [{ question: 'Proceed?', options: ['Yes'] }] }),
+      call('tu-4', 'spawn_agent', { agentType: 'implementer' }),
+      res('tu-3', 'Your questions have been answered: "Proceed?"="Yes". You can now continue with these answers in mind.'),
+      res('tu-4', { agentId: 'a1', label: 'Implementer' }),
+    ]);
+    expect([...cards.keys()]).toEqual(['tu-4']);
+    expect(cards.get('tu-4')?.agentId).toBe('a1');
   });
 });
 
-// Regression coverage for the "answering the coordinator's own AskUserQuestion makes it
-// vanish" bug: before this branch existed, an AskUserQuestion tool_use/tool_result pair
-// matched none of convItemsToStream's cases and was silently dropped — the live
-// coordinatorPending overlay (Stream.tsx) was the ONLY place it ever rendered, and it
-// unmounts the instant the question is answered. Now the answered pair becomes a durable
-// 'answeredQuestion' StreamMessage that stays in the stream.
-describe('convItemsToStream — answered AskUserQuestion', () => {
-  it('turns an AskUserQuestion tool_use + its tool_result into an answeredQuestion message', () => {
-    const items: ConvItem[] = [
-      { kind: 'tool', toolId: 'tu-1', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Deploy now?', options: ['Yes', 'No'] }] }) },
-      { kind: 'tool-result', toolId: 'tu-1', text: 'Your questions have been answered: "Deploy now?"="Yes". You can now continue with these answers in mind.' },
-    ];
-    const stream = convItemsToStream(items);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isAnsweredQuestion).toBe(true);
-    expect(stream[0].kind).toBe('answeredQuestion');
-    expect(stream[0].questions?.[0]?.question).toBe('Deploy now?');
-    expect(stream[0].resultText).toContain('"Deploy now?"="Yes"');
+describe('isOrphanAgencyResult — what the Control Plane drops when renderTimeline cannot pair a result', () => {
+  it('a TRUE orphan agency result (its call outside the window) is dropped', () => {
+    expect(isOrphanAgencyResult({ kind: 'tool-result', toolId: 'gone', text: JSON.stringify({ ok: true, agentId: 'a1' }) })).toBe(true);
   });
 
-  it('renders nothing for a still-pending AskUserQuestion (no tool_result yet)', () => {
-    const items: ConvItem[] = [
-      { kind: 'tool', toolId: 'tu-2', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Which env?', options: ['staging', 'prod'] }] }) },
-    ];
-    expect(convItemsToStream(items)).toHaveLength(0);
-  });
-
-  it('does not confuse an AskUserQuestion tool_result with an agent-management tool_result sharing the pairing pass', () => {
-    const items: ConvItem[] = [
-      { kind: 'tool', toolId: 'tu-3', toolName: 'AskUserQuestion', toolInput: JSON.stringify({ questions: [{ question: 'Proceed?', options: ['Yes'] }] }) },
-      { kind: 'tool', toolId: 'tu-4', toolName: 'spawn_agent', toolInput: JSON.stringify({ agentType: 'implementer' }) },
-      { kind: 'tool-result', toolId: 'tu-3', text: 'Your questions have been answered: "Proceed?"="Yes". You can now continue with these answers in mind.' },
-      { kind: 'tool-result', toolId: 'tu-4', text: JSON.stringify({ agentId: 'a1', label: 'Implementer' }) },
-    ];
-    const stream = convItemsToStream(items);
-    expect(stream).toHaveLength(2);
-    expect(stream.find((m) => m.isAnsweredQuestion)?.questions?.[0]?.question).toBe('Proceed?');
-    expect(stream.find((m) => m.isAgentCard)?.agentId).toBe('a1');
-  });
-});
-
-// ---- Stream render parity: generic tools / thinking / report_status / footers / notices ----
-// Before this, convItemsToStream rendered FOUR kinds and silently dropped the rest — the
-// coordinator looked idle while it ran tools, and its report_status findings never showed.
-describe('convItemsToStream — render parity (machinery, thinking, status, footer, notice)', () => {
-  const bash = (id: string, cmd: string): ConvItem => ({ kind: 'tool', toolId: id, toolName: 'Bash', toolInput: JSON.stringify({ command: cmd }) });
-  const res = (id: string, text = 'ok'): ConvItem => ({ kind: 'tool-result', toolId: id, text });
-
-  it('a generic tool call + its result become ONE machinery message carrying both items', () => {
-    const stream = convItemsToStream([bash('b1', 'ls'), res('b1')]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isMachinery).toBe(true);
-    expect(stream[0].machineryItems?.map((i) => [i.kind, i.toolId])).toEqual([['tool', 'b1'], ['tool-result', 'b1']]);
-  });
-
-  it('consecutive tools coalesce into one machinery message; prose splits the run', () => {
-    const stream = convItemsToStream([
-      bash('b1', 'ls'), res('b1'),
-      bash('b2', 'pwd'), res('b2'),
-      { kind: 'assistant', text: 'both ran fine' },
-      bash('b3', 'whoami'), res('b3'),
-    ]);
-    expect(stream.map((s) => s.isMachinery ? `mach:${s.machineryItems?.length}` : s.text)).toEqual([
-      'mach:4', 'both ran fine', 'mach:2',
-    ]);
-  });
-
-  it('report_status becomes a status message and its {ok} result is swallowed', () => {
-    const input = JSON.stringify({ state: 'blocked', summary: 'waiting on CI', blocker: 'run 42 pending' });
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: input },
-      { kind: 'tool-result', toolId: 'rs1', text: '{"ok":true}' },
-    ]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isStatus).toBe(true);
-    expect(stream[0].statusInput).toBe(input);
-  });
-
-  it('a still-streaming report_status (unparsable input) stays generic machinery', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 'rs1', toolName: 'mcp__dispatch__report_status', toolInput: '{"state":"do' },
-    ]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isMachinery).toBe(true);
-  });
-
-  it('thinking becomes a thinking message; result becomes a footer; notice becomes a notice', () => {
-    const stream = convItemsToStream([
-      { kind: 'thinking', text: 'weighing options' },
-      { kind: 'result', costUsd: 0.12, tokensIn: 100, tokensOut: 50, durationMs: 4200 },
-      { kind: 'notice', text: 'Background task finished' },
-    ]);
-    expect(stream.map((s) => [!!s.isThinking, !!s.isFooter, !!s.isNotice])).toEqual([
-      [true, false, false], [false, true, false], [false, false, true],
-    ]);
-    expect(stream[0].text).toBe('weighing options');
-    expect(stream[1].footerItem?.costUsd).toBe(0.12);
-    expect(stream[2].text).toBe('Background task finished');
-  });
-
-  it('REGRESSION: agency tools still become agent cards, never machinery', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 's1', toolName: 'spawn_agent', toolInput: JSON.stringify({ agentType: 'implementer' }) },
-      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a9', label: 'Fixer' }) },
-    ]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isAgentCard).toBe(true);
-    expect(stream[0].isMachinery).toBeFalsy();
-  });
-});
-
-// ---- MCP-namespaced agency tools (the names the live coordinator ACTUALLY emits) ----
-// The agency MCP server registers as "dispatch" (sessions/service.ts agencyServerSpec), so
-// the transcript records mcp__dispatch__spawn_agent — not the bare spawn_agent the map keys
-// used. The bare-name mismatch sent calls into machinery, then the orphan-agency-result
-// heuristic dropped their agentId-bearing results, leaving forever-"running…" tool rows.
-describe('convItemsToStream — MCP-namespaced agency tools', () => {
-  it('mcp__dispatch__spawn_agent + result become an agent card, never machinery', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 's1', toolName: 'mcp__dispatch__spawn_agent', toolInput: JSON.stringify({ agentType: 'researcher' }) },
-      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a1', label: 'Digger', mission: 'Delta' }) },
-    ]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isAgentCard).toBe(true);
-    expect(stream[0].agentId).toBe('a1');
-    expect(stream[0].agentName).toBe('Digger');
-    expect(stream[0].agentType).toBe('researcher');
-  });
-
-  it('a later mcp__dispatch__message_agent card backfills name/type from the namespaced spawn', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 's1', toolName: 'mcp__dispatch__spawn_agent', toolInput: JSON.stringify({ agentType: 'reviewer' }) },
-      { kind: 'tool-result', toolId: 's1', text: JSON.stringify({ agentId: 'a2', label: 'Checker' }) },
-      { kind: 'tool', toolId: 'm1', toolName: 'mcp__dispatch__message_agent', toolInput: JSON.stringify({ agentId: 'a2', text: 'go' }) },
-      { kind: 'tool-result', toolId: 'm1', text: JSON.stringify({ ok: true, agentId: 'a2' }) },
-    ]);
-    expect(stream).toHaveLength(2);
-    expect(stream[1].isAgentCard).toBe(true);
-    expect(stream[1].agentName).toBe('Checker');
-    expect(stream[1].agentAction).toBe('messaged');
-  });
-
-  it('mcp__dispatch__complete_agent keeps its {ok,agentId} result paired in machinery (no forever-running row)', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool', toolId: 'c1', toolName: 'mcp__dispatch__complete_agent', toolInput: JSON.stringify({ agentId: 'a1' }) },
-      { kind: 'tool-result', toolId: 'c1', text: JSON.stringify({ ok: true, agentId: 'a1' }) },
-    ]);
-    expect(stream).toHaveLength(1);
-    expect(stream[0].isMachinery).toBe(true);
-    expect(stream[0].machineryItems?.map((i) => [i.kind, i.toolId])).toEqual([['tool', 'c1'], ['tool-result', 'c1']]);
-  });
-
-  it('a TRUE orphan agency result (its call outside the window) is still dropped', () => {
-    const stream = convItemsToStream([
-      { kind: 'tool-result', toolId: 'gone', text: JSON.stringify({ ok: true, agentId: 'a1' }) },
-    ]);
-    expect(stream).toHaveLength(0);
+  it('a real tool\'s output, a JSON result without an agentId, and an id-less result are kept', () => {
+    expect(isOrphanAgencyResult({ kind: 'tool-result', toolId: 'gone', text: 'line1\nline2' })).toBe(false);
+    expect(isOrphanAgencyResult({ kind: 'tool-result', toolId: 'gone', text: JSON.stringify({ ok: true }) })).toBe(false);
+    expect(isOrphanAgencyResult({ kind: 'tool-result', text: JSON.stringify({ agentId: 'a1' }) })).toBe(false);
   });
 });
 

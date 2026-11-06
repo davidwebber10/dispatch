@@ -102,7 +102,9 @@ interface RenderVals {
   ribbon: Ribbon;            // { working, done, needs, hasNeeds }
   needs: Need[];             // unresolved needs only
   missions: Mission[];       // cloned; spawned prepended to missions[0].threads; every thread has dlabel
-  stream: StreamMessage[];   // base scenario stream + extra
+  items: ConvItem[];         // the coordinator transcript (project-gated), drawn by renderTimeline
+  showGreeting: boolean;     // empty transcript and no setup card → the canned greeting
+  sendError: string | null;  // last failed directive send → error pill below the list
   drillDetail: ThreadDetail | null;  // detail(drill, missions) when drilled, else null
   hasNeeds: boolean;
   noMissions: boolean;
@@ -119,7 +121,7 @@ interface RenderVals {
 ## 4. Types & helpers — `./types`, `./data`
 
 - `types.ts`: `AgentType`, `ThreadStatus`, `MessageKind`, `AGENT_TYPE`, `STATUS`,
-  `AgentThread`, `Outcome`, `Mission`, `StreamMessage`, `NeedAction`, `Need`, `Ribbon`,
+  `AgentThread`, `Outcome`, `Mission`, `StreamMessage` (mock scenarios only), `AgentCardInfo`, `NeedAction`, `Need`, `Ribbon`,
   `DrillStep`, `ThreadDetail`, `Scenario`, `RenderVals`.
 - `data.ts`: factories `th`/`outc`/`mission`/`m`/`btn`, `CANNED` copy, `baseMissions`,
   `buildScenario`, `detail`, `derive` (already wired into the store). You generally only

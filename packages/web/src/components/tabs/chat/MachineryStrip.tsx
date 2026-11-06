@@ -5,11 +5,10 @@ import { MachineryBlock, ToolGroup, type ToolPair } from './ChatView';
 
 /**
  * A pure run of consecutive tool / tool-result ConvItems rendered as ONE machinery
- * strip — the Control Plane stream's counterpart of renderTimeline's pushMach path
- * (ChatView.tsx). renderTimeline can't be reused directly because its run-grouping is
- * woven through a loop that also interleaves prose, images and footers; this component
- * applies the SAME pairing and grouping rules to a slice that live.convItemsToStream
- * guarantees is machinery-only:
+ * strip — the same pairing and grouping rules as renderTimeline's pushMach path
+ * (ChatView.tsx), for a slice that is machinery-only. NOTE: no surface uses this any more
+ * (the Control Plane, its only caller, now renders through renderTimeline itself); it is
+ * kept, with its tests, only until the Chat page is moved onto renderTimeline too:
  *
  * - a result pairs with its tool by toolId (position-independent — covers the batched
  *   [T,T,R,R] shape parallel same-tool calls actually emit), or by adjacency when

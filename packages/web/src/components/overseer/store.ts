@@ -25,25 +25,25 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { useLedgerCardSync } from '../../stores/ledgerCard';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
 import { appendToDraft, clearStoredDraft } from '../../hooks/useDraft';
-import type { PendingPermission, Terminal } from '../../api/types';
+import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPES } from '../../lib/harnesses';
-import { CANNED, m } from './data';
-import { convItemsToStream, groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
-import type { AgentType, Ribbon, RenderVals, Scenario, StreamMessage } from './types';
+import { CANNED } from './data';
+import { groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
+import type { AgentType, Ribbon, RenderVals, Scenario } from './types';
 
 // A stable empty-array reference for the composerImages selector fallback — a fresh
 // `[]` literal on every read would fail Zustand's Object.is check and re-render the
 // Composer on every unrelated store update.
 const EMPTY_IMAGES: ContentBlock[] = [];
 
-// A stable empty-stream reference so viewCoordinatorFields returns the SAME array
+// A stable empty-transcript reference so viewCoordinatorFields returns the SAME array
 // on every mismatched read — a fresh `[]` literal would fail Zustand/useMemo Object.is
 // checks and churn re-renders while another project's swap is in flight.
-const EMPTY_STREAM: StreamMessage[] = [];
+const EMPTY_ITEMS: ConvItem[] = [];
 
 /**
  * True only when the store's loaded coordinator belongs to the project the view is
- * currently showing. When false, the coordinator fields (`coordinatorStream`/`coordinatorId`/
+ * currently showing. When false, the coordinator fields (`coordinatorItems`/`coordinatorId`/
  * `coordinatorBusy`/pending/paging) still hold ANOTHER project's data — the async
  * ensureForProject swap on a tab switch hasn't landed yet — and MUST NOT be rendered,
  * or one Control Plane tab shows a different project's transcript (the cross-tab bleed).
@@ -59,13 +59,13 @@ export function coordinatorMatchesView(coordinatorProject: string | null, active
 export function viewCoordinatorFields(args: {
   coordinatorProject: string | null;
   activeId: string | null;
-  coordinatorStream: StreamMessage[];
+  coordinatorItems: ConvItem[];
   coordinatorBusy: boolean;
   coordinatorId: string | null;
-}): { stream: StreamMessage[]; busy: boolean; hasCoordinator: boolean; projectMatches: boolean } {
+}): { items: ConvItem[]; busy: boolean; hasCoordinator: boolean; projectMatches: boolean } {
   const projectMatches = coordinatorMatchesView(args.coordinatorProject, args.activeId);
   return {
-    stream: projectMatches ? args.coordinatorStream : EMPTY_STREAM,
+    items: projectMatches ? args.coordinatorItems : EMPTY_ITEMS,
     busy: projectMatches ? args.coordinatorBusy : false,
     hasCoordinator: projectMatches && !!args.coordinatorId,
     projectMatches,
@@ -111,7 +111,7 @@ interface OverseerState {
   // ---- live wiring state ----
   coordinatorId: string | null; // the active project's coordinator terminal
   coordinatorProject: string | null; // the session the coordinator belongs to
-  coordinatorStream: StreamMessage[]; // pushed in by useCoordinatorSync()
+  coordinatorItems: ConvItem[]; // the coordinator transcript; pushed in by useCoordinatorSync()
   coordinatorBusy: boolean; // coordinator turn in flight; pushed in by useCoordinatorSync()
   coordinatorContextTokens?: number; // context fill for the ContextIndicator; pushed in by useCoordinatorSync()
   coordinatorCompacting: boolean; // a native /compact is in progress on the coordinator thread
@@ -201,7 +201,7 @@ interface OverseerState {
    *  actually changed (including the restore-failure → fresh-coordinator fallback, and the
    *  mid-flight project-switch early return). */
   resumeCoordinatorSession: (sessionId: string, currentTerminalId: string, archivedTerminalId: string) => Promise<boolean>;
-  setCoordinatorStream: (stream: StreamMessage[]) => void;
+  setCoordinatorItems: (items: ConvItem[]) => void;
   setCoordinatorBusy: (busy: boolean) => void;
   /** Pushed in by useCoordinatorSync() from the same useStructuredChat() call as the stream/busy above. */
   setCoordinatorContextInfo: (info: { contextTokens?: number; contextWindow?: number; compacting: boolean; compactResult: CompactResult | null; model?: string; apiRetry: ApiRetry | null }) => void;
@@ -236,7 +236,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
 
   coordinatorId: null,
   coordinatorProject: null,
-  coordinatorStream: [],
+  coordinatorItems: [],
   coordinatorBusy: false,
   coordinatorContextTokens: undefined,
   coordinatorCompacting: false,
@@ -433,7 +433,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     set({
       coordinatorProject: sessionId,
       coordinatorId: null,
-      coordinatorStream: [],
+      coordinatorItems: [],
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
@@ -557,7 +557,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     // ensureForProject resets so the stream remounts cleanly on the new id.
     set({
       coordinatorId: archivedTerminalId,
-      coordinatorStream: [],
+      coordinatorItems: [],
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
@@ -579,7 +579,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     return true;
   },
 
-  setCoordinatorStream: (stream) => set({ coordinatorStream: stream }),
+  setCoordinatorItems: (items) => set({ coordinatorItems: items }),
 
   setCoordinatorBusy: (busy) => set({ coordinatorBusy: busy }),
 
@@ -643,7 +643,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     clearStoredDraft(sessionId);
     set((s) => ({
       coordinatorId: null,
-      coordinatorStream: [],
+      coordinatorItems: [],
       coordinatorBusy: false,
       coordinatorContextTokens: undefined,
       coordinatorCompacting: false,
@@ -754,7 +754,7 @@ useProjects.subscribe((state, prev) => {
 /**
  * Single owner of the live coordinator subscription. Call this ONCE from the
  * Overseer root (OverseerView) — it ensures the coordinator for the active project
- * and drives exactly one structured websocket, pushing the converted stream into
+ * and drives exactly one structured websocket, pushing the transcript (ConvItem[]) into
  * the store so useRenderVals() (used by many components) can stay a pure store read
  * and not open a socket per consumer.
  */
@@ -763,7 +763,7 @@ export function useCoordinatorSync(): void {
   const ensureForProject = useOverseer((s) => s.ensureForProject);
   const coordinatorId = useOverseer((s) => s.coordinatorId);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
-  const setCoordinatorStream = useOverseer((s) => s.setCoordinatorStream);
+  const setCoordinatorItems = useOverseer((s) => s.setCoordinatorItems);
   const setCoordinatorBusy = useOverseer((s) => s.setCoordinatorBusy);
   const setCoordinatorContextInfo = useOverseer((s) => s.setCoordinatorContextInfo);
   const setCoordinatorPaging = useOverseer((s) => s.setCoordinatorPaging);
@@ -779,10 +779,9 @@ export function useCoordinatorSync(): void {
   // daemon-restart/transcript-resume. (The hook reads sessionId via a ref, so this does
   // NOT re-key the socket effect.)
   const { items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, pending, answer, replyToQuestion, denyQuestion, hasMore, loadingOlder, loadOlder } = useStructuredChat(coordinatorId ?? '', coordinatorProject ?? undefined);
-  const stream = useMemo(() => convItemsToStream(items), [items]);
   useEffect(() => {
-    setCoordinatorStream(stream);
-  }, [stream, setCoordinatorStream]);
+    setCoordinatorItems(items);
+  }, [items, setCoordinatorItems]);
   useEffect(() => {
     setCoordinatorBusy(busy);
   }, [busy, setCoordinatorBusy]);
@@ -882,11 +881,11 @@ export function useNeedsSync(): void {
 // Derived view model. Pure read over the live stores (no websocket here — that's
 // owned by useCoordinatorSync), memoized so the snapshot reference is stable.
 export function useRenderVals(): RenderVals {
-  const { coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded } = useOverseer(
+  const { coordinatorId, coordinatorProject, coordinatorItems, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded } = useOverseer(
     useShallow((s) => ({
       coordinatorId: s.coordinatorId,
       coordinatorProject: s.coordinatorProject,
-      coordinatorStream: s.coordinatorStream,
+      coordinatorItems: s.coordinatorItems,
       coordinatorBusy: s.coordinatorBusy,
       sendError: s.sendError,
       resolved: s.resolved,
@@ -915,31 +914,25 @@ export function useRenderVals(): RenderVals {
     // Project-gate the coordinator fields: if the store still holds ANOTHER project's
     // coordinator (the async ensureForProject swap on a tab switch hasn't landed), treat
     // it as empty so this tab never paints the previous project's transcript.
-    const { stream: gatedStream, busy: gatedBusy, hasCoordinator, projectMatches } = viewCoordinatorFields({
+    const { items, busy: gatedBusy, hasCoordinator, projectMatches } = viewCoordinatorFields({
       coordinatorProject,
       activeId,
-      coordinatorStream,
+      coordinatorItems,
       coordinatorBusy,
       coordinatorId,
     });
 
     const hasNeeds = needs.length > 0;
     const noMissions = missions.length === 0;
-    const emptyMode = !hasCoordinator || (noMissions && gatedStream.length === 0);
+    const emptyMode = !hasCoordinator || (noMissions && items.length === 0);
 
-    // First-run / empty conversation → the Overseer greeting. Suppressed when the inline
-    // setup card is showing (setupNeeded) — the card carries its own copy, so an empty
-    // stream reads as blank rather than doubling up with the canned greeting.
-    const base: StreamMessage[] = gatedStream.length
-      ? gatedStream
-      : setupNeeded
-        ? []
-        : [m('overseer', 'Control Plane', CANNED.emptyGreeting, '', 'greeting')];
-    // Append a transient send-failure notice (BUG 1: previously swallowed) so a rejected
+    // First-run / empty conversation → the Overseer greeting (CANNED.emptyGreeting, drawn by
+    // ConversationStream above the empty list). Suppressed when the inline setup card is
+    // showing (setupNeeded) — the card carries its own copy, so an empty conversation reads
+    // as blank rather than doubling up with the canned greeting.
+    const showGreeting = items.length === 0 && !setupNeeded;
+    // sendError (BUG 1: previously swallowed) is drawn below the list so a rejected
     // directive is VISIBLE inline; cleared by the next send attempt / project switch.
-    const stream: StreamMessage[] = sendError
-      ? [...base, { kind: 'note', who: null, text: sendError, time: '', key: 'send-error', isUser: false, isOverseer: false, isNote: false, isError: true }]
-      : base;
 
     const ribbon: Ribbon = { working, done, needs: needs.length, hasNeeds };
 
@@ -947,7 +940,9 @@ export function useRenderVals(): RenderVals {
       ribbon,
       needs,
       missions,
-      stream,
+      items,
+      showGreeting,
+      sendError,
       busy: gatedBusy,
       drillDetail: null, // the live drill surface is the worker lightbox, not the rail
       hasNeeds,
@@ -957,5 +952,5 @@ export function useRenderVals(): RenderVals {
       overviewOpen: true,
       projectMatches,
     };
-  }, [coordinatorId, coordinatorProject, coordinatorStream, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorProject, coordinatorItems, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded, activeId, byProject, byTerminal]);
 }

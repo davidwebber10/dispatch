@@ -147,7 +147,7 @@ export function StatusNotice({ input, renderText, onDismiss, radius = 'var(--rad
  * it and remembers the choice (stores/dismissedNotices.ts, localStorage). `scope` is the
  * thread or coordinator the card belongs to, so closing "Done" in one thread never hides an
  * identically-worded "Done" in another. Renders nothing once dismissed. Used from the plain
- * render functions (renderTimeline / renderStream) that cannot call hooks themselves.
+ * render function (renderTimeline) that cannot call hooks itself.
  */
 export function DismissableStatusNotice({ scope, input, renderText, radius }: { scope?: string; input?: string; renderText?: (text: string) => ReactNode; radius?: string }) {
   const key = reportStatusKey(input);

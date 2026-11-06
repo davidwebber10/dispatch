@@ -1,12 +1,11 @@
 // Regression test for the 💬 "direct message to an agent" coordinator notice
 // (service.ts's noteUserMessageToAgent). It used to fall through detectAgencyNotice
 // undetected and render as a raw "You" bubble — the full injected system text shown
-// verbatim, as if the human had typed it. Stream.tsx's detectDirectMessageNotice +
+// verbatim, as if the human had typed it. AgencyNotices.tsx's detectDirectMessageNotice +
 // DirectMessageNoticeMsg now catch it and render a small card instead (see that file's
 // "Direct-message notice" section for the design rationale).
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { m } from '../data';
 import { useOverseer } from '../store';
 import { useProjects } from '../../../stores/projects';
 import { ConversationStream } from './Stream';
@@ -27,7 +26,7 @@ beforeEach(() => {
   useOverseer.setState({
     coordinatorId: 'coord-1',
     coordinatorProject: 'proj-1',
-    coordinatorStream: [],
+    coordinatorItems: [],
     coordinatorBusy: false,
     coordinatorPending: null,
     coordinatorAnswer: () => {},
@@ -37,7 +36,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 // Mirrors service.ts's noteUserMessageToAgent template exactly — the frontend detector
-// (Stream.tsx's detectDirectMessageNotice) parses this shape.
+// (AgencyNotices.tsx's detectDirectMessageNotice) parses this shape.
 const directMessageNoticeText = (message = 'Please add error logging.') =>
   `💬 The user just sent your agent "Bob" (mission "Fix auth") [agentId term-123] a message ` +
   `directly, not through you: "${message}". This may change what you asked it to do. Read how ` +
@@ -45,7 +44,7 @@ const directMessageNoticeText = (message = 'Please add error logging.') =>
 
 describe('ConversationStream — direct-message notice card', () => {
   it('renders agent name, mission, and the quoted message as a card, not a raw bubble', () => {
-    useOverseer.setState({ coordinatorStream: [m('user', 'You', directMessageNoticeText(), '9:02', 0)] });
+    useOverseer.setState({ coordinatorItems: [{ kind: 'user', text: directMessageNoticeText() }] });
     render(<ConversationStream />);
     expect(screen.getByText('Direct message to "Bob"')).toBeInTheDocument();
     expect(screen.getByText('· Fix auth')).toBeInTheDocument();
@@ -57,7 +56,7 @@ describe('ConversationStream — direct-message notice card', () => {
 
   it("quoted message extraction is not confused by quotes inside the user's own message", () => {
     useOverseer.setState({
-      coordinatorStream: [m('user', 'You', directMessageNoticeText('please rename "foo" to "bar"'), '9:02', 0)],
+      coordinatorItems: [{ kind: 'user', text: directMessageNoticeText('please rename "foo" to "bar"') }],
     });
     render(<ConversationStream />);
     expect(screen.getByText('“please rename "foo" to "bar"”')).toBeInTheDocument();
@@ -66,7 +65,7 @@ describe('ConversationStream — direct-message notice card', () => {
   it('opens the agent lightbox when the card is clicked', () => {
     const drillInto = vi.fn();
     useOverseer.setState({
-      coordinatorStream: [m('user', 'You', directMessageNoticeText(), '9:02', 0)],
+      coordinatorItems: [{ kind: 'user', text: directMessageNoticeText() }],
       drillInto,
     });
     const { container } = render(<ConversationStream />);

@@ -431,8 +431,6 @@ export function derive(s: DeriveState): RenderVals {
     threads: mm.threads.map((t) => ({ ...t, dlabel: t.typeLabel + ' #' + t.id + ' · ' + mm.name })),
   }));
 
-  const stream = [...data.stream, ...s.extra];
-
   const hasNeeds = needs.length > 0;
 
   const ribbon: Ribbon = {
@@ -446,7 +444,10 @@ export function derive(s: DeriveState): RenderVals {
     ribbon,
     needs,
     missions,
-    stream,
+    // The mock scenarios' StreamMessages predate the ConvItem transcript and are not drawn.
+    items: [],
+    showGreeting: s.scenario === 'empty',
+    sendError: null,
     busy: false, // mock scenarios have no live coordinator turn in flight
     drillDetail: s.drill ? detail(s.drill, missions) : null,
     hasNeeds,

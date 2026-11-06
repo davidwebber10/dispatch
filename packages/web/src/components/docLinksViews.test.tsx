@@ -20,7 +20,6 @@ import { ReleaseNotes } from './update/ReleaseNotes';
 import { useDocViewer } from '../stores/docViewer';
 import { useProjects } from '../stores/projects';
 import { api } from '../api/client';
-import { m } from './overseer/data';
 
 vi.mock('codemirror', () => ({ EditorView: class { state = { doc: { toString: () => '' } }; destroy() {} static updateListener = { of: () => ({}) }; }, basicSetup: [] }));
 vi.mock('@codemirror/state', () => ({ EditorState: { create: () => ({}) } }));
@@ -79,21 +78,21 @@ describe('a Markdown with no view around it (release notes, any new surface)', (
 
 describe('the overseer (Control Plane)', () => {
   beforeEach(() => {
-    useOverseer.setState({ coordinatorId: 'c1', coordinatorProject: 'p1', coordinatorStream: [m('overseer', 'Control Plane', SRC, '9:02', 1)], coordinatorBusy: false, coordinatorPending: null } as never);
+    useOverseer.setState({ coordinatorId: 'c1', coordinatorProject: 'p1', coordinatorItems: [{ kind: 'assistant', text: SRC }], coordinatorBusy: false, coordinatorPending: null } as never);
   });
   it('a link in an overseer reply opens the overseer\'s own doc viewer', () => {
     render(<OverseerView />);
     expectRouted('overseer');
   });
   it('a relative link in a reply reads from the coordinator\'s project', () => {
-    useOverseer.setState({ coordinatorStream: [m('overseer', 'Control Plane', '[rel](docs/plan.md)', '9:02', 2)] } as never);
+    useOverseer.setState({ coordinatorItems: [{ kind: 'assistant', text: '[rel](docs/plan.md)' }] } as never);
     render(<OverseerView />);
     expect(click('rel')).toBe(false);
     expect(useDocViewer.getState().open).toMatchObject({ project: 'p1', path: 'docs/plan.md', origin: 'overseer' });
   });
   it('a link in the ledger source panel does too', async () => {
     vi.spyOn(api, 'getLedgerSource').mockResolvedValue({ kind: 'section', file: 'r.md', path: 'docs/r.md', heading: 'H', markdown: SRC + ' [sib](y.md)', id: 'LR-6', fromMainCheckout: false, note: null, cut: false } as never);
-    useOverseer.setState({ coordinatorStream: [] } as never);
+    useOverseer.setState({ coordinatorItems: [] } as never);
     useLedgerCard.setState({ sourcePanel: { projectId: 'p1', seq: 14 } } as never);
     render(<OverseerView />);
     await screen.findByText('plan');
