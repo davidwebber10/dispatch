@@ -16,6 +16,7 @@ import { useUsageLimits } from './stores/usageLimits';
 import { PanelToggle } from './components/layout/PanelToggle';
 import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
 import { AgentPane } from './components/agents/AgentPane';
+import { closeAgentPane } from './components/agents/closeAgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
@@ -279,7 +280,7 @@ export default function App() {
                 />}
               main={
                 showAgent
-                  ? <AgentPane onClose={() => useAgentUI.getState().blur()} />
+                  ? <AgentPane onClose={closeAgentPane} />
                   : (
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                       {/* The panel toggles flank the tab strip — the old TopBar's

@@ -148,6 +148,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
           <div
             key={id}
             data-tab-id={id}
+            tabIndex={-1}
             onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(id); }}
             onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(id); } }}
             style={{
@@ -197,6 +198,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
   return (
     <div
       data-tab-id={tabId}
+      tabIndex={-1}
       onClick={() => { onSelect?.(); useTabs.getState().setActiveTab(tabId); }}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); useTabs.getState().closeTab(tabId); } }}
       style={{

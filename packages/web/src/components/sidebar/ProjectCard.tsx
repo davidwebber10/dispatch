@@ -419,7 +419,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           )}
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
-            <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} />
+            <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} automationsOf={session.id} />
             <span style={{ flex: 1 }} />
             {projTab === 'threads' ? (
               threadItems.length >= 2 && (
@@ -566,9 +566,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
 }
 
 
-function TabPill({ label, count, active, mobile, onClick }: { label: string; count: number; active: boolean; mobile: boolean; onClick: () => void }) {
+function TabPill({ label, count, active, mobile, onClick, automationsOf }: { label: string; count: number; active: boolean; mobile: boolean; onClick: () => void; automationsOf?: string }) {
   return (
-    <button onClick={(e) => { e.stopPropagation(); onClick(); }} style={{
+    <button data-automations-pill={automationsOf} onClick={(e) => { e.stopPropagation(); onClick(); }} style={{
       display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '9px 4px 8px' : '6px 3px 7px', background: 'transparent', border: 'none', cursor: 'pointer',
       borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent', marginBottom: -1,
       color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',

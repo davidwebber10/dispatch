@@ -3,6 +3,7 @@ import { test, expect, beforeEach, vi } from 'vitest';
 import { AgentPane } from './AgentPane';
 import { useAgents } from '../../stores/agents';
 import { useAgentUI } from '../../stores/agentUI';
+import { SortMenu } from '../sidebar/SortMenu';
 
 vi.mock('./RunnerView', () => ({ RunnerView: ({ onBack }: { onBack: () => void }) => <button onClick={onBack}>runner back</button> }));
 
@@ -58,6 +59,17 @@ test('Escape inside a run goes back to the dashboard first, then closes', () => 
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(onClose).not.toHaveBeenCalled();
   expect(screen.queryByText('runner back')).toBeNull();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test('Escape with the Sort menu open closes the menu, not the pane', () => {
+  const onClose = vi.fn();
+  render(<><SortMenu value="newest" options={[['newest', 'Newest'], ['oldest', 'Oldest']]} onChange={() => {}} isMobile={false} buttonStyle={{ width: 16 }} /><AgentPane onClose={onClose} /></>);
+  fireEvent.click(screen.getByLabelText('Sort'));
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(onClose).not.toHaveBeenCalled();
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(onClose).toHaveBeenCalledTimes(1);
 });
