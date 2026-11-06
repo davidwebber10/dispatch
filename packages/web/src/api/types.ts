@@ -501,11 +501,23 @@ export interface UsagePausedGroup {
   chat: boolean;
   firstTerminalId: string;
   firstSessionId: string | null;
-  /** The earliest pause start: keys this device's dismiss. */
+  /** The earliest pause start. */
   episodeStartedAt: number;
+  /** The newest pause start: this device's dismiss holds until a pause newer than it. Missing from an older daemon. */
+  latestStartedAt?: number;
+  /** When the limit stops holding the group back (latest reset; null while a reset was never read and the limit has not cleared, so the chip stays red). The chip is red only before it. Missing from an older daemon. */
+  activeUntil?: number | null;
 }
 /** GET /api/usage-limits/summary and the `usage-limits` broadcast carry the same body. */
-export interface UsageSummary { warnPercent: number; providers: UsageSummaryProvider[]; paused: UsagePausedGroup[] }
+export interface UsageSummary {
+  /** When the daemon built it (ms). The store keeps the newest, so a slow GET never undoes a newer event. Missing from an older daemon. */
+  at?: number;
+  warnPercent: number;
+  /** The daemon-wide push switch. Missing from an older daemon. */
+  pushOnWarn?: boolean;
+  providers: UsageSummaryProvider[];
+  paused: UsagePausedGroup[];
+}
 /** GET/PUT /api/settings/usage-limits: daemon-wide, every device sees the same values. */
 export interface UsageLimitSettings { warnPercent: number; pushOnWarn: boolean }
 

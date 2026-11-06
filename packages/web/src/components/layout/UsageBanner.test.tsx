@@ -11,7 +11,7 @@ import type { UsagePausedGroup } from '../../api/types';
 const NOW = Date.UTC(2026, 10, 5, 5, 0);
 const RESET = Date.UTC(2026, 10, 5, 6, 10);
 const g = (o: Partial<UsagePausedGroup> = {}): UsagePausedGroup => ({
-  provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 0, chat: false, firstTerminalId: 't1', firstSessionId: 's1', episodeStartedAt: 100, ...o,
+  provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 0, chat: false, firstTerminalId: 't1', firstSessionId: 's1', episodeStartedAt: 100, latestStartedAt: 100, activeUntil: RESET, ...o,
 });
 
 describe('bannerText', () => {
@@ -70,6 +70,17 @@ describe('UsageBanner', () => {
     expect(container.innerHTML).toBe('');
   });
 
+  it('the × holds when another thread resumes, and a newer pause shows it again', () => {
+    render(<UsageBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide until the next pause' }));
+    // The oldest thread resumes: the earliest pause time moves, but nothing new paused.
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [g({ threads: 2, episodeStartedAt: 150, latestStartedAt: 100 })] } }); });
+    expect(screen.queryByTestId('usage-banner')).toBeNull();
+    // A second thread pauses while the first stays paused: that is a new pause.
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [g({ threads: 4, episodeStartedAt: 100, latestStartedAt: 200 })] } }); });
+    expect(screen.getByTestId('usage-banner')).toBeTruthy();
+  });
+
   it('the × holds until a new pause episode', () => {
     render(<UsageBanner />);
     fireEvent.click(screen.getByRole('button', { name: 'Hide until the next pause' }));
@@ -78,7 +89,7 @@ describe('UsageBanner', () => {
     act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [g({ threads: 4 })] } }); });
     expect(screen.queryByTestId('usage-banner')).toBeNull();
     // A new episode (new earliest pause): shown again.
-    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [g({ episodeStartedAt: 200 })] } }); });
+    act(() => { useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [g({ episodeStartedAt: 200, latestStartedAt: 200 })] } }); });
     expect(screen.getByTestId('usage-banner')).toBeTruthy();
   });
 });

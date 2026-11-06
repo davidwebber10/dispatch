@@ -9,7 +9,7 @@ const claude = (five: number | null, week: number | null, extra: Record<string, 
 });
 const codex = (five: number, week: number): UsageSummaryProvider => ({ provider: 'codex', plan: 'plus', asOf: NOW - 60_000, windows: { five_hour: { usedPercent: five, resetsAt: NOW + H }, seven_day: { usedPercent: week, resetsAt: NOW + 50 * H } } });
 const sum = (providers: UsageSummaryProvider[], o: Partial<UsageSummary> = {}): UsageSummary => ({ warnPercent: 80, providers, paused: [], ...o });
-const pause = (provider = 'claude-code') => ({ provider, kind: 'session', earliestResetsAt: NOW + H, threads: 1, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: 's', episodeStartedAt: NOW - H });
+const pause = (provider = 'claude-code') => ({ provider, kind: 'session', earliestResetsAt: NOW + H, threads: 1, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: 's', episodeStartedAt: NOW - H, latestStartedAt: NOW - H, activeUntil: NOW + H });
 
 describe('chipModel', () => {
   it('is hidden with no data', () => {
@@ -44,6 +44,23 @@ describe('chipModel', () => {
   it('turns red while that provider is paused, and the paused provider wins the pick', () => {
     const m = chipModel(sum([claude(99, 50), codex(10, 5)], { paused: [pause('codex')] }), NOW)!;
     expect(m).toMatchObject({ provider: 'codex', tone: 'red', mark: 'X' });
+  });
+
+  it('is not red once the limit has reset, even if the thread is still stopped', () => {
+    const stopped = { ...pause(), capped: 1, activeUntil: NOW - 1 };
+    expect(chipModel(sum([claude(10, 20)], { paused: [stopped] }), NOW)!.tone).toBe('normal');
+    // ...and the next window's warning shows again.
+    expect(chipModel(sum([claude(85, 20)], { paused: [stopped] }), NOW)!.tone).toBe('amber');
+    // Still red while the reset is ahead, and when an older daemon sends no end time.
+    expect(chipModel(sum([claude(10, 20)], { paused: [{ ...stopped, activeUntil: NOW + 1 }] }), NOW)!.tone).toBe('red');
+    expect(chipModel(sum([claude(10, 20)], { paused: [{ ...stopped, activeUntil: null }] }), NOW)!.tone).toBe('red'); // unknown end: red until it clears
+    const { activeUntil: _a, ...old } = stopped;
+    expect(chipModel(sum([claude(10, 20)], { paused: [old] }), NOW)!.tone).toBe('red');
+  });
+
+  it('a provider whose pause is over does not win the pick', () => {
+    const m = chipModel(sum([claude(10, 5), codex(30, 5)], { paused: [{ ...pause(), activeUntil: NOW - 1 }] }), NOW)!;
+    expect(m.provider).toBe('codex');
   });
 
   it('with two providers, shows the one with the highest counted window, with its mark', () => {

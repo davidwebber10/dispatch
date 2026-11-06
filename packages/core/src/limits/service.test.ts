@@ -203,6 +203,17 @@ describe('restart', () => {
     expect(labels).toEqual([{ id: 'a', label: 'Paused: session limit, resumes 1:10 AM' }]);
     expect(parksDb.get(db, 'b')).toBeNull();
   });
+  it('restore also drops a capped park whose thread was archived or is gone', () => {
+    thread('a'); thread('b');
+    svc.park('a', 'claude-code', session);
+    svc.park('b', 'claude-code', session);
+    parksDb.setState(db, 'a', 'capped', 5, RESET, clock);
+    parksDb.setState(db, 'b', 'capped', 5, RESET, clock);
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'a'").run();
+    svc.restore();
+    expect(parksDb.get(db, 'a')).toBeNull();
+    expect(parksDb.get(db, 'b')).not.toBeNull();
+  });
   it('a weekly park keeps its wake time across a new service instance and does not retry early', () => {
     thread('a');
     const monday = Date.UTC(2026, 9, 26, 13, 0);
@@ -333,18 +344,66 @@ describe('change listener (#127)', () => {
     wakeError = new Error('no pty');
     for (let i = 0; i < 5; i++) { clock += 6 * MIN; svc.tick(); }
     expect(parksDb.get(db, 'b')!.state).toBe('capped');
-    expect(n).toBe(5); // the retries keep it parked, only the cap is a change
+    expect(n).toBe(9); // each failed retry moves the deadline the chip reads, so it notifies; then the cap
     expect(parksDb.listPaused(db).map((r) => r.terminal_id)).toEqual(['b']);
     svc.onUserMessage('b');
-    expect(n).toBe(6);
+    expect(n).toBe(10);
     svc.onStopped('b'); // already gone
-    expect(n).toBe(6);
+    expect(n).toBe(10);
     // restore drops a park whose thread was archived.
     svc.park('c', 'claude-code', session);
-    expect(n).toBe(7);
+    expect(n).toBe(11);
     db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'c'").run();
     svc.restore();
-    expect(n).toBe(8);
+    expect(n).toBe(12);
+  });
+
+  it('a failed wake that moves the retry time notifies, so open clients read the new deadline', () => {
+    let n = 0;
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    svc.addChangeListener(() => { n++; });
+    const firstDeadline = parksDb.get(db, 'a')!.wake_at;
+    wakeError = new Error('no pty');
+    clock = firstDeadline + 1;
+    svc.tick();
+    expect(parksDb.get(db, 'a')!.wake_at).toBeGreaterThan(firstDeadline);
+    expect(n).toBe(1);
+  });
+
+  it('an earlier failed wake leaves an unknown reset alone; only the last failed try stamps it as over', () => {
+    thread('a');
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    wakeError = new Error('no pty');
+    for (let i = 1; i <= 4; i++) {
+      clock = parksDb.get(db, 'a')!.wake_at + 1;
+      svc.tick();
+      expect(parksDb.get(db, 'a')).toMatchObject({ state: 'parked', attempts: i, resets_at: null });
+    }
+    clock = parksDb.get(db, 'a')!.wake_at + 1;
+    svc.tick(); // the fifth and last try
+    expect(parksDb.get(db, 'a')).toMatchObject({ state: 'capped', attempts: 5, resets_at: clock });
+  });
+
+  it('a renewed limit keeps the chain (parked_at, attempts) but records its own detection time', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    const first = parksDb.get(db, 'a')!;
+    expect(first.detected_at).toBe(T0);
+    clock = RESET + 91_000;
+    svc.tick(); // woken, attempts 1
+    clock += 10 * MIN;
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: clock + 60 * MIN, message: 'again' });
+    expect(parksDb.get(db, 'a')).toMatchObject({ parked_at: T0, attempts: 1, detected_at: clock, state: 'parked' });
+  });
+
+  it('a failed wake keeps a reset that was read', () => {
+    thread('a');
+    svc.park('a', 'claude-code', session);
+    wakeError = new Error('no pty');
+    clock = RESET + 91_000;
+    svc.tick();
+    expect(parksDb.get(db, 'a')!.resets_at).toBe(RESET);
   });
 
   it('a throwing listener does not break the service', () => {

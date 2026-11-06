@@ -5,9 +5,9 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
 import * as gaugeSettings from './gauge-settings.js';
-import { LimitSnapshots } from './snapshot.js';
+import { LimitSnapshots, parseClaudeRateLimit } from './snapshot.js';
 import { UsageGauge } from './gauge.js';
-import { CHAT_ID } from './service.js';
+import { CHAT_ID, UsageLimitService } from './service.js';
 
 const ZONE = 'America/Indianapolis';
 const T0 = Date.UTC(2026, 10, 5, 4, 0); // 23:00 local, Nov 4
@@ -56,7 +56,7 @@ afterEach(() => { gauge.stop(); vi.useRealTimers(); db.close(); });
 
 describe('summary', () => {
   it('is empty with no snapshot, and never carries the account id', () => {
-    expect(gauge.summary()).toEqual({ type: 'usage-limits', warnPercent: 80, providers: [], paused: [] });
+    expect(gauge.summary()).toEqual({ type: 'usage-limits', at: T0, warnPercent: 80, pushOnWarn: true, providers: [], paused: [] });
     claude(46.4, 21);
     const s = gauge.summary();
     expect(s.providers).toEqual([{ provider: 'claude-code', plan: undefined, asOf: T0, windows: { five_hour: { usedPercent: 46, resetsAt: RESET }, seven_day: { usedPercent: 21, resetsAt: WEEK } } }]);
@@ -78,8 +78,213 @@ describe('summary', () => {
     parksDb.upsert(db, { terminal_id: 'w', provider: 'claude-code', kind: 'session', resets_at: RESET, wake_at: RESET, message: 'm', parsed: 1, attempts: 1, state: 'woken', parked_at: T0 }, T0);
     const p = gauge.summary().paused;
     const c = p.find((g) => g.provider === 'claude-code')!;
-    expect(c).toEqual({ provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 1, chat: true, firstTerminalId: 'b', firstSessionId: 'proj', episodeStartedAt: T0 + 1 });
+    expect(c).toEqual({ provider: 'claude-code', kind: 'session', earliestResetsAt: RESET, threads: 3, capped: 1, chat: true, firstTerminalId: 'b', firstSessionId: 'proj', episodeStartedAt: T0 + 1, latestStartedAt: T0 + 9, activeUntil: RESET + 10 * MIN });
     expect(p.find((g) => g.provider === 'codex')).toMatchObject({ kind: 'weekly', threads: 1, firstSessionId: null });
+  });
+
+  it('activeUntil is the latest reset over every row, capped included; null while any row has none read', () => {
+    thread('a'); thread('b'); thread('c');
+    park('a', { state: 'capped', resets_at: RESET });
+    park('c', { resets_at: RESET + 3 * 60 * MIN });
+    expect(gauge.summary().paused[0].activeUntil).toBe(RESET + 3 * 60 * MIN);
+    parksDb.remove(db, 'c');
+    park('b', { resets_at: null, wake_at: RESET + 3 * 60 * MIN, parsed: 0 });
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    parksDb.remove(db, 'b');
+    expect(gauge.summary().paused[0].activeUntil).toBe(RESET);
+  });
+
+  it('a row with no readable reset has no end time (null) while the limit may still hold, however old its retry time', () => {
+    thread('a');
+    park('a', { state: 'capped', resets_at: null, wake_at: RESET + 30 * MIN, parsed: 0 });
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = RESET + 24 * 60 * MIN; // a day past the retry time: still unknown
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('fresh figures taken after the pause that show the window under 100% end an unknown-reset pause', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    // Figures from before the pause (or at the pause) prove nothing.
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 40, resetsAt: RESET } }, T0);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Fresh figures still at the limit: still active.
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 100, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Fresh figures under 100%: the limit cleared, so the chip may leave red (end time = when we learned it).
+    clock = T0 + 10 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    // Another provider's figures say nothing about this one.
+  });
+
+  it('no real below-limit figure means unknown: an empty snapshot, only null percentages, or only windows past their reset', () => {
+    thread('a');
+    park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0 }); // kind usage: the window is unknown, any window counts
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, {}, clock, undefined, true); // a snapshot with no windows
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET }, seven_day: { usedPercent: null, resetsAt: WEEK } }, clock + 1, undefined, true);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 10, resetsAt: clock - 1 } }, clock + 2, undefined, true); // past its reset: not a live figure
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // A live figure under 100% on any counted window does clear it.
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock + 3, undefined, true);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock + 3);
+  });
+
+  it('a null-percentage update after the limit hit does not clear it: the kept 20% is an old reading', () => {
+    thread('a');
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 20, resetsAt: RESET } }, T0); // last reading, before the limit
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN }); // the limit hits
+    clock = T0 + 15 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: null, resetsAt: RESET } }, clock); // a report with a reset time and no figure
+    expect(snaps.get('claude-code', account)!.windows.five_hour.usedPercent).toBe(20); // the old figure is kept
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // Another window's real figure does not turn the old 20% into a new reading either.
+    clock = T0 + 16 * MIN;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 100, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    // A genuine new reading under 100% after the detection does clear it, stamped with its own time.
+    clock = T0 + 20 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET }, seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('when the limited window is unknown (kind usage), a new real figure on any window clears it, an old carried one does not', () => {
+    thread('a');
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 20, resetsAt: RESET } }, T0);
+    park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0 + 10 * MIN, detected_at: T0 + 10 * MIN });
+    clock = T0 + 20 * MIN;
+    // A new real figure arrives on the weekly window only: it is a genuine new reading under 100%.
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 58, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('99.6% is below the limit even though it displays as 100%; 100.0% is not', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 100, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = T0 + 2 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 99.6, resetsAt: RESET } }, clock);
+    expect(gauge.summary().providers[0].windows.five_hour.usedPercent).toBe(100); // shown rounded
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock); // but it is not at the limit
+  });
+
+  describe('a limit with no reset time clears only on the window that hit it', () => {
+    const KINDS: [string, string, string][] = [['session', 'five_hour', 'seven_day'], ['weekly', 'seven_day', 'five_hour'], ['opus', 'seven_day_opus', 'five_hour'], ['sonnet', 'seven_day_sonnet', 'five_hour'], ['fable', 'seven_day_overage_included', 'five_hour']];
+    it.each(KINDS)('%s limit: a fresh figure under 100%% on %s clears; on %s it does not', (kind, limited, other) => {
+      thread('a');
+      park('a', { kind: kind as any, resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { [other]: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull(); // another window's reading says nothing about this limit
+      clock = T0 + 6 * MIN;
+      snaps.record('claude-code', account, { [limited]: { usedPercent: null, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull(); // a blank update is not a reading
+      clock = T0 + 7 * MIN;
+      snaps.record('claude-code', account, { [limited]: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    });
+    it('the limited window still at the limit keeps it red, whatever the other windows say', () => {
+      thread('a');
+      park('a', { kind: 'opus', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { seven_day_opus: { usedPercent: 100, resetsAt: WEEK }, five_hour: { usedPercent: 3, resetsAt: RESET } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    });
+    it('kind usage (the window could not be named) keeps the any-window rule', () => {
+      thread('a');
+      park('a', { kind: 'usage', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+      clock = T0 + 5 * MIN;
+      snaps.record('claude-code', account, { seven_day: { usedPercent: 12, resetsAt: WEEK } }, clock);
+      expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    });
+  });
+
+  it('99.96% read through the real Claude parser is below the limit; 100% is not', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    const ingest = (utilization: number, at: number) => { clock = at; snaps.record('claude-code', account, parseClaudeRateLimit({ unifiedWindows: { five_hour: { utilization, resetsAt: Math.floor(RESET / 1000) } } }), at); };
+    ingest(1, T0 + MIN);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    ingest(0.9996, T0 + 2 * MIN);
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 2 * MIN);
+  });
+
+  it('once cleared it stays cleared: the reading expiring, or a restart, does not turn it red again, and a new detection does', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+    // The clearing reading's window passes its reset, and the snapshot later drops it.
+    clock = RESET + 2 * 3600_000;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 3, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 5 * MIN);
+    // A restart (a new gauge and snapshots over the same db) keeps it too.
+    gauge.stop();
+    snaps = new LimitSnapshots(db);
+    gauge = make();
+    expect(gauge.summary().paused[0].activeUntil).toBe(T0 + 5 * MIN);
+    // A new detection of the limit starts over: red again until a fresh reading.
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: clock + MIN });
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('a weekly limit (even one that was really the Opus window) is held while any seven_day window is at 100%', () => {
+    thread('a');
+    park('a', { kind: 'weekly', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    // Fresh weekly reading under 100%, but Opus weekly is the one at the limit.
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 40, resetsAt: WEEK }, seven_day_opus: { usedPercent: 100, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    clock = T0 + 10 * MIN;
+    snaps.record('claude-code', account, { seven_day: { usedPercent: 40, resetsAt: WEEK }, seven_day_opus: { usedPercent: 60, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('an unknown-kind Codex stop keeps the any-window rule', () => {
+    thread('c', 'codex');
+    park('c', { provider: 'codex', kind: 'usage', resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 });
+    clock = T0 + 5 * MIN;
+    snaps.record('codex', account, { seven_day: { usedPercent: 12, resetsAt: WEEK } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('figures from before the latest detection do not clear a renewed limit, only newer ones', () => {
+    thread('a');
+    // The chain began at T0; the limit was detected again at T0 + 10 min (a resume that hit it again).
+    park('a', { resets_at: null, parsed: 0, parked_at: T0, detected_at: T0 + 10 * MIN });
+    clock = T0 + 5 * MIN;
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock); // newer than the chain, older than the detection
+    clock = T0 + 12 * MIN;
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 12, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBe(clock);
+  });
+
+  it('another provider\'s figures do not clear it', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    clock = T0 + MIN;
+    snaps.record('codex', 'acct-A', { five_hour: { usedPercent: 5, resetsAt: RESET } }, clock);
+    expect(gauge.summary().paused[0].activeUntil).toBeNull();
+  });
+
+  it('a new figure that clears the pause is broadcast', () => {
+    thread('a');
+    park('a', { resets_at: null, parsed: 0, parked_at: T0 });
+    gauge.pausesChanged();
+    const n = events.length;
+    clock = T0 + 10 * MIN;
+    claude(12, 58);
+    vi.advanceTimersByTime(5000);
+    expect(events.length).toBe(n + 1);
+    expect(events.at(-1).paused[0].activeUntil).toBe(clock);
   });
 
   it('mixed kinds: weekly beats session', () => {
@@ -92,6 +297,58 @@ describe('summary', () => {
   it('Chat alone: the first thread is Chat', () => {
     park(CHAT_ID);
     expect(gauge.summary().paused[0]).toMatchObject({ chat: true, threads: 1, firstTerminalId: CHAT_ID, firstSessionId: null });
+  });
+});
+
+describe('archived threads and the push switch', () => {
+  it('a paused or capped row of an archived thread is not shown', () => {
+    thread('a'); thread('b');
+    park('a', { state: 'capped' });
+    park('b');
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'a'").run();
+    const g = gauge.summary().paused[0];
+    expect(g).toMatchObject({ threads: 1, capped: 0, firstTerminalId: 'b' });
+    db.prepare("UPDATE terminals SET archived_at = 'x' WHERE id = 'b'").run();
+    expect(gauge.summary().paused).toEqual([]);
+    expect(gauge.activePauses('claude-code')).toEqual([]);
+  });
+
+  it('the summary carries the push switch, so other devices follow it', () => {
+    expect(gauge.summary().pushOnWarn).toBe(true);
+    gaugeSettings.set(db, { pushOnWarn: false });
+    gauge.settingsChanged();
+    expect(events.at(-1)).toMatchObject({ pushOnWarn: false });
+  });
+
+  it('the summary is stamped with the time it was built, outside the change check', () => {
+    claude(46, 21);
+    gauge.pausesChanged();
+    const n = events.length;
+    clock += 3 * MIN;
+    gauge.pausesChanged();
+    expect(events).toHaveLength(n); // same figures: no new event just for a new stamp
+    expect(gauge.summary().at).toBe(clock);
+  });
+});
+
+describe('the chip across failed wakes (D1, D2)', () => {
+  it('an earlier failed send leaves the chip red (no end time); the last failed send ends it', () => {
+    thread('a');
+    const svc = new UsageLimitService({
+      db, now: () => clock, zone: ZONE,
+      wake: () => { throw new Error('no pty'); }, markPaused: () => {}, note: () => {},
+    });
+    svc.park('a', 'claude-code', { kind: 'session', resetsAt: null, message: 'm' });
+    for (let i = 1; i <= 4; i++) {
+      clock = parksDb.get(db, 'a')!.wake_at + 1;
+      svc.tick();
+      expect(gauge.summary().paused[0].activeUntil).toBeNull();
+    }
+    clock = parksDb.get(db, 'a')!.wake_at + 1;
+    svc.tick();
+    const g = gauge.summary().paused[0];
+    expect(g.capped).toBe(1); // the banner still lists it
+    expect(g.activeUntil).toBe(clock); // the chip may leave red
   });
 });
 
@@ -141,6 +398,19 @@ describe('threshold push', () => {
     expect(pushes).toHaveLength(1);
     clock = RESET + MIN;
     snaps.record('claude-code', account, { five_hour: { usedPercent: 81, resetsAt: RESET + 5 * 60 * MIN } }, clock);
+    expect(pushes).toHaveLength(2);
+  });
+
+  it('a reset that jitters across a 10-minute rounding boundary is still the same window', () => {
+    const edge = Date.UTC(2026, 10, 5, 6, 5); // exactly between two 10-minute buckets
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 85, resetsAt: edge - 1000 } }, clock);
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 86, resetsAt: edge + 1000 } }, clock + 1);
+    expect(pushes).toHaveLength(1);
+  });
+
+  it('a reset that moves 20 minutes is a new window', () => {
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 85, resetsAt: RESET } }, clock);
+    snaps.record('claude-code', account, { five_hour: { usedPercent: 86, resetsAt: RESET + 20 * MIN } }, clock + 1);
     expect(pushes).toHaveLength(2);
   });
 
@@ -229,7 +499,7 @@ describe('broadcast', () => {
   it('a settings change sends at once with the new threshold', () => {
     gaugeSettings.set(db, { warnPercent: 90 });
     gauge.settingsChanged();
-    expect(events).toEqual([{ type: 'usage-limits', warnPercent: 90, providers: [], paused: [] }]);
+    expect(events).toEqual([{ type: 'usage-limits', at: T0, warnPercent: 90, pushOnWarn: true, providers: [], paused: [] }]);
   });
 });
 
@@ -244,5 +514,19 @@ describe('Codex refresh tick', () => {
     clock = T0 + 20 * MIN;
     gauge.tick();
     expect(refreshed).toEqual(['c2']);
+  });
+
+  it('keeps polling a Codex thread that is still working, however old its last activity', () => {
+    thread('c1', 'codex'); thread('c2', 'codex');
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run('e1', new Date(T0 - 40 * MIN).toISOString(), 'working', 'c1');
+    db.prepare('UPDATE terminals SET external_id = ?, last_activity_at = ?, status = ? WHERE id = ?').run('e2', new Date(T0 - 40 * MIN).toISOString(), 'idle', 'c2');
+    gauge.tick();
+    expect(refreshed).toEqual(['c1']);
+  });
+  it('does not poll an archived working thread', () => {
+    thread('c1', 'codex');
+    db.prepare("UPDATE terminals SET external_id = 'e1', status = 'working', archived_at = 'x' WHERE id = 'c1'").run();
+    gauge.tick();
+    expect(refreshed).toEqual([]);
   });
 });

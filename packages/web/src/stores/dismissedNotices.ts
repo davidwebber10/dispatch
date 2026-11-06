@@ -35,11 +35,17 @@ function save(keys: string[]) { try { localStorage.setItem(DISMISSED_NOTICES_KEY
 export const dismissKey = (scope: string, noticeKey: string) => `${scope}:${noticeKey}`;
 
 /**
- * The paused-usage banner's dismiss (#127) shares this store. One key per provider and pause
- * episode, so the × holds until a new episode starts (a new earliest pause time).
+ * The paused-usage banner's dismiss (#127) shares this store. The × records the newest pause start
+ * it covered, per provider. The banner stays hidden until a pause newer than that one starts, so a
+ * thread that resumes does not bring it back and a thread that pauses later does.
  */
 export const USAGE_BANNER_SCOPE = 'usage-banner';
-export const usageBannerKey = (provider: string, episodeStartedAt: number) => `${provider}:${episodeStartedAt}`;
+export const usageBannerKey = (provider: string, latestStartedAt: number) => `${provider}:${latestStartedAt}`;
+/** True when a dismiss of this provider covers a pause that started at `latestStartedAt`. */
+export const usageBannerDismissed = (keys: string[], provider: string, latestStartedAt: number): boolean => {
+  const prefix = `${USAGE_BANNER_SCOPE}:${provider}:`;
+  return keys.some((k) => k.startsWith(prefix) && Number(k.slice(prefix.length)) >= latestStartedAt);
+};
 
 /** The dismissed set a plain render function (renderTimeline / renderStream, no hooks)
  *  needs to skip a closed card's row entirely: the component that calls it subscribes to

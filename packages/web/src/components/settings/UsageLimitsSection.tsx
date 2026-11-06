@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { UsageLimitSettings } from '../../api/types';
 import { useSettings } from '../../stores/settings';
@@ -27,25 +27,40 @@ export function UsageLimitsSection() {
   const showBanner = useSettings((s) => s.showUsageBanner);
   const summary = useUsageLimits((s) => s.summary);
   const now = useNow();
+  // One settings state, three writers: the first GET, a broadcast from the daemon (another device changed
+  // something), and this device's own saves. `rev` counts every write that took effect. A GET or a PUT
+  // remembers the count when it started and installs its answer only if no later write happened meanwhile.
+  const rev = useRef(0);
+  const install = (s: UsageLimitSettings) => { rev.current++; setCfg(s); setDraft(String(s.warnPercent)); };
 
   useEffect(() => {
-    api.getUsageLimitSettings().then((s) => { setCfg(s); setDraft(String(s.warnPercent)); }).catch(() => setErr('Could not load the usage limit settings.'));
-  }, []);
-  // Another device changed the threshold: the broadcast carries it.
+    const started = rev.current;
+    let alive = true;
+    api.getUsageLimitSettings()
+      .then((s) => { if (alive && rev.current === started) install(s); })
+      .catch(() => { if (alive && rev.current === started) setErr('Could not load the usage limit settings.'); });
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Another device changed the threshold or the push switch: the broadcast carries both, and builds the state
+  // when the GET has not answered yet. An older daemon sends no push switch: then only the threshold follows.
   useEffect(() => {
-    if (summary && cfg && summary.warnPercent !== cfg.warnPercent) { setCfg({ ...cfg, warnPercent: summary.warnPercent }); setDraft(String(summary.warnPercent)); }
-  }, [summary?.warnPercent]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!summary) return;
+    if (summary.pushOnWarn !== undefined) { install({ warnPercent: summary.warnPercent, pushOnWarn: summary.pushOnWarn }); return; }
+    if (cfg && summary.warnPercent !== cfg.warnPercent) install({ ...cfg, warnPercent: summary.warnPercent });
+  }, [summary?.warnPercent, summary?.pushOnWarn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = (patch: Partial<UsageLimitSettings>) => {
     if (!cfg) return;
     const prior = cfg;
-    const next = { ...cfg, ...patch };
-    setCfg(next);
-    if (patch.warnPercent !== undefined) setDraft(String(patch.warnPercent));
+    install({ ...cfg, ...patch });
+    const started = rev.current;
     setErr(null);
     api.setUsageLimitSettings(patch)
-      .then((s) => { setCfg(s); setDraft(String(s.warnPercent)); })
-      .catch(() => { setCfg(prior); setDraft(String(prior.warnPercent)); setErr('Could not save. The daemon kept the old value.'); });
+      .then((s) => { if (rev.current === started) install(s); })
+      .catch(() => {
+        setErr('Could not save. The daemon kept the old value.');
+        if (rev.current === started) install(prior); // a newer write (a broadcast, another save) already replaced what this one showed
+      });
   };
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };

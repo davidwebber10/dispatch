@@ -2348,6 +2348,8 @@ export class SessionService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.revokeAllKeys(terminalId);
+    // An archived thread can never resume: drop its usage-limit pause (parked or capped) so the banner and chip clear.
+    this.usageLimits?.onStopped(terminalId);
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);

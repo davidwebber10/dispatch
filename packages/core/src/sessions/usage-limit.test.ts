@@ -154,4 +154,15 @@ describe('usage-limit wiring', () => {
     structured.emit('failed', 't1');
     expect(parksDb.get(db, 't1')).toBeNull();
   });
+  it('archiving a paused or capped thread (removeTerminal) drops its park', () => {
+    structured.emit('usage-limit', 't1', { kind: 'session', resetsAt: RESET, message: 'm' });
+    expect(parksDb.get(db, 't1')).not.toBeNull();
+    svc.removeTerminal('t1');
+    expect(parksDb.get(db, 't1')).toBeNull();
+    seed('t3');
+    lim.park('t3', 'claude-code', { kind: 'session', resetsAt: RESET, message: 'm' });
+    parksDb.setState(db, 't3', 'capped', 5, RESET, clock);
+    svc.removeTerminal('t3');
+    expect(parksDb.get(db, 't3')).toBeNull();
+  });
 });

@@ -1,15 +1,14 @@
 import type { UsagePausedGroup } from '../../api/types';
 import { useUsageLimits } from '../../stores/usageLimits';
 import { useSettings } from '../../stores/settings';
-import { useDismissedNotices, USAGE_BANNER_SCOPE, usageBannerKey } from '../../stores/dismissedNotices';
+import { useDismissedNotices, USAGE_BANNER_SCOPE, usageBannerKey, usageBannerDismissed } from '../../stores/dismissedNotices';
 import { useUI } from '../../stores/ui';
 import { bannerText, CHAT_PARK_ID } from './usageGauge';
 import { useNow } from '../../hooks/useNow';
 
 /**
  * The red global banner while any thread is paused on a usage limit (#127). One line per provider.
- * Click opens the first paused thread (or Chat). The × hides it on this device until the next
- * pause episode; Settings > Usage limits hides it on this device for good.
+ * Click opens the first paused thread (or Chat). The × hides it on this device until a newer pause starts; Settings > Usage limits hides it on this device for good.
  */
 export function UsageBanner({ onOpenChat, compact = false }: { onOpenChat?: () => void; compact?: boolean }) {
   const now = useNow();
@@ -17,7 +16,8 @@ export function UsageBanner({ onOpenChat, compact = false }: { onOpenChat?: () =
   const show = useSettings((s) => s.showUsageBanner);
   const dismissed = useDismissedNotices((s) => s.keys);
   if (!show || !summary) return null;
-  const groups = summary.paused.filter((g) => !dismissed.includes(`${USAGE_BANNER_SCOPE}:${usageBannerKey(g.provider, g.episodeStartedAt)}`));
+  const startedAt = (g: UsagePausedGroup) => g.latestStartedAt ?? g.episodeStartedAt;
+  const groups = summary.paused.filter((g) => !usageBannerDismissed(dismissed, g.provider, startedAt(g)));
   if (groups.length === 0) return null;
   const open = (g: UsagePausedGroup) => {
     if (g.firstTerminalId === CHAT_PARK_ID || !g.firstSessionId) { if (onOpenChat) onOpenChat(); else useUI.getState().setView('chat'); return; }
@@ -33,7 +33,7 @@ export function UsageBanner({ onOpenChat, compact = false }: { onOpenChat?: () =
             {bannerText(g, now)}
           </button>
           <button type="button" aria-label="Hide until the next pause" title="Hide until the next pause"
-            onClick={() => useDismissedNotices.getState().dismiss(USAGE_BANNER_SCOPE, usageBannerKey(g.provider, g.episodeStartedAt))}
+            onClick={() => useDismissedNotices.getState().dismiss(USAGE_BANNER_SCOPE, usageBannerKey(g.provider, startedAt(g)))}
             style={{ flexShrink: 0, minWidth: compact ? 44 : 28, minHeight: compact ? 36 : 26, background: 'none', border: 'none', color: 'var(--color-status-red)', fontSize: 16, cursor: 'pointer', padding: 0 }}>
             ×
           </button>

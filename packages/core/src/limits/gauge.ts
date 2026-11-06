@@ -10,6 +10,7 @@ import * as terminalsDb from '../db/terminals.js';
 import * as gaugeSettings from './gauge-settings.js';
 import { CHAT_ID } from './service.js';
 import type { LimitSnapshots, LimitWindows } from './snapshot.js';
+import type { LimitKind } from './detect.js';
 
 export const PROVIDERS = ['claude-code', 'codex'] as const;
 /** Windows that count toward the warning. Not `overage` (usage credit). Codex has the first two. */
@@ -19,6 +20,10 @@ const WINDOW_NAME: Record<string, string> = {
 };
 const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex' };
 const WEEKLY_KINDS = new Set(['weekly', 'fable', 'opus', 'sonnet']);
+/** The usage window each limit kind is about. `usage` (a limit the CLI did not name) has none: any counted window then counts. */
+const LIMITED_WINDOW: Partial<Record<LimitKind, string>> = {
+  session: 'five_hour', weekly: 'seven_day', opus: 'seven_day_opus', sonnet: 'seven_day_sonnet', fable: 'seven_day_overage_included',
+};
 const ALERTS_KEY = 'usage_limit_alerts';
 const MIN = 60_000;
 const DEFAULTS = {
@@ -27,6 +32,8 @@ const DEFAULTS = {
   tickMs: 60_000,
   /** Refresh Codex figures only when a Codex thread was active this recently. */
   codexActiveMs: 10 * MIN,
+  /** Two reset times this close are the same limit window (the CLI's reset time jitters by seconds). */
+  sameWindowMs: 10 * MIN,
   /** A null reset time keeps its alert key this long. */
   nullResetTtlMs: 7 * 24 * 60 * MIN,
 };
@@ -45,10 +52,30 @@ export interface PausedGroup {
   /** The first paused thread for the banner's click (CHAT_ID when Chat is the only one). */
   firstTerminalId: string;
   firstSessionId: string | null;
-  /** The earliest parked_at: keys the per-device dismiss. */
+  /** The earliest parked_at. */
   episodeStartedAt: number;
+  /** The newest parked_at: a pause newer than a device's dismiss shows the banner again. */
+  latestStartedAt: number;
+  /**
+   * When the limit stops holding the group back, so the chip is no longer red: the latest reset
+   * over its rows. A row with no readable reset has no end time: the limit holds until the thread
+   * resumes (the row goes away) or fresh figures for the provider, taken after the pause, show every
+   * counted window under 100% (then the end is when those figures were taken). Null while any row is
+   * still in that state, and the chip stays red. A failed wake stamps its row (a send failure is not
+   * the limit). The retry timing (30 minutes, 6 hours) does not change this. The banner still lists it.
+   */
+  activeUntil: number | null;
 }
-export interface UsageSummary { type: 'usage-limits'; warnPercent: number; providers: SummaryProvider[]; paused: PausedGroup[] }
+export interface UsageSummary {
+  type: 'usage-limits';
+  /** When the daemon built this summary (ms). A client keeps the newest, so a slow GET never undoes a newer broadcast. */
+  at: number;
+  warnPercent: number;
+  /** The daemon-wide push switch, so every open Settings follows a change made on another device. */
+  pushOnWarn: boolean;
+  providers: SummaryProvider[];
+  paused: PausedGroup[];
+}
 
 export interface PushTarget { notifyAccount(input: { title: string; body: string; tag: string }): Promise<void> }
 
@@ -97,26 +124,70 @@ export class UsageGauge {
   settings(): gaugeSettings.UsageLimitSettings { return gaugeSettings.get(this.d.db); }
 
   /** The current account's windows for one provider, percents rounded to integers. Null with no snapshot. */
-  private providerSummary(provider: string): (SummaryProvider & { account: string }) | null {
+  private providerSummary(provider: string): (SummaryProvider & { account: string; figureAt: Record<string, number>; raw: Record<string, number | null> }) | null {
     const s = this.d.snapshots.get(provider, this.d.accountFor(provider));
     if (!s) return null;
     const windows: Record<string, SummaryWindow> = {};
+    const raw: Record<string, number | null> = {}; // the unrounded figures: 99.6 shows as 100 but is not at the limit
     for (const [type, w] of Object.entries(s.windows as LimitWindows)) {
+      raw[type] = w.usedPercent;
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt };
     }
-    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows };
+    return { provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw };
+  }
+
+  /** The park rows in `parked` or `capped`, without those of an archived thread: it can never resume, so it is not paused. */
+  private pausedRows(): parksDb.ParkRow[] {
+    return parksDb.listPaused(this.d.db).filter((r) => r.terminal_id === CHAT_ID || !terminalsDb.getById(this.d.db, r.terminal_id)?.archived_at);
+  }
+
+  /**
+   * When one paused row's limit ends: its read reset, else when fresh figures showed the window clear,
+   * else null (unknown, still holding). Fresh means taken after the limit was last detected for the
+   * row (a resume that hits it again renews that), and clear means at least one live counted window
+   * with a real figure and none of them at 100%. No figure, a null percentage, or only windows past
+   * their reset is unknown, never clear.
+   */
+  private rowEnd(r: parksDb.ParkRow): number | null {
+    if (r.resets_at !== null) return r.resets_at;
+    // Seen to clear under this detection: it stays clear (the clearing reading expiring or a restart changes nothing) until a new detection.
+    if (r.cleared_at !== null && r.cleared_at > r.detected_at) return r.cleared_at;
+    const end = this.freshClearEnd(r);
+    if (end !== null) {
+      try { parksDb.markCleared(this.d.db, r.terminal_id, r.detected_at, end); } catch (err) { console.warn('[usage-gauge] could not keep the cleared mark:', err); }
+    }
+    return end;
+  }
+
+  /** The time of the reading that shows the row's limit clear, or null. */
+  private freshClearEnd(r: parksDb.ParkRow): number | null {
+    const s = this.providerSummary(r.provider);
+    if (!s) return null;
+    const now = this.now();
+    // The window the limit was about: only a reading of that window can clear it (another window under 100% says nothing).
+    // A limit the CLI did not name (kind usage) has no window, so any counted window counts, as before.
+    const named = LIMITED_WINDOW[r.kind];
+    const figures = Object.entries(s.windows).filter(([type, w]) => (named ? type === named : COUNTED.has(type)) && live(w, now));
+    // Any such live window at the limit holds it, old reading or not. Compared unrounded.
+    if (figures.some(([type]) => (s.raw[type] ?? 0) >= 100)) return null;
+    // A weekly limit may really have been a per-model one ("Opus weekly limit" reads as weekly): any weekly window at the limit holds it too.
+    if (r.kind === 'weekly' && Object.entries(s.windows).some(([type, w]) => type.startsWith('seven_day') && COUNTED.has(type) && live(w, now) && (s.raw[type] ?? 0) >= 100)) return null;
+    // A new reading is a window whose own figure was read after the detection: a kept or carried-forward old figure is not one.
+    const times = figures.map(([type]) => s.figureAt[type] ?? s.asOf).filter((at) => at > r.detected_at);
+    return times.length ? Math.max(...times) : null;
   }
 
   /** Paused threads grouped by provider, from the park rows in `parked` or `capped`. */
   private pausedGroups(): PausedGroup[] {
     const by = new Map<string, parksDb.ParkRow[]>();
-    for (const r of parksDb.listPaused(this.d.db)) by.set(r.provider, [...(by.get(r.provider) ?? []), r]);
+    for (const r of this.pausedRows()) by.set(r.provider, [...(by.get(r.provider) ?? []), r]);
     const out: PausedGroup[] = [];
     for (const [provider, rows] of by) {
       // Mixed kinds: weekly beats session, then the latest pause wins.
       const latest = [...rows].sort((a, b) => b.parked_at - a.parked_at);
       const kind = (latest.find((r) => WEEKLY_KINDS.has(r.kind)) ?? latest[0]).kind;
       const resets = rows.filter((r) => r.state === 'parked' && r.resets_at !== null).map((r) => r.resets_at as number);
+      const ends = rows.map((r) => this.rowEnd(r));
       const first = rows.find((r) => r.terminal_id !== CHAT_ID) ?? rows[0];
       const firstSessionId = first.terminal_id === CHAT_ID ? null : terminalsDb.getById(this.d.db, first.terminal_id)?.session_id ?? null;
       out.push({
@@ -128,6 +199,8 @@ export class UsageGauge {
         firstTerminalId: first.terminal_id,
         firstSessionId,
         episodeStartedAt: Math.min(...rows.map((r) => r.parked_at)),
+        latestStartedAt: Math.max(...rows.map((r) => r.parked_at)),
+        activeUntil: ends.includes(null) ? null : Math.max(...(ends as number[])),
       });
     }
     return out;
@@ -137,9 +210,10 @@ export class UsageGauge {
     const providers: SummaryProvider[] = [];
     for (const p of PROVIDERS) {
       const s = this.providerSummary(p);
-      if (s) { const { account: _account, ...rest } = s; providers.push(rest); }
+      if (s) { const { account: _account, figureAt: _figureAt, raw: _raw, ...rest } = s; providers.push(rest); }
     }
-    return { type: 'usage-limits', warnPercent: this.settings().warnPercent, providers, paused: this.pausedGroups() };
+    const settings = this.settings();
+    return { type: 'usage-limits', at: this.now(), warnPercent: settings.warnPercent, pushOnWarn: settings.pushOnWarn, providers, paused: this.pausedGroups() };
   }
 
   /** The highest counted window at or above the threshold, or null. For a future spawn guard (ledger N8). */
@@ -158,15 +232,24 @@ export class UsageGauge {
 
   /** The provider's threads stopped on a limit right now (parked or capped). For a future spawn guard (ledger N8). */
   activePauses(provider: string): parksDb.ParkRow[] {
-    return parksDb.listPaused(this.d.db).filter((r) => r.provider === provider);
+    return this.pausedRows().filter((r) => r.provider === provider);
   }
 
   // --- the one-push-per-window alert -------------------------------------------------------
 
   private alertKey(provider: string, account: string, type: string, resetsAt: number | null): string {
-    // Rounded to 10 minutes: the reset time can jitter between events of one window.
-    const r = resetsAt === null ? 'none' : String(Math.round(resetsAt / (10 * MIN)) * 10 * MIN);
-    return `${provider}|${account}|${type}|${r}`;
+    return `${provider}|${account}|${type}|${resetsAt === null ? 'none' : resetsAt}`;
+  }
+
+  /** The stored key of the same limit window, or null. The reset time jitters between events, so any stored reset within `sameWindowMs` counts as the same window. */
+  private alertedKey(alerts: Record<string, number>, provider: string, account: string, type: string, resetsAt: number | null): string | null {
+    const prefix = `${provider}|${account}|${type}|`;
+    for (const k of Object.keys(alerts)) {
+      if (!k.startsWith(prefix)) continue;
+      const r = k.slice(prefix.length);
+      if (resetsAt === null ? r === 'none' : r !== 'none' && Math.abs(Number(r) - resetsAt) <= this.o.sameWindowMs) return k;
+    }
+    return null;
   }
 
   private loadAlerts(): Record<string, number> {
@@ -191,8 +274,8 @@ export class UsageGauge {
     const out: { type: string; w: SummaryWindow }[] = [];
     for (const [type, w] of Object.entries(s.windows)) {
       if (!COUNTED.has(type) || !live(w, now) || w.usedPercent! < warn) continue;
+      if (this.alertedKey(alerts, provider, s.account, type, w.resetsAt)) continue;
       const key = this.alertKey(provider, s.account, type, w.resetsAt);
-      if (key in alerts) continue;
       alerts[key] = w.resetsAt ?? now + this.o.nullResetTtlMs;
       out.push({ type, w });
     }
@@ -239,12 +322,12 @@ export class UsageGauge {
     this.flush();
   }
 
-  /** 60 s: refresh Codex from its most recently active thread, if one was active in the last 10 minutes. */
+  /** 60 s: refresh Codex from its most recently active thread: one active in the last 10 minutes, or one still working (a long turn writes no activity stamp). */
   tick(): void {
     if (!this.d.refreshCodex) return;
     const since = new Date(this.now() - this.o.codexActiveMs).toISOString();
     const row = this.d.db.prepare(
-      "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND last_activity_at >= ? ORDER BY last_activity_at DESC LIMIT 1",
+      "SELECT id, external_id FROM terminals WHERE type = 'codex' AND archived_at IS NULL AND external_id IS NOT NULL AND (status = 'working' OR last_activity_at >= ?) ORDER BY last_activity_at DESC LIMIT 1",
     ).get(since) as { id: string; external_id: string } | undefined;
     if (row) this.d.refreshCodex(row.id, row.external_id);
   }
@@ -269,7 +352,8 @@ export class UsageGauge {
   private send(): void {
     let summary: UsageSummary;
     try { summary = this.summary(); } catch (err) { console.warn('[usage-gauge] summary failed:', err); return; }
-    const key = JSON.stringify({ ...summary, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
+    const { at: _at, ...stable } = summary; // the build time moves on every call: it must not count as a change
+    const key = JSON.stringify({ ...stable, providers: summary.providers.map((p) => ({ ...p, asOf: Math.floor(p.asOf / (5 * MIN)) })) });
     if (key === this.lastSent) return;
     this.lastSent = key;
     this.d.broadcast(summary as unknown as Record<string, unknown>);
