@@ -48,10 +48,11 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
   };
 
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: isMobile ? '12px 12px' : '9px 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit' };
+  // Never lead with the thread's name: a long one made the note read as one run-on sentence.
   const note = target
     ? tab.type === 'codex'
-      ? `${tab.label} restarts under ${target.label} with a fresh Codex session. Its Dispatch history stays.`
-      : `${tab.label} restarts under ${target.label} and resumes its session.`
+      ? `This thread restarts under “${target.label}” with a fresh Codex session. Its Dispatch history stays.`
+      : `This thread restarts under “${target.label}” and resumes its session.`
     : null;
 
   return (

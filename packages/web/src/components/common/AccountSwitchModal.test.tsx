@@ -46,7 +46,7 @@ describe('AccountSwitchModal', () => {
     const go = screen.getByRole('button', { name: 'Switch and restart' });
     expect(go).toBeDisabled();
     fireEvent.click(screen.getByRole('radio', { name: /Work/ }));
-    expect(screen.getByRole('note')).toHaveTextContent('restarts under Work and resumes its session');
+    expect(screen.getByRole('note')).toHaveTextContent('This thread restarts under “Work” and resumes its session.');
     fireEvent.click(go);
     await waitFor(() => expect(api.switchAccount).toHaveBeenCalledWith('t1', 'work', undefined));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
