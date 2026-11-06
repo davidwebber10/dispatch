@@ -46,7 +46,9 @@ import { createGitRouter } from './routes/git.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createAccountsRouter } from './routes/accounts.js';
-import type { AccountsStore } from './auth/accounts.js';
+import type { AccountsStore, AccountProvider } from './auth/accounts.js';
+import * as terminalsDb from './db/terminals.js';
+import { readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
 import { createStateRouter } from './routes/state.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
 import { createPushRouter } from './routes/push.js';
@@ -159,7 +161,33 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/sessions/:id/git', createGitRouter(d.db));
   app.use('/api/auth-requests', createAuthRouter(d.authRequestService));
   app.use('/api/claude-auth', createClaudeAuthRouter(d.claudeLogin));
-  if (d.accounts) app.use('/api/accounts', createAccountsRouter(d.accounts, d.claudeLogin));
+  if (d.accounts) {
+    const accounts = d.accounts;
+    const typeOf = (provider: AccountProvider) => (provider === 'claude' ? 'claude-code' : 'codex');
+    app.use('/api/accounts', createAccountsRouter(accounts, d.claudeLogin, {
+      // The CLI login's profile comes from its own token (keychain or credentials file) and is
+      // only shown; an added account's is written back so the next list needs no call.
+      claudeProfile: async (accountId) => {
+        const token = accountId === 'cli' ? await readClaudeToken({}) : accounts.claudeToken(accountId);
+        if (!token) return null;
+        const p = await fetchClaudeProfile(token);
+        if (p && accountId !== 'cli') accounts.updateClaude(accountId, p);
+        return p;
+      },
+      threads: {
+        pinnedTo: (provider, accountId) => terminalsDb.listPinnedToAccount(d.db, typeOf(provider), accountId).map((t) => ({ id: t.id, label: t.label, sessionId: t.session_id })),
+        unpin: (provider, accountId) => {
+          const rows = terminalsDb.listPinnedToAccount(d.db, typeOf(provider), accountId);
+          for (const t of rows) {
+            const config = terminalsDb.rowToTerminal(t).config as Record<string, unknown>;
+            delete config.accountId;
+            terminalsDb.updateConfig(d.db, t.id, config);
+          }
+          return rows.length;
+        },
+      },
+    }));
+  }
   app.use('/api/state', createStateRouter(d.db));
   app.use('/api/integrations', createIntegrationsRouter(d.integrationsService));
   app.use('/api/push', createPushRouter(d.pushService));

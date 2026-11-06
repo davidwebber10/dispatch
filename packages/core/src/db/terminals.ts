@@ -207,3 +207,8 @@ export function remove(db: Database.Database, id: string): void {
 export function removeBySession(db: Database.Database, sessionId: string): void {
   db.prepare('DELETE FROM terminals WHERE session_id = ?').run(sessionId);
 }
+
+/** The live (unarchived) threads of a type pinned to one account (`config.accountId`), for the account's delete notice. */
+export function listPinnedToAccount(db: Database.Database, type: string, accountId: string): TerminalRow[] {
+  return db.prepare(`SELECT * FROM terminals WHERE type = ? AND archived_at IS NULL AND json_extract(config, '$.accountId') = ?`).all(type, accountId) as TerminalRow[];
+}

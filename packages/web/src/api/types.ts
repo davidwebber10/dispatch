@@ -563,5 +563,7 @@ export interface Preview {
 
 /** Accounts per harness (multi-account spec 2026-11-06). `cli` is the CLI's own login on the daemon's computer. */
 export type AccountProvider = 'claude' | 'codex';
-export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean }
+export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean; threadCount?: number }
+/** A thread pinned to an account (the delete notice lists them). */
+export interface AccountThread { id: string; label: string; sessionId: string }
 export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }

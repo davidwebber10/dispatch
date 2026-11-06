@@ -56,6 +56,21 @@ afterEach(() => {
   window.history.pushState({}, '', '/');
 });
 
+describe('MobileApp project header (2026-11-06): the same shape as the thread header', () => {
+  it('shows usage then a ⋯ project menu, no Previews button; the menu holds Previews, Rename and Archive', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    window.history.pushState({}, '', '/p/s1');
+    render(<MobileApp />);
+    expect(screen.queryByRole('button', { name: 'Previews' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thread menu' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Project menu' }));
+    const menu = screen.getByRole('menu');
+    expect(menu).toHaveTextContent('Previews');
+    expect(menu).toHaveTextContent('Rename project');
+    expect(menu).toHaveTextContent('Archive project');
+  });
+});
+
 describe('MobileApp thread header (2026-11-06, option C)', () => {
   const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Thread menu' }));
 

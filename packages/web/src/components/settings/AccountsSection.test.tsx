@@ -30,15 +30,37 @@ describe('<AccountsSection>', () => {
     expect(screen.queryByRole('button', { name: 'Remove CLI login (this computer)' })).toBeNull(); // the CLI login stays
   });
 
-  it('makes another account the default and removes one', async () => {
+  it('makes another account the default; removing one names the threads that revert to the default', async () => {
     const setDefault = vi.spyOn(api, 'accountsSetDefault').mockResolvedValue({ claude: 'cli', codex: 'cli' });
-    const remove = vi.spyOn(api, 'accountsRemove').mockResolvedValue(undefined);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const remove = vi.spyOn(api, 'accountsRemove').mockResolvedValue({ unpinned: 2 });
+    vi.spyOn(api, 'accountsThreads').mockResolvedValue([{ id: 't1', label: 'Fix login', sessionId: 'P' }, { id: 't2', label: 'Docs', sessionId: 'P' }]);
     render(<AccountsSection />);
     fireEvent.click(await screen.findByRole('button', { name: 'Make CLI login (this computer) the default' }));
     await waitFor(() => expect(setDefault).toHaveBeenCalledWith('claude', 'cli'));
     fireEvent.click(screen.getByRole('button', { name: 'Remove Work' }));
+    const notice = await screen.findByText(/2 threads run on "Work": "Fix login", "Docs"\. They will use "CLI login \(this computer\)" the next time they start\./);
+    expect(notice).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith('claude', 'w1'));
+  });
+
+  it('renames an account in place (2026-11-06)', async () => {
+    const rename = vi.spyOn(api, 'accountsRename').mockResolvedValue(view());
+    render(<AccountsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename Work' }));
+    const input = screen.getByLabelText('New name') as HTMLInputElement;
+    expect(input.value).toBe('Work');
+    fireEvent.change(input, { target: { value: 'Side' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(rename).toHaveBeenCalledWith('claude', 'w1', 'Side'));
+  });
+
+  it('shows the thread count under an account that threads are pinned to', async () => {
+    const v = view();
+    v.claude[1].threadCount = 3;
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(v);
+    render(<AccountsSection />);
+    expect(await screen.findByText(/me@work.com · Max · 3 threads/)).toBeInTheDocument();
   });
 
   it('adding a Codex account makes the folder and opens a sign-in thread carrying its id', async () => {

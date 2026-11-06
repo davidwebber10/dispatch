@@ -8,6 +8,7 @@ import { UsageChip } from '../layout/UsageChip';
 import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
+import { ProjectMenu } from './ProjectMenu';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
 import { Eye, DotsThree } from '@phosphor-icons/react';
@@ -287,6 +288,8 @@ export function MobileApp() {
     : leafStatus === 'needs_input' ? 'var(--color-status-yellow)'
       : leafStatus === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
   const [threadMenu, setThreadMenu] = useState<ThreadMenuAt | null>(null);
+  // The project screen's ⋯ menu (2026-11-06): its header matches the thread screen's.
+  const [projectMenu, setProjectMenu] = useState(false);
   const connection = useShownStatus();
   useEffect(() => { void usePreviews.getState().load(); }, []);
   // The account under the thread name (multi-account, 2026-11-06): "Proj · Pretty · Work".
@@ -301,6 +304,7 @@ export function MobileApp() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       <PreviewSheet />
       {transport.confirmUi}
+      {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !leafTab} unseen={unseenHere} onClose={() => setProjectMenu(false)} onArchived={back} />}
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
         lead={(close, row) => (
           <>
@@ -368,18 +372,19 @@ export function MobileApp() {
           )
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Previews: what threads handed the user to look at or copy (spec 2026-10-28). Shown inside
-              a project (its threads list and a thread), for terminal and Pretty threads alike. */}
-          {level >= 1 && !inSettings && project && !leafTab && (
-            <button type="button" aria-label="Previews" title="Previews" onClick={() => usePreviews.getState().openSheet(project.id)}
+          {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
+          <UsageChip variant="phone" />
+          {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
+              Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
+          {level === 1 && !inSettings && project && !leafTab && (
+            <button type="button" aria-label="Project menu" title="Previews and project options"
+              onClick={() => setProjectMenu(true)}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
-              <Eye size={18} />
+              <DotsThree size={22} weight="bold" />
               <PreviewBadge count={unseenHere} />
             </button>
           )}
-          {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
-          <UsageChip variant="phone" />
-          <AlertBell terminalId={level === 2 && leaf === 'tab' ? leafTabId : null} />
+          {leafTab && <AlertBell terminalId={leafTab.id} />}
           {leafTab && (
             <button type="button" aria-label="Thread menu" title="Previews, Pretty / CLI and thread options"
               onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setThreadMenu({ tab: leafTab, x: r.right, y: r.bottom }); }}

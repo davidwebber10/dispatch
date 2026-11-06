@@ -7,6 +7,7 @@
 // `<dataDir>/codex-accounts/<id>` that holds that login's auth.json and sessions, used as
 // CODEX_HOME. The file `<dataDir>/accounts.json` (0600) holds them and the per-harness default.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
 
@@ -20,7 +21,31 @@ export interface CodexAccount { id: string; label: string; email?: string; dir: 
 export interface PublicAccount { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null }
 export interface AccountsView { claude: PublicAccount[]; codex: PublicAccount[]; defaults: Record<AccountProvider, string> }
 
-interface FileShape { claude: ClaudeAccount[]; codex: CodexAccount[]; defaults: Partial<Record<AccountProvider, string>> }
+interface FileShape { claude: ClaudeAccount[]; codex: CodexAccount[]; defaults: Partial<Record<AccountProvider, string>>; cliLabels?: Partial<Record<AccountProvider, string>> }
+
+/** What a Codex login file says about its account: the email and plan inside its id token. */
+export interface CodexIdentity { email?: string; plan?: string }
+
+/**
+ * Read the account behind a Codex `auth.json` (2026-11-06): the `tokens.id_token` is a JWT whose
+ * payload carries `email` and, under the OpenAI claim, `chatgpt_plan_type`. Nothing is verified
+ * (the CLI did that); this only names the account. Null when the file has no id token.
+ */
+export function parseCodexAuth(text: string): CodexIdentity | null {
+  try {
+    const j = JSON.parse(text);
+    const idToken = j?.tokens?.id_token;
+    if (typeof idToken !== 'string') return null;
+    const part = idToken.split('.')[1];
+    if (!part) return null;
+    const payload = JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    const plan = payload?.['https://api.openai.com/auth']?.chatgpt_plan_type;
+    return {
+      ...(typeof payload?.email === 'string' ? { email: payload.email } : {}),
+      ...(typeof plan === 'string' && plan ? { plan: plan.charAt(0).toUpperCase() + plan.slice(1) } : {}),
+    };
+  } catch { return null; }
+}
 
 const CLI_LABEL: Record<AccountProvider, string> = { claude: 'CLI login (this computer)', codex: 'CLI login (this computer)' };
 /** The provider id of a terminal type, or null for a harness without accounts. */
@@ -48,6 +73,7 @@ export class AccountsStore {
         claude: Array.isArray(j?.claude) ? j.claude.filter((a: any) => a && typeof a.id === 'string' && typeof a.token === 'string') : [],
         codex: Array.isArray(j?.codex) ? j.codex.filter((a: any) => a && typeof a.id === 'string' && typeof a.dir === 'string') : [],
         defaults: j?.defaults && typeof j.defaults === 'object' ? j.defaults : {},
+        ...(j?.cliLabels && typeof j.cliLabels === 'object' ? { cliLabels: j.cliLabels } : {}),
       };
     } catch { return { claude: [], codex: [], defaults: {} }; }
   }
@@ -76,7 +102,7 @@ export class AccountsStore {
   view(): AccountsView {
     const pub = (a: { id: string; label: string; email?: string; plan?: string; addedAt: string }): PublicAccount =>
       ({ id: a.id, label: a.label, ...(a.email ? { email: a.email } : {}), ...(a.plan ? { plan: a.plan } : {}), isCli: false, addedAt: a.addedAt });
-    const cli = (p: AccountProvider): PublicAccount => ({ id: CLI_ACCOUNT_ID, label: CLI_LABEL[p], isCli: true, addedAt: null });
+    const cli = (p: AccountProvider): PublicAccount => ({ id: CLI_ACCOUNT_ID, label: this.data.cliLabels?.[p] || CLI_LABEL[p], isCli: true, addedAt: null });
     return {
       claude: [cli('claude'), ...this.data.claude.map(pub)],
       codex: [cli('codex'), ...this.data.codex.map(pub)],
@@ -142,6 +168,34 @@ export class AccountsStore {
     if (!a) return;
     Object.assign(a, Object.fromEntries(Object.entries(patch).filter(([, v]) => typeof v === 'string' && v)));
     this.save();
+  }
+
+  /** Name an account yourself (2026-11-06). The CLI login takes a name too; empty restores its stock name. */
+  rename(provider: AccountProvider, id: string, label: string): void {
+    const name = label.trim();
+    if (id === CLI_ACCOUNT_ID) {
+      this.data.cliLabels = { ...this.data.cliLabels, [provider]: name };
+      if (!name) delete this.data.cliLabels[provider];
+      this.save();
+      return;
+    }
+    const a = (provider === 'claude' ? this.data.claude : this.data.codex).find((x) => x.id === id);
+    if (!a) throw new Error('unknown account');
+    if (!name) throw new Error('a name is required');
+    a.label = name;
+    this.save();
+  }
+
+  /** The folder a Codex account's login lives in: its own for an added account, the CLI's for `cli`. */
+  codexHomeOrCli(id: string): string {
+    return id === CLI_ACCOUNT_ID ? (process.env.CODEX_HOME || path.join(os.homedir(), '.codex')) : this.codexHome(id) ?? '';
+  }
+
+  /** Who a Codex account is, from its auth.json (see parseCodexAuth); null when not signed in. */
+  codexIdentity(id: string): CodexIdentity | null {
+    const dir = this.codexHomeOrCli(id);
+    if (!dir) return null;
+    try { return parseCodexAuth(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8')); } catch { return null; }
   }
 
   remove(provider: AccountProvider, id: string): boolean {

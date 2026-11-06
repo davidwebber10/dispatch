@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AccountsStore, CLI_ACCOUNT_ID } from './accounts.js';
+import { AccountsStore, CLI_ACCOUNT_ID, parseCodexAuth } from './accounts.js';
 
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-')); });
@@ -74,5 +74,35 @@ describe('AccountsStore', () => {
     a.addCodex('x');
     a.setDefault('codex', a.view().codex[1].id);
     expect(n).toBe(2);
+  });
+});
+
+describe('AccountsStore names and identities (2026-11-06)', () => {
+  it('renames an added account and the CLI login; an empty name restores the CLI stock name; survives a reload', () => {
+    const a = new AccountsStore(dir);
+    const w = a.addClaude({ token: 'tok-w', label: 'Work' });
+    a.rename('claude', w.id, '  Side  ');
+    a.rename('claude', 'cli', 'Laptop');
+    a.rename('codex', 'cli', 'Laptop Codex');
+    const b = new AccountsStore(dir);
+    expect(b.view().claude.map((x) => x.label)).toEqual(['Laptop', 'Side']);
+    expect(b.view().codex[0].label).toBe('Laptop Codex');
+    b.rename('claude', 'cli', '');
+    expect(b.view().claude[0].label).toBe('CLI login (this computer)');
+    expect(() => b.rename('claude', w.id, '')).toThrow(/name/);
+    expect(() => b.rename('codex', 'nope', 'x')).toThrow(/unknown/);
+  });
+
+  it('reads the email and plan out of a Codex auth.json id token', () => {
+    const payload = Buffer.from(JSON.stringify({ email: 'me@x.y', 'https://api.openai.com/auth': { chatgpt_plan_type: 'pro' } })).toString('base64url');
+    const text = JSON.stringify({ tokens: { id_token: `h.${payload}.s`, access_token: 'a' } });
+    expect(parseCodexAuth(text)).toEqual({ email: 'me@x.y', plan: 'Pro' });
+    expect(parseCodexAuth(JSON.stringify({ OPENAI_API_KEY: 'k' }))).toBeNull();
+    expect(parseCodexAuth('not json')).toBeNull();
+    const a = new AccountsStore(dir);
+    const c = a.addCodex('Second');
+    expect(a.codexIdentity(c.id)).toBeNull();
+    fs.writeFileSync(path.join(a.codexHome(c.id)!, 'auth.json'), text);
+    expect(a.codexIdentity(c.id)).toEqual({ email: 'me@x.y', plan: 'Pro' });
   });
 });

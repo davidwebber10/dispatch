@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Star, Trash, Plus } from '@phosphor-icons/react';
+import { Star, Trash, Plus, PencilSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
-import type { Account, AccountProvider, AccountsView } from '../../api/types';
+import type { Account, AccountProvider, AccountsView, AccountThread } from '../../api/types';
+import { ConfirmModal } from '../common/ConfirmModal';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
@@ -23,6 +24,11 @@ export function AccountsSection() {
   const [adding, setAdding] = useState<AccountProvider | null>(null);
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
+  // Rename in place (2026-11-06): which row is being renamed, and its draft.
+  const [renaming, setRenaming] = useState<{ provider: AccountProvider; id: string } | null>(null);
+  const [draft, setDraft] = useState('');
+  // Remove: the confirm names the threads pinned to the account (they revert to the default).
+  const [removing, setRemoving] = useState<{ provider: AccountProvider; account: Account; threads: AccountThread[] } | null>(null);
   const projects = useProjects((s) => s.sessions);
   const activeId = useProjects((s) => s.activeId);
 
@@ -34,9 +40,29 @@ export function AccountsSection() {
   const setDefault = async (provider: AccountProvider, id: string) => {
     try { await api.accountsSetDefault(provider, id); await load(); } catch { setError('Could not change the default.'); }
   };
-  const remove = async (provider: AccountProvider, a: Account) => {
-    if (!window.confirm(`Remove the ${PROVIDER_TITLE[provider]} account "${a.label}"? Threads set to it will use the default account next time they start.`)) return;
-    try { await api.accountsRemove(provider, a.id); await load(); } catch { setError('Could not remove the account.'); }
+  const askRemove = async (provider: AccountProvider, a: Account) => {
+    let threads: AccountThread[] = [];
+    try { threads = await api.accountsThreads(provider, a.id); } catch { /* an older daemon: no list, the notice stays general */ }
+    setRemoving({ provider, account: a, threads });
+  };
+  const remove = async () => {
+    const r = removing;
+    setRemoving(null);
+    if (!r) return;
+    try { await api.accountsRemove(r.provider, r.account.id); await load(); } catch { setError('Could not remove the account.'); }
+  };
+  const rename = async () => {
+    const r = renaming;
+    if (!r) return;
+    try { await api.accountsRename(r.provider, r.id, draft); setRenaming(null); await load(); } catch { setError('Could not rename the account.'); }
+  };
+  /** The notice under "Remove …?": which threads run on it, and what they fall back to. */
+  const removeMessage = (r: { provider: AccountProvider; account: Account; threads: AccountThread[] }) => {
+    const def = view?.[r.provider].find((a) => a.id === view.defaults[r.provider] && a.id !== r.account.id) ?? view?.[r.provider].find((a) => a.isCli);
+    const fallback = def ? `"${def.label}"` : 'the default account';
+    if (r.threads.length === 0) return `No thread is set to "${r.account.label}". New threads can no longer pick it.`;
+    const names = r.threads.slice(0, 6).map((t) => `"${t.label}"`).join(', ') + (r.threads.length > 6 ? ` and ${r.threads.length - 6} more` : '');
+    return `${r.threads.length === 1 ? '1 thread runs' : `${r.threads.length} threads run`} on "${r.account.label}": ${names}. ${r.threads.length === 1 ? 'It' : 'They'} will use ${fallback} the next time ${r.threads.length === 1 ? 'it starts' : 'they start'}.`;
   };
 
   /** A new Codex account: make its folder, then open a sign-in thread under it in the active (or first) project. */
@@ -63,18 +89,29 @@ export function AccountsSection() {
         <span style={sectionLabel}>{PROVIDER_TITLE[provider].toUpperCase()}</span>
         {accounts.map((a) => (
           <div key={a.id} data-testid={`account-${provider}-${a.id}`} style={{ ...row, padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' }}>
-            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <span style={{ ...item, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
+            <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {renaming?.provider === provider && renaming.id === a.id ? (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input aria-label="New name" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={a.isCli ? 'Name (empty restores the stock name)' : 'Name'}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void rename(); } if (e.key === 'Escape') setRenaming(null); }}
+                    style={{ ...fieldInput, flex: 1 }} />
+                  <button type="button" onClick={() => void rename()} style={solidBtn(true)}>Save</button>
+                  <button type="button" onClick={() => setRenaming(null)} style={ghostBtn}>Cancel</button>
+                </div>
+              ) : (
+                <span style={{ ...item, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
+              )}
               <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
-                {[a.email, a.plan, a.isCli ? 'the CLI’s own login' : null, a.signedIn === false ? 'not signed in yet' : null].filter(Boolean).join(' · ') || ' '}
+                {[a.email, a.plan, a.isCli ? 'the CLI’s own login' : null, a.signedIn === false ? 'not signed in yet' : null, a.threadCount ? `${a.threadCount} thread${a.threadCount === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ') || ' '}
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <button type="button" title="Rename" aria-label={`Rename ${a.label}`} onClick={() => { setRenaming({ provider, id: a.id }); setDraft(a.isCli ? '' : a.label); }} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><PencilSimple size={14} /></button>
               {def === a.id
                 ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>default</span>
                 : <button type="button" title="Use for new threads" aria-label={`Make ${a.label} the default`} onClick={() => void setDefault(provider, a.id)} style={{ ...ghostBtn, height: 28, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5 }}><Star size={13} />Default</button>}
               {!a.isCli && (
-                <button type="button" title="Remove" aria-label={`Remove ${a.label}`} onClick={() => void remove(provider, a)} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><Trash size={14} /></button>
+                <button type="button" title="Remove" aria-label={`Remove ${a.label}`} onClick={() => void askRemove(provider, a)} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><Trash size={14} /></button>
               )}
             </div>
           </div>
@@ -109,6 +146,15 @@ export function AccountsSection() {
       {list('claude')}
       <Divider />
       {list('codex')}
+      <ConfirmModal
+        open={!!removing}
+        title={removing ? `Remove "${removing.account.label}"?` : ''}
+        message={removing ? removeMessage(removing) : ''}
+        confirmLabel="Remove"
+        danger
+        onConfirm={() => void remove()}
+        onCancel={() => setRemoving(null)}
+      />
     </div>
   );
 }
