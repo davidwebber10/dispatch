@@ -21,11 +21,11 @@ export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFi
 
   const input: React.CSSProperties = {
     height: 32, width: 64, padding: '0 8px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-    borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)',
+    borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontFamily: 'var(--font-mono)',
   };
 
   return (
-    <div style={flush ? undefined : { marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 9 }}>
+    <div style={flush ? undefined : { marginTop: 14, padding: 12, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
         <Timer size={16} weight="fill" color="var(--color-text-tertiary)" />
         <span style={{ flex: 1, fontSize: 13, color: 'var(--color-text-primary)' }}>Auto-archive thread</span>

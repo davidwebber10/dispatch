@@ -8,7 +8,7 @@ export function isClaudeAuthError(text: string): boolean {
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: 13 };
+const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: 13 };
 
 /**
  * Log this daemon in to Claude from Chat. It drives the daemon's headless login
@@ -74,7 +74,7 @@ export function ClaudeLogin({ onDone }: { onDone: () => void }) {
       <div style={{ display: 'flex', gap: 8 }}>
         <input aria-label="Login code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="Paste the code"
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }}
-          style={{ flex: 1, minWidth: 0, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 16 }} />
+          style={{ flex: 1, minWidth: 0, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 16 }} />
         <button type="button" onClick={() => void submit()} disabled={phase === 'sending' || !code.trim()} style={btn}>
           {phase === 'sending' ? 'Checking…' : 'Submit code'}
         </button>

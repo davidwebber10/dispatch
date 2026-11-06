@@ -35,7 +35,7 @@ export function PanelToggle({ side, count = 0 }: { side: 'left' | 'right'; count
         style={side === 'right' ? { transform: 'scaleX(-1)' } : undefined} />
       {badge && (
         <span data-testid="panel-toggle-count" style={{
-          position: 'absolute', top: 6, right: 3, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 7,
+          position: 'absolute', top: 6, right: 3, minWidth: 14, height: 14, padding: '0 3px', borderRadius: 'var(--radius-sm)',
           background: 'var(--color-status-yellow)', color: 'var(--color-pane)',
           font: '700 9.5px var(--font-mono)', lineHeight: '14px', textAlign: 'center',
         }}>{count}</span>

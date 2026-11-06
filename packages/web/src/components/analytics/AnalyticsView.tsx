@@ -118,7 +118,7 @@ function ViewSwitch({ value, onChange, fullWidth }: {
       aria-label="Analytics view"
       style={{
         display: fullWidth ? 'flex' : 'inline-flex', gap: 2, padding: 2,
-        background: 'var(--color-base)', border: '1px solid var(--color-border)', borderRadius: 8,
+        background: 'var(--color-base)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
       }}
     >
       {options.map((o) => {
@@ -130,7 +130,7 @@ function ViewSwitch({ value, onChange, fullWidth }: {
             aria-pressed={active}
             onClick={() => onChange(o.id)}
             style={{
-              flex: fullWidth ? 1 : undefined, height: 26, padding: '0 12px', border: 'none', borderRadius: 6,
+              flex: fullWidth ? 1 : undefined, height: 26, padding: '0 12px', border: 'none', borderRadius: 'var(--radius-sm)',
               cursor: 'pointer', fontSize: 12, fontWeight: active ? 600 : 400,
               background: active ? 'var(--color-hover)' : 'transparent',
               color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',

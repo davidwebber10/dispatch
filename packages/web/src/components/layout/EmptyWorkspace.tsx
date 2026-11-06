@@ -27,7 +27,7 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 22, padding: 40, textAlign: 'center' }}>
-        <div style={{ width: 60, height: 60, borderRadius: 15, background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px rgba(0,0,0,.7)' }}>
+        <div style={{ width: 60, height: 60, borderRadius: 'var(--radius-xl)', background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px rgba(0,0,0,.7)' }}>
           <span style={{ font: '600 24px var(--font-mono)', color: 'var(--color-accent)' }}>&gt;_</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
@@ -42,11 +42,11 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
         </div>
         {project && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button onClick={() => void newThread()} style={{ height: 36, padding: '0 16px', background: 'var(--color-accent)', border: 'none', borderRadius: 9, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+            <button onClick={() => void newThread()} style={{ height: 36, padding: '0 16px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
               <Plus size={15} weight="bold" color="#08240F" />
               <span style={{ fontSize: 13, fontWeight: 600, color: '#08240F' }}>New Thread</span>
             </button>
-            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 9, color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>
+            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: '400 11px var(--font-mono)', color: '#46464d' }}>

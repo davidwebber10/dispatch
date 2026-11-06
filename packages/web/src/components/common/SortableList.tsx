@@ -57,7 +57,7 @@ function SortableRow({ id, children }: { id: string; children: (dragging: boolea
       <div style={{ opacity: isDragging ? 0 : 1 }}>{children(isDragging)}</div>
       {isDragging && (
         <div style={{
-          position: 'absolute', inset: 0, borderRadius: 8, pointerEvents: 'none',
+          position: 'absolute', inset: 0, borderRadius: 'var(--radius-md)', pointerEvents: 'none',
           border: '1.5px dashed color-mix(in srgb, var(--color-accent) 55%, transparent)',
           background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)',
         }} />
@@ -96,7 +96,7 @@ export function SortableList<T extends { id: string }>({ items, onReorder, rende
       {createPortal(
         <DragOverlay>
           {activeItem ? (
-            <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px rgba(0,0,0,.65)', borderRadius: 8, cursor: 'grabbing' }}>
+            <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px rgba(0,0,0,.65)', borderRadius: 'var(--radius-md)', cursor: 'grabbing' }}>
               {(renderOverlay ?? ((it: T) => renderItem(it, { dragging: true })))(activeItem)}
             </div>
           ) : null}

@@ -39,7 +39,7 @@
 }
 .overseer-root ::-webkit-scrollbar-thumb {
   background: #26262b;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -82,7 +82,7 @@
 .overseer-root .ledger-chip {
   display: inline;
   padding: 0 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--elev);
   border: 1px solid var(--border);
   color: var(--tp);

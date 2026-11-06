@@ -55,7 +55,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   }
 
   const chip = (on: boolean) => ({
-    flex: '0 0 auto', height: 30, padding: '0 12px', borderRadius: 999, border: '1px solid var(--color-border)', cursor: 'pointer',
+    flex: '0 0 auto', height: 30, padding: '0 12px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', cursor: 'pointer',
     background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? '#08240F' : 'var(--color-text-secondary)',
     fontSize: 13, fontWeight: on ? 600 : 500, whiteSpace: 'nowrap' as const, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis',
   });

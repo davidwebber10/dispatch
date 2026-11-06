@@ -78,13 +78,13 @@ function LogBox({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [lines]);
   return (
-    <div ref={ref} style={{ marginTop: 10, maxHeight: 170, overflowY: 'auto', textAlign: 'left', font: '400 11px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)', background: 'rgba(0,0,0,.35)', border: '1px solid #2C2C32', borderRadius: 8, padding: '7px 9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+    <div ref={ref} style={{ marginTop: 10, maxHeight: 170, overflowY: 'auto', textAlign: 'left', font: '400 11px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)', background: 'rgba(0,0,0,.35)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: '7px 9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
       {lines.length ? lines.map((l, k) => <div key={k}>{l}</div>) : <div>No output yet.</div>}
     </div>
   );
 }
 
-const ghost: React.CSSProperties = { height: 34, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 9, color: 'var(--color-text-secondary)', fontSize: 13, cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 34, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13, cursor: 'pointer' };
 const primary: React.CSSProperties = { ...ghost, background: 'var(--color-accent)', border: 'none', color: '#08240F', fontWeight: 600 };
 
 /** The card body while an update runs: steps, time, output on request, Hide. */
@@ -140,7 +140,7 @@ export function UpdateBadge() {
   const label = unreachable || p?.state === 'restarting' ? STEP_LABEL.restart : p?.step ? STEP_LABEL[p.step] : 'Starting';
   return (
     <button type="button" aria-label={`Updating · ${label}`} onClick={() => useUpdate.setState({ progressHidden: false })}
-      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 280, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 999, border: '1px solid #2C3A4A', background: '#1B1B1E', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', boxShadow: '0 10px 30px -10px rgba(0,0,0,.8)' }}>
+      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 280, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid #2C3A4A', background: '#1B1B1E', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer', boxShadow: '0 10px 30px -10px rgba(0,0,0,.8)' }}>
       <Spinner size={13} /> Updating · {label}
     </button>
   );
@@ -168,7 +168,7 @@ export function UpdateDone() {
 export function UpdateDoneBadge() {
   return (
     <button type="button" aria-label="Update done · Reload" onClick={() => pageReload.run()}
-      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 285, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 999, border: 'none', background: 'var(--color-accent)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>
+      style={{ position: 'fixed', right: 16, bottom: 'max(16px, env(safe-area-inset-bottom))', zIndex: 285, display: 'flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: 'none', background: 'var(--color-accent)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer' }}>
       <CheckCircle size={14} weight="fill" /> Update done · Reload
     </button>
   );

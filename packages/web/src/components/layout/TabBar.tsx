@@ -25,7 +25,7 @@ export function TabBar({ onSelect }: { onSelect?: () => void }) {
               <span style={{ fontSize: 12.5, fontWeight: active ? 500 : 400, color: active ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t?.label ?? 'tab'}</span>
               <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
             </div>
-            <button onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(id); }} title="Close tab" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '2px 4px', borderRadius: 4, flexShrink: 0 }}>×</button>
+            <button onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(id); }} title="Close tab" style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '2px 4px', borderRadius: 'var(--radius-xs)', flexShrink: 0 }}>×</button>
           </div>
         );
       })}

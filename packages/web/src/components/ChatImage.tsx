@@ -69,7 +69,7 @@ function toolbarButtonStyle(disabled: boolean): React.CSSProperties {
     justifyContent: 'center',
     width: 36,
     height: 36,
-    borderRadius: 8,
+    borderRadius: 'var(--radius-md)',
     background: 'rgba(20,20,22,.78)',
     border: '1px solid var(--color-border)',
     color: 'var(--color-text-primary)',
@@ -265,7 +265,7 @@ export function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string
         style={{
           maxWidth: '92vw',
           maxHeight: '92vh',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           boxShadow: '0 12px 48px -8px rgba(0,0,0,.7)',
           touchAction: 'none',
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
@@ -346,7 +346,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
             width: 'auto',
             height: 'auto',
             objectFit: 'contain',
-            borderRadius: 10,
+            borderRadius: 'var(--radius-md)',
             border: '1px solid var(--color-border)',
             background: 'var(--color-elevated)',
           }}

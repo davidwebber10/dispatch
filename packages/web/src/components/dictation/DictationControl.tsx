@@ -4,7 +4,7 @@ import type { Dictation } from '../../hooks/useDictation';
 import { Spinner } from '../common/Spinner';
 
 const iconBtn = (bg: string, color: string) => ({
-  flexShrink: 0, width: 40, height: 40, borderRadius: 12, border: 'none',
+  flexShrink: 0, width: 40, height: 40, borderRadius: 'var(--radius-lg)', border: 'none',
   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: bg, color,
 } as const);
 

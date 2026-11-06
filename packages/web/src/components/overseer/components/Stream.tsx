@@ -159,8 +159,8 @@ function UserMsg({ msg, ledger }: { msg: StreamMessage; ledger?: LedgerChips }) 
           style={{
             background: 'var(--elev)',
             border: '1px solid var(--border)',
-            borderRadius: 11,
-            borderTopRightRadius: 3,
+            borderRadius: 'var(--radius-lg)',
+            borderTopRightRadius: 'var(--radius-xs)',
             padding: '9px 13px',
             fontSize: 13.5,
             lineHeight: 1.55,
@@ -190,7 +190,7 @@ function ErrorMsg({ msg }: { msg: StreamMessage }) {
           alignItems: 'center',
           gap: 7,
           padding: '5px 12px',
-          borderRadius: 20,
+          borderRadius: 'var(--radius-2xl)',
           background: 'color-mix(in srgb, var(--red) 14%, transparent)',
           border: '1px solid color-mix(in srgb, var(--red) 45%, transparent)',
           fontSize: 11.5,
@@ -310,7 +310,7 @@ function AgencyNoticeMsg({ notice, ledger }: { notice: AgencyNotice; ledger?: Le
           alignItems: 'center',
           gap: 7,
           padding: '4px 12px',
-          borderRadius: 20,
+          borderRadius: 'var(--radius-2xl)',
           background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
           border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
           fontSize: 11.5,
@@ -384,7 +384,7 @@ function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessageNotic
           flexDirection: 'column',
           gap: 6,
           padding: '9px 13px',
-          borderRadius: 11,
+          borderRadius: 'var(--radius-lg)',
           background: clickable && hover ? 'var(--hover)' : 'var(--elev)',
           border: `1px solid ${clickable && hover ? 'var(--accLine)' : 'var(--border)'}`,
           maxWidth: '86%',
@@ -446,7 +446,7 @@ function NoteMsg({ msg }: { msg: StreamMessage }) {
           alignItems: 'center',
           gap: 7,
           padding: '5px 12px',
-          borderRadius: 20,
+          borderRadius: 'var(--radius-2xl)',
           background: 'var(--accDim)',
           border: '1px solid var(--accLine)',
           fontSize: 11.5,
@@ -858,7 +858,7 @@ function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; l
 function LoadingOlderPill({ show }: { show: boolean }) {
   if (!show) return null;
   return (
-    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, background: 'var(--elev)', border: '1px solid var(--border)', color: 'var(--tt)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
+    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--elev)', border: '1px solid var(--border)', color: 'var(--tt)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
       <Spinner size={11} color="var(--acc)" /> Loading earlier…
     </div>
   );
@@ -880,7 +880,7 @@ function JumpButton() {
         alignItems: 'center',
         gap: 6,
         padding: '6px 13px',
-        borderRadius: 20,
+        borderRadius: 'var(--radius-2xl)',
         background: 'var(--acc)',
         color: '#06140B',
         border: 'none',

@@ -12,7 +12,7 @@ export function ProjectMenuSection({ value, onChange, close, mobile = false }: {
   const [open, setOpen] = useState(false);
   const items = [...sessions].sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
   const current = sessions.find((s) => s.id === value)?.name ?? null;
-  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', font: '500 14px var(--font-sans)', cursor: 'pointer', textAlign: 'left', borderRadius: 8 };
+  const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none', color: 'var(--color-text-primary)', font: '500 14px var(--font-sans)', cursor: 'pointer', textAlign: 'left', borderRadius: 'var(--radius-md)' };
   const pick = (id: string | null) => { onChange(id); close(); };
   return (
     <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>

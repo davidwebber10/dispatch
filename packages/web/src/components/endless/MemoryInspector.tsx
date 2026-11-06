@@ -47,7 +47,7 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
         </div>
         {view && (
           <pre data-testid="memory-view"
-            style={{ margin: 0, maxHeight: '45vh', overflow: 'auto', padding: 10, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            style={{ margin: 0, maxHeight: '45vh', overflow: 'auto', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {view.rendered}
           </pre>
         )}
@@ -56,10 +56,10 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
         </label>
         <textarea id="endless-instructions" aria-label="Chat instructions" rows={4} disabled={!loaded} value={instructions}
           onChange={(e) => { setInstructions(e.target.value); setSaved(false); }}
-          style={{ resize: 'vertical', padding: 10, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }} />
+          style={{ resize: 'vertical', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }} />
         <div>
           <button type="button" onClick={save} disabled={!loaded}
-            style={{ opacity: loaded ? 1 : 0.5, padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--color-accent)', color: '#06140B', cursor: 'pointer', fontWeight: 600 }}>
+            style={{ opacity: loaded ? 1 : 0.5, padding: '6px 14px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#06140B', cursor: 'pointer', fontWeight: 600 }}>
             {saved ? 'Saved' : 'Save instructions'}
           </button>
           {loadFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-danger, #e5484d)' }}>Instructions could not be loaded.</span>}
@@ -68,7 +68,7 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <label htmlFor="endless-doc-editor" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Open docs in</label>
           <select id="endless-doc-editor" aria-label="Open docs in" value={editor} onChange={(e) => useSettings.getState().setEditor(e.target.value as DocEditor)}
-            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }}>
+            style={{ padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }}>
             <option value="">None</option>
             <option value="vscode">VS Code</option>
             <option value="cursor">Cursor</option>

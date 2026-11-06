@@ -108,7 +108,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
 
   const allAnswered = questions.every((_, i) => answerFor(i).length > 0);
   const actionStyle = {
-    border: '1px solid var(--color-border)', borderRadius: 6, height: 30, padding: '0 12px', fontSize: 12.5,
+    border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', height: 30, padding: '0 12px', fontSize: 12.5,
     background: 'transparent', color: 'var(--color-text-secondary)', cursor: submitted ? 'default' : 'pointer',
   } as const;
 
@@ -116,7 +116,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
   // label + right meta — the same visual state as a needs_you StatusNotice, because to the
   // reader both mean exactly one thing: the thread is paused on them.
   return (
-    <div style={{ border: '1px solid #7d4640', borderRadius: 6, background: 'rgba(243,113,101,.06)', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ border: '1px solid #7d4640', borderRadius: 'var(--radius-sm)', background: 'rgba(243,113,101,.06)', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
         <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: '#F37165', flexShrink: 0 }} />
         <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: '#f0a79f' }}>NEEDS YOU</span>
@@ -131,16 +131,16 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
           textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 2,
           border: isSel ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
           background: isSel ? 'color-mix(in srgb, var(--color-accent) 16%, var(--color-elevated))' : 'var(--color-elevated)',
-          color: 'var(--color-text-primary)', borderRadius: 9, padding: '9px 12px',
+          color: 'var(--color-text-primary)', borderRadius: 'var(--radius-md)', padding: '9px 12px',
           cursor: submitted ? 'default' : 'pointer', font: '400 14px var(--font-sans)', opacity: submitted && !isSel ? 0.5 : 1, transition: 'background .12s, border-color .12s',
         });
         const marker = (isSel: boolean) => (
-          <span style={{ flexShrink: 0, width: 15, height: 15, borderRadius: multi ? 4 : '50%', border: isSel ? '4px solid var(--color-accent)' : '1.5px solid var(--color-text-tertiary)', boxSizing: 'border-box' }} />
+          <span style={{ flexShrink: 0, width: 15, height: 15, borderRadius: multi ? 'var(--radius-xs)' : '50%', border: isSel ? '4px solid var(--color-accent)' : '1.5px solid var(--color-text-tertiary)', boxSizing: 'border-box' }} />
         );
         return (
           <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {q.header && (
-              <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-hover)', padding: '1px 7px', borderRadius: 6 }}>{q.header}</span>
+              <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-secondary)', background: 'var(--color-hover)', padding: '1px 7px', borderRadius: 'var(--radius-sm)' }}>{q.header}</span>
             )}
             <div style={{ fontSize: 14.5, fontWeight: 500, color: 'var(--color-text-primary)', lineHeight: 1.45 }}>{q.question}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -172,7 +172,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
                   disabled={submitted}
                   onChange={(e) => { const v = e.target.value; setOther((prev) => ({ ...prev, [qi]: v })); }}
                   placeholder="Type your answer"
-                  style={{ border: '1px solid var(--color-border)', borderRadius: 9, padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)' }}
+                  style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)' }}
                 />
               )}
             </div>
@@ -188,7 +188,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
             value={discussText}
             onChange={(e) => setDiscussText(e.target.value)}
             placeholder="Say what you think, or leave empty to ask for more context"
-            style={{ border: '1px solid var(--color-border)', borderRadius: 9, padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)', resize: 'vertical' }}
+            style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 12px', background: 'var(--color-base)', color: 'var(--color-text-primary)', font: '400 14px var(--font-sans)', resize: 'vertical' }}
           />
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={sendDiscuss} style={actionStyle}>Send</button>
@@ -201,7 +201,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
           onClick={submit}
           disabled={submitted || !allAnswered}
           style={{
-            border: 'none', borderRadius: 6, height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
+            border: 'none', borderRadius: 'var(--radius-sm)', height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
             background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
             color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
             cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
@@ -294,7 +294,7 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
   const firstAnswer = replyText != null ? `answered in chat: ${replyText}` : (first && parsed?.[first.question]) || resultText;
 
   return (
-    <div style={{ border: '1px solid var(--color-border)', borderRadius: 12, background: 'var(--color-elevated)', overflow: 'hidden' }}>
+    <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-elevated)', overflow: 'hidden' }}>
       <button
         onClick={() => setOpen((o) => !o)}
         style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: '10px 14px', textAlign: 'left', font: '400 13px var(--font-sans)' }}
@@ -323,7 +323,7 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
             return (
               <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {q.header && (
-                  <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-tertiary)', background: 'var(--color-hover)', padding: '1px 7px', borderRadius: 6 }}>{q.header}</span>
+                  <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4, color: 'var(--color-text-tertiary)', background: 'var(--color-hover)', padding: '1px 7px', borderRadius: 'var(--radius-sm)' }}>{q.header}</span>
                 )}
                 <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--color-text-primary)', lineHeight: 1.4 }}>{q.question}</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -335,7 +335,7 @@ export function AnsweredQuestionCard({ questions, resultText }: { questions: Per
                       <div
                         key={oi}
                         style={{
-                          display: 'flex', flexDirection: 'column', gap: 2, borderRadius: 9, padding: '7px 11px',
+                          display: 'flex', flexDirection: 'column', gap: 2, borderRadius: 'var(--radius-md)', padding: '7px 11px',
                           border: isSel ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
                           background: isSel ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))' : 'transparent',
                           opacity: isSel ? 1 : 0.55,

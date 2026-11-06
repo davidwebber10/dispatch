@@ -49,7 +49,7 @@ const timeOf = (iso: string): string => {
 const fmtSize = (n: number): string => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 const chipStyle: CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 34, padding: '0 11px', borderRadius: 9,
+  display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 34, padding: '0 11px', borderRadius: 'var(--radius-md)',
   border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)',
   fontSize: 13, cursor: 'pointer', textDecoration: 'none',
 };
@@ -84,7 +84,7 @@ function TextFileOverlay({ preview, k, onClose }: { preview: Preview; k: number;
   const kind = previewFileKind(file);
   return (
     <div role="dialog" aria-label={file.name} onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1300, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 820, maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderRadius: '14px 14px 0 0', border: '1px solid var(--color-border)' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 820, maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderRadius: 'var(--radius-xl) var(--radius-xl) 0 0', border: '1px solid var(--color-border)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--color-border)' }}>
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600, fontSize: 14 }}>{file.name}</span>
           {body !== null && <CopyButton text={body} />}
@@ -119,7 +119,7 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
 
   return (
     <div data-testid="preview-item" data-unseen={unseen ? 'true' : undefined}
-      style={{ display: 'flex', flexDirection: 'column', gap: 9, padding: '12px 14px', borderRadius: 12, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', position: 'relative' }}>
+      style={{ display: 'flex', flexDirection: 'column', gap: 9, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         {unseen && <span aria-label="New" title="New" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--color-accent)', marginTop: 7, flexShrink: 0 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -128,7 +128,7 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
         </div>
         {onDelete && (
           <button type="button" aria-label="Delete preview" title="Delete" onClick={() => onDelete(preview.id)}
-            style={{ width: 28, height: 28, padding: 0, border: 'none', borderRadius: 7, background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            style={{ width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Trash size={15} />
           </button>
         )}
@@ -136,7 +136,7 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
       {preview.note && <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' }}>{preview.note}</div>}
       {preview.text && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <pre data-testid="preview-text" style={{ margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 9, padding: '10px 12px' }}>{preview.text}</pre>
+          <pre data-testid="preview-text" style={{ margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{preview.text}</pre>
           <div><CopyButton text={preview.text} label="Copy text" /></div>
         </div>
       )}

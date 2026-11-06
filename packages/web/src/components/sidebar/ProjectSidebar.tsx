@@ -17,7 +17,7 @@ const SORTS: [Sort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabeti
    just opened is still animating, so a row revealed immediately has not reached its final position. */
 const EXPAND_SETTLE_MS = 140;
 
-const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 7, cursor: 'pointer' };
+const icon: React.CSSProperties = { width: 32, height: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-sm)', cursor: 'pointer' };
 
 export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispatch }: { onSelectTab: (terminalId: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onDispatch?: (projectId: string) => void }) {
   const sessions = useProjects((s) => s.sessions);
@@ -116,16 +116,16 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
       <div ref={scrollRef} className="sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' }}>
       <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', gap: 6, alignItems: 'center', padding: '8px 8px 10px', background: 'rgba(22,22,26,0.62)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-          style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 13 }} />
+          style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 13 }} />
         <div style={{ position: 'relative' }}>
           <button title="Sort" aria-label="Sort projects" onClick={() => setSortOpen((o) => !o)} style={{ ...icon, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)' }}><ArrowsDownUp size={16} weight="bold" /></button>
           {sortOpen && (
             <>
               <div onClick={() => setSortOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-              <div style={{ position: 'absolute', top: 36, right: 0, zIndex: 91, minWidth: 160, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+              <div style={{ position: 'absolute', top: 36, right: 0, zIndex: 91, minWidth: 160, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
                 <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>SORT BY</div>
                 {SORTS.map(([v, label]) => (
-                  <button key={v} onClick={() => { setSort(v); setSortOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: sort === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
+                  <button key={v} onClick={() => { setSort(v); setSortOpen(false); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: sort === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>
                     {label}{sort === v ? '  ·' : ''}
                   </button>
                 ))}

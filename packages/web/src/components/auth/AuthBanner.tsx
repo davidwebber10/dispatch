@@ -22,8 +22,8 @@ function isSignIn(req: AuthRequest): boolean {
   return AUTH_SIGNALS.some((s) => hay.includes(s));
 }
 
-const primary: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 7, color: '#08240F', fontWeight: 600, fontSize: 12, cursor: 'pointer' };
-const ghost: React.CSSProperties = { height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' };
+const primary: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12, cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' };
 
 export function AuthBanner() {
   // Select the STABLE array and derive here. A selector that returns `.filter(...)` hands
@@ -103,7 +103,7 @@ export function AuthBanner() {
     // A small pill so the user can keep working while the sign-in is pending. Tapping the
     // label opens the card again; Dismiss stays one tap away.
     return (
-      <div data-testid="auth-banner" style={{ ...frame, ...(isMobile ? { left: 'auto' } : { left: 'auto', right: 16, transform: 'none' }), maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, background: '#1B1B1E', border: '1px solid #4A3D18', borderRadius: 22, padding: 2, boxShadow: '0 8px 24px -8px rgba(0,0,0,.8)' }}>
+      <div data-testid="auth-banner" style={{ ...frame, ...(isMobile ? { left: 'auto' } : { left: 'auto', right: 16, transform: 'none' }), maxWidth: 'calc(100vw - 16px)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, background: '#1B1B1E', border: '1px solid #4A3D18', borderRadius: 'var(--radius-2xl)', padding: 2, boxShadow: '0 8px 24px -8px rgba(0,0,0,.8)' }}>
         <button
           onClick={() => setMinimizedFor(null)}
           aria-label={`${signIn ? 'Sign-in pending' : 'Link to open'}${agentLabel ? ` — ${agentLabel}` : ''}`}
@@ -114,7 +114,7 @@ export function AuthBanner() {
             {signIn ? 'Sign-in pending' : 'Link to open'}{agentLabel ? ` — ${agentLabel}` : ''}{pending.length > 1 ? ` (${pending.length})` : ''}
           </span>
         </button>
-        <button onClick={() => void dismissAll()} aria-label={dismissLabel} style={{ ...tapBtn(ghost), minHeight: 44, minWidth: 44, borderRadius: 22, flexShrink: 0 }}>✕</button>
+        <button onClick={() => void dismissAll()} aria-label={dismissLabel} style={{ ...tapBtn(ghost), minHeight: 44, minWidth: 44, borderRadius: 'var(--radius-2xl)', flexShrink: 0 }}>✕</button>
       </div>
     );
   }
@@ -127,7 +127,7 @@ export function AuthBanner() {
         boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflowX: 'hidden',
         // Leave the tab bar and some thread visible: the body scrolls, the buttons do not.
         maxHeight: isMobile ? 'calc(100dvh - 50px - env(safe-area-inset-top) - 150px)' : undefined,
-        background: '#1B1B1E', border: '1px solid #4A3D18', borderRadius: 12, padding: 14, boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)',
+        background: '#1B1B1E', border: '1px solid #4A3D18', borderRadius: 'var(--radius-lg)', padding: 14, boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -174,7 +174,7 @@ export function AuthBanner() {
                 placeholder="http://localhost:…/callback?code=…"
                 autoCapitalize="off" autoCorrect="off" spellCheck={false} inputMode="url"
                 // 16px on a phone: anything smaller makes iOS zoom the page on focus.
-                style={{ flex: 1, minWidth: 0, height: tap ?? 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 400, fontSize: isMobile ? 16 : 11 }}
+                style={{ flex: 1, minWidth: 0, height: tap ?? 30, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)', fontWeight: 400, fontSize: isMobile ? 16 : 11 }}
               />
               <button onClick={() => void submit()} disabled={busy} style={{ flexShrink: 0, ...tapBtn(ghost) }}>{busy ? 'Forwarding…' : 'Forward'}</button>
             </div>

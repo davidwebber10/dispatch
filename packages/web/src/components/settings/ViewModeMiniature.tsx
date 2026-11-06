@@ -38,7 +38,7 @@ const THREADS_BAR_COUNT = 6;
 // board accent color, which is the whole basis of the visual-distinctness test.
 const THREADS_BAR_COLOR = 'var(--color-text-tertiary)';
 
-const barBase: CSSProperties = { height: 5, borderRadius: 2, width: '100%', flexShrink: 0 };
+const barBase: CSSProperties = { height: 5, borderRadius: 'var(--radius-xs)', width: '100%', flexShrink: 0 };
 
 export function ViewModeMiniature({ mode }: { mode: MobileViewMode }) {
   if (mode === 'threads') {

@@ -27,7 +27,7 @@ export function SectionHeader({ label, count, prominent, collapsed, onToggleColl
   // longer count for yourself. Open, a quiet section stays badge-free as before.
   const showCount = count > 0 && (prominent || collapsed);
   const badge = showCount && (
-    <span style={{ font: `600 ${isMobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: isMobile ? '17px' : '15px' }}>{count}</span>
+    <span style={{ font: `600 ${isMobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: isMobile ? '17px' : '15px' }}>{count}</span>
   );
   const chevron = collapsed
     ? <CaretRight size={isMobile ? 13 : 11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
@@ -70,7 +70,7 @@ export function ShowMoreRow({ count, onClick }: { count: number; onClick: () => 
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 6, width: '100%',
         padding: isMobile ? '12px' : '4px 9px', background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        border: 'none', borderRadius: isMobile ? 0 : 5, textAlign: 'left', cursor: 'pointer',
+        border: 'none', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', textAlign: 'left', cursor: 'pointer',
         color: hover ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
         fontSize: isMobile ? 14 : 11.5,
       }}

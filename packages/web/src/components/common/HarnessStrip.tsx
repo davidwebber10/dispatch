@@ -88,7 +88,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
               onClick={() => onSelect(h.id)}
               style={{
                 flex: 'none', display: 'flex', alignItems: 'center', gap: 7, height: 40, padding: '0 12px 0 10px',
-                borderRadius: 20, cursor: 'pointer', font: '600 12.5px var(--font-sans)',
+                borderRadius: 'var(--radius-2xl)', cursor: 'pointer', font: '600 12.5px var(--font-sans)',
                 background: on ? ON_BG : 'var(--color-elevated)',
                 border: `1px solid ${on ? 'rgba(62,207,106,.5)' : BORDER}`,
                 color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
@@ -106,7 +106,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${harnesses.length}, minmax(0, 1fr))`, background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 10, padding: 3, gap: 3 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${harnesses.length}, minmax(0, 1fr))`, background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', padding: 3, gap: 3 }}>
       {harnesses.map((h) => {
         const on = value === h.id;
         const canRun = available(h.id);
@@ -117,7 +117,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
             onClick={() => onSelect(h.id)}
             style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '10px 4px 9px',
-              borderRadius: 7, border: 'none', cursor: 'pointer', font: '600 11px var(--font-sans)',
+              borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', font: '600 11px var(--font-sans)',
               background: on ? ON_BG : 'transparent',
               color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
               boxShadow: on ? ON_RING : 'none',

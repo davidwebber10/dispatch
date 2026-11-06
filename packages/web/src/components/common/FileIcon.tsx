@@ -12,7 +12,7 @@ export function FileIcon({ name, isDir, size = 16 }: { name: string; isDir: bool
   return (
     <span style={{
       width: size, height: size, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      font: '600 8px/1 var(--font-mono)', color, border: `1px solid ${color}`, borderRadius: 3,
+      font: '600 8px/1 var(--font-mono)', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)',
     }}>{glyph}</span>
   );
 }

@@ -42,7 +42,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
     }
   }
 
-  const dim = floating ? { w: 46, h: 32, radius: 9, pad: 3, font: 11 } : { w: 40, h: 24, radius: 6, pad: 2, font: 10.5 };
+  const dim = floating ? { w: 46, h: 32, radius: 'var(--radius-md)', pad: 3, font: 11 } : { w: 40, h: 24, radius: 'var(--radius-sm)', pad: 2, font: 10.5 };
   const opts: ['cli' | 'pretty', string][] = [['cli', 'CLI'], ['pretty', 'Pretty']];
   const tip = !tab.externalId
     ? 'Send a message first to enable switching'
@@ -57,7 +57,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
       title={tip}
       style={{
         display: 'flex', gap: 2, padding: dim.pad,
-        borderRadius: floating ? 11 : 8,
+        borderRadius: floating ? 'var(--radius-lg)' : 'var(--radius-md)',
         background: floating ? 'rgba(22,22,26,0.55)' : 'var(--color-elevated)',
         border: floating ? '1px solid rgba(255,255,255,0.10)' : '1px solid #2C2C32',
         // Grey the whole control whenever switching is unavailable (mid-turn, or no session

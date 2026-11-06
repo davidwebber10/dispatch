@@ -19,11 +19,11 @@ const HIDDEN_KEY = 'dispatch:files-hidden';
 const MENU_ITEM: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px',
   background: 'none', border: 'none', font: '400 13px var(--font-sans)', cursor: 'pointer',
-  borderRadius: 6, textAlign: 'left',
+  borderRadius: 'var(--radius-sm)', textAlign: 'left',
 };
 
 const TOOL_BTN: React.CSSProperties = {
-  width: 26, height: 26, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 6,
+  width: 26, height: 26, flexShrink: 0, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0,
 };
 
@@ -364,7 +364,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         const isExp = expanded.has(e.path);
         return (
           <div key={e.path}>
-            <Row onClick={() => toggle(e.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: '#c9c9cf', cursor: 'pointer' }}>
+            <Row onClick={() => toggle(e.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: '#c9c9cf', cursor: 'pointer' }}>
               <CaretRight size={13} weight="bold" color="#8e8e96" style={{ flexShrink: 0, transition: 'transform 0.15s ease', transform: isExp ? 'rotate(90deg)' : 'none' }} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
             </Row>
@@ -381,7 +381,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
           onClick={(ev) => onRowClick(ev, e)}
           onMiddle={() => void openFile(e, true)}
           onContext={(ev) => onRowContext(ev, e)}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 5, color: isSel || isOpen ? '#e9e9ec' : '#a8a8b0', background: isSel ? '#33333c' : isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: isSel || isOpen ? '#e9e9ec' : '#a8a8b0', background: isSel ? '#33333c' : isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
           <FIcon size={15} weight="fill" color={isSel || isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
           <span style={{ flexShrink: 0, font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{fmtSize(e.size)}</span>
@@ -401,7 +401,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         onClick={() => { setSelected(new Set([entry.path])); setAnchor(entry.path); void openFile(entry); }}
         onMiddle={() => void openFile(entry, true)}
         onContext={(ev) => onRowContext(ev, entry)}
-        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 5, color: isOpen ? '#e9e9ec' : '#a8a8b0', background: isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
+        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 'var(--radius-sm)', color: isOpen ? '#e9e9ec' : '#a8a8b0', background: isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
         <FIcon size={15} weight="fill" color={isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, display: 'flex' }}>
           {indices
@@ -433,7 +433,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     : 'PROJECT TREE';
 
   const segStyle = (on: boolean): React.CSSProperties => ({
-    flex: 1, textAlign: 'center', font: `400 11px var(--font-sans)`, padding: '4px 0', borderRadius: 6,
+    flex: 1, textAlign: 'center', font: `400 11px var(--font-sans)`, padding: '4px 0', borderRadius: 'var(--radius-sm)',
     cursor: 'pointer', border: 'none',
     background: on && !searching ? 'var(--color-hover)' : 'var(--color-elevated)',
     color: on && !searching ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
@@ -466,7 +466,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
             display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
             font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)',
             background: 'rgba(62,207,106,0.08)', border: '1px solid rgba(62,207,106,0.25)',
-            borderRadius: 5, padding: '1px 6px', maxWidth: 140,
+            borderRadius: 'var(--radius-sm)', padding: '1px 6px', maxWidth: 140,
           }}>
             <GitBranch size={11} weight="bold" style={{ flexShrink: 0 }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{git.branch}</span>
@@ -477,7 +477,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
 
       {/* search + view toggles */}
       <div style={{ padding: '8px 10px 6px', display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 6, padding: '5px 8px' }}>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '5px 8px' }}>
           <MagnifyingGlass size={12} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter files… (fuzzy)"
             style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }} />
@@ -521,7 +521,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <>
           <div onMouseDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 190, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 8, boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
+          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 190, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 'var(--radius-md)', boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
             <button type="button" onClick={() => { const t = targets; setMenu(null); void saveTargets(t); }}
               style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
               <DownloadSimple size={15} /> {targets.length > 1 ? `Save ${targets.length} Files As…` : 'Save As…'}

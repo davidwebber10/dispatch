@@ -22,8 +22,8 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
   const s = parseSpawn(tool, echo);
   const view = useThreadView(s.kind === 'started' ? s.agentId : null);
   const projects = useEndless((st) => st.projects);
-  const line: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', minHeight: 32, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-pane)', font: '400 12.5px var(--font-sans)', color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' };
-  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 20, padding: '0 7px', borderRadius: 5, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', flexShrink: 0 };
+  const line: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', minHeight: 32, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', font: '400 12.5px var(--font-sans)', color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' };
+  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 20, padding: '0 7px', borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', flexShrink: 0 };
   if (s.kind === 'starting') return <div aria-busy="true" style={{ ...line, opacity: 0.6 }}><StateMark state="queued" decorative /><span>Starting</span><span style={{ color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span></div>;
   if (s.kind === 'failed') return <div role="alert" style={{ ...line, borderColor: 'var(--color-status-red)' }}><Warning size={13} color="var(--color-status-red)" aria-hidden="true" /><span style={{ color: 'var(--color-status-red)' }}>Could not start</span><span style={{ color: 'var(--color-text-primary)' }}>{s.name}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.error}</span></div>;
   const projectId = s.projectId ?? projects.find((p) => p.name === s.projectName)?.id ?? null;
@@ -42,7 +42,7 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
   );
   if (!docs.length) return card;
   return (
-    <div style={{ minWidth: 0, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+    <div style={{ minWidth: 0, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
       {card}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0, padding: '0 10px 7px 31px' }}>
         {docs.map((d) => <DocChip key={d.start} span={d} project={projectId} />)}

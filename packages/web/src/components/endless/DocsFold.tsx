@@ -19,7 +19,7 @@ const mono = (size: number, color = 'var(--color-text-tertiary)'): React.CSSProp
 function Chip({ children, title, mobile }: { children: React.ReactNode; title?: string; mobile: boolean }) {
   return (
     <span title={title} style={{
-      display: 'inline-flex', alignItems: 'center', minHeight: mobile ? 22 : 20, padding: '1px 6px', boxSizing: 'border-box', borderRadius: 5, maxWidth: '100%',
+      display: 'inline-flex', alignItems: 'center', minHeight: mobile ? 22 : 20, padding: '1px 6px', boxSizing: 'border-box', borderRadius: 'var(--radius-sm)', maxWidth: '100%',
       background: 'var(--color-pane)', border: '1px solid var(--color-border)', ...mono(11, 'var(--color-text-secondary)'), lineHeight: 1.4,
       whiteSpace: 'normal', overflowWrap: 'anywhere',
     }}>{children}</span>

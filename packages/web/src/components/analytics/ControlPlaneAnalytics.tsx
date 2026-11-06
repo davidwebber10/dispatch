@@ -340,7 +340,7 @@ function StatusChip({ status }: { status: MissionStatus }) {
   const done = status === 'completed';
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--color-border)', borderRadius: 999,
+      display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)',
       padding: '1px 8px', fontSize: 11, color: done ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
     }}>
       <span aria-hidden="true">{done ? '✓' : '○'}</span>

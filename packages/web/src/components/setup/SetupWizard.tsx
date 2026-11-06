@@ -42,7 +42,7 @@ export function SetupWizard() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.6)' }}>
-      <div style={{ width: 'min(560px, 94vw)', maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 16, padding: 22, boxShadow: '0 24px 60px -12px rgba(0,0,0,.7)' }}>
+      <div style={{ width: 'min(560px, 94vw)', maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: 22, boxShadow: '0 24px 60px -12px rgba(0,0,0,.7)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <strong style={{ fontSize: 16 }}>Set up Dispatch</strong>
           <button onClick={finish} style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 13 }}>Skip all</button>
@@ -68,7 +68,7 @@ export function SetupWizard() {
 }
 
 export function btn(primary: boolean): React.CSSProperties {
-  return { height: 34, padding: '0 16px', borderRadius: 9, border: '1px solid var(--color-border)', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: primary ? 'var(--color-accent)' : 'transparent', color: primary ? '#08240F' : 'var(--color-text-secondary)' };
+  return { height: 34, padding: '0 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: primary ? 'var(--color-accent)' : 'transparent', color: primary ? '#08240F' : 'var(--color-text-secondary)' };
 }
 
 function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
@@ -97,7 +97,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
         const meta = INSTALL[p.name];
         const ok = p.installed && p.signedIn === true;
         return (
-          <div key={p.name} style={{ border: '1px solid var(--color-border)', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+          <div key={p.name} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: 12, marginBottom: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ color: ok ? 'var(--color-accent)' : 'var(--color-status-red)' }}>{ok ? '✓' : '✗'}</span>
               <strong style={{ fontSize: 13.5 }}>{meta.label}</strong>
@@ -106,7 +106,7 @@ function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
               </span>
             </div>
             {!ok && (
-              <pre style={{ margin: '8px 0 0', font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{meta.install}{'\n'}{meta.login}</pre>
+              <pre style={{ margin: '8px 0 0', font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{meta.install}{'\n'}{meta.login}</pre>
             )}
             {installErrors[p.name] && <pre role="alert" style={{ color: 'var(--color-status-red)', fontSize: 11, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 160, overflowY: 'auto' }}>{installErrors[p.name]}</pre>}
             {!p.installed && (
@@ -138,14 +138,14 @@ function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
       <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Reach Dispatch from your phone privately over Tailscale — no public exposure.</p>
       {ts.running && ts.url ? (
         <div style={{ textAlign: 'center' }}>
-          {qr && <img src={qr} alt="Open on phone" style={{ borderRadius: 10, background: '#fff', padding: 8 }} />}
+          {qr && <img src={qr} alt="Open on phone" style={{ borderRadius: 'var(--radius-md)', background: '#fff', padding: 8 }} />}
           <div style={{ font: '500 13px var(--font-mono)', marginTop: 10, wordBreak: 'break-all' }}>{ts.url}</div>
           <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Install the Tailscale app on your phone, sign into the same account, then open this URL.</p>
         </div>
       ) : (
         <div>
           <p style={{ fontSize: 13 }}>{ts.installed ? 'Tailscale is installed but not running. Start it, then re-check.' : flavor === 'macos' ? 'Install Tailscale on this Mac:' : flavor === 'wsl' ? 'Install Tailscale inside the WSL distribution running Dispatch:' : 'Install Tailscale on the computer running Dispatch:'}</p>
-          {!ts.installed && (flavor ? <pre style={{ font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 8, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{flavor === 'macos' ? 'brew install --cask tailscale\ntailscale up' : 'curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up'}</pre> : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Tailscale installation instructions</a>)}
+          {!ts.installed && (flavor ? <pre style={{ font: '400 11.5px var(--font-mono)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '8px 10px', whiteSpace: 'pre-wrap' }}>{flavor === 'macos' ? 'brew install --cask tailscale\ntailscale up' : 'curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up'}</pre> : <a href="https://tailscale.com/download" target="_blank" rel="noreferrer">Tailscale installation instructions</a>)}
           <button onClick={recheck} disabled={checking} style={btn(false)}>{checking ? 'Checking…' : 'Re-check'}</button>
         </div>
       )}

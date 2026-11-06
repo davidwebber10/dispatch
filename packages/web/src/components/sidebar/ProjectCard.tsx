@@ -63,7 +63,7 @@ const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'm
 // glyph overflowed it invisibly, but a Phosphor <svg> is a flex item that shrinks to
 // the 4px box → a 4px-wide sliver (the "+"/sort icons "not displaying" on desktop).
 // Zeroing the padding gives the 13px icon its full 16px box back.
-const plusBtn: React.CSSProperties = { width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: '600 14px/1 var(--font-sans)', borderRadius: 4 };
+const plusBtn: React.CSSProperties = { width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: '600 14px/1 var(--font-sans)', borderRadius: 'var(--radius-xs)' };
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -124,7 +124,7 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         // fade-back dims the row (dimmed → true), so it eases out, not in.
         transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
         background: showActive ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : (showActive ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : (showActive ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
         // Long-press opens the options menu — stop iOS from selecting the label
@@ -158,7 +158,7 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         )}
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
-            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
+            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
         ) : working ? (
           <Spinner size={isMobile ? 13 : 11} />
         ) : needsAttn ? (
@@ -194,7 +194,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         background: active ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
-        borderRadius: isMobile ? 0 : (active ? 0 : 5), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
+        borderRadius: isMobile ? 0 : (active ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
         color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
@@ -250,7 +250,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   // Expansion is decoupled from the active highlight on desktop; on mobile the
   // project screen is always expanded (open defaults to active when not provided).
   const isOpen = open ?? active;
-  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, borderRadius: 12 } : plusBtn;
+  const plusStyle: React.CSSProperties = isMobile ? { ...plusBtn, width: 34, height: 34, borderRadius: 'var(--radius-lg)' } : plusBtn;
   // Shared icon px for the add (+) buttons AND the sort control in this card's header, so the
   // two are stylistically identical (both Phosphor icons at the same size/weight).
   const plusIcon = isMobile ? 18 : 13;
@@ -369,7 +369,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         border: (!isMobile && active) ? '2px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
           : (!isMobile && isOpen) ? '2px solid #3a3a42'
           : '2px solid transparent',
-        borderRadius: 8, padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
+        borderRadius: 'var(--radius-md)', padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
     >
       <div
@@ -389,7 +389,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           )}
           {(hover || projMenu) && (
             <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}
-              style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 4 }}>⋯</button>
+              style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 'var(--radius-xs)' }}>⋯</button>
           )}
         </div>
         <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
@@ -407,7 +407,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 padding: isMobile ? '14px 12px' : '7px 9px',
                 background: 'var(--color-elevated)',
                 border: '1px solid var(--color-border)',
-                borderRadius: isMobile ? 12 : 7,
+                borderRadius: isMobile ? 'var(--radius-lg)' : 'var(--radius-sm)',
                 color: 'var(--color-text-secondary)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
                 textAlign: 'left', cursor: 'pointer',
               }}
@@ -488,7 +488,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
           <ArchivedSection sessionId={session.id} open={isOpen} onSelectTab={onSelectTab} />
           {isMobile && onBrowseFiles && (
             <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
               <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
               <span style={{ flex: 1 }}>Browse Files</span>
               <CaretRight size={16} color="var(--color-text-tertiary)" />
@@ -502,9 +502,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       {projMenu && createPortal(
         <>
           <div onClick={() => setProjMenu(null)} onContextMenu={(e) => { e.preventDefault(); setProjMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-          <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 9, padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
-            <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename project</button>
-            <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 6, color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
+          <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+            <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename project</button>
+            <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
           </div>
         </>,
         document.body,
@@ -575,7 +575,7 @@ function TabPill({ label, count, active, mobile, onClick }: { label: string; cou
       font: `700 ${mobile ? 13 : 11}px var(--font-mono)`, letterSpacing: '1.1px', transition: 'color .12s ease, border-color .12s ease',
     }}>
       {label.toUpperCase()}
-      <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
+      <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
     </button>
   );
 }

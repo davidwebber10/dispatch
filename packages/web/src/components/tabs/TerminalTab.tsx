@@ -64,7 +64,7 @@ const SOFT_KEY: CSSProperties = {
   flex: '0 0 auto', minWidth: 46, height: 36, padding: '0 10px',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 12, cursor: 'pointer',
+  borderRadius: 'var(--radius-lg)', cursor: 'pointer',
 };
 
 const ENTER: SoftKey = { label: 'Enter', seq: '\r', title: 'Enter', Icon: ArrowElbowDownLeft };
@@ -959,7 +959,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           drives the flex layout width (which previously blew the column out).
           On mobile the terminal is a rounded card with a thin frame (the pane bg
           shows through the 2px margin). */}
-      <div data-testid="term-frame" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-terminal)' : undefined, ...(isMobile && !grokFlush ? { margin: '2px 8px', borderRadius: 12 } : {}) }}>
+      <div data-testid="term-frame" style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', background: isMobile ? 'var(--color-terminal)' : undefined, ...(isMobile && !grokFlush ? { margin: '2px 8px', borderRadius: 'var(--radius-xl)' } : {}) }}>
         {/* inset (not padding): FitAddon measures the host's width, and padding on
             the host makes it over-count columns so the right edge clips. On mobile
             the right inset is trimmed: xterm's column quantization + scrollbar leave
@@ -986,13 +986,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           </button>
         )}
         {loadingOlder && (
-          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>Loading earlier output…</div>
+          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>Loading earlier output…</div>
         )}
         {drop && (
-          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 10, background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
+          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 'var(--radius-md)', background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
         )}
         {note && (
-          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 9, pointerEvents: 'none' }}>{note}</div>
+          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>{note}</div>
         )}
       </div>
       {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on
@@ -1058,10 +1058,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       {isMobile && keysOpen && createPortal(
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
           <div onClick={() => setKeysOpen(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
-          <div role="dialog" aria-label="Keys" style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '72vh', overflowY: 'auto', padding: '12px 12px calc(14px + env(safe-area-inset-bottom))', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)' }}>
+          <div role="dialog" aria-label="Keys" style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 'var(--radius-xl)', borderTopRightRadius: 'var(--radius-xl)', maxHeight: '72vh', overflowY: 'auto', padding: '12px 12px calc(14px + env(safe-area-inset-bottom))', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)' }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>Keys</span>
-              <button type="button" onClick={() => setKeysOpen(false)} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10, color: 'var(--color-text-primary)', fontSize: 14, cursor: 'pointer' }}>Done</button>
+              <button type="button" onClick={() => setKeysOpen(false)} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 14, cursor: 'pointer' }}>Done</button>
             </div>
             {sheetKeysFor(meta?.type).map((g) => (
               <div key={g.title} style={{ marginTop: 10 }}>
@@ -1086,9 +1086,9 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       {isMobile && slashOpen && createPortal(
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
           <div onClick={closeSlash} style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,.55)' }} />
-          <div style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '72vh', display: 'flex', flexDirection: 'column', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+          <div style={{ position: 'relative', background: 'var(--color-pane)', borderTopLeftRadius: 'var(--radius-xl)', borderTopRightRadius: 'var(--radius-xl)', maxHeight: '72vh', display: 'flex', flexDirection: 'column', animation: 'dispatchSlideUp .2s cubic-bezier(.4,0,.2,1)', boxShadow: '0 -12px 40px -10px rgba(0,0,0,.6)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 12px 10px' }}>
-              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12 }}>
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
                 <MagnifyingGlass size={17} color="var(--color-text-secondary)" />
                 <input
                   value={slashQuery} onChange={(e) => setSlashQuery(e.target.value)}
@@ -1097,7 +1097,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
                   style={{ flex: 1, minWidth: 0, height: '100%', background: 'none', border: 'none', outline: 'none', color: 'var(--color-text-primary)', fontSize: 16 }}
                 />
               </div>
-              <button onClick={closeSlash} title="Close" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 12, color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
+              <button onClick={closeSlash} title="Close" style={{ height: 40, width: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}>
                 <X size={18} weight="bold" />
               </button>
             </div>

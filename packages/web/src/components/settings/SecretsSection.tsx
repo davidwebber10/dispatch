@@ -281,7 +281,7 @@ export function SecretsSection() {
           ))}
 
           {readOnly && (
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4, padding: '9px 12px', borderRadius: 8, background: 'color-mix(in srgb, var(--color-accent) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4, padding: '9px 12px', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)' }}>
               <span style={{ font: '600 10px var(--font-mono)', letterSpacing: '1px', color: 'var(--color-accent)', flexShrink: 0 }}>read-only</span>
               <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>Values sync from Doppler. Turn off read-only to add, edit, or delete variables.</span>
             </div>

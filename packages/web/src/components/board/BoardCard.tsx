@@ -106,7 +106,7 @@ const controlBase: CSSProperties = {
 const answerButtonStyle: CSSProperties = {
   ...controlBase,
   border: '1px solid rgba(232,176,75,.6)',
-  borderRadius: 5,
+  borderRadius: 'var(--radius-sm)',
   padding: '2px 9px',
 };
 
@@ -115,7 +115,7 @@ const answerButtonStyle: CSSProperties = {
 const openButtonStyle: CSSProperties = {
   ...controlBase,
   border: '1px solid rgba(128,128,128,.4)',
-  borderRadius: 5,
+  borderRadius: 'var(--radius-sm)',
   padding: '2px 9px',
 };
 

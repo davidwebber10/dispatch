@@ -21,16 +21,16 @@ import { AutoArchiveField } from '../sidebar/AutoArchiveField';
 const label = { fontSize: 11, fontWeight: 600, letterSpacing: 0.4, color: 'var(--color-text-tertiary)' } as const;
 const selectStyle = {
   height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 8, color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
+  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
 } as const;
 const rowStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } as const;
 const cardStyle = {
   display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px',
-  background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 10,
+  background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
 } as const;
 const mono = { font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 const ghostButton = {
-  height: 28, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 7,
+  height: 28, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
   color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer',
 } as const;
 
@@ -193,7 +193,7 @@ export function HarnessesSection() {
                     type="button"
                     disabled={keySaving || !keyDraft.trim()}
                     onClick={() => void saveKey()}
-                    style={{ height: 34, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 8, color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.6 : 1 }}
+                    style={{ height: 34, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.6 : 1 }}
                   >
                     {keySaving ? 'Saving…' : 'Save'}
                   </button>
@@ -257,12 +257,12 @@ function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
       </div>
       <ul aria-label="OpenCode models" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
         {models.map((m) => (
-          <li key={m.model} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '3px 6px 3px 10px', background: 'rgba(0,0,0,.18)', border: '1px solid var(--color-border)', borderRadius: 7 }}>
+          <li key={m.model} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '3px 6px 3px 10px', background: 'rgba(0,0,0,.18)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)' }}>
             {/* One line per model: the list is long, so the label and id sit side by side. */}
             <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)', flex: '0 0 150px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
             <span style={{ ...mono, flex: 1, minWidth: 0 }}>{shortId(m.model)}</span>
             <button type="button" aria-label={`Remove ${m.label}`} title="Remove" onClick={() => remove(m.model)}
-              style={{ width: 24, height: 24, padding: 0, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 5, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>
+              style={{ width: 24, height: 24, padding: 0, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>
               <X size={12} weight="bold" />
             </button>
           </li>
@@ -287,7 +287,7 @@ function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
           {results?.map((r) => {
             const added = have.has(r.id);
             return (
-              <li key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px 5px 10px', borderRadius: 7, border: '1px solid transparent' }}>
+              <li key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px 5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid transparent' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)' }}>
                     {r.label}

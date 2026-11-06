@@ -74,7 +74,7 @@ describe('Modal — title-less and sheet variants', () => {
     expect(panel.style.width).toBe('100%');
     expect(panel.style.maxWidth).toBe('');
     expect(panel.style.marginTop).toBe('auto');
-    expect(panel.style.borderRadius).toBe('20px 20px 0 0');
+    expect(panel.style.borderRadius).toBe('var(--radius-2xl) var(--radius-2xl) 0 0'); // the shared radius scale (theme.css)
     // Same scroll contract as the card: the backdrop scrolls, the panel is unclamped.
     const backdrop = panel.parentElement as HTMLElement;
     expect(backdrop.style.overflowY).toBe('auto');

@@ -11,21 +11,21 @@ import { useState } from 'react';
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 export const pageLabel: React.CSSProperties = { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
-export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' };
-export const miniChip: React.CSSProperties = { flexShrink: 0, font: '500 9.5px var(--font-mono)', letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid #2c2c32', borderRadius: 4, padding: '1px 5px' };
-export const codeChip: React.CSSProperties = { font: '400 11px var(--font-mono)', color: '#c9c9cf', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 5, padding: '1px 5px', whiteSpace: 'nowrap' };
-export const fieldInput: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
-export const solidBtn = (on: boolean): React.CSSProperties => ({ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 7, color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: on ? 'pointer' : 'default', opacity: on ? 1 : 0.5 });
+export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' };
+export const miniChip: React.CSSProperties = { flexShrink: 0, font: '500 9.5px var(--font-mono)', letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-xs)', padding: '1px 5px' };
+export const codeChip: React.CSSProperties = { font: '400 11px var(--font-mono)', color: '#c9c9cf', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', padding: '1px 5px', whiteSpace: 'nowrap' };
+export const fieldInput: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
+export const solidBtn = (on: boolean): React.CSSProperties => ({ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: on ? 'pointer' : 'default', opacity: on ? 1 : 0.5 });
 export const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
 export const item: React.CSSProperties = { fontSize: 13, color: '#c9c9cf' };
-export const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: '#c9c9cf', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 10px' };
-export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer' };
+export const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: '#c9c9cf', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', padding: '5px 10px' };
+export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
 export function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }
 
 export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
   return (
-    <button onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 11, border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
+    <button onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : '#34343a', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 2, left: on ? 19 : 2, width: 17, height: 17, borderRadius: '50%', background: on ? '#08240F' : '#e9e9ec', transition: 'left .15s ease' }} />
     </button>
   );
@@ -54,7 +54,7 @@ export function SearchInput({ value, onChange, placeholder, style }: { value: st
 
 export function FilterSegments({ options, active, onSelect }: { options: { key: string; label: string; count?: number }[]; active: string; onSelect: (key: string) => void }) {
   return (
-    <span style={{ display: 'flex', border: '1px solid #2c2c32', borderRadius: 7, overflow: 'hidden', flexShrink: 0 }}>
+    <span style={{ display: 'flex', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', overflow: 'hidden', flexShrink: 0 }}>
       {options.map((o, idx) => {
         const on = o.key === active;
         return (
@@ -83,7 +83,7 @@ export function IconGhost({ title, onClick, active, danger, children }: { title:
   const color = active ? 'var(--color-accent)' : danger && hover ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   return (
     <button title={title} onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ width: 24, height: 24, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 5, color, cursor: 'pointer' }}>
+      style={{ width: 24, height: 24, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color, cursor: 'pointer' }}>
       {children}
     </button>
   );
@@ -95,7 +95,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.55)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
       <style>{'@keyframes dispatch-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }'}</style>
       <div onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--color-elevated)', borderRadius: '14px 14px 0 0', padding: '16px 16px calc(16px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '85dvh', overflowY: 'auto', animation: 'dispatch-sheet-up .18s ease-out' }}>
+        style={{ background: 'var(--color-elevated)', borderRadius: 'var(--radius-xl) var(--radius-xl) 0 0', padding: '16px 16px calc(16px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: 10, maxHeight: '85dvh', overflowY: 'auto', animation: 'dispatch-sheet-up .18s ease-out' }}>
         {title && <span style={{ ...pageLabel, marginBottom: 2 }}>{title}</span>}
         {children}
       </div>
@@ -104,7 +104,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
 }
 
 export function Stepper({ value, unit, onDec, onInc }: { value: string; unit?: string; onDec: () => void; onInc: () => void }) {
-  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: side === 'l' ? '7px 0 0 7px' : '0 7px 7px 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
+  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
   return (
     <div style={{ display: 'flex', alignItems: 'center' }}>
       <button onClick={onDec} style={btn('l')}>−</button>

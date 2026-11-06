@@ -75,12 +75,23 @@ export function PillComposer({
     else if (textareaRef) (textareaRef as { current: HTMLTextAreaElement | null }).current = el;
   };
 
-  const recording = dictation.state !== 'idle';
+  // Recording and transcribing take the text box's place. An error does not: it is a line above
+  // the box (a long message squeezed in beside the keys wrapped into a column, 2026-11-05).
+  const recording = dictation.state === 'recording' || dictation.state === 'transcribing';
+  const failed = dictation.state === 'error';
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
 
   return (
+    <>
+    {failed && (
+      <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0 6px 8px', fontSize: 13, lineHeight: 1.4 }}>
+        <span style={{ flex: 1, minWidth: 0, color: 'var(--color-status-red)' }}>{dictation.error}</span>
+        <button type="button" onClick={() => void dictation.start()} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+        <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+      </div>
+    )}
     <div data-testid="pill-composer" style={{
-      display: 'flex', alignItems: 'flex-end', gap: 4, padding: 5, borderRadius: mobile ? 24 : 22,
+      display: 'flex', alignItems: 'flex-end', gap: 4, padding: 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
       border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
     }}>
@@ -132,10 +143,11 @@ export function PillComposer({
         <button type="button" aria-label={sendLabel} title={sendLabel} disabled={!canSend}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSend}
-          style={{ ...circle, background: canSend ? 'var(--color-text-primary)' : 'var(--color-hover, rgba(255,255,255,.08))', color: canSend ? 'var(--color-base)' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
+          style={{ ...circle, background: canSend ? 'var(--color-accent)' : 'var(--color-hover, rgba(255,255,255,.08))', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
           <ArrowUp size={mobile ? 20 : 17} weight="bold" />
         </button>
       )}
     </div>
+    </>
   );
 }

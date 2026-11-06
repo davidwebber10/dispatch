@@ -64,7 +64,7 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
         padding: '8px 12px',
         background: hovered ? 'var(--hover)' : 'var(--elev)',
         border: `1px solid ${hovered ? '#36363c' : 'var(--border)'}`,
-        borderRadius: 9,
+        borderRadius: 'var(--radius-md)',
         cursor: 'pointer',
         transition: 'background 0.12s, border-color 0.12s',
       }}
@@ -178,7 +178,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
         padding: '8px 10px 8px 12px',
         background: hovered ? 'var(--hover)' : 'var(--elev)',
         border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
-        borderRadius: 9,
+        borderRadius: 'var(--radius-md)',
         transition: 'background 0.12s, border-color 0.12s',
       }}
     >
@@ -229,7 +229,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
           alignItems: 'center',
           gap: 5,
           padding: '5px 11px',
-          borderRadius: 7,
+          borderRadius: 'var(--radius-sm)',
           background: 'var(--acc)',
           color: '#06140B',
           border: 'none',
@@ -266,7 +266,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         padding: '9px 12px',
         background: hovered ? 'var(--hover)' : 'transparent',
         border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
-        borderRadius: 9,
+        borderRadius: 'var(--radius-md)',
         alignItems: 'flex-start',
         cursor: 'pointer',
         transition: 'background 0.12s, border-color 0.12s',
@@ -384,7 +384,7 @@ function FilterToggle({
         onClick={() => onTab(value)}
         style={{
           padding: '3px 10px',
-          borderRadius: 6,
+          borderRadius: 'var(--radius-sm)',
           border: 'none',
           background: active ? 'var(--elev)' : 'transparent',
           color: active ? 'var(--tp)' : 'var(--ts)',
@@ -413,7 +413,7 @@ function FilterToggle({
         padding: 2,
         background: 'var(--pane)',
         border: '1px solid var(--border)',
-        borderRadius: 8,
+        borderRadius: 'var(--radius-md)',
       }}
     >
       {seg('live', 'Live', liveCount)}
@@ -463,7 +463,7 @@ function EmptyMissions() {
         style={{
           width: 46,
           height: 46,
-          borderRadius: 12,
+          borderRadius: 'var(--radius-lg)',
           background: 'var(--elev)',
           border: '1px solid var(--border)',
           display: 'flex',

@@ -16,7 +16,7 @@ function ServersSection() {
   const [err, setErr] = useState('');
   const canAdd = !!label.trim() && !!origin.trim() && !busy;
 
-  const input: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
+  const input: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
 
   async function add() {
     if (!canAdd) return;
@@ -36,13 +36,13 @@ function ServersSection() {
             <span style={{ fontSize: 13, color: '#e9e9ec', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
             <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>
           </span>
-          <button title="Remove server" onClick={() => void useServers.getState().remove(s.origin)} style={{ width: 26, height: 26, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+          <button title="Remove server" onClick={() => void useServers.getState().remove(s.origin)} style={{ width: 26, height: 26, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8 }}>
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" style={{ ...input, flex: '0 0 34%' }} />
         <input value={origin} onChange={(e) => setOrigin(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }} placeholder="https://host:3456" style={{ ...input, flex: 1 }} />
-        <button onClick={() => void add()} disabled={!canAdd} style={{ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 7, color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.5 }}>Add</button>
+        <button onClick={() => void add()} disabled={!canAdd} style={{ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.5 }}>Add</button>
       </div>
       {err && <div style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
     </div>
@@ -90,7 +90,7 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
     <>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={sectionLabel}>GETTING STARTED</span>
-        <button onClick={() => { openSetup(); onDone?.(); }} style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' }}>Re-run setup wizard</button>
+        <button onClick={() => { openSetup(); onDone?.(); }} style={{ alignSelf: 'flex-start', height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' }}>Re-run setup wizard</button>
       </div>
       <Divider />
 
@@ -103,7 +103,7 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
             onChange={(e) => useSettings.getState().setCoordinatorName(e.target.value)}
             placeholder="Control Plane"
             aria-label="Coordinator name"
-            style={{ width: 180, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }}
+            style={{ width: 180, height: 30, padding: '0 9px', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' }}
           />
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Control Plane”.</div>
@@ -134,10 +134,10 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
         <div style={row}><span style={item}>Project names</span><Stepper value={String(projectFontSize)} onDec={() => useSettings.getState().setProjectFontSize(projectFontSize - 1)} onInc={() => useSettings.getState().setProjectFontSize(projectFontSize + 1)} /></div>
         <div style={row}><span style={item}>Thread &amp; file names</span><Stepper value={String(sidebarFontSize)} onDec={() => useSettings.getState().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => useSettings.getState().setSidebarFontSize(sidebarFontSize + 1)} /></div>
         <div style={row}><span style={item}>Density</span>
-          <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 7, padding: 2, gap: 2 }}>
+          <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
             {(['compact', 'cozy', 'roomy'] as const).map((d) => (
               <button key={d} onClick={() => useSettings.getState().setDensity(d)} style={{
-                padding: '4px 10px', borderRadius: 5, border: 'none', cursor: 'pointer', textTransform: 'capitalize',
+                padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', textTransform: 'capitalize',
                 fontSize: 12, fontWeight: density === d ? 600 : 400,
                 background: density === d ? 'var(--color-accent)' : 'transparent',
                 color: density === d ? '#08240F' : 'var(--color-text-secondary)',
@@ -159,13 +159,13 @@ export function GeneralSection({ onDone }: { onDone?: () => void }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <span style={sectionLabel}>APPEARANCE</span>
-        <div style={row}><span style={item}>Theme</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 7, padding: '5px 11px' }}><span style={{ width: 11, height: 11, borderRadius: 3, background: '#0f0f11', border: '1px solid #46464d' }} />Dark</span></div>
+        <div style={row}><span style={item}>Theme</span><span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)', background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', padding: '5px 11px' }}><span style={{ width: 11, height: 11, borderRadius: 'var(--radius-xs)', background: '#0f0f11', border: '1px solid #46464d' }} />Dark</span></div>
         <div style={{ ...row, alignItems: 'flex-start' }}><span style={{ ...item, paddingTop: 3 }}>Accent</span>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 360 }}>
             {ACCENTS.map((c) => (
-              <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 5, background: c, border: 'none', cursor: 'pointer', flexShrink: 0, outline: accent.toLowerCase() === c.toLowerCase() ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
+              <button key={c} onClick={() => useSettings.getState().setAccent(c)} title={c} style={{ width: 19, height: 19, borderRadius: 'var(--radius-sm)', background: c, border: 'none', cursor: 'pointer', flexShrink: 0, outline: accent.toLowerCase() === c.toLowerCase() ? `2px solid ${c}` : '2px solid transparent', outlineOffset: 2 }} />
             ))}
-            <label title="Custom color" style={{ position: 'relative', width: 19, height: 19, borderRadius: 5, cursor: 'pointer', overflow: 'hidden', flexShrink: 0, background: 'conic-gradient(from 90deg, #f0616d, #f5c542, #30d158, #56b6c2, #5a8dd6, #c792ea, #ff6ac1, #f0616d)', outline: ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? '2px solid transparent' : `2px solid ${accent}`, outlineOffset: 2 }}>
+            <label title="Custom color" style={{ position: 'relative', width: 19, height: 19, borderRadius: 'var(--radius-sm)', cursor: 'pointer', overflow: 'hidden', flexShrink: 0, background: 'conic-gradient(from 90deg, #f0616d, #f5c542, #30d158, #56b6c2, #5a8dd6, #c792ea, #ff6ac1, #f0616d)', outline: ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? '2px solid transparent' : `2px solid ${accent}`, outlineOffset: 2 }}>
               <input type="color" value={accent} onChange={(e) => useSettings.getState().setAccent(e.target.value)} style={{ position: 'absolute', inset: -6, width: 'calc(100% + 12px)', height: 'calc(100% + 12px)', opacity: 0, cursor: 'pointer', border: 'none', padding: 0, background: 'none' }} />
             </label>
           </div>

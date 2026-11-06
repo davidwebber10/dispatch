@@ -94,7 +94,7 @@ export function UploadTray({ uploads, onCancel }: { uploads: Upload[]; onCancel:
         const label = u.state === 'failed' ? `${u.name}: upload failed` : u.state === 'finishing' ? `${u.name}: sending` : `${u.name}: uploading ${pct}%`;
         return (
           <div key={u.id} role="status" aria-label={label} title={label}
-            style={{ position: 'relative', width: 60, height: 60, flex: 'none', borderRadius: 12, overflow: 'hidden', border: `1px solid ${u.state === 'failed' ? 'var(--color-status-red)' : 'var(--color-border)'}`, background: 'var(--color-elevated)' }}>
+            style={{ position: 'relative', width: 60, height: 60, flex: 'none', borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: `1px solid ${u.state === 'failed' ? 'var(--color-status-red)' : 'var(--color-border)'}`, background: 'var(--color-elevated)' }}>
             {u.preview
               ? <img src={u.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
               : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}><FileText size={24} /></div>}

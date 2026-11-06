@@ -157,7 +157,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
           : <span className="chat-shimmer" style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 11 }}>running…</span>}
       </button>
       {open && expandable && (
-        <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', overflow: 'hidden', margin: '4px 20px 8px' }}>
           {view ? view.expanded(tool, result) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '6px 8px 0', background: 'var(--color-pane)' }}>
@@ -187,7 +187,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button onClick={onClick} style={{
-      padding: '4px 11px', fontSize: 11.5, borderRadius: '6px 6px 0 0', border: 'none', cursor: 'pointer',
+      padding: '4px 11px', fontSize: 11.5, borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0', border: 'none', cursor: 'pointer',
       background: active ? 'var(--color-elevated)' : 'transparent', color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400,
     }}>{children}</button>
   );
@@ -211,7 +211,7 @@ export function ToolResult({ item }: { item: ConvItem }) {
         {err ? 'Error output' : 'Output'}<span style={{ opacity: 0.6 }}> · {lines} line{lines !== 1 ? 's' : ''}</span>
       </button>
       {open && (
-        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 8, padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
+        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-md)', padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
       )}
     </div>
   );

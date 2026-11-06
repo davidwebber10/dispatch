@@ -124,7 +124,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
       }</style>}
       <div ref={panelRef} data-testid={sheet ? 'sheet-panel' : undefined} onClick={(e) => e.stopPropagation()} style={sheet ? {
         width: '100%', marginTop: 'auto', flexShrink: 0, boxSizing: 'border-box',
-        background: '#18181B', borderTop: '1px solid #2F2F35', borderRadius: '20px 20px 0 0',
+        background: '#18181B', borderTop: '1px solid #2F2F35', borderRadius: 'var(--radius-2xl) var(--radius-2xl) 0 0',
         padding: '0 16px calc(16px + env(safe-area-inset-bottom))',
         display: 'flex', flexDirection: 'column', gap: 14,
         animation: 'dispatch-modal-sheet-up .18s ease-out',
@@ -134,7 +134,7 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
         // `auto` top/bottom margins centre; a zero top margin pins the card under the
         // backdrop's top padding so only its bottom edge moves as content changes.
         width: '100%', maxWidth, margin: anchor === 'top' ? '0 auto auto' : 'auto', flexShrink: 0, boxSizing: 'border-box',
-        background: '#18181B', border: '1px solid #2F2F35', borderRadius: 12, padding: 20,
+        background: '#18181B', border: '1px solid #2F2F35', borderRadius: 'var(--radius-lg)', padding: 20,
         boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
       }}>
         {sheet ? (
@@ -143,15 +143,15 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
           <div data-testid="sheet-header"
             onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragEnd} onLostPointerCapture={onDragEnd}
             style={{
-              position: 'sticky', top: 'calc(env(safe-area-inset-top) + 0px)', zIndex: 1, background: '#18181B', borderRadius: '20px 20px 0 0',
+              position: 'sticky', top: 'calc(env(safe-area-inset-top) + 0px)', zIndex: 1, background: '#18181B', borderRadius: 'var(--radius-2xl) var(--radius-2xl) 0 0',
               margin: '0 -16px', padding: '8px 16px 0', touchAction: 'none', userSelect: 'none', WebkitUserSelect: 'none', flex: 'none',
             }}>
-            <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 2, background: '#3A3A40', margin: '0 auto 2px' }} />
+            <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 'var(--radius-xs)', background: '#3A3A40', margin: '0 auto 2px' }} />
             {(title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
               {title ? <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
               {closeButton && <button type="button" aria-label="Close" onClick={onClose} style={{
                 minWidth: 44, minHeight: 44, flex: 'none', marginRight: -10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                background: 'transparent', border: 'none', color: '#A1A1AA', fontSize: 22, lineHeight: 1, cursor: 'pointer', borderRadius: 22,
+                background: 'transparent', border: 'none', color: '#A1A1AA', fontSize: 22, lineHeight: 1, cursor: 'pointer', borderRadius: 'var(--radius-2xl)',
               }}>×</button>}
             </div>}
           </div>

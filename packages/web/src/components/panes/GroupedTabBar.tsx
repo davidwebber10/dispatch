@@ -65,7 +65,7 @@ type TabSlot    = SingleSlot | GroupSlot;
 const iconBtn: React.CSSProperties = {
   background: 'none', border: 'none',
   color: 'var(--color-text-tertiary)', cursor: 'pointer',
-  padding: '2px 4px', borderRadius: 4,
+  padding: '2px 4px', borderRadius: 'var(--radius-xs)',
   flexShrink: 0, display: 'flex', alignItems: 'center',
   position: 'relative', zIndex: 2,
   fontSize: 15, lineHeight: 1,
@@ -236,7 +236,7 @@ function MergeOverlay({ label }: { label: string }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div style={{
-        background: 'var(--color-accent)', borderRadius: 4,
+        background: 'var(--color-accent)', borderRadius: 'var(--radius-xs)',
         padding: '2px 6px', display: 'flex', alignItems: 'center', gap: 4,
       }}>
         <SquaresFour size={11} weight="bold" color="#000" />
@@ -251,7 +251,7 @@ function InsertBar() {
   return (
     <div style={{
       position: 'absolute', top: 4, bottom: 4, left: '50%', transform: 'translateX(-50%)',
-      width: 3, borderRadius: 2, background: 'var(--color-accent)',
+      width: 3, borderRadius: 'var(--radius-xs)', background: 'var(--color-accent)',
       boxShadow: '0 0 6px 1px color-mix(in srgb, var(--color-accent) 70%, transparent)',
       pointerEvents: 'none',
     }} />
@@ -303,7 +303,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
           position: 'relative', alignSelf: 'stretch', flexShrink: 0,
           minWidth: TAB_MIN_W, maxWidth: TAB_MAX_W,
           boxSizing: 'border-box',
-          border: '1.5px dashed var(--color-border)', borderRadius: 7,
+          border: '1.5px dashed var(--color-border)', borderRadius: 'var(--radius-sm)',
           margin: '4px 0',
           background: isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'color-mix(in srgb, var(--color-text-tertiary) 7%, transparent)',
         }}
@@ -431,7 +431,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
           position: 'relative', alignSelf: 'stretch', flexShrink: 0,
           minWidth: GRP_MIN_W, maxWidth: GRP_MAX_W,
           boxSizing: 'border-box',
-          border: '1.5px dashed var(--color-border)', borderRadius: 7,
+          border: '1.5px dashed var(--color-border)', borderRadius: 'var(--radius-sm)',
           margin: '4px 0',
           background: isOver ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'color-mix(in srgb, var(--color-text-tertiary) 7%, transparent)',
         }}
@@ -486,7 +486,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
               else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
             }}
             placeholder={`${count} Tabs`}
-            style={{ font: '500 12.5px var(--font-sans)', color: '#fff', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 4, padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
+            style={{ font: '500 12.5px var(--font-sans)', color: '#fff', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
           />
         ) : (
           <>

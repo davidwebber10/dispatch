@@ -63,7 +63,7 @@ export function AgentCard({ msg }: { msg: StreamMessage }) {
           alignItems: 'center',
           gap: 10,
           padding: '7px 12px 7px 8px',
-          borderRadius: 11,
+          borderRadius: 'var(--radius-lg)',
           background: hovered ? 'var(--hover)' : 'var(--elev)',
           border: `1px solid ${hovered ? '#36363c' : 'var(--border)'}`,
           cursor: 'pointer',

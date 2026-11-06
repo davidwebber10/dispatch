@@ -9,7 +9,7 @@ import { pageLabel, summaryLine, ghostBtn, miniChip, fieldInput, solidBtn, Group
 const sub: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const onBtn = (on: boolean): React.CSSProperties => ({
-  flexShrink: 0, height: 26, padding: '0 10px', borderRadius: 6, font: '500 11px var(--font-mono)', cursor: 'pointer',
+  flexShrink: 0, height: 26, padding: '0 10px', borderRadius: 'var(--radius-sm)', font: '500 11px var(--font-mono)', cursor: 'pointer',
   background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
   border: on ? '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)' : '1px solid #2c2c32',
   color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)',
@@ -101,7 +101,7 @@ export function IntegrationsSection() {
       <button title="Remove" onClick={() => void remove(i.id)}
         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-red)'; e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--color-status-red) 45%, transparent)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = '#2c2c32'; }}
-        style={{ width: 26, height: 26, padding: 0, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 6, color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+        style={{ width: 26, height: 26, padding: 0, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
     </HoverRow>
   );
 

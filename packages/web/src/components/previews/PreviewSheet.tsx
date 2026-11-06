@@ -36,7 +36,7 @@ export function PreviewSheet() {
 export function PreviewBadge({ count }: { count: number }) {
   if (!count) return null;
   return (
-    <span aria-label={`${count} new previews`} style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 9, background: 'var(--color-accent)', color: '#08240F', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <span aria-label={`${count} new previews`} style={{ position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       {count > 99 ? '99+' : count}
     </span>
   );

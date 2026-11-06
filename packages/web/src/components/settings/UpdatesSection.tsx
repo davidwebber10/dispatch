@@ -7,7 +7,7 @@ import { ReleaseNotes } from '../update/ReleaseNotes';
 const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
 const item: React.CSSProperties = { fontSize: 13, color: '#c9c9cf' };
-const ghostBtn: React.CSSProperties = { height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 7, color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' };
+const ghostBtn: React.CSSProperties = { height: 30, padding: '0 14px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12.5, cursor: 'pointer' };
 
 /**
  * Settings → UPDATES: always-reachable update surface (the modal can be
@@ -46,7 +46,7 @@ export function UpdatesSection() {
       ) : available ? (
         <div style={row}>
           <span style={{ ...item, color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>
-          <button onClick={() => void apply()} disabled={applying} style={{ height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 7, color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', opacity: applying ? 0.7 : 1 }}>
+          <button onClick={() => void apply()} disabled={applying} style={{ height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', opacity: applying ? 0.7 : 1 }}>
             {applying ? 'Updating…' : 'Update now'}
           </button>
         </div>

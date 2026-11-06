@@ -37,7 +37,7 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          borderRadius: 8,
+          borderRadius: 'var(--radius-md)',
           border: '1px solid var(--border)',
           display: 'block',
         }}

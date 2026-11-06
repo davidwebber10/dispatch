@@ -100,7 +100,7 @@ export function ArchivedSection({ sessionId, open, onSelectTab }: { sessionId: s
         {/* This section always renders quiet (non-prominent), so SectionHeader's own count badge
             never shows; the badge below is what's actually visible. count is required, so pass 0. */}
         <SectionHeader label="ARCHIVED" count={0}>
-          <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', borderRadius: 9, padding: '0 6px', lineHeight: '15px' }}>{items.length}</span>
+          <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: '15px' }}>{items.length}</span>
           {expanded
             ? <CaretDown size={11} color="var(--color-text-tertiary)" />
             : <CaretRight size={11} color="var(--color-text-tertiary)" />}
@@ -128,7 +128,7 @@ function ArchivedRow({ tab, failed, restoring, onRestore }: { tab: Terminal; fai
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       data-archived-id={tab.id}
-      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 12px' : '3px 7px', borderRadius: isMobile ? 0 : 5, background: hover ? 'rgba(255,255,255,0.04)' : 'transparent' }}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 12px' : '3px 7px', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', background: hover ? 'rgba(255,255,255,0.04)' : 'transparent' }}
     >
       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: isMobile ? 15 : 12, color: 'var(--color-text-tertiary)' }}>
         <ThreadLabel tab={tab} />
@@ -140,7 +140,7 @@ function ArchivedRow({ tab, failed, restoring, onRestore }: { tab: Terminal; fai
         <button title="Restore thread" aria-label={`Restore ${tab.label}`}
           disabled={restoring}
           onClick={(e) => { e.stopPropagation(); if (!restoring) onRestore(); }}
-          style={{ width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: restoring ? 'default' : 'pointer', borderRadius: 4, flexShrink: 0, opacity: restoring ? 0.5 : 1 }}>
+          style={{ width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: restoring ? 'default' : 'pointer', borderRadius: 'var(--radius-xs)', flexShrink: 0, opacity: restoring ? 0.5 : 1 }}>
           <ArrowCounterClockwise size={13} weight="bold" />
         </button>
       )}
