@@ -33,10 +33,14 @@ test('shows the nudge with an enabled switch on an idle CLI thread', () => {
   expect(screen.getByRole('button', { name: 'Switch to Pretty' })).toBeEnabled();
 });
 
-test('the switch is disabled mid-turn — same gate as the transport toggle', () => {
+test('mid-turn the switch asks first, then stops the turn and switches — same rule as the transport toggle', async () => {
   useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } } as any);
+  const spy = vi.spyOn(api, 'switchTransport').mockResolvedValue({} as any);
   render(<CliPrettyHint tab={cliTab()} />);
-  expect(screen.getByRole('button', { name: 'Switch to Pretty' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Switch to Pretty' }));
+  expect(spy).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop and switch' }));
+  await waitFor(() => expect(spy).toHaveBeenCalledWith('t1', 'structured', { force: true }));
 });
 
 test('the switch is disabled until a session id is captured', () => {

@@ -340,12 +340,12 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // external_id / wrong type / harness lacks Pretty) surface as 409; the frontend
   // swaps ChatView↔xterm off config.transport on the session:tabs-changed reload.
   router.post('/terminals/:terminalId/transport', async (req, res) => {
-    const { transport } = req.body ?? {};
+    const { transport, force } = req.body ?? {};
     if (transport !== 'structured' && transport !== 'pty') {
       return res.status(400).json({ error: "transport must be 'structured' or 'pty'" });
     }
     try {
-      const terminal = await sessionService.switchTransport(req.params.terminalId, transport);
+      const terminal = await sessionService.switchTransport(req.params.terminalId, transport, { force: force === true });
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
       res.json(terminal);
     } catch (e: any) {

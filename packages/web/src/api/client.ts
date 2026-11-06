@@ -207,8 +207,9 @@ export const api = {
   getResumeAdvice: (terminalId: string) => req<ResumeAdvice>(`/api/terminals/${terminalId}/resume-advice`),
   // Live-switch a running claude/codex thread between CLI (pty) and Pretty (structured),
   // resuming its conversation. Rejects (409) when the thread is busy or has no session yet.
-  switchTransport: (terminalId: string, transport: 'structured' | 'pty') =>
-    req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport }) }),
+  // `force`: switch a working CLI thread anyway (the user confirmed stopping its turn).
+  switchTransport: (terminalId: string, transport: 'structured' | 'pty', opts?: { force?: boolean }) =>
+    req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport, ...(opts?.force ? { force: true } : {}) }) }),
   // Overseer: find-or-create this project's coordinator thread (idempotent) → { terminalId }.
   // opts apply only when this call CREATES the coordinator (setup card / first directive).
   // `coordinatorHarness` picks which harness backs the coordinator itself (Phase 2); absent
