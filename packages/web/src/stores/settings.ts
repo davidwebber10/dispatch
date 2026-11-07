@@ -1,7 +1,10 @@
 import { create } from 'zustand';
 import { syncAppIcons } from '../lib/appIcon';
 import { api } from '../api/client';
+import { setThemeSetting, useActiveTheme } from '../themes/apply';
+import { DEFAULT_THEME_ID, getTheme, type ThemeSetting } from '../themes';
 
+// literal color: the accent swatches the user picks from (content, not chrome).
 export const ACCENTS = [
   '#3ECF6A', // green
   '#30D158', // emerald
@@ -61,7 +64,10 @@ interface SettingsState {
    */
   showPinnedFiles: boolean;
   density: Density;
+  /** The user's accent, or '' for the theme's own accent ("Theme default"). Overrides the theme's when set. */
   accent: string;
+  /** 'system' follows the device (Dispatch Light / Dark); else a theme id (src/themes). Per device. */
+  theme: ThemeSetting;
   /**
    * Raw value; empty falls back to "Control Plane" at display (see useDispatchName). The same on
    * every device: stored on the daemon (/api/settings/coordinator), cached here for first paint.
@@ -107,6 +113,7 @@ interface SettingsState {
   setShowPinnedFiles: (b: boolean) => void;
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
+  setTheme: (t: ThemeSetting) => void;
   setPushEnabled: (b: boolean) => Promise<void>;
   /** Set the switch only (saved), with no network call: for code that already did the work. */
   setPushEnabledLocal: (b: boolean) => void;
@@ -131,10 +138,6 @@ function load<T>(key: string, fallback: T): T {
 }
 function save(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignore */ } }
 
-function applyAccent(c: string) {
-  try { document.documentElement.style.setProperty('--color-accent', c); } catch { /* ssr/jsdom */ }
-}
-
 // Keep the PWA/browser icons in the accent color. Debounced: the custom color
 // picker fires a change per drag frame, and each sync renders + uploads 4 PNGs.
 let iconTimer: ReturnType<typeof setTimeout> | undefined;
@@ -143,11 +146,15 @@ function scheduleIconSync(accent: string) {
   iconTimer = setTimeout(() => void syncAppIcons(accent), 600);
 }
 
-const initialAccent = load('dispatch:accent', ACCENTS[0] as string);
-applyAccent(initialAccent);
+const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && getTheme(t)) ? t as ThemeSetting : DEFAULT_THEME_ID);
+const initialTheme = validTheme(load<string>('dispatch:theme', DEFAULT_THEME_ID));
+const initialAccent = load('dispatch:accent', '');
+setThemeSetting(initialTheme, initialAccent);
+/** The accent on screen: the user's, else the theme's. */
+const effectiveAccent = () => useActiveTheme.getState().accent;
 // A non-default accent may predate the daemon growing the icons endpoint (or
 // another device may have changed it since) — re-sync once per boot.
-if (initialAccent !== ACCENTS[0]) scheduleIconSync(initialAccent);
+if (effectiveAccent().toUpperCase() !== ACCENTS[0]) scheduleIconSync(effectiveAccent());
 
 export const STT_DEFAULTS = { provider: 'groq', model: 'whisper-large-v3-turbo' } as const;
 
@@ -161,6 +168,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   showPinnedFiles: load('dispatch:showPinnedFiles', true),
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
+  theme: initialTheme,
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
@@ -181,7 +189,13 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setDensity: (density) => { save('dispatch:density', density); set({ density }); },
   setCoordinatorName: (coordinatorName) => { save('dispatch:coordinatorName', coordinatorName); set({ coordinatorName }); scheduleCoordinatorPut(coordinatorName); },
   setMultiPane: (b) => { save('dispatch:multiPane', b); set({ multiPane: b }); },
-  setAccent: (accent) => { save('dispatch:accent', accent); applyAccent(accent); set({ accent }); scheduleIconSync(accent); },
+  setAccent: (accent) => { save('dispatch:accent', accent); set({ accent }); setThemeSetting(get().theme, accent); scheduleIconSync(effectiveAccent()); },
+  setTheme: (t) => {
+    const theme = validTheme(t);
+    const before = effectiveAccent();
+    save('dispatch:theme', theme); set({ theme }); setThemeSetting(theme, get().accent);
+    if (effectiveAccent() !== before) scheduleIconSync(effectiveAccent());
+  },
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); putShared(() => api.putDictationSettings({ provider: id })); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); putShared(() => api.putDictationSettings({ model: id })); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); putShared(() => api.putDictationSettings({ secretName: name })); },
