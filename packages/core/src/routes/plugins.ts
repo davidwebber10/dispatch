@@ -235,6 +235,43 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     res.status(204).end();
   });
 
+  // ── export and import (owner, 2026-11-07) ──────────────────────────────────────────────
+  // Both work for a removed plugin whose data was kept (DELETE ?keepData=1): the rows are the subject,
+  // not the folder. 404 only when no such plugin is installed and nothing is stored under its id.
+  const knownOrStored = (req: Request, res: import('express').Response): boolean => {
+    if (plugins.get(req.params.id) || pluginData.hasData(db, req.params.id)) return true;
+    res.status(404).json({ error: 'unknown plugin' });
+    return false;
+  };
+
+  router.get('/plugins/:id/export', ownerOnlyStrict, (req, res) => {
+    if (!knownOrStored(req, res)) return;
+    const out = pluginData.exportPlugin(db, req.params.id);
+    const safeId = req.params.id.replace(/[^A-Za-z0-9._-]+/g, '_');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeId}-data-${out.exportedAt.slice(0, 10)}.json"`);
+    res.type('application/json').send(JSON.stringify(out, null, 2));
+  });
+
+  router.post('/plugins/:id/import', ownerOnlyStrict, (req, res) => {
+    if (!knownOrStored(req, res)) return;
+    const mode = req.query.mode === undefined ? 'merge' : req.query.mode;
+    if (mode !== 'merge' && mode !== 'replace') return void res.status(400).json({ error: 'bad_mode', message: 'mode is merge or replace.' });
+    const id = req.params.id;
+    const before = mode === 'replace' ? pluginData.listDocs(db, id).map((d) => d.key) : [];
+    try {
+      const out = pluginData.importPlugin(db, id, req.body, { mode, force: req.query.force === '1' });
+      const now = new Set(pluginData.listDocs(db, id).map((d) => d.key));
+      for (const key of before) if (!now.has(key)) plugins.broadcast({ type: 'plugin:data', id, key, deleted: true });
+      for (const key of now) plugins.broadcast({ type: 'plugin:data', id, key });
+      plugins.broadcast({ type: 'plugin:settings', id });
+      res.json(out);
+    } catch (e) {
+      if (e instanceof pluginData.ImportError) return void res.status(e.status).json({ error: e.code, message: e.message });
+      res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   // ── marketplaces and installs (spec section 7): owner-only ───────────────────────────────
   const skillsOf = (req: Request): SkillsService | null => (req.app.locals.skills as SkillsService | undefined) ?? null;
   const marketsOf = (req: Request): MarketplaceService | null => (req.app.locals.marketplaces as MarketplaceService | undefined) ?? null;

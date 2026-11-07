@@ -17,6 +17,8 @@ const LARGE_BODY_ROUTES: Array<{ method: string; path: RegExp }> = [
   { method: 'PUT', path: /^\/api\/sessions\/[^/]+\/files\/write\/?$/ },
   // Custom icons, a base64 PNG each.
   { method: 'PUT', path: /^\/api\/appearance\/icons\/?$/ },
+  // A plugin's exported data, back in (up to 2000 documents of 256 KB each; owner only).
+  { method: 'POST', path: /^\/api\/plugins\/[^/]+\/import\/?$/ },
 ];
 
 /** JSON body parser with a small cap, and the large cap only on the routes above. */
