@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
@@ -31,19 +31,64 @@ describe('MobileApp plugin screens (2026-11-07)', () => {
     render(<MobileApp />);
     expect(tabLabels()).toEqual(['Projects', 'Chat', 'Analytics', 'Plugins', 'Settings']);
     fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
-    const row = screen.getByRole('button', { name: /Rundown/ });
-    expect(row).toHaveTextContent('daily-rundown');
-    fireEvent.click(row);
+    fireEvent.click(screen.getByRole('button', { name: /Rundown/ }));
     expect(screen.getByText('rundown screen')).toBeInTheDocument();
   });
 
-  it('the Plugins tab says where to find plugins when none has a screen but a plugin exists', () => {
+  it('the Plugins tab is just a list: no section header, no repeated name, no commands', () => {
+    const reg = usePluginRegistry.getState().register;
+    reg('coach', { views: [{ id: 'v', label: 'Coach', icon: 'sun', Component: () => null }], commands: [{ id: 'mute', label: 'Mute coach', run: () => {} }] });
+    reg('rundown', { views: [{ id: 'v', label: 'Rundown', Component: () => null }] });
+    usePluginRegistry.setState({ manifests: [
+      { id: 'coach', name: 'Coach', version: '1', enabled: true, stamp: 1, install: null },
+      { id: 'rundown', name: 'Rundown', version: '1', description: 'A summary of the day', enabled: true, stamp: 1, install: null },
+    ] as any });
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
+    expect(screen.queryByText(/plugin screens/i)).toBeNull();
+    expect(screen.queryByText(/commands/i)).toBeNull();
+    expect(screen.queryByText('Mute coach')).toBeNull();
+    // One line when there is no description different from the name.
+    expect(screen.getByRole('button', { name: 'Coach' })).toHaveTextContent(/^Coach$/);
+    // The description shows when it exists and differs.
+    expect(screen.getByRole('button', { name: /Rundown/ })).toHaveTextContent('RundownA summary of the day');
+  });
+
+  it('an opened plugin screen has the thread header: back arrow, the name in a Marquee; back returns to the list', async () => {
+    usePluginRegistry.getState().register('daily-rundown', { views: [{ id: 'rundown', label: 'Rundown', Component: () => <div>rundown screen</div> }] });
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
+    fireEvent.click(screen.getByRole('button', { name: /Rundown/ }));
+    const title = screen.getByTestId('plugin-title');
+    expect(title.querySelector('[data-marquee="text"]')).toHaveTextContent('Rundown');
+    const backBtn = screen.getByRole('button', { name: 'Back to Plugins' });
+    expect(backBtn.closest('header')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Thread menu' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Project menu' })).toBeNull();
+    fireEvent.click(backBtn);
+    await waitFor(() => expect(screen.queryByTestId('plugin-title')).toBeNull());
+    expect(tabLabels()).toEqual(['Projects', 'Chat', 'Analytics', 'Plugins', 'Settings']);
+    expect(screen.getByRole('button', { name: /Rundown/ })).toBeInTheDocument();
+  });
+
+  it('the plugin screen header and the thread header share one title component', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    useTabs.setState({ byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } } as any] } });
+    vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } } as any);
+    window.history.pushState({}, '', '/p/s1/t/t1');
+    render(<MobileApp />);
+    const thread = screen.getByTestId('thread-title');
+    expect(thread).toHaveAttribute('data-leaf-title');
+    expect(screen.getByRole('button', { name: 'Back to Proj' })).toHaveAttribute('data-leaf-back');
+  });
+
+  it('the Plugins tab says one short line when no plugin has a screen but a plugin exists', () => {
     usePluginRegistry.getState().register('only-settings', { settings: [{ id: 's', label: 'S', Component: () => null }] });
     usePluginRegistry.setState({ manifests: [{ id: 'only-settings', name: 'Only settings', version: '1', enabled: true, stamp: 1, install: null }] });
     render(<MobileApp />);
     expect(tabLabels()).toEqual(['Projects', 'Chat', 'Analytics', 'Plugins', 'Settings']);
     fireEvent.click(screen.getByRole('button', { name: 'Plugins' }));
-    expect(screen.getByText(/No plugin screens yet/)).toBeInTheDocument();
+    expect(screen.getByText('No plugin has a screen yet.')).toBeInTheDocument();
   });
 
   it('a promoted view gets its own tab before Plugins; at most two', () => {
