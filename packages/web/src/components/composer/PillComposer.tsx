@@ -47,6 +47,10 @@ export interface PillComposerProps {
   mobile?: boolean;
   /** The ↑'s accessible name and tooltip (Control Plane: "Send directive"). */
   sendLabel?: string;
+  /** Cap the box at this many lines; the text scrolls inside (the CLI view's minimized box, 2026-11-07). */
+  maxLines?: number;
+  /** Called with true while the text is taller than two lines, false otherwise (the CLI view's handle). */
+  onTallChange?: (tall: boolean) => void;
 }
 
 const MAX_FRACTION = 0.5;
@@ -54,6 +58,7 @@ const MAX_FRACTION = 0.5;
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
+  maxLines, onTallChange,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
@@ -67,11 +72,18 @@ export function PillComposer({
     const el = own.current;
     if (!el) return;
     // Empty: one line, whatever the placeholder does (a long one wrapped and grew the box, 2026-11-06).
-    if (!el.value) { el.style.height = `${minH}px`; return; }
+    // N lines: the first fills the key height, each further line adds a line height.
+    const linesH = (n: number) => minH + (n - 1) * lineH;
+    if (!el.value) { el.style.height = `${minH}px`; tallRef.current(false); return; }
     el.style.height = 'auto';
-    el.style.height = `${Math.max(minH, Math.min(el.scrollHeight, Math.round(window.innerHeight * MAX_FRACTION)))}px`;
+    const natural = el.scrollHeight;
+    const cap = Math.min(Math.round(window.innerHeight * MAX_FRACTION), maxLines ? linesH(maxLines) : Infinity);
+    el.style.height = `${Math.max(minH, Math.min(natural, cap))}px`;
+    tallRef.current(natural > linesH(2));
   };
-  useLayoutEffect(fit, [value, minH]);
+  const tallRef = useRef<(t: boolean) => void>(() => {});
+  tallRef.current = (t) => onTallChange?.(t);
+  useLayoutEffect(fit, [value, minH, maxLines]);
   // A resize (rotation, the keyboard, a window drag) re-wraps the text and moves the cap.
   useEffect(() => {
     window.addEventListener('resize', fit);

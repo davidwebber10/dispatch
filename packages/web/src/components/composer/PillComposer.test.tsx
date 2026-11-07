@@ -61,6 +61,20 @@ describe('PillComposer', () => {
     }
   });
 
+  it('maxLines caps the box at that many lines, and onTallChange says when the text is taller (2026-11-07)', () => {
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    const onTall = vi.fn();
+    const { rerender } = render(<PillComposer {...base} dictation={dictation()} mobile value="" onTallChange={onTall} />);
+    const box = screen.getByPlaceholderText('Message…') as HTMLTextAreaElement;
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => 300 });
+    rerender(<PillComposer {...base} dictation={dictation()} mobile value={'line\n'.repeat(12)} onTallChange={onTall} />);
+    expect(box.style.height).toBe('300px');
+    expect(onTall).toHaveBeenLastCalledWith(true);
+    rerender(<PillComposer {...base} dictation={dictation()} mobile value={'line\n'.repeat(12)} maxLines={2} onTallChange={onTall} />);
+    expect(box.style.height).toBe('64px'); // two 22 px lines inside the 42 px key height
+    expect(onTall).toHaveBeenLastCalledWith(true); // still taller than two lines: the handle stays
+  });
+
   describe('going to two lines glides instead of jumping (2026-11-06)', () => {
     const realRect = HTMLElement.prototype.getBoundingClientRect;
     afterEach(() => {

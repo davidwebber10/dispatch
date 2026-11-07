@@ -367,6 +367,38 @@ test('the mobile composer wraps and grows with its text up to half the screen, a
   expect(box.value).toBe('');
 });
 
+test('the phone composer grows over the terminal, not into it; a handle shrinks it to two lines and back (2026-11-07)', async () => {
+  // jsdom has no PointerEvent: a MouseEvent stand-in carries clientY.
+  if (typeof (window as any).PointerEvent === 'undefined') (window as any).PointerEvent = class extends MouseEvent { pointerId: number; constructor(t: string, init: any = {}) { super(t, init); this.pointerId = init.pointerId ?? 1; } };
+  isMobileMock.mockReturnValue(true);
+  const { factory } = makeSocketFactory();
+  const { getByPlaceholderText } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  const box = getByPlaceholderText('Message or /command') as HTMLTextAreaElement;
+  // The dock keeps its place in the column; the composer sits on its bottom edge and grows upward over the terminal.
+  const dock = screen.getByTestId('term-composer-dock');
+  const overlay = screen.getByTestId('term-composer-overlay');
+  expect(dock.style.position).toBe('relative');
+  expect(overlay.style.position).toBe('absolute');
+  expect(overlay.style.bottom).toBe('0px');
+  expect(dock).toContainElement(box);
+  expect(screen.queryByRole('button', { name: 'Minimize the message box' })).toBeNull();
+
+  Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+  Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => 300 });
+  act(() => { fireEvent.change(box, { target: { value: 'a long message\n'.repeat(12) } }); });
+  expect(box.style.height).toBe('300px');
+  const handle = screen.getByRole('button', { name: 'Minimize the message box' });
+  // Drag down: two lines, the text kept and scrollable inside.
+  act(() => { fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 160, pointerId: 1 }); });
+  expect(box.style.height).toBe('64px');
+  expect(box.value).toBe('a long message\n'.repeat(12));
+  // Tap (or drag up): full height again.
+  const expand = screen.getByRole('button', { name: 'Expand the message box' });
+  act(() => { fireEvent.pointerDown(expand, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(expand, { clientY: 160, pointerId: 1 }); });
+  expect(box.style.height).toBe('300px');
+});
+
 test('the keys live in a sheet behind the +: no always-on row, and Clear input empties the prompt', async () => {
   isMobileMock.mockReturnValue(true);
   const { factory, created } = makeSocketFactory();

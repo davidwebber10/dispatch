@@ -214,6 +214,27 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [mobileInput, setMobileInput, clearMobileInput] = useDraft(terminalId);
+  // The phone composer's dock (2026-11-07): the empty box's height, measured; the box grows over the terminal.
+  const composerOverlayRef = useRef<HTMLDivElement | null>(null);
+  const [dockH, setDockH] = useState<number | null>(null);
+  const [tall, setTall] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const handleDownY = useRef<number | null>(null);
+  // Measure the box while it is empty (one line): that height is the dock's. A box with text
+  // keeps the last empty height, so the terminal above never moves while you type.
+  const emptyInput = !mobileInput;
+  useEffect(() => {
+    const el = composerOverlayRef.current;
+    if (!el || !emptyInput) return;
+    const take = () => { const h = el.offsetHeight; if (h > 0) setDockH(h); };
+    take();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(take);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [emptyInput]);
+  // A sent (cleared) box comes back full size next time.
+  useEffect(() => { if (emptyInput) setMinimized(false); }, [emptyInput]);
   const termFileInputRef = useRef<HTMLInputElement>(null);
   const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
   const dictation = useDictation((text) => {
@@ -1023,7 +1044,23 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         /* The shared composer (composer/PillComposer.tsx). The keys that used to sit in an
            always-on row above it (2026-11-05) are in a Keys sheet behind the +, with more per
            harness, which gives the terminal that line back. */
-        <div style={{ padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', flexShrink: 0 }}>
+        /* The dock keeps the empty box's height in the column; the box sits on its bottom edge and
+           grows upward OVER the terminal, so typing never resizes (and redraws) the terminal
+           (owner, 2026-11-07). A handle on a tall box shrinks it to two lines and back. */
+        <div data-testid="term-composer-dock" style={{ position: 'relative', flexShrink: 0, height: dockH ?? 'calc(72px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}>
+        <div ref={composerOverlayRef} data-testid="term-composer-overlay" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 9, padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', boxShadow: tall && !minimized ? '0 -10px 24px -14px var(--color-shadow)' : undefined, borderTop: tall ? '1px solid var(--color-border)' : undefined }}>
+          {tall && (
+            <button type="button" aria-label={minimized ? 'Expand the message box' : 'Minimize the message box'}
+              onPointerDown={(e) => { handleDownY.current = e.clientY; }}
+              onPointerUp={(e) => {
+                const dy = e.clientY - (handleDownY.current ?? e.clientY);
+                handleDownY.current = null;
+                if (minimized) { if (dy < 10) setMinimized(false); } else if (dy > 24) setMinimized(true);
+              }}
+              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: 18, margin: '-2px 0 2px', padding: 0, background: 'none', border: 'none', cursor: 'grab', touchAction: 'none' }}>
+              <span aria-hidden style={{ width: 36, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--color-text-tertiary)', opacity: 0.6 }} />
+            </button>
+          )}
           <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
           <PillComposer
             pluginContext={{ surface: 'terminal', terminalId: terminalId }}
@@ -1057,8 +1094,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
                off). autoCapitalize stays off so `git`, `rg` and paths are not capitalised, and
                autoComplete stays off so form autofill never offers a value. */
             textareaProps={{ autoCapitalize: 'off', autoComplete: 'off', autoCorrect: ptyAutocorrect ? 'on' : 'off', spellCheck: ptyAutocorrect }}
+            maxLines={minimized ? 2 : undefined}
+            onTallChange={setTall}
             mobile
           />
+        </div>
         </div>
       )}
       {/* Keys sheet: tap as many as needed (arrows through a menu, say); Done or the backdrop closes it. */}
