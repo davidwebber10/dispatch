@@ -8,7 +8,6 @@ import { apiPath } from '../lib/basePath';
 import { useUI } from '../stores/ui';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
-import { usePreviews } from '../stores/previews';
 import { useUpdate } from '../stores/update';
 import { useThreadStatus } from '../stores/threadStatus';
 import { useHint } from '../stores/hint';
@@ -147,7 +146,7 @@ export interface DispatchSdk {
     useStore: <S, T>(store: UseBoundStore<StoreApi<S>>, selector: (s: S) => T) => T;
   };
   zustand: { create: typeof create };
-  stores: { useUI: typeof useUI; useProjects: typeof useProjects; useTabs: typeof useTabs; usePreviews: typeof usePreviews; useUpdate: typeof useUpdate; useThreadStatus: typeof useThreadStatus };
+  stores: { useUI: typeof useUI; useProjects: typeof useProjects; useTabs: typeof useTabs; useUpdate: typeof useUpdate; useThreadStatus: typeof useThreadStatus };
   actions: { setView: (key: string) => void; openThread: (projectId: string, terminalId: string) => Promise<void>; openSettings: (sectionKey: string) => void; /** An unseen count on a view (`plugin:<id>:<view>`); 0 clears it. */ setBadge: (viewKey: string, n: number) => void };
   api: typeof api;
   ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
@@ -178,7 +177,7 @@ export function buildSdk(): DispatchSdk {
       useStore: (store, selector) => store(selector),
     },
     zustand: { create },
-    stores: { useUI, useProjects, useTabs, usePreviews, useUpdate, useThreadStatus },
+    stores: { useUI, useProjects, useTabs, useUpdate, useThreadStatus },
     actions: {
       setView: (key) => useUI.getState().setView(key as never),
       openThread: (projectId, terminalId) => openThreadInPlace(projectId, terminalId),

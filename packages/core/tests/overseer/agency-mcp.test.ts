@@ -38,10 +38,10 @@ describe('agency-mcp', () => {
     expect(names).toEqual([
       'answer_agent', 'complete_agent', 'ledger_add', 'ledger_add_from_agent', 'ledger_decide_self', 'ledger_import',
       'ledger_list', 'ledger_mark_default', 'ledger_note', 'ledger_resolve', 'ledger_set_title', 'ledger_show', 'list_agents', 'list_missions',
-      'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'preview', 'queue_agent', 'read_agent',
+      'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent',
       'read_thread', 'report_status', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(29);
+    expect(TOOLS).toHaveLength(28);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -1014,16 +1014,21 @@ describe('agency-mcp post_image', () => {
     if (origSession === undefined) delete process.env.DISPATCH_SESSION; else process.env.DISPATCH_SESSION = origSession;
   });
 
-  it('also posts the image as a preview, and still returns the image when that post fails', async () => {
+  it('also posts the image to the Previews plugin (a file reference, then a document), and still returns the image when that fails', async () => {
     fs.writeFileSync(path.join(process.cwd(), 'shot.png'), Buffer.from(PNG_BASE64, 'base64'));
+    const down = await callTool('post_image', { path: 'shot.png', alt: 'the result' });
+    expect(down.isError).toBeUndefined();
+    expect((down.content[0] as any).type).toBe('image');
+    const answers = [{ fileId: 'f-1', name: 'shot.png', mime: 'image/png', size: 3 }, { key: 'preview:x' }];
+    global.fetch = vi.fn().mockImplementation(async () => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(answers.shift()) })) as any;
     const out = await callTool('post_image', { path: 'shot.png', alt: 'the result' });
-    expect(out.isError).toBeUndefined();
     expect((out.content[0] as any).type).toBe('image');
     const calls = (global.fetch as any).mock.calls as [string, any][];
-    const post = calls.find(([url]) => url === 'http://localhost:9999/api/sessions/sess-1/previews');
-    expect(post).toBeTruthy();
-    const body = JSON.parse(post![1].body);
-    expect(body).toEqual({ paths: [path.join(fs.realpathSync(process.cwd()), 'shot.png')].map((p) => p.replace(fs.realpathSync(process.cwd()), process.cwd())), title: 'the result' });
+    expect(calls[0][0]).toBe('http://localhost:9999/api/plugins/previews/files');
+    expect(JSON.parse(calls[0][1].body)).toEqual({ path: 'shot.png' });
+    expect(calls[1][0]).toMatch(/^http:\/\/localhost:9999\/api\/plugins\/previews\/data\/preview:[0-9a-f-]{36}$/);
+    expect(calls[1][1].method).toBe('PUT');
+    expect(JSON.parse(calls[1][1].body).value).toMatchObject({ sessionId: 'sess-1', title: 'the result', files: [{ fileId: 'f-1', name: 'shot.png', mime: 'image/png', size: 3 }], seenAt: null });
   });
 
   it('reads an image file and returns an MCP image content block (base64 + mime + alt)', async () => {
@@ -1097,42 +1102,3 @@ describe('agency-mcp post_image', () => {
   });
 });
 
-describe('agency-mcp preview', () => {
-  const origFetch = global.fetch;
-  const origApi = process.env.DISPATCH_API;
-  const origSession = process.env.DISPATCH_SESSION;
-  beforeEach(() => {
-    process.env.DISPATCH_API = 'http://localhost:9999';
-    process.env.DISPATCH_SESSION = 'sess-1';
-  });
-  afterEach(() => {
-    global.fetch = origFetch;
-    if (origApi === undefined) delete process.env.DISPATCH_API; else process.env.DISPATCH_API = origApi;
-    if (origSession === undefined) delete process.env.DISPATCH_SESSION; else process.env.DISPATCH_SESSION = origSession;
-    vi.restoreAllMocks();
-  });
-
-  it('posts files (made absolute from the project root) and text to the project, and returns the id and address', async () => {
-    const row = { id: 'pv-1', files: [{ name: 'shot.png' }, { name: 'report.pdf' }] };
-    global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 201, statusText: 'Created', text: async () => JSON.stringify(row) }) as any;
-    const out = await callTool('preview', { paths: ['shot.png', '/abs/report.pdf'], text: 'npm run build', title: 'Build', note: 'run this' });
-    expect(out.isError).toBeUndefined();
-    expect(JSON.parse((out.content[0] as any).text)).toEqual({ ok: true, id: 'pv-1', url: 'http://localhost:9999/api/previews/pv-1', files: ['shot.png', 'report.pdf'] });
-    const [url, init] = (global.fetch as any).mock.calls[0];
-    expect(url).toBe('http://localhost:9999/api/sessions/sess-1/previews');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ paths: [path.resolve(process.cwd(), 'shot.png'), '/abs/report.pdf'], text: 'npm run build', title: 'Build', note: 'run this' });
-  });
-
-  it('needs paths or text, and relays the daemon refusal as the tool error', async () => {
-    global.fetch = vi.fn() as any;
-    const none = await callTool('preview', {});
-    expect(none.isError).toBe(true);
-    expect((none.content[0] as any).text).toContain('needs `paths`');
-    expect(global.fetch).not.toHaveBeenCalled();
-    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 400, statusText: 'Bad Request', text: async () => JSON.stringify({ error: 'path is outside the project folder: ../x' }) }) as any;
-    const bad = await callTool('preview', { paths: ['../x'] });
-    expect(bad.isError).toBe(true);
-    expect((bad.content[0] as any).text).toMatch(/outside the project folder/);
-  });
-});

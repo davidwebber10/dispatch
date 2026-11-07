@@ -58,7 +58,7 @@ afterEach(() => {
 });
 
 describe('MobileApp project header (2026-11-06): the same shape as the thread header', () => {
-  it('shows usage then a ⋯ project menu, no Previews button; the menu holds Previews, Rename and Archive', () => {
+  it('shows usage then a ⋯ project menu, no Previews button; the menu holds Rename and Archive (Previews is a plugin row now)', () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
     window.history.pushState({}, '', '/p/s1');
     render(<MobileApp />);
@@ -66,7 +66,7 @@ describe('MobileApp project header (2026-11-06): the same shape as the thread he
     expect(screen.queryByRole('button', { name: 'Thread menu' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Project menu' }));
     const menu = screen.getByRole('menu');
-    expect(menu).toHaveTextContent('Previews');
+    expect(menu).not.toHaveTextContent('Previews');
     expect(menu).toHaveTextContent('Rename project');
     expect(menu).toHaveTextContent('Archive project');
   });
@@ -96,14 +96,13 @@ describe('MobileApp thread header (2026-11-06, option C)', () => {
     await waitFor(() => expect(screen.getByTestId('thread-title').textContent).toContain('Work'));
   });
 
-  it('the CLI ⇄ Pretty switch and Previews are in the ⋯ menu, not the header', () => {
+  it('the CLI ⇄ Pretty switch is in the ⋯ menu, not the header', () => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Proj' } as any] });
     seedThreadAt('/p/s1/t/t1', { type: 'claude-code', externalId: 'e1', config: { transport: 'structured' } });
     render(<MobileApp />);
     expect(screen.queryByRole('group', { name: 'Transport' })).not.toBeInTheDocument();
     openMenu();
     expect(screen.getByRole('button', { name: /Switch to CLI/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Previews/ })).toBeInTheDocument();
   });
 
   it('a CLI thread offers Switch to Pretty', () => {

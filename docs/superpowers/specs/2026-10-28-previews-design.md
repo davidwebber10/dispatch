@@ -1,6 +1,6 @@
 # Previews: a model shows the user a file or a string
 
-Date: 2026-10-28. Status: approved in chat (the owner described the feature; the calls below
+Date: 2026-10-28. Status: shipped; since plugins slice 4 (2026-11-07) Previews is the bundled plugin `packages/plugins/previews` (its tool, sheet, history and badges), on plugin storage and checked file references. The promises below hold. Originally approved in chat (the owner described the feature; the calls below
 marked "my call" are the builder's).
 
 ## Intent

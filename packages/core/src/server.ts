@@ -103,6 +103,7 @@ import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { migratePreviews } from './plugins/previews-migration.js';
 import { ThreadEvents } from './plugins/thread-events.js';
 import { PluginHooks } from './plugins/hooks.js';
 import { createAssistRunner, commandAssistRunner, type AssistRunner } from './assist/run.js';
@@ -404,6 +405,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dispatchDir, 'keys'), bundledDir: options.bundledDir === undefined ? undefined : options.bundledDir ?? undefined });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
+  migratePreviews(db);
   app.locals.plugins = plugins;
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
@@ -589,6 +591,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dataDir, 'keys'), bundledDir: path.join(resolveRepoRoot(), 'packages', 'plugins') });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
+  migratePreviews(db);
   plugins.start();
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   const authRequestService = new AuthRequestService(broadcaster);

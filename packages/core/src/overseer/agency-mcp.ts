@@ -23,6 +23,7 @@
  */
 
 import { untrustedBlock } from '../security/untrusted-text.js';
+import { randomUUID } from 'node:crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
@@ -335,26 +336,6 @@ export const TOOLS = [
     },
   },
   // --- peer/thread tools: every non-archived thread in the project, not just typed agents ---
-  {
-    name: 'preview',
-    description:
-      'Hand the user something to LOOK AT or COPY, wherever they are (phone or desktop, terminal mode ' +
-      'or Pretty mode): it lands in their Previews list with a badge, and opens in the app. Pass `paths` ' +
-      '(files inside this project: png/jpg/gif/webp/svg images, pdf, html, md, txt, csv, json; up to 20) ' +
-      'and/or `text` (a string they will copy: a URL, a command, a token, a snippet; up to 64 KB). ' +
-      'Add a short `title` and a one-line `note` for context. Use it for screenshots, rendered pages, ' +
-      'reports, HTML artifacts, and for any text the user must copy exactly — in terminal mode they cannot ' +
-      'select text. Prefer this over describing a picture or dictating a long string.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        paths: { type: 'array', items: { type: 'string' }, description: 'Files inside the project working directory (relative or absolute).' },
-        text: { type: 'string', description: 'A string for the user to copy.' },
-        title: { type: 'string', description: 'A short name for the preview (default: the first file name, or "Text").' },
-        note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
-      },
-    },
-  },
   {
     name: 'list_projects',
     description:
@@ -1235,31 +1216,25 @@ async function postImage(args: { path: string; alt?: string }): Promise<McpImage
   return { type: 'image', data, mimeType, ...(alt ? { alt } : {}) };
 }
 
-// --- preview (hand the user files to look at and text to copy) ---------------
+// --- previews: post_image also lands in the Previews plugin ----------------------------------
 
 /**
- * Post a preview to the daemon (routes/previews.ts). The daemon does the path checks against the
- * project folder; paths here are made absolute from this MCP server's cwd (the project root) so the
- * daemon resolves the same file the thread meant. Returns the daemon's row plus its address.
+ * post_image also lands in Previews, so a terminal-mode thread's picture reaches the user. Best
+ * effort: the inline block is the contract. The Previews plugin (packages/plugins/previews) owns
+ * the `preview` tool now; this posts the same way it does: a checked file reference, then a document.
  */
-async function preview(args: { paths?: unknown; text?: unknown; title?: unknown; note?: unknown }): Promise<{ ok: true; id: string; url: string; files: string[] }> {
-  const paths = Array.isArray(args?.paths) ? args.paths.filter((p): p is string => typeof p === 'string' && !!p.trim()) : [];
-  const text = typeof args?.text === 'string' && args.text.trim() ? args.text : undefined;
-  if (!paths.length && !text) throw new Error('preview needs `paths` (files in this project) and/or `text` (a string to copy)');
-  const sid = sessionId();
-  if (!sid) throw new Error('cannot post a preview: this thread has no project identity (DISPATCH_SESSION is unset)');
-  const body: Record<string, unknown> = { paths: paths.map((p) => path.resolve(process.cwd(), p)) };
-  if (text) body.text = text;
-  if (typeof args?.title === 'string' && args.title.trim()) body.title = args.title;
-  if (typeof args?.note === 'string' && args.note.trim()) body.note = args.note;
-  const row = await httpJson('POST', `${apiBase()}/api/sessions/${encodeURIComponent(sid)}/previews`, body);
-  const files = Array.isArray(row?.files) ? row.files.map((f: any) => String(f?.name ?? '')) : [];
-  return { ok: true, id: String(row?.id ?? ''), url: `${apiBase()}/api/previews/${encodeURIComponent(String(row?.id ?? ''))}`, files };
-}
-
-/** post_image also lands in Previews, so a terminal-mode thread's picture reaches the user. Best effort: the inline block is the contract. */
 async function postImageToPreviews(args: { path: string; alt?: string }): Promise<void> {
-  try { await preview({ paths: [args.path], title: typeof args.alt === 'string' && args.alt.trim() ? args.alt : undefined }); } catch { /* the inline image still returns */ }
+  try {
+    const sid = sessionId();
+    if (!sid) return;
+    const base = apiBase();
+    const f = await httpJson('POST', `${base}/api/plugins/previews/files`, { path: args.path });
+    if (!f?.fileId) return;
+    const id = randomUUID();
+    const title = typeof args.alt === 'string' && args.alt.trim() ? args.alt.trim().slice(0, 200) : String(f.name ?? 'Image');
+    const doc = { id, sessionId: sid, sessionName: null, terminalId: process.env.DISPATCH_TERMINAL ?? null, terminalLabel: null, title, note: null, text: null, files: [{ fileId: f.fileId, name: f.name, mime: f.mime, size: f.size }], createdAt: new Date().toISOString(), seenAt: null };
+    await httpJson('PUT', `${base}/api/plugins/previews/data/preview:${id}`, { value: doc });
+  } catch { /* the inline image still returns */ }
 }
 
 /** An MCP `tools/call` content block: text for data tools, an image block for post_image. */
@@ -1306,7 +1281,6 @@ export async function callTool(
       case 'ledger_list': return { content: await ledgerList(args ?? {}) };
       // post_image's result IS the content block (an image, not JSON text) — return it directly.
       case 'post_image': { const img = await postImage(args ?? {}); await postImageToPreviews(args ?? {}); return { content: [img] }; }
-      case 'preview': result = await preview(args ?? {}); break;
       default: throw new Error(`Unknown tool: ${name}`);
     }
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };

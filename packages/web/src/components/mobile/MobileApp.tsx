@@ -7,7 +7,6 @@ import { AlertBell } from '../layout/AlertBell';
 import { UsageChip } from '../layout/UsageChip';
 import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
-import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
@@ -16,9 +15,8 @@ import { pluginIcon } from '../../plugins/sdk';
 import { PluginView, Slot } from '../../plugins/PluginView';
 import { PluginsTab } from './PluginsTab';
 import { ProjectMenu } from './ProjectMenu';
-import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
-import { Eye, DotsThree } from '@phosphor-icons/react';
+import { DotsThree } from '@phosphor-icons/react';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 import { useTransportSwitch } from '../layout/TransportToggle';
 import { useShownStatus } from '../../stores/connection';
@@ -289,7 +287,6 @@ export function MobileApp() {
   const anyPlugin = usePluginRegistry((s) => s.views.length > 0 || s.manifests.length > 0);
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
-  const unseenHere = usePreviews((s) => unseenPreviews(s.items, project?.id ?? null));
   // In a thread (2026-11-06, header option C): the title is the thread's own name, with its status,
   // status dot and account underneath (no project or Pretty/CLI label since 2026-11-06: the Back
   // button names the project and the body shows the mode); Previews and the CLI ⇄ Pretty switch
@@ -304,7 +301,6 @@ export function MobileApp() {
   // The project screen's ⋯ menu (2026-11-06): its header matches the thread screen's.
   const [projectMenu, setProjectMenu] = useState(false);
   const connection = useShownStatus();
-  useEffect(() => { void usePreviews.getState().load(); }, []);
   // The account under the thread name (multi-account, 2026-11-06): "Work".
   const accountsView = useAccounts((s) => s.view);
   useEffect(() => { if (leafTab) void useAccounts.getState().load(); }, [leafTab]);
@@ -315,19 +311,12 @@ export function MobileApp() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-      <PreviewSheet />
       {transport.confirmUi}
-      {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !leafTab} unseen={unseenHere} onClose={() => setProjectMenu(false)} onArchived={back} />}
+      {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !leafTab} onClose={() => setProjectMenu(false)} onArchived={back} />}
       <Slot name="app.overlay" />
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
         lead={(close, row) => (
           <>
-            {project && (
-              <button type="button" style={row} onClick={() => { close(); usePreviews.getState().openSheet(project.id); }}>
-                <Eye size={17} />Previews
-                {unseenHere > 0 && <span style={{ marginLeft: 'auto', font: '500 12px var(--font-mono)', color: 'var(--color-accent)' }}>{unseenHere} new</span>}
-              </button>
-            )}
             {transport.applies && (
               <button type="button" style={{ ...row, opacity: transport.canSwitch ? 1 : 0.5 }} disabled={!transport.canSwitch} title={transport.tip}
                 onClick={() => { close(); transport.request(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
@@ -392,21 +381,19 @@ export function MobileApp() {
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
           {level === 1 && !inSettings && project && !leafTab && <Slot name="project.header.actions" session={project} />}
           {level === 1 && !inSettings && project && !leafTab && (
-            <button type="button" aria-label="Project menu" title="Previews and project options"
+            <button type="button" aria-label="Project menu" title="Project options"
               onClick={() => setProjectMenu(true)}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <DotsThree size={22} weight="bold" />
-              <PreviewBadge count={unseenHere} />
             </button>
           )}
           {leafTab && <Slot name="thread.header.actions" terminal={leafTab} />}
           {leafTab && <AlertBell terminalId={leafTab.id} />}
           {leafTab && (
-            <button type="button" aria-label="Thread menu" title="Previews, Pretty / CLI and thread options"
+            <button type="button" aria-label="Thread menu" title="Pretty / CLI and thread options"
               onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setThreadMenu({ tab: leafTab, x: r.right, y: r.bottom }); }}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <DotsThree size={22} weight="bold" />
-              <PreviewBadge count={unseenHere} />
             </button>
           )}
         </div>

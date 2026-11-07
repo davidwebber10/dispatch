@@ -18,7 +18,6 @@ const PERMISSION_MEANING: Record<string, string> = {
   'read:threads': 'Reads threads and transcripts',
   'read:ledger': 'Reads project ledgers',
   'write:ledger': 'Adds to project ledgers',
-  'read:previews': 'Reads the previews lists',
   'read:prompts': 'Sees the text of your prompts in hooks',
   'message:threads': 'Sends messages to threads',
   'spawn:threads': 'Starts threads',

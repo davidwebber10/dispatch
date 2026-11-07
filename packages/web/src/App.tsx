@@ -9,9 +9,6 @@ import { OverseerView } from './components/overseer/OverseerView';
 import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
 import { Inspector } from './components/inspector/Inspector';
 import { SettingsView } from './components/settings/SettingsView';
-import { PreviewsView } from './components/previews/PreviewsView';
-import { PreviewSheet } from './components/previews/PreviewSheet';
-import { usePreviews } from './stores/previews';
 import { useUsageLimits } from './stores/usageLimits';
 import { PanelToggle } from './components/layout/PanelToggle';
 import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
@@ -170,7 +167,6 @@ export default function App() {
         useAnalyticsFeed.getState().applyEvent(e);
         useLedgerCard.getState().applyEvent(e);
         useEndless.getState().applyEvent(e);
-        usePreviews.getState().applyEvent(e);
         useUsageLimits.getState().applyEvent(e);
         applyPluginEvent(e);
       },
@@ -263,15 +259,12 @@ export default function App() {
       <AuthBanner />
       <UpdateModal />
       <HighScoreCelebration />
-      <PreviewSheet />
       <Slot name="app.overlay" />
       <AppShell>
         {view === 'settings'
           ? <SettingsView />
           : isPluginView(view)
           ? <PluginView viewKey={view} />
-          : view === 'previews'
-          ? <PreviewsView />
           : view === 'chat'
           ? <ChatMode />
           : view === 'analytics'

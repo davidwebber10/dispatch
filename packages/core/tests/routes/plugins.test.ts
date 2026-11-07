@@ -10,7 +10,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
-import { HTML_SANDBOX_CSP } from '../../src/routes/previews.js';
+import { HTML_SANDBOX_CSP } from '../../src/http/active-content.js';
 import { createPluginsRouter } from '../../src/routes/plugins.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { KeysManager } from './keys-manager.js';

@@ -28,7 +28,6 @@ import { TranscriptionService } from './transcription/service.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { createLedgerRouter } from './routes/ledger.js';
-import { createPreviewsRouter } from './routes/previews.js';
 import { createPluginsRouter } from './routes/plugins.js';
 import type { PluginRegistry } from './plugins/registry.js';
 import type { AssistRunner } from './assist/run.js';
@@ -150,7 +149,6 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   app.use('/api', createLedgerRouter(d.ledgerService));
-  app.use('/api', createPreviewsRouter(d.db, d.broadcaster));
   app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));

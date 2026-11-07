@@ -11,14 +11,14 @@ beforeEach(() => {
 });
 
 describe('ProjectMenu plugin items (2026-11-07)', () => {
-  it('a plugin item shows after Previews with the session, and closes the menu when picked', () => {
+  it('a plugin item shows first with the session, and closes the menu when picked', () => {
     const onPick = vi.fn();
     usePluginRegistry.getState().register('p', { projectMenu: [{ id: 'open-code', label: 'Open in VS Code', onPick }] });
     const onClose = vi.fn();
-    render(<ProjectMenu project={project} open unseen={0} onClose={onClose} onArchived={() => {}} />);
+    render(<ProjectMenu project={project} open onClose={onClose} onArchived={() => {}} />);
     const menu = screen.getByRole('menu');
     const labels = within(menu).getAllByRole('button').map((b) => b.textContent);
-    expect(labels.indexOf('Open in VS Code')).toBe(labels.indexOf('Previews') + 1);
+    expect(labels.indexOf('Open in VS Code')).toBe(0);
     fireEvent.click(within(menu).getByRole('button', { name: 'Open in VS Code' }));
     expect(onPick).toHaveBeenCalledWith({ session: expect.objectContaining({ id: 's1' }) });
     expect(onClose).toHaveBeenCalled();
@@ -26,7 +26,7 @@ describe('ProjectMenu plugin items (2026-11-07)', () => {
 
   it('`when` hides an item for a project it does not apply to', () => {
     usePluginRegistry.getState().register('p', { projectMenu: [{ id: 'x', label: 'Only beta', when: ({ session }) => session.name === 'Beta', onPick: () => {} }] });
-    render(<ProjectMenu project={project} open unseen={0} onClose={() => {}} onArchived={() => {}} />);
+    render(<ProjectMenu project={project} open onClose={() => {}} onArchived={() => {}} />);
     expect(screen.queryByRole('button', { name: 'Only beta' })).toBeNull();
   });
 });

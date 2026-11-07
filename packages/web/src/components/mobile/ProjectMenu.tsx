@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { Eye, PencilSimple, Archive } from '@phosphor-icons/react';
+import { PencilSimple, Archive } from '@phosphor-icons/react';
 import type { Session } from '../../api/types';
 import { Modal } from '../common/Modal';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameProjectModal } from '../sidebar/RenameProjectModal';
 import { useProjects } from '../../stores/projects';
-import { usePreviews } from '../../stores/previews';
 import { useContributions } from '../../plugins/registry';
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 15, font: 'inherit' };
@@ -15,7 +14,7 @@ const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8
  * screen's, so its options live behind one ⋯ button too. Previews first (the header button it
  * replaces), then the project's own actions, the same two the desktop right-click offers.
  */
-export function ProjectMenu({ project, open, unseen, onClose, onArchived }: { project: Session; open: boolean; unseen: number; onClose: () => void; onArchived: () => void }) {
+export function ProjectMenu({ project, open, onClose, onArchived }: { project: Session; open: boolean; onClose: () => void; onArchived: () => void }) {
   const [renaming, setRenaming] = useState(false);
   // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
   const pluginItems = useContributions('projectMenu');
@@ -28,10 +27,6 @@ export function ProjectMenu({ project, open, unseen, onClose, onArchived }: { pr
     <>
       <Modal open={open} sheet title={project.name} onClose={onClose}>
         <div role="menu" style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
-          <button type="button" style={row} onClick={() => { onClose(); usePreviews.getState().openSheet(project.id); }}>
-            <Eye size={17} />Previews
-            {unseen > 0 && <span style={{ marginLeft: 'auto', font: '500 12px var(--font-mono)', color: 'var(--color-accent)' }}>{unseen} new</span>}
-          </button>
           {pluginItems.filter((p) => !p.when || p.when({ session: project })).map((p) => (
             <button key={`${p.plugin}:${p.id}`} type="button" style={row} onClick={() => { onClose(); p.onPick({ session: project }); }}>{p.label}</button>
           ))}

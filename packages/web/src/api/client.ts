@@ -3,7 +3,7 @@ import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { Preview, SpinnerVerbs, SpinnerSet } from './types';
+import type { SpinnerVerbs, SpinnerSet } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -102,9 +102,6 @@ const qs = (o: QueryParams): string => {
 
 /** A saved Endless Chat image (`EndlessMessage.media` holds file names). */
 export const endlessMediaUrl = (name: string): string => apiPath(`/api/endless/media/${encodeURIComponent(name)}`);
-/** The bytes of file k of a preview (same origin, so an <img> and a new tab both work). */
-export const previewFileUrl = (id: string, k: number): string => apiPath(`/api/previews/${encodeURIComponent(id)}/files/${k}`);
-
 export const api = {
   // Endless Chat (spec 2026-10-13).
   endlessMessages: (p: { before?: number; around?: number; limit?: number; project?: string | null } = {}) => {
@@ -405,10 +402,6 @@ export const api = {
   accountsRename: (provider: AccountProvider, id: string, label: string) => req<AccountsView>(`/api/accounts/${provider}/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ label }) }),
   accountsThreads: (provider: AccountProvider, id: string) => req<AccountThread[]>(`/api/accounts/${provider}/${encodeURIComponent(id)}/threads`),
   // Previews: what threads handed the user to look at or copy.
-  listPreviews: (sessionId?: string, limit = 200) =>
-    req<{ previews: Preview[]; unseen: number }>(sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/previews?limit=${limit}` : `/api/previews?limit=${limit}`),
-  markPreviewSeen: (id: string) => req<Preview>(`/api/previews/${encodeURIComponent(id)}/seen`, { method: 'POST' }),
-  deletePreview: (id: string) => req<void>(`/api/previews/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md).
   listPlugins: () => req<{ plugins: PluginRow[] }>('/api/plugins'),
   scaffoldPlugin: (id: string, name: string) => req<PluginRow>('/api/plugins/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }) }),
@@ -429,11 +422,6 @@ export const api = {
   deletePluginDoc: (id: string, key: string) => req<void>(`/api/plugins/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}`, { method: 'DELETE' }),
   getPluginSettings: (id: string) => req<{ value: unknown; updatedAt: string | null }>(`/api/plugins/${encodeURIComponent(id)}/settings`),
   setPluginSettings: (id: string, value: unknown) => req<{ value: unknown; updatedAt: string }>(`/api/plugins/${encodeURIComponent(id)}/settings`, { method: 'PUT', body: JSON.stringify({ value }) }),
-  previewFileText: async (id: string, k: number): Promise<string> => {
-    const res = await fetch(previewFileUrl(id, k));
-    if (!res.ok) throw new ApiError(`GET preview file failed: ${res.status}`, res.status);
-    return res.text();
-  },
   // A one-time sign-in code for another device (Settings → Devices & access). 404 on a hosted box, where
   // there is no sign-in page to type it on.
   makePairCode: () => req<{ code: string; expiresAt: number }>('/api/access/pair-code', { method: 'POST' }),

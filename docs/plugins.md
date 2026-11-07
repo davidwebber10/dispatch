@@ -131,7 +131,6 @@ removed. Anything not listed is refused: `The plugin "<id>" lacks the permission
 | `read:projects` | the project list |
 | `read:threads` | a project's threads and a thread's transcript |
 | `read:ledger` | a project's ledger card and item sources |
-| `read:previews` | the previews lists |
 | `threads:read-storage` | a thread key may read this plugin's documents |
 | `threads:write-storage` | a thread key may write them; the daemon stamps the writing thread on the document |
 | `storage` | implied: the plugin's own documents and settings |

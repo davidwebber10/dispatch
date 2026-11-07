@@ -28,7 +28,7 @@ describe('plugin keys on the read routes (2026-11-07)', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-keys-'));
     db = new Database(':memory:');
     initSchema(db);
-    plugin('reader', ['read:projects', 'read:threads', 'read:ledger', 'read:previews']);
+    plugin('reader', ['read:projects', 'read:threads', 'read:ledger']);
     plugin('writer', ['read:ledger', 'write:ledger']);
     plugin('nothing', []);
     const mgr = new KeysManager();
@@ -62,19 +62,6 @@ describe('plugin keys on the read routes (2026-11-07)', () => {
     expect(no.body.message).toContain('"read:ledger"');
     expect((await request(app).post('/api/sessions/A/ledger/list').set(asPlugin('reader')).send({})).status).toBe(403);
     expect((await request(app).post('/api/sessions/A/ledger').set(asPlugin('writer')).send({ title: 'x' })).status).toBe(403);
-  });
-
-  it('read:previews opens the previews lists', async () => {
-    expect((await request(app).get('/api/previews').set(asPlugin('reader'))).status).toBe(200);
-    expect((await request(app).get('/api/sessions/A/previews').set(asPlugin('reader'))).status).toBe(200);
-    expect((await request(app).get('/api/previews').set(asPlugin('writer'))).status).toBe(403);
-  });
-
-  it('the previews lists stay closed to thread keys (previews spec: owner only); the owner lists them', async () => {
-    const thread = { Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key}` };
-    expect((await request(app).get('/api/previews').set(thread)).status).toBe(403);
-    expect((await request(app).get('/api/sessions/A/previews').set(thread)).status).toBe(403);
-    expect((await request(app).get('/api/previews')).status).toBe(200);
   });
 
   it('a refused request that names a plugin in X-Dispatch-Plugin is logged with the plugin', async () => {

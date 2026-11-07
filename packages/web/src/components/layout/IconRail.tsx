@@ -5,7 +5,6 @@ import { BrandSwitcher } from './BrandSwitcher';
 import { useShownStatus } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
-import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { UsageChip } from './UsageChip';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
@@ -57,7 +56,6 @@ const NAV: { view: View; label: string; icon: Icon }[] = [
   { view: 'workspace', label: 'Threads', icon: Rows },
   { view: 'chat', label: 'Chat', icon: ChatCircleDots },
   { view: 'analytics', label: 'Analytics', icon: ChartBar },
-  { view: 'previews', label: 'Previews', icon: Eye },
 ];
 
 /**
@@ -72,12 +70,9 @@ export function IconRail() {
   const servers = useServers((s) => s.servers);
   const conn = CONN[status];
   const serverLabel = currentLabel(servers, window.location.origin);
-  const unseen = usePreviews((s) => unseenPreviews(s.items));
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
   const badges = usePluginRegistry((s) => s.badges);
-  // The badge needs the list before the view is ever opened.
-  useEffect(() => { void usePreviews.getState().load(); }, []);
 
   // ⌘, — the platform-standard preferences shortcut, now that Settings is a page.
   useEffect(() => {
@@ -99,7 +94,7 @@ export function IconRail() {
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
       {NAV.map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
-          active={view === n.view} onClick={() => setView(n.view)} badge={n.view === 'previews' ? unseen : 0} />
+          active={view === n.view} onClick={() => setView(n.view)} />
       ))}
       {pluginViews.map((v) => (
         <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}

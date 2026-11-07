@@ -5,7 +5,7 @@ import { create } from 'zustand';
 // 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
 // that bypasses Workspace entirely (see App.tsx).
 // `plugin:<id>:<view>` is a plugin's screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
-export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | 'previews' | `plugin:${string}`;
+export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | `plugin:${string}`;
 export type InspectorTab = 'details' | 'files';
 
 const LKEY = 'dispatch:left-collapsed';
@@ -14,13 +14,15 @@ const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
 // Board is temporarily hidden; restore saved Board selections to Threads.
-const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat', 'previews'];
+const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
 // what regressed originally (the old check recognised only 'board').
 export const loadView = (): View => {
   try {
     const v = localStorage.getItem(VKEY) as View | null;
+    // Previews is a plugin screen now (plugins slice 4): a saved 'previews' opens it.
+    if ((v as string) === 'previews') return 'plugin:previews:history';
     return v && (VIEWS.includes(v) || v.startsWith('plugin:')) ? v : 'workspace';
   } catch { return 'workspace'; }
 };

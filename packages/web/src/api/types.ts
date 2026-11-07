@@ -550,21 +550,6 @@ export interface UsageSummary {
 /** GET/PUT /api/settings/usage-limits: daemon-wide, every device sees the same values. */
 export interface UsageLimitSettings { warnPercent: number; pushOnWarn: boolean }
 
-/** Previews (docs/superpowers/specs/2026-10-28-previews-design.md): what a thread handed the user to look at or copy. */
-export interface PreviewFile { path: string; name: string; mime: string; size: number }
-export interface Preview {
-  id: string;
-  sessionId: string;
-  sessionName: string;
-  terminalId: string | null;
-  terminalLabel: string | null;
-  title: string;
-  note: string | null;
-  text: string | null;
-  files: PreviewFile[];
-  createdAt: string;
-  seenAt: string | null;
-}
 
 /** Accounts per harness (multi-account spec 2026-11-06). `cli` is the CLI's own login on the daemon's computer. */
 export type AccountProvider = 'claude' | 'codex';

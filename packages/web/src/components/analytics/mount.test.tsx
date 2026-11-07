@@ -15,6 +15,11 @@ describe('analytics mounting', () => {
     expect(localStorage.getItem('dispatch:view')).toBe('analytics');
   });
 
+  it("a saved 'previews' view opens the Previews plugin screen (plugins slice 4)", () => {
+    localStorage.setItem('dispatch:view', 'previews');
+    expect(loadView()).toBe('plugin:previews:history');
+  });
+
   it('loadView reads a persisted analytics value back, instead of resetting to workspace', () => {
     localStorage.setItem('dispatch:view', 'analytics');
     expect(loadView()).toBe('analytics');
