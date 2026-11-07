@@ -71,6 +71,27 @@ const INSTALL_FILE = '.dispatch-install.json';
 /** `disabled`: plugins the owner turned off. `enabled`: bundled plugins the owner turned on (bundled ones start off unless their manifest says enabledByDefault). */
 interface StateFile { disabled: string[]; enabled: string[] }
 
+/**
+ * Bundled plugins that replaced another one (old id → new id). The owner's choice carries over
+ * once: an old id the owner had turned on turns the new one on, unless the owner already chose
+ * for the new one. The old id leaves the state at the next write. (Coach replaced the Prompt
+ * coach on 2026-11-07, coach spec section 9a.6.)
+ */
+const REPLACED: Record<string, string> = { 'prompt-coach': 'coach' };
+
+function carryOver(state: StateFile, exists: (id: string) => boolean): StateFile {
+  let { disabled, enabled } = state;
+  for (const [old, next] of Object.entries(REPLACED)) {
+    // A local folder with the old id is a plugin of its own: its state stays as it is.
+    if ((!enabled.includes(old) && !disabled.includes(old)) || exists(old)) continue;
+    const chose = enabled.includes(next) || disabled.includes(next);
+    if (enabled.includes(old) && !chose) enabled = [...enabled, next];
+    enabled = enabled.filter((x) => x !== old);
+    disabled = disabled.filter((x) => x !== old);
+  }
+  return { disabled, enabled };
+}
+
 export class PluginRegistry {
   private watcher: fs.FSWatcher | null = null;
   /** One more watcher per symlinked plugin folder: the top-level watcher does not follow links. */
@@ -206,7 +227,7 @@ export class PluginRegistry {
     try {
       const raw = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as Partial<StateFile>;
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
-      return { disabled: strings(raw.disabled), enabled: strings(raw.enabled) };
+      return carryOver({ disabled: strings(raw.disabled), enabled: strings(raw.enabled) }, (id) => this.folderOf(id) !== null);
     } catch { return { disabled: [], enabled: [] }; }
   }
 

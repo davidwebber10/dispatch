@@ -1,0 +1,21 @@
+{
+  "id": "coach",
+  "name": "Coach",
+  "version": "1.0.0",
+  "description": "Looks at how you work with AI and suggests one small next step at a natural break. You control how often, what it remembers, and what it may spend.",
+  "author": "dispatch",
+  "dispatch": ">=3.27",
+  "sdk": 1,
+  "web": "web.js",
+  "contributes": {
+    "views": [{ "id": "coach", "label": "Coach", "icon": "sparkle" }],
+    "settings": [{ "id": "coach", "label": "Coach" }],
+    "slots": ["composer.before"]
+  },
+  "permissions": ["read:prompts", "read:threads", "read:projects", "read:usage", "read:analytics", "model:assist", "notify:push"],
+  "worker": {
+    "command": "node",
+    "args": ["worker/index.mjs"],
+    "jobs": [{ "id": "weekly", "cron": "0 8 * * 1" }]
+  }
+}

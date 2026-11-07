@@ -35,6 +35,7 @@ const ICONS: Record<string, Icon> = {
   bell: Icons.Bell, chart: Icons.ChartBar, list: Icons.ListChecks, play: Icons.Play, gear: Icons.Gear, eye: Icons.Eye,
   chat: Icons.ChatCircleDots, book: Icons.BookOpen, bug: Icons.Bug, shield: Icons.ShieldCheck, globe: Icons.Globe, wrench: Icons.Wrench,
   copy: Icons.Copy, check: Icons.Check, trash: Icons.Trash, image: Icons.Image, file: Icons.FileText, pdf: Icons.FilePdf, html: Icons.FileHtml, csv: Icons.FileCsv, x: Icons.X,
+  'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash,
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
 /** A right-column tab's icon: a name from the list above, or the phosphor component itself. */

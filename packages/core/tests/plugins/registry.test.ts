@@ -363,3 +363,44 @@ describe('bundled plugins (2026-11-07, spec section 10)', () => {
     expect(new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys') }).list()).toEqual([]);
   });
 });
+
+describe('Coach replaces the Prompt coach (2026-11-07, coach spec section 9a.6)', () => {
+  let tmp: string; let dir: string; let keys: KeyRegistry;
+  const realBundled = path.resolve(__dirname, '../../../plugins');
+  const reg = (b = realBundled) => new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys'), bundledDir: b });
+  const state = (s: { disabled?: string[]; enabled?: string[] }) => fs.writeFileSync(path.join(tmp, 'plugins.json'), JSON.stringify({ disabled: s.disabled ?? [], enabled: s.enabled ?? [] }));
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-coach-')); dir = path.join(tmp, 'plugins'); keys = new KeyRegistry(); fs.mkdirSync(dir, { recursive: true }); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('coach is bundled and off by default', () => {
+    const row = reg().get('coach');
+    expect(row).toMatchObject({ id: 'coach', name: 'Coach', bundled: true, enabled: false });
+    expect(row!.error).toBeUndefined();
+    expect(row!.permissions).toEqual(expect.arrayContaining(['read:prompts', 'read:threads', 'read:projects', 'read:usage', 'read:analytics', 'model:assist', 'notify:push']));
+    expect(row!.worker?.jobs).toEqual([{ id: 'weekly', cron: '0 8 * * 1' }]);
+  });
+
+  it('prompt-coach is gone from the plugin list', () => {
+    const r = reg();
+    expect(r.get('prompt-coach')).toBeUndefined();
+    expect(r.list().map((p) => p.id)).not.toContain('prompt-coach');
+  });
+
+  it('coach starts on when prompt-coach was on, and the owner can still turn it off', () => {
+    state({ enabled: ['prompt-coach'] });
+    let r = reg(); r.issueKeys();
+    expect(r.get('coach')).toMatchObject({ enabled: true, keyed: true });
+    r.setEnabled('coach', false);
+    r = reg();
+    expect(r.get('coach')!.enabled).toBe(false);
+    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins.json'), 'utf8'));
+    expect(saved.enabled).not.toContain('prompt-coach');
+  });
+
+  it('a prompt-coach that was off leaves coach off; a coach the owner turned off stays off', () => {
+    state({ disabled: ['prompt-coach'] });
+    expect(reg().get('coach')!.enabled).toBe(false);
+    state({ enabled: ['prompt-coach'], disabled: ['coach'] });
+    expect(reg().get('coach')!.enabled).toBe(false);
+  });
+});
