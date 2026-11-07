@@ -240,7 +240,8 @@ A bundled plugin updates with Dispatch, cannot be removed, and is not edited in 
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
 `"enabledByDefault": true`: the coach makes a model call per prompt, so turning it on is the
-owner's choice on the Plugins page. A local plugin starts enabled.
+owner's choice on the Plugins page. A local plugin made with New plugin… or Copy to local… starts
+enabled; one that appears in the folder on its own starts disabled (see below).
 
 ## Marketplaces, install, update
 
@@ -283,7 +284,10 @@ The command validates `plugin.json`, clones the marketplace into a temp folder w
 login, refuses a version that is not newer than the one there, copies the folder to
 `plugins/<id>` (no `node_modules`, no install record, no symlinks), commits on
 `plugin/<id>-<version>`, pushes, and opens the pull request through `gh` (or prints the compare
-URL). Your local plugin stays local. `dispatch plugin list` and `dispatch skill list` read the
+URL). Without write access to a GitHub marketplace, the command forks it with `gh` and opens
+the pull request from your fork. Hidden files (`.env`, `.npmrc`), `node_modules`, symlinks and
+what the plugin's `.gitignore` names stay out; the file list is printed; a plugin over 10 MB is
+refused. Your local plugin stays local. `dispatch plugin list` and `dispatch skill list` read the
 daemon. `@dispatchd/sdk` (packages/sdk) types what `activate(d)` receives.
 
 ## Skills

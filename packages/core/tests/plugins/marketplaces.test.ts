@@ -99,6 +99,9 @@ describe('MarketplaceService', () => {
     expect(isMarketplaceUrl('https://user:TOKEN@github.com/x/y.git')).toBe(false);
     expect(isMarketplaceUrl('https://github.com/x/y.git')).toBe(true);
     expect(isMarketplaceUrl('git@github.com:x/y.git')).toBe(true);
+    expect(isMarketplaceUrl('ssh://git@github.com/x/y.git')).toBe(true);
+    expect(isMarketplaceUrl('ssh://git@gitlab.example.com:2222/x/y.git')).toBe(true);
+    expect(isMarketplaceUrl('ssh://user:pw@host/x/y.git')).toBe(false);
   });
 
   it('a marketplace removed while its pull runs does not throw', async () => {

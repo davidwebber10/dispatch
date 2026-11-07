@@ -290,7 +290,7 @@ export function PluginsSection() {
           <button type="button" style={solidBtn(marketUrl.trim().length > 0)} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
         </div>
         {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
-        {!markets.some((m) => /github\.com\/polywood\/dispatch-plugins/.test(m.url)) && (
+        {!markets.some((m) => /github\.com[/:]polywood\/dispatch-plugins/.test(m.url)) && (
           <div style={{ ...note, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>The public marketplace is {PUBLIC_MARKETPLACE}.</span>
             <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun('add', () => api.addMarketplace(PUBLIC_MARKETPLACE))}>Add it</button>

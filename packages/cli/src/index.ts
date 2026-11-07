@@ -4,7 +4,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
-import { publishPlugin } from './plugin-publish.js';
 
 const require = createRequire(import.meta.url);
 
@@ -272,10 +271,13 @@ const API_USAGE = 'usage: dispatch api METHOD PATH [--body FILE | --body -]  (PA
 export async function cmdPlugin(ctx: Ctx, args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (sub === 'publish') {
-    const folder = rest.find((a) => !a.startsWith('--'));
-    const to = rest[rest.indexOf('--to') + 1];
+    const to = rest.includes('--to') ? rest[rest.indexOf('--to') + 1] : undefined;
     const branch = rest.includes('--branch') ? rest[rest.indexOf('--branch') + 1] : undefined;
+    // The folder is the one argument that is neither a flag nor a flag's value.
+    const folder = rest.find((a, i) => !a.startsWith('--') && rest[i - 1] !== '--to' && rest[i - 1] !== '--branch');
     if (!folder || !rest.includes('--to') || !to) throw new Error('usage: dispatch plugin publish <folder> --to <marketplace url or slug> [--branch name] [--dry-run]');
+    // Loaded here, not at the top: every other command must run even when core's plugin files are stale.
+    const { publishPlugin } = await import('./plugin-publish.js');
     const r = await publishPlugin({ folder, marketplace: to, branch, dryRun: rest.includes('--dry-run'), dataDir: ctx.dataDir, log: (l) => console.log(l) });
     console.log(`${r.id} ${r.version} → ${r.branch}${r.prUrl ? ` (${r.prUrl})` : ''}`);
     return;

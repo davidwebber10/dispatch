@@ -23,7 +23,8 @@ const MAX_OUT = 64 * 1024 * 1024;
 export function isMarketplaceUrl(url: string): boolean {
   if (typeof url !== 'string' || !url || /[\s\x00-\x1f]/.test(url) || url.startsWith('-')) return false;
   // A user or token before the host would be stored in the clone's config and shown on the page: never.
-  if (/^(https?|ssh):\/\/[^/]*@/.test(url)) return false;
+  // ssh's own user (ssh://git@host/...) is fine; a password never is.
+  if (/^https?:\/\/[^/]*@/.test(url) || /^ssh:\/\/[^/@]*:[^/@]*@/.test(url)) return false;
   return /^https?:\/\/[^/]+\/.+/.test(url) || /^ssh:\/\/[^/]+\/.+/.test(url) || /^git@[\w.-]+:.+/.test(url) || /^file:\/\/\/.+/.test(url) || path.isAbsolute(url);
 }
 

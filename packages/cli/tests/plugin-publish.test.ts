@@ -88,4 +88,65 @@ describe('publishPlugin', () => {
     try { await expect(publishPlugin(opts())).rejects.toThrow(/push failed:/); } finally { fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o755); }
     expect(fs.readdirSync(path.join(root, 'tmp'))).toEqual([]);
   });
+
+  it('hidden files and the plugin\'s .gitignore stay out; the file list is printed; an oversize folder is refused', async () => {
+    plugin('1.0.0');
+    fs.writeFileSync(path.join(folder, '.env'), 'API_KEY=secret');
+    fs.writeFileSync(path.join(folder, '.npmrc'), '//registry:_authToken=x');
+    fs.writeFileSync(path.join(folder, '.gitignore'), 'build/\n*.log\n');
+    fs.mkdirSync(path.join(folder, 'build')); fs.writeFileSync(path.join(folder, 'build', 'out.js'), 'x');
+    fs.writeFileSync(path.join(folder, 'debug.log'), 'x');
+    fs.writeFileSync(path.join(folder, 'README.md'), '# hi');
+    const r = await publishPlugin(opts());
+    expect(g(bare, 'ls-tree', '-r', '--name-only', r.branch).trim().split('\n').sort()).toEqual(['marketplace.json', 'plugins/hello/README.md', 'plugins/hello/plugin.json', 'plugins/hello/web.js']);
+    expect(log.join('\n')).toMatch(/Files:[\s\S]*web\.js/);
+    expect(log.join('\n')).not.toMatch(/\.env/);
+    plugin('1.0.1');
+    fs.writeFileSync(path.join(folder, 'huge.bin'), Buffer.alloc(11 * 1024 * 1024));
+    await expect(publishPlugin(opts())).rejects.toThrow(/larger than 10 MB/);
+  });
+
+  it('the commit carries the author\'s own git identity when there is one, and a fixed one only when there is none', async () => {
+    plugin('1.0.0');
+    const cfg = path.join(root, 'gitconfig'); fs.writeFileSync(cfg, '[user]\n\tname = Ann Author\n\temail = ann@example.com\n');
+    const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_(AUTHOR|COMMITTER)_/.test(k)));
+    const runWith = (extra: Record<string, string>): Runner => (cmd, args, o) => {
+      if (cmd === 'gh') return { code: 127, stdout: '', stderr: 'gh: command not found' };
+      const r = spawnSync(cmd, args, { cwd: o.cwd, env: { ...clean, ...extra }, encoding: 'utf8' });
+      return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
+    };
+    const r = await publishPlugin(opts({ run: runWith({ GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: '1' }) }));
+    expect(g(bare, 'log', '-1', '--format=%an <%ae>', r.branch).trim()).toBe('Ann Author <ann@example.com>');
+    plugin('1.0.1');
+    const r2 = await publishPlugin(opts({ run: runWith({ GIT_CONFIG_GLOBAL: path.join(root, 'none'), GIT_CONFIG_NOSYSTEM: '1', HOME: root }) }));
+    expect(g(bare, 'log', '-1', '--format=%an', r2.branch).trim()).toBe('dispatch plugin publish');
+  });
+
+  it('an id that is not a plugin id is refused before anything is cloned', async () => {
+    const bad = path.join(root, 'Hello');
+    fs.mkdirSync(bad); fs.writeFileSync(path.join(bad, 'plugin.json'), JSON.stringify({ id: 'Hello', name: 'H', version: '1.0.0' }));
+    await expect(publishPlugin(opts({ folder: bad }))).rejects.toThrow(/not a plugin id/);
+  });
+
+  it('no write access to a GitHub marketplace: forks it with gh, pushes to the fork, and opens the PR upstream', async () => {
+    plugin('1.0.0');
+    const fork = path.join(root, 'fork.git'); fs.cpSync(bare, fork, { recursive: true });
+    fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o500);
+    const base = runner();
+    const run: Runner = (cmd, args, o) => {
+      if (cmd === 'gh' && args[0] === 'api') return { code: 0, stdout: 'someone\n', stderr: '' };
+      if (cmd === 'gh' && args[0] === 'repo' && args[1] === 'fork') { ghCalls.push(args); return { code: 0, stdout: '', stderr: '' }; }
+      if (cmd === 'git' && args[0] === 'remote' && args[1] === 'add') return base(cmd, [args[0], args[1], args[2], fork], o);
+      return base(cmd, args, o);
+    };
+    try {
+      const r = await publishPlugin(opts({ run, githubUrlFor: () => 'https://github.com/polywood/dispatch-plugins.git' }));
+      expect(r.prUrl).toBe('https://github.com/polywood/dispatch-plugins/pull/7');
+      expect(g(fork, 'branch', '--list').replace(/\*/g, '').trim().split('\n').map((x) => x.trim()).sort()).toEqual(['main', 'plugin/hello-1.0.0']);
+      expect(ghCalls.find((c) => c[0] === 'repo')).toEqual(['repo', 'fork', 'polywood/dispatch-plugins', '--clone=false', '--remote=false']);
+      const pr = ghCalls.find((c) => c[0] === 'pr')!;
+      expect(pr).toEqual(expect.arrayContaining(['--repo', 'polywood/dispatch-plugins', '--head', 'someone:plugin/hello-1.0.0']));
+      expect(pr).not.toContain('--base');
+    } finally { fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o755); }
+  });
 });
