@@ -349,12 +349,15 @@ export function buildPeerPrompt(ctx: {
   return (
     `PROJECT CONTEXT: you are thread "${ctx.selfLabel}" (${ctx.selfId}) in project "${ctx.projectName}" ` +
     `(${ctx.workingDir}). Other threads in this same project are your PEERS — you can see, read, ` +
-    'message, and watch them.\n\n' +
+    'message, and watch them. Threads in OTHER projects are reachable too: list_projects() names the ' +
+    'projects, list_threads({ projectId }) lists one, and read_thread/message_thread take a thread id ' +
+    'from any project — including an id the user pastes to you (the thread menu has "Copy thread ID").\n\n' +
     `${roster}\n\n` +
     'Peer tools (a "dispatch" MCP server):\n' +
-    '- list_threads() — the live roster: id, label, type, role, agentType, status, lastActivityAt; your own row is tagged isSelf.\n' +
-    '- read_thread({ id, tail? }) — read a peer\'s transcript and output.\n' +
-    '- message_thread({ id, text }) — send a peer a message.\n' +
+    '- list_projects() — every project: id, name, coordinatorId, isOwn.\n' +
+    '- list_threads({ projectId? }) — the live roster of your project (or another): id, label, type, role, agentType, status, lastActivityAt; your own row is tagged isSelf.\n' +
+    '- read_thread({ id, tail? }) — read a thread\'s transcript and output, in any project.\n' +
+    '- message_thread({ id, text }) — send a thread a message, in any project. A message from another project reaches its receiver under a line that names your project and thread.\n' +
     '- watch_thread({ id, when, note?, once? }) — a PUSH subscription: register interest (when: ' +
     '"idle" | "needs_input" | "error" | "any") and go idle at zero token cost — the daemon wakes you ' +
     'with a message the instant that peer hits it. PREFER watch_thread over polling read_thread in a ' +

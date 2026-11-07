@@ -97,11 +97,13 @@ export function createKeyScope(db: Database.Database): KeyScope {
       target.id !== caller.id
       && target.sessionId === caller.sessionId
       && (target.spawnedBy === caller.id || isCoordinatorOfProject(caller, target.sessionId)),
-    mayRead: (caller, sessionId) => caller.overseer || caller.sessionId === sessionId,
+    // Owner decision PK-5 (2026-11-06): every thread key reads every project and messages any thread of
+    // any project (the receiver gets a sender line, 6.4.1). A role run keeps its own project only.
+    mayRead: (caller, sessionId) => caller.sessionId === sessionId || !caller.roleRun,
     mayMessage: (caller, target) => {
       if (target.id === caller.id || target.type === 'shell') return false;
       if (target.sessionId === caller.sessionId) return true;
-      return caller.overseer && target.overseer;
+      return !caller.roleRun;
     },
   };
 }

@@ -1301,10 +1301,10 @@ export class SessionService {
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
-    fromProject?: { name: string; terminalId: string },
+    fromProject?: import('../auth/key-rules.js').SenderFacts,
   ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
-    // A cross-project message from another project's overseer (owner decision PK-4): the daemon puts
-    // one line before the text so the receiver, and the owner who reads the thread, see where it came from.
+    // A cross-project message from a thread of another project (owner decisions PK-4 and PK-5): the daemon
+    // puts one line before the text so the receiver, and the owner who reads the thread, see where it came from.
     if (fromProject) {
       const line = senderLine(fromProject);
       content = typeof content === 'string' ? `${line}\n\n${content}` : [{ type: 'text', text: line }, ...content];

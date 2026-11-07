@@ -160,16 +160,16 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
-      // A cross-project message from an overseer key: the rule names the sender, the daemon looks up
+      // A cross-project message from a thread key: the rule names the sender, the daemon looks up
       // the project name and puts the sender line before the text.
-      const from = res.locals.fromProject as { sessionId: string; terminalId: string } | undefined;
+      const from = res.locals.fromProject as { sessionId: string; terminalId: string; thread?: string | null; overseer?: boolean } | undefined;
       // A worker thread writes to its overseer: its text is data, under a line that names the thread (SEC-25).
       const fromThread = res.locals.fromThread as { terminalId: string } | undefined;
       const body = fromThread ? markThreadMessage(payload, fromThread.terminalId, sessionService.getTerminal(fromThread.terminalId)?.label) : payload;
       const logAs = canned === true ? 'canned' : undefined;
       const sent = from
         ? sessionService.sendThreadMessage(req.params.terminalId, body, source, logAs, {
-          name: sessionService.get(from.sessionId)?.name ?? from.sessionId, terminalId: from.terminalId,
+          name: sessionService.get(from.sessionId)?.name ?? from.sessionId, terminalId: from.terminalId, thread: from.thread, overseer: from.overseer,
         })
         : sessionService.sendThreadMessage(req.params.terminalId, body, source, logAs);
       if (source === 'user') sessionService.noteUserPrompt(req.params.terminalId, payload);

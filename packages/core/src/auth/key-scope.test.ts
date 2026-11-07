@@ -92,17 +92,25 @@ describe('createKeyScope', () => {
     mk('wB', 'B', { spawnedBy: 'cB', spawnDepth: 1 });
     mk('pB', 'B');
     mk('shA', 'A', {}, 'shell');
-    const cA = scope.caller('cA')!, wA = scope.caller('wA')!;
+    mk('rr', 'A', { roleRun: 'nightly' });
+    const cA = scope.caller('cA')!, wA = scope.caller('wA')!, rr = scope.caller('rr')!;
+    // PK-5 (2026-11-06): every thread reads every project and messages any agent thread of any project.
     expect(scope.mayRead(cA, 'B')).toBe(true);
-    expect(scope.mayRead(wA, 'B')).toBe(false);
+    expect(scope.mayRead(wA, 'B')).toBe(true);
     expect(scope.mayRead(wA, 'A')).toBe(true);
     expect(scope.mayMessage(cA, scope.target('cB')!)).toBe(true);
-    expect(scope.mayMessage(cA, scope.target('wB')!)).toBe(false);
-    expect(scope.mayMessage(cA, scope.target('pB')!)).toBe(false);
-    expect(scope.mayMessage(wA, scope.target('cB')!)).toBe(false);
+    expect(scope.mayMessage(cA, scope.target('wB')!)).toBe(true);
+    expect(scope.mayMessage(cA, scope.target('pB')!)).toBe(true);
+    expect(scope.mayMessage(wA, scope.target('cB')!)).toBe(true);
+    expect(scope.mayMessage(wA, scope.target('pB')!)).toBe(true);
     expect(scope.mayMessage(wA, scope.target('cA')!)).toBe(true);
     expect(scope.mayMessage(wA, scope.target('wA')!)).toBe(false);
     expect(scope.mayMessage(wA, scope.target('shA')!)).toBe(false);
+    // A role run keeps its own project.
+    expect(scope.mayRead(rr, 'A')).toBe(true);
+    expect(scope.mayRead(rr, 'B')).toBe(false);
+    expect(scope.mayMessage(rr, scope.target('cA')!)).toBe(true);
+    expect(scope.mayMessage(rr, scope.target('cB')!)).toBe(false);
     expect(scope.isCoordinatorOfProject(cA, 'A')).toBe(true);
     expect(scope.isCoordinatorOfProject(cA, 'B')).toBe(false);
     expect(scope.isCoordinatorOfProject(wA, 'A')).toBe(false);

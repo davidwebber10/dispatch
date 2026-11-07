@@ -170,7 +170,7 @@ describe('agency-mcp sends the thread key', () => {
     expect(del[0]).toBe(`${API}/api/terminals/a1`);
   });
 
-  describe('cross-project reach (overseer keys)', () => {
+  describe('cross-project reach (every thread key, PK-5 2026-11-06)', () => {
     const foreign = (id: string, role: string) => (u: string) =>
       u === `${API}/api/terminals/${id}` ? { body: { id, sessionId: 'sess-B', status: 'idle', config: { role } } } : undefined;
     const convo = (u: string) => (u.includes('/conversation') ? { body: { items: [{ kind: 'assistant', text: 'hello' }] } } : undefined);
@@ -187,7 +187,7 @@ describe('agency-mcp sends the thread key', () => {
         { id: 'sess-B', name: 'Bee', coordinatorId: 'c2', isOwn: false },
       ]);
       const tool = TOOLS.find((t) => t.name === 'list_projects') as any;
-      expect(tool.description).toMatch(/overseer/i);
+      expect(tool.description).toMatch(/any thread can use this/i);
     });
 
     it('list_threads with projectId reads that project, and each row has projectId', async () => {
@@ -218,33 +218,34 @@ describe('agency-mcp sends the thread key', () => {
       expect(a.isError).toBeUndefined();
     });
 
-    it('non-overseer: read_thread and read_agent on a project B id are refused with no conversation fetch', async () => {
-      const { calls } = install([whoamiRoute({ overseer: false }), foreign('f1', 'agent'), convo]);
+    it('non-overseer: read_thread and read_agent on a project B id pass the client check too', async () => {
+      const { calls } = install([whoamiRoute({ overseer: false }), foreign('f1', 'agent'), convo, (u) => (u.endsWith('/permission') ? { status: 404 } : undefined)]);
       const t = await callTool('read_thread', { id: 'f1' });
-      expect(t.content[0].text).toBe('Error: f1 is not a thread in this project');
+      expect(t.isError).toBeUndefined();
       const a = await callTool('read_agent', { agentId: 'f1' });
-      expect(a.content[0].text).toBe('Error: f1 is not a thread in this project');
-      expect(calls.some((c) => c.url.includes('/conversation'))).toBe(false);
+      expect(a.isError).toBeUndefined();
+      expect(calls.some((c) => c.url.includes('/conversation'))).toBe(true);
     });
 
-    it('overseer: message_thread to project B coordinator passes; to a project B worker is refused with no POST', async () => {
-      const { calls } = install([
-        whoamiRoute({ overseer: true }), foreign('co', 'coordinator'), foreign('wk', 'agent'),
-        (u, i) => (i?.method === 'POST' ? { status: 204 } : undefined),
-      ]);
-      const ok = await callTool('message_thread', { id: 'co', text: 'hi' });
-      expect(ok.isError).toBeUndefined();
-      expect(calls.some((c) => c.init?.method === 'POST' && c.url === `${API}/api/terminals/co/message`)).toBe(true);
-      const bad = await callTool('message_thread', { id: 'wk', text: 'hi' });
-      expect(bad.content[0].text).toBe("Error: outside your project you can only message another project's overseer.");
-      expect(calls.some((c) => c.url === `${API}/api/terminals/wk/message`)).toBe(false);
+    it('message_thread to a project B coordinator and to a project B worker both POST, for an overseer and a worker', async () => {
+      for (const overseer of [true, false]) {
+        const { calls } = install([
+          whoamiRoute({ overseer }), foreign('co', 'coordinator'), foreign('wk', 'agent'),
+          (u, i) => (i?.method === 'POST' ? { status: 204 } : undefined),
+        ]);
+        for (const id of ['co', 'wk']) {
+          const ok = await callTool('message_thread', { id, text: 'hi' });
+          expect(ok.isError, `${overseer} ${id}`).toBeUndefined();
+          expect(calls.some((c) => c.init?.method === 'POST' && c.url === `${API}/api/terminals/${id}/message`)).toBe(true);
+        }
+      }
     });
 
-    it('non-overseer: message_thread to project B coordinator is refused with no POST', async () => {
-      const { calls } = install([whoamiRoute({ overseer: false }), foreign('co', 'coordinator'), (u, i) => (i?.method === 'POST' ? { status: 204 } : undefined)]);
-      const out = await callTool('message_thread', { id: 'co', text: 'hi' });
+    it('a daemon refusal of a message shows as itself', async () => {
+      install([whoamiRoute({ overseer: false }), foreign('sh', 'agent'), (u, i) => (i?.method === 'POST' ? { status: 403, body: { error: 'out_of_scope', message: 'Daemon says no.' } } : undefined)]);
+      const out = await callTool('message_thread', { id: 'sh', text: 'hi' });
       expect(out.isError).toBe(true);
-      expect(calls.some((c) => c.init?.method === 'POST')).toBe(false);
+      expect(out.content[0].text).toBe('Error: Daemon says no.');
     });
 
     it('assertReadable shows a 403 as itself, not as not in this project', async () => {
@@ -253,11 +254,11 @@ describe('agency-mcp sends the thread key', () => {
       expect(out.content[0].text).toBe('Error: Daemon says no.');
     });
 
-    it('descriptions name the overseer reach', () => {
+    it('descriptions name the cross-project reach and the sender line', () => {
       for (const n of ['list_threads', 'read_thread', 'message_thread']) {
         const d = (TOOLS.find((t) => t.name === n) as any).description as string;
-        expect(d).toContain('Overseers (project coordinators) can also use this on other projects: read any thread, and message only another project\'s overseer.');
-        expect(d).toContain("Messages you receive from another project's overseer start with a line that names its project.");
+        expect(d).toContain('Works across projects too: pass a thread id from any project');
+        expect(d).toContain('A message that comes from a thread of another project starts with a line that names that project and thread.');
       }
     });
   });

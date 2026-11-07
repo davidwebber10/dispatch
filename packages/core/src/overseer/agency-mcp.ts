@@ -71,9 +71,6 @@ async function ensureIdentity(): Promise<void> {
 function sessionId(): string {
   return identity?.sessionId || process.env.DISPATCH_SESSION || '';
 }
-function isOverseer(): boolean {
-  return identity?.overseer === true;
-}
 /** The calling thread's own terminal id — how a tool knows "who am I" (e.g. to
  *  mark its own row in list_threads, or to register itself as a watcher). */
 function selfTerminalId(): string {
@@ -107,10 +104,10 @@ const LEDGER_IDS_ARG_DESCRIPTION =
   '(verbatim, from the ledger)" with those items\' rendered lines, so the agent gets the question and ' +
   "the user's exact words, not a paraphrase. Overseer only.";
 
-/** The cross-project rule of the peer tools (owner decision on overseer reach, spec 6.4.1). */
+/** The cross-project rule of the peer tools (owner decisions PK-4 and PK-5, spec 6.4.1). */
 const OVERSEER_REACH =
-  "Overseers (project coordinators) can also use this on other projects: read any thread, and message only another project's overseer. " +
-  "Messages you receive from another project's overseer start with a line that names its project.";
+  'Works across projects too: pass a thread id from any project (list_projects, then list_threads with its projectId, or an id the user pasted). ' +
+  'A message that comes from a thread of another project starts with a line that names that project and thread.';
 
 const LEDGER_IDS_SCHEMA = { type: 'array', items: { type: 'string' }, description: LEDGER_IDS_ARG_DESCRIPTION } as const;
 
@@ -361,7 +358,7 @@ export const TOOLS = [
   {
     name: 'list_projects',
     description:
-      'List the projects: id, name, coordinatorId, isOwn. Only a project\'s overseer (its coordinator) can use this. ' +
+      'List the projects: id, name, coordinatorId, isOwn. Any thread can use this. ' +
       'The other tools take a project id or a thread id from this list.',
     inputSchema: { type: 'object', properties: {} },
   },
@@ -375,14 +372,14 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        projectId: { type: 'string', description: 'Optional: another project\'s id (from list_projects). Default: your own project. Overseers only.' },
+        projectId: { type: 'string', description: 'Optional: another project\'s id (from list_projects). Default: your own project.' },
       },
     },
   },
   {
     name: 'read_thread',
     description:
-      "Read any thread's transcript in this project — its assistant output and the tools it ran " +
+      "Read any thread's transcript, in this project or another — its assistant output and the tools it ran " +
       '(generalizes read_agent beyond typed agents to every peer). Returns { id, status, output, tools }. ' +
       'Pass `tail` to cap how many recent conversation items are pulled (default 500). ' + OVERSEER_REACH,
     inputSchema: {
@@ -397,7 +394,7 @@ export const TOOLS = [
   {
     name: 'message_thread',
     description:
-      'Send a message to any thread in this project — a peer, a typed agent, or a plain thread the ' +
+      'Send a message to any thread, in this project or another — a peer, a typed agent, or a plain thread the ' +
       'user is working in (generalizes message_agent beyond typed agents to every peer). Works on ' +
       'either transport: a Pretty thread receives it on its structured channel, a CLI/PTY thread ' +
       'has it typed into its terminal. The target must be running. ' + OVERSEER_REACH,
@@ -895,14 +892,13 @@ async function fetchTerminal(id: string): Promise<any> {
 }
 
 /**
- * Like assertInProject, but an overseer may also read a thread of another project. The daemon is the
- * authority; this only gives a clean error first. A worker gets the same error as for an unknown id.
+ * Like assertInProject, but any project passes (PK-5): a thread reads and messages threads of other
+ * projects too. The daemon is the authority (it refuses with its own message); this only turns an
+ * unknown id into a clean error first.
  */
 async function assertReadable(id: string): Promise<any> {
   const terminal = await fetchTerminal(id);
-  if (!terminal || (terminal.sessionId !== sessionId() && !isOverseer())) {
-    throw new Error(`${id} is not a thread in this project`);
-  }
+  if (!terminal) throw new Error(`${id} is not a thread Dispatch knows`);
   return terminal;
 }
 
@@ -977,10 +973,7 @@ async function messageThread(args: { id: string; text: string }): Promise<{ ok: 
   if (!selfCheck.ok) throw new Error(selfCheck.reason);
   const rateCheck = pairRateLimiter.check(self, args.id);
   if (!rateCheck.ok) throw new Error(rateCheck.reason);
-  const target = await assertReadable(args.id);
-  if (target.sessionId !== sessionId() && target?.config?.role !== 'coordinator') {
-    throw new Error("outside your project you can only message another project's overseer.");
-  }
+  await assertReadable(args.id);
   await httpJson('POST', `${apiBase()}/api/terminals/${args.id}/message`, { text: args.text, source: 'coordinator' });
   return { ok: true, id: args.id };
 }

@@ -42,7 +42,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   router.get('/', keyRoute({ thread: projectListRule }), (req, res) => {
     const status = req.query.status as string | undefined;
     const sessions = sessionService.list(status);
-    // A key (an overseer, by the rule) sees only the project list it needs to find other overseers.
+    // A key (any thread, PK-5) sees only the project list it needs to find other projects and their overseers.
     if (isKeyRequest(req)) {
       return res.json(sessions.map((p) => ({ id: p.id, name: p.name, coordinatorId: sessionService.findCoordinator(p.id)?.id ?? null })));
     }

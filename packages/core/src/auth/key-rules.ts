@@ -28,8 +28,10 @@ const bodyOf = (req: Request): Record<string, any> =>
 
 /** A message from any key whose text holds this marker is refused (spec 6.4.1, no forged sender line). */
 export const SENDER_LINE_MARKER = '[From the overseer of project';
+/** The marker of the sender line of a thread that is not its project's overseer (PK-5, 2026-11-06). */
+export const THREAD_SENDER_LINE_MARKER = '[From thread';
 
-const normalizedMarker = SENDER_LINE_MARKER.toLowerCase();
+const normalizedMarkers = [SENDER_LINE_MARKER, THREAD_SENDER_LINE_MARKER].map((m) => m.toLowerCase());
 
 /** The text as the receiver will see it, folded so that a hidden or split marker still matches. */
 function foldForMarker(text: string): string {
@@ -58,13 +60,23 @@ export function holdsSenderMarker(payload: unknown): boolean {
     return false;
   }
   texts.push(flattenForPty(payload as any).text);
-  return texts.some((t) => foldForMarker(t).includes(normalizedMarker));
+  return texts.some((t) => { const folded = foldForMarker(t); return normalizedMarkers.some((m) => folded.includes(m)); });
 }
 
-/** The line the daemon puts before a cross-project message. The name comes from the daemon, never the body. */
-export function senderLine(from: { name: string; terminalId: string }): string {
-  const name = stripControlChars(from.name, { keepNewline: false }).replace(/"/g, "'").trim().slice(0, 80);
-  return `${SENDER_LINE_MARKER} "${name}" (thread ${from.terminalId}). This is not a message from the owner.]`;
+/** What the daemon knows about the sender of a cross-project message: all of it from the key, never the body. */
+export interface SenderFacts { name: string; terminalId: string; thread?: string | null; overseer?: boolean }
+
+const quoteName = (s: string) => stripControlChars(s, { keepNewline: false }).replace(/"/g, "'").trim().slice(0, 80);
+
+/**
+ * The line the daemon puts before a cross-project message. The project's overseer keeps the PK-4 line;
+ * any other thread (PK-5) is named by its label, so the receiver sees which thread of which project wrote.
+ */
+export function senderLine(from: SenderFacts): string {
+  const name = quoteName(from.name);
+  if (from.overseer !== false) return `${SENDER_LINE_MARKER} "${name}" (thread ${from.terminalId}). This is not a message from the owner.]`;
+  const thread = quoteName(from.thread || from.terminalId);
+  return `${THREAD_SENDER_LINE_MARKER} "${thread}" of project "${name}" (thread ${from.terminalId}). This is not a message from the owner.]`;
 }
 
 // ---------------------------------------------------------------- the pair limiter with a spawn credit
@@ -199,7 +211,7 @@ export function createBodyRule(mode: 'thread' | 'chat'): Rule {
 
 // ---------------------------------------------------------------- reads
 
-/** `GET /api/sessions/:id/terminals`: own project, or any project for an overseer key. */
+/** `GET /api/sessions/:id/terminals`: any project for a thread key (PK-5); a role run reads its own project only. */
 export const readSessionRule: Rule = (req, ctx) =>
   ctx.scope.mayRead(must(ctx), req.params.id) ? OK : outOfScope('This thread may read its own project only.');
 
@@ -209,9 +221,12 @@ export const readRule: Rule = (req, ctx) => {
   return target && ctx.scope.mayRead(must(ctx), target.sessionId) ? OK : outOfScope('This thread may read threads in its own project only.');
 };
 
-/** `GET /api/sessions`: overseer keys only. The handler trims the answer for a key. */
-export const projectListRule: Rule = (_req, ctx) =>
-  must(ctx).overseer ? OK : outOfScope('Only a project overseer may list projects.');
+/** A write into a project (`POST /api/sessions/:id/previews`): the caller's own project only, for every key kind. */
+export const ownProjectRule: Rule = (req, ctx) =>
+  req.params.id === must(ctx).sessionId ? OK : outOfScope('A thread may write into its own project only.');
+
+/** `GET /api/sessions`: every thread key (PK-5). The handler trims the answer for a key. */
+export const projectListRule: Rule = (_req, ctx) => { must(ctx); return OK; };
 
 /** `GET /api/sessions/:id/overseer/worker-defaults`: the caller's own project, overseers included. */
 export const workerDefaultsRule: Rule = (req, ctx) =>
@@ -226,7 +241,7 @@ export const messageRule: Rule = (req, ctx) => {
   const caller = must(ctx);
   const target = ctx.scope.target(req.params.terminalId);
   if (!target || !ctx.scope.mayMessage(caller, target)) {
-    return outOfScope('A thread may message threads in its own project, and an overseer may message another project\'s overseer.');
+    return outOfScope('A thread may message any agent thread, in its own project or another, but not itself, a shell tab or an unknown id.');
   }
   const body = bodyOf(req);
   for (const k of Object.keys(body)) if (!MESSAGE_FIELDS.has(k)) return fieldNotAllowed(k);
@@ -242,7 +257,8 @@ export const messageRule: Rule = (req, ctx) => {
   if (!limit.ok) return deny('rate_limited', limit.reason, 429);
   body.source = 'coordinator';
   req.body = body;
-  if (!same && req.res) req.res.locals.fromProject = { sessionId: caller.sessionId, terminalId: caller.id };
+  // A cross-project message: the daemon writes the sender line from these facts (the key's, never the body's).
+  if (!same && req.res) req.res.locals.fromProject = { sessionId: caller.sessionId, terminalId: caller.id, thread: caller.label ?? null, overseer: caller.overseer };
   // A thread that is not the overseer writes to the overseer: the daemon marks the text as that thread's words (SEC-25).
   if (same && target.overseer && !caller.overseer && req.res) req.res.locals.fromThread = { terminalId: caller.id };
   return OK;

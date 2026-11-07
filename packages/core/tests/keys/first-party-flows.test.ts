@@ -282,7 +282,7 @@ describe('every first-party tool passes with its key', () => {
     });
   });
 
-  describe('cross-project reach of an overseer (PK-4)', () => {
+  describe('cross-project reach (PK-4 for overseers, PK-5 for every thread)', () => {
     it('lets the coordinator list, read and message the other overseer', async () => {
       become('coordA');
       const projects = JSON.parse(textOf(await agency('list_projects')));
@@ -297,17 +297,19 @@ describe('every first-party tool passes with its key', () => {
       expect(got).toContain('hello from A');
     });
 
-    it('gives a worker a readable out_of_scope error on the same calls', async () => {
+    it('gives a worker the same reach; its message to project B names the worker thread (PK-5, 2026-11-06)', async () => {
       become('wA');
       for (const [name, args] of [
         ['list_projects', {}], ['list_threads', { projectId: 'B' }], ['read_thread', { id: 'wB' }],
-        ['read_agent', { agentId: 'wB' }], ['message_thread', { id: 'coordB', text: 'hi' }],
+        ['read_agent', { agentId: 'wB' }], ['message_thread', { id: 'coordB', text: 'hi' }], ['message_thread', { id: 'wB', text: 'hi worker' }],
       ] as const) {
         const r = await agencyCall(name, args);
-        expect(r.isError, name).toBe(true);
-        expect(textOf(r as Result), name).not.toMatch(/^Error: (GET|POST) /);
+        expect(r.isError, name).toBeUndefined();
       }
-      expect(mgr.sentTo('coordB')).toEqual([]);
+      const got = mgr.sentTo('coordB').join('\n');
+      expect(got).toContain('[From thread "wA" of project "proj-A" (thread wA). This is not a message from the owner.]');
+      expect(got).not.toContain(SENDER_LINE_MARKER);
+      expect(mgr.sentTo('wB').join('\n')).toContain('hi worker');
     });
 
     it('keeps spawn in the own project and refuses a direct start, delete and answer in the other', async () => {

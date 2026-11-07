@@ -638,26 +638,23 @@ describe('agency-mcp', () => {
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=20');
     });
 
-    it('rejects a foreign-project id with the project error and leaks no data', async () => {
-      const fetchMock = vi.fn().mockResolvedValueOnce({
-        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess', status: 'idle', label: 'Secret Thread' }),
-      });
+    it("reads a thread of another project: the daemon decides, the client no longer stops it (PK-5, 2026-11-06)", async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess', status: 'idle', label: 'Other Thread' }) })
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ items: [{ kind: 'assistant', text: 'from B' }] }) });
       global.fetch = fetchMock as any;
       const out = await callTool('read_thread', { id: 'foreign-1' });
-      expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
-      expect(out.content[0].text).not.toContain('Secret Thread');
-      expect(out.content[0].text).not.toContain('other-sess');
-      // Only the project check ran — no conversation fetch for a foreign thread.
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(out.isError).toBeUndefined();
+      expect(JSON.parse(out.content[0].text).output).toContain('from B');
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/foreign-1/conversation?limit=500');
     });
 
-    it('rejects an unknown id (404) the same way as a foreign id', async () => {
+    it('rejects an unknown id (404) with a clean error', async () => {
       const fetchMock = vi.fn().mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found', text: async () => JSON.stringify({ error: 'Terminal not found' }) });
       global.fetch = fetchMock as any;
       const out = await callTool('read_thread', { id: 'nope' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: nope is not a thread in this project');
+      expect(out.content[0].text).toBe('Error: nope is not a thread Dispatch knows');
     });
   });
 
@@ -673,15 +670,14 @@ describe('agency-mcp', () => {
       expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({ text: 'hey, status?', source: 'coordinator' });
     });
 
-    it('rejects a foreign-project id with the project error', async () => {
-      const fetchMock = vi.fn().mockResolvedValueOnce({
-        ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess' }),
-      });
+    it('POSTs to a thread of another project too (PK-5, 2026-11-06); the daemon adds the sender line', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify({ id: 'foreign-1', sessionId: 'other-sess' }) })
+        .mockResolvedValueOnce({ ok: true, status: 204, statusText: 'No Content', text: async () => '' });
       global.fetch = fetchMock as any;
       const out = await callTool('message_thread', { id: 'foreign-1', text: 'hi' });
-      expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
-      expect(fetchMock).toHaveBeenCalledTimes(1); // no message POST for a foreign thread
+      expect(out.isError).toBeUndefined();
+      expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/foreign-1/message');
     });
   });
 

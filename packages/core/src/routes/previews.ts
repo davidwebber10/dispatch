@@ -3,7 +3,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Router } from 'express';
 import { keyRoute, policyRouter } from '../auth/route-policy.js';
-import { readSessionRule } from '../auth/key-rules.js';
+import { ownProjectRule } from '../auth/key-rules.js';
 import { principalOf } from '../auth/request-principal.js';
 import { insideRealRoot } from '../files/confine.js';
 import { setFileHeaders } from '../http/active-content.js';
@@ -60,8 +60,8 @@ export function checkPreviewFile(workingDir: string, requested: unknown): previe
 export function createPreviewsRouter(db: Database.Database, broadcaster: EventBroadcaster): Router {
   const router = policyRouter();
 
-  // A thread may post where it may read: its own project, any project for an overseer.
-  router.post('/sessions/:id/previews', keyRoute({ thread: readSessionRule, roleRun: readSessionRule }), (req, res) => {
+  // A thread posts into its own project only (a preview is a write; reads reach every project since PK-5).
+  router.post('/sessions/:id/previews', keyRoute({ thread: ownProjectRule, roleRun: ownProjectRule }), (req, res) => {
     const session = sessionsDb.getById(db, req.params.id);
     if (!session) return void res.status(404).json({ error: 'session not found' });
     const body = (req.body ?? {}) as Record<string, unknown>;
