@@ -110,6 +110,8 @@ export function createCoach(d, deps = {}) {
     recap: null,    // the worker's weekly recap
     chat: { turns: [] }, // the chat history (spec section 4.9)
     chatDraft: null, // text for the chat box ("Tell me more about this")
+    reviews: {},    // reviews:<id> → the review job document (spec section 4.10)
+    reviewOpen: null, // the review the person asked for last
     signals: null,  // the worker's signals, loaded when the tab or the chat needs them
     signalsLoaded: false,
   }));
@@ -130,6 +132,7 @@ export function createCoach(d, deps = {}) {
     const cad = firstRun ? { ...emptyCadence(now()), ...(cadence || {}), firstSeenAt: now().toISOString() } : cadence;
     store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) }, measures: measuresDoc, recap, chat: chat && Array.isArray(chat.turns) ? chat : { turns: [] } });
     if (store.getState().signalsLoaded) void ensureSignals(true);
+    void loadReviews();
     if (firstRun) await storage.set(PLUGIN, 'cadence', cad).catch(() => {});
     // A new recap the worker may announce (not written in a mute or quiet hours) dots the Coach view until seen.
     const unseen = !!(recap && recap.announce && recap.at && cad.recapSeen !== recap.at);
@@ -475,7 +478,94 @@ export function createCoach(d, deps = {}) {
   // "Review this thread" and the other review entry points (spec section 4.10): the review panel
   // on the Coach screen shows the estimate first; nothing runs until its Start.
   function ReviewButton({ scope, label }) {
-    return h('button', { type: 'button', style: S.btn, onClick: () => { store.setState({ reviewAsk: scope }); } }, label);
+    return h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(scope); } }, label);
+  }
+  async function loadReviews() {
+    const list = await storage.list(PLUGIN).catch(() => []);
+    const keys = (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+    const docs = await Promise.all(keys.map((k) => storage.get(PLUGIN, k, null).catch(() => null)));
+    const reviews = {};
+    keys.forEach((k, i) => { if (docs[i]) reviews[k] = docs[i]; });
+    store.setState({ reviews });
+  }
+  /** Ask for a review: the worker works out the estimate first; nothing runs until Start. */
+  async function requestReview(scope, opts = {}) {
+    const id = `r${now().getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const key = `reviews:${id}`;
+    const doc = { id, scope, state: 'planning', at: now().toISOString(), ...(opts.backfill ? { backfill: true } : {}) };
+    store.setState({ reviews: { ...store.getState().reviews, [key]: doc }, reviewOpen: key });
+    await storage.set(PLUGIN, key, doc);
+    return key;
+  }
+  async function patchReview(key, patch) {
+    const cur = store.getState().reviews[key] || (await storage.get(PLUGIN, key, null)) || {};
+    const next = { ...cur, ...patch };
+    store.setState({ reviews: { ...store.getState().reviews, [key]: next } });
+    await storage.set(PLUGIN, key, next);
+  }
+  const lastDays = (n) => ({ kind: 'range', from: new Date(now().getTime() - n * 86400_000).toISOString(), to: now().toISOString() });
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const FINDING_WORD = { 'went-well': 'Went well', handoff: 'Hand off more', plan: 'Plan first', check: 'Check the result', reuse: 'Reuse', parallel: 'Run in parallel' };
+
+  /** The review the person asked for (or the newest one): the estimate with Start, the progress, the report. */
+  function ReviewPanel({ terminalId = null }) {
+    const reviews = store((s) => s.reviews);
+    const open = store((s) => s.reviewOpen);
+    let key = open && reviews[open] ? open : null;
+    if (!key) {
+      const list = Object.entries(reviews).filter(([, r]) => !terminalId || (r.scope && r.scope.kind === 'thread' && (r.scope.ids || []).includes(terminalId)));
+      list.sort((a, b) => String(b[1].at || '').localeCompare(String(a[1].at || '')));
+      key = list.length ? list[0][0] : null;
+    }
+    if (terminalId && key && !(reviews[key].scope && (reviews[key].scope.ids || []).includes(terminalId))) key = null;
+    if (!key) return null;
+    const r = reviews[key];
+    const plan = r.plan || {};
+    const n = (plan.threads || []).length;
+    let body;
+    if (r.state === 'planning') body = h('div', { style: S.note }, 'Working out what this review costs…');
+    else if (r.state === 'estimate') {
+      body = h('div', null,
+        n === 0 ? h('div', null, 'There is nothing the Coach can read in this scope.')
+          : h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}): about ${plan.estPercent}% of your weekly limit, an estimate.`),
+        plan.fits === false && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, 'That is more than the budget has left this week.'),
+        h('div', { style: S.row },
+          h('button', { type: 'button', style: { ...S.primary, opacity: plan.fits === false || n === 0 ? 0.5 : 1 }, disabled: plan.fits === false || n === 0, onClick: () => { void patchReview(key, { state: 'queued', startedAt: now().toISOString() }); } }, 'Start'),
+          plan.fits === false && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
+          h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel')));
+    } else if (r.state === 'queued' || r.state === 'reading') {
+      const p = r.progress || { done: 0, total: n };
+      body = h('div', null, h('div', null, r.state === 'queued' ? 'Starting the review…' : `Reading ${p.done} of ${plural(p.total, 'thread', 'threads')}…`),
+        h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel review')));
+    } else if (r.state === 'writing') body = h('div', null, 'Writing the report…');
+    else if (r.state === 'cancelled') body = h('div', { style: S.note }, 'The review was cancelled. Nothing more was read.');
+    else if (r.state === 'failed') body = h('div', { style: S.note }, r.error || 'The review stopped.');
+    else if (r.state === 'done' && r.report) {
+      const rep = r.report;
+      body = h('div', null,
+        h('div', { style: { color: 'var(--color-text-secondary)' } }, rep.summary),
+        (rep.findings || []).length > 0 && h('ul', { style: { margin: '8px 0 0', paddingLeft: 18 } }, ...rep.findings.map((f, i) => h('li', { key: i, style: { margin: '6px 0' } },
+          h('div', { style: S.src }, FINDING_WORD[f.kind] || f.kind),
+          h('div', { style: { ...S.ex, margin: '3px 0' } }, `"${f.quote}"`),
+          h('div', null, f.note)))),
+        (rep.nextSteps || []).length > 0 && h('div', { style: { marginTop: 8 } }, h('div', { style: S.src }, 'NEXT STEPS'),
+          ...rep.nextSteps.map((s, i) => h('div', { key: i, style: { ...S.row, marginTop: 4 } }, h('span', { style: { flex: 1 } }, s.text), s.action && h('button', { type: 'button', style: S.btn, onClick: () => { void runAction(s.action); } }, actionLabel(s.action))))));
+    } else body = null;
+    const title = r.backfill ? 'LOOK BACK' : r.scope && r.scope.kind === 'thread' ? 'REVIEW OF THIS THREAD' : r.scope && r.scope.kind === 'project' ? 'REVIEW OF THIS PROJECT' : 'REVIEW';
+    return h('div', { 'data-testid': 'coach-review', style: { ...S.section, fontSize: 13 } }, h('div', { style: { ...S.label, marginBottom: 6 } }, title), body);
+  }
+
+  /** The look back at history (spec section 4.10): offered once on the Coach screen; the estimate comes first. */
+  function LookBack() {
+    const cadence = store((s) => s.cadence);
+    if (cadence.lookbackAnswered) return null;
+    const answer = () => saveCadence({ ...store.getState().cadence, lookbackAnswered: true });
+    return h('div', { 'data-testid': 'coach-lookback', style: S.section },
+      h('div', { style: { fontWeight: 650 } }, 'Look back at your last 30 days'),
+      h('div', { style: { ...S.why, marginTop: 4 } }, 'The Coach can read your threads from the last 30 days to build its first picture, so it is useful today instead of after a week. You see the cost first.'),
+      h('div', { style: S.row },
+        h('button', { type: 'button', style: S.primary, onClick: () => { void answer(); void requestReview(lastDays(30), { backfill: true }); } }, 'See the cost'),
+        h('button', { type: 'button', style: S.btn, onClick: () => { void answer(); } }, 'Not now')));
   }
 
   // ── the right-column tab: about the open thread (owner, 2026-11-07; spec section 4.2) ──────
@@ -506,7 +596,8 @@ export function createCoach(d, deps = {}) {
       h('div', { 'data-testid': 'coach-thread-sees', style: S.section },
         h('div', { style: S.label }, 'WHAT THE COACH SEES IN THIS THREAD'),
         sees.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 } }, ...sees.map((x, k) => h('li', { key: k, style: { margin: '3px 0' } }, x))) : h('div', { style: { ...S.note, fontSize: 12.5 } }, 'Nothing yet: the Coach sees a thread after your first prompt in it.')),
-      h(ReviewButton, { scope: { kind: 'thread', ids: [terminalId] }, label: 'Review this thread' }),
+      h('div', null, h(ReviewButton, { scope: { kind: 'thread', ids: [terminalId] }, label: 'Review this thread' })),
+      h(ReviewPanel, { terminalId }),
       h(Chat, { terminalId, sessionId }));
   }
 
@@ -553,6 +644,15 @@ export function createCoach(d, deps = {}) {
       const q = text.trim();
       if (!q || busy) return;
       const st = store.getState();
+      // "Review how I worked in this thread": a review job (the estimate first), not a chat call.
+      if (/^\s*(please\s+)?review\b/i.test(q)) {
+        await requestReview(tid ? { kind: 'thread', ids: [tid] } : lastDays(7));
+        const at = now().toISOString();
+        const tag = tid ? { terminalId: tid } : {};
+        await saveChat(appendTurns(store.getState().chat, [{ role: 'user', text: q, at, ...tag }, { role: 'coach', text: 'I can do that. The review shows its cost first; nothing runs until you press Start.', at, ...tag }]));
+        setText('');
+        return;
+      }
       const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
       if (plan.tier === 'none') { setNote(CHAT_CAP); return; }
       setBusy(true); setNote(null);
@@ -762,6 +862,11 @@ export function createCoach(d, deps = {}) {
       h('div', null,
         h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
         h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
+      h(LookBack),
+      h(ReviewPanel, {}),
+      h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+        h(ReviewButton, { scope: lastDays(7), label: 'Review my last week' }),
+        h('button', { type: 'button', style: S.btn, onClick: () => { void saveCadence({ ...store.getState().cadence, lookbackAnswered: true }); void requestReview(lastDays(30), { backfill: true }); } }, 'Look back at the last 30 days')),
       h(Recap),
       h(Goals),
       st.settings.showMeasures !== false && h(Measures),
@@ -902,6 +1007,7 @@ export function createCoach(d, deps = {}) {
     settings: [{ id: 'coach', label: 'Coach', blurb: 'How often, what it may spend, what it remembers', icon: 'sparkle', Component: Settings }],
     slots: [{ id: 'card', slot: 'composer.before', Component: Card }],
     inspectorTabs: [{ id: 'coach', label: 'Coach', icon: 'sparkle', Component: CoachTab }],
+    threadMenu: [{ id: 'review', label: 'Review this thread', onPick: ({ tab }) => { if (tab && tab.id) void requestReview({ kind: 'thread', ids: [tab.id] }); if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }],
     commands: [
       { id: 'mute-coach', label: 'Mute coach', run: () => { void muteAs('hour'); } },
       { id: 'unmute-coach', label: 'Unmute coach', run: () => { void doUnmute(); } },

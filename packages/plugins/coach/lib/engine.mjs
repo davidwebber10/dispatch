@@ -18,6 +18,8 @@ import { measures, weakest, snapshot, scoresBefore, scoresOnly } from './measure
 import { buildRecap } from './recap.mjs';
 import { recapPrompt, parseAnswer } from './prompts.mjs';
 import { rankCandidates, suggestGoals } from './goals.mjs';
+import { planReview, chunkTranscript, reviewPrompt, parseReview, mergeReview, eventsFromTranscript, MAX_THREADS } from './review.mjs';
+import { appendTurns } from './chat.mjs';
 import { judgeCandidate, joinCards, unjudged } from './judge.mjs';
 
 const SAVE_DELAY_MS = 5_000;
@@ -156,8 +158,113 @@ export function createEngine(io) {
     }
   }
 
+  // ── reviews (spec section 4.10): `reviews:<id>` documents the web part writes and this job advances ──
+  // planning → estimate (no model call) → queued (the person's Start) → reading → writing → done;
+  // cancelled stops further calls; failed says why. Transcripts come from the conversation route.
+  const running = new Set();
+  const reviewWaits = new Set();
+  const reviewsIdle = async () => { while (reviewWaits.size) await Promise.all([...reviewWaits]); };
+  const getJson = (route) => (io.getJson ? io.getJson(route).catch(() => null) : Promise.resolve(null));
+  async function scopeThreads(scope) {
+    let rows = [];
+    if (scope.kind === 'thread') {
+      for (const id of scope.ids || []) { const t = await getJson(`/api/terminals/${encodeURIComponent(id)}`); if (t) rows.push({ id, sessionId: t.sessionId ?? null, at: t.lastActivityAt || t.createdAt || '' }); }
+    } else {
+      let projects = scope.kind === 'project' ? (scope.ids || []) : [];
+      if (scope.kind === 'range') { const s = await getJson('/api/sessions'); projects = Array.isArray(s) ? s.map((x) => x.id) : (s && Array.isArray(s.sessions) ? s.sessions.map((x) => x.id) : []); }
+      for (const p of projects) {
+        const list = await getJson(`/api/sessions/${encodeURIComponent(p)}/terminals`);
+        for (const t of Array.isArray(list) ? list : []) rows.push({ id: t.id, sessionId: t.sessionId ?? p, at: t.lastActivityAt || t.createdAt || '' });
+      }
+      if (scope.kind === 'range') {
+        const from = Date.parse(scope.from || 0); const to = scope.to ? Date.parse(scope.to) : Infinity;
+        rows = rows.filter((r) => { const a = Date.parse(r.at); return Number.isFinite(a) && a >= from && a <= to; });
+      }
+    }
+    return rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, MAX_THREADS);
+  }
+  async function transcript(id) {
+    const r = await getJson(`/api/terminals/${encodeURIComponent(id)}/conversation?limit=2000`);
+    return r && Array.isArray(r.items) ? r.items : [];
+  }
+  async function writeReview(key, patch) {
+    // Read again first: the person may have pressed Cancel since.
+    const cur = (await io.getDoc(key, null)) || {};
+    if (cur.cancel && patch.state !== 'cancelled') return { ...cur, cancelled: true };
+    const next = { ...cur, ...patch, updatedAt: now().toISOString() };
+    await io.putDoc(key, next);
+    return next;
+  }
+  async function reviewStep(key) {
+    if (running.has(key)) return;
+    const doc = await io.getDoc(key, null);
+    if (!doc || !doc.scope) return;
+    if (doc.state === 'planning') {
+      running.add(key);
+      try {
+        const rows = await scopeThreads(doc.scope);
+        const threads = [];
+        for (const r of rows) threads.push({ id: r.id, chunks: chunkTranscript(await transcript(r.id)).length });
+        await writeReview(key, { state: 'estimate', plan: planReview(doc.scope, threads, status.budget) });
+      } finally { running.delete(key); }
+      return;
+    }
+    if (doc.state !== 'queued') return;
+    running.add(key);
+    try { await runReview(key, doc); } finally { running.delete(key); }
+  }
+  async function runReview(key, doc) {
+    const ids = (doc.plan && Array.isArray(doc.plan.threads)) ? doc.plan.threads : (await scopeThreads(doc.scope)).map((r) => r.id);
+    const parts = [];
+    let read = 0;
+    const seeded = [];
+    for (let i = 0; i < ids.length; i++) {
+      const w = await writeReview(key, { state: 'reading', progress: { done: i, total: ids.length } });
+      if (w.cancelled || w.cancel) return;
+      const items = await transcript(ids[i]);
+      if (doc.backfill) { const t = await getJson(`/api/terminals/${encodeURIComponent(ids[i])}`); seeded.push(...eventsFromTranscript(ids[i], (t && t.sessionId) || null, items)); }
+      const chunks = chunkTranscript(items);
+      if (chunks.length) read++;
+      for (const chunk of chunks) {
+        const cur = await io.getDoc(key, null);
+        if (!cur || cur.cancel || cur.state === 'cancelled') return;
+        const plan = planCall('more', settings, status.budget, { harness: status.harness });
+        if (plan.tier === 'none') { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
+        const r = await io.assist({ ...reviewPrompt(chunk, memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
+        if (r && r.budget) status = { ...status, budget: r.budget };
+        if (r && r.result && r.result.harness) status = { ...status, harness: r.result.harness };
+        if (r && r.refused) { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
+        const p = parseReview(r && r.result ? r.result.text : '', chunk);
+        if (p) parts.push(p);
+      }
+    }
+    const w = await writeReview(key, { state: 'writing', progress: { done: ids.length, total: ids.length } });
+    if (w.cancelled || w.cancel) return;
+    const report = mergeReview(parts, { read });
+    await writeReview(key, { state: 'done', report, finishedAt: now().toISOString() });
+    if (doc.backfill && seeded.length) {
+      // The look back seeds the signals with threads the Coach has not seen yet, then the measures.
+      const known = new Set(Object.keys(state.threads || {}));
+      let next = state;
+      for (const e of seeded.filter((x) => !known.has(x.terminalId)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at))) next = collect(e, next, settings);
+      state = next;
+      await io.putDoc('signals', state);
+      await updateMeasures(now());
+    }
+    const chat = await io.getDoc('chat', null);
+    await io.putDoc('chat', appendTurns(chat, [{ role: 'coach', text: `Your ${doc.backfill ? 'look back' : 'review'} is ready. ${report.summary} The findings are on the Coach screen.`, at: now().toISOString(), review: doc.id || key }]));
+    await io.putDoc('status', status);
+  }
+
   function handle(e) {
     if (!e || typeof e.type !== 'string') return chain;
+    if (e.type === 'plugin:data' && typeof e.key === 'string' && e.key.startsWith('reviews:') && !e.deleted) {
+      const key = e.key;
+      // A review runs beside the detection queue: a long review never holds up a card.
+      const p = reviewStep(key).catch((err) => log('review:', err && err.message ? err.message : err)).finally(() => reviewWaits.delete(p));
+      reviewWaits.add(p);
+      return Promise.resolve().then(() => new Promise((r) => setTimeout(r, 0))).then(() => reviewsIdle());
+    }
     if (e.type === 'plugin:settings') return queue(loadSettings);
     if (e.type === 'plugin:data') {
       if (e.key === 'memory') return queue(loadMemory);
@@ -181,7 +288,7 @@ export function createEngine(io) {
     handle,
     flush,
     /** Resolves when the queued work is done (tests, shutdown). */
-    idle: () => chain,
+    idle: () => Promise.all([chain, reviewsIdle()]),
     get state() { return state; },
   };
 }

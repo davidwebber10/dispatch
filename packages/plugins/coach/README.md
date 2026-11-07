@@ -27,6 +27,11 @@ off keeps the Coach off.
 - **Five measures:** ambition, delegation, reuse, judgment and breadth, each from 0 to 100 over
   30 days. They compare you only with your own past. The Coach works on the weakest one, and
   works on judgment before it suggests a bigger handoff.
+- **Reviews:** ask for a review of a thread (its ⋯ menu, the tab, or the chat), a project, or a
+  date range ("Review my last week"). The worker reads the transcripts with the large model and
+  reports findings, each with the quoted moment, and up to 3 next steps. The cost estimate comes
+  first; nothing runs until Start; Cancel stops it. The look back reads your last 30 days the same
+  way, so the Coach is useful on day one; it also seeds the measures.
 - **A plugin, when it fits:** when you run the same multi-step workflow 3 times in 30 days and no
   schedule covers it, the Coach may suggest building a plugin for it. Try it opens a new thread,
   for you to confirm, that asks an agent to build the plugin; it starts disabled for your review.
@@ -52,13 +57,14 @@ off keeps the Coach off.
 | `lib/plan.mjs`, `lib/prompts.mjs`, `lib/judge.mjs`, `lib/client.mjs` | the tier per step, the prompts, the judge, the assist call |
 | `lib/cadence.mjs`, `lib/memory.mjs`, `lib/goals.mjs` | when a card may show, what the Coach knows, your goals |
 | `lib/measures.mjs`, `lib/recap.mjs` | the five measures and the weekly recap |
+| `lib/chat.mjs`, `lib/review.mjs` | the chat, and reviews and the look back |
 | `lib/settings.mjs` | every setting and its default |
 
 ## Documents
 
 `signals` (the rolling state), `candidates` (what the rules proposed), `cards` (the judged cards,
 and a record of each judged candidate), `cardState`, `cadence` (caps, mute, rests), `memory`
-(facts, known skills, level adjustments, muted types, goals), `chat`, `status` (the budget the worker
+(facts, known skills, level adjustments, muted types, goals), `chat`, `reviews:<id>` (one per review job), `status` (the budget the worker
 last heard), `measures` (scores, a daily history, suggested goals), `recap`.
 
 Design: `docs/superpowers/specs/2026-11-07-coach-design.md`.
