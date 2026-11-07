@@ -790,10 +790,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // With no Codex thread of an account active lately, ask Codex itself (codex-poll.ts), signed in as a thread is.
   const pollCodex = createCodexPoll({ snapshots: limitSnapshots, accountFor: limitAccount, env: codexEnvFor });
   // Claude's figures for CLI-only use: a tiny background turn when they go stale (claude-probe.ts).
-  const probeClaude = createClaudeProbe({ snapshots: limitSnapshots, accountFor: limitAccount, env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) });
+  // An added account runs it with its own token: its `setup-token` token cannot read the usage endpoint (2026-11-07).
+  const probeClaude = createClaudeProbe({
+    snapshots: limitSnapshots, accountFor: limitAccount,
+    env: (accountId = 'cli') => ({ ...inheritedEnv(), ...titleSpawnEnv, ...(accountId === 'cli' ? {} : accounts.spawnEnv('claude-code', { accountId })) }),
+  });
   // Claude's usage as claude.ai shows it (claude-usage.ts): every window, Fable included, and the extra-usage
   // spend. `cli` reads with the CLI's own login (file or keychain); an added account with its saved token.
-  // The tiny turn above is the fallback when the CLI login's read fails.
+  // The tiny turn above is the fallback when an account's read fails.
   const readClaudeUsage = createClaudeUsageReader({
     snapshots: limitSnapshots, accountFor: limitAccount,
     token: async (accountId) => (accountId === 'cli' ? readClaudeToken({}) : accounts.claudeToken(accountId)),

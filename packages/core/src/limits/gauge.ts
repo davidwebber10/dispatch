@@ -38,6 +38,8 @@ export function accountIdOf(config: string | null | undefined): string {
   try { const c = JSON.parse(config || '{}'); return typeof c?.accountId === 'string' && c.accountId ? c.accountId : 'cli'; } catch { return 'cli'; }
 }
 const MIN = 60_000;
+/** How long an added Claude account waits after a failed usage read before it tries again. */
+const CLAUDE_READ_BACKOFF_MS = 30 * MIN;
 const DEFAULTS = {
   /** At most one broadcast per this gap (trailing edge). A pause or settings change skips the wait. */
   throttleMs: 5000,
@@ -129,7 +131,7 @@ export interface GaugeDeps {
   /** Codex's banked limit resets, from the last direct read. */
   codexCredits?: (accountId?: string) => ResetCredits | null;
   /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
-  probeClaude?: () => Promise<boolean>;
+  probeClaude?: (accountId?: string) => Promise<boolean>;
   /** Read one Claude account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
   readClaudeUsage?: (accountId?: string) => Promise<boolean>;
   now?: () => number;
@@ -392,14 +394,17 @@ export class UsageGauge {
   }
 
   /** The accounts changed (one added or removed): broadcast at once. */
-  accountsChanged(): void { this.flush(); }
+  /** An account added or removed: broadcast, and read a new account at once (it has no figures yet). */
+  accountsChanged(): void { this.flush(); try { this.maybeProbeClaude(); } catch (err) { console.warn('[usage-gauge] account read failed:', err); } }
 
   private lastCodexPoll = new Map<string, number>();
   private codexPolling = new Set<string>();
-  private lastClaudeProbe = -Infinity;
+  private lastClaudeProbe = new Map<string, number>();
   private lastClaudeRead = new Map<string, number>();
+  /** An added account whose usage read failed: no read before this time (its token cannot read usage, the endpoint answers 429). */
+  private claudeReadAfter = new Map<string, number>();
   private claudeReading = new Set<string>();
-  private claudeProbing = false;
+  private claudeProbing = new Set<string>();
 
   /**
    * Keep Claude's figures current without a Pretty thread: when the last report is older than
@@ -409,36 +414,43 @@ export class UsageGauge {
   private maybeProbeClaude(): void {
     const now = this.now();
     const since = new Date(now - this.o.claudeIdleMs).toISOString();
-    const active = this.d.db.prepare('SELECT 1 FROM terminals WHERE archived_at IS NULL AND last_activity_at >= ? LIMIT 1').get(since);
-    if (!active) return;
+    const active = !!this.d.db.prepare('SELECT 1 FROM terminals WHERE archived_at IS NULL AND last_activity_at >= ? LIMIT 1').get(since);
     // The usage read is one request per account: run it on its own clock, whatever the stream
     // reports (a Pretty thread's events keep `asOf` fresh but carry no Fable window and no spend).
+    // An account with no figures yet (just added) is read at once, active or not, so it shows without use.
     if (this.d.readClaudeUsage) {
       for (const a of this.accountRefs()) {
         if (a.provider !== 'claude-code' || this.claudeReading.has(a.accountId)) continue;
-        if (now - (this.lastClaudeRead.get(a.accountId) ?? -Infinity) < this.o.claudeUsageMs) continue;
-        this.lastClaudeRead.set(a.accountId, now);
-        this.claudeReading.add(a.accountId);
         const id = a.accountId;
+        if (!active && this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', id), id)) continue;
+        if (now - (this.lastClaudeRead.get(id) ?? -Infinity) < this.o.claudeUsageMs) continue;
+        if (now < (this.claudeReadAfter.get(id) ?? -Infinity)) continue;
+        this.lastClaudeRead.set(id, now);
+        this.claudeReading.add(id);
         void this.d.readClaudeUsage(id).catch(() => false)
-          .then((ok) => { if (!ok && id === 'cli') this.fallbackProbe(now); })
+          .then((ok) => {
+            if (ok) { this.claudeReadAfter.delete(id); return; }
+            // An added account's token may only run a model: back off its read, and take the tiny turn as it.
+            if (id !== 'cli') this.claudeReadAfter.set(id, now + CLAUDE_READ_BACKOFF_MS);
+            this.fallbackProbe(now, id);
+          })
           .finally(() => { this.claudeReading.delete(id); });
       }
       return;
     }
-    if (!this.claudeProbing) this.fallbackProbe(now);
+    if (active) this.fallbackProbe(now, 'cli');
   }
 
-  /** The tiny Claude turn, only when the figures are stale: at most one per claudeStaleMs. */
-  private fallbackProbe(now: number): void {
+  /** The tiny Claude turn as one account, only when its figures are stale: at most one per claudeStaleMs per account. */
+  private fallbackProbe(now: number, accountId = 'cli'): void {
     if (!this.d.probeClaude) return;
-    if (now - this.lastClaudeProbe < this.o.claudeStaleMs) return;
-    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', 'cli'), 'cli');
+    if (now - (this.lastClaudeProbe.get(accountId) ?? -Infinity) < this.o.claudeStaleMs) return;
+    const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', accountId), accountId);
     if (s && now - s.asOf < this.o.claudeStaleMs) return;
-    if (this.claudeProbing) return;
-    this.lastClaudeProbe = now;
-    this.claudeProbing = true;
-    void this.d.probeClaude().catch(() => false).finally(() => { this.claudeProbing = false; });
+    if (this.claudeProbing.has(accountId)) return;
+    this.lastClaudeProbe.set(accountId, now);
+    this.claudeProbing.add(accountId);
+    void this.d.probeClaude(accountId).catch(() => false).finally(() => { this.claudeProbing.delete(accountId); });
   }
 
   /**

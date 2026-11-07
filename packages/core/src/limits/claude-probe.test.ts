@@ -39,4 +39,20 @@ describe('Claude usage probe', () => {
     expect(await createClaudeProbe({ snapshots: snaps, accountFor: () => 'acct', env: () => ({}), run, bin: async () => '/bin/claude', signedIn: async () => true })()).toBe(false);
     expect(snaps.get('claude-code', 'acct')).toBeNull();
   });
+
+  it('an added account: the turn runs signed in as that account and records under it (the CLI sign-in check does not apply)', async () => {
+    const db = new Database(':memory:'); initSchema(db);
+    const snaps = new LimitSnapshots(db);
+    const run = vi.fn<CommandRunner>().mockResolvedValue({ code: 0, stdout: STREAM });
+    const envs: string[] = [];
+    const probe = createClaudeProbe({
+      snapshots: snaps, accountFor: (_p, id) => `acct:${id ?? 'cli'}`, env: (id) => { envs.push(id ?? 'cli'); return { CLAUDE_CODE_OAUTH_TOKEN: `tok-${id}` }; },
+      now: () => 1793900000000, run, bin: async () => '/bin/claude', signedIn: async () => false,
+    });
+    expect(await probe('w1')).toBe(true);
+    expect(envs).toEqual(['w1']);
+    expect(run.mock.calls[0][2]?.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'tok-w1' });
+    expect(snaps.get('claude-code', 'acct:w1', 'w1')!.windows.seven_day).toEqual({ usedPercent: 2, resetsAt: 1794416400000 });
+    expect(snaps.get('claude-code', 'acct:cli')).toBeNull();
+  });
 });

@@ -880,3 +880,58 @@ describe('accounts (multi-account spec 2026-11-06)', () => {
     g.stop();
   });
 });
+
+describe('added Claude accounts show without use (2026-11-07)', () => {
+  // A `claude setup-token` token may only run a model: the usage read answers 429 and the profile 403.
+  const two = () => [{ provider: 'claude-code', accountId: 'cli', label: 'Ultra 1' }, { provider: 'claude-code', accountId: 'w1', label: 'Team' }];
+  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+  it('a new account with no figures is read at once, even when nothing was active; an account with figures waits for activity', async () => {
+    gauge.stop();
+    const reads: string[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: (_p, id) => `${account}:${id ?? 'cli'}`, now: () => clock, zone: ZONE, broadcast: () => {},
+      accounts: two, readClaudeUsage: async (id) => { reads.push(id ?? 'cli'); return true; } });
+    snaps.record('claude-code', `${account}:cli`, { seven_day: { usedPercent: 10, resetsAt: WEEK } }, clock, undefined, true, undefined, 'cli');
+    g.tick(); await flush();
+    expect(reads).toEqual(['w1']);
+    g.stop();
+  });
+
+  it('adding an account reads it without waiting for the next tick', async () => {
+    gauge.stop();
+    const reads: string[] = [];
+    let list = [two()[0]];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: (_p, id) => `${account}:${id ?? 'cli'}`, now: () => clock, zone: ZONE, broadcast: () => {},
+      accounts: () => list, readClaudeUsage: async (id) => { reads.push(id ?? 'cli'); return true; } });
+    snaps.record('claude-code', `${account}:cli`, { seven_day: { usedPercent: 10, resetsAt: WEEK } }, clock, undefined, true, undefined, 'cli');
+    list = two();
+    g.accountsChanged(); await flush();
+    expect(reads).toEqual(['w1']);
+    g.stop();
+  });
+
+  it('when an added account\'s usage read fails, the tiny turn runs as that account, and the read backs off 30 minutes', async () => {
+    gauge.stop();
+    const reads: string[] = [];
+    const probes: string[] = [];
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: (_p, id) => `${account}:${id ?? 'cli'}`, now: () => clock, zone: ZONE, broadcast: () => {},
+      accounts: two,
+      readClaudeUsage: async (id) => { reads.push(id ?? 'cli'); return id !== 'w1'; },
+      probeClaude: async (id) => { probes.push(id ?? 'cli'); return true; } });
+    snaps.record('claude-code', `${account}:cli`, { seven_day: { usedPercent: 10, resetsAt: WEEK } }, clock, undefined, true, undefined, 'cli');
+    g.tick(); await flush();
+    expect(reads).toEqual(['w1']);
+    expect(probes).toEqual(['w1']);
+    thread('k1'); db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock).toISOString(), 'k1');
+    snaps.record('claude-code', `${account}:w1`, { seven_day: { usedPercent: 40, resetsAt: WEEK } }, clock, undefined, true, undefined, 'w1');
+    reads.length = 0;
+    clock += 3 * MIN; db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock).toISOString(), 'k1');
+    g.tick(); await flush();
+    expect(reads).toEqual(['cli']); // w1's read waits: it failed 3 minutes ago
+    clock = T0 + 31 * MIN; db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock).toISOString(), 'k1');
+    reads.length = 0;
+    g.tick(); await flush();
+    expect(reads.sort()).toEqual(['cli', 'w1']);
+    g.stop();
+  });
+});
