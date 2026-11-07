@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { KeyRegistry } from '../auth/principals.js';
 import type { PluginFacts } from '../auth/plugin-facts.js';
+import type { McpServerSpec } from '../mcp/injection.js';
 import { PLUGIN_ID_RE, parseManifest, satisfiesDispatch, type PluginManifest } from './manifest.js';
 import { pluginTemplate } from './template.js';
 
@@ -112,6 +113,40 @@ export class PluginRegistry {
     else this.revokeKey(row.id);
   }
 
+  /**
+   * The model part of every enabled, keyed plugin for one harness (spec sections 3.1 and 3.2): MCP
+   * server specs (named `plugin-<id>`, with the plugin's identity and key file in their env) and
+   * instruction blocks, in id order. A relative arg or command that names a file in the plugin
+   * folder becomes absolute, so the server runs from any cwd.
+   */
+  modelInjection(harness: string): { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] } {
+    const specs: McpServerSpec[] = []; const prompts: string[] = []; const toolNames: string[] = [];
+    for (const row of this.list()) {
+      const model = row.model;
+      if (!model || !row.enabled || row.error || !this.keyed(row.id)) continue;
+      if (model.harnesses && !model.harnesses.includes(harness)) continue;
+      let folder: string;
+      try { folder = fs.realpathSync(path.join(this.dir, row.id)); } catch { continue; }
+      const abs = (a: string): string => (!path.isAbsolute(a) && this.resolveInside(folder, a) ? path.join(folder, a) : a);
+      if (model.mcp) {
+        const keyFile = this.keyFile(row.id);
+        specs.push({
+          name: `plugin-${row.id}`, command: abs(model.mcp.command), args: (model.mcp.args ?? []).map(abs),
+          env: { ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}) },
+          authEnv: true,
+        });
+        toolNames.push(`plugin-${row.id}`);
+      }
+      if (model.instructions) {
+        try {
+          const text = fs.readFileSync(path.join(folder, model.instructions), 'utf8').trim();
+          if (text) prompts.push(`## Plugin: ${row.name}\n\n${text}`);
+        } catch { /* listed as broken on the next read */ }
+      }
+    }
+    return { specs, prompts, toolNames };
+  }
+
   /** What a rule knows about a plugin key's plugin: null when unknown, disabled or broken (its key is then refused). */
   facts(id: string): PluginFacts | null {
     const row = this.get(id);
@@ -168,6 +203,8 @@ export class PluginRegistry {
       return this.broken(id, stamp, `needs Dispatch ${m.dispatch}; this is ${this.runningVersion}`);
     }
     if (m.web && !this.resolveInside(folder, m.web)) return this.broken(id, stamp, `plugin.json "web" names a file that does not exist: ${m.web}`);
+    if (m.model?.instructions && !this.resolveInside(folder, m.model.instructions)) return this.broken(id, stamp, `plugin.json "model.instructions" names a file that does not exist: ${m.model.instructions}`);
+    for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
     return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id) };
   }
 

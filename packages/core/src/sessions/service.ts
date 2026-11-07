@@ -137,6 +137,8 @@ export class SessionService {
   private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
   /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
   private integrationsSpecs: (() => McpServerSpec[]) | null = null;
+  /** Plugins' MCP servers and instruction blocks per harness (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3). */
+  private pluginInjection: ((harness: string) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private terminalStatusWriter?: (id: string, status: 'queued' | 'waiting' | 'error') => void;
   setTerminalStatusWriter(writer: (id: string, status: 'queued' | 'waiting' | 'error') => void): void { this.terminalStatusWriter = writer; }
@@ -298,8 +300,27 @@ export class SessionService {
     this.secretsServerSpec = fn;
   }
 
+  setPluginInjection(fn: (harness: string) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
+    this.pluginInjection = fn;
+  }
+
   setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
     this.integrationsSpecs = fn;
+  }
+
+  /**
+   * Add the plugins' servers and instruction blocks after Dispatch's own, and record every server
+   * the thread was launched with on its row (`config.toolsAvailable`, spec section 3.3).
+   */
+  private applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
+    const inj = this.pluginInjection?.(harness) ?? { specs: [], prompts: [], toolNames: [] };
+    specs.push(...inj.specs);
+    prompts.push(...inj.prompts);
+    const toolsAvailable = specs.map((s) => s.name);
+    try {
+      const t = this.getTerminal(terminalId);
+      if (t) terminalsDb.updateConfig(this.db, terminalId, { ...((t.config ?? {}) as Record<string, unknown>), toolsAvailable });
+    } catch { /* the record is informational */ }
   }
 
   setToolsAwareness(fn: () => string | null): void {
@@ -2543,6 +2564,7 @@ export class SessionService {
         specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk));
         prompts.push(this.peerPromptFor(terminal));
       }
+      this.applyPluginInjection(terminalId, terminal.type, specs, prompts);
       const developerNote = this.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, {
         configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote,
@@ -2769,6 +2791,7 @@ export class SessionService {
       specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk));
       prompts.push(this.peerPromptFor(terminal));
     }
+    this.applyPluginInjection(terminal.id, terminal.type, specs, prompts);
     const developerNote = this.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, {
       configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote,

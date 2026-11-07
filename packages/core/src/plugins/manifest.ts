@@ -15,6 +15,16 @@ export interface PluginContributes {
   tools?: string[];
 }
 
+export type HookEvent = 'prompt' | 'turnEnd' | 'toolCall' | 'spawn' | 'status';
+export interface PluginHookSpec { run: string; tools?: string[] }
+/** The model part (spec section 3): instructions text, an MCP server, hook scripts, and which harnesses get them. */
+export interface PluginModel {
+  instructions?: string;
+  mcp?: { command: string; args?: string[]; env?: Record<string, string> };
+  hooks?: Partial<Record<HookEvent, PluginHookSpec>>;
+  harnesses?: string[];
+}
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -29,6 +39,7 @@ export interface PluginManifest {
   web?: string;
   contributes?: PluginContributes;
   permissions?: string[];
+  model?: PluginModel;
 }
 
 export type ParsedManifest = { ok: true; manifest: PluginManifest } | { ok: false; error: string };
@@ -61,6 +72,11 @@ export function parseManifest(raw: string, folderId: string): ParsedManifest {
   if (typeof data.web === 'string') m.web = data.web;
   if (isRecord(data.contributes)) m.contributes = data.contributes as PluginContributes;
   if (Array.isArray(data.permissions)) m.permissions = data.permissions.filter((p): p is string => typeof p === 'string');
+  if (data.model !== undefined) {
+    const model = parseModel(data.model);
+    if (!model.ok) return model;
+    m.model = model.model;
+  }
   return { ok: true, manifest: m };
 }
 
@@ -77,4 +93,37 @@ export function satisfiesDispatch(range: string | undefined, running: string): b
     if (a < b) return false;
   }
   return true;
+}
+
+const HOOK_EVENTS: HookEvent[] = ['prompt', 'turnEnd', 'toolCall', 'spawn', 'status'];
+
+function parseModel(raw: unknown): { ok: true; model: PluginModel } | { ok: false; error: string } {
+  if (!isRecord(raw)) return { ok: false, error: 'plugin.json "model" must be an object' };
+  const model: PluginModel = {};
+  if (raw.instructions !== undefined) {
+    if (typeof raw.instructions !== 'string' || !insideFolder(raw.instructions)) return { ok: false, error: 'plugin.json "model.instructions" must be a file inside the plugin folder' };
+    model.instructions = raw.instructions;
+  }
+  if (raw.mcp !== undefined) {
+    if (!isRecord(raw.mcp) || !nonEmpty(raw.mcp.command)) return { ok: false, error: 'plugin.json "model.mcp" needs a command' };
+    const args = Array.isArray(raw.mcp.args) ? raw.mcp.args.filter((a): a is string => typeof a === 'string') : [];
+    const env: Record<string, string> = {};
+    if (isRecord(raw.mcp.env)) for (const [k, v] of Object.entries(raw.mcp.env)) if (typeof v === 'string') env[k] = v;
+    model.mcp = { command: raw.mcp.command.trim(), args, env };
+  }
+  if (raw.hooks !== undefined) {
+    if (!isRecord(raw.hooks)) return { ok: false, error: 'plugin.json "model.hooks" must be an object' };
+    const hooks: Partial<Record<HookEvent, PluginHookSpec>> = {};
+    for (const [event, spec] of Object.entries(raw.hooks)) {
+      if (!HOOK_EVENTS.includes(event as HookEvent)) return { ok: false, error: `plugin.json "model.hooks" has an unknown event "${event}" (prompt, turnEnd, toolCall, spawn, status)` };
+      if (!isRecord(spec) || typeof spec.run !== 'string' || !insideFolder(spec.run)) return { ok: false, error: `plugin.json "model.hooks.${event}.run" must be a file inside the plugin folder` };
+      hooks[event as HookEvent] = { run: spec.run, ...(Array.isArray(spec.tools) ? { tools: spec.tools.filter((t): t is string => typeof t === 'string') } : {}) };
+    }
+    model.hooks = hooks;
+  }
+  if (raw.harnesses !== undefined) {
+    if (!Array.isArray(raw.harnesses)) return { ok: false, error: 'plugin.json "model.harnesses" must be a list' };
+    model.harnesses = raw.harnesses.filter((h): h is string => typeof h === 'string');
+  }
+  return { ok: true, model };
 }
