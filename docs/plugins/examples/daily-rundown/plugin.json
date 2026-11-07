@@ -1,0 +1,13 @@
+{
+  "id": "daily-rundown",
+  "name": "Daily rundown",
+  "version": "0.1.0",
+  "description": "What happened in the last day, per project.",
+  "web": "web.js",
+  "contributes": {
+    "views": [{ "id": "rundown", "label": "Rundown", "icon": "sun", "mobileTab": true }],
+    "settings": [{ "id": "rundown", "label": "Daily rundown" }],
+    "menus": { "thread": [{ "id": "pin", "label": "Pin to rundown" }] }
+  },
+  "permissions": ["read:threads"]
+}

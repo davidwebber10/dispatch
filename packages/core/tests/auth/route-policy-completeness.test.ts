@@ -16,6 +16,7 @@ import { LimitSnapshots } from '../../src/limits/snapshot.js';
  * key rule without a matching edit here fails the second test below.
  */
 const EXPECTED_KEY_ROUTES: string[] = [
+  'GET /api/plugins',
   // Task 8: terminal and session routes
   'GET /api/sessions',
   'GET /api/sessions/:id/terminals',

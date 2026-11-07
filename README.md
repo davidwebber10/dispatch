@@ -16,6 +16,7 @@ couch, or your phone — including as an installable PWA. Put it behind a
 - **Analytics** — tokens, turns, and time per project, model, and provider, from your own machine.
 - **Single-origin** — the daemon serves both the API/WebSocket and the web bundle, so there's no CORS and one URL to expose.
 - **Installable PWA** — add it to your Dock (macOS) or Home Screen (iOS).
+- **Plugins** — a folder under `~/.dispatch/plugins` adds screens, settings, menu items and composer buttons, and reloads as you save. See [docs/plugins.md](docs/plugins.md).
 
 Agents run with your full user rights and with approvals off. That is by design: it lets them work unattended. See [Security notes](docs/security.md).
 
