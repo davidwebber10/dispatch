@@ -1,7 +1,7 @@
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js/lib/core';
-import 'highlight.js/styles/atom-one-dark.css';
+// Syntax colors come from the theme tokens (theme.css, "Syntax highlighting"), not a fixed highlight.js stylesheet.
 
 // Curated language set (keeps the bundle lean vs. the full highlight.js build).
 import javascript from 'highlight.js/lib/languages/javascript';

@@ -1,15 +1,50 @@
 :root {
-  --color-canvas:#08080A; --color-base:#0F0F11; --color-pane:#141416;
-  --color-terminal:#1E1E1E; --color-elevated:#1B1B1E; --color-hover:#26262B; --color-border:#29292E;
-  --color-accent:#3ECF6A; --color-status-yellow:#F5C542; --color-status-red:#F0616D;
-  --color-text-primary:#E9E9EC; --color-text-secondary:#8E8E96; --color-text-tertiary:#5A5A61;
+  /* Color tokens. These values are the "Dispatch Dark" theme (src/themes/dispatchDark.ts holds the
+     same values; themes.test.ts keeps the two in step). A theme writes its own values onto <html>
+     (src/themes/apply.ts), so every color in the app comes from a token: no component sets a literal
+     color (colorLiterals.test.ts). Tints use color-mix() with a token. */
+  /* Surfaces, darkest to lightest in a dark theme. */
+  --color-canvas:#08080A; --color-base:#0F0F11; --color-pane:#141416; --color-terminal:#1E1E1E;
+  --color-elevated:#1B1B1E; --color-modal:#18181B; --color-hover:#26262B; --color-selected:#2A2A31;
+  --color-border:#29292E; --color-border-strong:#2C2C32; --color-border-hover:#36363C;
+  /* The accent, and the text on a filled accent button. */
+  --color-accent:#3ECF6A; --color-on-accent:#08240F;
+  /* Text, from the strongest to the faintest. Contrast is tested for primary, secondary and tertiary. */
+  --color-text-emphasis:#FFFFFF; --color-text-primary:#E9E9EC; --color-text-body:#C9C9CF; --color-text-muted:#A8A8B0;
+  --color-text-secondary:#8E8E96; --color-text-dim:#6A6A72; --color-text-tertiary:#5A5A61; --color-text-faint:#46464D;
+  /* Status. */
+  --color-status-green:#3ECF6A; --color-status-yellow:#F5C542; --color-status-amber:#E8B04B; --color-status-red:#F0616D;
+  --color-status-coral:#F37165; --color-status-blue:#5A8DD6; --color-on-danger:#2A0A07;
+  /* Named hues for categories (file types, agent kinds, charts). */
+  --color-red:#E06C75; --color-orange:#D19A66; --color-yellow:#E5C07B; --color-green:#7FBE6E;
+  --color-cyan:#56B6C2; --color-blue:#4F90D0; --color-purple:#C792EA; --color-pink:#FF6AC1;
+  /* Analytics series (validated categorical set) and the "other" bucket. */
+  --color-chart-1:#3987E5; --color-chart-2:#D95926; --color-chart-3:#199E70; --color-chart-4:#C98500; --color-chart-5:#D55181; --color-chart-other:#6B6B73;
+  /* Scrims, shadows, and code. */
+  --color-overlay:rgba(0,0,0,.55); --color-shadow:rgba(0,0,0,.5); --color-shadow-strong:rgba(0,0,0,.85);
+  --color-code-bg:#1B1B1E;
+  /* A photo or video viewer stays dark in every theme. */
+  --color-media-bg:#000000; --color-on-media:#FFFFFF;
+  /* Derived from the tokens above; a theme can still set its own. */
+  --color-link:var(--color-accent);
+  --color-selection:color-mix(in srgb, var(--color-accent) 25%, transparent);
+  --color-scrollbar:color-mix(in srgb, var(--color-text-emphasis) 16%, transparent);
+  --color-scrollbar-hover:color-mix(in srgb, var(--color-text-emphasis) 28%, transparent);
+  /* Syntax colors (highlight.js and the file editor). */
+  --syntax-bg:#282C34; --syntax-text:#ABB2BF; --syntax-comment:#5C6370; --syntax-keyword:#C678DD; --syntax-tag:#E06C75;
+  --syntax-literal:#56B6C2; --syntax-string:#98C379; --syntax-number:#D19A66; --syntax-function:#61AEEE; --syntax-class:#E6C07B;
+  /* Terminal (xterm reads these through src/themes, not through CSS). */
+  --term-background:#1E1E1E; --term-foreground:#FFFFFF; --term-cursor:#FFFFFF; --term-selection:rgba(255,255,255,.3);
+  --term-black:#2E3436; --term-red:#CC0000; --term-green:#4E9A06; --term-yellow:#C4A000; --term-blue:#3465A4; --term-magenta:#75507B; --term-cyan:#06989A; --term-white:#D3D7CF;
+  --term-bright-black:#555753; --term-bright-red:#EF2929; --term-bright-green:#8AE234; --term-bright-yellow:#FCE94F; --term-bright-blue:#729FCF; --term-bright-magenta:#AD7FA8; --term-bright-cyan:#34E2E2; --term-bright-white:#EEEEEC;
+  color-scheme: dark;
   --font-sans:'IBM Plex Sans',sans-serif; --font-mono:'JetBrains Mono',monospace;
   /* One radius scale for the whole app (audit 2026-11-05). Inline styles and CSS use these,
      never a literal: xs tiny chips, sm small buttons and menu rows, md buttons and inputs,
      lg cards and popovers, xl the terminal card and the composer, 2xl sheets and modals.
      Circles stay 50%. */
   --radius-xs:4px; --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-2xl:20px; --radius-pill:999px;
-  --shadow-glow:0 0 6px 1px rgba(62,207,106,.6);
+  --shadow-glow:0 0 6px 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
 }
 * { box-sizing: border-box; }
 /* Browser: 100dvh tracks Safari's dynamic URL/tab bar so the bottom input isn't
@@ -26,7 +61,7 @@ html.pwa-standalone, html.pwa-standalone body { height: 100%; }
    exactly the visible area, with or without a status bar. */
 html.pwa-standalone #root { position: fixed; inset: 0; height: auto; }
 body { background: var(--color-canvas); color: var(--color-text-primary); font-family: var(--font-sans); }
-::selection { background: rgba(62,207,106,.25); }
+::selection { background: var(--color-selection); }
 /* xterm computes its scrollbar reservation as offsetWidth-scrollArea OR 15 when
    that's 0 — so a fully hidden/overlay scrollbar makes FitAddon reserve 15px and
    leave a dead gap on the right. A 1px transparent scrollbar measures 1, so the
@@ -40,8 +75,8 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
    run up beside the search bar. */
 .sidebar-scroll::-webkit-scrollbar { width: 11px; }
 .sidebar-scroll::-webkit-scrollbar-track { margin-top: 52px; background: transparent; }
-.sidebar-scroll::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,0.16); border-radius: var(--radius-sm); border: 3px solid transparent; background-clip: content-box; }
-.sidebar-scroll::-webkit-scrollbar-thumb:hover { background-color: rgba(255,255,255,0.28); }
+.sidebar-scroll::-webkit-scrollbar-thumb { background-color: var(--color-scrollbar); border-radius: var(--radius-sm); border: 3px solid transparent; background-clip: content-box; }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--color-scrollbar-hover); }
 /* Mobile terminals: stop a finger-drag over text from starting an iOS text
    selection, which hijacks the scroll gesture (xterm's accessibility tree sets
    user-select:text over exactly where the visible text is, so scrolling only
@@ -59,7 +94,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
    evenly. The scroll layer (.xterm-viewport) is position:absolute, so it's out of
    flow and unaffected. */
 .dispatch-noselect .xterm { display: flex; justify-content: center; align-items: flex-start; }
-@keyframes dispatchGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(245,197,66,0), 0 0 5px 1px rgba(245,197,66,.55); } 50% { box-shadow: 0 0 0 4px rgba(245,197,66,0), 0 0 11px 3px rgba(245,197,66,.95); } }
+@keyframes dispatchGlow { 0%,100% { box-shadow: 0 0 0 0 transparent, 0 0 5px 1px color-mix(in srgb, var(--color-status-yellow) 55%, transparent); } 50% { box-shadow: 0 0 0 4px transparent, 0 0 11px 3px color-mix(in srgb, var(--color-status-yellow) 95%, transparent); } }
 @keyframes dispatchBlink { 0%,49% { opacity: 1 } 50%,100% { opacity: 0 } }
 @keyframes dispatchPulse { 0%,100% { opacity: .5 } 50% { opacity: 1 } }
 @keyframes dispatchConnPulse { 0%,100% { opacity: .6 } 50% { opacity: 1 } }
@@ -73,16 +108,16 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view h1, .md-view h2, .md-view h3, .md-view h4 { font-weight: 600; line-height: 1.3; margin: 1em 0 .45em; }
 .md-view h1 { font-size: 1.7em; } .md-view h2 { font-size: 1.4em; } .md-view h3 { font-size: 1.18em; }
 .md-view p { margin: .55em 0; }
-.md-view a { color: var(--color-accent); text-decoration: none; }
+.md-view a { color: var(--color-link); text-decoration: none; }
 .md-view a:hover { text-decoration: underline; }
 /* overflow-wrap on inline code: a long joined identifier wraps mid-token on narrow screens
    instead of being clipped at the viewport edge. Harmless inside pre>code — `pre` whitespace
    forbids wrapping, and block-code keeps its own overflow-x scroll. `anywhere` (not
    break-word) on purpose: it also collapses the token's min-content contribution, so a long
    token can never again stretch a flex ancestor that forgot minWidth: 0. */
-.md-view code { background: var(--color-elevated); padding: 1px 5px; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: .88em; overflow-wrap: anywhere; }
+.md-view code { background: var(--color-code-bg); padding: 1px 5px; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: .88em; overflow-wrap: anywhere; }
 .md-view pre { background: none; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0; margin: .8em 0; overflow: hidden; }
-.md-view pre code, .md-view pre code.hljs { display: block; padding: 12px 14px; overflow-x: auto; background: var(--color-elevated); color: var(--color-text-primary); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: .82em; line-height: 1.55; }
+.md-view pre code, .md-view pre code.hljs { display: block; padding: 12px 14px; overflow-x: auto; background: var(--color-code-bg); color: var(--color-text-primary); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: .82em; line-height: 1.55; }
 .md-view blockquote { border-left: 3px solid var(--color-accent); margin: .6em 0; padding: 2px 0 2px 14px; color: var(--color-text-secondary); }
 .md-view ul, .md-view ol { padding-left: 1.4em; }
 .md-view li { margin: .2em 0; }
@@ -91,7 +126,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view table { border-collapse: collapse; margin: .9em 0; font-size: .92em; display: block; overflow-x: auto; max-width: 100%; }
 .md-view thead th { background: var(--color-elevated); font-weight: 600; }
 .md-view th, .md-view td { border: 1px solid var(--color-border); padding: 7px 13px; text-align: left; }
-.md-view tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+.md-view tbody tr:nth-child(even) { background: color-mix(in srgb, var(--color-text-emphasis) 2.5%, transparent); }
 .md-view img { max-width: 100%; border-radius: var(--radius-sm); }
 /* A remote image held back until the reader clicks it (Markdown.tsx holdRemoteImages). */
 .md-remote-image { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); font: 400 12px/18px var(--font-mono); overflow-wrap: anywhere; cursor: pointer; }
@@ -150,3 +185,20 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 @media (prefers-reduced-motion: reduce) {
   .dispatch-compact-sweep { animation: none; left: 0; width: 100% !important; opacity: .35; }
 }
+
+/* Syntax highlighting (highlight.js classes). Replaces the fixed atom-one-dark stylesheet, so code
+   follows the theme: the --syntax-* tokens above. */
+pre code.hljs { display: block; overflow-x: auto; padding: 1em; }
+code.hljs { padding: 3px 5px; }
+.hljs { color: var(--syntax-text); background: var(--syntax-bg); }
+.hljs-comment, .hljs-quote { color: var(--syntax-comment); font-style: italic; }
+.hljs-doctag, .hljs-keyword, .hljs-formula { color: var(--syntax-keyword); }
+.hljs-section, .hljs-name, .hljs-selector-tag, .hljs-deletion, .hljs-subst { color: var(--syntax-tag); }
+.hljs-literal { color: var(--syntax-literal); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: var(--syntax-string); }
+.hljs-attr, .hljs-variable, .hljs-template-variable, .hljs-type, .hljs-selector-class, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-number { color: var(--syntax-number); }
+.hljs-symbol, .hljs-bullet, .hljs-link, .hljs-meta, .hljs-selector-id, .hljs-title { color: var(--syntax-function); }
+.hljs-built_in, .hljs-title.class_, .hljs-class .hljs-title { color: var(--syntax-class); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+.hljs-link { text-decoration: underline; }
