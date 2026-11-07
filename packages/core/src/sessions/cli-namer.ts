@@ -79,13 +79,13 @@ export interface CliNamerDeps {
 }
 
 /** An empty directory to run in, so neither CLI picks up a project's CLAUDE.md / AGENTS.md. */
-function scratchDir(): string {
+export function scratchDir(): string {
   const dir = path.join(os.tmpdir(), 'dispatch-titles');
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the spawn reports it */ }
   return dir;
 }
 
-async function usable(name: ProviderName, deps: CliNamerDeps): Promise<string | null> {
+export async function usable(name: ProviderName, deps: CliNamerDeps): Promise<string | null> {
   const bin = await (deps.bin ?? resolveBin)(name);
   if (!bin) return null;
   const signedIn = await (deps.signedIn ?? (async (n) => (await detectProvider(n)).signedIn))(name).catch(() => 'unknown' as const);

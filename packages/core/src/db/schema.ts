@@ -482,4 +482,16 @@ function initializeSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
   `));
+
+  // Model assist for plugins (spec section 3.4): one row per call, for the meter.
+  migrate(db, '019-plugin-assist', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS plugin_assist (
+      plugin_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_plugin_assist_plugin ON plugin_assist(plugin_id);
+  `));
 }

@@ -1,13 +1,14 @@
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Router, RequestHandler, Request } from 'express';
-import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute, type Rule } from '../auth/route-policy.js';
+import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute, needs, type Rule } from '../auth/route-policy.js';
 import { principalOf, scopeOf } from '../auth/request-principal.js';
 import * as pluginData from '../db/plugin-data.js';
 import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders } from '../http/active-content.js';
 import { HTML_SANDBOX_CSP } from './previews.js';
 import type { PluginRegistry } from '../plugins/registry.js';
+import type { AssistRunner } from '../assist/run.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): the manifests, the owner's
@@ -55,7 +56,7 @@ function storageError(res: import('express').Response, e: unknown): void {
   res.status(500).json({ error: msg });
 }
 
-export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database): Router {
+export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null): Router {
   const router = policyRouter();
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -147,6 +148,23 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       plugins.broadcast({ type: 'plugin:settings', id: req.params.id });
       res.json(out);
     } catch (e) { storageError(res, e); }
+  });
+
+  // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──
+  const assistRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('model:assist')(req, ctx) : own; };
+  router.post('/plugins/:id/assist', keyRoute({ plugin: assistRule }), async (req, res) => {
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown };
+    const messages = Array.isArray(body.messages) ? body.messages.filter((m): m is { role: 'user' | 'assistant'; content: string } => !!m && typeof m === 'object' && ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant') && typeof (m as { content?: unknown }).content === 'string') : [];
+    if (messages.length === 0) return void res.status(400).json({ error: 'bad_body', message: 'Send { messages: [{ role: "user", content: "..." }], system?, maxTokens? }.' });
+    const maxTokens = Math.max(1, Math.min(2000, typeof body.maxTokens === 'number' ? Math.floor(body.maxTokens) : 800));
+    if (!assist || !(await assist.available().catch(() => false))) {
+      return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
+    }
+    const result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens }).catch(() => null);
+    if (!result) return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
+    pluginData.recordAssist(db, req.params.id, result.usage, result.ms);
+    res.json(result);
   });
 
   return router;

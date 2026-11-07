@@ -105,6 +105,8 @@ import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { ThreadEvents } from './plugins/thread-events.js';
 import { PluginHooks } from './plugins/hooks.js';
+import { createAssistRunner, type AssistRunner } from './assist/run.js';
+import * as pluginData from './db/plugin-data.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
@@ -260,6 +262,8 @@ interface CreateAppOptions {
   toolsDir?: string;
   /** The plugins folder (defaults to <secretsDir>/plugins). */
   pluginsDir?: string;
+  /** Model assist for plugins; tests inject a fake, and omit it for none. */
+  assistRunner?: AssistRunner | null;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
   /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
@@ -399,6 +403,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   app.locals.plugins = plugins;
+  plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   app.locals.threadEvents = threadEvents;
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
@@ -446,7 +451,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     claudeLogin: new ClaudeLoginService(dispatchDir), secretsService, integrationsService, pushService,
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
-    broadcaster, plugins, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
+    broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 
@@ -593,6 +598,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   let resolveOpenRouterKey: (() => Promise<string | null>) | null = null;
   let titleSpawnEnv: Record<string, string> = {};
   const titleCliDeps = { env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) };
+  // Model assist for plugins (spec section 3.4): the same signed-in CLI the titles use, else the OpenRouter key.
+  const assistRunner = createAssistRunner({ cli: titleCliDeps, getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null) });
+  plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
     cliTitle: firstTitle([claudeTitleGenerator(titleCliDeps), codexTitleGenerator(titleCliDeps)]),
@@ -945,7 +953,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, accounts, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, plugins, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
+    broadcaster, plugins, assistRunner, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
     reachableAddresses: async () => {
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');

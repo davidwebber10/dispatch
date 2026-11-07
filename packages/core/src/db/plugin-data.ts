@@ -77,3 +77,13 @@ export function setSettings(db: Database.Database, pluginId: string, value: unkn
     ON CONFLICT(plugin_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(pluginId, text, updatedAt);
   return getSettings(db, pluginId)!;
 }
+
+/** The assist meter (spec section 3.4). */
+export interface AssistTotals { calls: number; inputTokens: number; outputTokens: number }
+export function recordAssist(db: Database.Database, pluginId: string, usage: { inputTokens: number; outputTokens: number }, ms: number): void {
+  db.prepare('INSERT INTO plugin_assist (plugin_id, at, input_tokens, output_tokens, ms) VALUES (?, ?, ?, ?, ?)').run(pluginId, new Date().toISOString(), usage.inputTokens, usage.outputTokens, ms);
+}
+export function assistTotals(db: Database.Database, pluginId: string): AssistTotals {
+  const r = db.prepare('SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o FROM plugin_assist WHERE plugin_id = ?').get(pluginId) as { calls: number; i: number; o: number };
+  return { calls: r.calls, inputTokens: r.i, outputTokens: r.o };
+}
