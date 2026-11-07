@@ -245,9 +245,9 @@ enabled; one that appears in the folder on its own starts disabled (see below).
 
 ## Marketplaces, install, update
 
-A marketplace is a git repository (spec section 7.1). The public one is
-`https://github.com/polywood/dispatch-plugins.git` (the examples and a starter skill live there).
-Settings → Plugins → Marketplaces takes
+A marketplace is a git repository (spec section 7.1). Dispatch has no public marketplace: an
+organisation (or a person) keeps its own, usually private, and the people who can clone it can
+install from it. Settings → Plugins → Marketplaces takes
 its URL (https, ssh, `git@host:path`, or an absolute path); the daemon clones it under
 `~/.dispatch/marketplaces/<slug>` with your own git login (ssh keys, the credential helper,
 `gh auth`), so a private repository is a private marketplace for the people who can read it.

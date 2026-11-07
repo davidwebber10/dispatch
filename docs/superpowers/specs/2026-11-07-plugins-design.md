@@ -55,7 +55,7 @@ Skills (prompt packages the harnesses read) travel the same way, as a second kin
 
 1. **Trust**: a marketplace plugin runs with the same power as a local one. The manifest's
    `permissions` are enforced by the daemon on the plugin's key and shown before install.
-   The public marketplace reviews before listing.
+   A marketplace's owners review the pull request before it lands.
 2. **Previews** moves into a plugin in the first real version (slice 4).
 3. **Marketplace hosting**: a git repository is a marketplace (section 7.1); publishing is a
    pull request; an organisation uses a private repository and the git login its members
@@ -395,9 +395,10 @@ The repository's layout is the catalog:
 - Install copies `plugins/<id>` from the clone into `~/.dispatch/plugins/<id>` and writes
   `.dispatch-install.json` with the marketplace URL, the commit and the version. Git gives the
   integrity; no hashes.
-- The public marketplace is the repository `dispatch-plugins` on GitHub (the owner creates it,
-  or the builder does, at slice 7); publishing is a pull request, or `dispatch plugin publish`,
-  which commits the plugin folder on a branch and opens one.
+- There is no public marketplace (owner correction, 2026-11-07). An organisation keeps its own
+  repository, usually private (POLYWOOD's is `polywood/dispatch-plugins`, private); publishing is
+  a pull request, or `dispatch plugin publish`, which commits the plugin folder on a branch and
+  opens one.
 - Settings → Plugins → Marketplaces takes a repository URL (https or ssh). If the clone needs
   a login the owner does not have, the page shows git's own message and a hint to sign in
   with `gh auth login` or add an ssh key.
@@ -549,7 +550,7 @@ weekly job, so it ships in slice 3 with the model part.
 5. **Workers**: supervision, logs, jobs, the socket proxy.
 6. **Marketplaces**: index, install, update, roll back, pin, browse, skills install, the
    Settings dot and banner for plugin updates, commands registry and palette.
-7. **Publishing and the public index**: `dispatch plugin publish`, the dispatch-plugins
+7. **Publishing** (no public marketplace; owner correction 2026-11-07): `dispatch plugin publish`, the dispatch-plugins
    repository (owner creates it; the owner said the builder may), the review checklist,
    `@dispatchd/sdk` on npm (owner step: needs the npm account), docs.
 

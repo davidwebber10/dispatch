@@ -11,7 +11,7 @@ describe('publishPlugin', () => {
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
   const g = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] });
   const runner = (gh: 'present' | 'absent' = 'present'): Runner => (cmd, args, opts) => {
-    if (cmd === 'gh') { ghCalls.push(args); return gh === 'present' ? { code: 0, stdout: 'https://github.com/polywood/dispatch-plugins/pull/7\n', stderr: '' } : { code: 127, stdout: '', stderr: 'gh: command not found' }; }
+    if (cmd === 'gh') { ghCalls.push(args); return gh === 'present' ? { code: 0, stdout: 'https://github.com/example-org/plugins/pull/7\n', stderr: '' } : { code: 127, stdout: '', stderr: 'gh: command not found' }; }
     const r = spawnSync(cmd, args, { cwd: opts.cwd, env, encoding: 'utf8' });
     return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
@@ -34,7 +34,7 @@ describe('publishPlugin', () => {
   it('publishes a valid folder on a branch with one commit under plugins/<id>, pushes it, and opens a pull request through gh', async () => {
     plugin('1.0.0');
     const r = await publishPlugin(opts());
-    expect(r).toEqual({ id: 'hello', version: '1.0.0', branch: 'plugin/hello-1.0.0', prUrl: 'https://github.com/polywood/dispatch-plugins/pull/7', compareUrl: null });
+    expect(r).toEqual({ id: 'hello', version: '1.0.0', branch: 'plugin/hello-1.0.0', prUrl: 'https://github.com/example-org/plugins/pull/7', compareUrl: null });
     expect(g(bare, 'branch', '--list').trim().split('\n').map((s) => s.replace('*', '').trim()).sort()).toEqual(['main', 'plugin/hello-1.0.0']);
     expect(g(bare, 'ls-tree', '-r', '--name-only', 'plugin/hello-1.0.0').trim().split('\n').sort()).toEqual(['marketplace.json', 'plugins/hello/plugin.json', 'plugins/hello/web.js']);
     expect(g(bare, 'log', '-1', '--format=%s', 'plugin/hello-1.0.0').trim()).toBe('plugins: hello 1.0.0');
@@ -45,9 +45,9 @@ describe('publishPlugin', () => {
 
   it('gh absent: the branch is pushed and the compare URL is printed for a GitHub marketplace', async () => {
     plugin('1.0.0');
-    const r = await publishPlugin(opts({ run: runner('absent'), marketplace: bare, githubUrlFor: () => 'https://github.com/polywood/dispatch-plugins.git' }));
+    const r = await publishPlugin(opts({ run: runner('absent'), marketplace: bare, githubUrlFor: () => 'https://github.com/example-org/plugins.git' }));
     expect(r.prUrl).toBeNull();
-    expect(r.compareUrl).toBe('https://github.com/polywood/dispatch-plugins/compare/plugin/hello-1.0.0?expand=1');
+    expect(r.compareUrl).toBe('https://github.com/example-org/plugins/compare/plugin/hello-1.0.0?expand=1');
   });
 
   it('the copy skips node_modules, the install record and symlinks', async () => {
@@ -140,12 +140,12 @@ describe('publishPlugin', () => {
       return base(cmd, args, o);
     };
     try {
-      const r = await publishPlugin(opts({ run, githubUrlFor: () => 'https://github.com/polywood/dispatch-plugins.git' }));
-      expect(r.prUrl).toBe('https://github.com/polywood/dispatch-plugins/pull/7');
+      const r = await publishPlugin(opts({ run, githubUrlFor: () => 'https://github.com/example-org/plugins.git' }));
+      expect(r.prUrl).toBe('https://github.com/example-org/plugins/pull/7');
       expect(g(fork, 'branch', '--list').replace(/\*/g, '').trim().split('\n').map((x) => x.trim()).sort()).toEqual(['main', 'plugin/hello-1.0.0']);
-      expect(ghCalls.find((c) => c[0] === 'repo')).toEqual(['repo', 'fork', 'polywood/dispatch-plugins', '--clone=false', '--remote=false']);
+      expect(ghCalls.find((c) => c[0] === 'repo')).toEqual(['repo', 'fork', 'example-org/plugins', '--clone=false', '--remote=false']);
       const pr = ghCalls.find((c) => c[0] === 'pr')!;
-      expect(pr).toEqual(expect.arrayContaining(['--repo', 'polywood/dispatch-plugins', '--head', 'someone:plugin/hello-1.0.0']));
+      expect(pr).toEqual(expect.arrayContaining(['--repo', 'example-org/plugins', '--head', 'someone:plugin/hello-1.0.0']));
       expect(pr).not.toContain('--base');
     } finally { fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o755); }
   });
