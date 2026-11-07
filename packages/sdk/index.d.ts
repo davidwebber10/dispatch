@@ -73,12 +73,13 @@ export interface DispatchSdk {
     useStore<S, T>(store: Store<S>, selector: (s: S) => T): T;
   };
   zustand: { create: <S>(init: (set: (partial: Partial<S> | ((s: S) => Partial<S>)) => void, get: () => S) => S) => Store<S> };
+  /** The app's stores, typed by the fields a plugin reads; each has more. */
   stores: {
-    useUI: Store<{ view: string; setView(view: string): void; [key: string]: unknown }>;
-    useProjects: Store<{ sessions: Session[]; [key: string]: unknown }>;
-    useTabs: Store<{ byProject: Record<string, Terminal[]>; [key: string]: unknown }>;
-    useUpdate: Store<Record<string, unknown>>;
-    useThreadStatus: Store<Record<string, unknown>>;
+    useUI: Store<{ view: string; setView(view: string): void }>;
+    useProjects: Store<{ sessions: Session[] }>;
+    useTabs: Store<{ byProject: Record<string, Terminal[]> }>;
+    useUpdate: Store<object>;
+    useThreadStatus: Store<object>;
   };
   actions: {
     setView(key: string): void;
@@ -95,14 +96,14 @@ export interface DispatchSdk {
     [method: string]: (...args: any[]) => any;
   };
   ui: {
-    Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children?: React.ReactNode }>;
-    Markdown: React.ComponentType<{ children?: string; text?: string; [key: string]: unknown }>;
+    Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children: React.ReactNode }>;
+    Markdown: React.ComponentType<{ source: string }>;
     FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string> }[]; index?: number; onClose(): void; label?: string }>;
     Toggle: React.ComponentType<{ on: boolean; onClick(): void; label?: string }>;
     styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn(on: boolean): React.CSSProperties; chip: React.CSSProperties; fieldInput: React.CSSProperties };
   };
   /** Icon components by name (`eye`, `star`, `sparkle`, `sun`, …); the same names `contributes.views[].icon` takes. */
-  icons: Record<string, React.ComponentType<{ size?: number; weight?: string; color?: string; style?: React.CSSProperties }>>;
+  icons: Record<string, React.ComponentType<any>>;
   /** Documents in this plugin's storage on the daemon (`threads:*-storage` lets threads reach them). */
   storage: {
     get<T>(plugin: string, key: string, fallback: T): Promise<T>;

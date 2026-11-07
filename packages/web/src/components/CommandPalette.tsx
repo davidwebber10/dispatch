@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUI, type View } from '../stores/ui';
 import { useContributions } from '../plugins/registry';
 import { SETTINGS_SECTIONS } from './settings/sections';
+import { primaryMod } from '../lib/hostkeys';
 
 /**
  * The command palette (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2; plugins
@@ -26,7 +27,10 @@ export function CommandPalette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setOpen((o) => !o); setQ(''); setCursor(0); }
+      if (!primaryMod(e) || e.key.toLowerCase() !== 'k') return;
+      // Inside a terminal the key belongs to the shell (^K) — never both.
+      if (document.activeElement?.closest?.('.xterm')) return;
+      e.preventDefault(); setOpen((o) => !o); setQ(''); setCursor(0);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

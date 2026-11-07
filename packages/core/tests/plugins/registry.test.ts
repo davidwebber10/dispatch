@@ -275,6 +275,32 @@ describe('PluginRegistry keys (2026-11-07)', () => {
   });
 });
 
+describe('a plugin folder that appears while the daemon runs (slice 6 review)', () => {
+  let tmp: string; let dir: string;
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-appear-')); dir = path.join(tmp, 'plugins'); fs.mkdirSync(dir, { recursive: true }); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  it('starts disabled until the owner enables it; one the page scaffolds or copies starts enabled', async () => {
+    const r = new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys: new KeyRegistry(), keyDir: path.join(tmp, 'keys') });
+    r.start();
+    try {
+      fs.mkdirSync(path.join(dir, 'dropped'));
+      fs.writeFileSync(path.join(dir, 'dropped', 'plugin.json'), JSON.stringify({ id: 'dropped', name: 'Dropped', version: '1.0.0' }));
+      await new Promise((res) => setTimeout(res, 400));
+      expect(r.get('dropped')).toMatchObject({ enabled: false, keyed: false });
+      r.setEnabled('dropped', true);
+      expect(r.get('dropped')!.enabled).toBe(true);
+      const made = r.scaffold('made', 'Made');
+      await new Promise((res) => setTimeout(res, 400));
+      expect(made.enabled).toBe(true);
+      expect(r.get('made')!.enabled).toBe(true);
+      const copy = r.copyToLocal('made', 'made-copy');
+      await new Promise((res) => setTimeout(res, 400));
+      expect(copy.enabled).toBe(true);
+      expect(r.get('made-copy')!.enabled).toBe(true);
+    } finally { r.stop(); }
+  });
+});
+
 describe('bundled plugins (2026-11-07, spec section 10)', () => {
   let tmp: string; let dir: string; let bundled: string; let keys: KeyRegistry;
   const reg = (b: string | undefined = bundled) => new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys'), bundledDir: b });

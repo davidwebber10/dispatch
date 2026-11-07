@@ -13,7 +13,8 @@ import { satisfiesDispatch } from './manifest.js';
  */
 export interface PluginUpdate { id: string; name: string; marketplace: string; from: string; to: string; changelog: string | null }
 export interface InstallInfo { update?: { to: string; changelog: string | null }; pinned?: string; autoUpdate?: boolean; marketplaceGone?: boolean }
-interface State { pins: Record<string, string>; autoUpdate: string[] }
+/** `autoUpdate`: the owner's explicit choice per plugin; unset means the marketplace's trust decides. */
+interface State { pins: Record<string, string>; autoUpdate: Record<string, boolean> }
 
 export const SUPPORTED_SDK = 1;
 const INSTALL_FILE = '.dispatch-install.json';
@@ -51,7 +52,7 @@ export class PluginInstaller {
     return {
       ...(up ? { update: { to: up.to, changelog: up.changelog } } : {}),
       ...(state.pins[id] ? { pinned: state.pins[id] } : {}),
-      autoUpdate: state.autoUpdate.includes(id),
+      autoUpdate: this.autoUpdateOf(id, url, state),
       ...(this.markets.list().some((m) => m.url === url) ? {} : { marketplaceGone: true }),
     };
   }
@@ -167,9 +168,15 @@ export class PluginInstaller {
 
   setAutoUpdate(id: string, on: boolean): void {
     const s = this.readState();
-    s.autoUpdate = on ? [...new Set([...s.autoUpdate, id])] : s.autoUpdate.filter((x) => x !== id);
+    s.autoUpdate[id] = on;
     this.writeState(s);
     this.registry.announce(id);
+  }
+
+  /** The owner's explicit choice, else the marketplace's trust. */
+  private autoUpdateOf(id: string, url: string | null, state: State): boolean {
+    if (typeof state.autoUpdate[id] === 'boolean') return state.autoUpdate[id];
+    return !!url && this.markets.list().some((m) => m.url === url && m.trusted);
   }
 
   /** The schedule and "Check now": pull every marketplace, apply the auto-updates, tell the clients what waits. */
@@ -178,8 +185,8 @@ export class PluginInstaller {
     const updated: string[] = [];
     const state = this.readState();
     for (const u of await this.updates()) {
-      const trusted = this.markets.get(u.marketplace)?.trusted === true;
-      if (!state.autoUpdate.includes(u.id) && !trusted) continue;
+      const url = this.markets.get(u.marketplace)?.url ?? null;
+      if (!this.autoUpdateOf(u.id, url, state)) continue;
       try { await this.update(u.id); updated.push(u.id); } catch { /* the row keeps "update available"; the owner sees why on Update */ }
     }
     const updates = await this.updates();
@@ -199,7 +206,13 @@ export class PluginInstaller {
     fs.writeFileSync(path.join(folder, INSTALL_FILE), JSON.stringify({ marketplace: url, version, commit: commit ?? '', installedAt: new Date().toISOString() }, null, 2) + '\n');
   }
   private readState(): State {
-    try { const raw = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as Partial<State>; return { pins: raw.pins && typeof raw.pins === 'object' ? raw.pins as Record<string, string> : {}, autoUpdate: Array.isArray(raw.autoUpdate) ? raw.autoUpdate.filter((x): x is string => typeof x === 'string') : [] }; } catch { return { pins: {}, autoUpdate: [] }; }
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as { pins?: unknown; autoUpdate?: unknown };
+      const autoUpdate: Record<string, boolean> = {};
+      if (Array.isArray(raw.autoUpdate)) { for (const id of raw.autoUpdate) if (typeof id === 'string') autoUpdate[id] = true; } // the first shape: a list of ids
+      else if (raw.autoUpdate && typeof raw.autoUpdate === 'object') { for (const [k, v] of Object.entries(raw.autoUpdate as Record<string, unknown>)) if (typeof v === 'boolean') autoUpdate[k] = v; }
+      return { pins: raw.pins && typeof raw.pins === 'object' ? raw.pins as Record<string, string> : {}, autoUpdate };
+    } catch { return { pins: {}, autoUpdate: {} }; }
   }
   private writeState(s: State): void {
     fs.mkdirSync(path.dirname(this.stateFile), { recursive: true });

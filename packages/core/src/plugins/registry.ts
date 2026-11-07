@@ -319,7 +319,7 @@ export class PluginRegistry {
     if (fs.existsSync(folder)) throw new Error('exists');
     fs.mkdirSync(folder, { recursive: true });
     for (const [file, body] of Object.entries(pluginTemplate(id, name))) fs.writeFileSync(path.join(folder, file), body);
-    this.syncKey(this.get(id), id);
+    this.setEnabled(id, true);
     return this.get(id)!;
   }
 
@@ -351,7 +351,7 @@ export class PluginRegistry {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
       fs.writeFileSync(file, JSON.stringify({ ...raw, id: newId }, null, 2) + '\n');
     } catch { /* the copy lists as broken with the reason */ }
-    this.syncKey(this.get(newId), newId);
+    this.setEnabled(newId, true);
     return this.get(newId)!;
   }
 
@@ -395,12 +395,24 @@ export class PluginRegistry {
   private schedule(id: string): void {
     let exists = false;
     try { exists = fs.statSync(path.join(this.dir, id)).isDirectory(); } catch { /* gone or never there */ }
-    if (exists) this.known.add(id);
-    else if (this.known.has(id)) this.known.delete(id);
+    if (exists) {
+      // A folder that appears while the daemon runs (a thread wrote it, a copy landed) starts disabled: the
+      // owner enables it on the Plugins page. The page's own actions (scaffold, copy, install) enable explicitly.
+      if (!this.known.has(id)) this.appeared(id);
+      this.known.add(id);
+    } else if (this.known.has(id)) this.known.delete(id);
     else return;
     const pending = this.timers.get(id);
     if (pending) clearTimeout(pending);
     this.timers.set(id, setTimeout(() => { this.timers.delete(id); this.announce(id); }, DEBOUNCE_MS));
+  }
+
+  private appeared(id: string): void {
+    const st = this.readState();
+    if (st.enabled.includes(id) || st.disabled.includes(id)) return;
+    const where = this.folderOf(id);
+    if (!where || where.bundled) return;
+    this.writeState({ ...st, disabled: [...st.disabled, id].sort() });
   }
 
   /** A watcher on the real folder of every symlinked plugin, so an edit to the target announces it too. */

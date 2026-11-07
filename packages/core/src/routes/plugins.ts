@@ -277,8 +277,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const m = marketsOf(req);
     if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
     const skillRows = skillsOf(req)?.list() ?? [];
+    const urlOf = (slug: string) => m.get(slug)?.url ?? null;
+    // "Installed" names the copy that came from THIS marketplace; the same id from another one is not it.
     const entries = (await m.catalog()).map((e) => {
-      const installed = e.kind === 'plugin' ? plugins.get(e.id)?.install ?? null : skillRows.find((s) => s.id === e.id) ?? null;
+      const rec = e.kind === 'plugin' ? plugins.get(e.id)?.install ?? null : skillRows.find((s) => s.id === e.id)?.install ?? null;
+      const installed = rec && rec.marketplace === urlOf(e.marketplace) ? rec : null;
       return { ...e, folder: undefined, ...(installed ? { installed: { version: installed.version } } : {}) };
     });
     res.setHeader('Cache-Control', 'no-store');
@@ -342,9 +345,17 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     res.status(/unknown skill|unknown marketplace|not in the marketplace/.test(msg) ? 404 : /already installed/.test(msg) ? 409 : 400).json({ error: msg });
   };
   router.get('/skills', keyRoute({ thread: projectListRule, roleRun: projectListRule, plugin: needs('read:projects') }), (req, res) => {
-    const project = typeof req.query.project === 'string' ? req.query.project : undefined;
+    let principal: ReturnType<typeof principalOf> | null = null;
+    try { principal = principalOf(req); } catch { principal = null; }
     res.setHeader('Cache-Control', 'no-store');
-    // The text stays out of the list (a thread reads a skill it has); the owner's page shows it on demand.
+    if (principal?.kind === 'thread') {
+      // A thread sees the skills its own project gets (what is in its prompt), and no paths or marketplace URLs.
+      const own = scopeOf(req).caller(principal.terminalId)?.sessionId;
+      const rows = (skillsOf(req)?.list(own) ?? []).filter((s) => s.enabled && s.enabledHere !== false && !s.error);
+      return void res.json({ skills: rows.map((s) => ({ id: s.id, name: s.name, version: s.version, description: s.description, harnesses: s.harnesses, enabled: true, enabledHere: true, text: s.text.length > 400 ? `${s.text.slice(0, 400)}…` : s.text })) });
+    }
+    const project = typeof req.query.project === 'string' ? req.query.project : undefined;
+    // The text stays short in the list; the owner's page shows it on demand.
     res.json({ skills: (skillsOf(req)?.list(project) ?? []).map((s) => ({ ...s, text: s.text.length > 400 ? `${s.text.slice(0, 400)}…` : s.text })) });
   });
   router.post('/skills/install', ownerOnlyStrict, async (req, res) => {

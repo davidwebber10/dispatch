@@ -57,7 +57,7 @@ export class SkillsService {
       try { folder = fs.realpathSync(s.folder); } catch { /* as listed */ }
       let text = s.text.trim();
       if (text.length > SKILL_TEXT_MAX) text = `${text.slice(0, SKILL_TEXT_MAX)}\n\n[cut: the skill text is longer than ${SKILL_TEXT_MAX} characters; read the rest in ${folder}/SKILL.md]`;
-      out.push(`## Skill: ${s.name}\n\nFolder: ${folder}\n\n${text}`);
+      out.push(`## Skill: ${s.name.split('\n')[0].trim()}\n\nFolder: ${folder}\n\n${text}`);
     }
     return out;
   }

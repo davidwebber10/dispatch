@@ -105,4 +105,18 @@ describe('PluginInstaller', () => {
     expect((await inst.checkNow()).updated).toEqual(['other']);
     expect(reg.get('other')!.version).toBe('1.1.0');
   });
+
+  it('a plugin of a trusted marketplace shows auto-update on; an explicit off is honoured by the check', async () => {
+    const inst = build();
+    await inst.install(slug, 'hello');
+    mkt.setTrusted(slug, true);
+    expect(reg.get('hello')!.autoUpdate).toBe(true);
+    inst.setAutoUpdate('hello', false);
+    expect(reg.get('hello')!.autoUpdate).toBe(false);
+    m.plugin('hello', '1.1.0'); m.commit('bump');
+    expect((await inst.checkNow()).updated).toEqual([]);
+    expect(reg.get('hello')!.version).toBe('1.0.0');
+    inst.setAutoUpdate('hello', true);
+    expect((await inst.checkNow()).updated).toEqual(['hello']);
+  });
 });

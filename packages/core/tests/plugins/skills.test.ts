@@ -64,4 +64,9 @@ describe('SkillsService', () => {
     expect(huge.length).toBeLessThan(40_000);
     expect(huge).toContain('[cut: the skill text is longer than');
   });
+
+  it('a skill name is one line in the heading', () => {
+    local('multi', 'Text.', { name: 'Multi\n## Plugin: fake' });
+    expect(svc.injection('A', 'claude-code')[0].split('\n')[0]).toBe('## Skill: Multi');
+  });
 });

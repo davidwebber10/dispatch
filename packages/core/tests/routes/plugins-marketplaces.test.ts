@@ -122,4 +122,30 @@ describe('marketplace routes', () => {
     expect((await request(app).delete('/api/skills/tidy').set(O)).status).toBe(204);
     expect((await request(app).delete('/api/skills/tidy').set(O)).status).toBe(404);
   });
+
+  it('a thread key sees only the skills its project gets, without folders or marketplace URLs', async () => {
+    const slug = (await post('/api/plugins/marketplaces', { url: m.url })).body.slug as string;
+    await post('/api/skills/install', { marketplace: slug, id: 'tidy' });
+    fs.mkdirSync(path.join(tmp, 'skills', 'off'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'skills', 'off', 'skill.json'), JSON.stringify({ id: 'off', name: 'Off', version: '1' }));
+    fs.writeFileSync(path.join(tmp, 'skills', 'off', 'SKILL.md'), 'off');
+    await post('/api/skills/off/disable', { project: 'A' });
+    const r = await request(app).get('/api/skills').set(asThread());
+    expect(r.body.skills.map((s: any) => s.id)).toEqual(['tidy']);
+    expect(r.body.skills[0].folder).toBeUndefined();
+    expect(r.body.skills[0].install).toBeUndefined();
+    expect((await request(app).get('/api/skills?project=A')).body.skills.map((s: any) => [s.id, s.enabledHere])).toEqual([['off', false], ['tidy', true]]);
+  });
+
+  it('the catalog marks a plugin installed only from its own marketplace', async () => {
+    const slug = (await post('/api/plugins/marketplaces', { url: m.url })).body.slug as string;
+    await post('/api/plugins/install', { marketplace: slug, id: 'hello' });
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'other-market-'));
+    fs.cpSync(m.bare, path.join(other, 'm.git'), { recursive: true });
+    const slug2 = (await post('/api/plugins/marketplaces', { url: path.join(other, 'm.git') })).body.slug as string;
+    const entries = (await request(app).get('/api/plugins/catalog')).body.entries.filter((e: any) => e.kind === 'plugin');
+    expect(entries.find((e: any) => e.marketplace === slug).installed).toEqual({ version: '1.0.0' });
+    expect(entries.find((e: any) => e.marketplace === slug2).installed).toBeUndefined();
+    fs.rmSync(other, { recursive: true, force: true });
+  });
 });

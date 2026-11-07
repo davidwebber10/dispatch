@@ -15,7 +15,7 @@ describe('the command palette (plugins slice 6)', () => {
     usePluginRegistry.getState().register('p', { commands: [{ id: 'sync', label: 'Sync the rundown', run }, { id: 'other', label: 'Other thing', run: () => {} }] });
     render(<CommandPalette />);
     expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
-    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
     const dialog = screen.getByRole('dialog', { name: 'Commands' });
     expect(dialog).toHaveTextContent('Analytics');
     expect(dialog).toHaveTextContent('Sync the rundown');
@@ -24,15 +24,24 @@ describe('the command palette (plugins slice 6)', () => {
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
     expect(run).toHaveBeenCalled();
     expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
-    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Escape' });
     expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
   });
 
   it('a built-in row opens a view', () => {
     render(<CommandPalette />);
-    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
     fireEvent.click(screen.getByRole('option', { name: 'Analytics' }));
     expect(useUI.getState().view).toBe('analytics');
+  });
+
+  it('the shortcut inside the terminal does nothing (Ctrl+K is the shell\'s)', () => {
+    render(<div className="xterm"><textarea aria-label="Terminal input" /></div>);
+    render(<CommandPalette />);
+    const ta = screen.getByLabelText('Terminal input');
+    ta.focus();
+    fireEvent.keyDown(ta, { key: 'k', metaKey: true, ctrlKey: true, bubbles: true });
+    expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
   });
 });

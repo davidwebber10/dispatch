@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { MarketplaceService } from '../../src/plugins/marketplaces.js';
+import { MarketplaceService, gitErrorLine, isMarketplaceUrl } from '../../src/plugins/marketplaces.js';
 import { makeMarket } from './market-fixture.js';
 
 /** Marketplaces are git repositories (docs/superpowers/specs/2026-11-07-plugins-design.md, section 7.1). */
@@ -84,5 +84,28 @@ describe('MarketplaceService', () => {
     svc.setTrusted(row.slug, true);
     expect(svc.list()[0].trusted).toBe(true);
     expect(new MarketplaceService(path.join(tmp, 'marketplaces'), path.join(tmp, 'marketplaces.json')).list()[0].trusted).toBe(true);
+  });
+
+  it('gitErrorLine picks the line that explains an ssh or https failure, not the advice', () => {
+    const ssh = 'Cloning into x...\ngit@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n';
+    expect(gitErrorLine(ssh)).toBe('git@github.com: Permission denied (publickey).');
+    const https = "Cloning into x...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n";
+    expect(gitErrorLine(https)).toBe("fatal: could not read Username for 'https://github.com': terminal prompts disabled");
+    expect(gitErrorLine('fatal: repository \'x\' does not exist\n')).toBe("fatal: repository 'x' does not exist");
+    expect(gitErrorLine('')).toBe('git failed');
+  });
+
+  it('a URL with a user or a token before the host is refused (no credential is ever stored)', () => {
+    expect(isMarketplaceUrl('https://user:TOKEN@github.com/x/y.git')).toBe(false);
+    expect(isMarketplaceUrl('https://github.com/x/y.git')).toBe(true);
+    expect(isMarketplaceUrl('git@github.com:x/y.git')).toBe(true);
+  });
+
+  it('a marketplace removed while its pull runs does not throw', async () => {
+    const row = await svc.add(m.url);
+    const pull = svc.pull(row.slug);
+    svc.remove(row.slug);
+    await expect(pull).resolves.toBeTruthy();
+    expect(svc.list()).toEqual([]);
   });
 });

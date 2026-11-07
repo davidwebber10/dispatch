@@ -293,7 +293,7 @@ export function PluginsSection() {
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{m.name ?? m.slug}</span>
               <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' }}>{m.url}</span>
-              {m.error && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{m.error}{/sign in|auth|permission|denied/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</span>}
+              {m.error && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</span>}
             </div>
             {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

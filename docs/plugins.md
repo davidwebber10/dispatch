@@ -274,7 +274,7 @@ skills/<id>/              skill.json, SKILL.md, …
 ## Skills
 
 A skill is a folder under `~/.dispatch/skills/<id>` with a `skill.json` (`id`, `name`,
-`version`, `description`, optional `harnesses`) and a `SKILL.md`. Install one from a marketplace
+`version`, `description`, optional `harnesses`: any of `claude-code`, `codex`, `grok`, `opencode`) and a `SKILL.md`. Install one from a marketplace
 (Browse) or write the folder yourself. Settings → Skills switches each skill on or off
 everywhere, or for one project. The enabled skills' texts go into every thread's system prompt
 under `## Skill: <name>` with the folder's absolute path, so the model can read the skill's
@@ -291,6 +291,9 @@ COMMANDS. `run` is called with no arguments.
 
 - Save any file in the folder: the daemon tells the app, which re-imports the bundle and
   re-registers the plugin. Other plugins and the rest of the app keep their state.
+- A plugin folder that appears under `~/.dispatch/plugins` while the daemon runs (a thread wrote
+  it, a copy landed) starts **disabled**: the Plugins page shows it, and the owner enables it. New
+  plugin… and Copy to local… on the page start enabled, as does an install from a marketplace.
 - Hot reload watches the plugin folder, and the real folder behind a symlinked one. On Linux it
   needs Node 20 or newer (recursive watching); without it the Reload button on the Plugins page
   does the same by hand.

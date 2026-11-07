@@ -338,7 +338,7 @@ export const TOOLS = [
   // --- plugins and skills (read-only; docs/superpowers/specs/2026-11-07-plugins-design.md, section 9) ---
   {
     name: 'plugin_list',
-    description: 'The plugins this Dispatch has: id, name, version, enabled, and whether each is local, bundled or installed. Read-only. To build one, write a folder under ~/.dispatch/plugins/<id> (plugin.json + web.js); the app reloads it as you save.',
+    description: 'The plugins this Dispatch has: id, name, version, enabled, and whether each is local, bundled or installed. Read-only. A new plugin folder is the owner\'s call: one that appears on its own stays disabled until the owner enables it.',
     inputSchema: { type: 'object', properties: {} },
   },
   {

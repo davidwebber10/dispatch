@@ -22,6 +22,8 @@ const MAX_OUT = 64 * 1024 * 1024;
 /** The URL shapes a marketplace may have. Anything else (a flag, a relative path, whitespace) is refused before git sees it. */
 export function isMarketplaceUrl(url: string): boolean {
   if (typeof url !== 'string' || !url || /[\s\x00-\x1f]/.test(url) || url.startsWith('-')) return false;
+  // A user or token before the host would be stored in the clone's config and shown on the page: never.
+  if (/^(https?|ssh):\/\/[^/]*@/.test(url)) return false;
   return /^https?:\/\/[^/]+\/.+/.test(url) || /^ssh:\/\/[^/]+\/.+/.test(url) || /^git@[\w.-]+:.+/.test(url) || /^file:\/\/\/.+/.test(url) || path.isAbsolute(url);
 }
 
@@ -43,8 +45,18 @@ function runGit(args: string[], cwd: string): Promise<{ ok: boolean; stdout: Buf
     } catch (e) { resolve({ ok: false, stdout: Buffer.alloc(0), stderr: e instanceof Error ? e.message : String(e) }); }
   });
 }
-/** Git's last meaningful line: what the owner reads on the Plugins page. */
-const lastLine = (stderr: string): string => stderr.split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? 'git failed';
+/**
+ * The line of git's stderr that explains a failure: the one that says Permission denied, else the
+ * last `fatal:` or `error:` line, else the last line. The advice lines after it are not it.
+ */
+export function gitErrorLine(stderr: string): string {
+  const lines = stderr.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /permission denied|authentication failed/i.test(l))
+    ?? [...lines].reverse().find((l) => /^(fatal|error):/i.test(l))
+    ?? lines.pop()
+    ?? 'git failed';
+}
+const lastLine = gitErrorLine;
 
 export class MarketplaceService {
   constructor(readonly dir: string, private readonly stateFile: string) {}
@@ -93,7 +105,8 @@ export class MarketplaceService {
       r = await runGit(['pull', '--quiet', '--ff-only'], clone);
     }
     const rows = this.readState();
-    const live = rows.find((m) => m.slug === slug)!;
+    const live = rows.find((m) => m.slug === slug);
+    if (!live) { fs.rmSync(clone, { recursive: true, force: true }); return { ...row, error: 'removed' }; } // removed while the pull ran
     if (r.ok) {
       live.error = null; live.lastPulledAt = new Date().toISOString();
       const meta = this.readJson(path.join(clone, 'marketplace.json'));
