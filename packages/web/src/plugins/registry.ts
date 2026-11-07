@@ -108,7 +108,9 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
     for (const fn of cleanups.get(plugin) ?? []) { try { fn(); } catch { /* a listener already gone */ } }
     cleanups.delete(plugin);
     const s = get();
+    const badges = Object.fromEntries(Object.entries(s.badges).filter(([k]) => !k.startsWith(`plugin:${plugin}:`)));
     set({
+      badges,
       views: drop(s.views, plugin), settings: drop(s.settings, plugin), threadMenu: drop(s.threadMenu, plugin),
       projectMenu: drop(s.projectMenu, plugin), composerActions: drop(s.composerActions, plugin), slots: drop(s.slots, plugin),
     });
@@ -120,6 +122,8 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
   },
   addCleanup: (plugin, fn) => { const list = cleanups.get(plugin) ?? []; list.push(fn); cleanups.set(plugin, list); },
   setBadge: (viewKey, n) => {
+    const current = get().badges[viewKey] ?? 0;
+    if ((n > 0 ? Math.floor(n) : 0) === current) return;
     const badges = { ...get().badges };
     if (n > 0) badges[viewKey] = Math.floor(n); else delete badges[viewKey];
     set({ badges });

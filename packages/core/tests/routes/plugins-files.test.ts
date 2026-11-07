@@ -86,6 +86,12 @@ describe('plugin file routes (2026-11-07)', () => {
     expect((await register({}, 'nope', { path: 'notes.md', sessionId: 'A' })).status).toBe(404);
   });
 
+  it('a path in the real form of the project folder (through a symlinked parent) is inside the project', async () => {
+    const r = await register(asThread(), 'previews', { path: path.join(fs.realpathSync(proj), 'shot.png') });
+    expect(r.status).toBe(201);
+    expect((await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`)).status).toBe(200);
+  });
+
   it('a path outside the project, an unknown type, a missing file and an oversize file are refused with the previews messages', async () => {
     const out = await register(asThread(), 'previews', { path: path.join(outside, 'secret.txt') });
     expect(out.status).toBe(400);

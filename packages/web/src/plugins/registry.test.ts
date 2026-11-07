@@ -88,4 +88,15 @@ describe('view badges (plugins slice 4)', () => {
     expect(usePluginRegistry.getState().badges).toEqual({});
     expect(anyBadge(usePluginRegistry.getState())).toBe(false);
   });
+
+  it('unregister drops the plugin\'s badges, and setBadge with the same count keeps the same object', async () => {
+    const { usePluginRegistry } = await import('./registry');
+    usePluginRegistry.getState().setBadge('plugin:previews:history', 2);
+    usePluginRegistry.getState().setBadge('plugin:other:v', 1);
+    const before = usePluginRegistry.getState().badges;
+    usePluginRegistry.getState().setBadge('plugin:previews:history', 2);
+    expect(usePluginRegistry.getState().badges).toBe(before);
+    usePluginRegistry.getState().unregister('previews');
+    expect(usePluginRegistry.getState().badges).toEqual({ 'plugin:other:v': 1 });
+  });
 });

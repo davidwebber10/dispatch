@@ -322,7 +322,11 @@ export class SessionService {
   private applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
     if (!this.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
     const inj = this.pluginInjection(harness);
-    specs.push(...inj.specs);
+    // A plugin's server must find the daemon under every harness: Codex passes only the listed
+    // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
+    const api = this.apiUrl();
+    const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.daemonPort ? { DISPATCH_PORT: String(this.daemonPort) } : {}) };
+    specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
     prompts.push(...inj.prompts);
     const toolsAvailable = specs.map((s) => s.name);
     try {

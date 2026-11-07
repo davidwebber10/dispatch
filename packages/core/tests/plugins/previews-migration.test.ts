@@ -8,7 +8,7 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as pluginData from '../../src/db/plugin-data.js';
-import { migratePreviews } from '../../src/plugins/previews-migration.js';
+import { migratePreviews, MIGRATE_MAX } from '../../src/plugins/previews-migration.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { KeysManager } from '../routes/keys-manager.js';
@@ -51,6 +51,23 @@ describe('the previews migration', () => {
     expect(migratePreviews(db)).toBe(0);
     expect(pluginData.listDocs(db, 'previews')).toHaveLength(2);
     expect((pluginData.getSettings(db, 'previews')?.value as { migrated: boolean }).migrated).toBe(true);
+  });
+
+  it('the newest rows win the cap; a files entry missing a field and a bad files JSON are skipped, not fatal', () => {
+    const ins = db.prepare('INSERT INTO previews (id, session_id, session_name, terminal_id, terminal_label, title, note, text, files, created_at, seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    for (let i = 0; i < MIGRATE_MAX + 100; i++) ins.run(`r${i}`, 'A', 'Alpha', null, null, `T${i}`, null, null, '[]', new Date(Date.UTC(2027, 0, 1, 0, i)).toISOString(), null);
+    ins.run('bad1', 'A', 'Alpha', null, null, 'Bad files', null, 'kept', JSON.stringify([{ path: path.join(proj, 'shot.png') }]), '2028-01-01T00:00:00.000Z', null);
+    ins.run('bad2', 'A', 'Alpha', null, null, 'Bad json', null, 'kept too', 'not json', '2028-01-02T00:00:00.000Z', null);
+    expect(migratePreviews(db)).toBe(MIGRATE_MAX);
+    const keys = new Set(pluginData.listDocs(db, 'previews').map((d) => d.key));
+    expect(keys.size).toBe(MIGRATE_MAX);
+    expect(keys.has('preview:bad1')).toBe(true);
+    expect(keys.has('preview:bad2')).toBe(true);
+    expect(keys.has(`preview:r${MIGRATE_MAX + 99}`)).toBe(true);
+    expect(keys.has('preview:r0')).toBe(false);
+    expect((pluginData.getDoc(db, 'previews', 'preview:bad1')!.value as { files: unknown[] }).files).toEqual([]);
+    // p1 (2026) and the incomplete entry of bad1 are outside the newest rows or skipped: no file reference at all.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM plugin_files').get()).toEqual({ n: 0 });
   });
 
   it('an install without the old table, or with none to copy, is left alone', () => {

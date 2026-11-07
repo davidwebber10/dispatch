@@ -79,9 +79,9 @@ What `register` takes:
 | `views` | the desktop rail; the phone's Plugins tab (and a tab of its own once promoted in Settings → Plugins) | `{ id, label, icon?, Component }` |
 | `settings` | Settings, under PLUGINS, on desktop and phone | `{ id, label, blurb?, icon?, Component }` |
 | `threadMenu` | the thread ⋯ menu, after Copy thread ID | `{ id, label, when?({ tab }), onPick({ tab }) }` |
-| `projectMenu` | the phone's project ⋯ menu, after Previews | `{ id, label, when?({ session }), onPick({ session }) }` |
+| `projectMenu` | the phone's project ⋯ menu, with the project's own rows | `{ id, label, when?({ session }), onPick({ session }) }` |
 | `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text) }` |
-| `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; in this slice the one mounted slot is `composer.before` (above the composer, with the composer context as props); the others in the design arrive with later slices |
+| `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; mounted slots: `composer.before` (above the composer, the composer context as props), `project.header.actions` (the phone's project header, `{ session }`), `thread.header.actions` (the thread header on the phone and the desktop's floating controls, `{ terminal, floating? }`), `app.overlay` (the app root, for sheets and modals) |
 
 `surface` is `'thread'` (a Pretty thread), `'terminal'` (a CLI thread's phone composer),
 `'chat'` (the Control Plane chat) or `'unknown'`.
@@ -96,9 +96,10 @@ The SDK object, in full:
 - `version`, `React`, `h`, `Fragment`.
 - `hooks`: `useState`, `useEffect`, `useMemo`, `useCallback`, `useRef`, `useIsMobile`,
   `useContributions(kind, filter?)`, `useStore(store, selector)`.
-- `stores`: `useUI`, `useProjects`, `useTabs`, `usePreviews`, `useUpdate`, `useThreadStatus`.
+- `stores`: `useUI`, `useProjects`, `useTabs`, `useUpdate`, `useThreadStatus`.
   Read them; write through `actions`.
-- `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`.
+- `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`, `setBadge(viewKey, n)` (an unseen count on one of the plugin's views; 0 clears it).
+- `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,
   `item`, `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
@@ -207,7 +208,7 @@ pays for the same call.
 
 ## Bundled plugins
 
-`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: the Prompt coach is one.
+`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Prompt coach are the two.
 A bundled plugin updates with Dispatch, cannot be removed, and is not edited in place; "Copy
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says

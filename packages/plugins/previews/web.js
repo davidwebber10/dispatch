@@ -7,6 +7,7 @@ export default function activate(d) {
   const { h, hooks: { useState, useEffect, useMemo }, ui, storage, events, icons, actions, apiPath } = d;
   const ID = d.id || 'previews';
   const VIEW = `plugin:${ID}:history`;
+  const KEEP = 1000; // previews kept; the oldest seen ones are removed past this
   const fileUrl = (f) => apiPath(`/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`);
   const newestFirst = (a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
   const isPreview = (v) => !!v && typeof v === 'object' && typeof v.id === 'string' && Array.isArray(v.files);
@@ -20,6 +21,7 @@ export default function activate(d) {
       try {
         const docs = await storage.all(ID);
         set({ items: docs.filter((x) => x.key.startsWith('preview:')).map((x) => x.value).filter(isPreview).sort(newestFirst), loaded: true });
+        void get().prune();
       } catch { /* the next event or open tries again */ }
       finally { set({ loading: false }); }
     },
@@ -38,10 +40,15 @@ export default function activate(d) {
     remove: async (id) => {
       const p = get().items.find((x) => x.id === id);
       get().drop(id);
-      try {
-        await storage.remove(ID, `preview:${id}`);
-        for (const f of (p && p.files) || []) await d.fetch(ID, `/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`, { method: 'DELETE' });
-      } catch { /* gone or never there */ }
+      try { await storage.remove(ID, `preview:${id}`); } catch { /* gone */ }
+      for (const f of (p && p.files) || []) { try { await d.fetch(ID, `/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`, { method: 'DELETE' }); } catch { /* never there */ } }
+    },
+    // The store stays under the plugin's document cap: past KEEP previews, the oldest seen ones go.
+    prune: async () => {
+      const items = get().items;
+      if (items.length <= KEEP) return;
+      const seen = items.filter((x) => x.seenAt).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+      for (const x of seen.slice(0, Math.max(0, items.length - KEEP))) await get().remove(x.id);
     },
     openSheet: (sessionId) => set({ sheet: sessionId }),
     closeSheet: () => set({ sheet: null }),
@@ -87,7 +94,8 @@ export default function activate(d) {
     const [viewing, setViewing] = useState(null);
     const unseen = !preview.seenAt;
     const projectName = d.stores.useProjects((s) => { const p = s.sessions.find((x) => x.id === preview.sessionId); return p ? p.name : preview.sessionName; });
-    const viewerFiles = preview.files.map((f) => ({ src: fileUrl(f), name: f.name, mime: f.mime, size: f.size, loadText: () => d.fetch(ID, fileUrl(f)).then((r) => r.text()) }));
+    // The viewer fetches `src` itself for markdown and text (one app-root path; no second base prefix).
+    const viewerFiles = preview.files.map((f) => ({ src: fileUrl(f), name: f.name, mime: f.mime, size: f.size }));
     const context = [showProject !== false ? projectName : null, preview.terminalLabel].filter(Boolean).join(' · ');
     const when = timeOf(preview.createdAt);
     const hasImage = preview.files.some((f) => kindOf(f) === 'image');

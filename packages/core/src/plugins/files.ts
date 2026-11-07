@@ -21,19 +21,14 @@ export class ProjectFileError extends Error {
   constructor(message: string, readonly status: number = 400) { super(message); }
 }
 
-function resolveSafe(root: string, requested: string): string | null {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, requested);
-  const relative = path.relative(resolvedRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return resolved;
-}
 
 /** Check and describe one requested file. Throws ProjectFileError with the reason the caller should read. */
 export function checkProjectFile(workingDir: string, requested: unknown): ProjectFile {
   if (typeof requested !== 'string' || !requested.trim()) throw new ProjectFileError('each path must be a non-empty string');
-  const abs = resolveSafe(workingDir, requested.trim());
-  if (!abs || !insideRealRoot(workingDir, abs)) throw new ProjectFileError(`path is outside the project folder: ${requested}`);
+  // The real-root check decides (symlinks resolved on both sides): a path in the project folder's
+  // real form (/private/var for /var on macOS) is inside it; a textual comparison would refuse it.
+  const abs = path.resolve(workingDir, requested.trim());
+  if (!insideRealRoot(workingDir, abs)) throw new ProjectFileError(`path is outside the project folder: ${requested}`);
   const mime = PROJECT_FILE_MIME[path.extname(abs).toLowerCase()];
   if (!mime) throw new ProjectFileError(`unsupported file type: ${path.basename(abs)} (png, jpg, gif, webp, svg, pdf, html, md, txt, csv, json)`);
   let st: fs.Stats;

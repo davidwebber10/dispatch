@@ -406,7 +406,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dispatchDir, 'keys'), bundledDir: options.bundledDir === undefined ? undefined : options.bundledDir ?? undefined });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
-  migratePreviews(db);
+  try { migratePreviews(db); } catch (e) { console.warn('[plugins] the previews migration failed; the daemon runs without it:', e instanceof Error ? e.message : e); }
   app.locals.plugins = plugins;
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
@@ -592,7 +592,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dataDir, 'keys'), bundledDir: path.join(resolveRepoRoot(), 'packages', 'plugins') });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
-  migratePreviews(db);
+  try { migratePreviews(db); } catch (e) { console.warn('[plugins] the previews migration failed; the daemon runs without it:', e instanceof Error ? e.message : e); }
   plugins.start();
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   const authRequestService = new AuthRequestService(broadcaster);

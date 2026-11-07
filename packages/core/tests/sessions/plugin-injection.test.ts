@@ -55,6 +55,15 @@ describe('plugin injection at spawn (2026-11-07)', () => {
     expect((row.config as { toolsAvailable?: string[] }).toolsAvailable).toEqual(['fs', 'dispatch', 'plugin-coach']);
   });
 
+  it("a plugin server's env carries the daemon's address and port, so a harness that passes only listed variables (Codex) still reaches the daemon", () => {
+    const { svc } = makeService();
+    svc.setDaemonApi('http://127.0.0.1:4321/');
+    svc.setDaemonPort(4321);
+    const terminal = svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude-2');
+    const cfg = JSON.parse(fs.readFileSync(path.join(tmpDir, `thread-${terminal.id}.mcp.json`), 'utf8'));
+    expect(cfg.mcpServers['plugin-coach'].env).toMatchObject({ DISPATCH_API: 'http://127.0.0.1:4321', DISPATCH_PORT: '4321', DISPATCH_PLUGIN: 'coach' });
+  });
+
   it('a harness the plugin does not list gets nothing from it', () => {
     const { svc, pty } = makeService();
     const terminal = svc.createTerminal('s1', 'codex', 'CX', true, undefined, 'ext-codex');

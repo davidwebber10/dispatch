@@ -1025,7 +1025,7 @@ describe('agency-mcp post_image', () => {
     expect((out.content[0] as any).type).toBe('image');
     const calls = (global.fetch as any).mock.calls as [string, any][];
     expect(calls[0][0]).toBe('http://localhost:9999/api/plugins/previews/files');
-    expect(JSON.parse(calls[0][1].body)).toEqual({ path: 'shot.png' });
+    expect(JSON.parse(calls[0][1].body)).toEqual({ path: path.resolve(process.cwd(), 'shot.png') });
     expect(calls[1][0]).toMatch(/^http:\/\/localhost:9999\/api\/plugins\/previews\/data\/preview:[0-9a-f-]{36}$/);
     expect(calls[1][1].method).toBe('PUT');
     expect(JSON.parse(calls[1][1].body).value).toMatchObject({ sessionId: 'sess-1', title: 'the result', files: [{ fileId: 'f-1', name: 'shot.png', mime: 'image/png', size: 3 }], seenAt: null });

@@ -1228,7 +1228,8 @@ async function postImageToPreviews(args: { path: string; alt?: string }): Promis
     const sid = sessionId();
     if (!sid) return;
     const base = apiBase();
-    const f = await httpJson('POST', `${base}/api/plugins/previews/files`, { path: args.path });
+    // Made absolute from this server's cwd (the thread's folder, a worktree perhaps): the file the thread meant.
+    const f = await httpJson('POST', `${base}/api/plugins/previews/files`, { path: path.resolve(process.cwd(), args.path) });
     if (!f?.fileId) return;
     const id = randomUUID();
     const title = typeof args.alt === 'string' && args.alt.trim() ? args.alt.trim().slice(0, 200) : String(f.name ?? 'Image');

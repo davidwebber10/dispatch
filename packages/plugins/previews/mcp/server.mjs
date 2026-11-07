@@ -5,6 +5,7 @@
 // DISPATCH_AUTH_FILE), so it can write into the thread's own project only; the daemon checks every
 // path (inside the project, a known type, a regular file, size-capped) and serves it to the owner.
 import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
 
@@ -12,6 +13,10 @@ const PLUGIN = process.env.DISPATCH_PLUGIN || 'previews';
 const API = (process.env.DISPATCH_API || `http://127.0.0.1:${process.env.DISPATCH_PORT || 3456}`).replace(/\/$/, '');
 const MAX_FILES = 20;
 const MAX_TEXT = 64 * 1024;
+const CALL_TIMEOUT_MS = 15_000;
+/** Past this many documents the oldest seen ones go (a plugin holds at most 2000). */
+const PRUNE_AT = 1800;
+const PRUNE_TO = 1500;
 const DISABLED = 'The Previews plugin is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
 
 function key() {
@@ -24,7 +29,7 @@ async function call(method, route, body) {
   const k = key();
   if (!k) throw new Error('no Dispatch key in this process (DISPATCH_AUTH)');
   const res = await fetch(API + route, {
-    method,
+    method, signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     headers: { Authorization: `Bearer ${k}`, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -71,11 +76,16 @@ async function preview(args) {
   for (const p of paths) if (typeof p !== 'string' || !p.trim()) throw new Error('each path must be a non-empty string');
   const who = await call('GET', '/api/whoami');
   if (who.kind !== 'thread' || !who.sessionId) throw new Error('the preview tool runs inside a Dispatch thread only');
+  // Paths are made absolute from this server's cwd (the thread's folder, a worktree perhaps), so the
+  // daemon checks the file the thread meant. A refusal rolls back the references made before it.
   const files = [];
   for (const p of paths) {
     let f;
-    try { f = await call('POST', `/api/plugins/${encodeURIComponent(PLUGIN)}/files`, { path: p.trim() }); }
-    catch (e) { throw disabledIfGone(e); }
+    try { f = await call('POST', `/api/plugins/${encodeURIComponent(PLUGIN)}/files`, { path: path.resolve(process.cwd(), p.trim()) }); }
+    catch (e) {
+      for (const made of files) { try { await call('DELETE', `/api/plugins/${encodeURIComponent(PLUGIN)}/files/${encodeURIComponent(made.fileId)}`); } catch { /* best effort */ } }
+      throw disabledIfGone(e);
+    }
     files.push({ fileId: f.fileId, name: f.name, mime: f.mime, size: f.size });
   }
   let terminalLabel = null;
@@ -93,7 +103,19 @@ async function preview(args) {
   const doc = { id, sessionId: who.sessionId, sessionName, terminalId: who.terminalId, terminalLabel, title, note, text, files, createdAt: new Date().toISOString(), seenAt: null };
   try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/preview:${id}`, { value: doc }); }
   catch (e) { throw disabledIfGone(e); }
+  void prune().catch(() => {});
   return { ok: true, id, files: files.map((f) => f.name) };
+}
+
+/** Keep the store under the cap: past PRUNE_AT documents, the oldest seen previews go (their files with them). */
+async function prune() {
+  const list = await call('GET', `/api/plugins/${encodeURIComponent(PLUGIN)}/data?values=1`);
+  const docs = ((list && list.docs) || []).filter((d) => d.key.startsWith('preview:') && d.value && typeof d.value === 'object');
+  if (docs.length <= PRUNE_AT) return;
+  const seen = docs.filter((d) => d.value.seenAt).sort((a, b) => (a.value.createdAt < b.value.createdAt ? -1 : 1));
+  for (const d of seen.slice(0, Math.max(0, docs.length - PRUNE_TO))) {
+    try { await call('DELETE', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/${encodeURIComponent(d.key)}`); } catch { continue; }
+  }
 }
 
 async function callTool(name, args) {
