@@ -29,6 +29,8 @@ export interface PluginRow extends Partial<PluginManifest> {
   install: PluginInstall | null;
   /** True while the plugin holds a live key (enabled and not broken). */
   keyed: boolean;
+  /** Hook script counters, when the daemon runs hooks (slice 3). */
+  hooks?: { runs: number; failures: number; dropped: number };
 }
 
 const DEBOUNCE_MS = 150;
@@ -63,6 +65,8 @@ export class PluginRegistry {
 
   private readonly keys: KeyRegistry | null;
   private readonly keyDir: string | null;
+  private hookStats: ((id: string) => { runs: number; failures: number; dropped: number }) | null = null;
+  setHookStatsProvider(fn: (id: string) => { runs: number; failures: number; dropped: number }): void { this.hookStats = fn; }
 
   constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string } = {}) {
     this.keys = opts.keys ?? null;
@@ -205,7 +209,7 @@ export class PluginRegistry {
     if (m.web && !this.resolveInside(folder, m.web)) return this.broken(id, stamp, `plugin.json "web" names a file that does not exist: ${m.web}`);
     if (m.model?.instructions && !this.resolveInside(folder, m.model.instructions)) return this.broken(id, stamp, `plugin.json "model.instructions" names a file that does not exist: ${m.model.instructions}`);
     for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
-    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id) };
+    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}) };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
