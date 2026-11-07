@@ -63,3 +63,22 @@ effort is this thread only.
 Grok and OpenCode apply paths (the spikes show the calls work), the native passthrough menu (C),
 `/account`, `/context`, `/usage`, `/clear`, `/reload`, an effort reset to default, per-model effort
 lists for Codex (a fixed list is offered; Codex answers with an error text if a model refuses one).
+
+## Review round 1 (owner decisions on the Codex and Opus reviews)
+
+- A picked model or effort is saved with a pin (`config.settingsPinned`). The transcript no longer replaces it on the
+  next start (restart, `/restart`, `/cli`, update). The pin lets go once a turn has run on the pick, so a later `/model`
+  typed in the CLI is followed again. A picked Default keeps its pin until the next pick.
+- A pick made mid-turn that is still waiting when the thread exits stays saved and applies at the next start. It is not
+  rolled back. Applies run one at a time per thread, and a refused change goes back to what the process last accepted,
+  never to a value an earlier refusal rejected.
+- A model accepted but an effort refused: the old model is put back on the process; if that fails, the saved model
+  follows the process and the error says so.
+- Codex efforts depend on the model. The source is the app-server's `model/list` (live-checked: every model has low to
+  max; Sol, Terra and Astra also have ultra; Luna stops at max), with a built-in table as the fallback. An unsupported
+  effort is refused before it is sent. A model switch drops a saved effort the new model cannot take, and says so.
+  The effort is also passed to the Codex CLI (`-c model_reasoning_effort`) and to Pretty on every start.
+- A refused change that was rolled back posts a line in the thread (all Pretty surfaces, the Control Plane and the phone)
+  and reloads the thread, so the picker shows the real value. Chat shows the refusal as a line above its box.
+- `/model` with a bad value keeps the typed text. `/cli` asks first when the thread is working.
+- Left for later: a queued message running on the old model, the 15 second control-request timeout split.
