@@ -593,6 +593,8 @@ export interface PluginRow {
   error?: string;
   /** The marketplace install record; null for a local plugin. */
   install: PluginInstall | null;
+  /** True while the plugin holds a live key (enabled and not broken). */
+  keyed?: boolean;
 }
 
 /** A plugin's stored document (spec section 5); `writer` is set when a thread key wrote it. */

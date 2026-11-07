@@ -12,6 +12,24 @@ const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var
 const card: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** One line per permission, for the chip's title (docs/plugins.md lists the same). */
+const PERMISSION_MEANING: Record<string, string> = {
+  'read:projects': 'Reads the project list',
+  'read:threads': 'Reads threads and transcripts',
+  'read:ledger': 'Reads project ledgers',
+  'write:ledger': 'Adds to project ledgers',
+  'read:previews': 'Reads the previews lists',
+  'read:prompts': 'Sees the text of your prompts in hooks',
+  'message:threads': 'Sends messages to threads',
+  'spawn:threads': 'Starts threads',
+  'notify': 'Sends push notifications and hints',
+  'storage': 'Keeps its own documents and settings',
+  'threads:read-storage': 'Lets threads read its documents',
+  'threads:write-storage': 'Lets threads write its documents',
+  'model:assist': 'Makes model calls of its own',
+  'network': 'Its worker makes calls out to the internet',
+};
+
 /** One word for the row's state chip, from the daemon's row and the host's load status. */
 function stateOf(r: PluginRow, s: PluginStatus | undefined): { label: string; tone: 'accent' | 'red' | 'muted'; detail?: string } {
   if (r.error) return { label: 'Broken', tone: 'red', detail: r.error };
@@ -89,6 +107,16 @@ export function PluginsSection() {
         {r.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{r.description}</div>}
         {st.detail && <div role="note" style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{st.detail}</div>}
         <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>~/.dispatch/plugins/{r.id}</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {r.permissions && r.permissions.length > 0 ? (
+            <ul role="list" aria-label="Permissions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: 0, padding: 0, listStyle: 'none' }}>
+              {r.permissions.map((perm) => (
+                <li key={perm} title={PERMISSION_MEANING[perm] ?? 'A permission this Dispatch does not know'} style={{ ...miniChip, textTransform: 'none', letterSpacing: 0, color: PERMISSION_MEANING[perm] ? 'var(--color-text-secondary)' : 'var(--color-status-yellow)' }}>{perm}</li>
+              ))}
+            </ul>
+          ) : <span style={note}>No permissions</span>}
+          {r.keyed && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} title="The plugin's processes can use ~/.dispatch/keys/plugin-{r.id}">Key issued</span>}
+        </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)}>{r.enabled ? 'Disable' : 'Enable'}</button>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => void reload(r)}>Reload</button>

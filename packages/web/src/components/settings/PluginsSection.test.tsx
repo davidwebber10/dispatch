@@ -101,3 +101,18 @@ describe('Settings → Plugins (2026-11-07)', () => {
     expect(localStorage.getItem('dispatch:plugins:safe')).toBeNull();
   });
 });
+
+describe('permissions on the Plugins page (2026-11-07)', () => {
+  it("a row lists the plugin's permissions with their meaning, says when there are none, and shows the key state", async () => {
+    rows = [row('reader', { permissions: ['read:threads', 'notify'], keyed: true } as Partial<PluginRow>), row('bare', { keyed: false } as Partial<PluginRow>)];
+    render(<PluginsSection />);
+    const reader = await screen.findByTestId('plugin-row-reader');
+    const chips = within(reader).getByRole('list', { name: 'Permissions' });
+    expect(within(chips).getByTitle(/threads and transcripts/i)).toHaveTextContent('read:threads');
+    expect(within(chips).getByText('notify')).toBeInTheDocument();
+    expect(reader).toHaveTextContent('Key issued');
+    const bare = screen.getByTestId('plugin-row-bare');
+    expect(bare).toHaveTextContent('No permissions');
+    expect(bare).not.toHaveTextContent('Key issued');
+  });
+});
