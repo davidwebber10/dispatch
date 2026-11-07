@@ -32,6 +32,40 @@ export function budgetFraction(budget) {
   return null;
 }
 
+/** A budget whose window has reset since it was read says nothing about now: null (unknown). */
+export function liveBudget(budget, now = new Date()) {
+  if (!budget || !budget.resetsAt) return budget || null;
+  const r = Date.parse(budget.resetsAt);
+  const t = now instanceof Date ? now.getTime() : Number(now);
+  return Number.isFinite(r) && r <= t ? null : budget;
+}
+
+/** A budget from answer headers keeps the reset time the daemon gave before, while it is ahead. */
+export function mergeBudget(next, prev) {
+  if (!next || next.resetsAt || !prev || !prev.resetsAt) return next;
+  const samePercent = typeof next.usedPercent === 'number' && typeof prev.usedPercent === 'number';
+  return samePercent ? { ...next, resetsAt: prev.resetsAt } : next;
+}
+
+/**
+ * The budget state from the daemon's own routes (the worker reads them; review finding 1):
+ * `cap` is GET /budget, `share` GET /assist/share, `usage` GET /assist/usage (OpenRouter's dollars).
+ * Null = no cap. The weekly share when the account has figures, else the fail-safe token cap.
+ */
+export function budgetState(cap, share, harness = 'claude', usage = null) {
+  if (!cap) return null;
+  if (harness === 'openrouter') {
+    if (typeof cap.usdWeekly !== 'number') return null;
+    return { usedUsd: usage && typeof usage.costUsd === 'number' ? usage.costUsd : null, capUsd: cap.usdWeekly };
+  }
+  if (typeof cap.percentWeekly !== 'number') return null;
+  const w = share && share.sevenDay;
+  if (w && typeof w.pluginPercent === 'number') return { usedPercent: w.pluginPercent, capPercent: cap.percentWeekly, resetsAt: w.resetsAt || null };
+  const fb = share && share.fallback;
+  if (fb && typeof fb.capTokens === 'number') return { usedTokens: fb.usedTokens, capTokens: fb.capTokens, capPercent: cap.percentWeekly };
+  return { usedPercent: null, capPercent: cap.percentWeekly };
+}
+
 /**
  * The level the Coach runs at now: the chosen thoroughness (Use my budget starts at Thorough), one
  * level down at 80% of the cap, two at 90%; below small-only is rules only ('none'); at the cap, 'none'.

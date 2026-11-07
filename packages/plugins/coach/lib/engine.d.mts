@@ -10,7 +10,9 @@ export interface EngineIo {
   now(): Date;
   log?(...a: unknown[]): void;
   saveDelayMs?: number;
+  readBudget?(harness: string | null): Promise<unknown>;
 }
 export const JUDGE_PER_RUN: number;
 export const FRESH_MS: number;
-export function createEngine(io: EngineIo): { load(): Promise<void>; handle(e: Record<string, unknown>): Promise<unknown>; flush(): Promise<void>; idle(): Promise<unknown>; readonly state: unknown };
+export const BUDGET_TTL_MS: number;
+export function createEngine(io: EngineIo): { load(): Promise<void>; handle(e: Record<string, unknown>): Promise<unknown>; flush(): Promise<void>; refreshBudget(): Promise<unknown>; idle(): Promise<unknown>; readonly state: unknown };

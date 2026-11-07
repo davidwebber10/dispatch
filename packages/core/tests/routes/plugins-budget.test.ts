@@ -207,4 +207,23 @@ describe('plugin budget (coach plan, Task 4)', () => {
     expect(r.status).toBe(429);
     expect(r.body).toMatchObject({ error: 'budget', capUsd: 0.05 });
   });
+  it('the worker reads its own budget and share from the daemon: the cap, the reset time, and the fail-safe tokens', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    plugin('coach', ['model:assist', 'read:usage']);
+    plugin('other', ['model:assist', 'read:usage']);
+    app = build(runner);
+    // Its own budget: readable with its key (never writable); another plugin's: not.
+    expect((await request(app).get('/api/plugins/coach/budget').set(asPlugin('coach'))).body).toEqual({ percentWeekly: 3, usdWeekly: null });
+    expect((await request(app).get('/api/plugins/coach/budget').set(asPlugin('other'))).status).toBe(403);
+    // A known window: the answer and the share name its reset time.
+    usage(9000, 1000);
+    const a = await ask();
+    expect(a.headers['x-budget-resets-at']).toBe(new Date(now + 3 * 86_400_000).toISOString());
+    // No figures: the share carries the fail-safe token cap the guard uses.
+    summary = null;
+    const share = await request(app).get('/api/plugins/coach/assist/share').set(asPlugin('coach'));
+    expect(share.body.sevenDay).toBeNull();
+    expect(share.body.fallback).toMatchObject({ capTokens: 3 * WEEKLY_TOKENS_PER_PERCENT });
+    expect(share.body.fallback.usedTokens).toBeGreaterThan(0);
+  });
 });

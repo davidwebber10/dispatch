@@ -121,7 +121,14 @@ const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
  */
 function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
   const reserved = new Map<string, Set<Reservation>>();
+  /** The fail-safe token cap for a percent budget with no weekly figure: the plugin's 7-day tokens and the calls in flight. */
+  const tokenFallback = (pluginId: string, percentWeekly: number): { usedTokens: number; capTokens: number } => {
+    const capTokens = Math.round(percentWeekly * (limits.tokensPerPercent ?? WEEKLY_TOKENS_PER_PERCENT));
+    const inFlight = [...(reserved.get(pluginId) ?? [])].filter((r) => r.harness !== 'openrouter').reduce((n, r) => n + r.tokens, 0);
+    return { usedTokens: pluginData.assistTokensSince(db, pluginId, new Date(Date.now() - 7 * DAY_MS).toISOString()) + inFlight, capTokens };
+  };
   return {
+    tokenFallback,
     check(pluginId: string, call: { harness: AssistHarness | 'auto' | undefined; accountId: string | undefined; model: string | undefined; maxTokens: number; promptChars: number }): BudgetCheck {
       const harness: AssistHarness = call.harness === 'codex' || call.harness === 'openrouter' ? call.harness : 'claude';
       const sub: 'claude' | 'codex' = harness === 'codex' ? 'codex' : 'claude';
@@ -149,13 +156,13 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
           const reservedW = same.reduce((n, r) => n + r.weight, 0);
           const used = week.pluginPercent + (week.accountWeight > 0 ? (reservedW / week.accountWeight) * week.usedPercent : 0);
           headers['X-Budget-Used-Percent'] = pct(used);
+          if (week.resetsAt) headers['X-Budget-Resets-At'] = week.resetsAt;
           if (budget.percentWeekly !== null && used >= budget.percentWeekly) {
             refuse = { error: 'budget', window: 'seven_day', usedPercent: used, capPercent: budget.percentWeekly, message: `The plugin has used its ${budget.percentWeekly}% of the weekly limit.` };
           }
         } else if (budget.percentWeekly !== null) {
           // No weekly figure: never unlimited. The plugin's tokens over 7 days, with the calls in flight.
-          const cap = Math.round(budget.percentWeekly * (limits.tokensPerPercent ?? WEEKLY_TOKENS_PER_PERCENT));
-          const usedT = pluginData.assistTokensSince(db, pluginId, new Date(Date.now() - 7 * DAY_MS).toISOString()) + [...mine].filter((r) => r.harness !== 'openrouter').reduce((n, r) => n + r.tokens, 0);
+          const { usedTokens: usedT, capTokens: cap } = tokenFallback(pluginId, budget.percentWeekly);
           headers['X-Budget-Used-Tokens'] = String(usedT);
           headers['X-Budget-Cap-Tokens'] = String(cap);
           if (usedT >= cap) refuse = { error: 'budget', window: 'unknown', usedTokens: usedT, capTokens: cap, message: `The usage figures for this account are unknown, so the plugin is held to ${cap} tokens a week; it has used them.` };
@@ -651,7 +658,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
   const budgets = createBudgetGuard(db, limits);
-  router.get('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+  // The owner, or the plugin's own key: its worker reads the cap it plans by (never writes it).
+  router.get('/plugins/:id/budget', keyRoute({ plugin: ownPluginRule }), (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
     res.json(pluginData.getBudget(db, req.params.id));
@@ -753,7 +761,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
     const opts = { pluginId: req.params.id, accountId, harness: h as AssistHarness, defaultAccountId: limits.defaultAccount?.(h) ?? 'cli' };
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay: estimateShare(db, summary, { ...opts, window: 'seven_day' }) });
+    const sevenDay = estimateShare(db, summary, { ...opts, window: 'seven_day' });
+    // With no weekly figure and a percent budget, the guard holds the plugin to a token cap: say so.
+    const budget = pluginData.getBudget(db, req.params.id);
+    const fallback = !sevenDay && budget.percentWeekly !== null ? budgets.tokenFallback(req.params.id, budget.percentWeekly) : null;
+    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay, ...(fallback ? { fallback } : {}) });
   });
 
   // The meter by time (coach spec section 7.2): the owner, or the plugin's own key. No `from` = 7 days ago.

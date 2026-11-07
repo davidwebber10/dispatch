@@ -3,7 +3,11 @@
 // injected (`io`), so the tests drive it against a fake daemon; worker/index.mjs is the real shell.
 //
 // io: { getDoc(key, fallback), putDoc(key, value), getSettings(), assist(req) → { result, budget, refused },
-//       notify({ title, body, url }), now(), log(...) }
+//       notify({ title, body, url }), now(), log(...), readBudget?(harness) → budget | null | undefined }
+//
+// The budget: the assist headers update it, and the worker also reads it from the daemon
+// (readBudget: GET /budget and /assist/share) at start, at least every 15 minutes, on a settings
+// change, and before it settles on no call. A figure whose window has reset is stale (unknown).
 //
 // Documents: `signals` (lib/signals.mjs), `candidates` ({ items, seen }), `cards` ({ items, judged }),
 // `status` ({ budget, level, stepped, at }: what the daemon last said about the budget), `measures`
@@ -13,7 +17,7 @@ import { collect, emptyState } from './signals.mjs';
 import { detect, proposeNew } from './detectors.mjs';
 import { allows, normalizeMemory, emptyMemory } from './memory.mjs';
 import { isMuted, mayShow } from './cadence.mjs';
-import { effectiveLevel, planCall } from './plan.mjs';
+import { effectiveLevel, planCall, liveBudget, mergeBudget } from './plan.mjs';
 import { measures, weakest, snapshot, scoresBefore, scoresOnly } from './measures.mjs';
 import { buildRecap } from './recap.mjs';
 import { recapPrompt, parseAnswer } from './prompts.mjs';
@@ -27,13 +31,18 @@ const SAVE_DELAY_MS = 5_000;
 export const JUDGE_PER_RUN = 3;
 /** A candidate older than this is no longer "what you just did": it is not judged. */
 export const FRESH_MS = 2 * 3600_000;
+/** The budget is read from the daemon at least this often. */
+export const BUDGET_TTL_MS = 15 * 60_000;
+/** Before it settles on no call, the worker asks the daemon again, at most this often. */
+const BEFORE_NONE_GAP_MS = 60_000;
 
 export function createEngine(io) {
   let settings = withDefaults(null);
   let state = emptyState();
   let candidates = { items: [], seen: [] };
   let memory = emptyMemory();
-  let status = { budget: null, level: null, stepped: false, at: null, harness: null };
+  let status = { budget: null, budgetAt: null, level: null, stepped: false, at: null, harness: null };
+  let lastRead = -Infinity;
   let measuresDoc = null;
   let saveTimer = null;
   let chain = Promise.resolve();
@@ -58,7 +67,33 @@ export function createEngine(io) {
       measuresDoc = await io.getDoc('measures', null);
       await loadMemory();
     } catch (err) { log('load failed:', err.message); }
+    // A restart reads the budget again: never trust the last answer's headers alone.
+    await readBudget(now());
   }
+
+  /** The budget from the daemon's routes; a failed read keeps what the worker had. */
+  async function readBudget(t) {
+    if (typeof io.readBudget !== 'function') return;
+    lastRead = t.getTime();
+    let r;
+    try { r = await io.readBudget(status.harness); } catch (err) { log('budget read failed:', err && err.message ? err.message : err); return; }
+    if (r === undefined) return;
+    status = { ...status, budget: r, budgetAt: t.toISOString() };
+    await io.putDoc('status', status).catch((err) => log('status save failed:', err.message));
+  }
+  /** The budget to plan `step` with now: read again when old or stale, and once more before a 'none'. */
+  async function currentBudget(t, step) {
+    const age = status.budgetAt ? t.getTime() - Date.parse(status.budgetAt) : Infinity;
+    if (age >= BUDGET_TTL_MS || (status.budget && !liveBudget(status.budget, t))) await readBudget(t);
+    let b = liveBudget(status.budget, t);
+    if (planCall(step, settings, b, { harness: status.harness }).tier === 'none' && t.getTime() - lastRead >= BEFORE_NONE_GAP_MS) {
+      await readBudget(t);
+      b = liveBudget(status.budget, t);
+    }
+    return b;
+  }
+  /** A budget an answer carried: kept, with the reset time the daemon gave before. */
+  const heard = (b) => { status = { ...status, budget: mergeBudget(b, status.budget), budgetAt: now().toISOString() }; };
 
   function saveSoon() {
     if (saveTimer || io.saveDelayMs === 0) { if (io.saveDelayMs === 0) void io.putDoc('signals', state); return; }
@@ -81,7 +116,8 @@ export function createEngine(io) {
       return;
     }
     const results = [];
-    let budget = status.budget;
+    const before = await currentBudget(t, 'confirm');
+    let budget = before;
     let harness = status.harness;
     // Newest first, then the ones that serve a goal before the rest (spec section 4.6).
     for (const c of rankCandidates([...fresh].reverse(), memory).slice(0, JUDGE_PER_RUN)) {
@@ -91,7 +127,8 @@ export function createEngine(io) {
       if (r.outcome === 'budget') break;
     }
     const lvl = effectiveLevel(settings, budget);
-    status = { budget, level: lvl.level, stepped: lvl.stepped, at, harness };
+    const heardNew = budget !== before;
+    status = { ...status, budget: heardNew ? mergeBudget(budget, status.budget) : status.budget, ...(heardNew ? { budgetAt: at } : {}), level: lvl.level, stepped: lvl.stepped, at, harness };
     await io.putDoc('status', status);
     if (results.some((r) => r.outcome !== 'budget')) {
       // Read again: the web part may have written the document (Reset) while the model answered.
@@ -139,10 +176,10 @@ export function createEngine(io) {
     const draft = buildRecap(state, { memory, measures: measuresDoc && measuresDoc.scores, now: t });
     if (!draft) { log('recap: fewer than 5 active days'); return; }
     let recap = { ...draft, weakest: w };
-    const plan = planCall('recap', settings, status.budget, { harness: status.harness });
+    const plan = planCall('recap', settings, await currentBudget(t, 'recap'), { harness: status.harness });
     if (plan.tier !== 'none') {
       const r = await io.assist({ ...recapPrompt(draft, memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
-      if (r && r.budget) status = { ...status, budget: r.budget };
+      if (r && r.budget) heard(r.budget);
       const j = parseAnswer(r && r.result ? r.result.text : '');
       // The model may reword the lines; the stretch's action and the numbers stay the rules' own.
       const lines = j && Array.isArray(j.patterns) ? j.patterns.filter((x) => typeof x === 'string' && x.trim() && !/\bshould\b/i.test(x)) : [];
@@ -205,7 +242,7 @@ export function createEngine(io) {
         const rows = await scopeThreads(doc.scope);
         const threads = [];
         for (const r of rows) threads.push({ id: r.id, chunks: chunkTranscript(await transcript(r.id)).length });
-        await writeReview(key, { state: 'estimate', plan: planReview(doc.scope, threads, status.budget) });
+        await writeReview(key, { state: 'estimate', plan: planReview(doc.scope, threads, await currentBudget(now(), 'more')) });
       } finally { running.delete(key); }
       return;
     }
@@ -228,10 +265,10 @@ export function createEngine(io) {
       for (const chunk of chunks) {
         const cur = await io.getDoc(key, null);
         if (!cur || cur.cancel || cur.state === 'cancelled') return;
-        const plan = planCall('more', settings, status.budget, { harness: status.harness });
+        const plan = planCall('more', settings, await currentBudget(now(), 'more'), { harness: status.harness });
         if (plan.tier === 'none') { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const r = await io.assist({ ...reviewPrompt(chunk, memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
-        if (r && r.budget) status = { ...status, budget: r.budget };
+        if (r && r.budget) heard(r.budget);
         if (r && r.result && r.result.harness) status = { ...status, harness: r.result.harness };
         if (r && r.refused) { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const p = parseReview(r && r.result ? r.result.text : '', chunk);
@@ -265,7 +302,8 @@ export function createEngine(io) {
       reviewWaits.add(p);
       return Promise.resolve().then(() => new Promise((r) => setTimeout(r, 0))).then(() => reviewsIdle());
     }
-    if (e.type === 'plugin:settings') return queue(loadSettings);
+    // A settings change may carry a new budget (the web part saves the daemon's budget first).
+    if (e.type === 'plugin:settings') return queue(async () => { await loadSettings(); await readBudget(now()); });
     if (e.type === 'plugin:data') {
       if (e.key === 'memory') return queue(loadMemory);
       // Reset (What the Coach knows) drops the signals: follow it.
@@ -287,6 +325,8 @@ export function createEngine(io) {
     load,
     handle,
     flush,
+    /** Read the budget from the daemon now (the worker's 15-minute timer). */
+    refreshBudget: () => queue(() => readBudget(now())),
     /** Resolves when the queued work is done (tests, shutdown). */
     idle: () => Promise.all([chain, reviewsIdle()]),
     get state() { return state; },

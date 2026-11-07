@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { planCall, LARGE_DEFAULT, budgetFraction } from '../../../plugins/coach/lib/plan.mjs';
+import { planCall, LARGE_DEFAULT, budgetFraction, budgetState, liveBudget } from '../../../plugins/coach/lib/plan.mjs';
 import { confirmPrompt, writePrompt, morePrompt, recapPrompt, parseAnswer, checkCard } from '../../../plugins/coach/lib/prompts.mjs';
 import { judgeCandidate, budgetFromHeaders, joinCards } from '../../../plugins/coach/lib/judge.mjs';
 import { makeAssist } from '../../../plugins/coach/lib/client.mjs';
@@ -190,5 +190,21 @@ describe('Coach judge: the budget headers and the cards document (coach plan Tas
     // A candidate the budget stopped is not recorded: it is judged later.
     const next = joinCards(doc, [{ id: 'c', outcome: 'budget', card: null, calls: [] }], '2026-11-20T11:00:00Z');
     expect(next.judged.map((j: { id: string }) => j.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('Coach budget from the daemon routes (review finding 1)', () => {
+  it('budgetState reads the cap and the share; the fail-safe tokens; no cap; OpenRouter dollars', () => {
+    const share = { fiveHour: null, sevenDay: { usedPercent: 40, pluginPercent: 1.2, resetsAt: '2026-11-30T00:00:00.000Z' } };
+    expect(budgetState({ percentWeekly: 3, usdWeekly: null }, share)).toEqual({ usedPercent: 1.2, capPercent: 3, resetsAt: '2026-11-30T00:00:00.000Z' });
+    expect(budgetState({ percentWeekly: 3, usdWeekly: null }, { fiveHour: null, sevenDay: null, fallback: { usedTokens: 10, capTokens: 150000 } })).toEqual({ usedTokens: 10, capTokens: 150000, capPercent: 3 });
+    expect(budgetState({ percentWeekly: null, usdWeekly: null }, share)).toBeNull();
+    expect(budgetState({ percentWeekly: 3, usdWeekly: 5 }, null, 'openrouter', { costUsd: 1.5 })).toEqual({ usedUsd: 1.5, capUsd: 5 });
+  });
+  it('liveBudget drops a figure whose window has reset', () => {
+    const b = { usedPercent: 3, capPercent: 3, resetsAt: '2026-11-20T10:00:00.000Z' };
+    expect(liveBudget(b, new Date('2026-11-20T09:59:00Z'))).toBe(b);
+    expect(liveBudget(b, new Date('2026-11-20T10:00:00Z'))).toBeNull();
+    expect(liveBudget({ usedPercent: 1, capPercent: 3 }, new Date())).toEqual({ usedPercent: 1, capPercent: 3 });
   });
 });

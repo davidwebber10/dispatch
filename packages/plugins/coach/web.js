@@ -10,7 +10,7 @@
 // strips excerpts from `cards` and `candidates` and drops `signals`.
 import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
-import { planCall, LARGE_DEFAULT } from './lib/plan.mjs';
+import { planCall, LARGE_DEFAULT, liveBudget } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
 import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
 import { chatContext, chatPrompt, parseChat, threadObservations, appendTurns } from './lib/chat.mjs';
@@ -84,7 +84,7 @@ export function createCoach(d, deps = {}) {
   async function defaultRequestMore(card) {
     if (typeof d.assist !== 'function') return null;
     const st = store.getState();
-    const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+    const plan = planCall('more', st.settings, liveBudget(st.status.budget, now()), { harness: st.status.harness });
     if (plan.tier === 'none') return { budget: true };
     const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
     const j = parseAnswer(r && r.text);
@@ -657,7 +657,7 @@ export function createCoach(d, deps = {}) {
         setText('');
         return;
       }
-      const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+      const plan = planCall('more', st.settings, liveBudget(st.status.budget, now()), { harness: st.status.harness });
       if (plan.tier === 'none') { setNote(CHAT_CAP); return; }
       setBusy(true); setNote(null);
       try {
@@ -813,7 +813,7 @@ export function createCoach(d, deps = {}) {
   const mapText = (text) => {
     const st = store.getState();
     const assist = typeof d.assist === 'function' ? (req) => d.assist(PLUGIN, req) : null;
-    return mapGoal(text, { assist, settings: st.settings, budget: st.status.budget }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
+    return mapGoal(text, { assist, settings: st.settings, budget: liveBudget(st.status.budget, now()) }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
   };
   async function newGoal(text, mapped, source) {
     const r = addGoal(store.getState().memory, { text, measures: mapped.measures, detectors: mapped.detectors, source }, now());
@@ -890,9 +890,11 @@ export function createCoach(d, deps = {}) {
     return s;
   }
   async function saveBudget(patch) {
-    const s = await saveSettings({ ...store.getState().settings, ...patch });
+    // The daemon's budget first: the settings event that follows makes the worker read it at once.
+    const s = withDefaults({ ...store.getState().settings, ...patch });
     const api = d.api || {};
     if (typeof api.setPluginBudget === 'function') await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch((err) => { if (typeof d.hint === 'function') d.hint(`The budget was not saved: ${err && err.message ? err.message : err}`); });
+    await saveSettings(s);
   }
 
   /** A number field that writes on blur or Enter, clamped to [min, max]. */

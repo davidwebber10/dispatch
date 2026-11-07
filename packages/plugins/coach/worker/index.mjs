@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { createEngine } from '../lib/engine.mjs';
 import { makeAssist } from '../lib/client.mjs';
+import { budgetState } from '../lib/plan.mjs';
+import { BUDGET_TTL_MS } from '../lib/engine.mjs';
 
 const API = process.env.DISPATCH_API;
 const PLUGIN = process.env.DISPATCH_PLUGIN || 'coach';
@@ -30,6 +32,19 @@ const engine = createEngine({
     return { ok: !!res && res.ok, status: res ? res.status : 0 };
   },
   getJson: (route) => call('GET', route),
+  // The budget from the daemon's own routes (review finding 1): undefined when a read fails.
+  readBudget: async (harness) => {
+    try {
+      const cap = await call('GET', `${base}/budget`);
+      if (!cap) return undefined;
+      if (harness === 'openrouter') {
+        const from = new Date(Date.now() - 7 * 86400_000).toISOString();
+        return budgetState(cap, null, 'openrouter', await call('GET', `${base}/assist/usage?from=${encodeURIComponent(from)}`));
+      }
+      const share = await call('GET', `${base}/assist/share?harness=${harness === 'codex' ? 'codex' : 'claude'}`);
+      return budgetState(cap, share, harness);
+    } catch { return undefined; }
+  },
   now: () => new Date(),
   log: (...a) => console.log(...a),
 });
@@ -53,5 +68,7 @@ process.on('SIGTERM', () => {
   await engine.load();
   ready = true;
   for (const e of backlog.splice(0)) void engine.handle(e);
+  // At least every 15 minutes, even with no turns: the web part plans its calls from `status`.
+  setInterval(() => { void engine.refreshBudget(); }, BUDGET_TTL_MS).unref();
   console.log('coach worker started');
 })();

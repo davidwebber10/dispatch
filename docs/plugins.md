@@ -306,19 +306,19 @@ over every Dispatch token on the account in the window, times the window's used 
 outside Dispatch is not seen, so the estimate reads high.
 
 **Budget.** `PUT /api/plugins/<id>/budget { percentWeekly?, usdWeekly? }` (owner only; `null`
-clears one) caps the plugin's model calls: at most `percentWeekly` % (0.1 to 100) of the weekly
+clears one; `GET` also answers the plugin's own key, so its worker can plan by it) caps the plugin's model calls: at most `percentWeekly` % (0.1 to 100) of the weekly
 limit of the account a call runs on, and at most `usdWeekly` dollars over 7 days on OpenRouter.
 At the cap, or with the account at 90% of its 5-hour window, assist answers 429
 `{ error: 'budget', usedPercent, capPercent, window }` (`usedUsd`, `capUsd` on OpenRouter).
 Calls in flight count as reserved at their `maxTokens`. Each answer carries
-`X-Budget-Used-Percent` and `X-Budget-Cap-Percent` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
+`X-Budget-Used-Percent`, `X-Budget-Cap-Percent` and `X-Budget-Resets-At` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
 a caller can step down before it is refused. No budget: no cap.
 **Fail safe:** with a percent budget but no weekly figure for the account (no usage data yet, a
 poll gap after a restart), the cap becomes tokens, never unlimited: `percentWeekly` x 50,000
 tokens over the plugin's subscription calls of the last 7 days (3% = 150,000; input, output and
 cache writes count in full, a cache read counts one tenth). The answer then carries
-`X-Budget-Used-Tokens` and `X-Budget-Cap-Tokens`, and at the cap assist answers 429
-`{ error: 'budget', window: 'unknown', usedTokens, capTokens }`.
+`X-Budget-Used-Tokens` and `X-Budget-Cap-Tokens`, the share route adds `fallback: { usedTokens,
+capTokens }`, and at the cap assist answers 429 `{ error: 'budget', window: 'unknown', usedTokens, capTokens }`.
 
 ## The worker
 
@@ -359,7 +359,8 @@ enabled; one that appears in the folder on its own starts disabled (see below).
 The Coach (`packages/plugins/coach`) is also a worked example of the plugin features: its worker
 (`worker/index.mjs`, logic in `lib/engine.mjs`) reads the thread events, runs rules over them and
 asks `assist` with a harness and a model per tier, reading the `X-Budget-*` headers to step down
-before the budget refuses; its web part fills the `composer.before` slot, a right-column tab, a
+before the budget refuses (it also reads `GET /budget` and the share at start, every 15 minutes,
+on a settings change, and before it settles on no call, so a reset or a raised budget resumes it); its web part fills the `composer.before` slot, a right-column tab, a
 view, a settings section and two commands, and opens the schedule and new-thread dialogs through
 `d.actions`. It sets its own budget (`PUT /budget`) from its settings, and its weekly job pushes
 the recap through `notify:push` only when the person turns that on. Its documents: `signals`,

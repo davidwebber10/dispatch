@@ -15,7 +15,8 @@ const KEEP_JUDGED = 300;
 export function budgetFromHeaders(headers) {
   const get = (k) => { const v = headers && typeof headers.get === 'function' ? headers.get(k) : null; const n = v === null || v === undefined || v === '' ? NaN : Number(v); return Number.isFinite(n) ? n : null; };
   const usedPercent = get('X-Budget-Used-Percent'); const capPercent = get('X-Budget-Cap-Percent');
-  if (usedPercent !== null) return { usedPercent, capPercent };
+  const reset = headers && typeof headers.get === 'function' ? headers.get('X-Budget-Resets-At') : null;
+  if (usedPercent !== null) return { usedPercent, capPercent, ...(reset ? { resetsAt: reset } : {}) };
   // No weekly figure for the account: the daemon's fail-safe token cap counts instead.
   const usedTokens = get('X-Budget-Used-Tokens'); const capTokens = get('X-Budget-Cap-Tokens');
   if (usedTokens !== null || capTokens !== null) return { usedTokens, capTokens, ...(capPercent !== null ? { capPercent } : {}) };

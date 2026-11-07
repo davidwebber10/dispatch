@@ -93,3 +93,64 @@ describe('Coach worker engine (coach plan Task 9)', () => {
     expect(f.docs.has('cards')).toBe(false);
   });
 });
+
+describe('Coach worker: the budget comes from the daemon, not only from answers (review finding 1)', () => {
+  const capped = { usedPercent: 3, capPercent: 3, resetsAt: new Date(T0 + 86400_000).toISOString() };
+  const turn = async (e: ReturnType<typeof createEngine>) => {
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+  };
+
+  it('after the window resets, the Coach makes calls again', async () => {
+    // The cached figure is from the last window: its reset has passed.
+    const f = fakeIo({ docs: { status: { budget: { ...capped, resetsAt: new Date(T0 - 60_000).toISOString() }, budgetAt: new Date(T0 - 60_000).toISOString() } } });
+    const e = createEngine(f.io);
+    await e.load();
+    await turn(e);
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('raising the budget in settings lets calls resume', async () => {
+    let daemonBudget: unknown = capped;
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0).toISOString() } } });
+    const readBudget = vi.fn(async () => daemonBudget);
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    await turn(e);
+    expect(f.assist).not.toHaveBeenCalled();
+    // The person raises the budget: the web part saves it, and the settings event follows.
+    daemonBudget = { usedPercent: 3, capPercent: 10, resetsAt: capped.resetsAt };
+    await e.handle({ type: 'plugin:settings', id: 'coach' });
+    await e.idle();
+    expect(f.docs.get('status')).toMatchObject({ budget: { capPercent: 10 } });
+    f.advance(1);
+    await e.handle(ev('thread:prompt', 1, { source: 'user', text: BIG + ' again' }));
+    await e.handle(ev('thread:turn', 1, { ms: 30_000 }));
+    await e.idle();
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('a restart re-reads the budget', async () => {
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0).toISOString() } } });
+    const readBudget = vi.fn(async () => ({ usedPercent: 0.5, capPercent: 3, resetsAt: capped.resetsAt }));
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    expect(readBudget).toHaveBeenCalledTimes(1);
+    await turn(e);
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('the cached budget is read again after 15 minutes, and before the Coach settles on no call', async () => {
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0 - 16 * 60_000).toISOString() } } });
+    const readBudget = vi.fn(async () => capped);
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    expect(readBudget).toHaveBeenCalledTimes(1);
+    f.advance(2);
+    await turn(e);
+    // At the cap the Coach asks the daemon once more before it decides on no call.
+    expect(readBudget).toHaveBeenCalledTimes(2);
+    expect(f.assist).not.toHaveBeenCalled();
+  });
+});
