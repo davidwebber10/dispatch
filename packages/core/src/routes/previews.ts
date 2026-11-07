@@ -6,7 +6,8 @@ import { keyRoute, policyRouter, needs } from '../auth/route-policy.js';
 import { ownProjectRule } from '../auth/key-rules.js';
 import { principalOf } from '../auth/request-principal.js';
 import { insideRealRoot } from '../files/confine.js';
-import { setFileHeaders } from '../http/active-content.js';
+import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
+import { PROJECT_FILE_MIME as PREVIEW_MIME, ProjectFileError as PreviewError, checkProjectFile as checkPreviewFile } from '../plugins/files.js';
 import * as previewsDb from '../db/previews.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
@@ -19,43 +20,11 @@ import type { EventBroadcaster } from '../ws/events.js';
  * project folder after symlinks are resolved, carry a known extension, and be a regular file.
  */
 
-/** Extension → content type of the files a preview may carry. */
-export const PREVIEW_MIME: Record<string, string> = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf', '.html': 'text/html', '.htm': 'text/html',
-  '.md': 'text/markdown', '.markdown': 'text/markdown', '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
-};
+/** The checks and limits now live with the plugin file references (slice 4); these names stay until the routes go. */
+export { PROJECT_FILE_MIME as PREVIEW_MIME, PROJECT_FILE_MAX_BYTES as PREVIEW_MAX_FILE_BYTES, ProjectFileError as PreviewError, checkProjectFile as checkPreviewFile } from '../plugins/files.js';
+export { HTML_SANDBOX_CSP } from '../http/active-content.js';
 export const PREVIEW_MAX_FILES = 20;
-export const PREVIEW_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const PREVIEW_MAX_TEXT = 64 * 1024;
-/** An HTML preview runs with an opaque origin: no cookie, no app API, no framing of the app. */
-export const HTML_SANDBOX_CSP = 'sandbox allow-scripts allow-popups allow-forms allow-modals';
-
-function resolveSafe(root: string, requested: string): string | null {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, requested);
-  const relative = path.relative(resolvedRoot, resolved);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  return resolved;
-}
-
-export class PreviewError extends Error {
-  constructor(message: string, readonly status: number = 400) { super(message); }
-}
-
-/** Check and describe one requested file. Throws PreviewError with the reason the thread should read. */
-export function checkPreviewFile(workingDir: string, requested: unknown): previewsDb.PreviewFile {
-  if (typeof requested !== 'string' || !requested.trim()) throw new PreviewError('each path must be a non-empty string');
-  const abs = resolveSafe(workingDir, requested.trim());
-  if (!abs || !insideRealRoot(workingDir, abs)) throw new PreviewError(`path is outside the project folder: ${requested}`);
-  const mime = PREVIEW_MIME[path.extname(abs).toLowerCase()];
-  if (!mime) throw new PreviewError(`unsupported file type: ${path.basename(abs)} (png, jpg, gif, webp, svg, pdf, html, md, txt, csv, json)`);
-  let st: fs.Stats;
-  try { st = fs.statSync(abs); } catch { throw new PreviewError(`file not found: ${requested}`, 404); }
-  if (!st.isFile()) throw new PreviewError(`not a file: ${requested}`);
-  if (st.size > PREVIEW_MAX_FILE_BYTES) throw new PreviewError(`file too large (max 50 MB): ${requested}`);
-  return { path: abs, name: path.basename(abs), mime, size: st.size };
-}
 
 export function createPreviewsRouter(db: Database.Database, broadcaster: EventBroadcaster): Router {
   const router = policyRouter();

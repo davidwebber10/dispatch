@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 
 /**
@@ -62,6 +63,7 @@ export function listDocs(db: Database.Database, pluginId: string): PluginDocMeta
 export function clearPlugin(db: Database.Database, pluginId: string): void {
   db.prepare('DELETE FROM plugin_data WHERE plugin_id = ?').run(pluginId);
   db.prepare('DELETE FROM plugin_settings WHERE plugin_id = ?').run(pluginId);
+  db.prepare('DELETE FROM plugin_files WHERE plugin_id = ?').run(pluginId);
 }
 
 export function getSettings(db: Database.Database, pluginId: string): { value: unknown; updatedAt: string } | null {
@@ -86,4 +88,29 @@ export function recordAssist(db: Database.Database, pluginId: string, usage: { i
 export function assistTotals(db: Database.Database, pluginId: string): AssistTotals {
   const r = db.prepare('SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o FROM plugin_assist WHERE plugin_id = ?').get(pluginId) as { calls: number; i: number; o: number };
   return { calls: r.calls, inputTokens: r.i, outputTokens: r.o };
+}
+
+/**
+ * File references (spec section 5): a checked file of a project a plugin may serve to the owner.
+ * The path is re-checked against the project's current folder when the file is served.
+ */
+export interface PluginFile { fileId: string; sessionId: string; path: string; name: string; mime: string; size: number; createdAt: string }
+interface FileRow { file_id: string; session_id: string; path: string; name: string; mime: string; size: number; created_at: string }
+const toFile = (r: FileRow): PluginFile => ({ fileId: r.file_id, sessionId: r.session_id, path: r.path, name: r.name, mime: r.mime, size: r.size, createdAt: r.created_at });
+
+export function addFile(db: Database.Database, pluginId: string, sessionId: string, file: { path: string; name: string; mime: string; size: number }): PluginFile {
+  const fileId = randomUUID();
+  const createdAt = new Date().toISOString();
+  db.prepare('INSERT INTO plugin_files (plugin_id, file_id, session_id, path, name, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(pluginId, fileId, sessionId, file.path, file.name, file.mime, file.size, createdAt);
+  return { fileId, sessionId, createdAt, ...file };
+}
+
+export function getFile(db: Database.Database, pluginId: string, fileId: string): PluginFile | null {
+  const r = db.prepare('SELECT * FROM plugin_files WHERE plugin_id = ? AND file_id = ?').get(pluginId, fileId) as FileRow | undefined;
+  return r ? toFile(r) : null;
+}
+
+export function removeFile(db: Database.Database, pluginId: string, fileId: string): boolean {
+  return db.prepare('DELETE FROM plugin_files WHERE plugin_id = ? AND file_id = ?').run(pluginId, fileId).changes > 0;
 }

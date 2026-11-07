@@ -23,6 +23,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'DELETE /api/plugins/:id/data/:key',
   'GET /api/plugins/:id/settings',
   'PUT /api/plugins/:id/settings',
+  'POST /api/plugins/:id/files',
+  'DELETE /api/plugins/:id/files/:fileId',
   'GET /api/sessions/:sessionId/ledger/card',
   'GET /api/sessions/:sessionId/ledger/:itemId/source',
   'GET /api/previews',

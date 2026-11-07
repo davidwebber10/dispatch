@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Router, RequestHandler, Request } from 'express';
@@ -5,8 +6,10 @@ import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute, needs, type Rule 
 import { principalOf, scopeOf } from '../auth/request-principal.js';
 import * as pluginData from '../db/plugin-data.js';
 import { projectListRule, allowRule } from '../auth/key-rules.js';
-import { setFileHeaders } from '../http/active-content.js';
-import { HTML_SANDBOX_CSP } from './previews.js';
+import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
+import { insideRealRoot } from '../files/confine.js';
+import * as sessionsDb from '../db/sessions.js';
+import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { AssistRunner } from '../assist/run.js';
 
@@ -155,6 +158,57 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       plugins.broadcast({ type: 'plugin:settings', id: req.params.id });
       res.json(out);
     } catch (e) { storageError(res, e); }
+  });
+
+  // ── file references (spec section 5): a checked file of a project, served to the owner ──
+  // A thread registers a file of its own project (the plugin must grant threads:write-storage);
+  // the owner or the plugin's own key names the project in the body.
+  router.post('/plugins/:id/files', dataWrite, (req, res) => {
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { path?: unknown; sessionId?: unknown };
+    let principal: ReturnType<typeof principalOf> | null = null;
+    try { principal = principalOf(req); } catch { principal = null; }
+    let sessionId: string | null = null;
+    if (principal?.kind === 'thread') {
+      sessionId = scopeOf(req).caller(principal.terminalId)?.sessionId ?? null;
+      if (!sessionId) return void res.status(400).json({ error: 'bad_body', message: 'The thread has no project.' });
+    } else {
+      if (typeof body.sessionId !== 'string' || !body.sessionId) return void res.status(400).json({ error: 'bad_body', message: 'Send { path, sessionId }.' });
+      sessionId = body.sessionId;
+    }
+    const session = sessionsDb.getById(db, sessionId);
+    if (!session) return void res.status(404).json({ error: 'session not found' });
+    try {
+      const file = checkProjectFile(session.working_dir, body.path);
+      res.status(201).json(pluginData.addFile(db, req.params.id, session.id, file));
+    } catch (e) {
+      if (e instanceof ProjectFileError) return void res.status(e.status).json({ error: e.message });
+      throw e;
+    }
+  });
+
+  // The bytes, for the owner only. Re-checked against the project's CURRENT folder: a project moved
+  // since the post, or a file replaced by a symlink, must not turn this into a read outside it.
+  router.get('/plugins/:id/files/:fileId', (req, res) => {
+    if (!known(req, res)) return;
+    const file = pluginData.getFile(db, req.params.id, req.params.fileId);
+    const session = file ? sessionsDb.getById(db, file.sessionId) : null;
+    if (!file || !session || !insideRealRoot(session.working_dir, file.path) || !fs.existsSync(file.path)) {
+      return void res.status(404).json({ error: 'file not found' });
+    }
+    const mime = PROJECT_FILE_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.setHeader('Content-Disposition', `inline; filename="${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}"`);
+    // HTML runs scripts in an opaque origin; SVG and other markup get the plain sandbox (no scripts at all).
+    setFileHeaders(res, mime, mime === 'text/html' ? HTML_SANDBOX_CSP : 'sandbox');
+    res.type(mime);
+    res.sendFile(file.path);
+  });
+
+  router.delete('/plugins/:id/files/:fileId', settingsRule, (req, res) => {
+    if (!known(req, res)) return;
+    if (!pluginData.removeFile(db, req.params.id, req.params.fileId)) return void res.status(404).json({ error: 'file not found' });
+    res.status(204).end();
   });
 
   // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──

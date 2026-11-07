@@ -8,6 +8,9 @@ const ACTIVE_TYPES = new Set([
   'image/svg+xml', 'text/html', 'application/xhtml+xml', 'text/xml', 'application/xml', 'text/xsl', 'application/xslt+xml',
 ]);
 
+/** An HTML file a thread made runs with an opaque origin: no cookie, no app API, no framing of the app. */
+export const HTML_SANDBOX_CSP = 'sandbox allow-scripts allow-popups allow-forms allow-modals';
+
 export function isActiveContent(mime: string): boolean {
   return ACTIVE_TYPES.has(mime.split(';')[0].trim().toLowerCase()) || /\+xml$/i.test(mime.split(';')[0].trim());
 }

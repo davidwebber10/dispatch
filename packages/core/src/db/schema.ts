@@ -494,4 +494,17 @@ function initializeSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_plugin_assist_plugin ON plugin_assist(plugin_id);
   `));
+  migrate(db, '020-plugin-files', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS plugin_files (
+      plugin_id TEXT NOT NULL,
+      file_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_plugin_files_plugin ON plugin_files(plugin_id);
+  `));
 }
