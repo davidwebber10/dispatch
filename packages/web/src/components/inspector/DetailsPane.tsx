@@ -74,6 +74,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
         <>
           <div style={{ ...label, margin: showDetails ? '14px 0 8px' : '0 0 8px' }}>THREAD</div>
           {tab?.label && <Row label="Name" value={tab.label} />}
+          <Row label="ID" value={terminalId} mono />
           {term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
           {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}
           {term?.pid != null && <Row label="PID" value={String(term.pid)} mono />}

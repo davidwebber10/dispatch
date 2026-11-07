@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { useHint } from '../../stores/hint';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
+import { copyText } from '../../lib/clipboard';
 import { THREAD_TYPES } from '../../lib/harnesses';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameThreadModal } from './RenameThreadModal';
@@ -66,6 +67,11 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
     void api.relaunchTerminal(tab.id).catch(() => { /* surfaced via connection state */ });
   }
 
+  /** The id another thread can take straight into read_thread or message_thread (2026-11-06). */
+  async function copyId(tab: Terminal) {
+    try { await copyText(tab.id); useHint.getState().show('Thread ID copied'); } catch { useHint.getState().show('Could not copy the thread ID'); }
+  }
+
   /** Clear a stuck working / needs-input / error status (and any spinner) back to idle. */
   async function resetStatus(tab: Terminal) {
     useTabs.getState().clearLoading(tab.id);
@@ -84,6 +90,9 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
             <button onClick={pick(setRenameTarget)} style={isMobile ? sheetItem : item}>{at.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
             {BRANCHABLE.includes(at.tab.type) && (
               <button onClick={pick((t) => void branch(t))} style={isMobile ? sheetItem : item}>Branch thread</button>
+            )}
+            {THREAD_TYPES.includes(at.tab.type) && (
+              <button onClick={pick((t) => void copyId(t))} style={isMobile ? sheetItem : item}>Copy thread ID</button>
             )}
             {THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick(reload)} style={isMobile ? sheetItem : item}>Reload thread</button>

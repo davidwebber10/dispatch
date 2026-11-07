@@ -73,9 +73,22 @@ describe('<AllThreadsView>', () => {
     render(<AllThreadsView onOpenThread={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Thread options' }));
     const menu = screen.getByRole('menu');
-    for (const name of ['Thread details', 'Rename thread', 'Branch thread', 'Reload thread', 'Archive thread']) {
+    for (const name of ['Thread details', 'Rename thread', 'Copy thread ID', 'Branch thread', 'Reload thread', 'Archive thread']) {
       expect(within(menu).getByRole('button', { name })).toBeInTheDocument();
     }
+    vi.unstubAllGlobals();
+  });
+
+  it('Copy thread ID puts the id on the clipboard and says so (2026-11-06)', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    useTabs.setState({ byProject: { A: [t('c1', 'A', 'Codex work', '2026-10-28T10:00:00Z', { type: 'codex' })], B: [] } } as any);
+    render(<AllThreadsView onOpenThread={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Thread options' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Copy thread ID' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('c1'));
+    const { useHint } = await import('../../stores/hint');
+    await waitFor(() => expect(useHint.getState().msg).toBe('Thread ID copied'));
     vi.unstubAllGlobals();
   });
 
