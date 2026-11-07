@@ -298,8 +298,8 @@ for the same call.
 cost (the harness's own figure, else priced from the tokens). The Plugins page shows the last
 7 days on the plugin's row. `GET /api/plugins/<id>/assist/usage?from&to` (the owner, or the
 plugin's own key) gives `{ calls, failed, inputTokens, outputTokens, costUsd, byModel }`; no
-`from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` gives the
-plugin's estimated share of that account's 5-hour and weekly windows: its price-weighted tokens
+`from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` (the owner, or
+the plugin's own key with `read:usage`) gives the plugin's estimated share of that account's 5-hour and weekly windows: its price-weighted tokens
 over every Dispatch token on the account in the window, times the window's used percent. Usage
 outside Dispatch is not seen, so the estimate reads high.
 

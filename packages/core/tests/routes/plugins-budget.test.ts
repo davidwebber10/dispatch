@@ -171,4 +171,12 @@ describe('plugin budget (coach plan, Task 4)', () => {
     const row = db.prepare('SELECT account_id AS a FROM plugin_assist WHERE plugin_id = ?').get('coach') as { a: string | null };
     expect(row.a).toBe('cli');
   });
+  it('the share route needs read:usage for a plugin key; the owner may always read it', async () => {
+    const r = await request(app).get('/api/plugins/coach/assist/share').set(asPlugin('coach'));
+    expect(r.status).toBe(403);
+    expect((await request(app).get('/api/plugins/coach/assist/share')).status).toBe(200);
+    plugin('reader', ['model:assist', 'read:usage']);
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/reader/assist/share').set(asPlugin('reader'))).status).toBe(200);
+  });
 });

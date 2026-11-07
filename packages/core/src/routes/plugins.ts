@@ -717,7 +717,9 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   // A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3).
-  router.get('/plugins/:id/assist/share', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+  // Usage figures: a plugin key needs read:usage (the owner may always read them).
+  const shareRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('read:usage')(req, ctx) : own; };
+  router.get('/plugins/:id/assist/share', keyRoute({ plugin: shareRule }), (req, res) => {
     if (!known(req, res)) return;
     const h = req.query.harness ?? 'claude';
     if (h !== 'claude' && h !== 'codex') return void res.status(400).json({ error: 'bad_harness', message: 'harness is claude or codex (OpenRouter has no limit windows).' });
