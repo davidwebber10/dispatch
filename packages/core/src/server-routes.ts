@@ -5,7 +5,10 @@ import type { StatusService } from './status/service.js';
 import type { AgentService } from './agents/service.js';
 import type { RolesService } from './roles/service.js';
 import type { AuthRequestService } from './auth/service.js';
+import fs from 'fs';
+import path from 'path';
 import type { ClaudeLoginService } from './auth/claude-login.js';
+import { CodexLoginService } from './auth/codex-login.js';
 import type { SecretsService } from './secrets/service.js';
 import type { IntegrationsService } from './integrations/service.js';
 import type { PushService } from './push/service.js';
@@ -71,6 +74,8 @@ export interface ApiRouteDeps {
   rolesService: RolesService;
   authRequestService: AuthRequestService;
   claudeLogin: ClaudeLoginService;
+  /** The device-code sign-in for added Codex accounts. Absent: one is built on the daemon's own env. */
+  codexLogin?: CodexLoginService;
   /** Accounts per harness (multi-account spec). Absent in a bare createApp: the routes are not mounted. */
   accounts?: AccountsStore;
   /** The accounts the plugin assist route knows (test seam); defaults to `accounts`. */
@@ -200,6 +205,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
           return rows.length;
         },
       },
+      codexLogin: d.codexLogin ?? new CodexLoginService({ env: () => process.env, isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')) }),
     }));
   }
   app.use('/api/state', createStateRouter(d.db));

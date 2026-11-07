@@ -93,6 +93,7 @@ import { createCodexPoll } from './limits/codex-poll.js';
 import { createClaudeProbe } from './limits/claude-probe.js';
 import { createClaudeUsageReader, readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
 import { AccountsStore, type AccountProvider } from './auth/accounts.js';
+import { CodexLoginService } from './auth/codex-login.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
@@ -832,6 +833,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // refreshPtyEnv, so a box authenticated mid-session takes effect on the next spawn
   // without a daemon restart.
   const claudeLogin = new ClaudeLoginService(dataDir);
+  // Added Codex accounts sign in with `codex login --device-auth` under the threads' spawn env
+  // (PATH with the bundled tools), so it runs the same `codex` the threads do.
+  const codexLogin = new CodexLoginService({
+    env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }),
+    isSignedIn: (home) => fs.existsSync(path.join(home, 'auth.json')),
+  });
   // Accounts per harness (multi-account spec 2026-11-06). The single saved login of earlier
   // versions becomes the account `saved`; a login started for a new account lands here, and the
   // profile call fills in its email, account id and plan.
@@ -1017,7 +1024,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Mount routes (the one list, shared with createApp)
   mountApiRoutes(app, {
     db, sessionService, statusService, agentService, rolesService, authRequestService,
-    claudeLogin, accounts, secretsService, integrationsService, pushService, ledgerService,
+    claudeLogin, codexLogin, accounts, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
     broadcaster, plugins, assistRunner, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
     reachableAddresses: async () => {

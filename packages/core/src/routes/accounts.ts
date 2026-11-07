@@ -1,6 +1,7 @@
-import type { Router } from 'express';
+import type { Response, Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { ClaudeLoginService } from '../auth/claude-login.js';
+import type { CodexLoginService } from '../auth/codex-login.js';
 import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountsStore } from '../auth/accounts.js';
 import { clientMessage } from '../http/client-message.js';
 
@@ -14,6 +15,8 @@ export interface AccountsRouteExtras {
     /** Drop the pin from every thread of the account; returns how many. They use the default next start. */
     unpin: (provider: AccountProvider, accountId: string) => number;
   };
+  /** The device-code sign-in for an added Codex account (2026-11-07). Absent: those routes answer 501. */
+  codexLogin?: Pick<CodexLoginService, 'start' | 'status' | 'cancel'>;
 }
 const PROFILE_TTL_MS = 10 * 60_000;
 const PROFILE_RETRY_MS = 2 * 60_000;
@@ -28,8 +31,11 @@ const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' &
  *   GET    /api/accounts                      every account, no tokens
  *   POST   /api/accounts/claude/login { label } start the headless login for a NEW Claude account
  *                                             (finish with POST /api/claude-auth/login/code)
- *   POST   /api/accounts/codex { label }      a new Codex account folder; sign it in with a
- *                                             "Sign in — Codex" thread that carries its id
+ *   POST   /api/accounts/codex { label }      a new Codex account folder (not signed in yet)
+ *   POST   /api/accounts/codex/:id/login      sign it in (or again): `codex login --device-auth`
+ *                                             in its folder; answers the link and one-time code
+ *   GET    /api/accounts/codex/:id/login      that attempt (poll); idle/complete when none runs
+ *   DELETE /api/accounts/codex/:id/login      abandon the attempt
  *   PUT    /api/accounts/:provider/default { id }
  *   DELETE /api/accounts/:provider/:id
  */
@@ -89,6 +95,33 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
     const label = typeof req.body?.label === 'string' ? req.body.label : '';
     const a = accounts.addCodex(label);
     res.status(201).json({ id: a.id, label: a.label });
+  });
+
+  // A Codex account signs in with the device-code flow, which works from any device: the
+  // browser flow's callback goes to 127.0.0.1 on whichever machine opened the link
+  // (see auth/codex-login.ts). This is also "Sign in again" for an account with no login.
+  const codexAccount = (id: string, res: Response): string | null => {
+    if (id === 'cli') { res.status(400).json({ error: 'the CLI login is signed in on its own computer (codex login)' }); return null; }
+    const home = accounts.codexHome(id);
+    if (!home) { res.status(404).json({ error: 'unknown account' }); return null; }
+    if (!extras.codexLogin) { res.status(501).json({ error: 'this daemon cannot sign Codex accounts in' }); return null; }
+    return home;
+  };
+  router.post('/codex/:id/login', async (req, res) => {
+    const home = codexAccount(req.params.id, res);
+    if (!home) return;
+    try { res.json(await extras.codexLogin!.start(req.params.id, home)); } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
+  });
+  router.get('/codex/:id/login', (req, res) => {
+    const home = codexAccount(req.params.id, res);
+    if (!home) return;
+    const s = extras.codexLogin!.status(req.params.id);
+    res.json(s ?? { accountId: req.params.id, status: accounts.codexSignedIn(req.params.id) ? 'complete' : 'idle', url: null, code: null, error: null, createdAt: null });
+  });
+  router.delete('/codex/:id/login', (req, res) => {
+    if (!codexAccount(req.params.id, res)) return;
+    extras.codexLogin!.cancel(req.params.id);
+    res.status(204).end();
   });
 
   router.put('/:provider/default', (req, res) => {
