@@ -26,8 +26,8 @@ const body: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)
 const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' };
 const buttons: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
 const iconTile = (size: number): React.CSSProperties => ({ width: size, height: size, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' });
-const toneColor = { red: 'var(--color-status-red)', yellow: 'var(--color-status-yellow)', accent: 'var(--color-accent)', muted: 'var(--color-text-tertiary)' } as const;
-type Tone = keyof typeof toneColor;
+const TONE_VAR = { red: 'var(--color-status-red)', yellow: 'var(--color-status-yellow)', accent: 'var(--color-accent)', muted: 'var(--color-text-tertiary)' } as const;
+type Tone = keyof typeof TONE_VAR;
 
 /** Plain words for each permission id (docs/plugins.md lists the same ids). An unknown id shows as it is. */
 export const PERMISSION_WORDS: Record<string, string> = {
@@ -89,7 +89,7 @@ export function attentionOf(r: PluginRow, s: PluginStatus | undefined): { label:
 }
 
 function Dot({ tone }: { tone: Tone }) {
-  return <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: toneColor[tone], flexShrink: 0 }} />;
+  return <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: TONE_VAR[tone], flexShrink: 0 }} />;
 }
 
 /** A small heading over a group card. */
@@ -246,7 +246,7 @@ export function PluginsSection() {
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ ...title, display: 'block', color: r.enabled ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{r.name}</span>
             {att ? (
-              <span data-testid={`plugin-attention-${r.id}`} style={{ ...oneLine, display: 'flex', alignItems: 'center', gap: 6, color: toneColor[att.tone] }}><Dot tone={att.tone} />{att.label}</span>
+              <span data-testid={`plugin-attention-${r.id}`} style={{ ...oneLine, display: 'flex', alignItems: 'center', gap: 6, color: TONE_VAR[att.tone] }}><Dot tone={att.tone} />{att.label}</span>
             ) : r.description ? <span style={oneLine}>{r.description}</span> : null}
           </span>
         </button>
