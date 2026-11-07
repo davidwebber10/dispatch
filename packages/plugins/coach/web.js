@@ -882,7 +882,7 @@ export function createCoach(d, deps = {}) {
 
   function CoachView() {
     const st = store((x) => x);
-    return h('div', { style: { padding: '22px 26px 40px', maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 } },
+    return h('div', { style: { padding: '20px clamp(16px, 4vw, 26px) 40px', maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 } },
       h('div', null,
         h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
         h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),

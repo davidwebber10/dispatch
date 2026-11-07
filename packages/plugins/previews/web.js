@@ -205,7 +205,7 @@ export default function activate(d) {
       }
       return out;
     }, [items]);
-    return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 26px 40px' } },
+    return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px clamp(16px, 4vw, 26px) 40px' } },
       h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 } },
         h('div', null,
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Previews'),
