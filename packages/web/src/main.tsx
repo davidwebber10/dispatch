@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { loadPlugins } from './plugins/host';
 import { reloadForSignIn } from './lib/signInReload';
 import { reloadFresh } from './lib/shellCache';
 // Fonts ship with the app (cached forever) instead of Google Fonts, which blocked the first paint on
@@ -77,3 +78,6 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>,
 );
+
+// Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): load the enabled plugins' bundles.
+void loadPlugins();

@@ -12,6 +12,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': { target: process.env.DISPATCH_API_TARGET ?? 'http://localhost:3456', changeOrigin: true, ws: true },
+      // Plugin bundles come from the daemon too (docs/superpowers/specs/2026-11-07-plugins-design.md).
+      '/plugins': { target: process.env.DISPATCH_API_TARGET ?? 'http://localhost:3456', changeOrigin: true },
     },
   },
   base: './',

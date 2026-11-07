@@ -1,6 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
-import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT } from './types';
+import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { Preview, SpinnerVerbs, SpinnerSet } from './types';
@@ -409,6 +409,13 @@ export const api = {
     req<{ previews: Preview[]; unseen: number }>(sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/previews?limit=${limit}` : `/api/previews?limit=${limit}`),
   markPreviewSeen: (id: string) => req<Preview>(`/api/previews/${encodeURIComponent(id)}/seen`, { method: 'POST' }),
   deletePreview: (id: string) => req<void>(`/api/previews/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md).
+  listPlugins: () => req<{ plugins: PluginRow[] }>('/api/plugins'),
+  scaffoldPlugin: (id: string, name: string) => req<PluginRow>('/api/plugins/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }) }),
+  enablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
+  disablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
+  reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
+  removePlugin: (id: string) => req<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   previewFileText: async (id: string, k: number): Promise<string> => {
     const res = await fetch(previewFileUrl(id, k));
     if (!res.ok) throw new ApiError(`GET preview file failed: ${res.status}`, res.status);

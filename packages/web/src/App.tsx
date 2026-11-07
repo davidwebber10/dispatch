@@ -40,6 +40,7 @@ import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
+import { applyPluginEvent } from './plugins/host';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
 import { useAnalyticsFeed } from './stores/analytics';
@@ -169,6 +170,7 @@ export default function App() {
         useEndless.getState().applyEvent(e);
         usePreviews.getState().applyEvent(e);
         useUsageLimits.getState().applyEvent(e);
+        applyPluginEvent(e);
       },
     });
     sockRef.current = sock;
