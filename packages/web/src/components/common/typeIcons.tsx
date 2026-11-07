@@ -8,7 +8,7 @@ import type { TerminalType } from '../../api/types';
 export function providerColor(type: TerminalType): string {
   switch (type) {
     case 'claude-code': return 'var(--color-blue)'; // Claude → blue
-    case 'codex': return 'var(--color-green)'; // Codex → green
+    case 'codex': return 'var(--color-status-green)'; // Codex → green
     case 'grok': return 'var(--color-text-primary)'; // Grok → xAI white
     case 'opencode': return 'var(--color-orange)'; // OpenCode → open-model amber
     case 'shell': return 'var(--color-text-secondary)'; // Terminal → neutral

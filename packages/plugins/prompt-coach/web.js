@@ -100,7 +100,7 @@ export default function activate(d) {
     if (busy) return h('div', { style: { padding: '6px 10px 8px', fontSize: 12, color: 'var(--color-text-tertiary)' } }, 'Coach: looking at that prompt…');
     if (!latest || dismissedAt === latest.at) return null;
     if (latest.habit === 'good' && !latest.note) return null;
-    return h('div', { role: 'note', 'data-testid': 'coach-card', style: { margin: '0 0 8px', padding: '10px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid rgba(62,207,106,0.35)', background: 'rgba(62,207,106,0.08)', fontSize: 13, lineHeight: 1.5 } },
+    return h('div', { role: 'note', 'data-testid': 'coach-card', style: { margin: '0 0 8px', padding: '10px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', fontSize: 13, lineHeight: 1.5 } },
       h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } },
         h('span', { style: { fontWeight: 600, color: 'var(--color-text-primary)' } }, 'Coach'),
         h('span', { style: { font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)' } }, HABITS[latest.habit] || latest.habit),
@@ -177,7 +177,7 @@ export default function activate(d) {
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
       h('span', { style: ui.styles.sectionLabel }, 'STYLE'),
       h('div', { style: { display: 'flex', gap: 6 } }, ...['quiet', 'normal', 'direct'].map((style) =>
-        h('button', { key: style, type: 'button', onClick: () => save({ ...s, style }), style: { ...ui.styles.ghostBtn, ...(s.style === style ? { background: 'var(--color-accent)', color: '#08240F', borderColor: 'var(--color-accent)' } : {}) } }, style))),
+        h('button', { key: style, type: 'button', onClick: () => save({ ...s, style }), style: { ...ui.styles.ghostBtn, ...(s.style === style ? { background: 'var(--color-accent)', color: 'var(--color-on-accent)', borderColor: 'var(--color-accent)' } : {}) } }, style))),
       h('span', { style: ui.styles.sectionLabel }, 'WHAT IT MAY READ'),
       h('div', { style: ui.styles.row },
         h('span', { style: ui.styles.item }, 'Read my prompts and judge them'),
