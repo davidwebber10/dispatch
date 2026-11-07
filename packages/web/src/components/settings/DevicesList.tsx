@@ -110,7 +110,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
             <div
               key={d.id}
               data-testid="device-row"
-              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-md)' }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)' }}
             >
               <div style={{ ...row, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -137,7 +137,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
                     </>
                   ) : pending && pending !== 'legacy' && pending.id === d.id && pending.kind === 'revoke' ? (
                     <>
-                      <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: '#F37165', color: '#2a0a07' }} onClick={() => void revoke(d)}>
+                      <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: 'var(--color-status-coral)', color: 'var(--color-on-danger)' }} onClick={() => void revoke(d)}>
                         {d.current ? 'Yes, sign out' : 'Yes, revoke'}
                       </button>
                       <button type="button" style={ghostBtn} onClick={() => setPending(null)}>Cancel</button>
@@ -153,7 +153,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
                 </span>
               </div>
               {pending && pending !== 'legacy' && pending.id === d.id && pending.kind === 'revoke' && (
-                <div style={{ ...small, color: '#F37165' }}>
+                <div style={{ ...small, color: 'var(--color-status-coral)' }}>
                   {d.current
                     ? 'This will sign you out here. You will need a new code or the access token to come back.'
                     : 'That device will be signed out at once. It needs a new code or the access token to come back.'}
@@ -176,9 +176,9 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
               <div>
                 {pending === 'legacy' ? (
                   <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: '#F37165', color: '#2a0a07' }} onClick={() => void endLegacy()}>Yes, sign them out</button>
+                    <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: 'var(--color-status-coral)', color: 'var(--color-on-danger)' }} onClick={() => void endLegacy()}>Yes, sign them out</button>
                     <button type="button" style={ghostBtn} onClick={() => setPending(null)}>Cancel</button>
-                    <span style={{ ...small, color: '#F37165' }}>A device that has not opened Dispatch since the update will need to sign in again.</span>
+                    <span style={{ ...small, color: 'var(--color-status-coral)' }}>A device that has not opened Dispatch since the update will need to sign in again.</span>
                   </span>
                 ) : (
                   <button type="button" style={ghostBtn} onClick={() => setPending('legacy')}>Sign out devices not in this list</button>
@@ -186,7 +186,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
               </div>
             </div>
           )}
-          {error && <div role="alert" style={{ fontSize: 12.5, color: '#F37165' }}>{error}</div>}
+          {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-coral)' }}>{error}</div>}
         </>
       )}
     </div>

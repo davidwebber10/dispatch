@@ -27,14 +27,14 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 22, padding: 40, textAlign: 'center' }}>
-        <div style={{ width: 60, height: 60, borderRadius: 'var(--radius-xl)', background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px rgba(0,0,0,.7)' }}>
+        <div style={{ width: 60, height: 60, borderRadius: 'var(--radius-xl)', background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px var(--color-shadow)' }}>
           <span style={{ font: '600 24px var(--font-mono)', color: 'var(--color-accent)' }}>&gt;_</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
           <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--color-text-primary)' }}>No thread selected</span>
           <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', maxWidth: 340, lineHeight: 1.55 }}>
             {project ? (
-              <>Pick a thread, note, file, or web tab from <span style={{ color: '#c9c9cf', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new session below.</>
+              <>Pick a thread, note, file, or web tab from <span style={{ color: 'var(--color-text-body)', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new session below.</>
             ) : (
               <>Pick a project from the sidebar to see its threads, notes, and files.</>
             )}
@@ -43,25 +43,25 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
         {project && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={() => void newThread()} style={{ height: 36, padding: '0 16px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-              <Plus size={15} weight="bold" color="#08240F" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: '#08240F' }}>New Thread</span>
+              <Plus size={15} weight="bold" color="var(--color-on-accent)" />
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-on-accent)' }}>New Thread</span>
             </button>
-            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>
+            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: '400 11px var(--font-mono)', color: '#46464d' }}>
-          <span><span style={{ color: '#6a6a72' }}>{modLabel('N')}</span> new thread</span>
-          <span style={{ color: '#2c2c32' }}>·</span>
-          <span><span style={{ color: '#6a6a72' }}>{modLabel('P')}</span> quick open</span>
-          <span style={{ color: '#2c2c32' }}>·</span>
-          <span><span style={{ color: '#6a6a72' }}>{modLabel('K')}</span> commands</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: '400 11px var(--font-mono)', color: 'var(--color-text-faint)' }}>
+          <span><span style={{ color: 'var(--color-text-dim)' }}>{modLabel('N')}</span> new thread</span>
+          <span style={{ color: 'var(--color-border-strong)' }}>·</span>
+          <span><span style={{ color: 'var(--color-text-dim)' }}>{modLabel('P')}</span> quick open</span>
+          <span style={{ color: 'var(--color-border-strong)' }}>·</span>
+          <span><span style={{ color: 'var(--color-text-dim)' }}>{modLabel('K')}</span> commands</span>
         </div>
       </div>
       {project && (
-        <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: '400 11px var(--font-mono)', color: '#6a6a72' }}>
+        <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)' }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{homeAbbrev(project.workingDir)}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34343a', border: '1px solid #46464d', boxSizing: 'border-box' }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-border-hover)', border: '1px solid var(--color-text-faint)', boxSizing: 'border-box' }} />
             {threadCount} {threadCount === 1 ? 'thread' : 'threads'} · idle
           </span>
         </div>

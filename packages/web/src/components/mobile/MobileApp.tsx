@@ -355,16 +355,16 @@ export function MobileApp() {
             {bottomTab === 'projects' && (
               <>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={projectsView === 'threads' ? 'Search threads' : 'Search projects'}
-                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 16 }} />
+                  style={{ flex: 1, minWidth: 0, height: 36, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 16 }} />
                 {projectsView === 'projects' && <SortMenu
                   value={projectSort}
                   options={PROJECT_SORTS}
                   onChange={(v) => setProjectSort(v as ProjectSort)}
                   isMobile
                   iconSize={18}
-                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
+                  buttonStyle={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer' }}
                 />}
-                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#06140B', cursor: 'pointer' }}>
+                {projectsView === 'projects' && <button onClick={() => setNewProject(true)} title="New project" style={{ width: 36, height: 36, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', cursor: 'pointer' }}>
                   <Plus size={18} weight="bold" />
                 </button>}
               </>
@@ -447,7 +447,7 @@ export function MobileApp() {
                 const on = projectsView === key;
                 return (
                   <button key={key} type="button" role="tab" aria-selected={on} onClick={() => setProjectsView(key)}
-                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px rgba(0,0,0,.35)' : 'none' }}>
+                    style={{ flex: 1, height: 32, border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px var(--color-shadow)' : 'none' }}>
                     {label}
                   </button>
                 );
@@ -502,7 +502,7 @@ export function MobileApp() {
           <div style={{ ...slot, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative', ['--composer-safe-bottom' as string]: '0px' }}>
             {/* Only a real drop: a healthy connection needs no label (useShownStatus waits 1.5 s). */}
             {leaf === 'tab' && leafTabId && connection !== 'open' && findTerminal(byProject, leafTabId)?.type !== 'grok' && (
-              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'rgba(10,10,12,.6)', borderRadius: 'var(--radius-md)', padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
+              <div style={{ position: 'absolute', top: 8, right: 10, zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center', lineHeight: 1, background: 'color-mix(in srgb, var(--color-base) 60%, transparent)', borderRadius: 'var(--radius-md)', padding: '5px 9px', backdropFilter: 'blur(4px)' }}>
                 <ConnectionStatus shown={connection} />
               </div>
             )}
@@ -532,7 +532,7 @@ export function MobileApp() {
                   {key === 'settings' && <UpdateDot style={{ top: -2, right: -4 }} />}
                   {/* A promoted plugin screen carries its unseen count; the Plugins tab a plain dot when a screen inside it has one. */}
                   {(badges[key] ?? 0) > 0 && (
-                    <span aria-label={`${badges[key]} new`} style={{ position: 'absolute', top: -5, left: '100%', marginLeft: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--color-pane)' }}>
+                    <span aria-label={`${badges[key]} new`} style={{ position: 'absolute', top: -5, left: '100%', marginLeft: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--color-pane)' }}>
                       {badges[key] > 99 ? '99+' : badges[key]}
                     </span>
                   )}

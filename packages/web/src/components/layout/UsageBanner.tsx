@@ -25,7 +25,7 @@ export function UsageBanner({ onOpenChat, compact = false }: { onOpenChat?: () =
     useUI.getState().requestOpenThread({ sessionId: g.firstSessionId, terminalId: g.firstTerminalId });
   };
   return (
-    <div data-testid="usage-banner" role="status" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'rgba(240,72,72,0.14)', borderBottom: '1px solid rgba(240,72,72,0.45)' }}>
+    <div data-testid="usage-banner" role="status" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'color-mix(in srgb, var(--color-status-red) 14%, transparent)', borderBottom: '1px solid color-mix(in srgb, var(--color-status-red) 45%, transparent)' }}>
       {groups.map((g) => (
         <div key={g.provider} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: compact ? '4px 6px 4px 12px' : '3px 6px 3px 14px', minWidth: 0 }}>
           <button type="button" onClick={() => open(g)}

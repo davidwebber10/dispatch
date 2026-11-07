@@ -49,7 +49,7 @@ export function UpdatesSection() {
       ) : available ? (
         <div style={row}>
           <span style={{ ...item, color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>
-          <button onClick={() => void apply()} disabled={applying} style={{ height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', opacity: applying ? 0.7 : 1 }}>
+          <button onClick={() => void apply()} disabled={applying} style={{ height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', opacity: applying ? 0.7 : 1 }}>
             {applying ? 'Updating…' : 'Update now'}
           </button>
         </div>

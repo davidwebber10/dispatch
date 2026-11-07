@@ -30,7 +30,7 @@ function StatusCell({ bucket }: { bucket: Bucket }) {
       ? ['var(--color-status-red)', 'var(--color-status-red)', 'needs auth']
       : bucket === 'unchecked'
         ? ['var(--color-text-tertiary)', 'var(--color-text-secondary)', "couldn't check"]
-        : ['#4a4a52', 'var(--color-text-tertiary)', 'not installed'];
+        : ['var(--color-text-faint)', 'var(--color-text-tertiary)', 'not installed'];
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
       <span style={{ width: 6, height: 6, borderRadius: '50%', background: dot }} />
@@ -67,7 +67,7 @@ export function ToolsSection() {
   const renderRow = (t: ToolStatus) => (isMobile ? (
     <HoverRow key={t.name} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '9px 2px' }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-        <span style={{ font: '500 12px var(--font-mono)', color: '#e9e9ec', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+        <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
         <span style={miniChip}>{t.kind}</span>
         <span style={{ flex: 1 }} />
         <StatusCell bucket={bucketOf(t)} />
@@ -80,7 +80,7 @@ export function ToolsSection() {
   ) : (
     <HoverRow key={t.name} style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '8px 2px' }}>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-        <span style={{ font: '500 12px var(--font-mono)', color: '#e9e9ec', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+        <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
         <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description}</span>
       </span>
       <span><span style={miniChip}>{t.kind}</span></span>

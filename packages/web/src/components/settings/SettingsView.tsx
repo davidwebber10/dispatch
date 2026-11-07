@@ -51,10 +51,10 @@ export function SettingsView() {
                   <button key={s.key} onClick={() => setTab(s.key)} style={{
                     display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px',
                     borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', textAlign: 'left',
-                    background: on ? 'rgba(62,207,106,0.10)' : 'transparent',
+                    background: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
                   }}>
                     <span style={{ width: 3, height: 14, borderRadius: 'var(--radius-xs)', flexShrink: 0, background: on ? 'var(--color-accent)' : 'transparent' }} />
-                    <span style={{ flex: 1, fontSize: 12, color: on ? 'var(--color-text-primary)' : '#b8b8c0' }}>{s.label}</span>
+                    <span style={{ flex: 1, fontSize: 12, color: on ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}>{s.label}</span>
                   </button>
                 );
               })}

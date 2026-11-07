@@ -90,7 +90,7 @@ export function UsageLimitsSection() {
   const now = useNow();
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };
-  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: '#1b1b1e', border: '1px solid #2c2c32', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
+  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
 
   return (
     <>
@@ -106,7 +106,7 @@ export function UsageLimitsSection() {
                   onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
                   onBlur={commitDraft}
                   onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  style={{ width: 52, height: 28, boxSizing: 'border-box', textAlign: 'center', background: '#1b1b1e', border: 'none', borderTop: '1px solid #2c2c32', borderBottom: '1px solid #2c2c32', color: '#c9c9cf', font: '400 12px var(--font-mono)' }} />
+                  style={{ width: 52, height: 28, boxSizing: 'border-box', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', color: 'var(--color-text-body)', font: '400 12px var(--font-mono)' }} />
                 <button type="button" aria-label="Raise the warning level" onClick={() => setWarn(cfg.warnPercent + STEP)} style={btn('r')}>+</button>
                 <span style={{ marginLeft: 6, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>%</span>
               </div>

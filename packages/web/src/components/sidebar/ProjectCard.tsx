@@ -123,9 +123,9 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         // Selecting snaps instantly; the transition only applies while the mobile
         // fade-back dims the row (dimmed → true), so it eases out, not in.
         transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
-        background: showActive ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        background: showActive ? 'var(--color-selected)' : hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         borderRadius: isMobile ? 0 : (showActive ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: showActive ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
+        color: showActive ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
         // Long-press opens the options menu — stop iOS from selecting the label
         // text / showing the callout, and kill the tap-flash.
@@ -193,9 +193,9 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
-        background: active ? '#2a2a31' : hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        background: active ? 'var(--color-selected)' : hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         borderRadius: isMobile ? 0 : (active ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: active ? '#fff' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
+        color: active ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
     >
@@ -334,7 +334,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         {items.map((t) => (
           <SwipeRow key={t.id} disabled={!isMobile}
             actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-            actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+            actionColor={t.type === 'file' ? 'var(--color-border-hover)' : 'var(--color-status-red)'}
             onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
             <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
               onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
@@ -363,11 +363,11 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         //  selected:   accent border only, no wash (the active project)
         background: isMobile ? 'transparent'
           : active ? 'transparent'
-          : isOpen ? 'rgba(255,255,255,0.022)'
-          : hover ? 'rgba(255,255,255,0.05)'
+          : isOpen ? 'color-mix(in srgb, var(--color-text-emphasis) 2.2%, transparent)'
+          : hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)'
           : 'transparent',
         border: (!isMobile && active) ? '2px solid color-mix(in srgb, var(--color-accent) 45%, transparent)'
-          : (!isMobile && isOpen) ? '2px solid #3a3a42'
+          : (!isMobile && isOpen) ? '2px solid var(--color-border-hover)'
           : '2px solid transparent',
         borderRadius: 'var(--radius-md)', padding: isMobile ? 0 : '4px 0', marginBottom: 4, cursor: 'default', transition: 'background 0.12s ease, border-color 0.12s ease',
       }}
@@ -378,7 +378,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
+          <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {!isMobile && (
             <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
               {indicator === 'working' ? <Spinner size={11} />
@@ -417,7 +417,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
               <CaretRight size={isMobile ? 16 : 13} style={{ flexShrink: 0, opacity: 0.75 }} />
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.03)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, marginTop: isMobile ? 6 : 4, marginBottom: 6, padding: isMobile ? '0 12px' : '0 9px', borderBottom: '1px solid var(--color-border)', background: 'color-mix(in srgb, var(--color-text-emphasis) 3%, transparent)' }}>
             <TabPill label="Threads" count={threadItems.length} active={projTab === 'threads'} mobile={isMobile} onClick={() => setProjTab('threads')} />
             <TabPill label="Automations" count={agents.length} active={projTab === 'agents'} mobile={isMobile} onClick={() => setProjTab('agents')} automationsOf={session.id} />
             <span style={{ flex: 1 }} />
@@ -461,7 +461,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                 renderItem={(t) => (
                   <SwipeRow key={t.id} disabled={!isMobile}
                     actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-                    actionColor={t.type === 'file' ? '#3F3F46' : 'var(--color-status-red)'}
+                    actionColor={t.type === 'file' ? 'var(--color-border-hover)' : 'var(--color-status-red)'}
                     onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
                     <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
                       onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
@@ -502,7 +502,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       {projMenu && createPortal(
         <>
           <div onClick={() => setProjMenu(null)} onContextMenu={(e) => { e.preventDefault(); setProjMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-          <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+          <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
             <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename project</button>
             <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
           </div>

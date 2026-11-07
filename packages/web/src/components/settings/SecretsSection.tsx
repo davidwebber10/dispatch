@@ -229,7 +229,7 @@ export function SecretsSection() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '9px 0', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
             <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-              <span style={{ fontSize: 13, color: '#c9c9cf' }}>Read-only</span>
+              <span style={{ fontSize: 13, color: 'var(--color-text-body)' }}>Read-only</span>
               <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>{readOnly ? 'Values come from Doppler; nothing on this daemon can change them.' : 'Edits allowed — changes write to Doppler.'}</span>
             </span>
             <Toggle on={readOnly} onClick={() => void toggleReadOnly()} />
@@ -252,7 +252,7 @@ export function SecretsSection() {
           )}
           {filtered.map((s) => (isMobile ? (
             <HoverRow key={s.name} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '9px 2px' }}>
-              <span style={{ ...mono, color: '#e9e9ec' }}>{s.name}</span>
+              <span style={{ ...mono, color: 'var(--color-text-primary)' }}>{s.name}</span>
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
                 <span style={{ minWidth: 0, overflow: 'hidden' }}>{valueCell(s.name)}</span>
                 {actions(s.name)}
@@ -260,7 +260,7 @@ export function SecretsSection() {
             </HoverRow>
           ) : (
             <HoverRow key={s.name} style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '7px 2px' }}>
-              <span style={{ ...mono, color: '#e9e9ec' }}>{s.name}</span>
+              <span style={{ ...mono, color: 'var(--color-text-primary)' }}>{s.name}</span>
               {valueCell(s.name)}
               {actions(s.name)}
             </HoverRow>

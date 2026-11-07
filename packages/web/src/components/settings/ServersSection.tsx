@@ -55,7 +55,7 @@ export function ServersSection() {
         {servers.map((s) => (
           <div key={s.origin} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-              <span style={{ fontSize: 13, color: '#e9e9ec', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+              <span style={{ fontSize: 13, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
               <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>
             </span>
             <button title="Remove server" aria-label={`Remove ${s.label}`} onClick={() => void useServers.getState().remove(s.origin)} style={{ ...iconBtn, fontSize: 15, lineHeight: 1 }}>×</button>

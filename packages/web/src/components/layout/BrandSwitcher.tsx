@@ -30,14 +30,14 @@ export function BrandSwitcher() {
       <button onClick={() => setOpen((o) => !o)} title={`Dispatch${version ? ` v${version}` : ''} — switch server`} style={{
         width: 30, height: 30, borderRadius: 'var(--radius-md)', border: 'none', cursor: 'pointer', padding: 0,
         background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        outline: open ? '2px solid rgba(62,207,106,0.4)' : 'none', outlineOffset: 2,
+        outline: open ? '2px solid color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'none', outlineOffset: 2,
       }}>
-        <Terminal size={15} weight="bold" color="#08240F" />
+        <Terminal size={15} weight="bold" color="var(--color-on-accent)" />
       </button>
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-          <div style={{ position: 'absolute', top: 0, left: 40, zIndex: 91, minWidth: 250, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+          <div style={{ position: 'absolute', top: 0, left: 40, zIndex: 91, minWidth: 250, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '6px 8px 5px' }}>
               <span style={{ fontWeight: 600, fontSize: 13, letterSpacing: '-0.3px', color: 'var(--color-text-primary)' }}>Dispatch</span>
               {version && <span title="Daemon version" style={{ font: '500 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{version}</span>}
@@ -51,7 +51,7 @@ export function BrandSwitcher() {
                   background: active ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)',
                   color: 'var(--color-text-primary)', cursor: 'pointer', textAlign: 'left',
                 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: active ? 'var(--color-accent)' : '#46464d' }} />
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: active ? 'var(--color-accent)' : 'var(--color-text-faint)' }} />
                   <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                     <span style={{ fontSize: 13, fontWeight: active ? 600 : 400 }}>Dispatch {s.label}</span>
                     <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{new URL(s.origin).host}</span>

@@ -89,12 +89,12 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
       title={tip}
       style={{
         display: 'flex', gap: 2, padding: dim.pad,
-        ...(floating ? { borderRadius: 'var(--radius-lg)', background: 'rgba(22,22,26,0.55)', border: '1px solid rgba(255,255,255,0.10)' } : HEADER_BOX),
+        ...(floating ? { borderRadius: 'var(--radius-lg)', background: 'color-mix(in srgb, var(--color-pane) 55%, transparent)', border: '1px solid color-mix(in srgb, var(--color-text-emphasis) 10%, transparent)' } : HEADER_BOX),
         // Grey the whole control whenever switching is unavailable (no session yet, or a switch
         // in flight). Mid-turn it stays live and asks first (useTransportSwitch.request).
         opacity: busy || !canSwitch ? 0.45 : 1,
         transition: 'opacity .12s ease',
-        ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px rgba(0,0,0,.6)' } : {}),
+        ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px var(--color-shadow)' } : {}),
       }}
     >
       {opts.map(([m, label]) => {
@@ -115,7 +115,7 @@ export function TransportToggle({ terminalId, floating = false }: { terminalId: 
               minWidth: dim.w, height: dim.h, padding: '0 8px', borderRadius: dim.radius, border: 'none',
               font: `600 ${dim.font}px var(--font-mono, monospace)`, letterSpacing: '0.4px',
               cursor: disabled ? (on ? 'default' : 'not-allowed') : 'pointer',
-              background: on ? (floating ? 'rgba(255,255,255,0.14)' : 'var(--color-hover)') : 'transparent',
+              background: on ? (floating ? 'color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)' : 'var(--color-hover)') : 'transparent',
               color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
               transition: 'background .12s ease, color .12s ease',
             }}

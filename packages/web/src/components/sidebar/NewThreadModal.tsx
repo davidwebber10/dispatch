@@ -20,10 +20,10 @@ type Harness = Harnesses['id'];
 type Mode = 'cli' | 'pretty';
 
 const ACCENT = 'var(--color-accent)';
-const GLOW = '0 0 6px 1px rgba(62,207,106,.4)';
+const GLOW = '0 0 6px 1px color-mix(in srgb, var(--color-accent) 40%, transparent)';
 /** Hairlines inside the panel: the control border, and the quieter row divider. */
-const BORDER = '#2C2C32';
-const DIVIDER = '#26262B';
+const BORDER = 'var(--color-border-strong)';
+const DIVIDER = 'var(--color-hover)';
 /** The Account row's last option: not an account, it opens the add-account panel. */
 const ADD_ACCOUNT = '__add__';
 
@@ -360,10 +360,10 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
   const gateCard: React.CSSProperties = { padding: '14px 14px 13px', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)' };
   const gateButton = (disabled: boolean): React.CSSProperties => ({
     marginTop: 12, height: 38, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    background: ACCENT, border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 13.5,
+    background: ACCENT, border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5,
     cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.7 : 1, boxShadow: GLOW,
   });
-  const gateCommand: React.CSSProperties = { marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-sm)', padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
+  const gateCommand: React.CSSProperties = { marginTop: 9, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-sm)', padding: '7px 9px', overflowX: 'auto', whiteSpace: 'nowrap' };
 
   /** The duration control: a number + unit pair, shown only while auto-archive is on. */
   const durationControl = (
@@ -452,7 +452,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
               placeholder="sk-or-v1-…"
               value={keyDraft}
               onChange={(e) => setKeyDraft(e.target.value)}
-              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'rgba(0,0,0,.22)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
+              style={{ marginTop: 10, height: 36, width: '100%', padding: '0 12px', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', boxSizing: 'border-box', font: '400 12px var(--font-mono)' }}
             />
             {keyError && (
               <div style={{ marginTop: 9, fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-status-red)' }}>{keyError}</div>
@@ -504,7 +504,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
                         flex: 1, font: `600 ${m ? 13 : 12}px var(--font-sans)`, borderRadius: m ? 'var(--radius-sm)' : 'var(--radius-sm)', border: 'none',
                         ...(m ? { height: 34 } : { padding: '5px 4px' }),
                         background: on ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-elevated))' : 'transparent',
-                        boxShadow: on ? 'inset 0 0 0 1px rgba(62,207,106,.55)' : 'none',
+                        boxShadow: on ? 'inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'none',
                         color: on ? ACCENT : 'var(--color-text-tertiary)',
                         cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1,
                         transition: 'background .15s, color .15s',
@@ -609,7 +609,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         <div aria-hidden="true" style={{ flex: 1 }} />
 
         <button type="button" disabled={busy || capabilitiesLoading} onClick={() => void create()}
-          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
+          style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
           Start new thread
         </button>
 
