@@ -201,9 +201,20 @@ function keyPages(groups: { title: string; keys: SoftKey[] }[]): { title: string
 function KeysPager({ pages, onKey, onClose }: { pages: { title: string; keys: SoftKey[] }[]; onKey: (seq: string) => void; onClose: () => void }) {
   const [page, setPage] = useState(0);
   const pager = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  // A tap anywhere else closes it (owner, 2026-11-07). The keyboard button toggles on its own.
+  useEffect(() => {
+    const onDown = (e: Event) => {
+      const t = e.target as Element | null;
+      if (!t || box.current?.contains(t) || t.closest?.('[data-keys-toggle]')) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [onClose]);
   const go = (i: number) => { const el = pager.current; if (el) el.scrollTo?.({ left: i * el.clientWidth, behavior: 'smooth' }); setPage(i); };
   return (
-    <div role="dialog" aria-label="Keys" data-variant="pager"
+    <div ref={box} role="dialog" aria-label="Keys" data-variant="pager"
       style={{ position: 'absolute', left: 8, right: 8, bottom: '100%', marginBottom: 6, zIndex: 10, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 -10px 28px -14px var(--color-shadow)', padding: '6px 0 8px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 4px 12px', height: 26 }}>
         <span style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pages[page]?.title}</span>
@@ -1130,7 +1141,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             placeholder="Message or /command"
             onAddFile={() => termFileInputRef.current?.click()}
             afterPlus={(
-              <button type="button" aria-label="Keys" title="Keys" aria-pressed={keysOpen} aria-expanded={keysOpen}
+              <button type="button" data-keys-toggle aria-label="Keys" title="Keys" aria-pressed={keysOpen} aria-expanded={keysOpen}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setKeysOpen((o) => !o)}
                 style={{ flex: 'none', width: 40, height: 40, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',

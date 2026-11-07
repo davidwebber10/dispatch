@@ -1532,3 +1532,23 @@ test('keys have their own keyboard button right of the +, not a + menu row; the 
   fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
   expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
 });
+
+test('a tap outside the key panel closes it; a tap on a key or the keyboard button does not count as outside (2026-11-07)', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory, created } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  const panel = await openKeys();
+  fireEvent.pointerDown(within(panel).getByTitle('Escape'));
+  fireEvent.click(within(panel).getByTitle('Escape'));
+  expect(created[0].send).toHaveBeenLastCalledWith('\x1b');
+  expect(screen.getByRole('dialog', { name: 'Keys' })).toBeInTheDocument();
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
+  // The keyboard button still toggles: its own press is not an outside tap.
+  const btn = screen.getByRole('button', { name: 'Keys' });
+  fireEvent.pointerDown(btn); fireEvent.click(btn);
+  expect(screen.getByRole('dialog', { name: 'Keys' })).toBeInTheDocument();
+  fireEvent.pointerDown(btn); fireEvent.click(btn);
+  expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
+});
