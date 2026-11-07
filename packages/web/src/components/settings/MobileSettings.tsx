@@ -1,5 +1,5 @@
 import { CaretRight } from '@phosphor-icons/react';
-import { SETTINGS_SECTIONS, SETTINGS_GROUPS, settingsSection, type SettingsSectionKey } from './sections';
+import { settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
 import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
@@ -11,13 +11,15 @@ import { UpdateBanner } from '../update/UpdateBanner';
  * Both render the SAME section components as the desktop SettingsView; only the
  * chrome differs. See `sections.tsx`.
  */
-export function MobileSettingsList({ onOpen }: { onOpen: (key: SettingsSectionKey) => void }) {
+export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }) {
+  const sections = useAllSettingsSections();
+  const groups = useSettingsGroups();
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '4px 14px 16px' }}>
       {/* An update that waits heads the list (2026-11-07); the Settings tab's dot points here. */}
       <div style={{ marginTop: 8 }}><UpdateBanner compact /></div>
-      {SETTINGS_GROUPS.map((g) => {
-        const rows = SETTINGS_SECTIONS.filter((s) => s.group === g);
+      {groups.map((g) => {
+        const rows = sections.filter((s) => s.group === g);
         return (
           <section key={g} aria-label={g} style={{ marginTop: 10 }}>
             <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 8px' }}>{g}</div>
@@ -46,7 +48,7 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: SettingsSectionKe
   );
 }
 
-export function MobileSettingsSection({ sectionKey }: { sectionKey: SettingsSectionKey }) {
+export function MobileSettingsSection({ sectionKey }: { sectionKey: string }) {
   const section = settingsSection(sectionKey);
   if (!section) return null;
   const Body = section.Component;

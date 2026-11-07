@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { MobileSettingsList } from './MobileSettings';
+import { MobileSettingsList, MobileSettingsSection } from './MobileSettings';
+import { usePluginRegistry } from '../../plugins/registry';
 import { SETTINGS_SECTIONS, settingsSection } from './sections';
 
 // The mobile settings list is the level-0 rail screen behind the Settings bottom tab.
@@ -36,5 +37,26 @@ describe('MobileSettingsList', () => {
     expect(settingsSection('harnesses')?.key).toBe('agents');
     expect(settingsSection('access')?.key).toBe('devices');
     expect(settingsSection('general')?.key).toBe('appearance');
+  });
+});
+
+describe('plugin sections on the phone (2026-11-07)', () => {
+  it('the list shows the PLUGINS group after THIS MAC and drills into the plugin section', () => {
+    usePluginRegistry.getState().register('daily-rundown', { settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back', icon: 'sun', Component: () => <div>rundown settings body</div> }] });
+    try {
+      const onOpen = vi.fn();
+      render(<MobileSettingsList onOpen={onOpen} />);
+      const regions = screen.getAllByRole('region');
+      expect(regions.map((r) => r.getAttribute('aria-label'))).toEqual(['YOU', 'AGENTS', 'THIS MAC', 'PLUGINS']);
+      fireEvent.click(screen.getByText('Daily rundown'));
+      expect(onOpen).toHaveBeenCalledWith('plugin:daily-rundown:rundown');
+      render(<MobileSettingsSection sectionKey="plugin:daily-rundown:rundown" />);
+      expect(screen.getByText('rundown settings body')).toBeInTheDocument();
+    } finally { usePluginRegistry.getState().unregister('daily-rundown'); }
+  });
+
+  it('without a plugin section there is no PLUGINS group', () => {
+    render(<MobileSettingsList onOpen={() => {}} />);
+    expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['YOU', 'AGENTS', 'THIS MAC']);
   });
 });

@@ -33,7 +33,7 @@ import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { MobileSettingsList, MobileSettingsSection } from '../settings/MobileSettings';
-import { settingsSection, type SettingsSectionKey } from '../settings/sections';
+import { settingsSection } from '../settings/sections';
 import { findTerminal, useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
@@ -96,7 +96,7 @@ export function MobileApp() {
   // Settings is a bottom-tab destination, not an overlay: the list sits at level 0
   // and drilling into a section pushes it onto level 1 (where a project's threads
   // would otherwise be), so back / edge-swipe walk out of it like any other screen.
-  const [settingsKey, setSettingsKey] = useState<SettingsSectionKey | null>(null);
+  const [settingsKey, setSettingsKey] = useState<string | null>(null);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
   // The thread list highlights a row ONLY for the thread you last opened (set in
@@ -198,7 +198,7 @@ export function MobileApp() {
   };
   // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
   // so the entry only carries enough state for back/popstate to restore it.
-  const openSettingsSection = (key: SettingsSectionKey) => {
+  const openSettingsSection = (key: string) => {
     setSettingsKey(key); setLevel(1);
     pushNav({ nav: 1, settingsSection: key }, '', location.pathname);
   };
@@ -239,7 +239,7 @@ export function MobileApp() {
     setBottomTab('settings');
     toRoot();
     // After the walk back to the root lands, push the section (one frame for the popstate).
-    setTimeout(() => openSettingsSection(pendingSettings as SettingsSectionKey), 50);
+    setTimeout(() => openSettingsSection(pendingSettings), 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSettings]);
 
@@ -263,7 +263,7 @@ export function MobileApp() {
       pushNav({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
     }
     const onPop = (e: PopStateEvent) => {
-      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: SettingsSectionKey };
+      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string };
       // Returning to a settings section (edge-swipe forward, or back into one)
       // re-selects the tab too, so the level-1 slot renders the right screen.
       if (s.settingsSection) { setSettingsKey(s.settingsSection); setBottomTab('settings'); }

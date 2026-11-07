@@ -4,6 +4,7 @@ import { SettingsView } from './SettingsView';
 import { IconRail } from '../layout/IconRail';
 import { useUI } from '../../stores/ui';
 import { useUpdate } from '../../stores/update';
+import { usePluginRegistry } from '../../plugins/registry';
 
 beforeEach(() => {
   // The section bodies load their own data on mount; a resolved empty fetch keeps
@@ -71,4 +72,29 @@ test('an update that waits heads the page above every section, and dots the rail
   fireEvent.click(screen.getByRole('button', { name: 'Secrets' }));
   expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument();
   useUpdate.setState({ available: null });
+});
+
+test('a plugin settings section shows under PLUGINS on desktop and opens; the group is absent with no plugin (2026-11-07)', () => {
+  usePluginRegistry.setState({ settings: [] });
+  const { unmount } = render(<SettingsView />);
+  expect(screen.queryByRole('group', { name: 'PLUGINS' })).toBeNull();
+  unmount();
+  usePluginRegistry.getState().register('daily-rundown', { settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back', icon: 'sun', Component: () => <div>rundown settings body</div> }] });
+  render(<SettingsView />);
+  const group = screen.getByRole('group', { name: 'PLUGINS' });
+  fireEvent.click(within(group).getByRole('button', { name: 'Daily rundown' }));
+  expect(screen.getByText('rundown settings body')).toBeInTheDocument();
+  expect(screen.getByText('How far back')).toBeInTheDocument();
+  usePluginRegistry.getState().unregister('daily-rundown');
+});
+
+test('a plugin section that throws shows the boundary card inside Settings (2026-11-07)', () => {
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  usePluginRegistry.getState().register('bad', { settings: [{ id: 's', label: 'Bad section', blurb: '', Component: () => { throw new Error('section boom'); } }] });
+  render(<SettingsView />);
+  fireEvent.click(screen.getByRole('button', { name: 'Bad section' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('The plugin "bad" failed');
+  expect(screen.getByText('DAEMON')).toBeInTheDocument();
+  usePluginRegistry.getState().unregister('bad');
+  spy.mockRestore();
 });

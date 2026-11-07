@@ -1,4 +1,7 @@
-import type { ComponentType } from 'react';
+import { useMemo, type ComponentType } from 'react';
+import { usePluginRegistry, type PluginSettingsSection } from '../../plugins/registry';
+import { pluginIcon } from '../../plugins/sdk';
+import { PluginBoundary } from '../../plugins/PluginBoundary';
 import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { AppearanceSection } from './AppearanceSection';
@@ -29,11 +32,12 @@ export type SettingsSectionKey =
   | 'agents' | 'accounts' | 'usage' | 'integrations' | 'secrets' | 'tools'
   | 'devices' | 'servers' | 'about';
 
-export type SettingsGroup = 'YOU' | 'AGENTS' | 'THIS MAC';
+export type SettingsGroup = 'YOU' | 'AGENTS' | 'THIS MAC' | 'PLUGINS';
 export const SETTINGS_GROUPS: readonly SettingsGroup[] = ['YOU', 'AGENTS', 'THIS MAC'];
 
 export type SettingsSection = {
-  key: SettingsSectionKey;
+  /** A built-in key, or `plugin:<id>:<section>` for a plugin's section. */
+  key: string;
   group: SettingsGroup;
   label: string;
   blurb: string;
@@ -62,5 +66,33 @@ const LEGACY_KEYS: Record<string, SettingsSectionKey> = { general: 'appearance',
 
 export function settingsSection(key: string): SettingsSection | undefined {
   const k = LEGACY_KEYS[key] ?? key;
-  return SETTINGS_SECTIONS.find((s) => s.key === k);
+  return SETTINGS_SECTIONS.find((s) => s.key === k) ?? pluginSections(usePluginRegistry.getState().settings).find((s) => s.key === k);
+}
+
+// Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3): a plugin's sections join
+// the list under a PLUGINS group, each inside a boundary so a throwing section stays a card in Settings.
+const pluginSectionCache = new WeakMap<PluginSettingsSection, SettingsSection>();
+function pluginSections(list: PluginSettingsSection[]): SettingsSection[] {
+  return list.map((p) => {
+    let s = pluginSectionCache.get(p);
+    if (!s) {
+      const C = p.Component;
+      const Wrapped = (props: { onDone?: () => void }) => <PluginBoundary plugin={p.plugin}><C {...props} /></PluginBoundary>;
+      s = { key: p.key, group: 'PLUGINS', label: p.label, blurb: p.blurb ?? '', icon: pluginIcon(p.icon), Component: Wrapped };
+      pluginSectionCache.set(p, s);
+    }
+    return s;
+  });
+}
+
+/** Every section: the built-in ones, then the plugins'. */
+export function useAllSettingsSections(): SettingsSection[] {
+  const plugins = usePluginRegistry((s) => s.settings);
+  return useMemo(() => [...SETTINGS_SECTIONS, ...pluginSections(plugins)], [plugins]);
+}
+
+/** The groups that have sections: PLUGINS only once a plugin added one. */
+export function useSettingsGroups(): readonly SettingsGroup[] {
+  const n = usePluginRegistry((s) => s.settings.length);
+  return n > 0 ? [...SETTINGS_GROUPS, 'PLUGINS'] : SETTINGS_GROUPS;
 }

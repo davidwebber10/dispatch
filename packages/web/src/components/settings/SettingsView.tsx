@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SETTINGS_SECTIONS, SETTINGS_GROUPS, settingsSection, type SettingsSectionKey } from './sections';
+import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
 import { CONNECTION_STATUS } from './ui';
 import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
@@ -14,7 +14,9 @@ import { UpdateBanner } from '../update/UpdateBanner';
  * shared with MobileSettings, which keeps its drill-down presentation.
  */
 export function SettingsView() {
-  const [tab, setTab] = useState<SettingsSectionKey>('appearance');
+  const [tab, setTab] = useState<string>('appearance');
+  const sections = useAllSettingsSections();
+  const groups = useSettingsGroups();
   // A link elsewhere asked for a section (the mic's "Set up"): open it once.
   const pendingSection = useUI((s) => s.pendingSettingsSection);
   useEffect(() => {
@@ -40,10 +42,10 @@ export function SettingsView() {
           <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
-          {SETTINGS_GROUPS.map((g, gi) => (
+          {groups.map((g, gi) => (
             <div key={g} role="group" aria-label={g}>
               <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{g}</div>
-              {SETTINGS_SECTIONS.filter((s) => s.group === g).map((s) => {
+              {sections.filter((s) => s.group === g).map((s) => {
                 const on = s.key === tab;
                 return (
                   <button key={s.key} onClick={() => setTab(s.key)} style={{
