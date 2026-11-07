@@ -6,9 +6,12 @@
 //
 // Documents it reads and writes: `cards` ({ items: card[] }, written by the judge), `cardState`
 // ({ [cardId]: { state, at } }: shown, dismissed, used, down), `cadence` (lib/cadence.mjs), `memory`
-// (lib/memory.mjs). Reset also strips excerpts from `cards` and `candidates` and drops `signals`.
+// (lib/memory.mjs), `status` (the worker: the budget it last heard, and the harness it ran on). Reset also
+// strips excerpts from `cards` and `candidates` and drops `signals`.
 import { withDefaults } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
+import { planCall } from './lib/plan.mjs';
+import { morePrompt, parseAnswer } from './lib/prompts.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
@@ -60,12 +63,6 @@ function typing(ctx) {
   return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable === true);
 }
 
-function parseJson(text) {
-  const m = /\{[\s\S]*\}/.exec(text || '');
-  if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
-}
-
 export function createCoach(d, deps = {}) {
   const { h, hooks: { useState, useEffect }, storage, settings, events } = d;
   // The id the host gave this copy: a copy to local runs under its own id.
@@ -74,18 +71,16 @@ export function createCoach(d, deps = {}) {
   // Icons come from the app's icon map (d.icons, Phosphor); never emoji. A missing icon falls back to a short word.
   const icon = (name, fallback, size = 15) => { const I = d.icons && d.icons[name]; return I ? h(I, { size, 'aria-hidden': true }) : fallback; };
 
-  // "More": the detail behind a card, one large-model call on click (the judge replaces this, plan Task 9).
+  // "More": the detail behind a card, one large-model call on click (coach spec section 5, tier 3).
+  // The tier comes from the plan: thoroughness, the budget the worker last heard, and the harness it
+  // last ran on. At the cap nothing is called. An answer that is not whole shows nothing.
   async function defaultRequestMore(card) {
     if (typeof d.assist !== 'function') return null;
-    const s = store.getState().settings;
-    const tier = s.model && s.model.large ? { harness: s.model.large.harness, model: s.model.large.model } : {};
-    const r = await d.assist(PLUGIN, {
-      system: 'You are a coach for people who use AI agents at work. Answer only with JSON: {"better": "a better version of what they wrote", "bullets": ["2 to 4 short lines: why it helps, and what to check"]}. Plain words, no jargon, no "should".',
-      messages: [{ role: 'user', content: `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${card.excerpt || '(not kept)'}` }],
-      maxTokens: 600,
-      ...tier,
-    });
-    const j = parseJson(r && r.text);
+    const st = store.getState();
+    const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+    if (plan.tier === 'none') return { budget: true };
+    const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
+    const j = parseAnswer(r && r.text);
     if (!j || typeof j.better !== 'string' || !j.better.trim()) return null;
     return { wrote: card.excerpt || '', better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
   }
@@ -102,20 +97,22 @@ export function createCoach(d, deps = {}) {
     more: {},       // cardId → { status: 'loading' | 'ok' | 'none', data }
     offer: null,    // { type, measure, terminalId }: a tip type the person dismissed 3 times; offer to turn it off
     memory: emptyMemory(),
+    status: { budget: null, harness: null, level: null, stepped: false }, // the worker's last word on the budget
     toast: null,    // { terminalId, effect, undo, fact, saved, cardId, closed }: what the last feedback changed
   }));
 
   async function load() {
-    const [s, cadence, cards, cardState, memory] = await Promise.all([
+    const [s, cadence, cards, cardState, memory, status] = await Promise.all([
       settings.get(PLUGIN, null).catch(() => null),
       storage.get(PLUGIN, 'cadence', null).catch(() => null),
       storage.get(PLUGIN, 'cards', null).catch(() => null),
       storage.get(PLUGIN, 'cardState', null).catch(() => null),
       storage.get(PLUGIN, 'memory', null).catch(() => null),
+      storage.get(PLUGIN, 'status', null).catch(() => null),
     ]);
     const firstRun = !cadence || !cadence.firstSeenAt;
     const cad = firstRun ? { ...emptyCadence(now()), ...(cadence || {}), firstSeenAt: now().toISOString() } : cadence;
-    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory) });
+    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) } });
     if (firstRun) await storage.set(PLUGIN, 'cadence', cad).catch(() => {});
   }
   const ready = load();
@@ -153,7 +150,7 @@ export function createCoach(d, deps = {}) {
     put({ status: 'loading' });
     let data = null;
     try { data = await requestMore(card); } catch (err) { console.warn('[coach] more failed:', err && err.message ? err.message : err); }
-    put(data && data.better ? { status: 'ok', data } : { status: 'none' });
+    put(data && data.better ? { status: 'ok', data } : { status: data && data.budget ? 'budget' : 'none' });
   }
   function tryIt(card, ctx, text) {
     const a = card.action || {};
@@ -283,6 +280,7 @@ export function createCoach(d, deps = {}) {
       open && h('div', { style: S.more },
         (!more || more.status === 'loading') && h('div', { style: S.note }, 'Getting more detail…'),
         more && more.status === 'none' && h('div', { style: S.note }, 'The Coach could not get more detail just now.'),
+        more && more.status === 'budget' && h('div', { style: S.note }, 'The Coach has used its budget for this week. More detail comes back when the week resets.'),
         more && more.status === 'ok' && [
           (more.data.wrote || card.excerpt) && h('div', { key: 'w', style: S.ex }, h('b', { style: S.exLabel }, 'YOU WROTE'), more.data.wrote || card.excerpt),
           h('div', { key: 't', style: S.ex }, h('b', { style: S.exLabel }, 'TRY'), more.data.better),

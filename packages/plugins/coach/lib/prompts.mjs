@@ -1,0 +1,94 @@
+// Coach prompts (coach spec sections 4.1, 4.4, 5; plan Task 9): the text of each model call. The
+// fixed instructions come first, in the system text, the same for every call of a step, so the
+// provider's prompt cache can reuse them. What the Coach knows (confirmed facts, known skills,
+// level adjustments, types turned off, goals) goes into every call: the memory is how advice
+// improves without training. Answers are JSON.
+import { normalizeMemory, typeLabel } from './memory.mjs';
+
+const RULES = [
+  'You are the Coach inside Dispatch, an app where people work with AI agents in threads.',
+  'The people are developers and business users (operations, sales, finance, managers). Business users get no technical words.',
+  'You help one person improve how they work with AI, one small step at a time, on five measures:',
+  'ambition (how big a task they give AI), delegation (how much the AI does between their messages, threads in parallel),',
+  'reuse (templates, skills, schedules for repeated work), judgment (a plan first, checking the result, pushing back),',
+  'breadth (how many kinds of work they use AI for).',
+  'Card rules: a headline of at most 8 words that starts with a verb; one "why" sentence that names the specific thing the person did;',
+  'one action. Plain words, US spelling. Never write "should". Never grade the person. No jargon for business users.',
+  'Every "think bigger" card also says how to check the result.',
+  'Use what the Coach knows about the person: never suggest a skill they already have, or a kind of tip they turned off.',
+].join('\n');
+
+const ACTION_SHAPE = '"action": {"kind": "compose" | "schedule" | "threads", "label": "the button, at most 6 words, e.g. Try it: ask for a plan", "text": "for compose: the prompt to put in the message box", "prompt": "for schedule: the prompt to run", "cron": "for schedule: min hour dom mon dow", "prompts": ["for threads: one prompt per thread"]}';
+
+export const CONFIRM_SYSTEM = `${RULES}\n\nTask: a rule noticed something in the person's recent work. Decide whether a card fits, how sure you are, and write the card.\nAnswer only with JSON: {"fit": true | false, "confidence": 0 to 1, "headline": "...", "why": "...", ${ACTION_SHAPE}}`;
+export const WRITE_SYSTEM = `${RULES}\n\nTask: a smaller model confirmed this card. Write it as well as you can for this person, with the same facts.\nAnswer only with JSON: {"fit": true, "confidence": 0 to 1, "headline": "...", "why": "...", ${ACTION_SHAPE}}`;
+export const MORE_SYSTEM = `${RULES}\n\nTask: the person clicked More on a card. Give a better version of what they wrote, and 2 to 4 short lines: why it helps, and what to check.\nAnswer only with JSON: {"better": "the better prompt", "bullets": ["..."]}`;
+export const RECAP_SYSTEM = `${RULES}\n\nTask: write the weekly recap from the facts given. Keep each line short. Do not invent numbers.\nAnswer only with JSON: {"patterns": ["three lines, each an observed pattern"], "stretch": {"headline": "...", "why": "..."}, "learned": "one line on what the Coach learned"}`;
+
+const MEASURE_WORD = { ambition: 'task size', delegation: 'handing off work', reuse: 'reuse', judgment: 'checking', breadth: 'new kinds of work' };
+
+/** What the Coach knows, as lines for the model. Unconfirmed facts are left out. */
+export function memoryContext(memory) {
+  const m = normalizeMemory(memory);
+  const lines = [];
+  for (const f of m.facts) if (f.confirmedAt) lines.push(`- Fact: ${f.text}`);
+  for (const k of m.known) lines.push(`- Already does: ${typeLabel(k)}`);
+  for (const [measure, n] of Object.entries(m.levelAdjust)) if (n) lines.push(`- Tips on ${MEASURE_WORD[measure] || measure}: ${n > 0 ? 'aim higher' : 'start simpler'} (${n > 0 ? '+' : ''}${n})`);
+  for (const x of m.muted) lines.push(`- Turned off: ${typeLabel(x.type)}`);
+  for (const g of Array.isArray(m.goals) ? m.goals : []) if (g.status === 'active') lines.push(`- Goal: ${g.text}`);
+  return lines.length ? `What the Coach knows about this person:\n${lines.join('\n')}` : 'What the Coach knows about this person: nothing yet.';
+}
+
+function candidateText(c) {
+  const ev = { ...(c.evidence || {}) };
+  const excerpt = typeof ev.excerpt === 'string' ? ev.excerpt : '';
+  delete ev.excerpt;
+  return [
+    `What the rule saw: ${typeLabel(c.type)} (measure: ${c.measure}, tip type: ${c.tip || 'prompt'}).`,
+    `Details: ${JSON.stringify(ev)}`,
+    excerpt ? `What they wrote (an excerpt): ${excerpt}` : null,
+  ].filter(Boolean).join('\n');
+}
+
+const call = (system, user, memory, maxTokens) => ({ system, messages: [{ role: 'user', content: `${memoryContext(memory)}\n\n${user}` }], maxTokens });
+
+export const confirmPrompt = (candidate, memory) => call(CONFIRM_SYSTEM, candidateText(candidate), memory, 500);
+export const writePrompt = (candidate, memory, draft) => call(WRITE_SYSTEM, `${candidateText(candidate)}\n\nThe confirmed card: ${JSON.stringify({ headline: draft && draft.headline, why: draft && draft.why, action: draft && draft.action })}`, memory, 700);
+export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${card.excerpt || '(not kept)'}`, memory, 600);
+export const recapPrompt = (draft, memory) => call(RECAP_SYSTEM, `The facts of the week: ${JSON.stringify(draft)}`, memory, 800);
+
+/** The JSON object in a model's answer, or null (no object, a broken one, or an array). */
+export function parseAnswer(text) {
+  const m = /\{[\s\S]*\}/.exec(typeof text === 'string' ? text : '');
+  if (!m) return null;
+  try { const v = JSON.parse(m[0]); return v && typeof v === 'object' && !Array.isArray(v) ? v : null; } catch { return null; }
+}
+
+const ACTION_KINDS = new Set(['compose', 'schedule', 'threads']);
+const words = (s) => String(s).trim().split(/\s+/).filter(Boolean).length;
+const nonEmpty = (s) => typeof s === 'string' && s.trim().length > 0;
+
+/** The action, cleaned: a known kind with what that kind needs, or null. */
+export function cleanAction(a) {
+  if (!a || typeof a !== 'object' || !nonEmpty(a.label)) return null;
+  const kind = ACTION_KINDS.has(a.kind) ? a.kind : 'compose';
+  const label = a.label.trim().slice(0, 60);
+  if (kind === 'schedule' && nonEmpty(a.prompt)) return { kind, label, prompt: a.prompt.trim(), ...(nonEmpty(a.cron) ? { cron: a.cron.trim() } : {}) };
+  if (kind === 'threads' && Array.isArray(a.prompts) && a.prompts.filter(nonEmpty).length >= 2) return { kind, label, prompts: a.prompts.filter(nonEmpty).slice(0, 6).map((p) => p.trim()) };
+  const text = nonEmpty(a.text) ? a.text : nonEmpty(a.prompt) ? a.prompt : null;
+  return text ? { kind: 'compose', label, text: text.trim() } : null;
+}
+
+/**
+ * Why a card answer may not show, or null when it may: 'malformed' (a part is missing), 'no-fit',
+ * 'unsure' (confidence under the setting), 'copy' (the headline is over 8 words, or "should").
+ */
+export function checkCard(ans, minConfidence) {
+  if (!ans || typeof ans !== 'object') return 'malformed';
+  if (!nonEmpty(ans.headline) || !nonEmpty(ans.why) || !cleanAction(ans.action)) return ans.fit === false ? 'no-fit' : 'malformed';
+  if (ans.fit !== true) return 'no-fit';
+  const conf = typeof ans.confidence === 'number' ? ans.confidence : 0;
+  if (conf < (typeof minConfidence === 'number' ? minConfidence : 0.7)) return 'unsure';
+  if (words(ans.headline) > 8 || /\bshould\b/i.test(ans.headline) || /\bshould\b/i.test(ans.why)) return 'copy';
+  return null;
+}

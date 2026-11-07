@@ -342,3 +342,41 @@ describe('What the Coach knows (coach plan Task 11)', () => {
     expect((memOf(d)!.muted[0] as { reviewedAt?: string }).reviewedAt).toBeTruthy();
   });
 });
+
+describe('Coach card: More through the judge plan (coach plan Task 9)', () => {
+  async function mountReal(over: { docs?: Record<string, unknown>; settings?: unknown } = {}) {
+    const d: FakeD = fakeD({ docs: { cadence: SEASONED, cards: { items: [CARD] }, ...(over.docs ?? {}) }, settings: over.settings });
+    const coach = createCoach(d, { now: () => NOW });
+    await coach.ready;
+    const Card = (d.registered.coach.slots[0] as { Component: Slot }).Component;
+    render(<Card surface="thread" terminalId="t1" sessionId="s1" value="" set={vi.fn()} insert={vi.fn()} />);
+    return d;
+  }
+
+  it('More asks the large tier on the harness the worker last used, with the memory in the prompt', async () => {
+    const d = await mountReal({ docs: { status: { budget: { usedPercent: 0.2, capPercent: 3 }, harness: 'codex' }, memory: { facts: [{ id: 'f1', text: 'Works in finance', source: 'x', at: '2026-11-01T00:00:00Z', confirmedAt: '2026-11-01T00:00:00Z' }] } } });
+    d.assist.mockResolvedValueOnce({ text: '{"better": "Plan it, then run it in two threads.", "bullets": ["Two at once."]}' });
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }));
+    expect(await screen.findByText('Plan it, then run it in two threads.')).toBeInTheDocument();
+    expect(d.assist).toHaveBeenCalledTimes(1);
+    const req = d.assist.mock.calls[0][1];
+    expect(req).toMatchObject({ harness: 'codex', model: 'gpt-6.1-sol' });
+    expect(JSON.stringify(req.messages)).toContain('Works in finance');
+  });
+
+  it('More at the budget cap makes no call and says so; the card stays whole', async () => {
+    const d = await mountReal({ docs: { status: { budget: { usedPercent: 3, capPercent: 3 } } } });
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }));
+    expect(await screen.findByText('The Coach has used its budget for this week. More detail comes back when the week resets.')).toBeInTheDocument();
+    expect(d.assist).not.toHaveBeenCalled();
+    expect(screen.getByTestId('coach-card')).toHaveTextContent(CARD.headline);
+  });
+
+  it('More with a malformed answer shows no half-filled detail', async () => {
+    const d = await mountReal();
+    d.assist.mockResolvedValueOnce({ text: '{"better": ' });
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }));
+    expect(await screen.findByText('The Coach could not get more detail just now.')).toBeInTheDocument();
+    expect(screen.queryByText('TRY')).toBeNull();
+  });
+});
