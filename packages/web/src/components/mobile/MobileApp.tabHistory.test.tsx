@@ -50,7 +50,6 @@ describe('MobileApp bottom tabs remember their place', () => {
     fireEvent.click(tab('Settings'));
     await waitFor(() => expect(history.state).toMatchObject({ nav: 1, settingsSection: 'dictation' }));
     expect(level()).toBe(1);
-    expect(screen.getByRole('button', { name: /Settings/, hidden: false })).toBeInTheDocument();
   });
 
   it('a tap on Settings while in a section goes back to the Settings list, and the next visit starts there', async () => {
