@@ -49,6 +49,14 @@ function stateOf(r: PluginRow, s: PluginStatus | undefined): { label: string; to
  * marketplace slice.
  */
 /** "Worker running · pid 4242 · 2 restarts", "Worker crashed · exit 1 · 10 restarts", "Worker backing off", "Worker stopped". */
+const kTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+/** The row's meter line: calls, failures, tokens and the known cost over the last days (coach spec section 4.5). */
+export function assistLine(a: NonNullable<PluginRow['assist']>): string {
+  const failed = a.failed ? ` (${a.failed} failed)` : '';
+  const cost = a.costUsd ? ` · $${a.costUsd.toFixed(2)}` : '';
+  return `Model calls, ${a.days ?? 7} days: ${a.calls}${failed} · ${kTokens(a.inputTokens)} in · ${kTokens(a.outputTokens)} out tokens${cost}`;
+}
+
 function workerLabel(w: PluginRow['workerStats']): string {
   if (!w) return 'Worker stopped';
   const restarts = w.restarts > 0 ? ` · ${w.restarts} restart${w.restarts === 1 ? '' : 's'}` : '';
@@ -200,6 +208,9 @@ export function PluginsSection() {
           ) : <span style={note}>No permissions</span>}
           {r.keyed && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} title="The plugin's processes can use ~/.dispatch/keys/plugin-{r.id}">Key issued</span>}
         </div>
+        {r.assist && r.assist.calls > 0 && (
+          <span data-testid={`plugin-assist-${r.id}`} style={note}>{assistLine(r.assist)}</span>
+        )}
         {r.install && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

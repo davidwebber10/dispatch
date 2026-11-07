@@ -77,6 +77,7 @@ const PREFIXES: ReadonlyArray<readonly [string, ModelPrice]> = [
   ['claude-opus-4-6', OPUS],
   ['claude-sonnet-5', SONNET],
   ['claude-sonnet-4-6', SONNET],
+  ['claude-haiku-5', HAIKU],
   ['claude-haiku-4-5', HAIKU],
 ];
 

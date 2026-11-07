@@ -507,4 +507,16 @@ function initializeSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_plugin_files_plugin ON plugin_files(plugin_id);
   `));
+  // The assist meter keeps more (coach spec section 7.2): which model, harness and account, the
+  // cache tokens apart, the cost, and failed calls (ok = 0); read by time per plugin.
+  migrate(db, '021-plugin-assist-detail', () => db.exec(`
+    ALTER TABLE plugin_assist ADD COLUMN model TEXT;
+    ALTER TABLE plugin_assist ADD COLUMN harness TEXT;
+    ALTER TABLE plugin_assist ADD COLUMN account_id TEXT;
+    ALTER TABLE plugin_assist ADD COLUMN cache_read_tokens INTEGER DEFAULT 0;
+    ALTER TABLE plugin_assist ADD COLUMN cache_create_tokens INTEGER DEFAULT 0;
+    ALTER TABLE plugin_assist ADD COLUMN cost_usd REAL;
+    ALTER TABLE plugin_assist ADD COLUMN ok INTEGER DEFAULT 1;
+    CREATE INDEX IF NOT EXISTS idx_plugin_assist_plugin_at ON plugin_assist(plugin_id, at);
+  `));
 }

@@ -84,14 +84,58 @@ export function setSettings(db: Database.Database, pluginId: string, value: unkn
   return getSettings(db, pluginId)!;
 }
 
-/** The assist meter (spec section 3.4). */
-export interface AssistTotals { calls: number; inputTokens: number; outputTokens: number }
-export function recordAssist(db: Database.Database, pluginId: string, usage: { inputTokens: number; outputTokens: number }, ms: number): void {
-  db.prepare('INSERT INTO plugin_assist (plugin_id, at, input_tokens, output_tokens, ms) VALUES (?, ?, ?, ?, ?)').run(pluginId, new Date().toISOString(), usage.inputTokens, usage.outputTokens, ms);
+/**
+ * The assist meter (plugins spec section 3.4; coach spec section 7.2): one row per call, failed
+ * calls included (`ok` false). `inputTokens` is the uncached input; the cache tokens are apart.
+ * `costUsd` is what the harness reported or what the route priced; null = not known.
+ */
+export interface AssistRecord {
+  at?: string;
+  model: string;
+  harness: string;
+  accountId: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
+  costUsd: number | null;
+  ms: number;
+  ok: boolean;
 }
-export function assistTotals(db: Database.Database, pluginId: string): AssistTotals {
-  const r = db.prepare('SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o FROM plugin_assist WHERE plugin_id = ?').get(pluginId) as { calls: number; i: number; o: number };
-  return { calls: r.calls, inputTokens: r.i, outputTokens: r.o };
+export function recordAssist(db: Database.Database, pluginId: string, r: AssistRecord): void {
+  db.prepare(`INSERT INTO plugin_assist (plugin_id, at, model, harness, account_id, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd, ms, ok)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(pluginId, r.at ?? new Date().toISOString(), r.model, r.harness, r.accountId, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreateTokens, r.costUsd, r.ms, r.ok ? 1 : 0);
+}
+
+export interface AssistUsageByModel { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }
+export interface AssistUsage {
+  calls: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** The known costs summed (a call with no known cost adds nothing). */
+  costUsd: number;
+  byModel: AssistUsageByModel[];
+}
+/** A plugin's calls with `from <= at < to` (ISO times), summed and by model (most input first). */
+export function assistUsage(db: Database.Database, pluginId: string, from: string, to: string): AssistUsage {
+  const t = db.prepare(`SELECT COUNT(*) AS calls, COALESCE(SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END), 0) AS failed,
+      COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o, COALESCE(SUM(cost_usd), 0) AS c
+    FROM plugin_assist WHERE plugin_id = ? AND at >= ? AND at < ?`).get(pluginId, from, to) as { calls: number; failed: number; i: number; o: number; c: number };
+  const byModel = db.prepare(`SELECT COALESCE(model, '') AS model, COALESCE(harness, '') AS harness, COUNT(*) AS calls,
+      COALESCE(SUM(input_tokens), 0) AS inputTokens, COALESCE(SUM(output_tokens), 0) AS outputTokens
+    FROM plugin_assist WHERE plugin_id = ? AND at >= ? AND at < ?
+    GROUP BY COALESCE(model, ''), COALESCE(harness, '') ORDER BY inputTokens DESC, model`).all(pluginId, from, to) as AssistUsageByModel[];
+  return { calls: t.calls, failed: t.failed, inputTokens: t.i, outputTokens: t.o, costUsd: t.c, byModel };
+}
+
+/** The Plugins page row: the last `days` days (coach spec section 4.5). */
+export const ASSIST_ROW_DAYS = 7;
+export interface AssistTotals { calls: number; failed: number; inputTokens: number; outputTokens: number; costUsd: number; days: number }
+export function assistTotals(db: Database.Database, pluginId: string, now = Date.now()): AssistTotals {
+  const u = assistUsage(db, pluginId, new Date(now - ASSIST_ROW_DAYS * 86_400_000).toISOString(), new Date(now + 60_000).toISOString());
+  return { calls: u.calls, failed: u.failed, inputTokens: u.inputTokens, outputTokens: u.outputTokens, costUsd: u.costUsd, days: ASSIST_ROW_DAYS };
 }
 
 /**

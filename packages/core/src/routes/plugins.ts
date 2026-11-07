@@ -12,7 +12,8 @@ import { insideRealRoot } from '../files/confine.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import { ASSIST_HARNESSES, type AssistRunner, type AssistHarness } from '../assist/run.js';
+import { ASSIST_HARNESSES, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
+import { notionalValueUsd } from '../analytics/pricing.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
 import type { PluginInstaller } from '../plugins/installer.js';
@@ -66,6 +67,35 @@ function principalHeaders(req: Request): Record<string, string> {
 
 /** Headers that never cross to the worker: the caller's credentials and the hop-by-hop set. */
 const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
+
+/** One assist answer as a meter row: the harness's cost, else priced from the tokens when the model is known. */
+function meterOf(result: AssistResult, asked: string, started: number): pluginData.AssistRecord {
+  const u = result.usage;
+  const cacheReadTokens = u.cacheReadTokens ?? 0;
+  const cacheCreateTokens = u.cacheCreateTokens ?? 0;
+  const costUsd = typeof result.costUsd === 'number' ? result.costUsd
+    : notionalValueUsd({ model: result.model, input: u.inputTokens, output: u.outputTokens, cacheRead: cacheReadTokens, cacheCreate: cacheCreateTokens });
+  return {
+    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? null,
+    inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens, cacheCreateTokens,
+    costUsd, ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
+  };
+}
+
+const DAY_MS = 86_400_000;
+/** A `from`/`to` query as ISO times: `from` defaults to 7 days ago, `to` to now (+1 minute). Null when one does not parse. */
+export function rangeOf(from: unknown, to: unknown, now = Date.now()): { from: string; to: string } | null {
+  const parse = (v: unknown, fallback: number): number | null => {
+    if (v === undefined || v === '') return fallback;
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(v)) return null;
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  };
+  const f = parse(from, now - 7 * DAY_MS);
+  const t = parse(to, now + 60_000);
+  if (f === null || t === null) return null;
+  return { from: new Date(f).toISOString(), to: new Date(t).toISOString() };
+}
 
 /** The writer stamped on a document a thread key writes: from the key, never from the body. */
 function writerOf(req: Request): pluginData.Writer | null {
@@ -501,11 +531,26 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (busy >= ASSIST_INFLIGHT_MAX) return void res.status(429).json({ error: 'busy', message: `At most ${ASSIST_INFLIGHT_MAX} assist calls run at once for a plugin.` });
     inflight.set(req.params.id, busy + 1);
     let result;
+    const started = Date.now();
     try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens, ...(harness ? { harness } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}) }).catch(() => null); }
     finally { inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1); }
-    if (!result) return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
-    pluginData.recordAssist(db, req.params.id, result.usage, result.ms);
+    const asked = harness && harness !== 'auto' ? harness : '';
+    if (!result) {
+      // A failed call is metered too (ok = 0), so the Plugins page and a budget see it.
+      pluginData.recordAssist(db, req.params.id, { model: model ?? '', harness: asked, accountId: accountId ?? null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: Date.now() - started, ok: false });
+      return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
+    }
+    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started));
     res.json(result);
+  });
+
+  // The meter by time (coach spec section 7.2): the owner, or the plugin's own key. No `from` = 7 days ago.
+  router.get('/plugins/:id/assist/usage', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+    if (!known(req, res)) return;
+    const range = rangeOf(req.query.from, req.query.to);
+    if (!range) return void res.status(400).json({ error: 'bad_range', message: 'from and to are ISO times.' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(pluginData.assistUsage(db, req.params.id, range.from, range.to));
   });
 
   return router;

@@ -93,6 +93,14 @@ export interface PluginAssistRequest {
   /** The account a CLI harness signs in as (Settings → Accounts). */
   accountId?: string;
 }
+export interface PluginAssistUsage {
+  calls: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  byModel: { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }[];
+}
 export interface PluginAssistResult {
   text: string;
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number };
@@ -471,6 +479,13 @@ export const api = {
       throw new ApiError(message || `Import failed: ${res.status}`, res.status);
     }
     return (await res.json()) as PluginImportResult;
+  },
+  /** The assist meter by time (coach spec section 7.2): no `from` = the last 7 days. */
+  pluginAssistUsage: (id: string, range: { from?: string; to?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (range.from) q.set('from', range.from);
+    if (range.to) q.set('to', range.to);
+    return req<PluginAssistUsage>(`/api/plugins/${encodeURIComponent(id)}/assist/usage${q.toString() ? `?${q.toString()}` : ''}`);
   },
   pluginAssist: (id: string, body: PluginAssistRequest) => req<PluginAssistResult>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
   pluginLogs: async (id: string, lines = 200): Promise<string> => {

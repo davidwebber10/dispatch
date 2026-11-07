@@ -38,8 +38,8 @@ export interface PluginRow extends Partial<PluginManifest> {
   pinned?: string;
   autoUpdate?: boolean;
   marketplaceGone?: boolean;
-  /** The assist meter, once the plugin made a call. */
-  assist?: { calls: number; inputTokens: number; outputTokens: number };
+  /** Model assist in the last `days` days (coach spec section 4.5). */
+  assist?: { calls: number; failed?: number; inputTokens: number; outputTokens: number; costUsd?: number; days?: number };
   /** Served from the Dispatch checkout (spec section 10): updates with Dispatch, cannot be removed. */
   bundled?: boolean;
   /** A local folder with this id hides a bundled plugin of the same id. */
@@ -83,7 +83,7 @@ export class PluginRegistry {
   private readonly bundledDir: string | null;
   private hookStats: ((id: string) => { runs: number; failures: number; dropped: number }) | null = null;
   setHookStatsProvider(fn: (id: string) => { runs: number; failures: number; dropped: number }): void { this.hookStats = fn; }
-  private assistTotals: ((id: string) => { calls: number; inputTokens: number; outputTokens: number }) | null = null;
+  private assistTotals: ((id: string) => NonNullable<PluginRow['assist']>) | null = null;
   private workerStats: ((id: string) => import('./workers.js').WorkerStats | null) | null = null;
   private installInfo: ((id: string) => import('./installer.js').InstallInfo | null) | null = null;
   setInstallInfoProvider(fn: (id: string) => import('./installer.js').InstallInfo | null): void { this.installInfo = fn; }
@@ -94,7 +94,7 @@ export class PluginRegistry {
   private taps = new Set<(e: Record<string, unknown>) => void>();
   /** Hear every event this registry broadcasts (plugin:changed, plugin:data, plugin:settings). */
   tapBroadcast(fn: (e: Record<string, unknown>) => void): () => void { this.taps.add(fn); return () => { this.taps.delete(fn); }; }
-  setAssistTotalsProvider(fn: (id: string) => { calls: number; inputTokens: number; outputTokens: number }): void { this.assistTotals = fn; }
+  setAssistTotalsProvider(fn: (id: string) => NonNullable<PluginRow['assist']>): void { this.assistTotals = fn; }
 
   constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string; bundledDir?: string } = {}) {
     this.keys = opts.keys ?? null;
