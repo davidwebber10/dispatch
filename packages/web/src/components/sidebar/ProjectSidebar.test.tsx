@@ -352,4 +352,27 @@ describe('Projects ⇄ Threads on the desktop (2026-11-07)', () => {
     fireEvent.click(within(tablist).getByRole('tab', { name: 'Projects' }));
     expect(screen.getByPlaceholderText('Search projects')).toBeInTheDocument();
   });
+
+  it('on the desktop: Filters sits right of the search and opens a panel there; archived threads are a folded section at the bottom', async () => {
+    (api.listArchivedTerminals as any).mockImplementation(async (sid: string) => (sid === 's1' ? [{ id: 'gone', sessionId: 's1', type: 'claude-code', label: 'An archived thread', status: 'exited', archivedAt: '2026-11-02T10:00:00Z' }] : []));
+    useProjectsView.setState({ view: 'threads' });
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    expect(screen.queryByRole('tablist', { name: 'Thread list' })).toBeNull();
+    const search = screen.getByPlaceholderText('Search threads');
+    const filters = screen.getByRole('button', { name: 'Filters' });
+    expect(search.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(search.parentElement).toBe(filters.closest('[data-testid="sidebar-search-row"]'));
+    fireEvent.click(filters);
+    const panel = screen.getByRole('dialog', { name: 'Filters' });
+    expect(panel).toHaveAttribute('data-variant', 'popover');
+    expect(screen.queryByTestId('sheet-panel')).toBeNull();
+    fireEvent.click(filters);
+    expect(screen.queryByRole('dialog', { name: 'Filters' })).toBeNull();
+    const archived = await screen.findByRole('button', { name: 'Toggle archived threads' });
+    const newest = screen.getByText('Newest thread');
+    expect(newest.compareDocumentPosition(archived) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('An archived thread')).toBeNull();
+    fireEvent.click(archived);
+    expect(await screen.findByText('An archived thread')).toBeInTheDocument();
+  });
 });
