@@ -3,7 +3,7 @@ import { runCommand, usable, scratchDir, type CliNamerDeps, type CommandRunner }
 
 /**
  * Model assist (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.4): one prompt in,
- * text out, with usage, for plugins that judge, summarise or draft. The same signed-in CLI the
+ * text out, with usage, for plugins that judge, summarize or draft. The same signed-in CLI the
  * thread titles use (`claude -p`, JSON output), else the OpenRouter key the namer falls back to.
  * No tools, no session, one turn.
  */

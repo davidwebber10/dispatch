@@ -54,7 +54,7 @@ Web (`packages/web`):
 - Modify `src/stores/ui.ts`, `src/components/layout/IconRail.tsx`, `src/App.tsx`, `src/main.tsx`, `src/components/mobile/MobileApp.tsx`, `src/components/settings/sections.tsx`, `SettingsView.tsx`, `MobileSettings.tsx`, `src/components/sidebar/ThreadMenu.tsx`, `src/components/mobile/ProjectMenu.tsx`, `src/components/composer/PillComposer.tsx`, `src/components/tabs/chat/ChatView.tsx`, `src/components/endless/EndlessColumn.tsx`, `src/components/tabs/TerminalTab.tsx`, `vite.config.ts`.
 - Tests beside each file.
 
-Docs: `docs/plugins.md` (how to write a plugin in this slice), `docs/plugins/examples/composer-favourites/` and `docs/plugins/examples/daily-rundown/` (from the spike's `docs/spike-plugins`, adjusted to the SDK of this slice).
+Docs: `docs/plugins.md` (how to write a plugin in this slice), `docs/plugins/examples/composer-favorites/` and `docs/plugins/examples/daily-rundown/` (from the spike's `docs/spike-plugins`, adjusted to the SDK of this slice).
 
 ---
 
@@ -170,7 +170,7 @@ it('start() broadcasts plugin:changed once per burst of writes, with the row, an
 ```
 
 - [ ] **Step 2: Run to verify it fails.**
-- [ ] **Step 3: Implement `registry.ts` and `template.ts`.** The template's `web.js` is the composer-favourites-style minimal plugin: `export default function activate(d) { d.register('<id>', { views: [{ id: 'home', label: '<name>', icon: 'puzzle', Component: () => d.h('div', { style: { padding: 24 } }, 'Hello from <name>') }] }); }`; `README.md` explains the SDK in ten lines and links `docs/plugins.md`.
+- [ ] **Step 3: Implement `registry.ts` and `template.ts`.** The template's `web.js` is the composer-favorites-style minimal plugin: `export default function activate(d) { d.register('<id>', { views: [{ id: 'home', label: '<name>', icon: 'puzzle', Component: () => d.h('div', { style: { padding: 24 } }, 'Hello from <name>') }] }); }`; `README.md` explains the SDK in ten lines and links `docs/plugins.md`.
 - [ ] **Step 4: Run to verify it passes.**
 - [ ] **Step 5: Write the failing route tests** (`tests/routes/plugins.test.ts`, `createApp({ db, skipPty: true, pluginsDir: tmp, managers })` as in `tests/routes/previews.test.ts`; owner calls use no header the way `GET /api/previews` is called there; a thread key via `app.locals.keys.mint`):
 
@@ -390,7 +390,7 @@ it('the safe-mode switch writes the flag and says to reload', ...)
 ### Task 10: Examples, docs and the end-to-end check
 
 **Files:**
-- Create: `docs/plugins.md` (writing a plugin: the folder, the manifest, `activate(d)`, `register`, the slots this slice has, hot reload, safe mode, `h()` vs JSX), `docs/plugins/examples/daily-rundown/{plugin.json,web.js}`, `docs/plugins/examples/composer-favourites/{plugin.json,web.js}` (from the spike's `docs/spike-plugins`, using `d.hooks.useContributions` where a list is filtered)
+- Create: `docs/plugins.md` (writing a plugin: the folder, the manifest, `activate(d)`, `register`, the slots this slice has, hot reload, safe mode, `h()` vs JSX), `docs/plugins/examples/daily-rundown/{plugin.json,web.js}`, `docs/plugins/examples/composer-favorites/{plugin.json,web.js}` (from the spike's `docs/spike-plugins`, using `d.hooks.useContributions` where a list is filtered)
 - Modify: `README.md` (one line under features linking `docs/plugins.md`)
 
 - [ ] **Step 1: Copy the examples and adjust them to the SDK of Task 5.**

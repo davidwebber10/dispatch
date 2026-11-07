@@ -9,7 +9,7 @@ import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { useUI } from '../../stores/ui';
 
 /**
- * The one message composer (2026-11-05, modelled on ChatGPT's): a rounded box holding
+ * The one message composer (2026-11-05, modeled on ChatGPT's): a rounded box holding
  *   [+]  text that wraps and grows  [mic] [↑]
  * Every composer in the app renders this: a thread's CLI input on a phone, the Pretty thread
  * view, Control Plane and Chat. Each keeps its own sending, attachments and stop logic; this
@@ -124,7 +124,7 @@ export function PillComposer({
   });
   // A mic with dictation not set up says so, with a link to the setting, instead of doing nothing.
   const [micHint, setMicHint] = useState(false);
-  // Plugin buttons above the pill (the composer-favourites example): each gets the composer's context.
+  // Plugin buttons above the pill (the composer-favorites example): each gets the composer's context.
   const pluginActions = useContributions('composerActions');
   const composerCtx: ComposerCtx = {
     surface: pluginContext?.surface ?? 'unknown', terminalId: pluginContext?.terminalId, sessionId: pluginContext?.sessionId, value,

@@ -17,7 +17,7 @@ const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k
 const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
-// what regressed originally (the old check recognised only 'board').
+// what regressed originally (the old check recognized only 'board').
 export const loadView = (): View => {
   try {
     const v = localStorage.getItem(VKEY) as View | null;

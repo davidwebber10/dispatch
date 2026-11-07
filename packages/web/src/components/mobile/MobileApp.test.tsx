@@ -167,7 +167,7 @@ describe('MobileApp — Settings as a bottom-rail destination', () => {
     seedThreadAt('/', { type: 'shell', config: {} });
     render(<MobileApp />);
     // The old control was a 32px icon button carrying title="Settings"; the bottom
-    // tab is a labelled button, so the title lookup is what distinguishes them.
+    // tab is a labeled button, so the title lookup is what distinguishes them.
     expect(screen.queryByTitle('Settings')).not.toBeInTheDocument();
   });
 

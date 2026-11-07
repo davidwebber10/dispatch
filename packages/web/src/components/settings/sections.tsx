@@ -65,7 +65,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { key: 'about', group: 'THIS MAC', label: 'About & updates', blurb: 'Version, updates, setup, usage stats', icon: Info, Component: AboutSection },
 ];
 
-/** Keys from before the reorganisation, still found in old history entries and links. */
+/** Keys from before the reorganization, still found in old history entries and links. */
 const LEGACY_KEYS: Record<string, SettingsSectionKey> = { general: 'appearance', access: 'devices', harnesses: 'agents', transcription: 'dictation' };
 
 export function settingsSection(key: string): SettingsSection | undefined {

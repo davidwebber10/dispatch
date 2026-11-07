@@ -291,7 +291,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // is CURRENTLY on screen begins (from the `dispatch:replay-meta` frame of
     // whichever socket owns the view). Infinity means "not known": a daemon older
     // than the meta protocol never sends the frame, and every comparison below must
-    // then fall back to the pre-protocol behaviour instead of blocking rebuilds.
+    // then fall back to the pre-protocol behavior instead of blocking rebuilds.
     let displayedStartOffset = Number.POSITIVE_INFINITY;
     // Set once the daemon has PROVEN nothing older exists (a rebuild's replay began
     // at the same offset as, or later than, what is already displayed). A ring only
@@ -352,7 +352,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     let pinNextReplay = true;
     // Every write goes through the gate, which knows whether the write xterm is parsing right now
     // is a REPLAY (the ring-buffer history a connection opens with). The history holds every
-    // colour, cursor and device query the CLI ever sent. Their answers were consumed long ago, so
+    // color, cursor and device query the CLI ever sent. Their answers were consumed long ago, so
     // answering them again makes the CLI read the reply as typing. The handlers below make xterm
     // skip its own answer while a replay parses; live queries are answered as before.
     //
@@ -521,7 +521,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       //
       // The old socket's frames withheld during the attempt MUST still be written: its view
       // was never reset, so they are the missing continuation of what the reader is looking
-      // at. Discarding them (the previous behaviour) silently lost every byte the PTY emitted
+      // at. Discarding them (the previous behavior) silently lost every byte the PTY emitted
       // during the attempt — up to REBUILD_TIMEOUT_MS (10s) on a stall, and unrecoverable
       // because nothing replays afterwards. The speculative socket's own buffer IS dropped:
       // it belongs to a snapshot that is being thrown away.

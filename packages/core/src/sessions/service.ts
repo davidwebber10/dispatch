@@ -2335,7 +2335,7 @@ export class SessionService {
   /**
    * Find-or-create the project's Overseer coordinator: a structured thread tagged
    * `config.role === 'coordinator'`. Returns the existing one if a non-archived
-   * coordinator already exists, else spawns a new one labelled "Overseer" via the
+   * coordinator already exists, else spawns a new one labeled "Overseer" via the
    * normal createTerminal path. Idempotent (one per project).
    *
    * `opts` (model, workerHarness, coordinatorHarness) apply ONLY on create. They are ignored

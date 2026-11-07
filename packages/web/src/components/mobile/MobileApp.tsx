@@ -49,7 +49,7 @@ import { ChatMode } from '../endless/ChatMode';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
-// Same idiom as App.tsx's desktop fallback: centred at the pane's eventual
+// Same idiom as App.tsx's desktop fallback: centered at the pane's eventual
 // footprint so the ~120kB gzipped Recharts chunk downloading doesn't read as a
 // blank/broken screen, and nothing jumps once it lands.
 const analyticsFallback = (

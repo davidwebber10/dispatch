@@ -66,7 +66,7 @@ export default function activate(d) {
     views: [{ id: 'rundown', label: 'Rundown', icon: 'sun', Component: Rundown }],
     settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back it looks', icon: 'sun', Component: Settings }],
     threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick: ({ tab }) => { storage.set('daily-rundown', 'pinned', tab.id); hint('Pinned'); } }],
-    composerActions: [{ id: 'sum', label: 'Summarise', onClick: (ctx) => ctx.insert('Summarise where you are.') }],
+    composerActions: [{ id: 'sum', label: 'Summarize', onClick: (ctx) => ctx.insert('Summarize where you are.') }],
     slots: [{ id: 'form', slot: 'composer.before', Component: TemplatePicker }],
   });
 }
@@ -231,7 +231,7 @@ pays for the same call.
   `/api/plugins/<id>/worker/<path>`: the owner, the plugin's own key, and thread keys when the
   plugin grants `threads:call-worker`. The daemon forwards the method, path, query, headers and
   body, drops the caller's credential, and adds `X-Dispatch-Principal` (`owner`, `thread:<id>`,
-  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialised (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch(d.id, 'jobs/run', { method: 'POST' })`.
+  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialized (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch(d.id, 'jobs/run', { method: 'POST' })`.
 
 ## Bundled plugins
 
@@ -246,7 +246,7 @@ enabled; one that appears in the folder on its own starts disabled (see below).
 ## Marketplaces, install, update
 
 A marketplace is a git repository (spec section 7.1). Dispatch has no public marketplace: an
-organisation (or a person) keeps its own, usually private, and the people who can clone it can
+organization (or a person) keeps its own, usually private, and the people who can clone it can
 install from it. Settings → Plugins → Marketplaces takes
 its URL (https, ssh, `git@host:path`, or an absolute path); the daemon clones it under
 `~/.dispatch/marketplaces/<slug>` with your own git login (ssh keys, the credential helper,
@@ -325,4 +325,4 @@ COMMANDS. `run` is called with no arguments.
 `docs/plugins/examples/` holds two plugins to copy into `~/.dispatch/plugins/`:
 
 - `daily-rundown`: a screen (rail item and phone tab), a settings section, a thread-menu item.
-- `composer-favourites`: buttons above every composer, edited in a settings section.
+- `composer-favorites`: buttons above every composer, edited in a settings section.

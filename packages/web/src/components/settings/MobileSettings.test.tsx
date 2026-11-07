@@ -32,7 +32,7 @@ describe('MobileSettingsList', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['appearance', 'notifications', 'dictation', 'agents', 'accounts', 'usage', 'integrations', 'secrets', 'tools', 'devices', 'servers', 'plugins', 'skills', 'about']);
   });
 
-  it('resolves the keys from before the reorganisation', () => {
+  it('resolves the keys from before the reorganization', () => {
     expect(settingsSection('transcription')?.key).toBe('dictation');
     expect(settingsSection('harnesses')?.key).toBe('agents');
     expect(settingsSection('access')?.key).toBe('devices');

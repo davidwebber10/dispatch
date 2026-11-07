@@ -15,7 +15,7 @@ It loads into the running app, and it reloads as its files are saved.
 
 A plugin does not have to be published. A local plugin is complete. Publishing to a
 marketplace is a separate step for a plugin someone else should install. A marketplace is a
-JSON index at a URL: the public one on dispatchd.app, or an organisation's private one.
+JSON index at a URL: the public one on dispatchd.app, or an organization's private one.
 
 Skills (prompt packages the harnesses read) travel the same way, as a second kind.
 
@@ -58,7 +58,7 @@ Skills (prompt packages the harnesses read) travel the same way, as a second kin
    A marketplace's owners review the pull request before it lands.
 2. **Previews** moves into a plugin in the first real version (slice 4).
 3. **Marketplace hosting**: a git repository is a marketplace (section 7.1); publishing is a
-   pull request; an organisation uses a private repository and the git login its members
+   pull request; an organization uses a private repository and the git login its members
    already have.
 4. **Skills**: a Dispatch skill library in `~/.dispatch/skills`, installed from the same
    marketplaces, injected per thread into each harness.
@@ -295,7 +295,7 @@ the derived events only, and the Plugins page says so under its permissions.
 
 ### 3.4 Model assist
 
-A plugin that judges, summarises or drafts needs a model call of its own (the prompt coach,
+A plugin that judges, summarizes or drafts needs a model call of its own (the prompt coach,
 section 13). `POST /api/plugins/<id>/assist` with `{ system, messages, maxTokens }` runs one
 turn on the daemon's assist model (the one that names threads and writes summaries today),
 with no tools, and returns the text and the usage. It needs `model:assist`; the daemon
@@ -395,7 +395,7 @@ The repository's layout is the catalog:
 - Install copies `plugins/<id>` from the clone into `~/.dispatch/plugins/<id>` and writes
   `.dispatch-install.json` with the marketplace URL, the commit and the version. Git gives the
   integrity; no hashes.
-- There is no public marketplace (owner correction, 2026-11-07). An organisation keeps its own
+- There is no public marketplace (owner correction, 2026-11-07). An organization keeps its own
   repository, usually private (POLYWOOD's is `polywood/dispatch-plugins`, private); publishing is
   a pull request, or `dispatch plugin publish`, which commits the plugin folder on a branch and
   opens one.
@@ -497,7 +497,7 @@ the owner wants on day one. Each is bundled (section 10's state), disabled or en
 the Plugins page, and written against the public SDK so a user can copy it to local and
 change it.
 
-- **Composer favourites**: your own buttons under every composer, edited in Settings.
+- **Composer favorites**: your own buttons under every composer, edited in Settings.
 - **Daily rundown**: yesterday per project, every morning, with a push; pin from a thread.
 - **Prompt coach**: the one the owner cares most about. Its goal is to level a person up in
   how they engage with AI: not as a parrot (the person types what the model should type),

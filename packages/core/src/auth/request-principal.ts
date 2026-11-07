@@ -75,7 +75,7 @@ export interface PrincipalOptions {
   stats?: NoCredentialStats;
   log?: (line: string) => void;
   now?: () => number;
-  /** How a credential-free request is labelled when the access gate did not run. Default 'test'. */
+  /** How a credential-free request is labeled when the access gate did not run. Default 'test'. */
   via?: 'test';
 }
 

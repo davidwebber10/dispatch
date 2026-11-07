@@ -59,7 +59,7 @@ preview({ title?: string, note?: string, text?: string, paths?: string[] })
 - At least one of `text` or `paths` is required.
 - Returns `{ ok: true, id, url }` where `url` is the daemon's address for the preview.
 
-`post_image` (existing) keeps its behaviour and **also** posts the image as a preview, so a
+`post_image` (existing) keeps its behavior and **also** posts the image as a preview, so a
 terminal-mode thread's screenshots reach the user. If the preview post fails, the inline image
 still returns (best effort; my call).
 

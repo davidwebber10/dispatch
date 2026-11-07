@@ -1,11 +1,11 @@
 {
-  "id": "composer-favourites",
-  "name": "Composer favourites",
+  "id": "composer-favorites",
+  "name": "Composer favorites",
   "version": "0.1.0",
   "description": "Your own buttons under the composer.",
   "web": "web.js",
   "contributes": {
     "composerActions": true,
-    "settings": [{ "id": "favorites", "label": "Composer favourites" }]
+    "settings": [{ "id": "favorites", "label": "Composer favorites" }]
   }
 }

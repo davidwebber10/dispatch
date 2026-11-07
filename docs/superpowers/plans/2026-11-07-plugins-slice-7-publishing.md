@@ -16,7 +16,7 @@
 - The temp clone is removed after the run, success or failure.
 - `gh` absent: the command prints the branch and the compare URL and exits 0.
 - The SDK package has no runtime code: types and a README; `@dispatchd/sdk` is not published by the builder.
-- The GitHub repository is created under the `polywood` organisation as **private** first (the owner flips it to public when ready; a private repository is a working marketplace for the people who can read it); the builder pushes the seed only.
+- The GitHub repository is created under the `polywood` organization as **private** first (the owner flips it to public when ready; a private repository is a working marketplace for the people who can read it); the builder pushes the seed only.
 
 ## Review Focus
 
@@ -46,11 +46,11 @@
 ### Task 3: the public marketplace repository and the seed
 
 **Files:**
-- Create (in a temp clone, pushed to GitHub): `README.md` (what the marketplace is, how to add it in Dispatch, how to publish), `marketplace.json` (`{ "name": "Dispatch plugins", "description": "The public marketplace for Dispatch plugins and skills." }`), `plugins/composer-favourites/` and `plugins/daily-rundown/` (from `docs/plugins/examples`, each with a `CHANGELOG.md`), `skills/tidy-first/` (`skill.json` + `SKILL.md`: list the folder and remove stray files you created before any change)
+- Create (in a temp clone, pushed to GitHub): `README.md` (what the marketplace is, how to add it in Dispatch, how to publish), `marketplace.json` (`{ "name": "Dispatch plugins", "description": "The public marketplace for Dispatch plugins and skills." }`), `plugins/composer-favorites/` and `plugins/daily-rundown/` (from `docs/plugins/examples`, each with a `CHANGELOG.md`), `skills/tidy-first/` (`skill.json` + `SKILL.md`: list the folder and remove stray files you created before any change)
 - Modify: `docs/plugins.md` (Publishing section with the command and the repository URL; the Marketplaces section names the public repository), `packages/web/src/components/settings/PluginsSection.tsx` (a one-line hint under MARKETPLACES naming the public repository URL with an Add button when it is not added yet)
 
 - [ ] Create `polywood/dispatch-plugins` (private) with `gh repo create`, push the seed, record the URL in the ledger.
-- [ ] E2E: add `https://github.com/polywood/dispatch-plugins.git` to an isolated daemon (the owner's gh credential helper serves the clone), browse, install `daily-rundown` and the skill, run the worker; `dispatch plugin publish docs/plugins/examples/composer-favourites --to <local bare repo> --dry-run` against a local marketplace (never a real PR from the e2e).
+- [ ] E2E: add `https://github.com/polywood/dispatch-plugins.git` to an isolated daemon (the owner's gh credential helper serves the clone), browse, install `daily-rundown` and the skill, run the worker; `dispatch plugin publish docs/plugins/examples/composer-favorites --to <local bare repo> --dry-run` against a local marketplace (never a real PR from the e2e).
 - [ ] Commit `docs(plugins): publishing; the public marketplace`.
 
 ### Task 4: release note draft, docs, suites

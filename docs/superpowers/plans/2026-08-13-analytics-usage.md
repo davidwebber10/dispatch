@@ -17,7 +17,7 @@
 - **ESM imports in `packages/core` need explicit `.js` extensions.** `import * as usageDb from '../db/usage.js'`. The build and the tests pass without them, but the daemon will not start.
 - **One writer per row class.** The recorder is the only thing that writes live turn rows (`backfilled = 0`). The importer writes only `backfilled = 1` rows, and only for turns older than the tracking cutoff. Nothing else writes `usage_turns` at all. `persistAgentTokenUsage` keeps writing `config.totalTokens` for the Done cards and must not be changed.
 - **Analytics must never break a turn.** Every recorder entry point is wrapped in `try { … } catch { /* best effort */ }`.
-- **Cost is notional.** Any dollar figure is labelled "equivalent API value", never "cost" or "spend".
+- **Cost is notional.** Any dollar figure is labeled "equivalent API value", never "cost" or "spend".
 - **Categorical palette, fixed order, never cycled:** `#3987e5`, `#d95926`, `#199e70`, `#c98500`, `#d55181`. A sixth series folds into "Other" (`#6b6b73`).
 - **Status colors are reserved.** `--color-accent` `#3ECF6A`, `--color-status-yellow` `#F5C542`, `--color-status-red` `#F0616D` are only for turn outcomes, never for a model series.
 - **No dual-axis charts.** Two measures of different scale get two charts.
@@ -1031,7 +1031,7 @@ describe('analytics queries', () => {
     turn(d, { id: 'c', startedAt: '2026-08-12T09:00:00.000Z', endedAt: '2026-08-12T09:01:00.000Z', input: 1, output: 2, projectId: 'proj2', terminalId: 'term2' });
   });
 
-  it('summarises tokens, turns and threads', () => {
+  it('summarizes tokens, turns and threads', () => {
     const s = summary(d, {});
     expect(s.turns).toBe(3);
     expect(s.threads).toBe(2);
@@ -1311,7 +1311,7 @@ export function records(db: Database.Database): Records {
 Run: `pnpm --filter dispatch-server exec vitest run src/analytics/queries.test.ts`
 Expected: PASS, 7 tests.
 
-If vitest hoists the imports above the `process.env.TZ` assignment and the day-bucket assertions fail, move the assignment into a `setupFiles` entry in `packages/core/vitest.config.ts` instead. Do not weaken the assertions to make them timezone-agnostic — the local-time bucket is the behaviour under test.
+If vitest hoists the imports above the `process.env.TZ` assignment and the day-bucket assertions fail, move the assignment into a `setupFiles` entry in `packages/core/vitest.config.ts` instead. Do not weaken the assertions to make them timezone-agnostic — the local-time bucket is the behavior under test.
 
 - [ ] **Step 5: Commit**
 

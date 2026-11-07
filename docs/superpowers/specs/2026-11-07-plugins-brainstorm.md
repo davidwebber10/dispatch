@@ -10,7 +10,7 @@ end need the owner's answers before a design.
 The owner wants anyone (a person, or the person's own agent) to change Dispatch without a
 Dispatch release: add a screen, add a settings section, add an item to a menu, give every
 harness a new tool, change what an existing screen does. Changes are packaged as plugins,
-published to a marketplace (a public one on dispatchd.app, or an organisation's private
+published to a marketplace (a public one on dispatchd.app, or an organization's private
 one), and installed from inside Dispatch. Skills (prompt packages for the harnesses) get
 the same treatment, as a separate kind.
 
@@ -192,7 +192,7 @@ a name, description, version, the manifest's `contributes` and `permissions`, an
 
 - **dispatchd.app** hosts the public index. Publishing is a pull request to the index
   repository, or later a `dispatch plugin publish` that opens it.
-- **An organisation** hosts its own index: a private GitHub repository, or any URL that needs
+- **An organization** hosts its own index: a private GitHub repository, or any URL that needs
   a token. Settings → Plugins → Marketplaces takes the URL and the token (stored in Doppler
   or the daemon's secrets store). Members add the same marketplace; plugins stay private.
 - **Install** downloads the tarball into `~/.dispatch/plugins/<id>`, checks its hash against
@@ -245,7 +245,7 @@ they decide which slots the screens must expose.
 
 | Idea | What it does | Needs |
 | --- | --- | --- |
-| Composer favourites | A row of your own buttons under the composer: "Run tests", "Commit and push", "Summarise where you are", each inserts or sends a saved prompt, per project | slot `composer.actions`, storage |
+| Composer favorites | A row of your own buttons under the composer: "Run tests", "Commit and push", "Summarize where you are", each inserts or sends a saved prompt, per project | slot `composer.actions`, storage |
 | Composer snippets | `/` or `;` expands a saved snippet; a snippet library in Settings | slot `composer.actions`, override `Composer` input handler, storage |
 | Composer templates | A "New thread" form per project: pick a template (bug fix, spike, review) that fills the first message and the model | slot `newThread.form`, storage |
 | Send-later | Queue a message to a thread for 07:00 | slot `composer.actions`, worker job |
@@ -258,7 +258,7 @@ they decide which slots the screens must expose.
 | Thread list filters and groups | Group by branch, by model, by "needs me"; saved filters | slot `threadList.filters`, store read |
 | Inspector tabs | Beside Details and Files: Git, Issues, Tests, Logs | slot `inspector.tabs` |
 | Details pane rows | Add rows to Thread details: the PR, the issue, the deploy state | slot `details.rows` |
-| Chat rendering | Render a Mermaid block as a diagram, a CSV block as a table, a colour as a swatch | override `Markdown` block renderer |
+| Chat rendering | Render a Mermaid block as a diagram, a CSV block as a table, a color as a swatch | override `Markdown` block renderer |
 | Tool-call rendering | A custom card for a tool the plugin added (a map for a geocode tool, a chart for a query tool) | registry `toolRenderers` |
 | Notification rules | Only notify on needs-you for projects tagged "work"; quiet hours | event hook, override `notify` |
 | Status and presence | A top-bar chip: "3 running, 1 needs you, $4.20 today" | slot `header.chips`, store read |
@@ -369,7 +369,7 @@ lists the versions. Updates follow the same shape as the auto-updater:
   reloads, the MCP server is picked up by the next thread, and the worker is restarted.
   No Dispatch restart.
 - **Auto-update**: a per-plugin switch, off by default for marketplace plugins, on for a
-  plugin installed from a marketplace the owner marked trusted (the organisation's own).
+  plugin installed from a marketplace the owner marked trusted (the organization's own).
 - **Compatibility**: the manifest declares `"dispatch": ">=3.27"` and the SDK version it was
   built against. The daemon refuses an update that needs a newer Dispatch and says so. An
   SDK major bump is the only way a plugin can break by a Dispatch update: the SDK keeps a
@@ -382,7 +382,7 @@ lists the versions. Updates follow the same shape as the auto-updater:
 - **Local plugins** (a folder the agent wrote, not from a marketplace) never update from an
   index; they change when their files change. Publishing one to a marketplace turns it into
   a marketplace plugin for everyone else and leaves the author's copy local.
-- **Pinned**: a plugin can be pinned to a version, for an organisation that qualifies a
+- **Pinned**: a plugin can be pinned to a version, for an organization that qualifies a
   release before rolling it to members.
 
 ## 8. The spike
@@ -411,7 +411,7 @@ running Dispatch with no build and no restart:
 
 - `daily-rundown`: a screen in the desktop rail and a fifth tab on the phone, a settings
   section under a new PLUGINS group, and a "Pin to rundown" item in the thread menu.
-- `composer-favourites`: a row of buttons under every composer (Chat, a Pretty thread, the
+- `composer-favorites`: a row of buttons under every composer (Chat, a Pretty thread, the
   phone's CLI composer) that insert saved prompts, and a settings section that edits them.
 - Editing a plugin's file on disk changed the open screen within a second (the daemon watches
   the folder, sends `plugin:changed`, the client re-imports the bundle with a new stamp).
