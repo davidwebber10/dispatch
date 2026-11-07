@@ -126,6 +126,18 @@ export class AuthRequestService {
       const detail = (await res.text().catch(() => '')).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160);
       throw new Error(`The CLI rejected the callback (${res.status})${detail ? `: ${detail}` : ''}`);
     }
+    // A 2xx is not always a success. Codex (measured on codex-cli 0.167.0) answers a failed
+    // token exchange with HTTP 200 and an HTML page titled "Codex Sign-in Error", then exits 1.
+    // Read as success, that closed the banner with nothing signed in: "it doesn't do anything".
+    if (res.status < 300) {
+      const body = await res.text().catch(() => '');
+      const title = /<title>([^<]*)<\/title>/i.exec(body)?.[1] ?? '';
+      if (/error|fail/i.test(title)) {
+        const text = body.replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/<title>[^<]*<\/title>/i, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const reason = /(token exchange failed[^.]*|[^.]*(?:failed|error)[^.]*)/i.exec(text)?.[1]?.trim().slice(0, 200) ?? '';
+        throw new Error(`The sign-in failed${reason ? `: ${reason}` : ''}. Start the sign-in again and use the new link.`);
+      }
+    }
     return this.updateStatus(id, 'callback_forwarded');
   }
 
