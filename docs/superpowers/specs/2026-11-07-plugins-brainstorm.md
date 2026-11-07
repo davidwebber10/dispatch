@@ -30,6 +30,11 @@ A plugin is a folder. It has a manifest and up to three parts, each optional:
   worker/            a process the daemon runs: jobs, event handlers, HTTP endpoints
 ```
 
+A plugin does not have to be published. A folder the owner (or the owner's agent) wrote in
+`~/.dispatch/plugins` is a complete plugin: it loads, it shows in Settings → Plugins as
+"local", it updates when its files change, and it never talks to a marketplace. Publishing is
+a separate, optional step for a plugin someone else should install.
+
 The daemon never loads plugin code into its own process. The web bundle runs in the app;
 the MCP server and the worker are processes that talk to the daemon over the API it already
 has, with a key the daemon issues to the plugin. That keeps the daemon safe from a bad
