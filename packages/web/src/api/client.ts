@@ -1,6 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
-import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta, WorkerStats } from './types';
+import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet } from './types';
@@ -415,6 +415,26 @@ export const api = {
     if (!res.ok) throw new ApiError(`GET plugin logs failed: ${res.status}`, res.status);
     return res.text();
   },
+  // Marketplaces, installs and skills (plugins slice 6).
+  listMarketplaces: () => req<{ marketplaces: Marketplace[] }>('/api/plugins/marketplaces'),
+  addMarketplace: (url: string) => req<Marketplace>('/api/plugins/marketplaces', { method: 'POST', body: JSON.stringify({ url }) }),
+  removeMarketplace: (slug: string) => req<void>(`/api/plugins/marketplaces/${encodeURIComponent(slug)}`, { method: 'DELETE' }),
+  pullMarketplace: (slug: string) => req<Marketplace>(`/api/plugins/marketplaces/${encodeURIComponent(slug)}/pull`, { method: 'POST' }),
+  setMarketplaceTrusted: (slug: string, on: boolean) => req<Marketplace>(`/api/plugins/marketplaces/${encodeURIComponent(slug)}/trusted`, { method: 'POST', body: JSON.stringify({ on }) }),
+  pluginCatalog: () => req<{ entries: CatalogEntry[] }>('/api/plugins/catalog'),
+  pluginUpdates: () => req<{ updates: PluginUpdate[] }>('/api/plugins/updates'),
+  checkPluginUpdates: () => req<{ updated: string[]; updates: PluginUpdate[] }>('/api/plugins/updates/check', { method: 'POST' }),
+  installPlugin: (marketplace: string, id: string, version?: string) => req<PluginRow>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ marketplace, id, ...(version ? { version } : {}) }) }),
+  pluginVersions: (id: string) => req<{ versions: MarketVersion[] }>(`/api/plugins/${encodeURIComponent(id)}/versions`),
+  updatePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/update`, { method: 'POST' }),
+  rollbackPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/rollback`, { method: 'POST' }),
+  pinPlugin: (id: string, version: string | null) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ version }) }),
+  setPluginAutoUpdate: (id: string, on: boolean) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/auto-update`, { method: 'POST', body: JSON.stringify({ on }) }),
+  listSkills: (project?: string) => req<{ skills: SkillRow[] }>(`/api/skills${project ? `?project=${encodeURIComponent(project)}` : ''}`),
+  installSkill: (marketplace: string, id: string) => req<SkillRow>('/api/skills/install', { method: 'POST', body: JSON.stringify({ marketplace, id }) }),
+  removeSkill: (id: string) => req<void>(`/api/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  enableSkill: (id: string, project?: string) => req<SkillRow>(`/api/skills/${encodeURIComponent(id)}/enable`, { method: 'POST', body: JSON.stringify(project ? { project } : {}) }),
+  disableSkill: (id: string, project?: string) => req<SkillRow>(`/api/skills/${encodeURIComponent(id)}/disable`, { method: 'POST', body: JSON.stringify(project ? { project } : {}) }),
   restartPluginWorker: (id: string) => req<WorkerStats>(`/api/plugins/${encodeURIComponent(id)}/worker/restart`, { method: 'POST' }),
   copyPlugin: (id: string, newId: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/copy`, { method: 'POST', body: JSON.stringify({ id: newId }) }),
   // Plugin storage and settings (spec section 5). A missing document is null, not an error.

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { ReleaseNote, UpdateProgress, UpdateState as UpdateStateDto } from '../api/types';
+import type { ReleaseNote, UpdateProgress, UpdateState as UpdateStateDto, PluginUpdate } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
 
 interface UpdateInfo {
@@ -11,6 +11,9 @@ interface UpdateInfo {
 
 interface UpdateState {
   available: UpdateInfo | null;
+  /** Plugin updates waiting (plugins slice 6): the dot and the banner count them too. */
+  pluginUpdates: PluginUpdate[];
+  setPluginUpdates: (u: PluginUpdate[]) => void;
   currentVersion: string | null;
   dismissedVersion: string | null;
   /** Notes for every version between the one running and the newest, newest first. */
@@ -56,6 +59,8 @@ function fromDto(state: UpdateStateDto): Partial<UpdateState> {
 
 export const useUpdate = create<UpdateState>((set, get) => ({
   available: null,
+  pluginUpdates: [],
+  setPluginUpdates: (pluginUpdates) => set({ pluginUpdates }),
   currentVersion: null,
   dismissedVersion: null,
   notes: [],
@@ -89,6 +94,7 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   },
   load: async () => {
     set(fromDto(await api.getUpdateState()));
+    try { set({ pluginUpdates: (await api.pluginUpdates()).updates }); } catch { /* an older daemon, or no marketplaces */ }
   },
   // Ask GitHub now, then reload the full state: the check's own answer carries no notes, so setting
   // from it blanked the release notes and "what's new" whenever no newer release turned up.
@@ -110,6 +116,8 @@ export const useUpdate = create<UpdateState>((set, get) => ({
       // and this broadcast reaches every connected client. Pull them over REST instead,
       // so a client that was already open still shows what the update contains.
       void get().load().catch(() => {});
+    } else if (e.type === 'plugin:updates' && Array.isArray(e.updates)) {
+      set({ pluginUpdates: e.updates as PluginUpdate[] });
     } else if (e.type === 'update:in-progress') {
       set({ inProgress: true, failure: null });
     } else if (e.type === 'update:failed') {
@@ -124,6 +132,6 @@ export const useUpdate = create<UpdateState>((set, get) => ({
  * Drives the dot on the Settings tab / rail item and the banner at the top of Settings. The
  * modal's Dismiss does not clear it on purpose: the dot is the reminder after the modal is gone.
  */
-export function updatePending(s: Pick<UpdateState, 'available' | 'inProgress' | 'doneVersion'>): boolean {
-  return s.available !== null && !s.inProgress && s.doneVersion === null;
+export function updatePending(s: Pick<UpdateState, 'available' | 'inProgress' | 'doneVersion'> & { pluginUpdates?: PluginUpdate[] }): boolean {
+  return (s.available !== null && !s.inProgress && s.doneVersion === null) || (s.pluginUpdates?.length ?? 0) > 0;
 }

@@ -39,6 +39,7 @@ import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
 import { PluginView, Slot } from './plugins/PluginView';
+import { CommandPalette } from './components/CommandPalette';
 import { isPluginView } from './plugins/registry';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
@@ -260,6 +261,7 @@ export default function App() {
       <UpdateModal />
       <HighScoreCelebration />
       <Slot name="app.overlay" />
+      <CommandPalette />
       <AppShell>
         {view === 'settings'
           ? <SettingsView />

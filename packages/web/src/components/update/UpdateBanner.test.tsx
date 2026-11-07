@@ -2,10 +2,14 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { test, expect, beforeEach, vi, describe } from 'vitest';
 
 const applyUpdate = vi.fn();
+const updatePlugin = vi.fn();
+const pluginUpdates = vi.fn();
 vi.mock('../../api/client', () => ({
   api: {
     applyUpdate: (force?: boolean) => applyUpdate(force),
     getUpdateState: vi.fn().mockResolvedValue({ available: false, version: null, url: null, publishedAt: null, currentVersion: '3.19.0' }),
+    updatePlugin: (id: string) => updatePlugin(id),
+    pluginUpdates: () => pluginUpdates(),
   },
 }));
 
@@ -16,8 +20,8 @@ import { useUpdate, updatePending } from '../../stores/update';
 const waiting = { available: { version: 'v3.26.1', url: 'https://example.test/v3.26.1', publishedAt: null }, currentVersion: '3.19.0', inProgress: false, doneVersion: null, failure: null };
 
 beforeEach(() => {
-  useUpdate.setState({ available: null, currentVersion: '3.19.0', dismissedVersion: null, inProgress: false, doneVersion: null, failure: null });
-  applyUpdate.mockReset();
+  useUpdate.setState({ available: null, currentVersion: '3.19.0', dismissedVersion: null, inProgress: false, doneVersion: null, failure: null, pluginUpdates: [] });
+  applyUpdate.mockReset(); updatePlugin.mockReset(); pluginUpdates.mockReset();
 });
 
 describe('updatePending (2026-11-07): one answer for the dot and the banner', () => {
@@ -82,5 +86,38 @@ describe('UpdateBanner', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update now' }));
     await screen.findByText(/the checkout has local changes/);
     expect(screen.getByText(/dispatch update/)).toBeInTheDocument();
+  });
+});
+
+describe('plugin updates in the dot and the banner (plugins slice 6)', () => {
+  const hello = { id: 'hello', name: 'The hello plugin', marketplace: 'm', from: '1.0.0', to: '1.1.0', changelog: '## 1.1.0\n\nFaster.' };
+  test('updatePending is true with plugin updates alone', () => {
+    expect(updatePending({ available: null, inProgress: false, doneVersion: null, pluginUpdates: [hello] })).toBe(true);
+    expect(updatePending({ available: null, inProgress: false, doneVersion: null, pluginUpdates: [] })).toBe(false);
+  });
+  test('the banner lists plugin updates under the Dispatch one; Update calls the API and is disabled while one runs', async () => {
+    let release: () => void = () => {};
+    updatePlugin.mockImplementation(() => new Promise<void>((r) => { release = r; }));
+    pluginUpdates.mockResolvedValue({ updates: [] });
+    useUpdate.setState({ ...waiting, pluginUpdates: [hello, { ...hello, id: 'other', name: 'Other' }] });
+    render(<UpdateBanner />);
+    expect(screen.getByText(/Dispatch v3.26.1 is available/)).toBeInTheDocument();
+    const region = screen.getByRole('region', { name: 'Plugin updates' });
+    expect(region).toHaveTextContent('The hello plugin 1.0.0 → 1.1.0');
+    const buttons = screen.getAllByRole('button', { name: /^Update (The hello plugin|Other)$/ });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(updatePlugin).toHaveBeenCalledWith('hello'));
+    expect(buttons[0]).toBeDisabled();
+    expect(buttons[1]).toBeDisabled();
+    fireEvent.click(buttons[1]);
+    expect(updatePlugin).toHaveBeenCalledTimes(1);
+    release();
+    await waitFor(() => expect(pluginUpdates).toHaveBeenCalled());
+  });
+  test('the dot shows for plugin updates alone', () => {
+    useUpdate.setState({ pluginUpdates: [hello] });
+    render(<UpdateDot />);
+    expect(screen.getByRole('status', { name: 'Update available' })).toBeInTheDocument();
   });
 });

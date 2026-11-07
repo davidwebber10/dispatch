@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-import type { PluginRow } from '../../api/types';
+import type { PluginRow, Marketplace, CatalogEntry, MarketVersion } from '../../api/types';
 import { usePluginRegistry, PROMOTED_MAX, type PluginStatus } from '../../plugins/registry';
 import { isSafeMode, setSafeMode, reloadPlugin } from '../../plugins/host';
 import { ConfirmModal } from '../common/ConfirmModal';
@@ -83,6 +83,25 @@ export function PluginsSection() {
   const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
   const [safe, setSafe] = useState(isSafeMode());
   const [safeTouched, setSafeTouched] = useState(false);
+  // Marketplaces and the catalog (spec section 7): loaded with the page; the catalog after any change.
+  const [markets, setMarkets] = useState<Marketplace[]>([]);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [marketUrl, setMarketUrl] = useState('');
+  const [marketErr, setMarketErr] = useState('');
+  const [marketBusy, setMarketBusy] = useState<string | null>(null);
+  const [notesOpen, setNotesOpen] = useState<string | null>(null);
+  const [pinning, setPinning] = useState<{ id: string; versions: MarketVersion[] } | null>(null);
+  const loadMarkets = async () => {
+    try { setMarkets((await api.listMarketplaces()).marketplaces); } catch { setMarkets([]); }
+    try { setCatalog((await api.pluginCatalog()).entries); } catch { setCatalog([]); }
+  };
+  useEffect(() => { void loadMarkets(); }, []);
+  const marketRun = async (key: string, fn: () => Promise<unknown>) => {
+    setMarketBusy(key); setMarketErr('');
+    try { await fn(); await loadMarkets(); await refresh(); } catch (e) { setMarketErr(e instanceof Error ? e.message : String(e)); }
+    setMarketBusy(null);
+  };
+  const marketName = (url: string) => markets.find((m) => m.url === url)?.name ?? markets.find((m) => m.url === url)?.slug ?? null;
 
   const refresh = async () => {
     try { const r = await api.listPlugins(); usePluginRegistry.getState().setManifests(r.plugins); } catch { /* the list stays as it was */ }
@@ -145,6 +164,36 @@ export function PluginsSection() {
           ) : <span style={note}>No permissions</span>}
           {r.keyed && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} title="The plugin's processes can use ~/.dispatch/keys/plugin-{r.id}">Key issued</span>}
         </div>
+        {r.install && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {r.marketplaceGone
+                ? <span style={{ ...miniChip, color: 'var(--color-status-yellow)', borderColor: 'var(--color-status-yellow)' }} title={r.install.marketplace}>Marketplace removed</span>
+                : <span style={miniChip} title={r.install.marketplace}>{marketName(r.install.marketplace) ?? 'Marketplace'}</span>}
+              {r.pinned && <span style={miniChip} title="No update past this version">Pinned v{r.pinned}</span>}
+              {r.update && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>v{r.update.to} available</span>}
+              {r.update?.changelog && <button type="button" style={ghostBtn} onClick={() => setNotesOpen(notesOpen === r.id ? null : r.id)}>What's new</button>}
+            </div>
+            {notesOpen === r.id && r.update?.changelog && <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{r.update.changelog}</pre>}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" style={ghostBtn} disabled={busy === r.id || !r.update || r.marketplaceGone} onClick={() => run(r.id, () => api.updatePlugin(r.id))}>Update</button>
+              <button type="button" style={ghostBtn} disabled={busy === r.id} onClick={() => run(r.id, () => api.rollbackPlugin(r.id))}>Roll back</button>
+              <button type="button" style={ghostBtn} disabled={busy === r.id} onClick={() => void api.pluginVersions(r.id).then((v) => setPinning({ id: r.id, versions: v.versions })).catch(() => setPinning({ id: r.id, versions: [] }))}>Pin…</button>
+              <span style={{ ...item, marginLeft: 'auto' }}>Auto-update</span>
+              <Toggle on={r.autoUpdate === true} label="Auto-update" onClick={() => run(r.id, () => api.setPluginAutoUpdate(r.id, !r.autoUpdate))} />
+            </div>
+            {pinning?.id === r.id && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <select aria-label="Pin to version" value={r.pinned ?? ''} onChange={(e) => { const v = e.target.value || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ ...fieldInput, width: 180 }}>
+                  <option value="">No pin</option>
+                  {pinning.versions.map((v) => <option key={v.version} value={v.version}>v{v.version}</option>)}
+                </select>
+                <button type="button" style={ghostBtn} onClick={() => setPinning(null)}>Cancel</button>
+                <span style={note}>A pin stops updates past that version.</span>
+              </div>
+            )}
+          </div>
+        )}
         {r.worker && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ ...miniChip, textTransform: 'none', letterSpacing: 0, color: workerTone(r.workerStats), borderColor: workerTone(r.workerStats) }}>{workerLabel(r.workerStats)}</span>
@@ -229,6 +278,63 @@ export function PluginsSection() {
         <section aria-label="Installed plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <span style={sectionLabel}>INSTALLED</span>
           {installed.map(renderRow)}
+        </section>
+      )}
+
+      <section aria-label="Marketplaces" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <span style={sectionLabel}>MARKETPLACES</span>
+        <div style={note}>A marketplace is a git repository. Add it by URL (https, ssh, or a path); the daemon clones it with your own git login, so a private repository is a private marketplace.</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)} placeholder="https://github.com/org/dispatch-plugins.git" style={{ ...fieldInput, flex: 1, minWidth: 220 }} />
+          <button type="button" style={solidBtn(marketUrl.trim().length > 0)} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
+        </div>
+        {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
+        {markets.map((m) => (
+          <div key={m.slug} data-testid={`marketplace-${m.slug}`} style={card}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{m.name ?? m.slug}</span>
+              <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' }}>{m.url}</span>
+              {m.error && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{m.error}{/sign in|auth|permission|denied/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</span>}
+            </div>
+            {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</button>
+              <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</button>
+              <span style={{ ...item, marginLeft: 'auto' }} title="Plugins from a trusted marketplace update on their own">Trusted</span>
+              <Toggle on={m.trusted} label="Trusted" onClick={() => void marketRun(m.slug, () => api.setMarketplaceTrusted(m.slug, !m.trusted))} />
+            </div>
+            {m.lastPulledAt && <div style={note}>Checked {new Date(m.lastPulledAt).toLocaleString()}.</div>}
+          </div>
+        ))}
+      </section>
+
+      {catalog.length > 0 && (
+        <section aria-label="Browse" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <span style={sectionLabel}>BROWSE</span>
+          {markets.map((m) => {
+            const mine = catalog.filter((e) => e.marketplace === m.slug);
+            if (mine.length === 0) return null;
+            return (
+              <div key={m.slug} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{m.name ?? m.slug}</div>
+                {(['plugin', 'skill'] as const).map((kind) => mine.filter((e) => e.kind === kind).map((e) => (
+                  <div key={`${kind}:${e.id}`} data-testid={`catalog-${kind}-${e.id}`} style={{ ...card, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{e.name}</span>
+                        <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{e.version}</span>
+                        <span style={miniChip}>{kind}</span>
+                      </div>
+                      {e.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{e.description}</div>}
+                    </div>
+                    {kind === 'plugin' && e.installed
+                      ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>Installed v{e.installed.version}</span>
+                      : <button type="button" style={solidBtn(marketBusy === null)} disabled={marketBusy !== null} onClick={() => void marketRun(`${kind}:${e.id}`, () => (kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</button>}
+                  </div>
+                )))}
+              </div>
+            );
+          })}
         </section>
       )}
 

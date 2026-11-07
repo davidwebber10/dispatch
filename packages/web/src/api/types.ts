@@ -559,7 +559,7 @@ export interface AccountThread { id: string; label: string; sessionId: string }
 export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }
 
 /** Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): one row of GET /api/plugins. */
-export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string }
+export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string; commit?: string }
 export interface WorkerStats {
   state: 'running' | 'backoff' | 'stopped' | 'crashed';
   pid: number | null;
@@ -569,6 +569,13 @@ export interface WorkerStats {
   socket: string | null;
   queued: number;
 }
+
+/** Marketplaces, catalog, updates and skills (plugins slice 6; spec sections 7 and 8). */
+export interface Marketplace { url: string; slug: string; name: string | null; description: string | null; trusted: boolean; addedAt: string; lastPulledAt: string | null; error: string | null }
+export interface CatalogEntry { marketplace: string; kind: 'plugin' | 'skill'; id: string; name: string; version: string; description: string | null; dispatch?: string; sdk?: number; changelog: string | null; installed?: { version: string } }
+export interface PluginUpdate { id: string; name: string; marketplace: string; from: string; to: string; changelog: string | null }
+export interface MarketVersion { version: string; commit: string; date: string }
+export interface SkillRow { id: string; name: string; version: string; description: string | null; harnesses: string[] | null; folder: string; install: { marketplace: string; version: string; commit: string; installedAt: string } | null; enabled: boolean; enabledHere?: boolean; text: string; error?: string }
 
 export interface PluginRow {
   id: string;
@@ -599,6 +606,11 @@ export interface PluginRow {
   /** The worker the manifest declares, and its live state while a supervisor runs (plugins slice 5). */
   worker?: { command: string; args: string[]; env: Record<string, string>; jobs: { id: string; cron: string }[] };
   workerStats?: WorkerStats;
+  /** An installed plugin's update state (spec 7.2). */
+  update?: { to: string; changelog: string | null };
+  pinned?: string;
+  autoUpdate?: boolean;
+  marketplaceGone?: boolean;
 }
 
 /** A plugin's stored document (spec section 5); `writer` is set when a thread key wrote it. */

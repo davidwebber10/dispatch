@@ -1,5 +1,5 @@
 import { CaretRight } from '@phosphor-icons/react';
-import { usePluginRegistry, usePluginViews } from '../../plugins/registry';
+import { usePluginRegistry, usePluginViews, useContributions } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 
 /**
@@ -12,6 +12,7 @@ export function PluginsTab({ onOpen }: { onOpen: (viewKey: string) => void }) {
   const manifests = usePluginRegistry((s) => s.manifests);
   const promoted = usePluginRegistry((s) => s.promoted);
   const rows = views.filter((v) => !promoted.includes(v.key));
+  const commands = useContributions('commands');
   const nameOf = (plugin: string) => manifests.find((m) => m.id === plugin)?.name ?? plugin;
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 14px 16px' }}>
@@ -39,6 +40,20 @@ export function PluginsTab({ onOpen }: { onOpen: (viewKey: string) => void }) {
             );
           })}
         </div>
+      )}
+      {commands.length > 0 && (
+        <>
+          <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '18px 4px 8px' }}>COMMANDS</div>
+          <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            {commands.map((c, i) => (
+              <button key={`${c.plugin}:${c.id}`} type="button" onClick={() => { try { c.run(); } catch (e) { console.error('[command]', e); } }}
+                style={{ display: 'flex', alignItems: 'center', gap: 13, width: '100%', textAlign: 'left', padding: '12px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 15, color: 'var(--color-text-primary)' }}>{c.label}</span>
+                <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{nameOf(c.plugin)}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

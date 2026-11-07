@@ -29,6 +29,8 @@ export interface ComposerCtx {
   set: (text: string) => void;
 }
 export interface PluginComposerAction { plugin: string; id: string; label: string; icon?: string; when?: (ctx: ComposerCtx) => boolean; onClick: (ctx: ComposerCtx) => void }
+/** A command for the ⌘K palette (and the phone's Plugins tab). */
+export interface PluginCommand { plugin: string; id: string; label: string; run: () => void }
 export interface PluginSlotContent { plugin: string; id: string; slot: string; priority?: number; Component: ComponentType<Record<string, unknown>> }
 export type PluginStatus = { state: 'loading' | 'ready' | 'error'; error?: string; version?: string; at: number };
 
@@ -40,12 +42,13 @@ export interface Contributions {
   projectMenu?: Omit<PluginMenuItem<ProjectMenuCtx>, 'plugin'>[];
   composerActions?: Omit<PluginComposerAction, 'plugin'>[];
   slots?: Omit<PluginSlotContent, 'plugin'>[];
+  commands?: Omit<PluginCommand, 'plugin'>[];
 }
 
-export type ContributionKind = 'views' | 'settings' | 'threadMenu' | 'projectMenu' | 'composerActions' | 'slots';
+export type ContributionKind = 'views' | 'settings' | 'threadMenu' | 'projectMenu' | 'composerActions' | 'slots' | 'commands';
 type Lists = {
   views: PluginView[]; settings: PluginSettingsSection[]; threadMenu: PluginMenuItem<ThreadMenuCtx>[];
-  projectMenu: PluginMenuItem<ProjectMenuCtx>[]; composerActions: PluginComposerAction[]; slots: PluginSlotContent[];
+  projectMenu: PluginMenuItem<ProjectMenuCtx>[]; composerActions: PluginComposerAction[]; slots: PluginSlotContent[]; commands: PluginCommand[];
 };
 
 interface PluginRegistryState extends Lists {
@@ -89,6 +92,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
   projectMenu: [],
   composerActions: [],
   slots: [],
+  commands: [],
   promoted: loadPromoted(),
   badges: {},
   setManifests: (manifests) => set({ manifests }),
@@ -102,6 +106,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
       projectMenu: [...drop(s.projectMenu, plugin), ...(c.projectMenu ?? []).map((v) => ({ ...v, plugin }))],
       composerActions: [...drop(s.composerActions, plugin), ...(c.composerActions ?? []).map((v) => ({ ...v, plugin }))],
       slots: [...drop(s.slots, plugin), ...(c.slots ?? []).map((v) => ({ ...v, plugin }))],
+      commands: [...drop(s.commands, plugin), ...(c.commands ?? []).map((v) => ({ ...v, plugin }))],
     });
   },
   unregister: (plugin) => {
@@ -112,7 +117,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
     set({
       badges,
       views: drop(s.views, plugin), settings: drop(s.settings, plugin), threadMenu: drop(s.threadMenu, plugin),
-      projectMenu: drop(s.projectMenu, plugin), composerActions: drop(s.composerActions, plugin), slots: drop(s.slots, plugin),
+      projectMenu: drop(s.projectMenu, plugin), composerActions: drop(s.composerActions, plugin), slots: drop(s.slots, plugin), commands: drop(s.commands, plugin),
     });
   },
   setPromoted: (keys) => {

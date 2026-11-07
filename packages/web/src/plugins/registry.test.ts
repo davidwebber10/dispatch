@@ -99,4 +99,13 @@ describe('view badges (plugins slice 4)', () => {
     usePluginRegistry.getState().unregister('previews');
     expect(usePluginRegistry.getState().badges).toEqual({ 'plugin:other:v': 1 });
   });
+
+  it('commands register under the plugin and drop on unregister', async () => {
+    const { usePluginRegistry } = await import('./registry');
+    const run = () => {};
+    usePluginRegistry.getState().register('p', { commands: [{ id: 'sync', label: 'Sync now', run }] });
+    expect(usePluginRegistry.getState().commands).toEqual([{ plugin: 'p', id: 'sync', label: 'Sync now', run }]);
+    usePluginRegistry.getState().unregister('p');
+    expect(usePluginRegistry.getState().commands).toEqual([]);
+  });
 });

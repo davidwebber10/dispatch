@@ -1,4 +1,6 @@
-import { ArrowCircleUp } from '@phosphor-icons/react';
+import { useState } from 'react';
+import { ArrowCircleUp, PuzzlePiece } from '@phosphor-icons/react';
+import { api } from '../../api/client';
 import { useUpdate, updatePending } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 
@@ -12,11 +14,45 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
   const pending = useUpdate(updatePending);
   const available = useUpdate((s) => s.available);
   const currentVersion = useUpdate((s) => s.currentVersion);
+  const pluginUpdates = useUpdate((s) => s.pluginUpdates);
   const { apply, applying, failReason, hosted } = useApplyUpdate();
-  if (!pending || !available) return null;
-  const next = `v${available.version.replace(/^v/, '')}`;
+  // One plugin update runs at a time; the buttons wait for it.
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [pluginFail, setPluginFail] = useState<string | null>(null);
+  const updateOne = async (id: string) => {
+    if (updating) return;
+    setUpdating(id); setPluginFail(null);
+    try { await api.updatePlugin(id); } catch (e) { setPluginFail(e instanceof Error ? e.message : String(e)); }
+    try { useUpdate.getState().setPluginUpdates((await api.pluginUpdates()).updates); } catch { /* the next event corrects it */ }
+    setUpdating(null);
+  };
+  const dispatchWaiting = pending && available !== null;
+  if (!dispatchWaiting && pluginUpdates.length === 0) return null;
+  const next = available ? `v${available.version.replace(/^v/, '')}` : '';
+
+  const pluginsBlock = pluginUpdates.length > 0 && (
+    <div role="region" aria-label="Plugin updates" style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, padding: compact ? '12px 14px' : '12px 16px', background: 'rgba(62,207,106,0.06)', border: '1px solid rgba(62,207,106,0.25)', borderRadius: 'var(--radius-lg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <PuzzlePiece size={compact ? 22 : 20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
+        <div style={{ fontSize: compact ? 14.5 : 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{pluginUpdates.length === 1 ? 'A plugin update is available' : `${pluginUpdates.length} plugin updates are available`}</div>
+      </div>
+      {pluginUpdates.map((u) => (
+        <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: compact ? 32 : 30 }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: compact ? 13 : 12.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{u.name}</span> {u.from} → {u.to}
+          </span>
+          <button type="button" aria-label={`Update ${u.name}`} onClick={() => void updateOne(u.id)} disabled={updating !== null} style={{ flexShrink: 0, height: 28, padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-sm)', color: 'var(--color-accent)', fontWeight: 600, fontSize: 12, cursor: updating ? 'default' : 'pointer', opacity: updating && updating !== u.id ? 0.6 : 1 }}>
+            {updating === u.id ? 'Updating…' : 'Update'}
+          </button>
+        </div>
+      ))}
+      {pluginFail && <div style={{ fontSize: 11.5, color: 'var(--color-status-red)', paddingLeft: compact ? 32 : 30 }}>{pluginFail}</div>}
+    </div>
+  );
+  if (!dispatchWaiting || !available) return <>{pluginsBlock}</>;
 
   return (
+    <>
     <div role="region" aria-label="Update available" style={{
       display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0,
       padding: compact ? '12px 14px' : '12px 16px',
@@ -48,5 +84,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
         </div>
       )}
     </div>
+    {pluginsBlock}
+    </>
   );
 }
