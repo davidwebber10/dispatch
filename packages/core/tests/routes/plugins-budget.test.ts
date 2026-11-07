@@ -151,4 +151,24 @@ describe('plugin budget (coach plan, Task 4)', () => {
     expect(r.status).toBe(429);
     expect(calls).toHaveLength(0);
   });
+  it('an accountId the daemon does not know is 400, and no model runs (it cannot skip the budget)', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    usage(7000, 3000); // at the cap on `cli`
+    const r = await ask({ accountId: 'ghost' });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ error: 'unknown_account' });
+    expect(calls).toHaveLength(0);
+    // The known default account is still accepted (and refused at its cap).
+    expect((await ask({ accountId: 'cli' })).status).toBe(429);
+  });
+
+  it('the meter row records the account that actually ran, even when the answer does not name it', async () => {
+    app = build({ available: async () => true, run: async (req) => { calls.push(req); return { ...answer(req), accountId: null }; } });
+    const r = await ask();
+    expect(r.status).toBe(200);
+    // The runner ran on the default account: the request carried it, and the meter row names it.
+    expect(calls[0].accountId).toBe('cli');
+    const row = db.prepare('SELECT account_id AS a FROM plugin_assist WHERE plugin_id = ?').get('coach') as { a: string | null };
+    expect(row.a).toBe('cli');
+  });
 });

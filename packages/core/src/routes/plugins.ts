@@ -73,14 +73,15 @@ function principalHeaders(req: Request): Record<string, string> {
 const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
 
 /** One assist answer as a meter row: the harness's cost, else priced from the tokens when the model is known. */
-function meterOf(result: AssistResult, asked: string, started: number): pluginData.AssistRecord {
+function meterOf(result: AssistResult, asked: string, started: number, account?: string): pluginData.AssistRecord {
   const u = result.usage;
   const cacheReadTokens = u.cacheReadTokens ?? 0;
   const cacheCreateTokens = u.cacheCreateTokens ?? 0;
   const costUsd = typeof result.costUsd === 'number' ? result.costUsd
     : notionalValueUsd({ model: result.model, input: u.inputTokens, output: u.outputTokens, cacheRead: cacheReadTokens, cacheCreate: cacheCreateTokens });
   return {
-    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? null,
+    // The account that ran: the answer's, else the one the route resolved (never for OpenRouter, which has none).
+    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? (result.harness === 'openrouter' ? null : account ?? null),
     inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens, cacheCreateTokens,
     costUsd, ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
   };
@@ -188,12 +189,15 @@ export interface AssistLimitsDeps {
   summary?: () => UsageSummary | null;
   /** A harness's default account (accounts.json); `cli` when absent. */
   defaultAccount?: (harness: 'claude' | 'codex') => string;
+  /** Whether an account id exists for a harness (accounts.json). Absent: only the default account is known. */
+  hasAccount?: (harness: 'claude' | 'codex', id: string) => boolean;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
   push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
 
 export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
+  const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
   router.get('/plugins', keyRoute({ thread: projectListRule, roleRun: projectListRule, plugin: allowRule }), (_req, res) => {
@@ -668,6 +672,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     let harness = body.harness as AssistHarness | 'auto' | undefined;
     const model = body.model as string | undefined;
     let accountId = body.accountId as string | undefined;
+    // An account the daemon does not know is refused: the runner would fall back to the default
+    // account while the budget guard checked the unknown one (no figures = no cap).
+    if (accountId !== undefined && harness !== 'openrouter' && harness !== 'auto' && !knownAccount(harness === 'codex' ? 'codex' : 'claude', accountId)) {
+      return void res.status(400).json({ error: 'unknown_account', message: `No ${harness === 'codex' ? 'Codex' : 'Claude'} account has the id "${accountId}".` });
+    }
     if (!assist || !(await assist.available(harness).catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
@@ -678,6 +687,9 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       harness = pick.harness;
       accountId = pick.harness === 'openrouter' ? undefined : pick.accountId;
     }
+    // The effective account, resolved once: the budget guard checks it, the runner runs on it, the meter names it.
+    if (harness === 'openrouter') accountId = undefined;
+    else accountId = accountId ?? limits.defaultAccount?.(harness === 'codex' ? 'codex' : 'claude') ?? 'cli';
     // From here to the reservation nothing awaits: the check and the reservation are one step, so
     // concurrent calls each see the ones before them (coach plan, Review Focus 1).
     const busy = inflight.get(req.params.id) ?? 0;
@@ -700,7 +712,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       pluginData.recordAssist(db, req.params.id, { model: model ?? '', harness: asked, accountId: accountId ?? null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: Date.now() - started, ok: false });
       return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
     }
-    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started));
+    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started, accountId));
     res.json(result);
   });
 

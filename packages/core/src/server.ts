@@ -282,6 +282,8 @@ interface CreateAppOptions {
   endless?: EndlessService;
   /** Test seam: mounts `/api/usage-limits` (the daemon always does). */
   usageLimits?: ApiRouteDeps['usageLimits'];
+  /** Test seam: the accounts the plugin assist route knows (without it, only `cli`). */
+  assistAccounts?: ApiRouteDeps['assistAccounts'];
   /**
    * Structured managers by provider name, in place of the real Claude, Codex, Grok and opencode
    * managers (test seam: no CLI runs). Must include `claude-code`.
@@ -467,7 +469,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     claudeLogin: new ClaudeLoginService(dispatchDir), secretsService, integrationsService, pushService,
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
-    broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
+    broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits, assistAccounts: options.assistAccounts,
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 

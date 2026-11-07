@@ -73,6 +73,8 @@ export interface ApiRouteDeps {
   claudeLogin: ClaudeLoginService;
   /** Accounts per harness (multi-account spec). Absent in a bare createApp: the routes are not mounted. */
   accounts?: AccountsStore;
+  /** The accounts the plugin assist route knows (test seam); defaults to `accounts`. */
+  assistAccounts?: Pick<AccountsStore, 'has' | 'defaultId'>;
   secretsService: SecretsService;
   integrationsService: IntegrationsService;
   pushService: PushService;
@@ -149,10 +151,11 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   app.use('/api', createLedgerRouter(d.ledgerService));
-  const accountsForAssist = d.accounts;
+  const accountsForAssist = d.assistAccounts ?? d.accounts;
   app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
     summary: d.usageLimits?.summary,
     defaultAccount: accountsForAssist ? (h) => accountsForAssist.defaultId(h) : undefined,
+    hasAccount: accountsForAssist ? (h, id) => accountsForAssist.has(h, id) : undefined,
     push: d.pushService,
   }));
   app.use('/api/events', createEventsRouter(d.statusService));

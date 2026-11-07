@@ -32,7 +32,9 @@ describe('plugin assist route (2026-11-07)', () => {
   const build = (runner: AssistRunner | null) => {
     const mgr = new KeysManager();
     return createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]), assistRunner: runner,
-      usageLimits: { snapshots: new LimitSnapshots(db), accountFor: () => 'acct', summary: () => summary as UsageSummary } });
+      usageLimits: { snapshots: new LimitSnapshots(db), accountFor: () => 'acct', summary: () => summary as UsageSummary },
+      // `work` is an added account on both harnesses; `cli` is the default.
+      assistAccounts: { has: (_p, id) => id === 'cli' || id === 'work', defaultId: () => 'cli' } });
   };
 
   beforeEach(() => {
