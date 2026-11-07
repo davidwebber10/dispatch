@@ -575,7 +575,7 @@ export interface Marketplace { url: string; slug: string; name: string | null; d
 export interface CatalogEntry { marketplace: string; kind: 'plugin' | 'skill'; id: string; name: string; version: string; description: string | null; dispatch?: string; sdk?: number; changelog: string | null; installed?: { version: string } }
 export interface PluginUpdate { id: string; name: string; marketplace: string; from: string; to: string; changelog: string | null }
 export interface MarketVersion { version: string; commit: string; date: string }
-export interface SkillRow { id: string; name: string; version: string; description: string | null; harnesses: string[] | null; folder: string; install: { marketplace: string; version: string; commit: string; installedAt: string } | null; enabled: boolean; enabledHere?: boolean; text: string; error?: string }
+export interface SkillRow { id: string; name: string; version: string; description: string | null; harnesses: string[] | null; projects?: string[] | null; folder: string; install: { marketplace: string; version: string; commit: string; installedAt: string } | null; enabled: boolean; enabledHere?: boolean; text: string; error?: string }
 
 export interface PluginRow {
   id: string;

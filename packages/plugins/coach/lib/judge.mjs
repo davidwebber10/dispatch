@@ -6,7 +6,7 @@
 // `assist(req)` is injected: it resolves to { result: { text, harness } | null, budget, refused }
 // (lib/client.mjs in the worker). The worker joins the outcomes into the `cards` document.
 import { planCall } from './plan.mjs';
-import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt } from './prompts.mjs';
+import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt, skillDraftPrompt, cleanSkill } from './prompts.mjs';
 
 const KEEP_CARDS = 60;
 const KEEP_JUDGED = 300;
@@ -31,6 +31,7 @@ export function reasonFor(c) {
     case 'step-by-step': return `You sent ${e.prompts} one-line prompts in ${e.minutes} minutes in one thread.`;
     case 'no-plan-big-task': return `Your prompt had ${e.parts} parts and did not ask for a plan first.`;
     case 'fast-approve': return `You approved ${e.seconds} seconds after a ${e.turnMinutes}-minute answer.`;
+    case 'skill-fit': return `You typed the same instructions into ${e.threads} threads in ${e.days} days.`;
     case 'plugin-fit': return `You ran the same ${e.steps}-step workflow ${e.repeats} times in ${e.days} days, and no schedule covers it.`;
     case 'narrow-breadth': return `${e.threads} of your ${e.total} threads in ${e.days} days were one kind of work (${e.kind}).`;
     default: return 'The Coach saw this in your recent threads.';
@@ -48,6 +49,7 @@ function pluginAnswer(c, ans) {
 }
 
 function cardOf(c, ans, at) {
+  if (c.type === 'skill-fit') return { ...cardBase(c, ans, at), action: { kind: 'skill', label: 'Create skill' }, skill: ans.skill };
   if (c.type === 'plugin-fit') {
     return { ...cardBase(c, ans, at), action: ans.action, plugin: ans.plugin, parts: ans.parts };
   }
@@ -91,6 +93,18 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   calls.push({ step: 'confirm', tier: p1.tier, ok: !!r1.ans && why1 !== 'malformed' });
   if (why1) return { id: c.id, card: null, outcome: 'dropped', reason: why1, calls, budget: b, harness: ran };
   let final = r1.ans;
+
+  // A skill: the large model drafts it from the repeated text only; no draft, no card.
+  if (c.type === 'skill-fit') {
+    const pd = planCall('more', settings, b, { harness: ran });
+    if (pd.tier === 'none') return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
+    const rd = await step('draft', skillDraftPrompt(c), pd);
+    if (rd.refused) return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
+    const skill = cleanSkill(rd.ans);
+    calls.push({ step: 'draft', tier: pd.tier, ok: !!skill });
+    if (!skill) return { id: c.id, card: null, outcome: 'dropped', reason: 'malformed', calls, budget: b, harness: ran };
+    return { id: c.id, card: cardOf(c, { ...final, skill }, at), outcome: 'card', calls, budget: b, harness: ran };
+  }
 
   const p2 = planCall('write', settings, b, { harness: ran });
   if (p2.tier !== 'none') {

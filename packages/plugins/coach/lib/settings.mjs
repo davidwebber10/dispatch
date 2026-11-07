@@ -12,6 +12,7 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
   fastApprove: { seconds: 10, longTurnMinutes: 2 },
   narrowBreadth: { share: 0.9, days: 30, minThreads: 10 },
   pluginFit: { minRepeats: 3, days: 30, minSteps: 3 },
+  skillFit: { minThreads: 3, days: 30, minChars: 200 },
 });
 
 export const DEFAULT_SETTINGS = Object.freeze({

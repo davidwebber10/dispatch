@@ -521,6 +521,8 @@ export const api = {
   setPluginAutoUpdate: (id: string, on: boolean) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/auto-update`, { method: 'POST', body: JSON.stringify({ on }) }),
   listSkills: (project?: string) => req<{ skills: SkillRow[] }>(`/api/skills${project ? `?project=${encodeURIComponent(project)}` : ''}`),
   installSkill: (marketplace: string, id: string) => req<SkillRow>('/api/skills/install', { method: 'POST', body: JSON.stringify({ marketplace, id }) }),
+  /** A new skill from a draft (coach spec section 4.8): written and enabled; 409 for an id that exists. */
+  createSkill: (d: { id: string; name: string; description: string; body: string; projects?: string[] }) => req<{ skill: SkillRow }>('/api/skills', { method: 'POST', body: JSON.stringify(d) }),
   removeSkill: (id: string) => req<void>(`/api/skills/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   enableSkill: (id: string, project?: string) => req<SkillRow>(`/api/skills/${encodeURIComponent(id)}/enable`, { method: 'POST', body: JSON.stringify(project ? { project } : {}) }),
   disableSkill: (id: string, project?: string) => req<SkillRow>(`/api/skills/${encodeURIComponent(id)}/disable`, { method: 'POST', body: JSON.stringify(project ? { project } : {}) }),

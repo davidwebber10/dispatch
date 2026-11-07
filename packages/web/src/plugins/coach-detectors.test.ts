@@ -39,8 +39,8 @@ describe('Coach signals: collect (coach plan Task 8)', () => {
 });
 
 describe('Coach detectors (coach plan Task 8)', () => {
-  it('lists the v1 detectors (seven, and plugin-fit from Task 12c), each with its measure and tip type', () => {
-    expect(Object.keys(DETECTORS).sort()).toEqual(['fast-approve', 'idle-wait', 'narrow-breadth', 'no-plan-big-task', 'plugin-fit', 'repeated-prompt', 'serial-independent', 'step-by-step']);
+  it('lists the v1 detectors (seven, plus plugin-fit and skill-fit), each with its measure and tip type', () => {
+    expect(Object.keys(DETECTORS).sort()).toEqual(['fast-approve', 'idle-wait', 'narrow-breadth', 'no-plan-big-task', 'plugin-fit', 'repeated-prompt', 'serial-independent', 'skill-fit', 'step-by-step']);
     expect(DETECTORS['repeated-prompt']).toMatchObject({ measure: 'reuse', tip: 'thinkBigger' });
     expect(DETECTORS['fast-approve']).toMatchObject({ measure: 'judgment', tip: 'prompt' });
   });

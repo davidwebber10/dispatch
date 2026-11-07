@@ -128,6 +128,10 @@ The SDK object, in full:
   fields filled; `openNewThreads({ projectId?, prompts })` opens the new-thread dialog listing one
   thread per prompt. Neither creates anything: the person reviews and presses Save or Start (each
   new thread then gets its prompt as its first message). No `projectId` = the open project.
+  `createSkill({ name, description?, body, id?, projects?, projectId? })` opens a review sheet with
+  a drafted skill (name, id, description, the `SKILL.md` body, and all projects or the open one,
+  all editable); only its **Create** writes and enables the skill. It resolves with `{ id }`, or
+  null on Cancel.
 - `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,
@@ -408,7 +412,11 @@ A skill is a folder under `~/.dispatch/skills/<id>` with a `skill.json` (`id`, `
 (Browse) or write the folder yourself. Settings → Skills switches each skill on or off
 everywhere, or for one project. The enabled skills' texts go into every thread's system prompt
 under `## Skill: <name>` with the folder's absolute path, so the model can read the skill's
-other files; Dispatch never writes into a project for this. A thread's `skill_list` tool lists
+other files; Dispatch never writes into a project for this. The owner can also create one:
+`POST /api/skills { id, name, description, body, projects? }` writes `<id>/SKILL.md` and
+`skill.json` and enables it (201 `{ skill }`; 409 for an id that exists; 400 for an id that is not
+a lower-case slug or a body over 64 KB). `projects` limits the skill to those projects
+(`skill.json` `projects`). A thread's `skill_list` tool lists
 them; `plugin_list` lists the plugins (both read-only).
 
 ## Commands

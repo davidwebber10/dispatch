@@ -513,6 +513,17 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (typeof marketplace !== 'string' || typeof id !== 'string') return void res.status(400).json({ error: 'marketplace and id are required' });
     try { res.status(201).json(await sv.install(marketplace, id)); } catch (e) { skillError(res, e); }
   });
+  // A new skill from a draft (coach spec section 4.8): the owner's one click on Create.
+  router.post('/skills', ownerOnlyStrict, (req, res) => {
+    const sv = skillsOf(req);
+    if (!sv) return void res.status(503).json({ error: 'no_skills' });
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof b.id !== 'string' || typeof b.name !== 'string' || typeof b.body !== 'string') return void res.status(400).json({ error: 'id, name and body are required' });
+    try {
+      const skill = sv.create({ id: b.id, name: b.name, description: typeof b.description === 'string' ? b.description : '', body: b.body, ...(b.projects !== undefined ? { projects: b.projects as string[] } : {}) });
+      res.status(201).json({ skill });
+    } catch (e) { skillError(res, e); }
+  });
   router.delete('/skills/:id', ownerOnlyStrict, (req, res) => {
     const sv = skillsOf(req);
     if (!sv) return void res.status(503).json({ error: 'no_skills' });

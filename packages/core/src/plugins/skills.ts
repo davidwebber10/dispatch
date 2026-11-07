@@ -9,13 +9,16 @@ import type { MarketplaceService } from './marketplaces.js';
  * model can read the skill's other files. Dispatch never writes into a project for this. A skill
  * is enabled globally (the default) and may be switched off for one project.
  */
-export interface SkillRow { id: string; name: string; version: string; description: string | null; harnesses: string[] | null; folder: string; install: { marketplace: string; version: string; commit: string; installedAt: string } | null; enabled: boolean; enabledHere?: boolean; text: string; error?: string }
+export interface SkillRow { id: string; name: string; version: string; description: string | null; harnesses: string[] | null; /** Only these projects get it (skill.json `projects`); null = every project. */ projects: string[] | null; folder: string; install: { marketplace: string; version: string; commit: string; installedAt: string } | null; enabled: boolean; enabledHere?: boolean; text: string; error?: string }
 interface State { disabled: string[]; projects: Record<string, { off: string[] }> }
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const INSTALL_FILE = '.dispatch-install.json';
 /** Longer skill texts are cut: a skill is guidance, not a book; the folder path lets the model read the rest. */
 export const SKILL_TEXT_MAX = 32 * 1024;
+/** The most a created skill's SKILL.md may hold (coach spec section 4.8). */
+export const SKILL_BODY_MAX = 64 * 1024;
+export interface SkillDraft { id: string; name: string; description: string; body: string; projects?: string[] }
 
 export class SkillsService {
   constructor(readonly dir: string, private readonly stateFile: string, private readonly markets: MarketplaceService) {}
@@ -33,12 +36,13 @@ export class SkillsService {
       let text = '';
       try { text = fs.readFileSync(path.join(folder, 'SKILL.md'), 'utf8'); } catch { text = ''; }
       const enabled = !state.disabled.includes(id);
+      const projects = Array.isArray(meta?.projects) ? (meta!.projects as unknown[]).filter((p): p is string => typeof p === 'string') : null;
       const row: SkillRow = {
         id, name: typeof meta?.name === 'string' ? meta.name : id, version: typeof meta?.version === 'string' ? meta.version : '0.0.0',
         description: typeof meta?.description === 'string' ? meta.description : null,
         harnesses: Array.isArray(meta?.harnesses) ? (meta!.harnesses as unknown[]).filter((h): h is string => typeof h === 'string') : null,
-        folder, install: this.readInstall(folder), enabled, text,
-        ...(sessionId !== undefined ? { enabledHere: enabled && !(state.projects[sessionId]?.off ?? []).includes(id) } : {}),
+        projects, folder, install: this.readInstall(folder), enabled, text,
+        ...(sessionId !== undefined ? { enabledHere: enabled && !(state.projects[sessionId]?.off ?? []).includes(id) && (!projects || projects.includes(sessionId)) } : {}),
         ...(!meta ? { error: 'no skill.json in the folder' } : !text ? { error: 'no SKILL.md in the folder' } : {}),
       };
       out.push(row);
@@ -77,6 +81,33 @@ export class SkillsService {
     fs.rmSync(exported, { recursive: true, force: true });
     fs.writeFileSync(path.join(this.dir, id, INSTALL_FILE), JSON.stringify({ marketplace: m.url, version: entry.version, commit: commit ?? '', installedAt: new Date().toISOString() }, null, 2) + '\n');
     return this.list().find((s) => s.id === id)!;
+  }
+
+  /**
+   * A new local skill from a draft (coach spec section 4.8: the Coach's "Create skill"): writes
+   * `<id>/SKILL.md` and `skill.json`, and enables it. Throws 'bad …' for a bad draft and
+   * 'already installed' for an id that exists. `projects` limits it to those projects.
+   */
+  create(d: SkillDraft): SkillRow {
+    if (!ID_RE.test(d.id)) throw new Error('bad id: a lower-case slug (letters, digits, dashes), up to 64');
+    const name = typeof d.name === 'string' ? d.name.trim() : '';
+    if (!name || name.length > 120 || name.includes('\n')) throw new Error('bad name: one line, up to 120 characters');
+    const description = typeof d.description === 'string' ? d.description.trim() : '';
+    if (description.length > 300) throw new Error('bad description: up to 300 characters');
+    if (typeof d.body !== 'string' || !d.body.trim()) throw new Error('bad body: SKILL.md text is required');
+    if (Buffer.byteLength(d.body, 'utf8') > SKILL_BODY_MAX) throw new Error(`bad body: at most ${SKILL_BODY_MAX} bytes`);
+    if (d.projects !== undefined && !(Array.isArray(d.projects) && d.projects.every((p) => typeof p === 'string' && p.length > 0 && p.length <= 120))) throw new Error('bad projects: a list of project ids');
+    if (fs.existsSync(path.join(this.dir, d.id))) throw new Error(`"${d.id}" is already installed`);
+    fs.mkdirSync(this.dir, { recursive: true });
+    const tmp = fs.mkdtempSync(path.join(this.dir, `.new-${d.id}-`));
+    try {
+      const meta: Record<string, unknown> = { id: d.id, name, version: '1.0.0', description: description || null, ...(d.projects && d.projects.length ? { projects: [...new Set(d.projects)] } : {}) };
+      fs.writeFileSync(path.join(tmp, 'skill.json'), JSON.stringify(meta, null, 2) + '\n');
+      fs.writeFileSync(path.join(tmp, 'SKILL.md'), d.body.replace(/\s+$/, '') + '\n');
+      fs.renameSync(tmp, path.join(this.dir, d.id));
+    } catch (e) { fs.rmSync(tmp, { recursive: true, force: true }); throw e; }
+    this.setEnabled(d.id, true);
+    return this.list().find((s) => s.id === d.id)!;
   }
 
   remove(id: string): void {

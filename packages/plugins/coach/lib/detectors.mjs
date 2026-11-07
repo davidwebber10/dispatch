@@ -15,6 +15,8 @@ export const DETECTORS = Object.freeze({
   'narrow-breadth': { measure: 'breadth', tip: 'thinkBigger' },
   // Reuse's top step (spec section 4.7): a workflow that belongs in Dispatch as a plugin.
   'plugin-fit': { measure: 'reuse', tip: 'thinkBigger' },
+  // Instructions typed into many threads belong in a skill (spec section 4.8).
+  'skill-fit': { measure: 'reuse', tip: 'prompt' },
 });
 
 const MIN = 60_000;
@@ -181,6 +183,20 @@ function pluginFit(s, th, now) {
   return out;
 }
 
+/** The same instruction block (normalized; at least minChars, or 3 sentences) in prompts of minThreads threads in `days`. */
+function skillFit(s, th, now) {
+  const from = now - th.days * DAY;
+  const out = [];
+  for (const [h, b] of Object.entries(s.blocks || {})) {
+    if (b.len < th.minChars && b.parts < 3) continue;
+    const seen = b.seen.filter((x) => ms(x.at) >= from && ms(x.at) <= now);
+    if (seen.length < th.minThreads) continue;
+    const latest = seen[seen.length - 1];
+    out.push(candidate('skill-fit', { id: h, terminalId: latest.t, projectId: b.p, evidence: { threads: seen.length, days: th.days, text: b.text, excerpt: b.text.slice(0, 200) } }));
+  }
+  return out;
+}
+
 const RUN = {
   'repeated-prompt': (s, t, n) => repeatedPrompt(s, t.repeatedPrompt, n),
   'serial-independent': (s, t, n) => serialIndependent(s, t.serialIndependent, n),
@@ -190,6 +206,7 @@ const RUN = {
   'fast-approve': (s, t, n) => fastApprove(s, t.fastApprove, n),
   'narrow-breadth': (s, t, n) => narrowBreadth(s, t.narrowBreadth, n),
   'plugin-fit': (s, t, n) => pluginFit(s, t.pluginFit, n),
+  'skill-fit': (s, t, n) => skillFit(s, t.skillFit, n),
 };
 
 /**

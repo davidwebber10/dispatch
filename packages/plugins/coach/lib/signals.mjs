@@ -12,6 +12,10 @@ const KEEP_PROMPTS = 600;
 const KEEP_TURNS = 600;
 /** Only the newest prompts keep their excerpt: the document stays far under the 256 KB limit. */
 const KEEP_EXCERPTS = 60;
+/** Instruction blocks (spec section 4.8): paragraphs of a longer prompt, kept to find instructions typed again and again. */
+const BLOCK_MIN_CHARS = 80;
+const BLOCK_TEXT_MAX = 1500;
+const KEEP_BLOCKS = 30;
 
 export function emptyState() {
   return { v: 1, prompts: [], turns: [], threads: {}, open: {}, last: {} };
@@ -89,6 +93,19 @@ export function collect(event, state, settings) {
       prev: prev ? prev.ms : null,
     };
     s.prompts = [...s.prompts, rec];
+    // A block is one paragraph of a prompt that has more than one: instructions added to a task.
+    const paras = trimmed.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
+    if (paras.length > 1) {
+      const blocks = { ...(s.blocks || {}) };
+      for (const para of paras) {
+        const len = normalize(para).length;
+        if (len < BLOCK_MIN_CHARS) continue;
+        const bh = hashText(para);
+        const b = blocks[bh] || { text: para.slice(0, BLOCK_TEXT_MAX), len, parts: countParts(para), p, last: e.at, seen: [] };
+        blocks[bh] = { ...b, p, last: e.at, seen: [...b.seen.filter((x) => x.t !== t), { t, at: e.at }].slice(-20) };
+      }
+      s.blocks = blocks;
+    }
     const th = s.threads[t];
     s.threads[t] = th ? { ...th, prompts: th.prompts + 1 } : { p, first: e.at, end: null, kind: classify(text), prompts: 1, tools: 0 };
     if (!s.open[t]) s.open[t] = e.at;
@@ -121,5 +138,7 @@ export function prune(s, nowIso) {
   for (const [id, th] of Object.entries(s.threads)) if (ms(th.end || th.first) >= cutoff) threads[id] = th;
   const last = {};
   for (const [id, v] of Object.entries(s.last)) if (threads[id]) last[id] = v;
-  return { ...s, prompts, turns, threads, last };
+  const blocks = {};
+  for (const [h, b] of Object.entries(s.blocks || {}).filter(([, b]) => ms(b.last) >= cutoff).sort((a, b) => ms(b[1].last) - ms(a[1].last)).slice(0, KEEP_BLOCKS)) blocks[h] = b;
+  return { ...s, prompts, turns, threads, last, blocks };
 }

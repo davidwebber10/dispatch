@@ -2,8 +2,12 @@
 export interface PromptRec { t: string; p: string | null; at: string; ex: string; h: string; len: number; lines: number; parts: number; plan: boolean; ok: boolean; gap: number | null; prev: number | null }
 export interface TurnRec { t: string; p: string | null; start: string; end: string; ms: number; outcome: string | null }
 export interface ThreadRec { p: string | null; first: string; end: string | null; kind: string; prompts: number; tools: number; /** The hash of the first prompt, when a schedule or an agent (not the person) started the thread. */ auto?: string }
+/** An instruction block (a paragraph of a longer prompt) and the threads it appeared in. */
+export interface BlockRec { text: string; len: number; parts: number; p: string | null; last: string; seen: { t: string; at: string }[] }
 export interface SignalsState {
   v: 1;
+  /** normalized-hash → block (spec section 4.8: skill-fit). */
+  blocks?: Record<string, BlockRec>;
   prompts: PromptRec[];
   turns: TurnRec[];
   threads: Record<string, ThreadRec>;

@@ -109,6 +109,12 @@ export interface DispatchSdk {
      * presses Start; then each thread gets its prompt as its first message.
      */
     openNewThreads(p: { projectId?: string; prompts: string[] }): void;
+    /**
+     * Opens the review sheet for a drafted skill (name, id, description, SKILL.md body, and which
+     * projects get it, all editable). Only its Create writes and enables the skill
+     * (`POST /api/skills`); resolves with `{ id }`, or null on Cancel.
+     */
+    createSkill(draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }): Promise<{ id: string } | null>;
   };
   /** The app's API client. The methods a plugin uses most; the object has more. */
   api: {

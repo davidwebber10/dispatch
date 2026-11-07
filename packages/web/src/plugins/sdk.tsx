@@ -162,6 +162,8 @@ export interface DispatchSdk {
     openSchedule: (p: { projectId?: string; prompt: string; cron?: string; label?: string }) => void;
     /** The new-thread dialog listing one thread per prompt; nothing starts until the person presses Start. No project = the open one. */
     openNewThreads: (p: { projectId?: string; prompts: string[] }) => void;
+    /** Opens the skill review sheet with a draft; resolves with the created skill's id on Create, null on Cancel. */
+    createSkill: (draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }) => Promise<{ id: string } | null>;
   };
   api: typeof api;
   ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
@@ -202,6 +204,7 @@ export function buildSdk(): DispatchSdk {
       setBadge: (viewKey, n) => usePluginRegistry.getState().setBadge(viewKey, n),
       openSchedule: (p) => usePluginDialogs.getState().openSchedule(p),
       openNewThreads: (p) => usePluginDialogs.getState().openNewThreads(p),
+      createSkill: (draft) => usePluginDialogs.getState().openSkill(draft),
     },
     api,
     ui: { Modal, Markdown, FileViewer, Toggle, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },

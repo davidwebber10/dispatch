@@ -26,6 +26,7 @@ const TYPE_WORD = {
   'repeated-prompt': 'Repeated prompts', 'serial-independent': 'Threads run one after another', 'idle-wait': 'Waiting on one thread',
   'step-by-step': 'Step-by-step prompts', 'no-plan-big-task': 'Big tasks without a plan', 'fast-approve': 'Quick approvals', 'narrow-breadth': 'One kind of work',
   'plugin-fit': 'Repeated workflows',
+  'skill-fit': 'Repeated instructions',
 };
 export const typeLabel = (type) => TYPE_WORD[type] || type;
 

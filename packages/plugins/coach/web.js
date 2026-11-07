@@ -16,7 +16,7 @@ import { morePrompt, parseAnswer, partWords } from './lib/prompts.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
 /** The detector each threshold group tunes (Settings → Coach → Advanced). */
-const DETECTOR_OF_THRESHOLD = { pluginFit: 'plugin-fit', repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
+const DETECTOR_OF_THRESHOLD = { skillFit: 'skill-fit', pluginFit: 'plugin-fit', repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
 const CLOSED = new Set(['dismissed', 'used', 'down']);
 const WELCOME = Object.freeze({
@@ -185,6 +185,16 @@ export function createCoach(d, deps = {}) {
     const a = card.action || {};
     const acts = d.actions || {};
     const projectId = card.projectId || ctx.sessionId || undefined;
+    // A skill (spec section 4.8): the review sheet writes it only on its Create; Cancel keeps the card.
+    if (a.kind === 'skill' && card.skill && typeof acts.createSkill === 'function') {
+      void acts.createSkill({ name: card.skill.name, description: card.skill.description, body: card.skill.body, projectId }).then((r) => {
+        if (!r) return;
+        void setCardState(card.id, 'used');
+        if (typeof d.hint === 'function') d.hint('Skill created. Every thread gets it now.');
+      }).catch(() => {});
+      return;
+    }
+    if (a.kind === 'skill' && card.skill) { ctx.set(card.skill.body); void setCardState(card.id, 'used'); return; }
     if (text) ctx.set(text);
     else if (a.kind === 'schedule' && typeof acts.openSchedule === 'function') acts.openSchedule({ projectId, prompt: a.prompt, cron: a.cron, label: a.label });
     else if (a.kind === 'threads' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ projectId, prompts: a.prompts || [] });
@@ -311,6 +321,7 @@ export function createCoach(d, deps = {}) {
       h('div', { style: S.kicker }, 'COACH', card.measure && MEASURES[card.measure] ? h('span', { style: S.axis }, ` · ${MEASURES[card.measure]}`) : null),
       h('div', { style: S.head }, card.headline),
       h('div', { style: S.why }, card.why),
+      card.skill && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, `The skill: ${card.skill.name}. ${card.skill.description}`),
       card.plugin && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, `The plugin: ${card.plugin}${Array.isArray(card.parts) && card.parts.length ? ` Parts: ${partWords(card.parts)}.` : ''}`),
       open && h('div', { style: S.more },
         (!more || more.status === 'loading') && h('div', { style: S.note }, 'Getting more detail…'),
@@ -706,6 +717,7 @@ export function createCoach(d, deps = {}) {
     idleWait: 'A thread busy this long while nothing else runs', stepByStep: 'One-line prompts in a row in one thread',
     noPlanBigTask: 'A long prompt with this many parts and no plan', fastApprove: 'An approval this soon after a long answer',
     narrowBreadth: 'This share of threads being one kind of work',
+    skillFit: 'The same instructions in this many threads in this many days (at least this many characters)',
     pluginFit: 'The same multi-step workflow this many times in this many days, with no schedule',
   };
   function Advanced({ s }) {

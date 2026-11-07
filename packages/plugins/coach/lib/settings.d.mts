@@ -8,6 +8,7 @@ export interface Thresholds {
   fastApprove: { seconds: number; longTurnMinutes: number };
   narrowBreadth: { share: number; days: number; minThreads: number };
   pluginFit: { minRepeats: number; days: number; minSteps: number };
+  skillFit: { minThreads: number; days: number; minChars: number };
 }
 export type TierModel = { harness: string; model: string };
 export interface CoachSettings {

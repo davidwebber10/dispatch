@@ -77,6 +77,30 @@ export function buildPluginPrompt(card) {
   ].filter(Boolean).join('\n');
 }
 
+/**
+ * The skill draft (spec section 4.8): the large model writes a skill from the repeated text only.
+ * Nothing else goes in: not the memory, not the tasks around the block, not other prompts.
+ */
+export const SKILL_SYSTEM = [
+  'You turn instructions a person types into many AI threads into a skill: text every thread gets in its system prompt.',
+  'Keep their meaning; do not add rules they did not give. Plain words, US spelling.',
+  'Answer only with JSON: {"name": "2 to 5 words", "description": "one line: what the skill makes the agent do", "body": "the SKILL.md text in Markdown: a # title, then the instructions as short bullets"}',
+].join('\n');
+export const skillDraftPrompt = (candidate) => ({
+  system: SKILL_SYSTEM,
+  messages: [{ role: 'user', content: `The repeated instructions:\n\n${String((candidate.evidence && candidate.evidence.text) || '')}` }],
+  maxTokens: 1200,
+});
+/** A whole skill draft from an answer, or null. */
+export function cleanSkill(ans) {
+  if (!ans || typeof ans !== 'object') return null;
+  const name = typeof ans.name === 'string' ? ans.name.trim().split('\n')[0].slice(0, 60) : '';
+  const description = typeof ans.description === 'string' ? ans.description.trim().slice(0, 300) : '';
+  const body = typeof ans.body === 'string' ? ans.body.trim() : '';
+  if (!name || !description || !body || body.length > 64 * 1024) return null;
+  return { name, description, body };
+}
+
 export const confirmPrompt = (candidate, memory) => call(CONFIRM_SYSTEM, candidateText(candidate), memory, 500);
 export const writePrompt = (candidate, memory, draft) => call(WRITE_SYSTEM, `${candidateText(candidate)}\n\nThe confirmed card: ${JSON.stringify({ headline: draft && draft.headline, why: draft && draft.why, action: draft && draft.action })}`, memory, 700);
 export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${card.excerpt || '(not kept)'}`, memory, 600);

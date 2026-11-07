@@ -4,6 +4,7 @@ import { NewThreadModal } from '../components/sidebar/NewThreadModal';
 import { useAgentUI } from '../stores/agentUI';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
+import { CreateSkillSheet, type SkillDraftIn } from './CreateSkillSheet';
 
 /** The desktop default: the project open, the thread's tab focused. */
 const openTab = (sessionId: string, terminalId: string): void => {
@@ -23,6 +24,10 @@ export interface NewThreadsPrefill { sessionId: string; prompts: string[] }
 interface PluginDialogsState {
   schedule: SchedulePrefill | null;
   newThreads: NewThreadsPrefill | null;
+  /** The skill review sheet (coach spec section 4.8) and the promise it settles. */
+  skill: { draft: SkillDraftIn; resolve: (r: { id: string } | null) => void } | null;
+  openSkill: (draft: SkillDraftIn) => Promise<{ id: string } | null>;
+  doneSkill: (r: { id: string } | null) => void;
   openSchedule: (p: { projectId?: string; prompt: string; cron?: string; label?: string }) => void;
   openNewThreads: (p: { projectId?: string; prompts: string[] }) => void;
   close: () => void;
@@ -35,9 +40,16 @@ function projectOf(projectId: string | undefined): string | null {
   return activeId ?? sessions[0]?.id ?? null;
 }
 
-export const usePluginDialogs = create<PluginDialogsState>((set) => ({
+export const usePluginDialogs = create<PluginDialogsState>((set, get) => ({
   schedule: null,
   newThreads: null,
+  skill: null,
+  openSkill: (draft) => {
+    if (!draft || typeof draft.name !== 'string' || typeof draft.body !== 'string') return Promise.resolve(null);
+    get().skill?.resolve(null); // a sheet already open is cancelled
+    return new Promise((resolve) => set({ skill: { draft, resolve } }));
+  },
+  doneSkill: (r) => { const s = get().skill; set({ skill: null }); s?.resolve(r); },
   openSchedule: ({ projectId, prompt, cron, label }) => {
     const sessionId = projectOf(projectId);
     if (!sessionId || typeof prompt !== 'string') return;
@@ -62,8 +74,11 @@ export function PluginDialogs({ onAgentSaved, onThreadCreated }: {
   const schedule = usePluginDialogs((s) => s.schedule);
   const newThreads = usePluginDialogs((s) => s.newThreads);
   const close = usePluginDialogs((s) => s.close);
+  const skill = usePluginDialogs((s) => s.skill);
+  const doneSkill = usePluginDialogs((s) => s.doneSkill);
   return (
     <>
+      {skill && <CreateSkillSheet key={`skill:${skill.draft.name}`} draft={skill.draft} onDone={doneSkill} />}
       {schedule && (
         <EditAgentModal
           key={`schedule:${schedule.sessionId}:${schedule.prompt}`}

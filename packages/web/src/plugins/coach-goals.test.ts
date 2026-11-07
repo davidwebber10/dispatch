@@ -16,7 +16,7 @@ describe('Coach goals: suggestions (coach plan Task 12b)', () => {
   it('suggests at most 3 goals; the weakest measure first', () => {
     const s = suggestGoals(emptyState(), ALL({ reuse: 10, delegation: 30 }), emptyMemory());
     expect(s.length).toBeLessThanOrEqual(3);
-    expect(s[0]).toMatchObject({ measures: ['reuse'], detectors: ['repeated-prompt', 'plugin-fit'] });
+    expect(s[0]).toMatchObject({ measures: ['reuse'], detectors: ['repeated-prompt', 'plugin-fit', 'skill-fit'] });
     expect(s[1].measures).toEqual(['delegation']);
     for (const g of s) expect(g.text.split(/\s+/).length).toBeLessThanOrEqual(8);
   });
@@ -60,7 +60,7 @@ describe('Coach goals: the list (coach plan Task 12b)', () => {
 describe('Coach goals: mapping free text (coach plan Task 12b)', () => {
   it('the keyword fallback maps the owner\'s examples', () => {
     expect(keywordMap('I want to hand off whole reports').measures).toContain('ambition');
-    expect(keywordMap('I want to automate my Monday work')).toMatchObject({ measures: ['reuse'], detectors: ['repeated-prompt', 'plugin-fit'] });
+    expect(keywordMap('I want to automate my Monday work')).toMatchObject({ measures: ['reuse'], detectors: ['repeated-prompt', 'plugin-fit', 'skill-fit'] });
     expect(keywordMap('I want to run more things at once').measures).toEqual(['delegation']);
     expect(keywordMap('Check the numbers before I send them').measures).toEqual(['judgment']);
     expect(keywordMap('something else entirely').measures).toEqual(['ambition']);
