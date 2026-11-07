@@ -11,7 +11,7 @@
   --color-accent:#3ECF6A; --color-on-accent:#08240F;
   /* Text, from the strongest to the faintest. Contrast is tested for primary, secondary and tertiary. */
   --color-text-emphasis:#FFFFFF; --color-text-primary:#E9E9EC; --color-text-body:#C9C9CF; --color-text-muted:#A8A8B0;
-  --color-text-secondary:#8E8E96; --color-text-dim:#6A6A72; --color-text-tertiary:#5A5A61; --color-text-faint:#46464D;
+  --color-text-secondary:#8E8E96; --color-text-dim:#6A6A72; --color-text-tertiary:#68686F; --color-text-faint:#46464D;
   /* Status. */
   --color-status-green:#3ECF6A; --color-status-yellow:#F5C542; --color-status-amber:#E8B04B; --color-status-red:#F0616D;
   --color-status-coral:#F37165; --color-status-blue:#5A8DD6; --color-on-danger:#2A0A07;
