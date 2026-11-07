@@ -355,8 +355,10 @@ before the budget refuses; its web part fills the `composer.before` slot, a righ
 view, a settings section and two commands, and opens the schedule and new-thread dialogs through
 `d.actions`. It sets its own budget (`PUT /budget`) from its settings, and its weekly job pushes
 the recap through `notify:push` only when the person turns that on. Its documents: `signals`,
-`candidates`, `cards`, `cardState`, `cadence`, `memory`, `status`, `measures`, `recap`. See its
-`README.md`.
+`candidates`, `cards`, `cardState`, `cadence`, `memory`, `status`, `measures`, `recap`, `chat`,
+and `reviews:<id>` (one per review job: the web part writes the request and Start, the worker
+reads the transcripts with `read:threads` and writes the progress and the report). It also adds a
+thread menu row (Review this thread). See its `README.md`.
 
 ## Marketplaces, install, update
 
