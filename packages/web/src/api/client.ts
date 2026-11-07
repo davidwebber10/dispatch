@@ -1,6 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
-import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
+import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet } from './types';
@@ -449,6 +449,9 @@ export const api = {
   getAccounts: () => req<AccountsView>('/api/accounts'),
   accountsClaudeLogin: (label: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label }) }),
   accountsAddCodex: (label: string) => req<{ id: string; label: string }>('/api/accounts/codex', { method: 'POST', body: body({ label }) }),
+  accountsCodexLogin: (id: string) => req<CodexLoginSession>(`/api/accounts/codex/${encodeURIComponent(id)}/login`, { method: 'POST' }),
+  accountsCodexLoginStatus: (id: string) => req<CodexLoginSession>(`/api/accounts/codex/${encodeURIComponent(id)}/login`),
+  accountsCodexLoginCancel: (id: string) => req<void>(`/api/accounts/codex/${encodeURIComponent(id)}/login`, { method: 'DELETE' }),
   accountsSetDefault: (provider: AccountProvider, id: string) => req<Record<AccountProvider, string>>(`/api/accounts/${provider}/default`, { method: 'PUT', body: body({ id }) }),
   accountsRemove: (provider: AccountProvider, id: string) => req<{ unpinned: number } | void>(`/api/accounts/${provider}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   accountsRename: (provider: AccountProvider, id: string, label: string) => req<AccountsView>(`/api/accounts/${provider}/${encodeURIComponent(id)}`, { method: 'PATCH', body: body({ label }) }),

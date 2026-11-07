@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AccountsSection } from './AccountsSection';
+import { codexLoginTiming } from './CodexLogin';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
@@ -63,16 +64,32 @@ describe('<AccountsSection>', () => {
     expect(await screen.findByText(/me@work.com · Max · 3 threads/)).toBeInTheDocument();
   });
 
-  it('adding a Codex account makes the folder and opens a sign-in thread carrying its id', async () => {
+  it('adding a Codex account makes its folder and signs it in right here with the device code (no thread, nothing to paste)', async () => {
+    codexLoginTiming.pollMs = 10;
     vi.spyOn(api, 'accountsAddCodex').mockResolvedValue({ id: 'n1', label: 'Second' });
-    const create = vi.spyOn(api, 'createTerminal').mockResolvedValue({ id: 't-new' } as any);
-    const open = vi.spyOn(useUI.getState(), 'requestOpenThread');
+    const login = vi.spyOn(api, 'accountsCodexLogin').mockResolvedValue({ accountId: 'n1', status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' });
+    vi.spyOn(api, 'accountsCodexLoginStatus').mockResolvedValue({ accountId: 'n1', status: 'complete', url: null, code: null, error: null, createdAt: 'x' });
+    const create = vi.spyOn(api, 'createTerminal');
     render(<AccountsSection />);
     fireEvent.click(await screen.findByRole('button', { name: 'Add Codex account' }));
     fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Second' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Open the sign-in thread' }));
-    await waitFor(() => expect(create).toHaveBeenCalledWith('P', { type: 'shell', label: 'Sign in — Codex (Second)', config: { signIn: 'codex', accountId: 'n1' } }));
-    expect(open).toHaveBeenCalledWith({ sessionId: 'P', terminalId: 't-new' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add and sign in' }));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('n1'));
+    // Complete: the panel closes and the list reloads.
+    await waitFor(() => expect(screen.queryByLabelText('Account name')).toBeNull());
+    expect(create).not.toHaveBeenCalled();
+    codexLoginTiming.pollMs = 2000;
+  });
+
+  it('a Codex account with no login offers Sign in again, which starts the device sign-in for it', async () => {
+    const login = vi.spyOn(api, 'accountsCodexLogin').mockResolvedValue({ accountId: 'p9', status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' });
+    vi.spyOn(api, 'accountsCodexLoginStatus').mockResolvedValue({ accountId: 'p9', status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' });
+    render(<AccountsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in again to Personal' }));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('p9'));
+    expect(await screen.findByText('ABCD-12345')).toBeInTheDocument();
+    // Only an account with no login gets it: the CLI login and signed-in accounts do not.
+    expect(screen.queryByRole('button', { name: /Sign in again to CLI login/ })).toBeNull();
   });
 
   it('adding a Claude account starts the headless login for a new account', async () => {

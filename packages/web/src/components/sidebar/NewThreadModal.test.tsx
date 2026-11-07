@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { NewThreadModal } from './NewThreadModal';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
+import { codexLoginTiming } from '../settings/CodexLogin';
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -30,6 +31,9 @@ vi.mock('../../api/client', () => ({
     getAccounts: vi.fn().mockRejectedValue(new Error('no accounts route')),
     accountsClaudeLogin: vi.fn().mockResolvedValue({ url: 'https://claude.ai/login?x', error: null }),
     accountsAddCodex: vi.fn().mockResolvedValue({ id: 'cx-2', label: 'Work' }),
+    accountsCodexLogin: vi.fn().mockImplementation(async (id: string) => ({ accountId: id, status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' })),
+    accountsCodexLoginStatus: vi.fn().mockImplementation(async (id: string) => ({ accountId: id, status: id === 'cx-2' ? 'complete' : 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' })),
+    accountsCodexLoginCancel: vi.fn().mockResolvedValue(undefined),
     claudeLoginCode: vi.fn().mockResolvedValue({ status: 'complete' }),
   },
 }));
@@ -611,19 +615,37 @@ describe('NewThreadModal accounts', () => {
     expect(lastInput().config.accountId).toBe('acc-2');
   });
 
-  it('adds a Codex account by opening its sign-in thread under the new account', async () => {
-    (api.getAccounts as any).mockResolvedValueOnce(cliOnly);
-    const onCreated = vi.fn(); const onClose = vi.fn();
-    render(<NewThreadModal sessionId="s1" onClose={onClose} onCreated={onCreated} />);
+  it('adds a Codex account inline with the device code: once signed in, the new account is picked and the thread pins it', async () => {
+    codexLoginTiming.pollMs = 10;
+    const work = { id: 'cx-2', label: 'Work', isCli: false, addedAt: '2026-11-07', signedIn: true };
+    (api.getAccounts as any)
+      .mockResolvedValueOnce(cliOnly)
+      .mockResolvedValue({ ...cliOnly, codex: [...cliOnly.codex, work] });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
     await screen.findByRole('combobox', { name: 'Account' });
     pickAccount(/Add account/);
     fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Work' } });
-    fireEvent.click(screen.getByRole('button', { name: /Open the sign-in thread/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add and sign in' }));
     await waitFor(() => expect(api.accountsAddCodex).toHaveBeenCalledWith('Work'));
+    await waitFor(() => expect(api.accountsCodexLogin).toHaveBeenCalledWith('cx-2'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Account' })).toHaveTextContent('Work'));
+    expect(api.createTerminal).not.toHaveBeenCalled(); // no sign-in thread
+    start();
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    expect(lastInput()).toMatchObject({ type: 'shell', config: { signIn: 'codex', accountId: 'cx-2' } });
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('t-new'));
-    expect(onClose).toHaveBeenCalled();
+    expect(lastInput().config.accountId).toBe('cx-2');
+    codexLoginTiming.pollMs = 2000;
+  });
+
+  it('a picked Codex account with no login offers Sign in again in place', async () => {
+    const lost = { id: 'cx-3', label: 'Old', isCli: false, addedAt: '2026-11-07', signedIn: false };
+    (api.getAccounts as any).mockResolvedValue({ ...cliOnly, codex: [...cliOnly.codex, lost] });
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Codex' }));
+    await screen.findByRole('combobox', { name: 'Account' });
+    pickAccount(/^Old/);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in again to Old' }));
+    await waitFor(() => expect(api.accountsCodexLogin).toHaveBeenCalledWith('cx-3'));
+    expect(await screen.findByText('ABCD-12345')).toBeInTheDocument();
   });
 });
