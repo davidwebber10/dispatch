@@ -2,6 +2,10 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AppearanceSection } from './AppearanceSection';
 import { useSettings } from '../../stores/settings';
+import { THEMES, getTheme, resolveTokens } from '../../themes';
+
+/** jsdom serializes inline colors as rgb(r, g, b). */
+const hexToRgb = (hex: string) => { const n = parseInt(hex.slice(1, 7), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; };
 
 // Regression note: these suites render FRESH per case and assert the sibling setting did NOT
 // change. A single-render, click-both-then-assert-both style test would still pass even if two
@@ -15,10 +19,47 @@ beforeEach(() => {
 });
 
 describe('AppearanceSection — what moved in, what left', () => {
-  it('has no fixed Theme row', () => {
+  it('the Theme row comes first: System, then the light themes, then the dark themes', () => {
     render(<AppearanceSection />);
-    expect(screen.queryByText('Theme')).toBeNull();
-    expect(screen.queryByText('Dark')).toBeNull();
+    const group = screen.getByRole('radiogroup', { name: 'Theme' });
+    const names = within(group).getAllByRole('radio').map((r) => r.getAttribute('aria-label'));
+    expect(names).toEqual(['System', ...THEMES.filter((t) => t.kind === 'light').map((t) => t.name), ...THEMES.filter((t) => t.kind === 'dark').map((t) => t.name)]);
+    expect(names).toHaveLength(13);
+    // First in the section: before the accent swatches.
+    const accent = screen.getByLabelText('Accent #3ECF6A');
+    expect(group.compareDocumentPosition(accent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('marks the theme in use, and selecting one applies it at once', () => {
+    useSettings.getState().setTheme('dispatch-dark');
+    render(<AppearanceSection />);
+    expect(screen.getByRole('radio', { name: 'Dispatch Dark' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('radio', { name: 'Nord' }));
+    expect(useSettings.getState().theme).toBe('nord');
+    expect(screen.getByRole('radio', { name: 'Nord' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Dispatch Dark' })).toHaveAttribute('aria-checked', 'false');
+    expect(document.documentElement.style.getPropertyValue('--color-canvas')).toBe(resolveTokens(getTheme('nord')!).canvas);
+    fireEvent.click(screen.getByRole('radio', { name: 'Dispatch Dark' }));
+    expect(useSettings.getState().theme).toBe('dispatch-dark');
+  });
+
+  it('each theme shows a swatch preview of its background, pane, text and accent', () => {
+    render(<AppearanceSection />);
+    const dracula = getTheme('dracula')!;
+    const swatch = within(screen.getByRole('radio', { name: 'Dracula' })).getByTestId('theme-swatch');
+    const html = swatch.outerHTML.toLowerCase();
+    const tk = resolveTokens(dracula);
+    for (const c of [tk.canvas, tk.pane, tk['text-primary'], tk.accent]) expect(html).toContain(hexToRgb(c));
+  });
+
+  it('the accent offers "Theme default", which follows the theme', () => {
+    useSettings.getState().setTheme('nord');
+    useSettings.getState().setAccent('#FF6AC1');
+    render(<AppearanceSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Theme default accent' }));
+    expect(useSettings.getState().accent).toBe('');
+    expect(document.documentElement.style.getPropertyValue('--color-accent')).toBe('#88C0D0');
+    useSettings.getState().setTheme('dispatch-dark');
   });
 
   it('offers terminal autocorrect (also in the terminal + menu)', () => {

@@ -277,7 +277,7 @@ export function NeedsZone() {
         maxHeight: '62%',
         overflowY: 'auto' as const,
         borderBottom: '1px solid var(--border)',
-        background: 'linear-gradient(180deg,rgba(245,197,66,.045),transparent 60%)',
+        background: 'linear-gradient(180deg,color-mix(in srgb, var(--color-status-yellow) 4.5%, transparent),transparent 60%)',
         padding: '15px 22px 18px',
       };
 

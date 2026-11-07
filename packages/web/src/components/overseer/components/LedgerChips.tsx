@@ -121,7 +121,7 @@ export function LedgerRefPopover() {
       style={{
         position: 'fixed', left, top: popover.y + 12, width: POPOVER_WIDTH, zIndex: 50,
         display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 'var(--radius-md)',
-        background: 'var(--elev)', border: '1px solid var(--border)', boxShadow: '0 10px 28px -8px rgba(0,0,0,.7)',
+        background: 'var(--elev)', border: '1px solid var(--border)', boxShadow: '0 10px 28px -8px var(--color-shadow)',
         fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)',
       }}
     >

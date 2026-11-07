@@ -136,7 +136,7 @@ export function chartTooltip(
 ) {
   return (
     <Tooltip
-      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+      cursor={{ fill: theme.text, fillOpacity: 0.04 }}
       contentStyle={{ background: theme.surface, border: `1px solid ${theme.grid}`, borderRadius: 'var(--radius-md)', fontSize: 12 }}
       labelStyle={{ color: theme.muted }}
       itemStyle={{ color: theme.text }}

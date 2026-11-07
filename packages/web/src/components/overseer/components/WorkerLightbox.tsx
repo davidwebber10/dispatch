@@ -79,7 +79,7 @@ export function WorkerLightbox({ onOpenFull }: { onOpenFull?: (terminalId: strin
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,.62)',
+        background: 'var(--color-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -98,7 +98,7 @@ export function WorkerLightbox({ onOpenFull }: { onOpenFull?: (terminalId: strin
           border: '1px solid var(--border)',
           borderRadius: 'var(--radius-lg)',
           overflow: 'hidden',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
+          boxShadow: '0 30px 80px -20px var(--color-shadow-strong)',
         }}
       >
         {/* Header */}

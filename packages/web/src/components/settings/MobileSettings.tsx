@@ -29,7 +29,7 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }
                 return (
                   <button key={s.key} onClick={() => onOpen(s.key)}
                     style={{ display: 'flex', alignItems: 'center', gap: 13, width: '100%', textAlign: 'left', padding: '12px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
-                    <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)' }}>
+                    <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' }}>
                       <Icon size={17} />
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>

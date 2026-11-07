@@ -31,7 +31,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
   const next = available ? `v${available.version.replace(/^v/, '')}` : '';
 
   const pluginsBlock = pluginUpdates.length > 0 && (
-    <div role="region" aria-label="Plugin updates" style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, padding: compact ? '12px 14px' : '12px 16px', background: 'rgba(62,207,106,0.06)', border: '1px solid rgba(62,207,106,0.25)', borderRadius: 'var(--radius-lg)' }}>
+    <div role="region" aria-label="Plugin updates" style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, padding: compact ? '12px 14px' : '12px 16px', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', borderRadius: 'var(--radius-lg)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <PuzzlePiece size={compact ? 22 : 20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
         <div style={{ fontSize: compact ? 14.5 : 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>{pluginUpdates.length === 1 ? 'A plugin update is available' : `${pluginUpdates.length} plugin updates are available`}</div>
@@ -56,7 +56,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
     <div role="region" aria-label="Update available" style={{
       display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0,
       padding: compact ? '12px 14px' : '12px 16px',
-      background: 'rgba(62,207,106,0.10)', border: '1px solid rgba(62,207,106,0.35)', borderRadius: 'var(--radius-lg)',
+      background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)', borderRadius: 'var(--radius-lg)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <ArrowCircleUp size={compact ? 24 : 22} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
@@ -70,7 +70,7 @@ export function UpdateBanner({ compact = false }: { compact?: boolean }) {
         <button type="button" onClick={() => void apply()} disabled={applying} style={{
           flexShrink: 0, height: compact ? 34 : 30, padding: compact ? '0 16px' : '0 14px',
           background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)',
-          color: '#08240F', fontWeight: 600, fontSize: compact ? 13.5 : 12.5, cursor: applying ? 'default' : 'pointer', opacity: applying ? 0.7 : 1,
+          color: 'var(--color-on-accent)', fontWeight: 600, fontSize: compact ? 13.5 : 12.5, cursor: applying ? 'default' : 'pointer', opacity: applying ? 0.7 : 1,
         }}>
           {applying ? 'Updating…' : 'Update now'}
         </button>

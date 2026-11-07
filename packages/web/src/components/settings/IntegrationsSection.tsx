@@ -82,10 +82,10 @@ export function IntegrationsSection() {
 
   const renderRow = (i: Integration) => (
     <HoverRow key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 2px' }}>
-      {isMobile && <span style={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', background: i.enabled ? 'var(--color-accent)' : '#4a4a52' }} />}
+      {isMobile && <span style={{ width: 6, height: 6, flexShrink: 0, borderRadius: '50%', background: i.enabled ? 'var(--color-accent)' : 'var(--color-text-faint)' }} />}
       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, gap: 2 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ fontSize: 13, fontWeight: 500, color: i.enabled ? '#e9e9ec' : 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: i.enabled ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.name}</span>
           <span style={miniChip}>{i.type === 'remote' ? 'REMOTE' : 'LOCAL'}</span>
         </span>
         <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.type === 'remote' ? i.url : `${i.command} ${i.args.join(' ')}`}</span>
@@ -94,8 +94,8 @@ export function IntegrationsSection() {
       <Toggle on={i.enabled} label={`${i.name} on`} onClick={() => void toggle(i)} />
       <button title="Remove" onClick={() => void remove(i.id)}
         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--color-status-red)'; e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--color-status-red) 45%, transparent)'; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = '#2c2c32'; }}
-        style={{ width: 26, height: 26, padding: 0, flexShrink: 0, background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
+        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--color-text-secondary)'; e.currentTarget.style.borderColor = 'var(--color-border-strong)'; }}
+        style={{ width: 26, height: 26, padding: 0, flexShrink: 0, background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1 }}>×</button>
     </HoverRow>
   );
 

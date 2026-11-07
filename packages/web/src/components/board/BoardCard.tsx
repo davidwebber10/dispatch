@@ -83,14 +83,14 @@ function appearance(card: BoardCardModel): CSSProperties {
   switch (card.column) {
     case 'needs_help':
       return card.inferred
-        ? { borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(232,176,75,.3)', background: 'rgba(232,176,75,.03)' }
-        : { borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(232,176,75,.55)', background: 'rgba(232,176,75,.07)' };
+        ? { borderWidth: 1, borderStyle: 'solid', borderColor: 'color-mix(in srgb, var(--color-status-amber) 30%, transparent)', background: 'color-mix(in srgb, var(--color-status-amber) 3%, transparent)' }
+        : { borderWidth: 1, borderStyle: 'solid', borderColor: 'color-mix(in srgb, var(--color-status-amber) 55%, transparent)', background: 'color-mix(in srgb, var(--color-status-amber) 7%, transparent)' };
     case 'complete':
-      return { borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(90,141,214,.5)', background: 'rgba(90,141,214,.06)' };
+      return { borderWidth: 1, borderStyle: 'solid', borderColor: 'color-mix(in srgb, var(--color-status-blue) 50%, transparent)', background: 'color-mix(in srgb, var(--color-status-blue) 6%, transparent)' };
     case 'working':
       return card.pending
-        ? { borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(128,128,128,.4)', opacity: 0.62 }
-        : { borderWidth: 1, borderStyle: 'solid', borderColor: 'rgba(62,207,106,.5)', background: 'rgba(62,207,106,.05)' };
+        ? { borderWidth: 1, borderStyle: 'dashed', borderColor: 'color-mix(in srgb, var(--color-text-secondary) 40%, transparent)', opacity: 0.62 }
+        : { borderWidth: 1, borderStyle: 'solid', borderColor: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)' };
     case 'resting':
       return { borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--color-border)', opacity: 0.55 };
   }
@@ -105,7 +105,7 @@ const controlBase: CSSProperties = {
 
 const answerButtonStyle: CSSProperties = {
   ...controlBase,
-  border: '1px solid rgba(232,176,75,.6)',
+  border: '1px solid color-mix(in srgb, var(--color-status-amber) 60%, transparent)',
   borderRadius: 'var(--radius-sm)',
   padding: '2px 9px',
 };
@@ -114,7 +114,7 @@ const answerButtonStyle: CSSProperties = {
 // declared question; "Open" just goes and looks, it doesn't promise an answer is owed.
 const openButtonStyle: CSSProperties = {
   ...controlBase,
-  border: '1px solid rgba(128,128,128,.4)',
+  border: '1px solid color-mix(in srgb, var(--color-text-secondary) 40%, transparent)',
   borderRadius: 'var(--radius-sm)',
   padding: '2px 9px',
 };
@@ -195,7 +195,7 @@ export function BoardCard({ card, onOpen, onAcknowledge, onDismissInferred }: Bo
           )}
           {card.column === 'complete' && (
             <div style={{ marginTop: 3, color: 'var(--color-text-secondary)', ...clampLines(2) }}>
-              <span style={{ color: '#5A8DD6', fontWeight: 700 }}>✓</span> {stripLeadingCheckmark(card.detail)}
+              <span style={{ color: 'var(--color-status-blue)', fontWeight: 700 }}>✓</span> {stripLeadingCheckmark(card.detail)}
             </div>
           )}
           {card.column === 'working' && (

@@ -58,8 +58,8 @@ import { api } from '../../api/client';
 export type OverrideTarget = Exclude<BoardColumn, 'working'>;
 
 const TARGETS: { target: OverrideTarget; label: string; dotStyle: { color?: string; opacity?: number } }[] = [
-  { target: 'needs_help', label: 'Needs help', dotStyle: { color: '#e8b04b' } },
-  { target: 'complete', label: 'Complete', dotStyle: { color: '#5A8DD6' } },
+  { target: 'needs_help', label: 'Needs help', dotStyle: { color: 'var(--color-status-amber)' } },
+  { target: 'complete', label: 'Complete', dotStyle: { color: 'var(--color-status-blue)' } },
   { target: 'resting', label: 'Resting', dotStyle: { opacity: 0.6 } },
 ];
 
@@ -146,7 +146,7 @@ const panelBaseStyle = {
   borderColor: 'var(--color-border)',
   borderRadius: 'var(--radius-md)',
   overflow: 'hidden',
-  boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)',
+  boxShadow: '0 12px 34px -10px var(--color-shadow)',
   padding: '7px 0',
 };
 

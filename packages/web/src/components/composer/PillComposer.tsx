@@ -219,7 +219,7 @@ export function PillComposer({
         <button type="button" aria-label={sendLabel} title={sendLabel} disabled={!canSend}
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSend}
-          style={{ ...circle, gridArea: 'send', background: canSend ? 'var(--color-accent)' : 'var(--color-hover, rgba(255,255,255,.08))', color: canSend ? '#06140B' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
+          style={{ ...circle, gridArea: 'send', background: canSend ? 'var(--color-accent)' : 'var(--color-hover)', color: canSend ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', cursor: canSend ? 'pointer' : 'default', transition: 'background .15s' }}>
           <ArrowUp size={mobile ? 20 : 17} weight="bold" />
         </button>
       )}

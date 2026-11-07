@@ -9,8 +9,8 @@ import type { AgentSchedule, AgentRun } from '../../api/types';
 
 const panel: React.CSSProperties = { background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: 14 };
 const label: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const green: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: '#08240F', fontWeight: 600, fontSize: 12, cursor: 'pointer' };
-const ghost: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
+const green: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12, cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 30, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 12, cursor: 'pointer' };
 const kvRow: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 };
 const kvVal: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' };
 
@@ -149,7 +149,7 @@ export function AgentDashboard({ onEdit, onOpenRun, onBack, onClose }: { onEdit:
           ) : (
             <div key={r.id} onClick={() => onOpenRun(r.id)} title="Open run"
               style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 6px', margin: '0 -6px', borderTop: '1px solid var(--color-border)', font: '400 12px var(--font-mono)', cursor: 'pointer', borderRadius: 'var(--radius-sm)' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--color-text-emphasis) 3%, transparent)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}>
               <span style={{ flex: 1.6, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.startedAt ? new Date(r.startedAt).toLocaleString() : '—'}</span>
               <span style={{ flex: 1, color: 'var(--color-text-secondary)' }}>{formatDuration(runDurationMs(r))}</span>

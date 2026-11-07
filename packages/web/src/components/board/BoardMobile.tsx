@@ -46,8 +46,8 @@ import { Spinner } from '../common/Spinner';
 // Same four literal colors as BoardCard.tsx's accents (kept local —
 // each board-adjacent file owns its own copy rather than sharing an import, per their comments).
 const BAND_COLOR: Record<BoardColumn, string> = {
-  needs_help: '#e8b04b',
-  complete: '#5A8DD6',
+  needs_help: 'var(--color-status-amber)',
+  complete: 'var(--color-status-blue)',
   working: 'var(--color-accent)',
   resting: 'var(--color-border)',
 };
@@ -90,11 +90,11 @@ const INITIAL_EXPANDED: Record<BoardColumn, boolean> = {
 
 // The persistent bar's tiles are plain except Needs Help, which gets the same tinted/bordered
 // emphasis BoardCard.tsx already gives a non-inferred needs_help card (identical rgba literals —
-// derived from the same #e8b04b so the bar's "Help" tile reads as the same color as the section
+// derived from the same --color-status-amber so the bar's "Help" tile reads as the same color as the section
 // below it, not a second, slightly-off yellow).
 const countTileStyle = (column: BoardColumn): { borderColor: string; background: string } =>
   column === 'needs_help'
-    ? { borderColor: 'rgba(232,176,75,.55)', background: 'rgba(232,176,75,.07)' }
+    ? { borderColor: 'color-mix(in srgb, var(--color-status-amber) 55%, transparent)', background: 'color-mix(in srgb, var(--color-status-amber) 7%, transparent)' }
     : { borderColor: 'var(--color-border)', background: 'transparent' };
 
 function CountBar({ columns }: { columns: Record<BoardColumn, BoardCardModel[]> }) {

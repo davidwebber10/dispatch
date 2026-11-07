@@ -4,8 +4,8 @@ const MAP: Record<State, { background: string; border: string; animation: string
   working:     { background: 'var(--color-accent)', border: 'none', animation: 'dispatchPulse 2s ease-in-out infinite', opacity: 1 },
   needs_input: { background: 'var(--color-status-yellow)', border: 'none', animation: 'dispatchGlow 1.6s ease-in-out infinite', opacity: 1 },
   error:       { background: 'var(--color-status-red)', border: 'none', animation: 'none', opacity: 1 },
-  idle:        { background: 'transparent', border: '1.5px solid #46464D', animation: 'none', opacity: 1 },
-  disabled:    { background: 'transparent', border: '1.5px solid #34343a', animation: 'none', opacity: 0.6 },
+  idle:        { background: 'transparent', border: '1.5px solid var(--color-text-faint)', animation: 'none', opacity: 1 },
+  disabled:    { background: 'transparent', border: '1.5px solid var(--color-border-hover)', animation: 'none', opacity: 0.6 },
 };
 
 export function StatusDot({ state, size = 8 }: { state: State; size?: number }) {

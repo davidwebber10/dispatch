@@ -64,7 +64,7 @@ export function AgentCard({ card }: { card: AgentCardInfo }) {
           padding: '7px 12px 7px 8px',
           borderRadius: 'var(--radius-lg)',
           background: hovered ? 'var(--hover)' : 'var(--elev)',
-          border: `1px solid ${hovered ? '#36363c' : 'var(--border)'}`,
+          border: `1px solid ${hovered ? 'var(--color-border-hover)' : 'var(--border)'}`,
           cursor: 'pointer',
           maxWidth: '86%',
           transition: 'background .12s, border-color .12s',

@@ -113,7 +113,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
     ? err
       ? { text: 'error', color: 'var(--color-status-red)' }
       : diff
-      ? { text: `+${diff.add} −${diff.del}`, color: '#8fb79a' }
+      ? { text: `+${diff.add} −${diff.del}`, color: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))' }
       : { text: `${lines} line${lines !== 1 ? 's' : ''}`, color: 'var(--color-text-tertiary)' }
     : null;
   return (
@@ -213,7 +213,7 @@ export function ToolResult({ item }: { item: ConvItem }) {
         {err ? 'Error output' : 'Output'}<span style={{ opacity: 0.6 }}> · {lines} line{lines !== 1 ? 's' : ''}</span>
       </button>
       {open && (
-        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'rgba(240,97,109,.3)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-md)', padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
+        <pre style={{ margin: '4px 0 0', font: '400 11.5px var(--font-mono)', lineHeight: 1.5, color, background: 'var(--color-elevated)', border: `1px solid ${err ? 'color-mix(in srgb, var(--color-status-red) 30%, transparent)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-md)', padding: '8px 10px', maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</pre>
       )}
     </div>
   );

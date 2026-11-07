@@ -63,7 +63,7 @@ function AgentThreadChip({ thread }: { thread: AgentThread }) {
         gap: 10,
         padding: '8px 12px',
         background: hovered ? 'var(--hover)' : 'var(--elev)',
-        border: `1px solid ${hovered ? '#36363c' : 'var(--border)'}`,
+        border: `1px solid ${hovered ? 'var(--color-border-hover)' : 'var(--border)'}`,
         borderRadius: 'var(--radius-md)',
         cursor: 'pointer',
         transition: 'background 0.12s, border-color 0.12s',
@@ -177,7 +177,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
         alignItems: 'center',
         padding: '8px 10px 8px 12px',
         background: hovered ? 'var(--hover)' : 'var(--elev)',
-        border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
+        border: `1px dashed ${hovered ? 'var(--color-border-hover)' : 'var(--border)'}`,
         borderRadius: 'var(--radius-md)',
         transition: 'background 0.12s, border-color 0.12s',
       }}
@@ -231,7 +231,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
           padding: '5px 11px',
           borderRadius: 'var(--radius-sm)',
           background: 'var(--acc)',
-          color: '#06140B',
+          color: 'var(--color-on-accent)',
           border: 'none',
           fontFamily: 'inherit',
           fontSize: 12,
@@ -239,7 +239,7 @@ function QueuedChip({ thread }: { thread: AgentThread }) {
           cursor: 'pointer',
         }}
       >
-        <Icon name="ph-lightning" weight="fill" size={12} color="#06140B" />
+        <Icon name="ph-lightning" weight="fill" size={12} color="var(--color-on-accent)" />
         Start
       </button>
     </div>
@@ -265,7 +265,7 @@ function OutcomeCard({ outcome }: { outcome: Outcome }) {
         gap: 10,
         padding: '9px 12px',
         background: hovered ? 'var(--hover)' : 'transparent',
-        border: `1px dashed ${hovered ? '#36363c' : 'var(--border)'}`,
+        border: `1px dashed ${hovered ? 'var(--color-border-hover)' : 'var(--border)'}`,
         borderRadius: 'var(--radius-md)',
         alignItems: 'flex-start',
         cursor: 'pointer',

@@ -96,7 +96,7 @@ export function m(
 
 export function btn(label: string, primary?: boolean): NeedAction {
   return primary
-    ? { label, bg: 'var(--acc)', fg: '#06140B', bd: '1px solid var(--acc)' }
+    ? { label, bg: 'var(--acc)', fg: 'var(--color-on-accent)', bd: '1px solid var(--acc)' }
     : { label, bg: 'var(--pane)', fg: 'var(--ts)', bd: '1px solid var(--border)' };
 }
 

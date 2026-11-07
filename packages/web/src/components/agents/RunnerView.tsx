@@ -59,7 +59,7 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
         </button>
         {active && (
           <button onClick={() => void api.cancelRun(run.id)}
-            style={{ height: 28, padding: '0 12px', background: '#241313', border: '1px solid #4A1F22', borderRadius: 'var(--radius-md)', color: '#F0616D', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
+            style={{ height: 28, padding: '0 12px', background: 'color-mix(in srgb, var(--color-status-red) 10%, var(--color-elevated))', border: '1px solid color-mix(in srgb, var(--color-status-red) 45%, var(--color-border))', borderRadius: 'var(--radius-md)', color: 'var(--color-status-red)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
         )}
       </div>
 
@@ -72,7 +72,7 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
         <Hud label="elapsed" value={formatDuration(elapsed)} />
       </div>
 
-      {run.error && <div style={{ padding: '8px 18px', color: '#F0616D', fontSize: 12.5, fontFamily: 'var(--font-mono)', flexShrink: 0, whiteSpace: 'pre-wrap' }}>{run.error}</div>}
+      {run.error && <div style={{ padding: '8px 18px', color: 'var(--color-status-red)', fontSize: 12.5, fontFamily: 'var(--font-mono)', flexShrink: 0, whiteSpace: 'pre-wrap' }}>{run.error}</div>}
 
       {/* Body */}
       {showRaw ? (
@@ -127,8 +127,8 @@ function StepRow({ step, timeline }: { step: RunStep; timeline?: boolean }) {
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 9, padding: isResult ? '8px 10px' : '5px 6px',
       borderRadius: 'var(--radius-sm)', margin: isResult ? '6px 0 2px' : 0,
-      background: isResult ? (step.status === 'error' ? 'rgba(240,97,109,.08)' : 'rgba(62,207,106,.08)') : undefined,
-      border: isResult ? `1px solid ${step.status === 'error' ? 'rgba(240,97,109,.3)' : 'rgba(62,207,106,.3)'}` : undefined,
+      background: isResult ? (step.status === 'error' ? 'color-mix(in srgb, var(--color-status-red) 8%, transparent)' : 'color-mix(in srgb, var(--color-status-green) 8%, transparent)') : undefined,
+      border: isResult ? `1px solid ${step.status === 'error' ? 'color-mix(in srgb, var(--color-status-red) 30%, transparent)' : 'color-mix(in srgb, var(--color-status-green) 30%, transparent)'}` : undefined,
     }}>
       <Icon size={15} color={color} weight={isResult ? 'fill' : 'regular'} style={{ flexShrink: 0, marginTop: 1 }} />
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -149,7 +149,7 @@ function stepVisual(step: RunStep): { Icon: typeof Wrench; color: string } {
     case 'init': return { Icon: Sparkle, color: 'var(--color-accent)' };
     case 'assistant-text': return { Icon: ChatText, color: 'var(--color-text-secondary)' };
     case 'thinking': return { Icon: Brain, color: 'var(--color-text-tertiary)' };
-    case 'tool-use': return { Icon: Wrench, color: '#5A8DD6' };
+    case 'tool-use': return { Icon: Wrench, color: 'var(--color-status-blue)' };
     case 'tool-result': return { Icon: ArrowElbowDownRight, color: step.status === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' };
     case 'todos': return { Icon: ListChecks, color: 'var(--color-accent)' };
     case 'usage': return { Icon: Coins, color: 'var(--color-text-tertiary)' };
@@ -187,4 +187,4 @@ const LiveCursor = () => (
 );
 
 const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, flexShrink: 0 };
-const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 };
+const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 };

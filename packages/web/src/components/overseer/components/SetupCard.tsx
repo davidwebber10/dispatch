@@ -19,8 +19,8 @@ import { useProjects } from '../../../stores/projects';
 import { useOverseer } from '../store';
 
 const ACCENT = 'var(--color-accent)';
-const GLOW = '0 0 6px 1px rgba(62,207,106,.4)';
-const BORDER = '#2C2C32';
+const GLOW = '0 0 6px 1px color-mix(in srgb, var(--color-accent) 40%, transparent)';
+const BORDER = 'var(--color-border-strong)';
 
 /**
  * The strip renders catalog ids (`claude`/`codex`/`grok`/`opencode`), but the daemon (and
@@ -202,7 +202,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
           border: 'none',
           borderRadius: 'var(--radius-md)',
           background: ACCENT,
-          color: '#08240F',
+          color: 'var(--color-on-accent)',
           fontWeight: 600,
           fontSize: isMobile ? 14.5 : 13.5,
           cursor: ensuring || !sessionId ? 'default' : 'pointer',

@@ -200,7 +200,7 @@ test('the in-progress card is translucent glass (backdrop blur), not the opaque 
   let found = false;
   while (node) {
     const bf = node.style.backdropFilter || (node.style as any).webkitBackdropFilter;
-    if (bf && bf.includes('blur')) { found = true; expect(node.style.background).toMatch(/rgba/); break; }
+    if (bf && bf.includes('blur')) { found = true; expect(node.style.background).toMatch(/color-mix\(in srgb, var\(--color-pane\) \d+%, transparent\)/); break; }
     node = node.parentElement;
   }
   expect(found).toBe(true);

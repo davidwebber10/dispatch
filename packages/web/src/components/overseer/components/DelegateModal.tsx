@@ -30,7 +30,7 @@ export function DelegateModal() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,.6)',
+        background: 'var(--color-overlay)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -46,10 +46,10 @@ export function DelegateModal() {
       <div
         style={{
           width: 480,
-          background: '#18181B',
-          border: '1px solid #2F2F35',
+          background: 'var(--color-modal)',
+          border: '1px solid var(--color-border-hover)',
           borderRadius: 'var(--radius-lg)',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
+          boxShadow: '0 30px 80px -20px var(--color-shadow-strong)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -101,7 +101,7 @@ export function DelegateModal() {
             style={{
               width: '100%',
               background: 'var(--pane)',
-              border: '1px solid #2C2C32',
+              border: '1px solid var(--color-border-strong)',
               borderRadius: 'var(--radius-md)',
               fontSize: 13,
               lineHeight: 1.5,
@@ -203,7 +203,7 @@ export function DelegateModal() {
               padding: '7px 13px',
               borderRadius: 'var(--radius-md)',
               background: 'var(--acc)',
-              color: '#06140B',
+              color: 'var(--color-on-accent)',
               border: '1px solid var(--acc)',
               fontSize: 12.5,
               fontWeight: 600,
@@ -215,7 +215,7 @@ export function DelegateModal() {
             }}
           >
             Delegate
-            <Icon name="ph-arrow-right" weight="bold" size={13} color="#06140B" />
+            <Icon name="ph-arrow-right" weight="bold" size={13} color="var(--color-on-accent)" />
           </button>
         </div>
       </div>

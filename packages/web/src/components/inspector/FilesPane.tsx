@@ -96,7 +96,7 @@ function Row({ children, style, onClick, onMiddle, onContext }: { children: Reac
       onAuxClick={(e) => { if (e.button === 1 && onMiddle) { e.preventDefault(); onMiddle(); } }}
       onContextMenu={onContext}
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ ...style, background: style.background ?? (hover ? 'rgba(255,255,255,0.04)' : 'transparent') }}>
+      style={{ ...style, background: style.background ?? (hover ? 'color-mix(in srgb, var(--color-text-emphasis) 4%, transparent)' : 'transparent') }}>
       {children}
     </div>
   );
@@ -364,8 +364,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         const isExp = expanded.has(e.path);
         return (
           <div key={e.path}>
-            <Row onClick={() => toggle(e.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: '#c9c9cf', cursor: 'pointer' }}>
-              <CaretRight size={13} weight="bold" color="#8e8e96" style={{ flexShrink: 0, transition: 'transform 0.15s ease', transform: isExp ? 'rotate(90deg)' : 'none' }} />
+            <Row onClick={() => toggle(e.path)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: 'var(--color-text-body)', cursor: 'pointer' }}>
+              <CaretRight size={13} weight="bold" color="var(--color-text-secondary)" style={{ flexShrink: 0, transition: 'transform 0.15s ease', transform: isExp ? 'rotate(90deg)' : 'none' }} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
             </Row>
             {isExp && renderDir(e.path, depth + 1)}
@@ -381,8 +381,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
           onClick={(ev) => onRowClick(ev, e)}
           onMiddle={() => void openFile(e, true)}
           onContext={(ev) => onRowContext(ev, e)}
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: isSel || isOpen ? '#e9e9ec' : '#a8a8b0', background: isSel ? '#33333c' : isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
-          <FIcon size={15} weight="fill" color={isSel || isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: `6px 8px 6px ${pl}px`, borderRadius: 'var(--radius-sm)', color: isSel || isOpen ? 'var(--color-text-primary)' : 'var(--color-text-muted)', background: isSel ? 'var(--color-selected)' : isOpen ? 'var(--color-hover)' : undefined, cursor: 'pointer' }}>
+          <FIcon size={15} weight="fill" color={isSel || isOpen ? 'var(--color-text-primary)' : fcolor} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.name}</span>
           <span style={{ flexShrink: 0, font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{fmtSize(e.size)}</span>
           {st && <span style={{ flexShrink: 0, width: 12, textAlign: 'center', font: '700 10px var(--font-mono)', color: STATUS_COLOR[st] ?? 'var(--color-text-tertiary)' }}>{st}</span>}
@@ -401,8 +401,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         onClick={() => { setSelected(new Set([entry.path])); setAnchor(entry.path); void openFile(entry); }}
         onMiddle={() => void openFile(entry, true)}
         onContext={(ev) => onRowContext(ev, entry)}
-        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 'var(--radius-sm)', color: isOpen ? '#e9e9ec' : '#a8a8b0', background: isOpen ? '#26262b' : undefined, cursor: 'pointer' }}>
-        <FIcon size={15} weight="fill" color={isOpen ? '#e9e9ec' : fcolor} style={{ flexShrink: 0 }} />
+        style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 'var(--radius-sm)', color: isOpen ? 'var(--color-text-primary)' : 'var(--color-text-muted)', background: isOpen ? 'var(--color-hover)' : undefined, cursor: 'pointer' }}>
+        <FIcon size={15} weight="fill" color={isOpen ? 'var(--color-text-primary)' : fcolor} style={{ flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, display: 'flex' }}>
           {indices
             ? <HighlightedPath path={path} indices={indices} />
@@ -457,22 +457,22 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* root + branch */}
-      <div style={{ padding: '9px 10px', borderBottom: '1px solid #1d1d21', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ flex: 1, minWidth: 0, font: '400 11px var(--font-mono)', color: '#6a6a72', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ padding: '9px 10px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <span style={{ flex: 1, minWidth: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {project ? homeAbbrev(project.workingDir) : ''}
         </span>
         {git.branch && (
           <span title="Current branch" style={{
             display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
             font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)',
-            background: 'rgba(62,207,106,0.08)', border: '1px solid rgba(62,207,106,0.25)',
+            background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)',
             borderRadius: 'var(--radius-sm)', padding: '1px 6px', maxWidth: 140,
           }}>
             <GitBranch size={11} weight="bold" style={{ flexShrink: 0 }} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{git.branch}</span>
           </span>
         )}
-        <button title="Refresh" onClick={refresh} style={{ background: 'none', border: 'none', color: '#46464d', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: 0 }}>⟳</button>
+        <button title="Refresh" onClick={refresh} style={{ background: 'none', border: 'none', color: 'var(--color-text-faint)', cursor: 'pointer', fontSize: 14, flexShrink: 0, padding: 0 }}>⟳</button>
       </div>
 
       {/* search + view toggles */}
@@ -487,7 +487,7 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
           )}
         </div>
         <button onClick={toggleHidden} title={showHidden ? 'Hide dotfiles' : 'Show dotfiles'}
-          style={{ ...TOOL_BTN, font: '600 11px var(--font-mono)', background: showHidden ? 'var(--color-accent)' : 'transparent', color: showHidden ? '#08240F' : 'var(--color-text-secondary)' }}>·*</button>
+          style={{ ...TOOL_BTN, font: '600 11px var(--font-mono)', background: showHidden ? 'var(--color-accent)' : 'transparent', color: showHidden ? 'var(--color-on-accent)' : 'var(--color-text-secondary)' }}>·*</button>
         <button onClick={() => setExpanded(new Set())} title="Collapse all"
           style={{ ...TOOL_BTN, background: 'transparent', color: 'var(--color-text-secondary)' }}>
           <ArrowLineLeft size={13} />
@@ -521,36 +521,36 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <>
           <div onMouseDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 190, padding: 4, background: 'var(--color-elevated, #26262b)', border: '1px solid #37373d', borderRadius: 'var(--radius-md)', boxShadow: '0 10px 30px -10px rgba(0,0,0,.7)' }}>
+          <div role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, zIndex: 1000, minWidth: 190, padding: 4, background: 'var(--color-elevated)', border: '1px solid var(--color-border-hover)', borderRadius: 'var(--radius-md)', boxShadow: '0 10px 30px -10px var(--color-shadow)' }}>
             <button type="button" onClick={() => { const t = targets; setMenu(null); void saveTargets(t); }}
-              style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+              style={{ ...MENU_ITEM, color: 'var(--color-text-primary)' }}>
               <DownloadSimple size={15} /> {targets.length > 1 ? `Save ${targets.length} Files As…` : 'Save As…'}
             </button>
             {loneImage && (
               <button type="button" onClick={() => { const p = loneImage; setMenu(null); void copyImage(p); }}
-                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                style={{ ...MENU_ITEM, color: 'var(--color-text-primary)' }}>
                 <ImageSquare size={15} /> Copy Image
               </button>
             )}
             <button type="button" onClick={() => { const t = targets; setMenu(null); void copyPaths(t); }}
-              style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+              style={{ ...MENU_ITEM, color: 'var(--color-text-primary)' }}>
               <Copy size={15} /> {targets.length > 1 ? `Copy ${targets.length} Paths` : 'Copy Path'}
             </button>
             {canReveal && (
               <button type="button" onClick={() => { const t = targets; setMenu(null); void reveal(t); }}
-                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                style={{ ...MENU_ITEM, color: 'var(--color-text-primary)' }}>
                 <FolderOpen size={15} /> Reveal in {fileManagerName ?? 'Finder'}
               </button>
             )}
             {targets.length === 1 && (
               <button type="button" onClick={() => { const entry = menu.entry; setMenu(null); void renameEntry(entry); }}
-                style={{ ...MENU_ITEM, color: '#e9e9ec' }}>
+                style={{ ...MENU_ITEM, color: 'var(--color-text-primary)' }}>
                 <PencilSimple size={15} /> Rename
               </button>
             )}
-            <div style={{ height: 1, background: '#37373d', margin: '4px 6px' }} />
+            <div style={{ height: 1, background: 'var(--color-border-hover)', margin: '4px 6px' }} />
             <button type="button" onClick={() => { const t = targets; setMenu(null); void deleteTargets(t); }}
-              style={{ ...MENU_ITEM, color: '#f87171' }}>
+              style={{ ...MENU_ITEM, color: 'var(--color-status-red)' }}>
               <TrashSimple size={15} /> {targets.length > 1 ? `Delete ${targets.length} items` : 'Delete'}
             </button>
           </div>

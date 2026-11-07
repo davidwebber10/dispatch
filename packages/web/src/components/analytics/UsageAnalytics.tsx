@@ -8,6 +8,7 @@ import { useAnalyticsFeed } from '../../stores/analytics';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { formatCost } from '../../lib/agentStats';
 import { makeSeriesScale, OUTCOME_COLOR, OTHER, SERIES, resolveChartTheme } from './chartTheme';
+import { useActiveTheme } from '../../themes/apply';
 import {
   Block, Kpi, NoData, chartTooltip, fmtDay, fmtSeconds, fmtTokens, labelStyle,
   dayRange, localDayString, muted, normKey, panel, startOfLocalDay, type ChartTheme,
@@ -22,7 +23,7 @@ const CALENDAR_WEEKS = 26;
 const CALENDAR_DAYS = CALENDAR_WEEKS * 7;
 
 /** The heatmap ramp: one hue, monotonic lightness, near-surface to full accent. */
-const HEAT = ['#1B1B1E', '#1E3D28', '#256B3C', '#2E9C52', '#3ECF6A'];
+const HEAT = ['var(--color-elevated)', 'color-mix(in srgb, var(--color-accent) 20%, var(--color-elevated))', 'color-mix(in srgb, var(--color-accent) 45%, var(--color-elevated))', 'color-mix(in srgb, var(--color-accent) 72%, var(--color-elevated))', 'var(--color-accent)'];
 
 /** Everything a filter changes. Re-fetched whenever a select moves. */
 interface Loaded {
@@ -111,7 +112,9 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
 }) {
   const isMobile = useIsMobile();
   // Recharts cannot read `var(--color-*)`, so the theme resolves to literals once.
-  const theme = useMemo(() => resolveChartTheme(), []);
+  // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
+  const themeId = useActiveTheme((s) => s.theme.id);
+  const theme = useMemo(() => resolveChartTheme(), [themeId]);
 
   const [data, setData] = useState<Loaded | null>(null);
   const [domain, setDomain] = useState<Domain | null>(null);

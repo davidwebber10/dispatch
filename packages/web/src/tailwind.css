@@ -1,31 +1,31 @@
 /* Tailwind v4 — theme + utilities only. Preflight is intentionally NOT imported
    so the hand-rolled theme.css (the rest of the app) is left completely untouched.
-   shadcn semantic tokens are mapped onto Dispatch's existing dark palette so
+   shadcn semantic tokens are mapped onto Dispatch's theme tokens (theme.css) so
    shadcn chat components match the product exactly. */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css" layer(utilities);
 
 :root {
-  --background: #0F0F11;            /* color-base */
-  --foreground: #E9E9EC;            /* text-primary */
-  --card: #141416;                 /* pane */
-  --card-foreground: #E9E9EC;
-  --popover: #1B1B1E;              /* elevated */
-  --popover-foreground: #E9E9EC;
-  --primary: #3ECF6A;             /* accent */
-  --primary-foreground: #06140B;   /* near-black on accent */
-  --secondary: #1B1B1E;
-  --secondary-foreground: #E9E9EC;
-  --muted: #1B1B1E;
-  --muted-foreground: #8E8E96;     /* text-secondary */
-  --accent: #26262B;              /* hover */
-  --accent-foreground: #E9E9EC;
-  --destructive: #F0616D;          /* status-red */
-  --destructive-foreground: #E9E9EC;
-  --border: #29292E;
-  --input: #29292E;
-  --ring: #3ECF6A;
+  --background: var(--color-base);
+  --foreground: var(--color-text-primary);
+  --card: var(--color-pane);
+  --card-foreground: var(--color-text-primary);
+  --popover: var(--color-elevated);
+  --popover-foreground: var(--color-text-primary);
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-on-accent);
+  --secondary: var(--color-elevated);
+  --secondary-foreground: var(--color-text-primary);
+  --muted: var(--color-elevated);
+  --muted-foreground: var(--color-text-secondary);
+  --accent: var(--color-hover);
+  --accent-foreground: var(--color-text-primary);
+  --destructive: var(--color-status-red);
+  --destructive-foreground: var(--color-text-primary);
+  --border: var(--color-border);
+  --input: var(--color-border);
+  --ring: var(--color-accent);
   --radius: 0.625rem;
 }
 

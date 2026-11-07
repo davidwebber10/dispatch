@@ -23,7 +23,7 @@ import { api } from '../api/client';
 
 vi.mock('codemirror', () => ({ EditorView: class { state = { doc: { toString: () => '' } }; destroy() {} static updateListener = { of: () => ({}) }; }, basicSetup: [] }));
 vi.mock('@codemirror/state', () => ({ EditorState: { create: () => ({}) } }));
-vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: {} }));
+vi.mock('../themes/codemirror', () => ({ tokenEditorTheme: [] }));
 
 const DOC = '/Users/me/dev/app/docs/plan.md';
 const SRC = `[plan](${DOC}) [web](https://example.com/x) [local](http://localhost:3456${DOC})`;

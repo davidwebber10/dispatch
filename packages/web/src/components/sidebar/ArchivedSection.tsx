@@ -128,7 +128,7 @@ function ArchivedRow({ tab, failed, restoring, onRestore }: { tab: Terminal; fai
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       data-archived-id={tab.id}
-      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 12px' : '3px 7px', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', background: hover ? 'rgba(255,255,255,0.04)' : 'transparent' }}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 12px' : '3px 7px', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', background: hover ? 'color-mix(in srgb, var(--color-text-emphasis) 4%, transparent)' : 'transparent' }}
     >
       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: isMobile ? 15 : 12, color: 'var(--color-text-tertiary)' }}>
         <ThreadLabel tab={tab} />

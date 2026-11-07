@@ -24,8 +24,8 @@ function Waveform({ dictation }: { dictation: Dictation }) {
           const data = new Uint8Array(bins);
           analyser?.getByteFrequencyData(data);
           const bars = 28; const bw = w / bars;
-          const accent = getComputedStyle(document.documentElement).getPropertyValue('--color-accent') || '#3ECF6A';
-          ctx.fillStyle = accent.trim() || '#3ECF6A';
+          const accent = getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim();
+          if (accent) ctx.fillStyle = accent;
           for (let i = 0; i < bars; i++) {
             const v = analyser ? data[Math.floor((i / bars) * bins)] / 255 : 0.15 + 0.1 * Math.abs(Math.sin(i));
             const bh = Math.max(3, v * h);
@@ -82,7 +82,7 @@ export function DictationControl({ dictation }: { dictation: Dictation }) {
         <X size={18} weight="bold" />
       </button>
       <Waveform dictation={dictation} />
-      <button type="button" aria-label="Confirm dictation" onClick={() => void dictation.confirm()} style={iconBtn('var(--color-accent)', '#06140B')}>
+      <button type="button" aria-label="Confirm dictation" onClick={() => void dictation.confirm()} style={iconBtn('var(--color-accent)', 'var(--color-on-accent)')}>
         <Check size={18} weight="bold" />
       </button>
     </div>

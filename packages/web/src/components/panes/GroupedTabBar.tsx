@@ -164,7 +164,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
             {dispatch && <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
             {!dispatch && <TabActivityIndicator tabId={id} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-              <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {dispatch ? dispatchName : tabLabel(id, byProject)}
               </span>
               <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -214,7 +214,7 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
     >
       <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
+        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
       </div>
       <button
@@ -241,8 +241,8 @@ function MergeOverlay({ label }: { label: string }) {
         background: 'var(--color-accent)', borderRadius: 'var(--radius-xs)',
         padding: '2px 6px', display: 'flex', alignItems: 'center', gap: 4,
       }}>
-        <SquaresFour size={11} weight="bold" color="#000" />
-        <span style={{ fontSize: 10, color: '#000', fontWeight: 700 }}>{label}</span>
+        <SquaresFour size={11} weight="bold" color="var(--color-on-accent)" />
+        <span style={{ fontSize: 10, color: 'var(--color-on-accent)', fontWeight: 700 }}>{label}</span>
       </div>
     </div>
   );
@@ -341,7 +341,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
 
       <TabActivityIndicator tabId={slot.tabId} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {t?.label ?? 'tab'}
         </span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -377,12 +377,12 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
       borderRight: '1px solid var(--color-border)',
       borderBottom: '2px solid var(--color-accent)',
       opacity: 0.95,
-      boxShadow: '0 8px 28px rgba(0,0,0,.5)',
+      boxShadow: '0 8px 28px var(--color-shadow)',
       cursor: 'grabbing',
       userSelect: 'none',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {t?.label ?? 'tab'}
         </span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -488,14 +488,14 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
               else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
             }}
             placeholder={`${count} Tabs`}
-            style={{ font: '500 12.5px var(--font-sans)', color: '#fff', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
+            style={{ font: '500 12.5px var(--font-sans)', color: 'var(--color-text-emphasis)', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
           />
         ) : (
           <>
             <span
               onDoubleClick={(e) => { e.stopPropagation(); startRename(); }}
               title="Double-click to rename group"
-              style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? '#fff' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
               {title}
             </span>
@@ -548,13 +548,13 @@ function GroupChipGhost({ slot }: { slot: GroupSlot }) {
       borderRight: '1px solid var(--color-border)',
       borderBottom: '2px solid var(--color-accent)',
       opacity: 0.95,
-      boxShadow: '0 8px 28px rgba(0,0,0,.5)',
+      boxShadow: '0 8px 28px var(--color-shadow)',
       cursor: 'grabbing',
       userSelect: 'none',
     }}>
       <SquaresFour size={14} weight="bold" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {title}
         </span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

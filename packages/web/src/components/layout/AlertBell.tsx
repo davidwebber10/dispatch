@@ -30,12 +30,12 @@ export function AlertBell({ terminalId, floating = false }: { terminalId: string
   return (
     <div style={{
       display: 'flex', padding: dim.pad,
-      ...(floating ? { borderRadius: 'var(--radius-lg)', background: 'rgba(22,22,26,0.55)', border: '1px solid rgba(255,255,255,0.10)' } : HEADER_BOX),
-      ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px rgba(0,0,0,.6)' } : {}),
+      ...(floating ? { borderRadius: 'var(--radius-lg)', background: 'color-mix(in srgb, var(--color-pane) 55%, transparent)', border: '1px solid color-mix(in srgb, var(--color-text-emphasis) 10%, transparent)' } : HEADER_BOX),
+      ...(floating ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', boxShadow: '0 6px 18px -8px var(--color-shadow)' } : {}),
     }}>
       <button title={on ? 'Alerts on — click to disable' : 'Alerts off — click to enable'} onClick={() => void toggle()} style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center', width: dim.w, height: dim.h, borderRadius: dim.radius, border: 'none', cursor: 'pointer',
-        background: on ? (floating ? 'rgba(255,255,255,0.14)' : 'var(--color-hover)') : 'transparent',
+        background: on ? (floating ? 'color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)' : 'var(--color-hover)') : 'transparent',
         color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)',
         transition: 'background .12s ease, color .12s ease',
       }}>

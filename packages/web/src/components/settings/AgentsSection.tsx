@@ -240,7 +240,7 @@ function HarnessDefaults() {
                     type="button"
                     disabled={keySaving || !keyDraft.trim()}
                     onClick={() => void saveKey()}
-                    style={{ height: 34, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 12.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.6 : 1 }}
+                    style={{ height: 34, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.6 : 1 }}
                   >
                     {keySaving ? 'Saving…' : 'Save'}
                   </button>
@@ -304,7 +304,7 @@ function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
       </div>
       <ul aria-label="OpenCode models" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
         {models.map((m) => (
-          <li key={m.model} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '3px 6px 3px 10px', background: 'rgba(0,0,0,.18)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)' }}>
+          <li key={m.model} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '3px 6px 3px 10px', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)' }}>
             {/* One line per model: the list is long, so the label and id sit side by side. */}
             <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)', flex: '0 0 150px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
             <span style={{ ...mono, flex: 1, minWidth: 0 }}>{shortId(m.model)}</span>

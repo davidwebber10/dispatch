@@ -69,7 +69,7 @@ export function ShowMoreRow({ count, onClick }: { count: number; onClick: () => 
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 6, width: '100%',
-        padding: isMobile ? '12px' : '4px 9px', background: hover ? 'rgba(255,255,255,0.05)' : 'transparent',
+        padding: isMobile ? '12px' : '4px 9px', background: hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         border: 'none', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', textAlign: 'left', cursor: 'pointer',
         color: hover ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
         fontSize: isMobile ? 14 : 11.5,

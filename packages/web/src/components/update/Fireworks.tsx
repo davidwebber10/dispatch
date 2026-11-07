@@ -85,6 +85,7 @@ export function Fireworks() {
         }
         // Late-life flicker reads as embers burning out.
         const alpha = s.life * (s.life < 0.35 && Math.random() < 0.35 ? 0.4 : 0.95);
+        // literal color: canvas celebration art (PALETTE above), the same in every theme
         ctx.fillStyle = `rgba(${s.color},${alpha.toFixed(3)})`;
         const size = 1.5 + s.life * 2;
         ctx.fillRect(s.x - size / 2, s.y - size / 2, size, size);

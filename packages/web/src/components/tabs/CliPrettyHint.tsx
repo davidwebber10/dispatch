@@ -40,7 +40,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
       data-testid="cli-pretty-hint"
       style={{
         display: 'flex', alignItems: 'center', gap: 10, padding: '5px 12px', paddingRight: reserveRight || 12, flexShrink: 0,
-        background: 'var(--color-elevated)', borderBottom: '1px solid #2C2C32',
+        background: 'var(--color-elevated)', borderBottom: '1px solid var(--color-border-strong)',
         color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.4,
       }}
     >
@@ -57,7 +57,7 @@ export function CliPrettyHint({ tab, reserveRight }: { tab: Terminal; reserveRig
           flexShrink: 0, height: 24, padding: '0 4px', border: 'none', background: 'transparent', color: 'var(--color-accent)',
           font: '500 13px var(--font-sans)', cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,
         } : {
-          flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 'var(--radius-sm)', border: '1px solid #2C2C32',
+          flexShrink: 0, height: 22, padding: '0 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-strong)',
           background: 'var(--color-hover)', color: 'var(--color-text-primary)',
           font: '600 11px var(--font-mono, monospace)', letterSpacing: '0.3px',
           cursor: canSwitch ? 'pointer' : 'not-allowed', opacity: canSwitch ? 1 : 0.5,

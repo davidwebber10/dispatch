@@ -170,6 +170,21 @@ test('mounts the terminal and wires the socket for replayed output', async () =>
   expect(() => onData('hello-from-pty')).not.toThrow();
 });
 
+// ---- themes: the terminal wears the theme's terminal palette and follows a change live ----
+
+test("the terminal gets the theme's terminal palette, and a theme change repaints it live", async () => {
+  const { getTheme, dispatchDark } = await import('../../themes');
+  useSettings.getState().setTheme('dispatch-dark');
+  const { factory } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(instances.length).toBe(1));
+  expect(instances[0].options.theme).toEqual(dispatchDark.terminal);
+  act(() => useSettings.getState().setTheme('dracula'));
+  expect(instances[0].options.theme).toEqual(getTheme('dracula')!.terminal);
+  act(() => useSettings.getState().setTheme('dispatch-dark'));
+  expect(instances[0].options.theme).toEqual(dispatchDark.terminal);
+});
+
 // ---- clipboard: Ctrl+C copies a selection instead of interrupting, Ctrl+V is released ----
 
 // keyCode defaults to the Latin letter's code — the field xterm maps Ctrl+letter by.

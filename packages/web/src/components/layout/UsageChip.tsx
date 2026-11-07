@@ -113,7 +113,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
         {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
       </button>
       {open && (
-        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px rgba(0,0,0,.8)' }}>
+        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Usage</div>
           <UsageRings summary={summary} now={now} />
         </div>

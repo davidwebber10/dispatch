@@ -81,11 +81,11 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
       )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Close</button>
+        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Close</button>
         <button
           disabled={compacting}
           onClick={compact}
-          style={{ height: 32, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, background: compacting ? 'var(--color-hover)' : 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: compacting ? 'var(--color-text-tertiary)' : '#08240F', fontWeight: 600, cursor: compacting ? 'default' : 'pointer' }}
+          style={{ height: 32, padding: '0 18px', display: 'flex', alignItems: 'center', gap: 6, background: compacting ? 'var(--color-hover)' : 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: compacting ? 'var(--color-text-tertiary)' : 'var(--color-on-accent)', fontWeight: 600, cursor: compacting ? 'default' : 'pointer' }}
         >
           {compacting && <Spinner size={12} color="var(--color-text-tertiary)" />}
           {compacting ? 'Compacting…' : 'Compact'}

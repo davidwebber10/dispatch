@@ -21,9 +21,11 @@
     <meta name="apple-mobile-web-app-title" content="Dispatch" />
     <meta name="mobile-web-app-capable" content="yes" />
 
-    <!-- Painted before any stylesheet or script arrives, so a launch never flashes white
-         (--color-canvas; the app is dark only). -->
-    <style>html,body{background:#08080A;color-scheme:dark}</style>
+    <!-- Painted before any stylesheet or script arrives, so a launch never flashes. theme-boot.js
+         first writes the saved theme's colors (Settings > Appearance > Theme) onto <html>; with no
+         saved theme, this is Dispatch Dark's canvas. -->
+    <script src="theme-boot.js"></script>
+    <style>html,body{background:var(--color-canvas,#08080A);color-scheme:dark}</style>
     <title>Dispatch</title>
   </head>
   <body>

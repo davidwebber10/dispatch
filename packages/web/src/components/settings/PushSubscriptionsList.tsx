@@ -69,7 +69,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
             <div
               key={s.deviceId}
               data-testid="push-row"
-              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid #2c2c32', borderRadius: 'var(--radius-md)' }}
+              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)' }}
             >
               <div style={{ ...row, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -79,7 +79,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
                 <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {pending === s.deviceId ? (
                     <>
-                      <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: '#F37165', color: '#2a0a07' }} onClick={() => void revoke(s)}>Yes, revoke</button>
+                      <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: 'var(--color-status-coral)', color: 'var(--color-on-danger)' }} onClick={() => void revoke(s)}>Yes, revoke</button>
                       <button type="button" style={ghostBtn} onClick={() => setPending(null)}>Cancel</button>
                     </>
                   ) : (
@@ -88,7 +88,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
                 </span>
               </div>
               {pending === s.deviceId && (
-                <div style={{ ...small, color: '#F37165' }}>That device stops getting alerts at once. It can turn them on again in its own Settings.</div>
+                <div style={{ ...small, color: 'var(--color-status-coral)' }}>That device stops getting alerts at once. It can turn them on again in its own Settings.</div>
               )}
               <div style={small}>Push service: {s.host}</div>
               <div style={small}>
@@ -96,7 +96,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
               </div>
             </div>
           ))}
-          {error && <div role="alert" style={{ fontSize: 12.5, color: '#F37165' }}>{error}</div>}
+          {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-coral)' }}>{error}</div>}
         </>
       )}
     </div>

@@ -50,7 +50,7 @@ export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { 
             {t}
             {t === 'files' && changedCount > 0 && (
               <span title={`${changedCount} uncommitted change${changedCount === 1 ? '' : 's'}`} style={{
-                font: '700 10px var(--font-mono)', color: '#0A0A0B', background: 'var(--color-status-yellow)',
+                font: '700 10px var(--font-mono)', color: 'var(--color-on-accent)', background: 'var(--color-status-yellow)',
                 borderRadius: 'var(--radius-md)', padding: '0 5px', lineHeight: '14px',
               }}>{changedCount}</span>
             )}

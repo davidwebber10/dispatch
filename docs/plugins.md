@@ -144,6 +144,34 @@ The SDK object, in full:
 A selector that returns a new array on every call loops React. Use `useContributions`, or
 `useMemo` over a store's list.
 
+## Themes
+
+Dispatch has light and dark themes (Settings → Appearance → Theme), and the user can pick
+their own accent. A plugin renders inside the app's page, so it follows the theme when it takes
+every color from the app's CSS variables. Do not write a literal color (`#fff`, `rgb(…)`,
+`white`): it stays the same in every theme and reads as a bug on a light one.
+
+- Surfaces: `--color-canvas` (the backdrop), `--color-base`, `--color-pane`, `--color-elevated`
+  (cards, inputs), `--color-modal`, `--color-hover`, `--color-selected`.
+- Borders: `--color-border`, `--color-border-strong` (controls), `--color-border-hover`.
+- Text: `--color-text-primary`, `--color-text-body`, `--color-text-secondary`,
+  `--color-text-tertiary`, `--color-text-emphasis` (the strongest).
+- Accent: `--color-accent`, and `--color-on-accent` for text on a filled accent button.
+  `--color-link` for links.
+- Status: `--color-status-green`, `--color-status-yellow`, `--color-status-amber`,
+  `--color-status-red`, `--color-status-coral`, `--color-status-blue`.
+- Hues for categories: `--color-red`, `--color-orange`, `--color-yellow`, `--color-green`,
+  `--color-cyan`, `--color-blue`, `--color-purple`, `--color-pink`.
+- Scrims and shadows: `--color-overlay`, `--color-shadow`, `--color-shadow-strong`.
+- Code: `--color-code-bg` and the `--syntax-*` colors; highlight.js classes (`.hljs-*`) are
+  already styled.
+
+For a tint, mix a variable: `color-mix(in srgb, var(--color-accent) 12%, transparent)`. Code
+that needs a real color value (a canvas, a chart library) can read one with
+`getComputedStyle(document.documentElement).getPropertyValue('--color-accent')`; read it again
+when `document.documentElement.dataset.theme` changes. The full list is the `:root` block of
+`packages/web/src/theme.css`. `ui.styles` already uses these variables.
+
 ## Permissions and the plugin key
 
 `permissions` in the manifest is the full list of what the plugin's own key may do. The web

@@ -25,7 +25,7 @@ export function HighScoreCelebration() {
   return (
     <div
       onClick={close}
-      style={{ position: 'fixed', inset: 0, zIndex: 290, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 290, background: 'var(--color-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
     >
       <Fireworks />
       <div
@@ -34,22 +34,22 @@ export function HighScoreCelebration() {
           position: 'relative',
           width: 340,
           maxWidth: '100%',
-          background: 'rgba(27,27,30,.55)',
+          background: 'color-mix(in srgb, var(--color-pane) 55%, transparent)',
           backdropFilter: 'blur(10px) saturate(1.4)',
           WebkitBackdropFilter: 'blur(10px) saturate(1.4)',
-          border: '1px solid rgba(255,255,255,.14)',
+          border: '1px solid color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)',
           borderRadius: 'var(--radius-xl)',
           padding: '24px 20px',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
+          boxShadow: '0 30px 80px -20px var(--color-shadow-strong)',
           textAlign: 'center',
         }}
       >
-        <Trophy size={34} weight="fill" color="#F5C542" />
+        <Trophy size={34} weight="fill" color="var(--color-status-yellow)" />
         <div style={{ marginTop: 8, fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>New high score!</div>
-        <div style={{ marginTop: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 40, fontWeight: 700, lineHeight: 1, color: 'rgba(140,255,180,1)', textShadow: '0 0 16px rgba(62,207,106,.55)' }}>
+        <div style={{ marginTop: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 40, fontWeight: 700, lineHeight: 1, color: 'color-mix(in srgb, var(--color-accent) 60%, var(--color-text-emphasis))', textShadow: '0 0 16px color-mix(in srgb, var(--color-accent) 55%, transparent)' }}>
           {celebration.score}
         </div>
-        <div style={{ marginTop: 4, fontSize: 11, letterSpacing: 2, color: 'rgba(62,207,106,.75)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POINTS</div>
+        <div style={{ marginTop: 4, fontSize: 11, letterSpacing: 2, color: 'color-mix(in srgb, var(--color-accent) 75%, transparent)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>POINTS</div>
         <div style={{ marginTop: 10, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
           {celebration.prev > 0
             ? <>You beat your old best of {celebration.prev} during the update.</>
@@ -58,7 +58,7 @@ export function HighScoreCelebration() {
         <div style={{ marginTop: 18 }}>
           <button
             onClick={close}
-            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }}
+            style={{ height: 38, padding: '0 22px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' }}
           >
             Nice
           </button>

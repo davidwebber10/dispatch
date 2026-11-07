@@ -115,7 +115,7 @@ export default function activate(d) {
     useEffect(() => { if (state === 'idle') return; const t = setTimeout(() => setState('idle'), 1600); return () => clearTimeout(t); }, [state]);
     const I = state === 'copied' ? icons.check : icons.copy;
     return h('button', { type: 'button', 'aria-label': label, title: label, onClick: () => d.copyText(text).then(() => setState('copied'), () => setState('error')),
-      style: { ...chip, height: 30, padding: '0 10px', background: state === 'copied' ? 'var(--color-accent)' : 'var(--color-elevated)', color: state === 'copied' ? '#08240F' : 'var(--color-text-primary)', fontWeight: 600, fontSize: 12.5 } },
+      style: { ...chip, height: 30, padding: '0 10px', background: state === 'copied' ? 'var(--color-accent)' : 'var(--color-elevated)', color: state === 'copied' ? 'var(--color-on-accent)' : 'var(--color-text-primary)', fontWeight: 600, fontSize: 12.5 } },
       h(I, { size: 14, weight: state === 'copied' ? 'bold' : 'regular' }),
       state === 'copied' ? 'Copied' : state === 'error' ? 'Could not copy' : label);
   }
@@ -231,12 +231,12 @@ export default function activate(d) {
     const n = usePv((s) => unseenOf(s.items, sessionId));
     if (!sessionId) return null;
     const box = floating
-      ? { borderRadius: 'var(--radius-lg)', background: 'rgba(22,22,26,0.55)', border: '1px solid rgba(255,255,255,0.10)', height: 30, width: 32 }
+      ? { borderRadius: 'var(--radius-lg)', background: 'color-mix(in srgb, var(--color-pane) 55%, transparent)', border: '1px solid color-mix(in srgb, var(--color-text-emphasis) 10%, transparent)', height: 30, width: 32 }
       : { borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', height: 36, width: 36 };
     return h('button', { type: 'button', 'aria-label': 'Previews', title: n ? `${n} new previews` : 'Previews', onClick: () => usePv.getState().openSheet(sessionId),
       style: { ...box, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', color: n ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 } },
       h(icons.eye, { size: 20 }),
-      n > 0 && h('span', { 'aria-label': `${n} new previews`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
+      n > 0 && h('span', { 'aria-label': `${n} new previews`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
   }
   const ProjectEye = ({ session }) => h(Eye, { sessionId: session ? session.id : null });
   const ThreadEye = ({ terminal, floating }) => h(Eye, { sessionId: terminal ? terminal.sessionId : null, floating: !!floating });

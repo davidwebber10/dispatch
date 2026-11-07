@@ -32,7 +32,7 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
         width: 52, height: 44, flexShrink: 0, borderRadius: 'var(--radius-md)', border: 'none', cursor: 'pointer',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
         position: 'relative', padding: 0,
-        background: active ? 'rgba(62,207,106,0.10)' : hover ? 'var(--color-elevated)' : 'transparent',
+        background: active ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : hover ? 'var(--color-elevated)' : 'transparent',
         color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)',
       }}>
       <span style={{ position: 'relative', display: 'flex' }}>
@@ -41,7 +41,7 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
       </span>
       <span style={{ font: '400 8.5px var(--font-sans)', letterSpacing: '0.01em' }}>{label}</span>
       {badge > 0 && (
-        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {badge > 99 ? '99+' : badge}
         </span>
       )}

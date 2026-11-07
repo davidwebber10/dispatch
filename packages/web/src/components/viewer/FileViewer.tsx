@@ -98,8 +98,8 @@ async function shareFile(file: ViewerFile): Promise<void> {
 
 const btn = (disabled = false, accent = false): React.CSSProperties => ({
   display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, flexShrink: 0,
-  borderRadius: 'var(--radius-md)', background: accent ? 'var(--color-accent)' : 'rgba(28,28,32,.82)', border: '1px solid rgba(255,255,255,.12)',
-  color: accent ? '#08240F' : 'var(--color-text-primary)', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1, padding: 0,
+  borderRadius: 'var(--radius-md)', background: accent ? 'var(--color-accent)' : 'color-mix(in srgb, color-mix(in srgb, var(--color-on-media) 11%, var(--color-media-bg)) 82%, transparent)', border: '1px solid color-mix(in srgb, var(--color-on-media) 12%, transparent)',
+  color: accent ? 'var(--color-on-accent)' : 'var(--color-on-media)', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1, padding: 0,
 });
 
 type Gesture =
@@ -388,13 +388,13 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
 
   return createPortal(
     <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={label ?? file.name ?? 'File viewer'}
-      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: `rgba(0,0,0,${Math.max(0.35, 0.92 - sink / 400)})`, display: 'flex', flexDirection: 'column', userSelect: 'none', WebkitUserSelect: 'none', overscrollBehavior: 'contain' }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: `color-mix(in srgb, var(--color-media-bg) ${Math.max(0.35, 0.92 - sink / 400) * 100}%, transparent)`, display: 'flex', flexDirection: 'column', userSelect: 'none', WebkitUserSelect: 'none', overscrollBehavior: 'contain' }}>
       {/* top bar: close, name and position, actions */}
-      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3, display: 'flex', alignItems: 'center', gap: 8, padding: 'max(10px, env(safe-area-inset-top)) 12px 10px', background: 'linear-gradient(rgba(0,0,0,.65), rgba(0,0,0,0))', pointerEvents: 'none' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3, display: 'flex', alignItems: 'center', gap: 8, padding: 'max(10px, env(safe-area-inset-top)) 12px 10px', background: 'linear-gradient(color-mix(in srgb, var(--color-media-bg) 65%, transparent), transparent)', pointerEvents: 'none' }}>
         <button ref={closeRef} type="button" onClick={onClose} title="Close" aria-label="Close" style={{ ...btn(), pointerEvents: 'auto' }}><X size={18} weight="bold" /></button>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1, pointerEvents: 'auto' }}>
-          {file.name && <span style={{ fontSize: 13.5, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>{file.name}</span>}
-          {n > 1 && <span aria-label={`File ${index + 1} of ${n}`} style={{ font: '500 11px var(--font-mono)', color: 'rgba(255,255,255,.7)' }}>{index + 1} / {n}</span>}
+          {file.name && <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-on-media)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: '0 1px 2px color-mix(in srgb, var(--color-media-bg) 60%, transparent)' }}>{file.name}</span>}
+          {n > 1 && <span aria-label={`File ${index + 1} of ${n}`} style={{ font: '500 11px var(--font-mono)', color: 'color-mix(in srgb, var(--color-on-media) 70%, transparent)' }}>{index + 1} / {n}</span>}
         </div>
         <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
           {kind === 'image' && !mobile && (
@@ -451,13 +451,13 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
       {/* the strip of files: tap one to jump */}
       {n > 1 && (
         <div ref={stripRef} role="tablist" aria-label="Files" onClick={(e) => e.stopPropagation()}
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 3, display: 'flex', gap: 6, padding: `10px 12px max(10px, env(safe-area-inset-bottom))`, overflowX: 'auto', background: 'linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.7))', scrollbarWidth: 'none' }}>
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 3, display: 'flex', gap: 6, padding: `10px 12px max(10px, env(safe-area-inset-bottom))`, overflowX: 'auto', background: 'linear-gradient(transparent, color-mix(in srgb, var(--color-media-bg) 70%, transparent))', scrollbarWidth: 'none' }}>
           {files.map((f, i) => {
             const k = viewerKind(f.mime); const on = i === index; const I = k === 'image' ? null : KIND_ICON[k];
             return (
               <button key={i} type="button" role="tab" aria-selected={on} aria-label={f.name} title={f.name} onClick={() => go(i)}
-                style={{ width: 48, height: 48, flexShrink: 0, padding: 0, borderRadius: 'var(--radius-sm)', overflow: 'hidden', cursor: 'pointer', background: 'rgba(28,28,32,.9)',
-                  border: on ? '2px solid var(--color-accent)' : '2px solid rgba(255,255,255,.14)', opacity: on ? 1 : 0.72, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}>
+                style={{ width: 48, height: 48, flexShrink: 0, padding: 0, borderRadius: 'var(--radius-sm)', overflow: 'hidden', cursor: 'pointer', background: 'color-mix(in srgb, color-mix(in srgb, var(--color-on-media) 11%, var(--color-media-bg)) 90%, transparent)',
+                  border: on ? '2px solid var(--color-accent)' : '2px solid color-mix(in srgb, var(--color-on-media) 14%, transparent)', opacity: on ? 1 : 0.72, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}>
                 {I ? <I size={22} /> : <img src={f.src} alt="" loading="lazy" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
               </button>
             );
@@ -488,10 +488,11 @@ function FrameSlide({ file, kind, mobile }: { file: ViewerFile; kind: 'pdf' | 'h
   return (
     <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: kind === 'html' ? 1100 : 900, height: '100%', display: 'flex', flexDirection: 'column', gap: 8, cursor: 'auto' }}>
       {kind === 'pdf' && mobile && (
-        <a href={file.src} target="_blank" rel="noopener noreferrer" style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
+        <a href={file.src} target="_blank" rel="noopener noreferrer" style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
           <ArrowSquareOut size={15} weight="bold" /> Open the full pdf
         </a>
       )}
+      {/* literal color: a user's HTML page expects a white page behind it (content, not chrome) */}
       <iframe src={file.src} title={file.name} {...(kind === 'html' ? { sandbox: 'allow-scripts' } : {})}
         style={{ flex: 1, width: '100%', border: mobile ? 'none' : '1px solid var(--color-border)', borderRadius: mobile ? 0 : 'var(--radius-lg)', background: '#fff' }} />
     </div>

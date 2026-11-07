@@ -937,7 +937,7 @@ function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: {
       <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
       <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>×{count}</span>
       <span style={{ flex: 1, minWidth: 0 }} />
-      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: '#8fb79a' }}>+{diff.add} −{diff.del}</span>}
+      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))' }}>+{diff.add} −{diff.del}</span>}
       {running
         ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
         : !diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
@@ -995,7 +995,7 @@ export function UserBubble({ text, source, grouped = false, relayName, renderTex
         style={{
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
-          color: viaCoordinator ? 'var(--color-text-primary)' : '#06140B',
+          color: viaCoordinator ? 'var(--color-text-primary)' : 'var(--color-on-accent)',
           borderRadius: 'var(--radius-md)',
           padding: '12px 15px',
           font: '500 15.5px var(--font-sans)',
@@ -1233,7 +1233,7 @@ export function JumpButton() {
   return (
     <MessageScroller.Button
       direction="end"
-      style={{ position: 'absolute', right: 16, bottom: 16, width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 5 }}
+      style={{ position: 'absolute', right: 16, bottom: 16, width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: 'var(--color-on-accent)', border: 'none', boxShadow: '0 8px 22px -6px var(--color-shadow)', cursor: 'pointer', zIndex: 5 }}
     >
       <CaretDoubleDown size={18} weight="bold" />
     </MessageScroller.Button>

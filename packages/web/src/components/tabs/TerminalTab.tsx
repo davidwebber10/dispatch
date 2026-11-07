@@ -24,6 +24,7 @@ import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
+import { useActiveTheme } from '../../themes/apply';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -234,7 +235,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   useEffect(() => {
     let disposed = false;
     const s0 = useSettings.getState();
-    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
+    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
       // xterm's own handler asks confirm() and ignores every non-http link; a doc opens in the doc viewer, a web link in a new tab, the rest nothing.
       linkHandler: { allowNonHttpProtocols: true, activate: (_e, uri) => {
         const chips = docChipsRef.current;
@@ -725,7 +726,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // scrolling (xterm's accessibility-tree overlay is user-select:text), which
     // is why scrolling only felt right when the finger was over empty space.
     if (isMobile && host) host.classList.add('dispatch-noselect');
-    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
+    { const s = screenEl(); if (s) { s.style.background = 'var(--term-background)'; s.style.willChange = 'transform'; } }
 
     let rowHeight = Math.ceil((term.options.fontSize ?? 13) * 1.2);
     rowMeasureRef.current = () => { const r = host?.querySelector('.xterm-rows') as HTMLElement | null; if (r && r.children.length) rowHeight = r.getBoundingClientRect().height / r.children.length; };
@@ -908,6 +909,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     };
   }, [terminalId, socketFactory]);
 
+  // The theme's terminal palette, live: a theme change (Settings → Appearance, or the device
+  // switching light/dark under 'system') repaints the running terminal.
+  const termPalette = useActiveTheme((s) => s.theme.terminal);
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    try { term.options.theme = { ...termPalette }; } catch { /* terminal not fully initialised (e.g. jsdom) */ }
+  }, [termPalette]);
+
   // Apply font-size / scrollback changes live to the running terminal.
   useEffect(() => {
     const term = termRef.current;
@@ -981,19 +991,19 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
           <button
             title="Scroll to latest"
             onClick={() => scrollToEndRef.current()}
-            style={{ position: 'absolute', right: 16, bottom: 16, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: '#06140B', border: 'none', boxShadow: '0 8px 22px -6px rgba(0,0,0,.7)', cursor: 'pointer', zIndex: 6 }}
+            style={{ position: 'absolute', right: 16, bottom: 16, width: 42, height: 42, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: 'var(--color-on-accent)', border: 'none', boxShadow: '0 8px 22px -6px var(--color-shadow)', cursor: 'pointer', zIndex: 6 }}
           >
             <CaretDoubleDown size={19} weight="bold" />
           </button>
         )}
         {loadingOlder && (
-          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>Loading earlier output…</div>
+          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>Loading earlier output…</div>
         )}
         {drop && (
-          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 'var(--radius-md)', background: 'rgba(62,207,106,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
+          <div style={{ position: 'absolute', inset: 8, border: '2px dashed var(--color-accent)', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', color: 'var(--color-accent)', fontSize: 14, fontWeight: 600 }}>Drop image to send to the agent</div>
         )}
         {note && (
-          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'rgba(10,10,12,.85)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>{note}</div>
+          <div style={{ position: 'absolute', left: 14, bottom: 14, zIndex: 6, background: 'color-mix(in srgb, var(--color-base) 85%, transparent)', color: 'var(--color-accent)', fontSize: 12, fontWeight: 500, padding: '5px 11px', borderRadius: 'var(--radius-md)', pointerEvents: 'none' }}>{note}</div>
         )}
       </div>
       {/* Safety net: a needs_you question a CLI thread declared via report_status lands only on

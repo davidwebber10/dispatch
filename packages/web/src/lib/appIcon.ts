@@ -16,6 +16,7 @@ function shade(hex: string, amt: number): string {
   const target = amt > 0 ? 255 : 0;
   const t = Math.abs(amt);
   const ch = (i: number) => Math.round(parseInt(n.slice(i, i + 2), 16) * (1 - t) + target * t);
+  // literal color: a canvas color string computed from the accent hex for the PNG app icon
   return `rgb(${ch(0)},${ch(2)},${ch(4)})`;
 }
 
@@ -33,6 +34,7 @@ export function drawAppIcon(size: number, accent: string): HTMLCanvasElement | n
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
 
+  // literal color: the dark `>_` glyph is content of the PWA icon PNG, the same in every theme
   ctx.strokeStyle = '#0A1410';
   ctx.lineWidth = 15.5 * s;
   ctx.lineCap = 'round';

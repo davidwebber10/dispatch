@@ -3,8 +3,8 @@ import { highlightCode, langFromPath } from '../../../lib/markdown';
 import { lineDiff, type DiffLine } from './diff';
 
 function Hunk({ lines }: { lines: DiffLine[] }) {
-  const bg = (t: DiffLine['type']) => t === 'add' ? 'rgba(63,185,80,.14)' : t === 'del' ? 'rgba(240,97,109,.14)' : 'transparent';
-  const fg = (t: DiffLine['type']) => t === 'add' ? '#5fce7e' : t === 'del' ? '#f0616d' : 'var(--color-text-secondary)';
+  const bg = (t: DiffLine['type']) => t === 'add' ? 'color-mix(in srgb, var(--color-status-green) 14%, transparent)' : t === 'del' ? 'color-mix(in srgb, var(--color-status-red) 14%, transparent)' : 'transparent';
+  const fg = (t: DiffLine['type']) => t === 'add' ? 'var(--color-status-green)' : t === 'del' ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   const sign = (t: DiffLine['type']) => t === 'add' ? '+' : t === 'del' ? '-' : ' ';
   return (
     <pre style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, overflow: 'auto', maxHeight: 360 }}>

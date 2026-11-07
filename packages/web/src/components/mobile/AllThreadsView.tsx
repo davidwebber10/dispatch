@@ -272,7 +272,7 @@ export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpe
             ...(desktop ? {} : { background: nFilters || filtersOpen ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent' }), color: nFilters ? 'var(--color-accent)' : 'var(--color-text-secondary)',
           }}>
           <FunnelSimple size={15} weight="bold" />Filters
-          {nFilters > 0 && <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: '#06140B', font: '600 11px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{nFilters}</span>}
+          {nFilters > 0 && <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '600 11px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{nFilters}</span>}
         </button>
   );
   return (
@@ -298,7 +298,7 @@ export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpe
         {filtersButton}
         {filtersOpen && <>
           <div onClick={() => setFiltersOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-          <div role="dialog" aria-label="Filters" data-variant="popover" style={{ position: 'absolute', top: 38, right: 0, zIndex: 91, width: 300, maxHeight: '65vh', overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+          <div role="dialog" aria-label="Filters" data-variant="popover" style={{ position: 'absolute', top: 38, right: 0, zIndex: 91, width: 300, maxHeight: '65vh', overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
             {filtersBody}
           </div>
         </>}

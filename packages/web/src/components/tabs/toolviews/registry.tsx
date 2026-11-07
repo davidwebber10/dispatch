@@ -23,14 +23,14 @@ function hasQuery(input: any): boolean {
 export function getToolView(toolName: string | undefined, input: any): ToolView | null {
   if (toolName === 'Edit' || toolName === 'MultiEdit' || toolName === 'Write') {
     return {
-      icon: <PencilSimple size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />,
+      icon: <PencilSimple size={13} color="var(--color-status-blue)" style={{ flexShrink: 0 }} />,
       label: (t) => t.toolTitle ?? t.toolName ?? 'Edit',
       expanded: (t) => <DiffView tool={t} />,
     };
   }
   if (toolName === 'TodoWrite') {
     return {
-      icon: <ListChecks size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />,
+      icon: <ListChecks size={13} color="var(--color-status-blue)" style={{ flexShrink: 0 }} />,
       label: () => 'Updated plan',
       expanded: (t) => <TodoView tool={t} />,
     };
@@ -38,14 +38,14 @@ export function getToolView(toolName: string | undefined, input: any): ToolView 
   // WebSearch input also carries a `query` field, so it MUST be matched before hasQuery.
   if (toolName === 'WebFetch' || toolName === 'WebSearch') {
     return {
-      icon: <Globe size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />,
+      icon: <Globe size={13} color="var(--color-status-blue)" style={{ flexShrink: 0 }} />,
       label: (t) => t.toolTitle ?? t.toolName ?? 'Web',
       expanded: (t, r) => <WebView tool={t} result={r} />,
     };
   }
   if (hasQuery(input)) {
     return {
-      icon: <Database size={13} color="#5A8DD6" style={{ flexShrink: 0 }} />,
+      icon: <Database size={13} color="var(--color-status-blue)" style={{ flexShrink: 0 }} />,
       label: (t) => t.toolTitle ?? t.toolName ?? 'Query',
       expanded: (t, r) => <QueryView tool={t} result={r} />,
     };

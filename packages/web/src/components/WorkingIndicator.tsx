@@ -75,7 +75,7 @@ export function ApiRetryIndicator({ retry }: { retry: { attempt: number; maxRetr
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
       <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <CloudWarning size={14} weight="fill" color="var(--color-warning, #d9a03f)" />
+        <CloudWarning size={14} weight="fill" color="var(--color-status-amber)" />
       </div>
       <span className="chat-shimmer" style={{ font: '500 13.5px var(--font-sans)' }}>{what} — retrying{attempts}…</span>
     </div>

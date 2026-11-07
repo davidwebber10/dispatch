@@ -120,7 +120,7 @@ export function CoordinatorMenu({ terminalId, sessionId, scheme = 'scoped', dire
               borderRadius: 'var(--radius-md)',
               background: t.surface,
               border: `1px solid ${t.border}`,
-              boxShadow: '0 12px 32px -12px rgba(0,0,0,.6)',
+              boxShadow: '0 12px 32px -12px var(--color-shadow)',
               display: 'flex',
               flexDirection: 'column',
               gap: 2,
