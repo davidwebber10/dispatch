@@ -9,6 +9,12 @@ import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { UpdateDot } from '../update/UpdateDot';
+import { PuzzlePiece } from '@phosphor-icons/react';
+import type { Icon } from '@phosphor-icons/react';
+import { usePluginRegistry, usePromotedViews } from '../../plugins/registry';
+import { pluginIcon } from '../../plugins/sdk';
+import { PluginView } from '../../plugins/PluginView';
+import { PluginsTab } from './PluginsTab';
 import { ProjectMenu } from './ProjectMenu';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
@@ -102,7 +108,8 @@ export function MobileApp() {
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'agents' | 'analytics' | 'settings'>('projects');
+  // 'plugins' is the fixed Plugins tab; 'plugin:<id>:<view>' a promoted plugin screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
+  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'agents' | 'analytics' | 'settings' | 'plugins' | `plugin:${string}`>('projects');
   // The Projects tab shows either the project list or every thread across projects (2026-10-28,
   // replaced the Pinned tab). Remembered per device.
   const [projectsView, setProjectsView] = useState<'projects' | 'threads'>(() => { try { return localStorage.getItem('dispatch:mobileProjectsView') === 'threads' ? 'threads' : 'projects'; } catch { return 'projects'; } });
@@ -276,6 +283,8 @@ export function MobileApp() {
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
   const inSettings = bottomTab === 'settings';
+  const promotedViews = usePromotedViews();
+  const anyPlugin = usePluginRegistry((s) => s.views.length > 0 || s.manifests.length > 0);
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
   const unseenHere = usePreviews((s) => unseenPreviews(s.items, project?.id ?? null));
@@ -415,6 +424,10 @@ export function MobileApp() {
               <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
+            ) : bottomTab === 'plugins' ? (
+              <PluginsTab onOpen={(key) => setBottomTab(key as `plugin:${string}`)} />
+            ) : bottomTab.startsWith('plugin:') ? (
+              <PluginView viewKey={bottomTab} />
             ) : bottomTab === 'agents' ? (
               <AllAgentsView onOpenAgent={openAgentFromList} />
             ) : (
@@ -496,11 +509,11 @@ export function MobileApp() {
           agent included (2026-11-05: the thread composer lost its key row, which
           paid for the space). Tapping a tab pops back to the root. */}
       {(
-        <div style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div data-testid="bottom-tabs" style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
               whichever list it opens to. */}
-          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? TerminalWindow : Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ['settings', 'Settings', Gear]] as const).map(([key, label, Icon]) => {
-            const on = bottomTab === key;
+          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? TerminalWindow : Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [typeof bottomTab, string, Icon])[]).map(([key, label, Icon]) => {
+            const on = bottomTab === key || (key === 'plugins' && bottomTab.startsWith('plugin:') && !promotedViews.some((v) => v.key === bottomTab));
             return (
               <button key={key} onClick={() => onTab(key)}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 0 6px', background: 'none', border: 'none', cursor: 'pointer', color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>

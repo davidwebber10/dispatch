@@ -4,7 +4,8 @@ import { create } from 'zustand';
 // board (docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section):
 // 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
 // that bypasses Workspace entirely (see App.tsx).
-export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | 'previews';
+// `plugin:<id>:<view>` is a plugin's screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
+export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | 'previews' | `plugin:${string}`;
 export type InspectorTab = 'details' | 'files';
 
 const LKEY = 'dispatch:left-collapsed';
@@ -20,7 +21,7 @@ const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat', 'p
 export const loadView = (): View => {
   try {
     const v = localStorage.getItem(VKEY) as View | null;
-    return v && VIEWS.includes(v) ? v : 'workspace';
+    return v && (VIEWS.includes(v) || v.startsWith('plugin:')) ? v : 'workspace';
   } catch { return 'workspace'; }
 };
 const saveView = (v: View): void => { try { localStorage.setItem(VKEY, v); } catch { /* ignore */ } };

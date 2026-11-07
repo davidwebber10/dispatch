@@ -41,6 +41,8 @@ import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
+import { PluginView } from './plugins/PluginView';
+import { isPluginView } from './plugins/registry';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
 import { useAnalyticsFeed } from './stores/analytics';
@@ -265,6 +267,8 @@ export default function App() {
       <AppShell>
         {view === 'settings'
           ? <SettingsView />
+          : isPluginView(view)
+          ? <PluginView viewKey={view} />
           : view === 'previews'
           ? <PreviewsView />
           : view === 'chat'

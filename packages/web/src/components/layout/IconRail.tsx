@@ -8,6 +8,8 @@ import { useUI, type View } from '../../stores/ui';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { UsageChip } from './UsageChip';
 import { UpdateDot } from '../update/UpdateDot';
+import { usePluginViews } from '../../plugins/registry';
+import { pluginIcon } from '../../plugins/sdk';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -71,6 +73,8 @@ export function IconRail() {
   const conn = CONN[status];
   const serverLabel = currentLabel(servers, window.location.origin);
   const unseen = usePreviews((s) => unseenPreviews(s.items));
+  // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
+  const pluginViews = usePluginViews();
   // The badge needs the list before the view is ever opened.
   useEffect(() => { void usePreviews.getState().load(); }, []);
 
@@ -95,6 +99,10 @@ export function IconRail() {
       {NAV.map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} badge={n.view === 'previews' ? unseen : 0} />
+      ))}
+      {pluginViews.map((v) => (
+        <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}
+          active={view === v.key} onClick={() => setView(v.key as View)} />
       ))}
       <div style={{ flex: 1 }} />
       {/* Account usage (#127): above the connection dot, hidden until a provider reports. */}
