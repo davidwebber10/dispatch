@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PillComposer } from './PillComposer';
+import { usePluginRegistry } from '../../plugins/registry';
 
 const dictation = (over: Record<string, unknown> = {}) => ({
   state: 'idle', error: null, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(), reset: vi.fn(), getAnalyser: () => null, ...over,
@@ -83,3 +84,39 @@ describe('PillComposer', () => {
   });
 });
 
+
+describe('plugin composer actions (2026-11-07)', () => {
+  afterEach(() => { usePluginRegistry.setState({ composerActions: [] }); });
+
+  it('actions render as a row above the pill; insert appends with a space, set replaces; the context names the surface', () => {
+    const seen: unknown[] = [];
+    usePluginRegistry.getState().register('fav', { composerActions: [
+      { id: 'a', label: 'Summarise', onClick: (ctx) => { seen.push({ surface: ctx.surface, terminalId: ctx.terminalId }); ctx.insert('Summarise where you are.'); } },
+      { id: 'b', label: 'Replace', onClick: (ctx) => ctx.set('fresh text') },
+    ] });
+    const onChange = vi.fn();
+    render(<PillComposer {...base} value="hello" onChange={onChange} dictation={dictation()} pluginContext={{ surface: 'thread', terminalId: 't1' }} />);
+    const row = screen.getByTestId('composer-plugin-actions');
+    expect(row.compareDocumentPosition(screen.getByTestId('pill-composer')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Summarise' }));
+    expect(onChange).toHaveBeenCalledWith('hello Summarise where you are.');
+    expect(seen).toEqual([{ surface: 'thread', terminalId: 't1' }]);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace' }));
+    expect(onChange).toHaveBeenCalledWith('fresh text');
+  });
+
+  it('insert into an empty composer adds no leading space; `when` hides an action; the row is absent with no actions', () => {
+    const onChange = vi.fn();
+    usePluginRegistry.getState().register('fav', { composerActions: [
+      { id: 'a', label: 'Go', onClick: (ctx) => ctx.insert('Run the tests.') },
+      { id: 'chat-only', label: 'Chat only', when: (ctx) => ctx.surface === 'chat', onClick: () => {} },
+    ] });
+    render(<PillComposer {...base} value="" onChange={onChange} dictation={dictation()} pluginContext={{ surface: 'thread' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    expect(onChange).toHaveBeenCalledWith('Run the tests.');
+    expect(screen.queryByRole('button', { name: 'Chat only' })).toBeNull();
+    usePluginRegistry.setState({ composerActions: [] });
+    const { queryByTestId } = render(<PillComposer {...base} dictation={dictation()} />);
+    expect(queryByTestId('composer-plugin-actions')).toBeNull();
+  });
+});

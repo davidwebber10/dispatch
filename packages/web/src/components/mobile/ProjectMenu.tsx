@@ -6,6 +6,7 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import { RenameProjectModal } from '../sidebar/RenameProjectModal';
 import { useProjects } from '../../stores/projects';
 import { usePreviews } from '../../stores/previews';
+import { useContributions } from '../../plugins/registry';
 
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 15, font: 'inherit' };
 
@@ -16,6 +17,8 @@ const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8
  */
 export function ProjectMenu({ project, open, unseen, onClose, onArchived }: { project: Session; open: boolean; unseen: number; onClose: () => void; onArchived: () => void }) {
   const [renaming, setRenaming] = useState(false);
+  // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
+  const pluginItems = useContributions('projectMenu');
   const [archiving, setArchiving] = useState(false);
   const archive = async () => {
     setArchiving(false);
@@ -29,6 +32,9 @@ export function ProjectMenu({ project, open, unseen, onClose, onArchived }: { pr
             <Eye size={17} />Previews
             {unseen > 0 && <span style={{ marginLeft: 'auto', font: '500 12px var(--font-mono)', color: 'var(--color-accent)' }}>{unseen} new</span>}
           </button>
+          {pluginItems.filter((p) => !p.when || p.when({ session: project })).map((p) => (
+            <button key={`${p.plugin}:${p.id}`} type="button" style={row} onClick={() => { onClose(); p.onPick({ session: project }); }}>{p.label}</button>
+          ))}
           <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />
           <button type="button" style={row} onClick={() => { onClose(); setRenaming(true); }}><PencilSimple size={17} />Rename project</button>
           <button type="button" style={{ ...row, color: 'var(--color-status-red)' }} onClick={() => { onClose(); setArchiving(true); }}><Archive size={17} />Archive project</button>

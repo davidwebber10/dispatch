@@ -1,3 +1,4 @@
+import { useContributions } from '../../plugins/registry';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Terminal } from '../../api/types';
@@ -41,6 +42,8 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
   const [accountTarget, setAccountTarget] = useState<Terminal | null>(null);
   // Desktop shows the same details in its right-hand panel; a phone has no panel.
   const isMobile = useIsMobile();
+  // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
+  const pluginItems = useContributions('threadMenu');
 
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
@@ -94,6 +97,9 @@ export function ThreadMenu({ at, onClose, onBranched, lead }: { at: ThreadMenuAt
             {THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick((t) => void copyId(t))} style={isMobile ? sheetItem : item}>Copy thread ID</button>
             )}
+            {pluginItems.filter((p) => !p.when || p.when({ tab: at.tab })).map((p) => (
+              <button key={`${p.plugin}:${p.id}`} onClick={pick((t) => p.onPick({ tab: t }))} style={isMobile ? sheetItem : item}>{p.label}</button>
+            ))}
             {THREAD_TYPES.includes(at.tab.type) && (
               <button onClick={pick(reload)} style={isMobile ? sheetItem : item}>Reload thread</button>
             )}

@@ -405,6 +405,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             stopMode={stopMode}
             onStop={doStop}
             placeholder="Message…"
+            pluginContext={{ surface: 'thread', terminalId, sessionId }}
             onAddFile={() => fileInputRef.current?.click()}
             dictation={dictation}
             sttConfigured={sttConfigured}

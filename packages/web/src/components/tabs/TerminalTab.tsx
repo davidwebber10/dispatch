@@ -1016,6 +1016,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         <div style={{ padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', flexShrink: 0 }}>
           <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
           <PillComposer
+            pluginContext={{ surface: 'terminal', terminalId: terminalId }}
             value={mobileInput}
             onChange={setMobileInput}
             onSend={sendMobileInput}

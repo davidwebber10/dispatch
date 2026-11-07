@@ -1,3 +1,4 @@
+import { useContributions, type ComposerCtx } from '../../plugins/registry';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { ArrowUp, Microphone, Stop } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
@@ -30,6 +31,10 @@ export interface PillComposerProps {
   onAddFile: () => void;
   /** Extra rows at the top of the + menu (Chat's project choice). */
   menuExtra?: (close: () => void) => ReactNode;
+  /** Which composer this is, for plugin composer actions (docs/superpowers/specs/2026-11-07-plugins-design.md). */
+  pluginContext?: { surface: ComposerCtx['surface']; terminalId?: string; sessionId?: string };
+  /** Send text through the composer's own path; plugin actions get `send` only when this is given. */
+  onSendText?: (text: string) => void;
   dictation: Dictation;
   /** False shows the mic greyed out, pointing at Settings → Dictation. */
   sttConfigured: boolean;
@@ -47,7 +52,7 @@ export interface PillComposerProps {
 const MAX_FRACTION = 0.5;
 
 export function PillComposer({
-  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra,
+  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, pluginContext, onSendText,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
@@ -118,9 +123,26 @@ export function PillComposer({
   });
   // A mic with dictation not set up says so, with a link to the setting, instead of doing nothing.
   const [micHint, setMicHint] = useState(false);
+  // Plugin buttons above the pill (the composer-favourites example): each gets the composer's context.
+  const pluginActions = useContributions('composerActions');
+  const composerCtx: ComposerCtx = {
+    surface: pluginContext?.surface ?? 'unknown', terminalId: pluginContext?.terminalId, sessionId: pluginContext?.sessionId, value,
+    insert: (t) => onChange(value ? `${value}${/\s$/.test(value) ? '' : ' '}${t}` : t),
+    set: (t) => onChange(t),
+    send: onSendText,
+  };
+  const shownActions = pluginActions.filter((a) => !a.when || a.when(composerCtx));
 
   return (
     <>
+    {shownActions.length > 0 && (
+      <div data-testid="composer-plugin-actions" style={{ display: 'flex', gap: 6, padding: '0 2px 6px', overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {shownActions.map((a) => (
+          <button key={`${a.plugin}:${a.id}`} type="button" onClick={() => a.onClick(composerCtx)}
+            style={{ flexShrink: 0, height: 28, padding: '0 11px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>{a.label}</button>
+        ))}
+      </div>
+    )}
     {micHint && !sttConfigured && (
       <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 6px 8px', fontSize: 13 }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-text-secondary)' }}>Dictation isn't set up yet.</span>

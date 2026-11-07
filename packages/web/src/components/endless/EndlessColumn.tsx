@@ -310,6 +310,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         {/* The shared composer (composer/PillComposer.tsx). The + holds Project and Add file. */}
         <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
         <PillComposer
+            pluginContext={{ surface: 'chat' }}
           value={text}
           onChange={setText}
           onSend={() => void submit()}
