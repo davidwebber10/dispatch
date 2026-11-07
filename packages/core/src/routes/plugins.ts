@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Router, RequestHandler, Request } from 'express';
@@ -12,6 +13,7 @@ import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { AssistRunner } from '../assist/run.js';
+import type { PluginWorkers } from '../plugins/workers.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): the manifests, the owner's
@@ -32,16 +34,33 @@ const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
   : { ok: false, status: 403, error: 'out_of_scope', message: 'A plugin reaches its own storage only.' });
 
 /** A thread reaches a plugin's documents only when the plugin granted threads that access (spec section 5). */
-function grantRule(plugins: PluginRegistry, kind: 'read' | 'write'): Rule {
+function grantRule(plugins: PluginRegistry, kind: 'read' | 'write' | 'call-worker'): Rule {
+  const permission = kind === 'call-worker' ? 'threads:call-worker' : `threads:${kind}-storage`;
+  const what = kind === 'call-worker' ? 'call its worker' : `${kind} its storage`;
   return (req) => {
     const facts = plugins.facts(req.params.id);
     // A disabled or broken plugin granted nothing: its documents stay closed to every thread.
     if (!facts) return { ok: false, status: 404, error: 'out_of_scope', message: 'unknown plugin' };
-    return facts.permissions.includes(`threads:${kind}-storage`)
+    return facts.permissions.includes(permission)
       ? OK
-      : { ok: false, status: 403, error: 'out_of_scope', message: `The plugin "${req.params.id}" does not let threads ${kind} its storage.` };
+      : { ok: false, status: 403, error: 'out_of_scope', message: `The plugin "${req.params.id}" does not let threads ${what}.` };
   };
 }
+
+/** Who is calling, for the worker: the owner, a thread, or a plugin (never the credential itself). */
+function principalHeaders(req: Request): Record<string, string> {
+  let p;
+  try { p = principalOf(req); } catch { return { 'x-dispatch-principal': 'owner' }; }
+  if (p.kind === 'thread') {
+    const c = scopeOf(req).caller(p.terminalId);
+    return { 'x-dispatch-principal': `thread:${p.terminalId}`, ...(c?.sessionId ? { 'x-dispatch-session': c.sessionId } : {}) };
+  }
+  if (p.kind === 'plugin') return { 'x-dispatch-principal': `plugin:${p.pluginId}` };
+  return { 'x-dispatch-principal': 'owner' };
+}
+
+/** Headers that never cross to the worker: the caller's credentials and the hop-by-hop set. */
+const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
 
 /** The writer stamped on a document a thread key writes: from the key, never from the body. */
 function writerOf(req: Request): pluginData.Writer | null {
@@ -210,6 +229,53 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!known(req, res)) return;
     if (!pluginData.removeFile(db, req.params.id, req.params.fileId)) return void res.status(404).json({ error: 'file not found' });
     res.status(204).end();
+  });
+
+  // ── the worker (spec section 4): logs, restart, and the socket proxy ──────────────────────
+  const workersOf = (req: Request): PluginWorkers | null => (req.app.locals.pluginWorkers as PluginWorkers | undefined) ?? null;
+
+  router.get('/plugins/:id/logs', (req, res) => {
+    if (!known(req, res)) return;
+    const lines = Math.max(1, Math.min(2000, Number(req.query.lines) || 200));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('text/plain').send(workersOf(req)?.logTail(req.params.id, lines) ?? '');
+  });
+
+  // Before the proxy's catch-all: the owner's Restart is the daemon's, not the worker's.
+  router.post('/plugins/:id/worker/restart', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    const w = workersOf(req);
+    if (!w) return void res.status(503).json({ error: 'no_supervisor' });
+    w.restart(req.params.id);
+    res.json(w.stats(req.params.id) ?? { state: 'stopped' });
+  });
+
+  // The proxy: the caller's principal in headers, never its credential; the worker answers as itself.
+  const workerRule = keyRoute({ plugin: ownPluginRule, thread: grantRule(plugins, 'call-worker'), roleRun: grantRule(plugins, 'call-worker') });
+  router.all('/plugins/:id/worker/*', workerRule, (req, res) => {
+    if (!known(req, res)) return;
+    const stats = workersOf(req)?.stats(req.params.id);
+    if (!stats?.socket) return void res.status(502).json({ error: 'no_worker', message: 'The plugin has no worker listening.' });
+    const rest = String(req.params[0] ?? '');
+    const q = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(k.toLowerCase()) && typeof v === 'string') headers[k] = v;
+    Object.assign(headers, principalHeaders(req));
+    const hasJson = req.is('application/json') && req.body !== undefined && typeof req.body === 'object';
+    const body = hasJson ? Buffer.from(JSON.stringify(req.body)) : null;
+    if (body) { headers['content-type'] = 'application/json'; headers['content-length'] = String(body.length); }
+    const up = http.request({ socketPath: stats.socket, path: `/${rest}${q}`, method: req.method, headers }, (r) => {
+      res.status(r.statusCode ?? 502);
+      for (const [k, v] of Object.entries(r.headers)) if (v !== undefined && !['connection', 'keep-alive', 'transfer-encoding'].includes(k)) res.setHeader(k, v as string | string[]);
+      r.pipe(res);
+      r.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'no_worker' }); else res.end(); });
+    });
+    up.setTimeout(60_000, () => up.destroy(new Error('timeout')));
+    up.on('error', () => { if (!res.headersSent) res.status(502).json({ error: 'no_worker', message: 'The worker did not answer.' }); else res.end(); });
+    res.on('close', () => { if (!res.writableFinished) up.destroy(); });
+    if (body) up.end(body);
+    else if (req.method === 'GET' || req.method === 'HEAD') up.end();
+    else req.pipe(up);
   });
 
   // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──
