@@ -114,7 +114,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/:id/data', dataRead, (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ docs: pluginData.listDocs(db, req.params.id) });
+    res.json({ docs: req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }) : pluginData.listDocs(db, req.params.id) });
   });
 
   router.get('/plugins/:id/data/:key', dataRead, (req, res) => {

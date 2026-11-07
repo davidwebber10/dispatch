@@ -35,6 +35,7 @@ const ICONS: Record<string, Icon> = {
   folder: Icons.Folder, terminal: Icons.TerminalWindow, git: Icons.GitBranch, cloud: Icons.Cloud, database: Icons.Database,
   bell: Icons.Bell, chart: Icons.ChartBar, list: Icons.ListChecks, play: Icons.Play, gear: Icons.Gear, eye: Icons.Eye,
   chat: Icons.ChatCircleDots, book: Icons.BookOpen, bug: Icons.Bug, shield: Icons.ShieldCheck, globe: Icons.Globe, wrench: Icons.Wrench,
+  copy: Icons.Copy, check: Icons.Check, trash: Icons.Trash, image: Icons.Image, file: Icons.FileText, pdf: Icons.FilePdf, html: Icons.FileHtml, csv: Icons.FileCsv, x: Icons.X,
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
 
@@ -61,6 +62,10 @@ const storage = {
   },
   list(plugin: string): Promise<string[]> {
     return queued(plugin, async () => (await api.listPluginDocs(plugin)).docs.map((d) => d.key));
+  },
+  /** Every document with its value, in one call (a store the plugin reads whole). */
+  all<T = unknown>(plugin: string): Promise<{ key: string; value: T }[]> {
+    return queued(plugin, async () => (await api.listPluginDocsWithValues(plugin)).docs.map((d) => ({ key: d.key, value: d.value as T })));
   },
 };
 const settings = {
@@ -153,6 +158,8 @@ export interface DispatchSdk {
   assist: typeof assist;
   /** fetch with the plugin named in a header. */
   fetch: typeof pluginFetch;
+  /** An app-root-relative path (`/api/...`, `/plugins/...`) as the browser must request it. */
+  apiPath: typeof apiPath;
   hint: (msg: string) => void;
   copyText: (text: string) => Promise<void>;
   register: (plugin: string, c: Contributions) => void;
@@ -186,6 +193,7 @@ export function buildSdk(): DispatchSdk {
     events,
     assist,
     fetch: pluginFetch,
+    apiPath,
     hint: (msg) => useHint.getState().show(msg),
     copyText,
     register: (plugin, c) => usePluginRegistry.getState().register(plugin, c),

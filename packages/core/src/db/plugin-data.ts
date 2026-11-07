@@ -54,8 +54,12 @@ export function deleteDoc(db: Database.Database, pluginId: string, key: string):
   return db.prepare('DELETE FROM plugin_data WHERE plugin_id = ? AND key = ?').run(pluginId, key).changes > 0;
 }
 
-export function listDocs(db: Database.Database, pluginId: string): PluginDocMeta[] {
+export function listDocs(db: Database.Database, pluginId: string): PluginDocMeta[];
+export function listDocs(db: Database.Database, pluginId: string, opts: { values: true }): PluginDoc[];
+/** The documents of a plugin, by key; with `values` each carries its value (one call for a store). */
+export function listDocs(db: Database.Database, pluginId: string, opts?: { values?: boolean }): PluginDocMeta[] | PluginDoc[] {
   const rows = db.prepare('SELECT * FROM plugin_data WHERE plugin_id = ? ORDER BY key').all(pluginId) as Row[];
+  if (opts?.values) return rows.map(toDoc);
   return rows.map((r) => ({ key: r.key, writer: parseWriter(r.writer), updatedAt: r.updated_at, bytes: Buffer.byteLength(r.value, 'utf8') }));
 }
 

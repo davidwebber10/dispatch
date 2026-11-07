@@ -420,6 +420,7 @@ export const api = {
   copyPlugin: (id: string, newId: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/copy`, { method: 'POST', body: JSON.stringify({ id: newId }) }),
   // Plugin storage and settings (spec section 5). A missing document is null, not an error.
   listPluginDocs: (id: string) => req<{ docs: PluginDocMeta[] }>(`/api/plugins/${encodeURIComponent(id)}/data`),
+  listPluginDocsWithValues: (id: string) => req<{ docs: PluginDoc[] }>(`/api/plugins/${encodeURIComponent(id)}/data?values=1`),
   getPluginDoc: async (id: string, key: string): Promise<PluginDoc | null> => {
     try { return await req<PluginDoc>(`/api/plugins/${encodeURIComponent(id)}/data/${encodeURIComponent(key)}`); }
     catch (e) { if (e instanceof ApiError && e.status === 404) return null; throw e; }

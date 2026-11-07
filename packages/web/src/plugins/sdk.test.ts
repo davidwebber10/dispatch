@@ -19,8 +19,8 @@ function fakeDaemon() {
       if (method === 'PUT') { const body = JSON.parse(String(init?.body)) as { value: unknown }; await new Promise((r) => setTimeout(r, 5)); docs.set(k, body.value); return json(200, { key: m[2], value: body.value, writer: null, updatedAt: 't', bytes: 1 }); }
       if (method === 'DELETE') { const had = docs.delete(k); return had ? { ok: true, status: 204, json: async () => null, text: async () => '', headers: new Headers() } : json(404, {}); }
     }
-    m = /\/api\/plugins\/([^/]+)\/data$/.exec(url);
-    if (m) return json(200, { docs: [...docs.keys()].filter((k) => k.startsWith(`${m![1]}/`)).map((k) => ({ key: k.split('/')[1], writer: null, updatedAt: 't', bytes: 1 })) });
+    m = /\/api\/plugins\/([^/]+)\/data(\?values=1)?$/.exec(url);
+    if (m) return json(200, { docs: [...docs.keys()].filter((k) => k.startsWith(`${m![1]}/`)).map((k) => ({ key: k.split('/')[1], writer: null, updatedAt: 't', bytes: 1, ...(m![2] ? { value: docs.get(k) } : {}) })) });
     m = /\/api\/plugins\/([^/]+)\/assist$/.exec(url);
     if (m && method === 'POST') { const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] }; return json(200, { text: `judged: ${body.messages[0].content}`, usage: { inputTokens: 10, outputTokens: 5 }, ms: 100, model: 'fake' }); }
     m = /\/api\/plugins\/([^/]+)\/settings$/.exec(url);
@@ -47,6 +47,15 @@ describe('plugin SDK storage on the daemon (2026-11-07)', () => {
     expect(await d.storage.list('p')).toEqual(['pins']);
     await d.storage.remove('p', 'pins');
     expect(await d.storage.get('p', 'pins', 'gone')).toBe('gone');
+  });
+
+  it('storage.all returns every document with its value in one call; apiPath prefixes the app base', async () => {
+    const d = fakeDaemon(); vi.stubGlobal('fetch', d.fetch);
+    const sdk = buildSdk();
+    await sdk.storage.set('p', 'x', 1); await sdk.storage.set('p', 'y', { z: 2 });
+    expect(await sdk.storage.all('p')).toEqual([{ key: 'x', value: 1 }, { key: 'y', value: { z: 2 } }]);
+    expect(d.calls.filter((c) => c.includes('values=1'))).toHaveLength(1);
+    expect(sdk.apiPath('/api/plugins/p/files/f1')).toMatch(/\/api\/plugins\/p\/files\/f1$/);
   });
 
   it('two sets in a row land in order', async () => {

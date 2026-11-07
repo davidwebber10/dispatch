@@ -1,0 +1,22 @@
+{
+  "id": "previews",
+  "name": "Previews",
+  "version": "1.0.0",
+  "description": "A thread hands you files to look at and text to copy: a badge, a sheet on the phone, a history on the desktop.",
+  "author": "dispatch",
+  "dispatch": ">=3.27",
+  "sdk": 1,
+  "web": "web.js",
+  "enabledByDefault": true,
+  "contributes": {
+    "views": [{ "id": "history", "label": "Previews", "icon": "eye" }],
+    "threadMenu": [{ "id": "open", "label": "Previews" }],
+    "projectMenu": [{ "id": "open", "label": "Previews" }],
+    "slots": ["project.header.actions", "thread.header.actions", "app.overlay"]
+  },
+  "permissions": ["threads:read-storage", "threads:write-storage"],
+  "model": {
+    "instructions": "instructions.md",
+    "mcp": { "command": "node", "args": ["mcp/server.mjs"] }
+  }
+}

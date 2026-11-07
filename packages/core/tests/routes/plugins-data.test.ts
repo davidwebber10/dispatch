@@ -58,6 +58,15 @@ describe('plugin storage routes (2026-11-07)', () => {
     await put({}, 'open', 'bad key', 1).expect(400);
   });
 
+  it('?values=1 lists the documents with their values, for the owner and for a key that may read', async () => {
+    await put({}, 'open', 'a', { n: 1 });
+    await put({}, 'open', 'b', 'two');
+    const r = await request(app).get('/api/plugins/open/data?values=1');
+    expect(r.body.docs.map((d: any) => [d.key, d.value])).toEqual([['a', { n: 1 }], ['b', 'two']]);
+    expect((await request(app).get('/api/plugins/open/data')).body.docs[0].value).toBeUndefined();
+    expect((await request(app).get('/api/plugins/open/data?values=1').set(asThread())).body.docs.map((d: any) => d.value)).toEqual([{ n: 1 }, 'two']);
+  });
+
   it('a plugin key reaches its own storage only', async () => {
     expect((await put(asPlugin('closed'), 'closed', 'k', 1)).status).toBe(200);
     expect((await request(app).get('/api/plugins/closed/data/k').set(asPlugin('closed'))).body.value).toBe(1);
