@@ -8,9 +8,9 @@ import type * as React from 'react';
 export type SdkVersion = 1;
 
 // ── the app's data a plugin reads ────────────────────────────────────────────────────────────
-export interface Session { id: string; name: string; workingDir: string; provider: string; status: string; [key: string]: unknown }
-export interface Terminal { id: string; sessionId: string; type: string; label: string; status?: string; config?: Record<string, unknown>; [key: string]: unknown }
-export interface PluginRow { id: string; name: string; version: string; description?: string; enabled: boolean; bundled?: boolean; install?: { marketplace: string; version: string } | null; permissions?: string[]; [key: string]: unknown }
+export interface Session { id: string; name: string; workingDir: string; provider: string; status: string }
+export interface Terminal { id: string; sessionId: string; type: string; label: string; status?: string }
+export interface PluginRow { id: string; name: string; version: string; description?: string; enabled: boolean; bundled?: boolean; install?: { marketplace: string; version: string } | null; permissions?: string[] }
 export interface PluginDoc { key: string; value: unknown; writer: { terminalId: string; sessionId: string; label: string | null } | null; updatedAt: string; bytes: number }
 
 /** A zustand store as the app exposes it: call it with a selector inside a component; `getState` elsewhere. */
