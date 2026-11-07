@@ -1051,11 +1051,14 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         <div ref={composerOverlayRef} data-testid="term-composer-overlay" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 9, padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', boxShadow: tall && !minimized ? '0 -10px 24px -14px var(--color-shadow)' : undefined, borderTop: tall ? '1px solid var(--color-border)' : undefined }}>
           {tall && (
             <button type="button" aria-label={minimized ? 'Expand the message box' : 'Minimize the message box'}
-              onPointerDown={(e) => { handleDownY.current = e.clientY; }}
+              // Keep the pointer while the finger drags off the handle, so the release lands here.
+              onPointerDown={(e) => { handleDownY.current = e.clientY; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom */ } }}
               onPointerUp={(e) => {
                 const dy = e.clientY - (handleDownY.current ?? e.clientY);
                 handleDownY.current = null;
-                if (minimized) { if (dy < 10) setMinimized(false); } else if (dy > 24) setMinimized(true);
+                const tap = Math.abs(dy) < 10;
+                // Drag down or tap: two lines. Drag up or tap: full size again.
+                if (minimized) { if (tap || dy < -24) setMinimized(false); } else if (tap || dy > 24) setMinimized(true);
               }}
               style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: 18, margin: '-2px 0 2px', padding: 0, background: 'none', border: 'none', cursor: 'grab', touchAction: 'none' }}>
               <span aria-hidden style={{ width: 36, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--color-text-tertiary)', opacity: 0.6 }} />

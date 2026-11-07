@@ -397,6 +397,9 @@ test('the phone composer grows over the terminal, not into it; a handle shrinks 
   const expand = screen.getByRole('button', { name: 'Expand the message box' });
   act(() => { fireEvent.pointerDown(expand, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(expand, { clientY: 160, pointerId: 1 }); });
   expect(box.style.height).toBe('300px');
+  // A tap on the handle of a tall box also shrinks it.
+  act(() => { const h = screen.getByRole('button', { name: 'Minimize the message box' }); fireEvent.pointerDown(h, { clientY: 50, pointerId: 1 }); fireEvent.pointerUp(h, { clientY: 52, pointerId: 1 }); });
+  expect(box.style.height).toBe('64px');
 });
 
 test('the keys live in a sheet behind the +: no always-on row, and Clear input empties the prompt', async () => {
