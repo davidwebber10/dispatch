@@ -105,7 +105,7 @@ import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { ThreadEvents } from './plugins/thread-events.js';
 import { PluginHooks } from './plugins/hooks.js';
-import { createAssistRunner, type AssistRunner } from './assist/run.js';
+import { createAssistRunner, commandAssistRunner, type AssistRunner } from './assist/run.js';
 import * as pluginData from './db/plugin-data.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
@@ -601,7 +601,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   let titleSpawnEnv: Record<string, string> = {};
   const titleCliDeps = { env: () => ({ ...inheritedEnv(), ...titleSpawnEnv }) };
   // Model assist for plugins (spec section 3.4): the same signed-in CLI the titles use, else the OpenRouter key.
-  const assistRunner = createAssistRunner({ cli: titleCliDeps, getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null) });
+  const assistRunner = process.env.DISPATCH_ASSIST_COMMAND
+    ? commandAssistRunner(process.env.DISPATCH_ASSIST_COMMAND)
+    : createAssistRunner({ cli: titleCliDeps, getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null) });
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),

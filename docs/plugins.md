@@ -145,6 +145,65 @@ For a plugin's processes (or `d.fetch`):
 The owner (the browser) reaches everything. A plugin key reaches its own plugin only. A thread
 key reaches a plugin's documents only with the grants above.
 
+## Instructions and tools for the model
+
+The `model` block of the manifest reaches every thread (all harnesses, or the ones in
+`harnesses`):
+
+```json
+"model": {
+  "instructions": "instructions.md",
+  "mcp": { "command": "node", "args": ["mcp/server.js"], "env": { "LOG": "1" } },
+  "hooks": { "prompt": { "run": "hooks/on-prompt.js" }, "toolCall": { "run": "hooks/on-tool.js", "tools": ["Bash", "mcp__dispatch__*"] } },
+  "harnesses": ["claude-code", "codex", "opencode", "grok"]
+}
+```
+
+- `instructions` is a Markdown file whose text joins the thread's system prompt after
+  Dispatch's own prompts, under `## Plugin: <name>`, in plugin id order.
+- `mcp` is an MCP server the daemon injects into every thread as `plugin-<id>`. It runs with
+  `DISPATCH_PLUGIN=<id>`, `DISPATCH_PLUGIN_AUTH_FILE=<the plugin's key file>` and, like the
+  `dispatch` server, the thread's key in `DISPATCH_AUTH`. A relative command or arg that names
+  a file in the plugin folder is made absolute. Thread details show every server a thread was
+  launched with (`toolsAvailable`).
+
+## Thread events and hooks
+
+The daemon raises one stream of events for every thread, whichever harness:
+
+| Event | When | Carries |
+| --- | --- | --- |
+| `thread:spawned` | a thread starts | `toolsAvailable` |
+| `thread:prompt` | the user sent a prompt | `text` (with `read:prompts`), `textLength`, `source` |
+| `thread:tool` | the model called a tool | `tool`, `input` (with `read:prompts`), `inputLength` |
+| `thread:turn` | a turn ended | `ms`, `inputTokens`, `outputTokens`, `costUsd`, `outcome`, `summary`; `partial: true` when a CLI thread gave no usage |
+| `thread:status` | `report_status` | `state`, `summary`, `ask`, `blocker` |
+
+In the browser, `d.events.on('thread:prompt', handler)` (one type, a list, or `'*'`) receives
+them; the browser runs with your power, so it sees the text.
+
+`model.hooks` runs a script in the plugin folder per event (`prompt`, `toolCall` with an
+optional `tools` glob list, `turnEnd`, `spawn`, `status`) with the event as JSON on stdin and
+`DISPATCH_PLUGIN`, `DISPATCH_PLUGIN_AUTH_FILE`, `DISPATCH_API`, `DISPATCH_TERMINAL` and
+`DISPATCH_SESSION` in the environment. Without `read:prompts` the script gets lengths, not
+text. One script runs at a time per plugin, with a 10 s timeout and a backlog of 100; the
+Plugins page shows runs, failures and drops. Hooks observe; a blocking hook (deny a tool
+call) is not in this slice.
+
+## Assist: one model call
+
+`d.assist(plugin, { system, messages, maxTokens })` runs one turn on the daemon's assist model
+(the signed-in Claude Code CLI, else the OpenRouter key) with no tools, and returns
+`{ text, usage, ms, model }`. It needs `model:assist`; every call is metered on the Plugins
+page. A plugin's processes call `POST /api/plugins/<id>/assist` with the same body.
+
+## Bundled plugins
+
+`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: the Prompt coach is one.
+A bundled plugin updates with Dispatch, can be disabled, cannot be removed, and is not edited in
+place; "Copy to local…" on the Plugins page duplicates it under a new id. A local plugin with
+the same id hides the bundled one.
+
 ## Reloading, errors and safe mode
 
 - Save any file in the folder: the daemon tells the app, which re-imports the bundle and

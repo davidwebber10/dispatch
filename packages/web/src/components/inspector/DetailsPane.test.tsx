@@ -70,3 +70,16 @@ it('a refresh from new turn numbers keeps the rows on screen while it loads (no 
   act(() => { useActivity.setState({ byTerminal: { t1: { tokens: '12k', cost: '$1' } as any } }); });
   expect(screen.getByText('Session (5h)')).toBeTruthy();
 });
+
+it('lists the servers the thread was launched with under Tools, and nothing when the row has none (2026-11-07)', async () => {
+  vi.spyOn(api, 'getUsageLimits').mockResolvedValue({ provider: 'claude-code', supported: false, paused: null, snapshot: null } as any);
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', workingDir: '/tmp/x', pid: 1, status: 'idle', type: 'claude-code', config: { toolsAvailable: ['doppler', 'dispatch', 'plugin-prompt-coach'] } } as any);
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  expect(await screen.findByText('Tools')).toBeTruthy();
+  expect(screen.getByText('doppler, dispatch, plugin-prompt-coach')).toBeTruthy();
+  cleanup();
+  vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', workingDir: '/tmp/x', pid: 1, status: 'idle', type: 'claude-code', config: {} } as any);
+  render(<DetailsPane projectId="p1" terminalId="t1" />);
+  await screen.findByText('ID');
+  expect(screen.queryByText('Tools')).toBeNull();
+});

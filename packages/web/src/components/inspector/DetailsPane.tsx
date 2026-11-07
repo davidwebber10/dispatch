@@ -78,6 +78,10 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
           {term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
           {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}
           {term?.pid != null && <Row label="PID" value={String(term.pid)} mono />}
+          {/* Every MCP server the thread was launched with (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3). */}
+          {Array.isArray((term?.config as { toolsAvailable?: unknown } | undefined)?.toolsAvailable) && ((term!.config as { toolsAvailable: string[] }).toolsAvailable.length > 0) && (
+            <Row label="Tools" value={(term!.config as { toolsAvailable: string[] }).toolsAvailable.join(', ')} mono />
+          )}
           {status && <Row label="Status" value={status} />}
           {account && <Row label="Account" value={account.pinned ? account.label : `${account.label} (default)`} />}
         </>

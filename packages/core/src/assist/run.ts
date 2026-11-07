@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { runCommand, usable, scratchDir, type CliNamerDeps, type CommandRunner } from '../sessions/cli-namer.js';
 
 /**
@@ -93,5 +94,36 @@ export function createAssistRunner(deps: { cli: CliNamerDeps; getApiKey?: () => 
   return {
     available: async () => (await usable('claude', deps.cli)) !== null || !!(await deps.getApiKey?.().catch(() => null)),
     run: async (req) => (await viaClaude(req)) ?? (await viaOpenRouter(req)),
+  };
+}
+
+/**
+ * A test seam (`DISPATCH_ASSIST_COMMAND`): a shell command that reads the request as JSON on
+ * stdin and writes the result as JSON on stdout. Lets an end-to-end run use a fake model.
+ */
+export function commandAssistRunner(command: string, timeoutMs = 30_000): AssistRunner {
+  return {
+    available: async () => true,
+    run: (req) => new Promise((resolve) => {
+      const started = Date.now();
+      let out = ''; let done = false;
+      const finish = (v: AssistResult | null) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+      let child: ReturnType<typeof spawn>;
+      try { child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'] }); } catch { resolve(null); return; }
+      const ee = child as unknown as NodeJS.EventEmitter;
+      const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } finish(null); }, timeoutMs);
+      child.stdout?.on('data', (d) => { out += String(d); });
+      ee.on('error', () => finish(null));
+      ee.on('close', (code: number | null) => {
+        if (code !== 0) return finish(null);
+        try {
+          const v = JSON.parse(out) as Partial<AssistResult>;
+          if (typeof v.text !== 'string') return finish(null);
+          finish({ text: v.text, usage: { inputTokens: v.usage?.inputTokens ?? 0, outputTokens: v.usage?.outputTokens ?? 0 }, ms: typeof v.ms === 'number' ? v.ms : Date.now() - started, model: v.model ?? 'command' });
+        } catch { finish(null); }
+      });
+      child.stdin?.on('error', () => { /* the command closed stdin early */ });
+      child.stdin?.end(JSON.stringify(req));
+    }),
   };
 }

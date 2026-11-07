@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createAssistRunner, parseClaudeJson, transcriptOf } from './run.js';
+import { createAssistRunner, parseClaudeJson, transcriptOf, commandAssistRunner } from './run.js';
 
 describe('assist runner (2026-11-07)', () => {
   const cli = (over: Record<string, unknown> = {}) => ({ env: () => ({}), bin: async () => '/usr/local/bin/claude', signedIn: async () => true as const, ...over });
@@ -36,5 +36,16 @@ describe('assist runner (2026-11-07)', () => {
     const r3 = createAssistRunner({ cli: cli({ signedIn: async () => false as const }) });
     expect(await r3.available()).toBe(false);
     expect(await r3.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 50 })).toBeNull();
+  });
+});
+
+describe('commandAssistRunner (a test seam: DISPATCH_ASSIST_COMMAND)', () => {
+  it('spawns the command with the request on stdin and parses its JSON answer', async () => {
+    const script = `const chunks=[];process.stdin.on('data',(c)=>chunks.push(c));process.stdin.on('end',()=>{const req=JSON.parse(Buffer.concat(chunks).toString());process.stdout.write(JSON.stringify({text:'echo: '+req.messages[0].content,usage:{inputTokens:3,outputTokens:4},ms:1,model:'cmd'}));});`;
+    const r = commandAssistRunner(`${process.execPath} -e ${JSON.stringify(script)}`);
+    expect(await r.available()).toBe(true);
+    expect(await r.run({ messages: [{ role: 'user', content: 'hi' }], maxTokens: 10 })).toEqual({ text: 'echo: hi', usage: { inputTokens: 3, outputTokens: 4 }, ms: 1, model: 'cmd' });
+    const bad = commandAssistRunner(`${process.execPath} -e "process.stdout.write('not json')"`);
+    expect(await bad.run({ messages: [{ role: 'user', content: 'hi' }], maxTokens: 10 })).toBeNull();
   });
 });
