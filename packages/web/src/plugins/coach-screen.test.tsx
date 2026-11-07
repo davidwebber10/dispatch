@@ -148,4 +148,11 @@ describe('Coach web part: no emoji, no literal colors (themes)', () => {
     expect(code).not.toMatch(/(?<![\w&/])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b/);
     expect(code).not.toMatch(/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/);
   });
+  it('every CSS variable web.js uses is a token the theme defines', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../plugins/coach/web.js'), 'utf8');
+    const theme = fs.readFileSync(path.resolve(__dirname, '../theme.css'), 'utf8');
+    const used = [...new Set([...src.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))];
+    expect(used.length).toBeGreaterThan(5);
+    expect(used.filter((v) => !theme.includes(`${v}:`))).toEqual([]);
+  });
 });

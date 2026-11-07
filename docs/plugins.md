@@ -90,7 +90,7 @@ What `register` takes:
 Icons are names from the SDK's map (`puzzle`, `sun`, `star`, `sparkle`, `lightning`,
 `calendar`, `clock`, `note`, `rocket`, `flag`, `heart`, `folder`, `terminal`, `git`, `cloud`,
 `database`, `bell`, `chart`, `list`, `play`, `gear`, `eye`, `chat`, `book`, `bug`, `shield`,
-`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`); an unknown name shows the puzzle piece.
+`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`, `arrow-up`, `arrow-down`, `arrow-right`, `target`, `plus`); an unknown name shows the puzzle piece.
 
 ### Right-column tabs
 
@@ -343,6 +343,16 @@ hides the bundled one. A bundled plugin starts **disabled** unless its manifest 
 `"enabledByDefault": true`: the Coach makes model calls, so turning it on is the
 owner's choice on the Plugins page. A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).
+
+The Coach (`packages/plugins/coach`) is also a worked example of the plugin features: its worker
+(`worker/index.mjs`, logic in `lib/engine.mjs`) reads the thread events, runs rules over them and
+asks `assist` with a harness and a model per tier, reading the `X-Budget-*` headers to step down
+before the budget refuses; its web part fills the `composer.before` slot, a right-column tab, a
+view, a settings section and two commands, and opens the schedule and new-thread dialogs through
+`d.actions`. It sets its own budget (`PUT /budget`) from its settings, and its weekly job pushes
+the recap through `notify:push` only when the person turns that on. Its documents: `signals`,
+`candidates`, `cards`, `cardState`, `cadence`, `memory`, `status`, `measures`, `recap`. See its
+`README.md`.
 
 ## Marketplaces, install, update
 

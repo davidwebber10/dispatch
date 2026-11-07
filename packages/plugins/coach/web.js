@@ -8,13 +8,15 @@
 // ({ [cardId]: { state, at } }: shown, dismissed, used, down), `cadence` (lib/cadence.mjs), `memory`
 // (lib/memory.mjs), `status` (the worker: the budget it last heard, and the harness it ran on). Reset also
 // strips excerpts from `cards` and `candidates` and drops `signals`.
-import { withDefaults } from './lib/settings.mjs';
+import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
-import { planCall } from './lib/plan.mjs';
+import { planCall, LARGE_DEFAULT } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
 import { morePrompt, parseAnswer } from './lib/prompts.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
+/** The detector each threshold group tunes (Settings → Coach → Advanced). */
+const DETECTOR_OF_THRESHOLD = { repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
 const CLOSED = new Set(['dismissed', 'used', 'down']);
 const WELCOME = Object.freeze({
@@ -34,12 +36,12 @@ const S = {
   why: { color: 'var(--color-text-secondary)', fontSize: 13 },
   row: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' },
   btn: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 },
-  primary: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-accent-foreground)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
+  primary: { height: 28, padding: '0 11px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' },
   icon: { width: 28, height: 28, padding: 0, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 },
   more: { marginTop: 10, borderTop: '1px solid var(--color-border)', paddingTop: 10, fontSize: 13, color: 'var(--color-text-secondary)' },
   ex: { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 10px', margin: '6px 0', fontSize: 12.5, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' },
   exLabel: { display: 'block', marginBottom: 2, font: '600 10px var(--font-mono)', letterSpacing: 1, color: 'var(--color-text-tertiary)' },
-  menu: { position: 'absolute', right: 10, bottom: 44, zIndex: 2, width: 230, padding: 5, borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-popover)', color: 'var(--color-popover-foreground)' },
+  menu: { position: 'absolute', right: 10, bottom: 44, zIndex: 2, width: 230, padding: 5, borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-modal)', color: 'var(--color-text-primary)' },
   menuItem: { display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 'var(--radius-sm)', border: 'none', background: 'none', color: 'inherit', fontSize: 12.5, cursor: 'pointer' },
   sep: { height: 1, margin: '4px 0', background: 'var(--color-border)' },
   note: { marginTop: 8, fontSize: 12, color: 'var(--color-text-tertiary)' },
@@ -48,7 +50,7 @@ const S = {
   chips: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   chip: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'none', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' },
   chipOn: { height: 26, padding: '0 10px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-accent)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', color: 'var(--color-accent)', fontSize: 12, cursor: 'pointer' },
-  input: { marginTop: 8, width: '100%', height: 32, boxSizing: 'border-box', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-input)', color: 'var(--color-text-primary)', fontSize: 12.5, padding: '0 10px' },
+  input: { marginTop: 8, width: '100%', height: 32, boxSizing: 'border-box', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 12.5, padding: '0 10px' },
   toast: { marginTop: 2, fontSize: 12.5, color: 'var(--color-text-secondary)', background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '7px 10px', marginRight: 28 },
   section: { padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' },
   label: { font: '600 10.5px var(--font-mono)', letterSpacing: 1, color: 'var(--color-text-tertiary)' },
@@ -132,7 +134,17 @@ export function createCoach(d, deps = {}) {
     await saveCadence({ ...store.getState().cadence, recapSeen: r.at });
     if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, 0);
   }
-  const ready = load();
+  // The budget is the daemon's (a hard stop it enforces, spec section 7.4). A daemon with none gets
+  // the settings' budget once, so the default 3% holds before anyone opens the settings.
+  async function syncBudget() {
+    const api = d.api || {};
+    if (typeof api.pluginBudget !== 'function' || typeof api.setPluginBudget !== 'function') return;
+    const b = await api.pluginBudget(PLUGIN).catch(() => undefined);
+    if (!b || b.percentWeekly !== null || b.usdWeekly !== null) return;
+    const s = store.getState().settings;
+    await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch(() => {});
+  }
+  const ready = load().then(() => { void syncBudget(); });
   events.on(['plugin:data', 'plugin:settings'], (e) => { if (e.id === PLUGIN) void load(); });
   events.on('thread:prompt', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: true } }); });
   events.on('thread:turn', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: false } }); });
@@ -629,8 +641,127 @@ export function createCoach(d, deps = {}) {
       h(Cost));
   }
 
+  // ── Settings → Coach (spec sections 2, 4.3, 5; mockup part 7): every behavior, with its default ──
+  const SMALL_DEFAULT = { claude: 'claude-haiku-5-5', codex: 'gpt-6.1-terra', openrouter: 'anthropic/claude-haiku-5.5' };
+  const HARNESS_NAME = { claude: 'Claude', codex: 'Codex', openrouter: 'OpenRouter' };
+  async function saveSettings(next) {
+    const s = withDefaults(next);
+    store.setState({ settings: s });
+    await settings.set(PLUGIN, s);
+    return s;
+  }
+  async function saveBudget(patch) {
+    const s = await saveSettings({ ...store.getState().settings, ...patch });
+    const api = d.api || {};
+    if (typeof api.setPluginBudget === 'function') await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch((err) => { if (typeof d.hint === 'function') d.hint(`The budget was not saved: ${err && err.message ? err.message : err}`); });
+  }
+
+  /** A number field that writes on blur or Enter, clamped to [min, max]. */
+  function NumField({ label, value, min, max, step = 1, onSave, width = 70 }) {
+    const [text, setText] = useState(String(value));
+    useEffect(() => { setText(String(value)); }, [value]);
+    const commit = () => {
+      const n = Number(text);
+      if (!Number.isFinite(n) || text.trim() === '') { setText(String(value)); return; }
+      const v = Math.max(min, Math.min(max, n));
+      setText(String(v));
+      if (v !== value) void onSave(v);
+    };
+    return h('input', { type: 'number', 'aria-label': label, value: text, min, max, step, style: { ...S.input, marginTop: 0, width }, onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
+  }
+  function TextField({ label, value, onSave, width = 200 }) {
+    const [text, setText] = useState(value);
+    useEffect(() => { setText(value); }, [value]);
+    const commit = () => { const v = text.trim(); if (v && v !== value && /^\S{1,120}$/.test(v)) void onSave(v); else setText(value); };
+    return h('input', { type: 'text', 'aria-label': label, value: text, style: { ...S.input, marginTop: 0, width }, onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
+  }
+  function Radios({ label, value, options, onPick }) {
+    return h('div', { role: 'radiogroup', 'aria-label': label, style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, ...options.map(([v, text]) =>
+      h('button', { key: v, type: 'button', role: 'radio', 'aria-checked': value === v, style: value === v ? S.chipOn : S.chip, onClick: () => { if (value !== v) void onPick(v); } }, text)));
+  }
+  function Toggle({ label, on, onClick }) {
+    const T = d.ui && d.ui.Toggle;
+    return T ? h(T, { on, label, onClick }) : h('button', { type: 'button', role: 'switch', 'aria-checked': on, 'aria-label': label, style: on ? S.chipOn : S.chip, onClick }, on ? 'On' : 'Off');
+  }
+  const Line = ({ label, hint, children }) => h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--color-border)' } },
+    h('div', { style: { flex: 1, minWidth: 0 } }, h('div', { style: { fontSize: 13, color: 'var(--color-text-primary)' } }, label), hint ? h('div', { style: S.src }, hint) : null),
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } }, children));
+  const Group = (title, ...rows) => h('div', { style: { marginTop: 18 } }, h('div', { style: S.label }, title), ...rows);
+
+  function TierPicker({ tier, s }) {
+    const cur = (s.model && s.model[tier]) || { harness: 'claude', model: tier === 'small' ? SMALL_DEFAULT.claude : LARGE_DEFAULT.claude };
+    const name = tier === 'small' ? 'Small model' : 'Large model';
+    const set = (next) => saveSettings({ ...store.getState().settings, model: { ...store.getState().settings.model, mode: 'pick', [tier]: next } });
+    return h(Line, { label: name, hint: tier === 'small' ? 'Checks each tip (cheap).' : 'Writes tips, More, and the weekly recap.' },
+      h('select', { 'aria-label': `${name} harness`, value: cur.harness, style: { ...S.input, marginTop: 0, width: 120 }, onChange: (e) => { const harness = e.target.value; void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); } },
+        ...Object.keys(HARNESS_NAME).map((k) => h('option', { key: k, value: k }, HARNESS_NAME[k]))),
+      h(TextField, { label: name, value: cur.model, onSave: (model) => set({ harness: cur.harness, model }) }));
+  }
+
+  const THRESHOLD_HINT = {
+    repeatedPrompt: 'The same prompt this many times in this many days', serialIndependent: 'Short threads in one project run one after another',
+    idleWait: 'A thread busy this long while nothing else runs', stepByStep: 'One-line prompts in a row in one thread',
+    noPlanBigTask: 'A long prompt with this many parts and no plan', fastApprove: 'An approval this soon after a long answer',
+    narrowBreadth: 'This share of threads being one kind of work',
+  };
+  function Advanced({ s }) {
+    const th = s.advanced.thresholds;
+    const setTh = (group, field, v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, thresholds: { ...store.getState().settings.advanced.thresholds, [group]: { ...store.getState().settings.advanced.thresholds[group], [field]: v } } } });
+    return h('div', { 'data-testid': 'coach-advanced', style: { marginTop: 6 } },
+      h(Line, { label: 'Show a card at this confidence or more', hint: 'The small model says how sure it is, from 0 to 1.' },
+        h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, minConfidence: v } }) }),
+        h('span', { style: S.src }, 'default 0.7')),
+      ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Line, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
+        ...Object.entries(fields).map(([field, def]) => h('span', { key: field, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+          h('span', { style: S.src }, field),
+          h(NumField, { label: `${group} ${field}`, value: (th[group] && th[group][field]) ?? def, min: 0, max: 100000, step: field === 'share' ? 0.05 : 1, width: 64, onSave: (v) => setTh(group, field, v) }),
+          h('span', { 'data-default': `${group}.${field}`, style: S.src }, `default ${def}`))))));
+  }
+
   function Settings() {
-    return h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)' } }, 'Coach settings.');
+    const s = store((st) => st.settings);
+    const loaded = store((st) => st.loaded);
+    const projects = d.stores && d.stores.useProjects ? d.stores.useProjects((p) => p.sessions) : [];
+    const [adv, setAdv] = useState(false);
+    if (!loaded) return null;
+    const put = (patch) => saveSettings({ ...store.getState().settings, ...patch });
+    const leave = new Set(s.leaveAlone || []);
+    const picked = s.model && s.model.mode !== 'auto';
+    return h('div', { 'data-testid': 'coach-settings', style: { fontSize: 13, color: 'var(--color-text-secondary)' } },
+      Group('HOW OFTEN',
+        h(Line, { label: 'How often', hint: 'Quiet: only the weekly recap and the right-column tab. Normal: up to 3 cards a day. Chatty: up to 8.' },
+          h(Radios, { label: 'How often', value: s.howOften, options: [['off', 'Off'], ['quiet', 'Quiet'], ['normal', 'Normal'], ['chatty', 'Chatty']], onPick: (v) => put({ howOften: v }) })),
+        h(Line, { label: 'Most cards in a day' }, h(NumField, { label: 'Most cards in a day', value: s.maxPerDay, min: 0, max: 20, onSave: (v) => put({ maxPerDay: v }) })),
+        h(Line, { label: 'Most cards in one session' }, h(NumField, { label: 'Most cards in one session', value: s.maxPerSession, min: 0, max: 20, onSave: (v) => put({ maxPerSession: v }) })),
+        h(Line, { label: 'Quiet hours', hint: 'No cards and no recap push in these hours.' },
+          s.quietHours && h('input', { type: 'time', 'aria-label': 'Quiet from', value: s.quietHours.from, style: { ...S.input, marginTop: 0, width: 110 }, onChange: (e) => put({ quietHours: { ...s.quietHours, from: e.target.value } }) }),
+          s.quietHours && h('input', { type: 'time', 'aria-label': 'Quiet to', value: s.quietHours.to, style: { ...S.input, marginTop: 0, width: 110 }, onChange: (e) => put({ quietHours: { ...s.quietHours, to: e.target.value } }) }),
+          h(Toggle, { label: 'Quiet hours', on: !!s.quietHours, onClick: () => put({ quietHours: s.quietHours ? null : { from: '18:00', to: '08:00' } }) })),
+        h(Line, { label: 'Cards on the phone' }, h(Toggle, { label: 'Cards on the phone', on: !!s.phone, onClick: () => put({ phone: !s.phone }) })),
+        h(Line, { label: 'Mute shortcut', hint: 'Press ⌘K, then type "Mute coach".' })),
+      Group('WHAT KIND',
+        h(Line, { label: 'Prompt tips', hint: 'Better prompts: a plan first, the whole task at once.' }, h(Toggle, { label: 'Prompt tips', on: s.tipTypes.prompt !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, prompt: s.tipTypes.prompt === false } }) })),
+        h(Line, { label: '"Think bigger" tips', hint: 'Schedules, parallel threads, new kinds of work.' }, h(Toggle, { label: '"Think bigger" tips', on: s.tipTypes.thinkBigger !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, thinkBigger: s.tipTypes.thinkBigger === false } }) })),
+        h(Line, { label: 'Weekly recap in the app', hint: 'Monday, after 5 active days.' }, h(Toggle, { label: 'Weekly recap in the app', on: s.recap.inApp !== false, onClick: () => put({ recap: { ...s.recap, inApp: s.recap.inApp === false } }) })),
+        h(Line, { label: 'Weekly recap push notification', hint: 'The recap only. Tips never arrive as push notifications.' }, h(Toggle, { label: 'Weekly recap push notification', on: !!s.recap.push, onClick: () => put({ recap: { ...s.recap, push: !s.recap.push } }) })),
+        h(Line, { label: 'Projects to leave alone', hint: 'The Coach does not look at these projects.' },
+          (projects || []).length === 0 ? h('span', { style: S.src }, 'No projects') : null),
+        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10, padding: '6px 0' } }, ...(projects || []).map((p) => h('label', { key: p.id, style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5 } },
+          h('input', { type: 'checkbox', 'aria-label': `Leave alone: ${p.name}`, checked: leave.has(p.id), onChange: () => put({ leaveAlone: leave.has(p.id) ? [...leave].filter((x) => x !== p.id) : [...leave, p.id] }) }), p.name)))),
+      Group('COST AND MODELS',
+        h(Line, { label: 'Thoroughness', hint: 'Economy uses the fewest large-model calls. Use my budget picks the most thorough level that fits your budget.' },
+          h(Radios, { label: 'Thoroughness', value: s.thoroughness, options: [['economy', 'Economy'], ['balanced', 'Balanced'], ['thorough', 'Thorough'], ['budget', 'Use my budget']], onPick: (v) => put({ thoroughness: v }) })),
+        h(Line, { label: 'Budget', hint: 'At most this share of the weekly limit of the account the Coach uses. Dispatch stops the calls at the budget.' },
+          h(NumField, { label: 'Budget, percent of the weekly limit', value: s.budgetPercentWeekly, min: 0.1, max: 100, step: 0.5, onSave: (v) => saveBudget({ budgetPercentWeekly: v }) }), h('span', { style: S.src }, '%')),
+        h(Line, { label: 'OpenRouter budget', hint: 'OpenRouter has no limit: its budget is dollars a week.' },
+          h('span', { style: S.src }, '$'), h(NumField, { label: 'OpenRouter budget, dollars a week', value: s.budgetUsdWeekly, min: 0, max: 10000, step: 1, onSave: (v) => saveBudget({ budgetUsdWeekly: v }) })),
+        h(Line, { label: 'Model', hint: 'Automatic uses the subscription with the most room, and never the last of a limit.' },
+          h(Radios, { label: 'Model', value: picked ? 'pick' : 'auto', options: [['auto', 'Automatic'], ['pick', 'Pick a harness and models']], onPick: (v) => put({ model: v === 'auto' ? { mode: 'auto' } : { mode: 'pick', small: { harness: 'claude', model: SMALL_DEFAULT.claude }, large: { harness: 'claude', model: LARGE_DEFAULT.claude } } }) })),
+        picked && h(TierPicker, { tier: 'small', s }),
+        picked && h(TierPicker, { tier: 'large', s })),
+      h('div', { style: { marginTop: 18 } },
+        h('button', { type: 'button', 'aria-expanded': adv, style: S.btn, onClick: () => setAdv(!adv) }, 'Advanced'),
+        adv && h(Advanced, { s })));
   }
 
   d.register(PLUGIN, {
