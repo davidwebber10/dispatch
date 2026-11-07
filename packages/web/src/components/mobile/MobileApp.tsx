@@ -401,7 +401,7 @@ export function MobileApp() {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
-          <UsageChip variant="phone" only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli' } : null} />
+          <UsageChip variant="phone" only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
           {level === 1 && !inSettings && !inPlugins && project && !leafTab && <Slot name="project.header.actions" session={project} />}

@@ -87,6 +87,7 @@ export function UsageAlertSetting() {
 export function UsageLimitsSection() {
   const { cfg, draft, setDraft, err, save, summary } = useUsageLimitSettings();
   const showBanner = useSettings((s) => s.showUsageBanner);
+  const ringCenter = useSettings((s) => s.usageRingCenter);
   const now = useNow();
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };
@@ -125,6 +126,17 @@ export function UsageLimitsSection() {
           <Toggle on={showBanner} onClick={() => useSettings.getState().setShowUsageBanner(!showBanner)} label="Show the paused banner on this device" />
         </div>
         <div style={note}>The red banner shown while agents are paused on a usage limit.</div>
+        <div style={row}>
+          <span style={item}>In the usage ring</span>
+          <div role="radiogroup" aria-label="In the usage ring" style={{ display: 'inline-flex', padding: 2, gap: 2, borderRadius: 'var(--radius-md)', background: 'var(--color-hover)' }}>
+            {([['logo', 'Logo'], ['percent', 'Percent used']] as const).map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={ringCenter === v} onClick={() => useSettings.getState().setUsageRingCenter(v)}
+                style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12.5, fontWeight: 500,
+                  background: ringCenter === v ? 'var(--color-elevated)' : 'transparent', color: ringCenter === v ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={note}>The ring counts the 5-hour and weekly limits, and a model's own weekly limit in a thread on that model.</div>
       </div>
       <Divider />
 

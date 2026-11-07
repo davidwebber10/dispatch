@@ -159,3 +159,21 @@ describe('accounts (multi-account spec 2026-11-06)', () => {
     expect(usageTables(s, NOW, 'UTC').map((t) => t.name)).toEqual(['Claude · CLI login', 'Claude · Work', 'Codex']);
   });
 });
+
+describe('the ring ignores a model window the thread does not use (2026-11-07)', () => {
+  const W = (p: number) => ({ usedPercent: p, resetsAt: NOW + 50 * H });
+  const s = () => sum([{ provider: 'claude-code', asOf: NOW - 60_000, windows: { five_hour: W(20), seven_day: W(67), seven_day_fable: W(100) } } as UsageSummaryProvider]);
+  it('with no model: the 5-hour and weekly windows only (Fable at 100% does not fill the ring)', () => {
+    const [r] = chipRings(s(), NOW);
+    expect(r.used).toBe(67);
+    expect(r.type).toBe('seven_day');
+    expect(r.title).toContain('Fable weekly 100% used'); // the tooltip still lists it
+  });
+  it('a thread on Fable: its model window counts', () => {
+    expect(chipRings(s(), NOW, undefined, { model: 'claude-fable-5-1' })[0].used).toBe(100);
+    expect(chipRings(s(), NOW, undefined, { model: 'fable' })[0].used).toBe(100);
+  });
+  it('a thread on Opus: the Fable window does not count', () => {
+    expect(chipRings(s(), NOW, undefined, { model: 'claude-opus-5-5' })[0].used).toBe(67);
+  });
+});

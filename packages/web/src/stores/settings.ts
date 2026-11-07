@@ -103,6 +103,8 @@ interface SettingsState {
    * device only. The warning push is a separate daemon-wide switch in Settings > Notifications.
    */
   showUsageBanner: boolean;
+  /** What the usage ring shows in its middle on this device (2026-11-07): the tool's logo or the percent used. */
+  usageRingCenter: 'logo' | 'percent';
   setCoordinatorName: (name: string) => void;
   setFontSize: (n: number) => void;
   setScrollback: (n: number) => void;
@@ -125,6 +127,7 @@ interface SettingsState {
   setEditor: (e: DocEditor) => void;
   setShowPrettyHint: (b: boolean) => void;
   setShowUsageBanner: (b: boolean) => void;
+  setUsageRingCenter: (v: 'logo' | 'percent') => void;
 }
 
 /** The pre-setting per-device dismissal flag the hint's × wrote (kept as the default's source). */
@@ -179,6 +182,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   editor: ((e) => (EDITORS.includes(e) ? e : ''))(load<DocEditor>('dispatch:editor', '')),
   showPrettyHint: load<boolean>('dispatch:showPrettyHint', legacyPrettyHintShown()),
   showUsageBanner: load<boolean>('dispatch:usageBanner', true) !== false,
+  usageRingCenter: load<string>('dispatch:usageRingCenter', 'logo') === 'percent' ? 'percent' : 'logo',
   setFontSize: (n) => { const fontSize = Math.max(9, Math.min(22, Math.round(n))); save('dispatch:fontSize', fontSize); set({ fontSize }); },
   setScrollback: (n) => { const scrollback = Math.max(1000, Math.min(100000, Math.round(n))); save('dispatch:scrollback', scrollback); set({ scrollback }); },
   setSidebarFontSize: (n) => { const sidebarFontSize = Math.max(10, Math.min(18, Math.round(n))); save('dispatch:sidebarFontSize', sidebarFontSize); set({ sidebarFontSize }); },
@@ -203,6 +207,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setEditor: (e) => { const editor = EDITORS.includes(e) ? e : ''; save('dispatch:editor', editor); set({ editor }); },
   setShowPrettyHint: (b) => { save('dispatch:showPrettyHint', b); set({ showPrettyHint: b }); },
   setShowUsageBanner: (b) => { save('dispatch:usageBanner', b); set({ showUsageBanner: b }); },
+  setUsageRingCenter: (v) => { save('dispatch:usageRingCenter', v); set({ usageRingCenter: v }); },
   setPushEnabledLocal: (b) => { save('dispatch:pushEnabled', b); set({ pushEnabled: b }); },
   setPushEnabled: async (b) => {
     const push = await import('../lib/push');

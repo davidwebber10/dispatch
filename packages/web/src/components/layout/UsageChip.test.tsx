@@ -1,3 +1,4 @@
+import { useSettings } from '../../stores/settings';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { UsageChip, UsageTable } from './UsageChip';
@@ -123,5 +124,16 @@ describe('UsageChip', () => {
     expect(cards[0].textContent).toContain('This account');
     expect(cards[0].textContent).toContain('Team');
     expect(cards[1].textContent).not.toContain('This account');
+  });
+
+  it('the per-device setting puts the percent used in the ring instead of the logo (2026-11-07)', () => {
+    useUsageLimits.setState({ summary: summary(10) });
+    useSettings.getState().setUsageRingCenter('percent');
+    const { unmount } = render(<UsageChip variant="phone" />);
+    expect(screen.getByTestId('usage-ring').textContent).toBe('21');
+    unmount();
+    useSettings.getState().setUsageRingCenter('logo');
+    render(<UsageChip variant="phone" />);
+    expect(screen.getByTestId('usage-ring').textContent).toBe('');
   });
 });

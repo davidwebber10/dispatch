@@ -295,14 +295,25 @@ export interface ChipRing {
  * One ring per tool for the rail chip: every provider with a current figure, plus a paused one
  * without. The ring shows the window closest to its limit; the tooltip lists them all.
  */
-export function chipRings(s: UsageSummary | null, now: number, zone?: string): ChipRing[] {
+/**
+ * The windows a ring counts (2026-11-07): the 5-hour and weekly ones, plus a model's own weekly
+ * window only for a thread on that model. A Fable weekly window at 100% says nothing about an
+ * Opus thread, so it must not fill that thread's ring. The tooltip and the details list them all.
+ */
+export function ringTypes(model?: string | null): string[] {
+  const m = (model ?? '').toLowerCase();
+  const family = ['opus', 'sonnet', 'fable'].find((f) => m.includes(f));
+  return ['five_hour', 'seven_day', ...(family ? [`seven_day_${family}`] : [])];
+}
+
+export function chipRings(s: UsageSummary | null, now: number, zone?: string, opts: { model?: string | null } = {}): ChipRing[] {
   if (!s) return [];
   const paused = activePaused(s, now);
   const seen = new Set<string>();
   const out: ChipRing[] = [];
   for (const p of s.providers) {
     seen.add(p.provider);
-    const peak = peakWindow(p, now);
+    const peak = peakWindow(p, now, ringTypes(opts.model));
     // A pause is per tool (not per account yet): it reddens the tool's CLI-login ring.
     const isPaused = paused.has(p.provider) && (p.accountId ?? 'cli') === 'cli';
     if (!peak && !isPaused) continue;

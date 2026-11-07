@@ -2,6 +2,7 @@ import { HEADER_BOX } from './headerButton';
 import { useEffect, useRef, useState } from 'react';
 import { useNow } from '../../hooks/useNow';
 import { useUsageLimits } from '../../stores/usageLimits';
+import { useSettings } from '../../stores/settings';
 import type { UsageSummary } from '../../api/types';
 import { Modal } from '../common/Modal';
 import { UsageRings } from './UsageRings';
@@ -53,6 +54,7 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
   const c = 2 * Math.PI * r;
   const used = ring.used ?? 0;
   const Mark = HARNESS_MARK[MARK_KEY[ring.provider] ?? ''];
+  const percent = useSettings((st) => st.usageRingCenter) === 'percent';
   return (
     <span data-testid="usage-ring" data-provider={ring.provider} data-account={ring.accountId} data-tone={ring.tone} role="meter" aria-label={ring.title}
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={ring.used ?? undefined}
@@ -62,7 +64,8 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
         {used > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR[ring.tone]} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${(Math.min(100, used) / 100) * c} ${c}`} />}
         {ring.paused && used === 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR.red} strokeWidth={stroke} strokeDasharray={`${c / 8} ${c / 8}`} />}
       </svg>
-      {Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${Math.round(size * 0.38)}px var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
+      {percent ? <span style={{ font: `600 ${Math.round(size * (String(ring.used ?? '–').length > 2 ? 0.3 : 0.38))}px var(--font-mono)`, color: 'var(--color-text-primary)', letterSpacing: '-0.03em' }}>{ring.used ?? '–'}</span>
+        : Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${Math.round(size * 0.38)}px var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
     </span>
   );
 }
@@ -74,7 +77,7 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
  * chip is one button. `only` (an open thread, 2026-11-07) keeps the ring of that thread's account
  * alone; a thread whose tool reports no limits shows no chip.
  */
-export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string } | null }) {
+export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string; model?: string | null } | null }) {
   const summary = useUsageLimits((s) => s.summary);
   const now = useNow();
   const [open, setOpen] = useState(false);
@@ -87,7 +90,7 @@ export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?:
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open, variant]);
-  const all = chipRings(summary, now);
+  const all = chipRings(summary, now, undefined, { model: only?.model });
   const rings = only ? all.filter((r) => r.provider === only.provider && (r.accountId ?? 'cli') === only.accountId) : all;
   if (!summary || rings.length === 0) return null;
   const tone = chipTone(rings, summary.warnPercent);
