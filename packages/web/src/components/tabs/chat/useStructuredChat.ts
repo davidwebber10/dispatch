@@ -1,3 +1,4 @@
+import { textToSend } from '../../../lib/slashEscape';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
@@ -559,6 +560,14 @@ export function useStructuredChat(
           return;
         }
 
+        // A model/effort change the agent refused after it was accepted: the daemon put the earlier values
+        // back and says so here, in the thread, so the owner does not think it took.
+        if (type === 'system' && event.subtype === 'settings_refused') {
+          const why = typeof event.message === 'string' && event.message ? event.message : 'The model or effort change was refused.';
+          setItems((p) => [...p, { kind: 'result', isError: true, text: why }]);
+          return;
+        }
+
         if (type === 'system' && event.subtype === 'api_retry') {
           setApiRetry({
             attempt: typeof event.attempt === 'number' ? event.attempt : 0,
@@ -936,7 +945,7 @@ export function useStructuredChat(
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
     // just needs at least one block. Both flow through the SAME widened API.
-    const payload = typeof content === 'string' ? content.trim() : content;
+    const payload = typeof content === 'string' ? textToSend(content) : content;
     const empty = typeof payload === 'string' ? !payload : payload.length === 0;
     if (empty || !terminalId) return;
     // A pending question takes the reply. A plain gated tool does not: that stays a normal send.

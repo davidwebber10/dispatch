@@ -26,15 +26,27 @@ export function adoptTranscriptSettings(
 ): boolean {
   if (!seen || config.role || config.agentType) return false;
   let changed = false;
-  if (seen.model) {
+  // A model or effort the owner PICKED (the picker, /model) is saved with a pin and wins over the transcript:
+  // the transcript still shows the old one until a turn has run on the pick. The pin lets go once the
+  // transcript shows the pick took hold, so a later /model typed in the CLI is followed again. A pick of
+  // Default has no saved value to compare, so its pin stays until the next pick.
+  const pins: { model?: boolean; effort?: boolean } = config.settingsPinned ?? {};
+  if (seen.model && pins.model) {
+    const saved = typeof config.model === 'string' ? config.model.trim() : '';
+    const family = FAMILY_RE.exec(seen.model)?.[1];
+    if (saved && (saved === seen.model || saved === family)) { delete pins.model; changed = true; }
+  } else if (seen.model) {
     const saved = typeof config.model === 'string' ? config.model.trim() : '';
     const family = FAMILY_RE.exec(seen.model)?.[1];
     const target = family ?? seen.model;
     if (saved !== target && saved !== seen.model) { config.model = target; changed = true; }
   }
-  if (seen.effort && (seen.effortChanged || config.effort !== undefined) && config.effort !== seen.effort) {
+  if (seen.effort && pins.effort) {
+    if (config.effort === seen.effort) { delete pins.effort; changed = true; }
+  } else if (seen.effort && (seen.effortChanged || config.effort !== undefined) && config.effort !== seen.effort) {
     config.effort = seen.effort; changed = true;
   }
+  if (config.settingsPinned && !Object.keys(pins).length) delete config.settingsPinned;
   return changed;
 }
 

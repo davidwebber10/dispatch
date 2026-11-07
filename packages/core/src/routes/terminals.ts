@@ -151,12 +151,19 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Optional `canned: true` marks fixed text that a card click sent (the need-card
   // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
   // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
-  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), requireOwnerProof, (req, res) => {
+  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), requireOwnerProof, async (req, res) => {
     const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
     try {
+      // A typed /model or /effort in a Pretty Claude thread is Dispatch's to run (the CLI's own version
+      // is masked by Dispatch's override); it is never sent to the model. 200 tells the client it was a command.
+      const typed = await sessionService.handleTypedSlash(req.params.terminalId, payload, source);
+      if (typed) {
+        broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: typed.sessionId });
+        return void res.status(200).json({ handled: 'settings' });
+      }
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
@@ -178,7 +185,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // signal, so mark it here exactly like the /input route does for a submitted line.
       if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
+    } catch (e: any) { res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) }); }
   });
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
@@ -364,6 +371,38 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       const terminal = await sessionService.switchAccount(req.params.terminalId, accountId, { force: force === true });
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
       res.json(terminal);
+    } catch (e: any) {
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
+    }
+  });
+
+  // GET /api/codex/model-efforts — the efforts each Codex model takes, as the running app-server reports them
+  // (they differ by model). `live` is null when no Codex app-server is running; the client then uses the
+  // built-in table (providers/codex-efforts.ts). `defaults` is the effort each model runs at when none is sent.
+  router.get('/codex/model-efforts', async (_req, res) => {
+    try { const live = await sessionService.codexModelEfforts(); res.json({ live, defaults: live ? sessionService.codexModelDefaults() : null }); }
+    catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
+  });
+
+  // PATCH /api/terminals/:terminalId/settings { model?, effort? } — change a Pretty thread's model and/or
+  // effort (the picker, a typed /model). Saved in the thread's config first, then applied to the live
+  // agent with no restart (Claude waits for a turn in flight). `model: null` resets a Claude thread to its
+  // default. Owner work, like the account route: a web page or a token, never a thread key.
+  router.patch('/terminals/:terminalId/settings', requireOwnerProof, async (req, res) => {
+    const { model, effort } = req.body ?? {};
+    const change: { model?: string | null; effort?: string } = {};
+    if (model !== undefined) {
+      if (model !== null && typeof model !== 'string') return res.status(400).json({ error: 'model must be a string or null' });
+      change.model = model;
+    }
+    if (effort !== undefined) {
+      if (typeof effort !== 'string') return res.status(400).json({ error: 'effort must be a string' });
+      change.effort = effort;
+    }
+    try {
+      const { terminal, applied, clearedEffort, effortNow } = await sessionService.setThreadSettings(req.params.terminalId, change);
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
+      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort } : {}), ...(effortNow ? { effortNow } : {}) });
     } catch (e: any) {
       res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }

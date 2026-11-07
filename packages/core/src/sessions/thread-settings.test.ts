@@ -56,3 +56,52 @@ describe('adoptTranscriptSettings', () => {
     expect(adoptTranscriptSettings({ model: 'fable' }, null)).toBe(false);
   });
 });
+
+// Review round 1 (PR #155): a pick made in the picker must win over what the transcript shows.
+describe('adoptTranscriptSettings — a saved pick wins over the transcript', () => {
+  it('keeps a picked model while the transcript still shows the old one', () => {
+    const cfg: Record<string, any> = { model: 'haiku', settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5' })).toBe(false);
+    expect(cfg).toEqual({ model: 'haiku', settingsPinned: { model: true } });
+  });
+  it('lets go of the pin once the transcript shows the pick took hold, and follows the CLI after that', () => {
+    const cfg: Record<string, any> = { model: 'haiku', settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-haiku-5-5' })).toBe(true);
+    expect(cfg.settingsPinned).toBeUndefined();
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5' })).toBe(true);
+    expect(cfg.model).toBe('opus');
+  });
+  it('a picked Default (no saved model) is not filled in from the transcript', () => {
+    const cfg: Record<string, any> = { settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5' })).toBe(false);
+    expect(cfg.model).toBeUndefined();
+    expect(cfg.settingsPinned).toEqual({ model: true });
+  });
+  it('keeps a picked effort over a different transcript effort, then releases it when they match', () => {
+    const cfg: Record<string, any> = { model: 'opus', effort: 'low', settingsPinned: { effort: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5', effort: 'high', effortChanged: true })).toBe(false);
+    expect(cfg.effort).toBe('low');
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5', effort: 'low', effortChanged: true })).toBe(true);
+    expect(cfg.settingsPinned).toBeUndefined();
+  });
+  it('pins are per setting: a pinned effort does not stop the model from following the CLI', () => {
+    const cfg: Record<string, any> = { model: 'opus', effort: 'low', settingsPinned: { effort: true } };
+    adoptTranscriptSettings(cfg, { model: 'claude-fable-5-1', effort: 'high', effortChanged: true });
+    expect(cfg).toMatchObject({ model: 'fable', effort: 'low' });
+  });
+});
+
+// Live check (2026-11-06, Claude Code 2.1.316): after set_model('opus') or ('sonnet') the transcript's requestedModel is
+// the plain 'claude-opus-5-5' / 'claude-sonnet-5-5', with no [1m] suffix, so the family pattern matches and the pin lets go.
+describe('adoptTranscriptSettings — what Claude writes after set_model (round 2, item 8)', () => {
+  it.each([['opus', 'claude-opus-5-5'], ['sonnet', 'claude-sonnet-5-5'], ['fable', 'claude-fable-5-1'], ['haiku', 'claude-haiku-5-5']])('releases the pin on a picked %s', (alias, seen) => {
+    const cfg: Record<string, any> = { model: alias, settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: seen })).toBe(true);
+    expect(cfg).toEqual({ model: alias });
+  });
+  it('a pick of a full 1M id matches itself exactly, so that pin lets go too', () => {
+    const cfg: Record<string, any> = { model: 'claude-opus-5-5[1m]', settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5[1m]' })).toBe(true);
+    expect(cfg.settingsPinned).toBeUndefined();
+  });
+});

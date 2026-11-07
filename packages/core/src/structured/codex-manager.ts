@@ -26,6 +26,8 @@ import type {
   PendingPermission,
   PermissionDecision,
   StatusDeclaration,
+  ThreadSettingsChange,
+  ApplyResult,
 } from './manager.js';
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
@@ -169,6 +171,9 @@ interface CodexSession {
   turnActive: boolean;
   sessionId?: string;
   model?: string;
+  /** What the owner picked in the slash menu. Sent on every `turn/start` once set; `model` above also
+   *  tracks the thread's bound default, so the pick is kept apart to send only a real choice. */
+  picked?: { model?: string; effort?: string };
   cwd: string;
   resumeId?: string;
   /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
@@ -229,6 +234,8 @@ export interface CodexManagerOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** How long a `thread/unsubscribe` may stay unanswered before we stop waiting (default 5s). */
   releaseTimeoutMs?: number;
+  /** How long `loadModelEfforts` waits for the app-server to be ready and to answer `model/list` (default 5s). */
+  modelListTimeoutMs?: number;
 }
 
 export class CodexStructuredSessionManager extends EventEmitter implements IStructuredManager {
@@ -237,14 +244,17 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private conn?: CodexConnection;
   private connSpec?: { command: string; args: string[]; cwd: string; env: Record<string, string> };
   private defaultEnv: Record<string, string> = {};
+  private effortCache?: { at: number; map: Record<string, string[]>; defaults: Record<string, string> };
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly releaseTimeoutMs: number;
+  private readonly modelListTimeoutMs: number;
 
   constructor(opts: CodexManagerOptions = {}) {
     super();
     this.setMaxListeners(0);
     this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
+    this.modelListTimeoutMs = opts.modelListTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
     this.sandbox = opts.sandbox ?? 'workspace-write';
   }
@@ -275,6 +285,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       turnActive: false,
       cwd: opts.workDir,
       model: opts.model,
+      picked: opts.effort ? { effort: opts.effort } : undefined,
       resumeId: opts.resumeId,
       systemPrompt: opts.systemPrompt,
       toolPolicy: opts.toolPolicy,
@@ -675,7 +686,14 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (session.turnActive && session.currentTurnId) {
       await this.conn.request('turn/steer', { threadId: session.threadId, expectedTurnId: session.currentTurnId, input });
     } else {
-      await this.conn.request('turn/start', { threadId: session.threadId, input });
+      // A model or effort the owner picked rides on the turn. Live-verified on codex-cli 0.166.0: it
+      // sticks for later turns and survives thread/resume; sending it every time costs nothing.
+      await this.conn.request('turn/start', {
+        threadId: session.threadId,
+        input,
+        ...(session.picked?.model ? { model: session.picked.model } : {}),
+        ...(session.picked?.effort ? { effort: session.picked.effort } : {}),
+      });
     }
   }
 
@@ -718,6 +736,79 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const session = this.sessions.get(terminalId);
     if (!session || !this.conn?.alive || !session.threadId) return;
     void this.conn.request('thread/compact/start', { threadId: session.threadId }).catch(() => {});
+  }
+
+  /**
+   * Change the model and/or effort of a live thread. Nothing is sent now: the values are kept on the
+   * session and the next `turn/start` carries them (a turn in flight is not touched). The new model is
+   * announced with a fresh `system/init`, so the status row shows it at once.
+   */
+  async applySettings(terminalId: string, change: ThreadSettingsChange): Promise<ApplyResult> {
+    const session = this.sessions.get(terminalId);
+    if (!session) return { ok: false, error: 'This thread is not running.', stopped: true };
+    session.picked ??= {};
+    if (change.model) {
+      session.model = change.model; // a crash-recovery thread/resume asks for it too
+      session.picked.model = change.model;
+      // init() resets the usage gauge, so it waits for a turn in flight to end; the web shows the pick meanwhile.
+      if (!session.turnActive) this.applyActions(session, session.translator.init(change.model));
+    }
+    if (change.effort) session.picked.effort = change.effort;
+    return { ok: true };
+  }
+
+  postNotice(terminalId: string, message: string): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message });
+  }
+
+  /** The efforts each model takes, from the last `model/list` (see loadModelEfforts), or null if never asked. */
+  modelEfforts(): Record<string, string[]> | null { return this.effortCache?.map ?? null; }
+  /** The effort each model runs at by default, from the same `model/list`. */
+  modelDefaultEfforts(): Record<string, string> | null { return this.effortCache?.defaults ?? null; }
+  /** The model a live thread runs (what the app-server bound at start or resume, or the owner's pick). */
+  currentModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
+
+  /**
+   * Ask the running app-server which efforts each model takes (live-checked: they differ by model). Cached
+   * for ten minutes. null when no app-server is running or it did not answer: the caller falls back to
+   * the built-in table (codex-efforts.ts).
+   */
+  async loadModelEfforts(): Promise<Record<string, string[]> | null> {
+    const c = this.effortCache;
+    if (c && Date.now() - c.at < 10 * 60_000) return c.map;
+    const conn = this.conn;
+    if (!conn?.alive) return c?.map ?? null;
+    try {
+      // An app-server that is alive but never answers `initialize` would otherwise hold every caller (the
+      // settings lock of a thread) for ever: give up after the same limit as model/list itself.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          conn.ready,
+          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('app-server not ready')), this.modelListTimeoutMs); timer.unref?.(); }),
+        ]);
+      } finally { clearTimeout(timer); }
+      const map: Record<string, string[]> = {};
+      const defaults: Record<string, string> = {};
+      let cursor: string | null = null;
+      for (let page = 0; page < 5; page++) {
+        const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, this.modelListTimeoutMs);
+        for (const m of res?.data ?? []) {
+          const efforts = (m?.supportedReasoningEfforts ?? []).map((e: any) => e?.reasoningEffort).filter((e: unknown): e is string => typeof e === 'string' && !!e);
+          if (typeof m?.model === 'string' && efforts.length) {
+            map[m.model] = efforts;
+            if (typeof m?.defaultReasoningEffort === 'string' && efforts.includes(m.defaultReasoningEffort)) defaults[m.model] = m.defaultReasoningEffort;
+          }
+        }
+        cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : null;
+        if (!cursor) break;
+      }
+      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map, defaults };
+      return this.effortCache?.map ?? null;
+    } catch {
+      return c?.map ?? null;
+    }
   }
 
   /**

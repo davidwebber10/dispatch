@@ -82,3 +82,46 @@ describe('Composer — Send/Stop key parity', () => {
     expect(screen.queryByTitle('Stop')).not.toBeInTheDocument();
   });
 });
+
+// ---- the "/" menu and the model/effort picker for the overseer (slash menu, 2026-11-06) ----
+import { waitFor } from '@testing-library/react';
+import { useTabs } from '../../../stores/tabs';
+
+describe('Composer — the "/" menu and the model picker', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    useOverseer.setState({ coordinatorId: 'coord-1', coordinatorProject: 'proj-a', coordinatorModel: 'claude-sonnet-5-5', sendDirective: vi.fn() } as never);
+    useProjects.setState({ activeId: 'proj-a' } as never);
+    useTabs.setState({ byProject: { 'proj-a': [{ id: 'coord-1', sessionId: 'proj-a', type: 'claude-code', label: 'CP', pid: 1, externalId: 'e', workingDir: '/w', status: 'idle', createdAt: '', config: { role: 'coordinator', transport: 'structured' }, archivedAt: null, sortOrder: 0 }] } } as never);
+  });
+  const box = () => screen.getByPlaceholderText(/Fire a directive/) as HTMLTextAreaElement;
+
+  it('/model opus changes the overseer\'s model and is not sent as a directive', async () => {
+    const settings = vi.spyOn(api, 'setThreadSettings').mockResolvedValue({ terminal: {} as never, applied: 'now' });
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/model opus' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(settings).toHaveBeenCalledWith('coord-1', { model: 'opus' }));
+    expect(useOverseer.getState().sendDirective).not.toHaveBeenCalled();
+  });
+
+  it('the model name in the status row opens the picker', () => {
+    render(<Composer />);
+    fireEvent.click(screen.getByRole('button', { name: /Sonnet/ }));
+    expect(screen.getByRole('dialog', { name: 'Model and effort' })).toBeInTheDocument();
+  });
+
+  it('lists /model, /effort, /compact and /stop (no /cli: an overseer has no CLI mode)', () => {
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/' } });
+    expect(screen.getAllByRole('option').map((o) => o.firstElementChild?.textContent)).toEqual(['/model', '/effort', '/compact', '/stop']);
+  });
+
+  it('a normal directive still goes out', () => {
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'status please' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(useOverseer.getState().sendDirective).toHaveBeenCalledWith('status please');
+  });
+});

@@ -22,6 +22,9 @@ import { PillComposer } from '../../composer/PillComposer';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
+import { ThreadModelControl, applyThreadSettings, useThreadSettings, useEffortLevels } from '../../composer/ThreadModelControl';
+import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../../stores/pickerRequest';
 import { modLabel } from '../../../lib/hostkeys';
 import { CoordinatorMenu } from './CoordinatorMenu';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
@@ -157,11 +160,33 @@ export function Composer() {
     [coordinatorProject, startUpload],
   );
 
+  // The "/" menu (composer/slash): /model and /effort for the overseer. An explicit model wins over the
+  // coordinator tier, so the owner may change it freely. /compact and /stop have buttons elsewhere too.
+  const overseer = useThreadSettings(coordinatorId ?? '');
+  const slashHarness = overseer.harness ?? 'claude-code';
+  const effortLevels = useEffortLevels(overseer.harness, overseer.model, coordinatorModel);
+  const slash = useSlashMenu({
+    surface: 'overseer', harness: slashHarness, value: composer, setValue: setComposer, model: overseer.model, effort: overseer.effort, mobile: isMobile, effortLevels,
+    run: async (name, args) => {
+      if (name === 'stop') { doStop(); return; }
+      if (!coordinatorId) throw new Error('The Control Plane session has not started yet.');
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({
+          harness: slashHarness, name, args,
+          openPicker: () => usePickerRequest.getState().request(`thread:${coordinatorId}`),
+          apply: (change) => applyThreadSettings(coordinatorId, change),
+        });
+      }
+      if (name === 'compact') { compactCoordinator(); return; }
+    },
+  });
+
   // Return and the ↑ both land here (PillComposer handles the keys, Shift+Return and IME).
   const handleSend = useCallback(() => {
+    if (slash.interceptSend()) return; // a typed command is Dispatch's to run, never the model's
     sendDirective(composer);
     clearComposer();
-  }, [sendDirective, composer, clearComposer]);
+  }, [sendDirective, composer, clearComposer, slash]);
 
   // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
   // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
@@ -242,9 +267,11 @@ export function Composer() {
             dictation={dictation}
             sttConfigured={sttConfigured}
             textareaRef={textareaRef}
-            textareaProps={{ onPaste }}
+            textareaProps={{ onPaste, onKeyDown: slash.onKeyDown }}
             dragActive={dragActive}
             mobile={isMobile}
+            menuExtra={slash.plusRow}
+            slash={slash.overlay}
             sendLabel="Send directive"
           />
         </div>
@@ -277,6 +304,7 @@ export function Composer() {
           compactResult={coordinatorCompactResult}
           model={coordinatorModel}
           compact={compactCoordinator}
+          modelControl={coordinatorId ? <ThreadModelControl terminalId={coordinatorId} liveModel={coordinatorModel} mobile={isMobile} /> : undefined}
         />
         {!isMobile && (
           <span
