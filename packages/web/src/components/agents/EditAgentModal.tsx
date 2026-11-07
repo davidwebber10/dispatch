@@ -58,15 +58,21 @@ function initSched(existing: AgentSchedule | null): SchedState {
 const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
 const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? '#08240F' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
 
-export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }: { scheduleId: string | null; presetProjectId?: string | null; onClose: () => void; onSaved?: (id: string) => void }) {
+/** Fields a plugin fills for a new automation (coach spec section 4.1): the person reviews them and saves. */
+export interface AutomationPrefill { prompt?: string; cron?: string; name?: string }
+
+export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, onSaved }: { scheduleId: string | null; presetProjectId?: string | null; prefill?: AutomationPrefill; onClose: () => void; onSaved?: (id: string) => void }) {
   const existing = useAgents((s) => s.schedules.find((x) => x.id === scheduleId)) ?? null;
   const sessions = useProjects((s) => s.sessions);
 
   const [projectId, setProjectId] = useState(existing?.projectId ?? presetProjectId ?? sessions[0]?.id ?? '');
-  const [name, setName] = useState(existing?.name ?? '');
+  const [name, setName] = useState(existing?.name ?? prefill?.name ?? '');
   const [provider, setProvider] = useState<AgentSchedule['provider']>(existing?.provider ?? 'claude-code');
-  const [prompt, setPrompt] = useState(existing?.prompt ?? '');
-  const [sched, setSched] = useState<SchedState>(() => initSched(existing));
+  const [prompt, setPrompt] = useState(existing?.prompt ?? prefill?.prompt ?? '');
+  const [sched, setSched] = useState<SchedState>(() => {
+    const s = initSched(existing);
+    return !existing && prefill?.cron ? { ...s, mode: 'cron', cron: prefill.cron } : s;
+  });
   const [busy, setBusy] = useState(false);
   const set = (patch: Partial<SchedState>) => setSched((s) => ({ ...s, ...patch }));
 

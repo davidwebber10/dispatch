@@ -61,11 +61,17 @@ function Row({ mobile, last, children }: { mobile: boolean; last?: boolean; chil
   );
 }
 
-export function NewThreadModal({ sessionId, onClose, onCreated }: {
+export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   sessionId: string;
+  /**
+   * A plugin's "Split into N threads" (coach spec section 4.1): one thread per prompt, each sent
+   * its prompt once the person presses Start. The dialog lists them first; nothing starts before.
+   */
+  prompts?: string[];
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
+  const batch = prompts && prompts.length > 0 ? prompts : null;
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!!api.getHarnessCapabilities);
   const [harnesses, setHarnesses] = useState<(Harnesses & { capabilities?: { resume: boolean } })[]>(HARNESSES);
   useEffect(() => {
@@ -333,6 +339,20 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
       // resumed thread to another account. With only the CLI login there is nothing to pin.
       if (accountProvider && effectiveAccountId && accountList.length > 1) config.accountId = effectiveAccountId;
 
+      if (batch && !externalId) {
+        // One thread per prompt, the same settings for each; each gets its prompt as its first message.
+        const ids: string[] = [];
+        for (const text of batch) {
+          const t = await api.createTerminal(sessionId, { type: spec.type, ...(Object.keys(config).length ? { config } : {}) });
+          ids.push(t.id);
+          await api.sendStructuredMessage(t.id, text);
+        }
+        await useTabs.getState().loadTabs(sessionId);
+        for (const id of ids) useTabs.getState().markLoading(id);
+        onCreated(ids[0]);
+        onClose();
+        return;
+      }
       const t = await api.createTerminal(sessionId, {
         type: spec.type,
         externalId,
@@ -608,9 +628,20 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         {/* Takes the grow-only slack on the phone sheet (see `floor`); zero-height otherwise. */}
         <div aria-hidden="true" style={{ flex: 1 }} />
 
+        {batch && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 6 : 5 }}>
+            <span style={rowLabel}>Starts {batch.length} thread{batch.length === 1 ? '' : 's'}, one for each prompt</span>
+            <ol aria-label="Threads to start" style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: m ? 6 : 5, maxHeight: 220, overflowY: 'auto' }}>
+              {batch.map((text, i) => (
+                <li key={i} style={{ background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: 'var(--radius-md)', padding: m ? '10px 12px' : '8px 10px', fontSize: m ? 14 : 12.5, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{text}</li>
+              ))}
+            </ol>
+          </div>
+        )}
+
         <button type="button" disabled={busy || capabilitiesLoading} onClick={() => void create()}
           style={{ height: m ? 48 : 40, width: '100%', flex: 'none', background: ACCENT, border: 'none', borderRadius: m ? 'var(--radius-lg)' : 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: m ? 15 : 14, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1, boxShadow: GLOW }}>
-          Start new thread
+          {batch ? `Start ${batch.length} thread${batch.length === 1 ? '' : 's'}` : 'Start new thread'}
         </button>
 
         {/* RESUME — folded behind one line that names the harness and counts what's there.
@@ -618,7 +649,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
             lives inside the grow-only region (so a harness with no history does not shrink
             the sheet); the opened list renders below it, outside, so opening it never pads
             the region above. */}
-        {canResume && (recent === null ? (
+        {canResume && !batch && (recent === null ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text-tertiary)', fontSize: m ? 13 : 12.5, borderTop: `1px solid ${DIVIDER}`, paddingTop: m ? 10 : 12, minHeight: m ? 44 : undefined, boxSizing: 'border-box' }}>
             <Spinner size={12} /> Loading recent sessions…
           </div>
@@ -636,7 +667,7 @@ export function NewThreadModal({ sessionId, onClose, onCreated }: {
         )}
       </div>
 
-        {!gated && canResume && recent !== null && recent.length > 0 && resumeOpen && (
+        {!gated && canResume && !batch && recent !== null && recent.length > 0 && resumeOpen && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 6 : 5, maxHeight: 240, overflowY: 'auto', marginTop: m ? -6 : -8 }}>
             {recent.map((s) => (
               <button key={s.id} type="button" disabled={busy || capabilitiesLoading} onClick={() => void create(s.id)}

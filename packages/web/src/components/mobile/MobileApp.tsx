@@ -33,6 +33,7 @@ import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
+import { PluginDialogs } from '../../plugins/PluginDialogs';
 import { MobileSettingsList, MobileSettingsSection } from '../settings/MobileSettings';
 import { settingsSection } from '../settings/sections';
 import { findTerminal, useTabs } from '../../stores/tabs';
@@ -547,6 +548,7 @@ export function MobileApp() {
 
       {newProject && <NewProjectModal open onClose={() => setNewProject(false)} />}
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => openAgent(id)} />}
+      <PluginDialogs onAgentSaved={(id) => openAgent(id)} onThreadCreated={(pid, id) => openThreadFromList(pid, id)} />
 
       {browseFiles && project && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>

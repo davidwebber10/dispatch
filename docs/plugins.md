@@ -124,6 +124,10 @@ The SDK object, in full:
 - `stores`: `useUI`, `useProjects`, `useTabs`, `useUpdate`, `useThreadStatus`.
   Read them; write through `actions`.
 - `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`, `setBadge(viewKey, n)` (an unseen count on one of the plugin's views; 0 clears it).
+  `openSchedule({ projectId?, prompt, cron?, label? })` opens the new-automation dialog with those
+  fields filled; `openNewThreads({ projectId?, prompts })` opens the new-thread dialog listing one
+  thread per prompt. Neither creates anything: the person reviews and presses Save or Start (each
+  new thread then gets its prompt as its first message). No `projectId` = the open project.
 - `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,

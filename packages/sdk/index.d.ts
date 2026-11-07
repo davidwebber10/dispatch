@@ -99,6 +99,16 @@ export interface DispatchSdk {
     openSettings(sectionKey: string): void;
     /** An unseen count on one of this plugin's views (`plugin:<id>:<view>`); 0 clears it. */
     setBadge(viewKey: string, n: number): void;
+    /**
+     * Opens the new-automation dialog with the prompt (and the cron and name) filled. Nothing is
+     * saved until the person presses Save. No `projectId` = the open project.
+     */
+    openSchedule(p: { projectId?: string; prompt: string; cron?: string; label?: string }): void;
+    /**
+     * Opens the new-thread dialog listing one thread per prompt. Nothing starts until the person
+     * presses Start; then each thread gets its prompt as its first message.
+     */
+    openNewThreads(p: { projectId?: string; prompts: string[] }): void;
   };
   /** The app's API client. The methods a plugin uses most; the object has more. */
   api: {
