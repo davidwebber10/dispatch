@@ -202,16 +202,24 @@ export function createEngine(io) {
   const reviewWaits = new Set();
   const reviewsIdle = async () => { while (reviewWaits.size) await Promise.all([...reviewWaits]); };
   const getJson = (route) => (io.getJson ? io.getJson(route).catch(() => null) : Promise.resolve(null));
+  // Projects on the leave-alone list are never read (spec section 4.3), in any scope. Threads a
+  // schedule or a role started (`config.runner`, `config.roleRun`) are not the person's work: a
+  // project or range review skips them, and the look back never seeds them as the person's prompts.
+  const leftAlone = (projectId) => !!projectId && Array.isArray(settings.leaveAlone) && settings.leaveAlone.includes(projectId);
+  const automated = (t) => !!(t && t.config && (t.config.runner || t.config.roleRun));
   async function scopeThreads(scope) {
     let rows = [];
     if (scope.kind === 'thread') {
-      for (const id of scope.ids || []) { const t = await getJson(`/api/terminals/${encodeURIComponent(id)}`); if (t) rows.push({ id, sessionId: t.sessionId ?? null, at: t.lastActivityAt || t.createdAt || '' }); }
+      for (const id of scope.ids || []) {
+        const t = await getJson(`/api/terminals/${encodeURIComponent(id)}`);
+        if (t && !leftAlone(t.sessionId)) rows.push({ id, sessionId: t.sessionId ?? null, at: t.lastActivityAt || t.createdAt || '' });
+      }
     } else {
       let projects = scope.kind === 'project' ? (scope.ids || []) : [];
       if (scope.kind === 'range') { const s = await getJson('/api/sessions'); projects = Array.isArray(s) ? s.map((x) => x.id) : (s && Array.isArray(s.sessions) ? s.sessions.map((x) => x.id) : []); }
-      for (const p of projects) {
+      for (const p of projects.filter((x) => !leftAlone(x))) {
         const list = await getJson(`/api/sessions/${encodeURIComponent(p)}/terminals`);
-        for (const t of Array.isArray(list) ? list : []) rows.push({ id: t.id, sessionId: t.sessionId ?? p, at: t.lastActivityAt || t.createdAt || '' });
+        for (const t of Array.isArray(list) ? list : []) if (!automated(t) && !leftAlone(t.sessionId ?? p)) rows.push({ id: t.id, sessionId: t.sessionId ?? p, at: t.lastActivityAt || t.createdAt || '' });
       }
       if (scope.kind === 'range') {
         const from = Date.parse(scope.from || 0); const to = scope.to ? Date.parse(scope.to) : Infinity;
@@ -258,8 +266,11 @@ export function createEngine(io) {
     for (let i = 0; i < ids.length; i++) {
       const w = await writeReview(key, { state: 'reading', progress: { done: i, total: ids.length } });
       if (w.cancelled || w.cancel) return;
+      // Checked again before any transcript is read: the plan may predate a leave-alone change.
+      const t = await getJson(`/api/terminals/${encodeURIComponent(ids[i])}`);
+      if (t && (leftAlone(t.sessionId) || (automated(t) && doc.scope.kind !== 'thread'))) continue;
       const items = await transcript(ids[i]);
-      if (doc.backfill) { const t = await getJson(`/api/terminals/${encodeURIComponent(ids[i])}`); seeded.push(...eventsFromTranscript(ids[i], (t && t.sessionId) || null, items)); }
+      if (doc.backfill && !automated(t)) seeded.push(...eventsFromTranscript(ids[i], (t && t.sessionId) || null, items));
       const chunks = chunkTranscript(items);
       if (chunks.length) read++;
       for (const chunk of chunks) {

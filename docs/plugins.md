@@ -254,7 +254,7 @@ The daemon raises one stream of events for every thread, whichever harness:
 | Event | When | Carries |
 | --- | --- | --- |
 | `thread:spawned` | a thread starts | `toolsAvailable` |
-| `thread:prompt` | a prompt went to the thread | `text` (with `read:prompts`), `textLength`, `source`: `user`, `coordinator`, `thread` (a peer) or `daemon` (an auto-resume) |
+| `thread:prompt` | a prompt went to the thread | `text` (with `read:prompts`), `textLength`, `source`: `user`, `coordinator`, `thread` (a peer), `daemon` (an auto-resume) or `schedule` (any prompt in a thread a schedule or a role started) |
 | `thread:tool` | the model called a tool | `tool`, `input` (with `read:prompts`), `inputLength` |
 | `thread:turn` | a turn ended | `ms`, `inputTokens`, `outputTokens`, `costUsd`, `outcome`, `summary`; `partial: true` when a CLI thread gave no usage |
 | `thread:status` | `report_status` | `state`, `summary`, `ask`, `blocker` |

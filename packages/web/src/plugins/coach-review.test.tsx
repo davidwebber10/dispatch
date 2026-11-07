@@ -73,7 +73,7 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
 });
 
 // ── the worker job, against a fake daemon ─────────────────────────────────────────────────
-function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string }>; answers?: unknown[]; status?: unknown } = {}) {
+function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string; config?: Record<string, unknown> }>; answers?: unknown[]; status?: unknown; settings?: unknown } = {}) {
   const docs = new Map<string, unknown>([['cadence', emptyCadence(new Date('2026-10-01T00:00:00Z'))]]);
   if (over.status) docs.set('status', over.status);
   const threads = over.threads ?? { t1: { sessionId: 's1', items: TRANSCRIPT, lastActivityAt: at(5) } };
@@ -82,15 +82,15 @@ function daemon(over: { threads?: Record<string, { sessionId: string; items: unk
   const io = {
     getDoc: vi.fn(async (k: string, f: unknown) => (docs.has(k) ? JSON.parse(JSON.stringify(docs.get(k))) : f)),
     putDoc: vi.fn(async (k: string, v: unknown) => { docs.set(k, JSON.parse(JSON.stringify(v))); writes.push({ key: k, value: JSON.parse(JSON.stringify(v)) }); }),
-    getSettings: vi.fn(async () => null),
+    getSettings: vi.fn(async () => over.settings ?? null),
     getJson: vi.fn(async (route: string) => {
-      if (route === '/api/sessions') return [{ id: 's1', name: 'Alpha' }];
+      if (route === '/api/sessions') return [...new Set(Object.values(threads).map((t) => t.sessionId))].map((id) => ({ id, name: id }));
       let m = /^\/api\/sessions\/([^/]+)\/terminals$/.exec(route);
-      if (m) return Object.entries(threads).filter(([, t]) => t.sessionId === m![1]).map(([id, t]) => ({ id, sessionId: t.sessionId, label: id, lastActivityAt: t.lastActivityAt ?? at(5), createdAt: at(0) }));
+      if (m) return Object.entries(threads).filter(([, t]) => t.sessionId === m![1]).map(([id, t]) => ({ id, sessionId: t.sessionId, label: id, lastActivityAt: t.lastActivityAt ?? at(5), createdAt: at(0), config: t.config ?? {} }));
       m = /^\/api\/terminals\/([^/?]+)\/conversation/.exec(route);
       if (m) return { items: threads[m[1]]?.items ?? [] };
       m = /^\/api\/terminals\/([^/?]+)$/.exec(route);
-      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, lastActivityAt: threads[m[1]].lastActivityAt ?? at(5) } : null;
+      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, lastActivityAt: threads[m[1]].lastActivityAt ?? at(5), config: threads[m[1]].config ?? {} } : null;
       return null;
     }),
     assist: vi.fn(async (_req: unknown) => ({ result: answers.length ? { text: String(answers.shift()), harness: 'claude' } : null, budget: { usedPercent: 0.5, capPercent: 3 }, refused: null })),
@@ -163,6 +163,46 @@ describe('Coach reviews in the worker (coach plan Task 12f)', () => {
     const signals = f.docs.get('signals') as { prompts: { t: string }[] };
     expect(signals.prompts.map((p) => p.t)).toEqual(['t1', 't1']);
     expect(f.docs.get('measures')).toMatchObject({ scores: expect.any(Object) });
+  });
+});
+
+describe('Coach reviews skip what the person left alone, and what a schedule started (review finding 4)', () => {
+  const conversations = (f: ReturnType<typeof daemon>) => f.io.getJson.mock.calls.map((c) => String(c[0])).filter((r) => r.includes('/conversation'));
+
+  it("a leave-alone project's transcript is never fetched, in a range, a project or a thread review", async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT }, t2: { sessionId: 's2', items: TRANSCRIPT } };
+    const f = daemon({ threads, settings: { leaveAlone: ['s2'] }, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    const range = { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() };
+    f.docs.set('reviews:a', { id: 'a', scope: range, state: 'planning' });
+    f.docs.set('reviews:b', { id: 'b', scope: { kind: 'project', ids: ['s2'] }, state: 'planning' });
+    f.docs.set('reviews:c', { id: 'c', scope: { kind: 'thread', ids: ['t2'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    for (const k of ['reviews:a', 'reviews:b', 'reviews:c']) await step(e, k);
+    expect(conversations(f).some((r) => r.includes('/t2/'))).toBe(false);
+    expect((f.docs.get('reviews:a') as { plan: { threads: string[] } }).plan.threads).toEqual(['t1']);
+    expect((f.docs.get('reviews:b') as { plan: { threads: string[] } }).plan.threads).toEqual([]);
+    expect((f.docs.get('reviews:c') as { plan: { threads: string[] } }).plan.threads).toEqual([]);
+  });
+
+  it('a schedule-started thread yields no candidate: the look back does not read it as the person', async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT, config: { runner: true, runnerPrompt: 'x' } }, t2: { sessionId: 's1', items: TRANSCRIPT, config: { roleRun: 'triage' } } };
+    const f = daemon({ threads, answers: [GOOD, GOOD] });
+    f.docs.set('reviews:lb', { id: 'lb', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, backfill: true, state: 'queued', plan: { threads: ['t1', 't2'], chunks: 2, estPercent: 0.1, fits: true } });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:lb');
+    const signals = f.docs.get('signals') as { prompts: unknown[] } | undefined;
+    expect(signals ? signals.prompts : []).toEqual([]);
+    expect(f.io.assist).not.toHaveBeenCalled();
+  });
+
+  it('a live prompt a schedule sent (source "schedule") yields no candidate', async () => {
+    const f = daemon({ answers: [JSON.stringify({ fit: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'x', action: { kind: 'compose', label: 'Try', text: 'y' } })] });
+    const e = createEngine(f.io); await e.load();
+    const BIGP = 'Pull last week returns by reason from the warehouse table. Chart them by week and by store. Compare them with the prior month and list the three biggest changes. Then email the summary to Sam with the chart attached. '.repeat(3);
+    await e.handle({ type: 'thread:prompt', terminalId: 't9', sessionId: 's1', at: NOW.toISOString(), source: 'schedule', text: BIGP });
+    await e.handle({ type: 'thread:turn', terminalId: 't9', sessionId: 's1', at: NOW.toISOString(), ms: 30_000 });
+    await e.idle();
+    expect(f.docs.has('candidates')).toBe(false);
   });
 });
 

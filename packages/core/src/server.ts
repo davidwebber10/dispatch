@@ -105,7 +105,9 @@ import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { migratePreviews } from './plugins/previews-migration.js';
-import { ThreadEvents } from './plugins/thread-events.js';
+import { ThreadEvents, isAutomatedThread } from './plugins/thread-events.js';
+/** A terminal row's config (JSON text) names a thread a schedule or a role started. */
+const automatedConfig = (config: string | null | undefined): boolean => { try { return isAutomatedThread(JSON.parse(config || '{}')); } catch { return false; } };
 import { PluginHooks } from './plugins/hooks.js';
 import { PluginWorkers } from './plugins/workers.js';
 import { MarketplaceService } from './plugins/marketplaces.js';
@@ -421,7 +423,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const skills = new SkillsService(path.join(dispatchDir, 'skills'), path.join(dispatchDir, 'skills.json'), marketplaces);
   app.locals.skills = skills;
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
-  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
+  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type, automated: automatedConfig(t.config) } : null; });
   app.locals.threadEvents = threadEvents;
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dispatchDir, 'keys') });
@@ -614,7 +616,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   marketplaceCheck.unref?.();
   const marketplaceFirstCheck = setTimeout(() => { void installer.checkNow().catch(() => {}); }, 20_000);
   marketplaceFirstCheck.unref?.();
-  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
+  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type, automated: automatedConfig(t.config) } : null; });
   const authRequestService = new AuthRequestService(broadcaster);
 
   // Name once from the first submitted user prompt; transcript activity is a legacy
