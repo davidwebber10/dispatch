@@ -626,6 +626,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       // Endless first, in its own try: a throw in either hook must not drop the other.
       try { onEndlessStatus?.(terminalId, status); } catch (err) { console.warn('[endless] status edge failed:', err); }
       watchDispatcher.onStatus(terminalId, status);
+    },
+    (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
+  );
   // Plugins observe hook payloads, spawns and declarations; prompts join the auto-namer's listener below.
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
@@ -633,9 +636,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Hook scripts run on thread events (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
   const pluginHooks = new PluginHooks(plugins, threadEvents, { api: () => daemonApi });
   plugins.setHookStatsProvider((id) => pluginHooks.stats(id));
-    },
-    (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
-  );
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
