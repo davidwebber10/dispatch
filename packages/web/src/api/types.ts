@@ -602,7 +602,8 @@ export interface PluginRow {
   /** A local folder with this id hides a bundled plugin of the same id. */
   shadowsBundled?: boolean;
   hooks?: { runs: number; failures: number; dropped: number };
-  assist?: { calls: number; inputTokens: number; outputTokens: number };
+  /** Model calls in the last `days` days (coach spec section 4.5); `costUsd` sums the known costs. */
+  assist?: { calls: number; failed?: number; inputTokens: number; outputTokens: number; costUsd?: number; days?: number };
   /** The worker the manifest declares, and its live state while a supervisor runs (plugins slice 5). */
   worker?: { command: string; args: string[]; env: Record<string, string>; jobs: { id: string; cron: string }[] };
   workerStats?: WorkerStats;

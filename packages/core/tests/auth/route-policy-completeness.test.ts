@@ -17,6 +17,17 @@ import { LimitSnapshots } from '../../src/limits/snapshot.js';
  */
 const EXPECTED_KEY_ROUTES: string[] = [
   'POST /api/plugins/:id/assist',
+  // Coach plan (2026-11-07): the assist meter and share for a plugin's own key; push; usage and analytics reads.
+  'GET /api/plugins/:id/assist/usage',
+  'GET /api/plugins/:id/assist/share',
+  'POST /api/plugins/:id/notify',
+  'GET /api/usage-limits/summary',
+  'GET /api/analytics/summary',
+  'GET /api/analytics/series',
+  'GET /api/analytics/top',
+  'GET /api/analytics/records',
+  'GET /api/analytics/control-plane',
+  'GET /api/analytics/tracking',
   'GET /api/plugins/:id/data',
   'GET /api/plugins/:id/data/:key',
   'PUT /api/plugins/:id/data/:key',

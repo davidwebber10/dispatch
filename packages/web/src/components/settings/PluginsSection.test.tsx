@@ -212,6 +212,33 @@ describe('permissions on the Plugins page (2026-11-07)', () => {
   });
 });
 
+describe('the coach permissions on the Plugins page (coach plan, Task 5)', () => {
+  it('read:usage, read:analytics and notify:push show their meaning', async () => {
+    rows = [row('coach', { permissions: ['read:usage', 'read:analytics', 'notify:push'] } as Partial<PluginRow>)];
+    render(<PluginsSection />);
+    const chips = within(await screen.findByTestId('plugin-row-coach')).getByRole('list', { name: 'Permissions' });
+    expect(within(chips).getByTitle('Reads your usage limits')).toHaveTextContent('read:usage');
+    expect(within(chips).getByTitle('Reads your usage analytics')).toHaveTextContent('read:analytics');
+    expect(within(chips).getByTitle('Sends you push notifications')).toHaveTextContent('notify:push');
+  });
+});
+
+describe('model calls on the Plugins page (coach plan, Task 2)', () => {
+  it('a plugin row shows calls and tokens for 7 days when it has assist usage', async () => {
+    rows = [
+      row('coach', { assist: { calls: 42, failed: 2, inputTokens: 12345, outputTokens: 2100, costUsd: 0.4567, days: 7 } }),
+      row('quiet'),
+    ];
+    render(<PluginsSection />);
+    const coach = await screen.findByTestId('plugin-row-coach');
+    const meter = within(coach).getByTestId('plugin-assist-coach');
+    expect(meter).toHaveTextContent('Model calls, 7 days: 42 (2 failed)');
+    expect(meter).toHaveTextContent('12.3k in · 2.1k out tokens');
+    expect(meter).toHaveTextContent('$0.46');
+    expect(within(screen.getByTestId('plugin-row-quiet')).queryByTestId('plugin-assist-quiet')).toBeNull();
+  });
+});
+
 describe('bundled plugins on the Plugins page (2026-11-07)', () => {
   it('a bundled plugin shows under BUNDLED with no Remove and a Copy to local that asks for an id', async () => {
     rows = [row('prompt-coach', { name: 'Prompt coach', bundled: true } as Partial<PluginRow>)];

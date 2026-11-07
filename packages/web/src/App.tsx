@@ -15,6 +15,7 @@ import { DispatchWorkPane } from './components/overseer/components/DispatchWorkP
 import { AgentPane } from './components/agents/AgentPane';
 import { closeAgentPane } from './components/agents/closeAgentPane';
 import { EditAgentModal } from './components/agents/EditAgentModal';
+import { PluginDialogs } from './plugins/PluginDialogs';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { HighScoreCelebration } from './components/update/HighScoreCelebration';
@@ -313,6 +314,7 @@ export default function App() {
           )}
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
+      <PluginDialogs />
       <HintToast />
     </>
   );

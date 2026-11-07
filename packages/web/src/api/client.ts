@@ -80,6 +80,37 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const body = (data: unknown) => JSON.stringify(data);
 
 export interface PluginImportResult { docs: number; files: number; settings: boolean }
+/** A plugin's model call (coach spec section 7.1): the harness and the model are optional. */
+export type PluginAssistHarness = 'claude' | 'codex' | 'openrouter';
+export interface PluginAssistRequest {
+  system?: string;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  maxTokens?: number;
+  /** One harness only (no fallback); `auto` = the account with the most room; absent = Claude, then OpenRouter. */
+  harness?: PluginAssistHarness | 'auto';
+  /** A model id for that harness (no spaces, at most 120 characters). */
+  model?: string;
+  /** The account a CLI harness signs in as (Settings → Accounts). */
+  accountId?: string;
+}
+export interface PluginAssistShare { usedPercent: number; pluginPercent: number; pluginTokens: number; accountTokens: number; resetsAt: string | null }
+export interface PluginAssistUsage {
+  calls: number;
+  failed: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  byModel: { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }[];
+}
+export interface PluginAssistResult {
+  text: string;
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number };
+  ms: number;
+  model: string;
+  harness?: PluginAssistHarness;
+  accountId?: string | null;
+  costUsd?: number | null;
+}
 
 /** A picked file's text. FileReader, not File.text(): older Safari and jsdom do not have the latter. */
 export function readFileText(file: Blob): Promise<string> {
@@ -450,7 +481,24 @@ export const api = {
     }
     return (await res.json()) as PluginImportResult;
   },
-  pluginAssist: (id: string, body: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) => req<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
+  /** A plugin's model budget (coach spec section 7.4): owner-only; null = no cap of that kind. */
+  pluginBudget: (id: string) => req<{ percentWeekly: number | null; usdWeekly: number | null }>(`/api/plugins/${encodeURIComponent(id)}/budget`),
+  setPluginBudget: (id: string, budget: { percentWeekly?: number | null; usdWeekly?: number | null }) => req<{ percentWeekly: number | null; usdWeekly: number | null }>(`/api/plugins/${encodeURIComponent(id)}/budget`, { method: 'PUT', body: JSON.stringify(budget) }),
+  /** A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3); null = not known. */
+  pluginAssistShare: (id: string, q: { accountId?: string; harness?: 'claude' | 'codex' } = {}) => {
+    const p = new URLSearchParams();
+    if (q.accountId) p.set('accountId', q.accountId);
+    if (q.harness) p.set('harness', q.harness);
+    return req<{ fiveHour: PluginAssistShare | null; sevenDay: PluginAssistShare | null }>(`/api/plugins/${encodeURIComponent(id)}/assist/share${p.toString() ? `?${p.toString()}` : ''}`);
+  },
+  /** The assist meter by time (coach spec section 7.2): no `from` = the last 7 days. */
+  pluginAssistUsage: (id: string, range: { from?: string; to?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (range.from) q.set('from', range.from);
+    if (range.to) q.set('to', range.to);
+    return req<PluginAssistUsage>(`/api/plugins/${encodeURIComponent(id)}/assist/usage${q.toString() ? `?${q.toString()}` : ''}`);
+  },
+  pluginAssist: (id: string, body: PluginAssistRequest) => req<PluginAssistResult>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
   pluginLogs: async (id: string, lines = 200): Promise<string> => {
     const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/logs?lines=${lines}`), { cache: 'no-store' });
     if (!res.ok) throw new ApiError(`GET plugin logs failed: ${res.status}`, res.status);

@@ -149,7 +149,12 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   app.use('/api', createLedgerRouter(d.ledgerService));
-  app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null));
+  const accountsForAssist = d.accounts;
+  app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
+    summary: d.usageLimits?.summary,
+    defaultAccount: accountsForAssist ? (h) => accountsForAssist.defaultId(h) : undefined,
+    push: d.pushService,
+  }));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));
   app.use('/api/roles', createRolesRouter(d.rolesService));

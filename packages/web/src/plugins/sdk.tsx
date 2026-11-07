@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import * as Icons from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, type PluginAssistRequest } from '../api/client';
 import type { ServerEvent } from '../api/events-socket';
 import { apiPath } from '../lib/basePath';
 import { useUI } from '../stores/ui';
@@ -19,6 +19,7 @@ import { copyText } from '../lib/clipboard';
 import { openThreadInPlace } from '../components/endless/openThread';
 import { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput, Toggle } from '../components/settings/ui';
 import { usePluginRegistry, useContributions, type Contributions, type InspectorTabIcon } from './registry';
+import { usePluginDialogs } from './PluginDialogs';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.2): the object a plugin's
@@ -97,7 +98,7 @@ const events = {
 };
 
 /** One model call through the daemon (spec section 3.4); needs the plugin's `model:assist` permission. */
-function assist(plugin: string, req: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) {
+function assist(plugin: string, req: PluginAssistRequest) {
   return api.pluginAssist(plugin, req);
 }
 
@@ -150,7 +151,17 @@ export interface DispatchSdk {
   };
   zustand: { create: typeof create };
   stores: { useUI: typeof useUI; useProjects: typeof useProjects; useTabs: typeof useTabs; useUpdate: typeof useUpdate; useThreadStatus: typeof useThreadStatus };
-  actions: { setView: (key: string) => void; openThread: (projectId: string, terminalId: string) => Promise<void>; openSettings: (sectionKey: string) => void; /** An unseen count on a view (`plugin:<id>:<view>`); 0 clears it. */ setBadge: (viewKey: string, n: number) => void };
+  actions: {
+    setView: (key: string) => void;
+    openThread: (projectId: string, terminalId: string) => Promise<void>;
+    openSettings: (sectionKey: string) => void;
+    /** An unseen count on a view (`plugin:<id>:<view>`); 0 clears it. */
+    setBadge: (viewKey: string, n: number) => void;
+    /** The new-automation dialog with the prompt (and cron, name) filled; nothing is saved until the person saves. No project = the open one. */
+    openSchedule: (p: { projectId?: string; prompt: string; cron?: string; label?: string }) => void;
+    /** The new-thread dialog listing one thread per prompt; nothing starts until the person presses Start. No project = the open one. */
+    openNewThreads: (p: { projectId?: string; prompts: string[] }) => void;
+  };
   api: typeof api;
   ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
   icons: Record<string, Icon>;
@@ -188,6 +199,8 @@ export function buildSdk(): DispatchSdk {
       openThread: (projectId, terminalId) => openThreadInPlace(projectId, terminalId),
       openSettings: (sectionKey) => useUI.getState().requestSettings(sectionKey),
       setBadge: (viewKey, n) => usePluginRegistry.getState().setBadge(viewKey, n),
+      openSchedule: (p) => usePluginDialogs.getState().openSchedule(p),
+      openNewThreads: (p) => usePluginDialogs.getState().openNewThreads(p),
     },
     api,
     ui: { Modal, Markdown, FileViewer, Toggle, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },

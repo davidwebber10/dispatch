@@ -124,6 +124,10 @@ The SDK object, in full:
 - `stores`: `useUI`, `useProjects`, `useTabs`, `useUpdate`, `useThreadStatus`.
   Read them; write through `actions`.
 - `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`, `setBadge(viewKey, n)` (an unseen count on one of the plugin's views; 0 clears it).
+  `openSchedule({ projectId?, prompt, cron?, label? })` opens the new-automation dialog with those
+  fields filled; `openNewThreads({ projectId?, prompts })` opens the new-thread dialog listing one
+  thread per prompt. Neither creates anything: the person reviews and presses Save or Start (each
+  new thread then gets its prompt as its first message). No `projectId` = the open project.
 - `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,
@@ -185,6 +189,10 @@ removed. Anything not listed is refused: `The plugin "<id>" lacks the permission
 | `read:projects` | the project list |
 | `read:threads` | a project's threads and a thread's transcript |
 | `read:ledger` | a project's ledger card and item sources |
+| `read:usage` | the usage-limit summary (`GET /api/usage-limits/summary`): every account's windows and resets |
+| `read:analytics` | the analytics routes (`GET /api/analytics/*`), read only |
+| `notify:push` | `POST /api/plugins/<id>/notify { title, body, url? }` from its own key: a push to every device, at most one an hour (429 `rate_limited` with `retryAfterSeconds`). `url` is an app path a tap opens |
+| `model:assist` | model calls (see Assist below) |
 | `threads:read-storage` | a thread key may read this plugin's documents |
 | `threads:write-storage` | a thread key may write them; the daemon stamps the writing thread on the document |
 | `threads:call-worker` | a thread key may call the plugin's worker through the proxy |
@@ -264,13 +272,41 @@ call) is not in this slice.
 
 ## Assist: one model call
 
-`d.assist(plugin, { system, messages, maxTokens })` runs one turn on the daemon's assist model
-(the signed-in Claude Code CLI, else the OpenRouter key) with no tools, and returns
-`{ text, usage, ms, model }`. It needs `model:assist`; every call is metered on the Plugins
-page, and at most three run at once per plugin (a fourth gets 429). A plugin's processes call
-`POST /api/plugins/<id>/assist` with the same body. A plugin that judges in the browser
-should claim its result document before it calls, or every open tab
-pays for the same call.
+`d.assist(plugin, { system, messages, maxTokens, harness?, model?, accountId? })` runs one turn
+with no tools and returns `{ text, usage, ms, model, harness, accountId, costUsd }`. `usage`
+keeps `cacheReadTokens` and `cacheCreateTokens` apart from `inputTokens`.
+
+- `harness`: `claude` (the `claude` CLI), `codex` (`codex exec`), `openrouter` (the OpenRouter
+  key), or `auto` (the signed-in account with the most weekly room, never one at 90% of its
+  5-hour window). An explicit harness runs alone: no fallback. With no harness the call runs
+  as before: the Claude CLI, else OpenRouter.
+- `model`: that harness's model id (no spaces, at most 120 characters). Defaults:
+  `claude-haiku-5-5`, Codex's small model, `anthropic/claude-haiku-5.5`.
+- `accountId`: the account (Settings → Accounts) a CLI harness signs in as; default: the
+  harness's default account.
+
+It needs `model:assist`; at most three calls run at once per plugin (a fourth gets 429 `busy`).
+A plugin's processes call `POST /api/plugins/<id>/assist` with the same body. A plugin that
+judges in the browser should claim its result document before it calls, or every open tab pays
+for the same call.
+
+**Metering.** Every call is a row, failed calls included: model, harness, account, tokens,
+cost (the harness's own figure, else priced from the tokens). The Plugins page shows the last
+7 days on the plugin's row. `GET /api/plugins/<id>/assist/usage?from&to` (the owner, or the
+plugin's own key) gives `{ calls, failed, inputTokens, outputTokens, costUsd, byModel }`; no
+`from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` gives the
+plugin's estimated share of that account's 5-hour and weekly windows: its price-weighted tokens
+over every Dispatch token on the account in the window, times the window's used percent. Usage
+outside Dispatch is not seen, so the estimate reads high.
+
+**Budget.** `PUT /api/plugins/<id>/budget { percentWeekly?, usdWeekly? }` (owner only; `null`
+clears one) caps the plugin's model calls: at most `percentWeekly` % (0.1 to 100) of the weekly
+limit of the account a call runs on, and at most `usdWeekly` dollars over 7 days on OpenRouter.
+At the cap, or with the account at 90% of its 5-hour window, assist answers 429
+`{ error: 'budget', usedPercent, capPercent, window }` (`usedUsd`, `capUsd` on OpenRouter).
+Calls in flight count as reserved at their `maxTokens`. Each answer carries
+`X-Budget-Used-Percent` and `X-Budget-Cap-Percent` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
+a caller can step down before it is refused. No budget: no cap.
 
 ## The worker
 

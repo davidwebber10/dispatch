@@ -12,7 +12,10 @@ import { insideRealRoot } from '../files/confine.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import type { AssistRunner } from '../assist/run.js';
+import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
+import { notionalValueUsd } from '../analytics/pricing.js';
+import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT } from '../plugins/assist-share.js';
+import type { UsageSummary } from '../limits/gauge.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
 import type { PluginInstaller } from '../plugins/installer.js';
@@ -30,6 +33,10 @@ function fail(res: import('express').Response, e: unknown): void {
 
 const OK = { ok: true } as const;
 export const ASSIST_INFLIGHT_MAX = 3;
+/** A plugin sends at most one push in this time (coach plan, Task 5). */
+export const PUSH_GAP_MS = 3_600_000;
+/** A model or account id a caller may name: no spaces, at most 120 characters. */
+const ASSIST_ID_RE = /^[^\s]{1,120}$/;
 
 /** A plugin key reaches the storage and settings of its own plugin only. */
 const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
@@ -65,6 +72,99 @@ function principalHeaders(req: Request): Record<string, string> {
 /** Headers that never cross to the worker: the caller's credentials and the hop-by-hop set. */
 const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
 
+/** One assist answer as a meter row: the harness's cost, else priced from the tokens when the model is known. */
+function meterOf(result: AssistResult, asked: string, started: number): pluginData.AssistRecord {
+  const u = result.usage;
+  const cacheReadTokens = u.cacheReadTokens ?? 0;
+  const cacheCreateTokens = u.cacheCreateTokens ?? 0;
+  const costUsd = typeof result.costUsd === 'number' ? result.costUsd
+    : notionalValueUsd({ model: result.model, input: u.inputTokens, output: u.outputTokens, cacheRead: cacheReadTokens, cacheCreate: cacheCreateTokens });
+  return {
+    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? null,
+    inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens, cacheCreateTokens,
+    costUsd, ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
+  };
+}
+
+const DAY_MS = 86_400_000;
+
+/** The default model a harness runs when the caller names none, to price a reservation. */
+const DEFAULT_MODEL: Record<AssistHarness, string> = { claude: ASSIST_CLAUDE_MODEL, codex: 'gpt-5.6-terra', openrouter: ASSIST_OPENROUTER_MODEL };
+interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number }
+interface BudgetCheck { refuse: Record<string, unknown> | null; headers: Record<string, string>; release: () => void }
+const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
+
+/**
+ * The budget guard (coach spec sections 4.5, 7.4, 9a.2-3). A plugin with a budget is refused
+ * (429 `budget`) when its estimated weekly share of the account the call runs on, plus the calls
+ * it has in flight, reaches its cap; or when that account's 5-hour window is at 90% or more.
+ * OpenRouter has no limit windows: its cap is dollars over the last 7 days. A call in flight is
+ * reserved at its prompt (about 4 characters a token) and its maxTokens of output, at the model's
+ * price, until it ends; then the metered row takes its place. No budget = no cap.
+ */
+function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
+  const reserved = new Map<string, Set<Reservation>>();
+  return {
+    check(pluginId: string, call: { harness: AssistHarness | 'auto' | undefined; accountId: string | undefined; model: string | undefined; maxTokens: number; promptChars: number }): BudgetCheck {
+      const harness: AssistHarness = call.harness === 'codex' || call.harness === 'openrouter' ? call.harness : 'claude';
+      const sub: 'claude' | 'codex' = harness === 'codex' ? 'codex' : 'claude';
+      const accountId = harness === 'openrouter' ? 'openrouter' : call.accountId ?? limits.defaultAccount?.(sub) ?? 'cli';
+      const budget = pluginData.getBudget(db, pluginId);
+      const mine = reserved.get(pluginId) ?? new Set<Reservation>();
+      const same = [...mine].filter((r) => r.harness === harness && r.accountId === accountId);
+      const weight = tokenWeight(call.model ?? DEFAULT_MODEL[harness], { input: Math.ceil(call.promptChars / 4), output: call.maxTokens });
+      const headers: Record<string, string> = {};
+      let refuse: Record<string, unknown> | null = null;
+
+      if (harness === 'openrouter') {
+        const spent = pluginData.assistCostSince(db, pluginId, 'openrouter', new Date(Date.now() - 7 * DAY_MS).toISOString()) + same.reduce((n, r) => n + r.usd, 0);
+        headers['X-Budget-Used-Usd'] = pct(spent);
+        if (budget.usdWeekly !== null) {
+          headers['X-Budget-Cap-Usd'] = String(budget.usdWeekly);
+          if (spent >= budget.usdWeekly) refuse = { error: 'budget', usedUsd: spent, capUsd: budget.usdWeekly, message: `The plugin has spent its $${budget.usdWeekly} a week on OpenRouter.` };
+        }
+      } else {
+        const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
+        const opts = { pluginId, accountId, harness, defaultAccountId: limits.defaultAccount?.(sub) ?? 'cli' };
+        const week = estimateShare(db, summary, { ...opts, window: 'seven_day' });
+        if (week) {
+          const reservedW = same.reduce((n, r) => n + r.weight, 0);
+          const used = week.pluginPercent + (week.accountWeight > 0 ? (reservedW / week.accountWeight) * week.usedPercent : 0);
+          headers['X-Budget-Used-Percent'] = pct(used);
+          if (budget.percentWeekly !== null && used >= budget.percentWeekly) {
+            refuse = { error: 'budget', window: 'seven_day', usedPercent: used, capPercent: budget.percentWeekly, message: `The plugin has used its ${budget.percentWeekly}% of the weekly limit.` };
+          }
+        }
+        if (budget.percentWeekly !== null) {
+          headers['X-Budget-Cap-Percent'] = String(budget.percentWeekly);
+          // Never take the last 10% of a 5-hour window (section 9a.2).
+          const five = estimateShare(db, summary, { ...opts, window: 'five_hour' });
+          if (!refuse && five && five.usedPercent >= FIVE_HOUR_FLOOR_PERCENT) {
+            refuse = { error: 'budget', window: 'five_hour', usedPercent: five.usedPercent, capPercent: FIVE_HOUR_FLOOR_PERCENT, message: 'The account is at 90% of its 5-hour limit; assist waits for the reset.' };
+          }
+        }
+      }
+      if (refuse) return { refuse, headers, release: () => {} };
+      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6 };
+      mine.add(r); reserved.set(pluginId, mine);
+      return { refuse: null, headers, release: () => { mine.delete(r); if (mine.size === 0) reserved.delete(pluginId); } };
+    },
+  };
+}
+/** A `from`/`to` query as ISO times: `from` defaults to 7 days ago, `to` to now (+1 minute). Null when one does not parse. */
+export function rangeOf(from: unknown, to: unknown, now = Date.now()): { from: string; to: string } | null {
+  const parse = (v: unknown, fallback: number): number | null => {
+    if (v === undefined || v === '') return fallback;
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(v)) return null;
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : null;
+  };
+  const f = parse(from, now - 7 * DAY_MS);
+  const t = parse(to, now + 60_000);
+  if (f === null || t === null) return null;
+  return { from: new Date(f).toISOString(), to: new Date(t).toISOString() };
+}
+
 /** The writer stamped on a document a thread key writes: from the key, never from the body. */
 function writerOf(req: Request): pluginData.Writer | null {
   let p;
@@ -82,7 +182,17 @@ function storageError(res: import('express').Response, e: unknown): void {
   res.status(500).json({ error: msg });
 }
 
-export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null): Router {
+/** What the assist routes read beyond the runner: the usage summary and each harness's default account. */
+export interface AssistLimitsDeps {
+  /** The usage gauge's summary (`/usage-limits/summary`); absent = no limit figures. */
+  summary?: () => UsageSummary | null;
+  /** A harness's default account (accounts.json); `cli` when absent. */
+  defaultAccount?: (harness: 'claude' | 'codex') => string;
+  /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
+  push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
+}
+
+export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -469,28 +579,139 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     else req.pipe(up);
   });
 
+  // ── plugin push (coach spec section 9a.5): its own key with notify:push, at most one an hour ──
+  // There are no daemon-wide quiet hours today; a plugin keeps its own (the Coach's do).
+  const lastPush = new Map<string, number>();
+  const notifyRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('notify:push')(req, ctx) : own; };
+  router.post('/plugins/:id/notify', keyRoute({ plugin: notifyRule }), async (req, res) => {
+    let kind: string;
+    try { kind = principalOf(req).kind; } catch { kind = 'owner'; }
+    if (kind !== 'plugin') return void res.status(403).json({ error: 'out_of_scope', message: "A plugin's push comes from its own key." });
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { title?: unknown; body?: unknown; url?: unknown };
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const text = typeof body.body === 'string' ? body.body.trim() : '';
+    if (!title || title.length > 120 || !text || text.length > 500) return void res.status(400).json({ error: 'bad_body', message: 'Send { title (1-120 characters), body (1-500), url? }.' });
+    // An app path only: never another origin.
+    if (body.url !== undefined && !(typeof body.url === 'string' && /^\/(?![/\\])[^\s]{0,500}$/.test(body.url))) {
+      return void res.status(400).json({ error: 'bad_url', message: 'url is an app path that starts with one /.' });
+    }
+    if (!limits.push) return void res.status(503).json({ error: 'no_push', message: 'Push is not available on this daemon.' });
+    const now = Date.now();
+    const last = lastPush.get(req.params.id);
+    if (last !== undefined && now - last < PUSH_GAP_MS) {
+      return void res.status(429).json({ error: 'rate_limited', message: 'A plugin sends at most one push an hour.', retryAfterSeconds: Math.ceil((PUSH_GAP_MS - (now - last)) / 1000) });
+    }
+    lastPush.set(req.params.id, now);
+    try { await limits.push.notifyPlugin({ pluginId: req.params.id, title, body: text, ...(typeof body.url === 'string' ? { url: body.url } : {}) }); }
+    catch { return void res.status(502).json({ error: 'push_failed', message: 'The push could not be sent.' }); }
+    res.json({ ok: true });
+  });
+
+  // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
+  const budgets = createBudgetGuard(db, limits);
+  router.get('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(pluginData.getBudget(db, req.params.id));
+  });
+  router.put('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { percentWeekly?: unknown; usdWeekly?: unknown };
+    const next = pluginData.getBudget(db, req.params.id);
+    if (body.percentWeekly !== undefined) {
+      if (body.percentWeekly !== null && !(typeof body.percentWeekly === 'number' && body.percentWeekly >= 0.1 && body.percentWeekly <= 100)) {
+        return void res.status(400).json({ error: 'bad_budget', message: 'percentWeekly is 0.1 to 100, or null for no cap.' });
+      }
+      next.percentWeekly = body.percentWeekly as number | null;
+    }
+    if (body.usdWeekly !== undefined) {
+      if (body.usdWeekly !== null && !(typeof body.usdWeekly === 'number' && Number.isFinite(body.usdWeekly) && body.usdWeekly >= 0 && body.usdWeekly <= 10_000)) {
+        return void res.status(400).json({ error: 'bad_budget', message: 'usdWeekly is 0 to 10000 dollars, or null for no cap.' });
+      }
+      next.usdWeekly = body.usdWeekly as number | null;
+    }
+    res.json(pluginData.setBudget(db, req.params.id, next));
+  });
+
   // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──
   const assistRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('model:assist')(req, ctx) : own; };
   // A bound per plugin: each call is a model process on the owner's account.
   const inflight = new Map<string, number>();
   router.post('/plugins/:id/assist', keyRoute({ plugin: assistRule }), async (req, res) => {
     if (!known(req, res)) return;
-    const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown };
+    const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown; harness?: unknown; model?: unknown; accountId?: unknown };
     const messages = Array.isArray(body.messages) ? body.messages.filter((m): m is { role: 'user' | 'assistant'; content: string } => !!m && typeof m === 'object' && ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant') && typeof (m as { content?: unknown }).content === 'string') : [];
-    if (messages.length === 0) return void res.status(400).json({ error: 'bad_body', message: 'Send { messages: [{ role: "user", content: "..." }], system?, maxTokens? }.' });
+    if (messages.length === 0) return void res.status(400).json({ error: 'bad_body', message: 'Send { messages: [{ role: "user", content: "..." }], system?, maxTokens?, harness?, model? }.' });
     const maxTokens = Math.max(1, Math.min(2000, typeof body.maxTokens === 'number' ? Math.floor(body.maxTokens) : 800));
-    if (!assist || !(await assist.available().catch(() => false))) {
+    // The harness and model the caller chose (coach spec section 7.1): a known harness, a model id with no spaces.
+    if (body.harness !== undefined && !(typeof body.harness === 'string' && (body.harness === 'auto' || (ASSIST_HARNESSES as readonly string[]).includes(body.harness)))) {
+      return void res.status(400).json({ error: 'bad_harness', message: `harness is one of ${[...ASSIST_HARNESSES, 'auto'].join(', ')}.` });
+    }
+    if (body.model !== undefined && !(typeof body.model === 'string' && ASSIST_ID_RE.test(body.model))) {
+      return void res.status(400).json({ error: 'bad_model', message: 'model is a model id: 1 to 120 characters, no spaces.' });
+    }
+    if (body.accountId !== undefined && !(typeof body.accountId === 'string' && ASSIST_ID_RE.test(body.accountId))) {
+      return void res.status(400).json({ error: 'bad_account', message: 'accountId is an account id: 1 to 120 characters, no spaces.' });
+    }
+    let harness = body.harness as AssistHarness | 'auto' | undefined;
+    const model = body.model as string | undefined;
+    let accountId = body.accountId as string | undefined;
+    if (!assist || !(await assist.available(harness).catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
+    // `auto` is resolved here when the runner can say what it would pick, so that account's budget is the one checked.
+    if (harness === 'auto' && assist.pick) {
+      const pick = await assist.pick();
+      if (!pick) return void res.status(503).json({ error: 'no_model', message: 'No signed-in account has room for assist right now.' });
+      harness = pick.harness;
+      accountId = pick.harness === 'openrouter' ? undefined : pick.accountId;
+    }
+    // From here to the reservation nothing awaits: the check and the reservation are one step, so
+    // concurrent calls each see the ones before them (coach plan, Review Focus 1).
     const busy = inflight.get(req.params.id) ?? 0;
     if (busy >= ASSIST_INFLIGHT_MAX) return void res.status(429).json({ error: 'busy', message: `At most ${ASSIST_INFLIGHT_MAX} assist calls run at once for a plugin.` });
+    const promptChars = (typeof body.system === 'string' ? body.system.length : 0) + messages.reduce((n, m) => n + m.content.length, 0);
+    const check = budgets.check(req.params.id, { harness, accountId, model, maxTokens, promptChars });
+    for (const [k, v] of Object.entries(check.headers)) res.setHeader(k, v);
+    if (check.refuse) return void res.status(429).json(check.refuse);
     inflight.set(req.params.id, busy + 1);
     let result;
-    try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens }).catch(() => null); }
-    finally { inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1); }
-    if (!result) return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
-    pluginData.recordAssist(db, req.params.id, result.usage, result.ms);
+    const started = Date.now();
+    try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens, ...(harness ? { harness } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}) }).catch(() => null); }
+    finally {
+      inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1);
+      check.release();
+    }
+    const asked = harness && harness !== 'auto' ? harness : '';
+    if (!result) {
+      // A failed call is metered too (ok = 0), so the Plugins page and a budget see it.
+      pluginData.recordAssist(db, req.params.id, { model: model ?? '', harness: asked, accountId: accountId ?? null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: Date.now() - started, ok: false });
+      return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
+    }
+    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started));
     res.json(result);
+  });
+
+  // A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3).
+  router.get('/plugins/:id/assist/share', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+    if (!known(req, res)) return;
+    const h = req.query.harness ?? 'claude';
+    if (h !== 'claude' && h !== 'codex') return void res.status(400).json({ error: 'bad_harness', message: 'harness is claude or codex (OpenRouter has no limit windows).' });
+    const accountId = typeof req.query.accountId === 'string' && ASSIST_ID_RE.test(req.query.accountId) ? req.query.accountId : (limits.defaultAccount?.(h) ?? 'cli');
+    const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
+    const opts = { pluginId: req.params.id, accountId, harness: h as AssistHarness, defaultAccountId: limits.defaultAccount?.(h) ?? 'cli' };
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay: estimateShare(db, summary, { ...opts, window: 'seven_day' }) });
+  });
+
+  // The meter by time (coach spec section 7.2): the owner, or the plugin's own key. No `from` = 7 days ago.
+  router.get('/plugins/:id/assist/usage', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+    if (!known(req, res)) return;
+    const range = rangeOf(req.query.from, req.query.to);
+    if (!range) return void res.status(400).json({ error: 'bad_range', message: 'from and to are ISO times.' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(pluginData.assistUsage(db, req.params.id, range.from, range.to));
   });
 
   return router;
