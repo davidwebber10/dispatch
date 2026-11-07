@@ -91,10 +91,25 @@ export class PluginRegistry {
 
   /** Mint a key for every enabled, loadable plugin (boot), and drop keys of plugins that no longer qualify. */
   issueKeys(): void {
-    for (const row of this.list()) {
-      if (row.enabled && !row.error) { if (!this.keyed(row.id)) this.issueKey(row.id); }
-      else this.revokeKey(row.id);
+    const rows = this.list();
+    for (const row of rows) this.syncKey(row);
+    // A key file of a folder deleted while the daemon was down is litter: sweep it.
+    if (this.keyDir) {
+      const ids = new Set(rows.map((r) => r.id));
+      let names: string[] = [];
+      try { names = fs.readdirSync(this.keyDir); } catch { return; }
+      for (const n of names) {
+        const id = n.startsWith('plugin-') ? n.slice('plugin-'.length) : null;
+        if (id && !ids.has(id)) { try { fs.unlinkSync(path.join(this.keyDir, n)); } catch { /* ignore */ } }
+      }
     }
+  }
+
+  /** Issue or revoke one plugin's key to match its state (enabled and loadable → keyed). */
+  private syncKey(row: PluginRow | undefined, id?: string): void {
+    if (!row) { if (id) this.revokeKey(id); return; }
+    if (row.enabled && !row.error) { if (!this.keyed(row.id)) this.issueKey(row.id); }
+    else this.revokeKey(row.id);
   }
 
   /** What a rule knows about a plugin key's plugin: null when unknown, disabled or broken (its key is then refused). */
@@ -205,6 +220,7 @@ export class PluginRegistry {
     if (fs.existsSync(folder)) throw new Error('exists');
     fs.mkdirSync(folder, { recursive: true });
     for (const [file, body] of Object.entries(pluginTemplate(id, name))) fs.writeFileSync(path.join(folder, file), body);
+    this.syncKey(this.get(id), id);
     return this.get(id)!;
   }
 
@@ -226,7 +242,10 @@ export class PluginRegistry {
 
   /** Tell every client the plugin changed (or went away): `plugin:changed { id, plugin }`. */
   announce(id: string): void {
-    this.broadcaster.broadcast({ type: 'plugin:changed', id, plugin: this.get(id) ?? null });
+    const row = this.get(id);
+    // A folder that appeared, was fixed, or went away: its key follows (spec section 6).
+    this.syncKey(row, id);
+    this.broadcaster.broadcast({ type: 'plugin:changed', id, plugin: row ? this.get(id) ?? null : null });
   }
 
   /** Watch the folder; a burst of writes to one plugin becomes one announcement. */

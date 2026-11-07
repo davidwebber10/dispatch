@@ -70,9 +70,19 @@ describe('plugin keys on the read routes (2026-11-07)', () => {
     expect((await request(app).get('/api/previews').set(asPlugin('writer'))).status).toBe(403);
   });
 
-  it('a thread key still lists previews, and the owner too', async () => {
+  it('the previews lists stay closed to thread keys (previews spec: owner only); the owner lists them', async () => {
     const thread = { Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key}` };
-    expect((await request(app).get('/api/previews').set(thread)).status).toBe(200);
+    expect((await request(app).get('/api/previews').set(thread)).status).toBe(403);
+    expect((await request(app).get('/api/sessions/A/previews').set(thread)).status).toBe(403);
     expect((await request(app).get('/api/previews')).status).toBe(200);
+  });
+
+  it('a refused request that names a plugin in X-Dispatch-Plugin is logged with the plugin', async () => {
+    const lines: string[] = [];
+    configureRefusalLog({ log: (l) => lines.push(l) });
+    await request(app).get('/api/sessions').set(asPlugin('nothing')).set('X-Dispatch-Plugin', 'nothing');
+    await request(app).post('/api/plugins/scaffold').set(asPlugin('reader')).set('X-Dispatch-Plugin', 'reader').send({ id: 'x', name: 'X' });
+    expect(lines.some((l) => l.includes('plugin=reader'))).toBe(true);
+    configureRefusalLog({ log: () => {} });
   });
 });

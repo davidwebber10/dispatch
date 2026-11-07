@@ -86,6 +86,17 @@ describe('plugin storage routes (2026-11-07)', () => {
     expect(wno.body.message).toBe('The plugin "closed" does not let threads write its storage.');
   });
 
+  it("a thread key cannot reach a disabled plugin's storage, nor a broken one's", async () => {
+    await put({}, 'open', 'k', 'v');
+    await request(app).post('/api/plugins/open/disable').expect(200);
+    expect((await request(app).get('/api/plugins/open/data/k').set(asThread())).status).toBe(404);
+    expect((await request(app).get('/api/plugins/open/data').set(asThread())).status).toBe(404);
+    expect((await put(asThread(), 'open', 'k', 'changed')).status).toBe(404);
+    expect((await request(app).delete('/api/plugins/open/data/k').set(asThread())).status).toBe(404);
+    // the owner still can
+    expect((await request(app).get('/api/plugins/open/data/k')).body.value).toBe('v');
+  });
+
   it('a document over the size cap is refused with 413 and the old value stays', async () => {
     await put({}, 'open', 'big', 'small');
     const r = await put({}, 'open', 'big', 'x'.repeat(DOC_MAX_BYTES));

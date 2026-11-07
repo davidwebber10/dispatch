@@ -30,7 +30,8 @@ const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
 function grantRule(plugins: PluginRegistry, kind: 'read' | 'write'): Rule {
   return (req) => {
     const facts = plugins.facts(req.params.id);
-    if (!facts) return OK; // the handler answers 404
+    // A disabled or broken plugin granted nothing: its documents stay closed to every thread.
+    if (!facts) return { ok: false, status: 404, error: 'out_of_scope', message: 'unknown plugin' };
     return facts.permissions.includes(`threads:${kind}-storage`)
       ? OK
       : { ok: false, status: 403, error: 'out_of_scope', message: `The plugin "${req.params.id}" does not let threads ${kind} its storage.` };

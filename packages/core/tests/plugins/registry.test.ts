@@ -237,6 +237,30 @@ describe('PluginRegistry keys (2026-11-07)', () => {
     expect(fs.existsSync(keyFile('p'))).toBe(false);
   });
 
+  it('a plugin that appears, is scaffolded, or is fixed after boot gets a key on announce; a removed folder loses its key file', () => {
+    const r = reg(); r.issueKeys();
+    plugin('late');
+    expect(r.get('late')!.keyed).toBe(false);
+    r.announce('late');
+    expect(r.get('late')!.keyed).toBe(true);
+    expect(fs.existsSync(keyFile('late'))).toBe(true);
+    const made = r.scaffold('fresh', 'Fresh');
+    expect(made.keyed).toBe(true);
+    plugin('fixme', { id: 'wrong' });
+    r.announce('fixme');
+    expect(fs.existsSync(keyFile('fixme'))).toBe(false);
+    plugin('fixme');
+    r.announce('fixme');
+    expect(r.get('fixme')!.keyed).toBe(true);
+    fs.rmSync(path.join(dir, 'late'), { recursive: true });
+    r.announce('late');
+    expect(fs.existsSync(keyFile('late'))).toBe(false);
+    // a stale key file from a folder deleted while the daemon was down is swept at boot
+    fs.writeFileSync(keyFile('ghost'), 'dpk_x\n');
+    reg().issueKeys();
+    expect(fs.existsSync(keyFile('ghost'))).toBe(false);
+  });
+
   it('facts(id) returns the manifest permissions; null for unknown, disabled or broken', () => {
     plugin('p'); plugin('broken', { id: 'x' });
     const r = reg();

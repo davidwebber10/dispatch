@@ -3,7 +3,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { Router } from 'express';
 import { keyRoute, policyRouter, needs } from '../auth/route-policy.js';
-import { ownProjectRule, allowRule } from '../auth/key-rules.js';
+import { ownProjectRule } from '../auth/key-rules.js';
 import { principalOf } from '../auth/request-principal.js';
 import { insideRealRoot } from '../files/confine.js';
 import { setFileHeaders } from '../http/active-content.js';
@@ -95,12 +95,12 @@ export function createPreviewsRouter(db: Database.Database, broadcaster: EventBr
     }
   });
 
-  router.get('/previews', keyRoute({ thread: allowRule, roleRun: allowRule, plugin: needs('read:previews') }), (req, res) => {
+  router.get('/previews', keyRoute({ plugin: needs('read:previews') }), (req, res) => {
     const limit = Number(req.query.limit) || 200;
     res.json({ previews: previewsDb.list(db, { limit }), unseen: previewsDb.unseenCount(db) });
   });
 
-  router.get('/sessions/:id/previews', keyRoute({ thread: allowRule, roleRun: allowRule, plugin: needs('read:previews') }), (req, res) => {
+  router.get('/sessions/:id/previews', keyRoute({ plugin: needs('read:previews') }), (req, res) => {
     const limit = Number(req.query.limit) || 200;
     res.json({ previews: previewsDb.list(db, { sessionId: req.params.id, limit }), unseen: previewsDb.unseenCount(db, req.params.id) });
   });

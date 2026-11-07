@@ -60,3 +60,9 @@ describe('redactKeysDeep', () => {
     expect(redactKeysDeep(7)).toBe(7);
   });
 });
+
+it('redacts a plugin key (dpk_) like the other kinds (2026-11-07)', () => {
+  const key = 'dpk_' + 'a'.repeat(43);
+  expect(redactKeys(`/api/x?k=${key}`)).not.toContain(key);
+  expect(redactKeys(`Bearer ${key}`)).toMatch(/dpk_/);
+});

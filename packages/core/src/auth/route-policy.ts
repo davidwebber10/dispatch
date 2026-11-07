@@ -78,7 +78,9 @@ export function refuse(res: Response, result: Extract<RuleResult, { ok: false }>
       const id = `${p.kind === 'none' ? 'none' : p.handle}|${req.method}|${route}|${result.error}`;
       const t = nowFn();
       const e = seen.get(id);
-      const line = `[keys] refused ${describe(p)} ${req.method} ${route}: ${result.error}`;
+      // The web part of a plugin names itself in X-Dispatch-Plugin (spec section 6): the log says which plugin asked.
+      const tag = String(req.headers['x-dispatch-plugin'] ?? '').replace(/[^a-z0-9-]/g, '').slice(0, 64);
+      const line = `[keys] refused ${describe(p)} ${req.method} ${route}: ${result.error}${tag ? ` plugin=${tag}` : ''}`;
       if (!e) {
         if (seen.size > 1000) seen.clear();
         seen.set(id, { last: t, suppressed: 0 });
