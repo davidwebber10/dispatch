@@ -9,6 +9,7 @@ import readline from 'node:readline';
 import { withDefaults } from '../lib/settings.mjs';
 import { collect, emptyState } from '../lib/signals.mjs';
 import { detect, proposeNew } from '../lib/detectors.mjs';
+import { allows, normalizeMemory, emptyMemory } from '../lib/memory.mjs';
 
 const API = process.env.DISPATCH_API;
 const PLUGIN = process.env.DISPATCH_PLUGIN || 'coach';
@@ -27,9 +28,14 @@ const putDoc = (k, value) => call('PUT', `/api/plugins/${PLUGIN}/data/${k}`, { v
 let settings = withDefaults(null);
 let state = emptyState();
 let candidates = { items: [], seen: [] };
+let memory = emptyMemory();
 let saveTimer = null;
 let ready = false;
 const backlog = [];
+
+async function loadMemory() {
+  try { memory = normalizeMemory(await getDoc('memory', null)); } catch (err) { console.error('memory:', err.message); }
+}
 
 async function loadSettings() {
   try { const r = await call('GET', `/api/plugins/${PLUGIN}/settings`); settings = withDefaults(r && r.value); } catch (err) { console.error('settings:', err.message); }
@@ -44,7 +50,8 @@ function saveSoon() {
 }
 
 async function runDetectors() {
-  const found = detect(state, settings, new Date());
+  // What the person told the Coach (known skills, types turned off, bad detections) filters here too.
+  const found = detect(state, settings, new Date()).filter((c) => allows(memory, c, new Date()));
   if (!found.length) return;
   const next = proposeNew(candidates, found, new Date());
   if (!next.added.length) return;
@@ -55,6 +62,13 @@ async function runDetectors() {
 
 function handle(e) {
   if (e.type === 'plugin:settings') { void loadSettings(); return; }
+  if (e.type === 'plugin:data') {
+    if (e.key === 'memory') void loadMemory();
+    // Reset (What the Coach knows) drops the signals and strips the candidates' excerpts: follow it.
+    if (e.key === 'signals' && e.deleted) { state = emptyState(); if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; } }
+    if (e.key === 'candidates') getDoc('candidates', candidates).then((c) => { if (c && Array.isArray(c.items)) candidates = c; }).catch(() => {});
+    return;
+  }
   if (e.type === 'plugin:job' && e.id === 'weekly') return; // the weekly recap (plan Task 12)
   if (typeof e.type !== 'string' || !e.type.startsWith('thread:')) return;
   const next = collect(e, state, settings);
@@ -82,6 +96,7 @@ process.on('SIGTERM', () => {
     const saved = await getDoc('signals', null);
     if (saved && saved.v === 1) state = { ...emptyState(), ...saved };
     candidates = await getDoc('candidates', candidates);
+    await loadMemory();
   } catch (err) { console.error('load failed:', err.message); }
   ready = true;
   for (const e of backlog.splice(0)) handle(e);

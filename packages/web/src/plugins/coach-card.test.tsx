@@ -190,3 +190,155 @@ describe('Coach card (coach plan Task 10)', () => {
     expect(screen.queryByTestId('coach-muted')).toBeNull();
   });
 });
+
+type Mem = { facts: { id: string; text: string; confirmedAt: string | null }[]; known: string[]; muted: { type: string }[]; weights: Record<string, number>; levelAdjust: Record<string, number> };
+const memOf = (d: FakeD) => (d.docs.get('memory') ?? null) as Mem | null;
+
+describe('Coach feedback on the card (coach plan Task 11)', () => {
+  it('👎 opens the reason chips; a reason with text asks before it saves a fact, then says what changed, with Edit and Undo', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not helpful' }));
+    for (const chip of ['I already do this', 'Not relevant to my work', 'Too basic', 'Too advanced', 'Wrong about what I did', 'Not now']) expect(screen.getByRole('button', { name: chip })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'I already do this' }));
+    expect(screen.getByRole('button', { name: 'I already do this' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Why? (optional)' }), { target: { value: 'Ops already sends it to me' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    const toast = await screen.findByTestId('coach-toast');
+    expect(toast).toHaveTextContent('Ops already sends it to me');
+    await waitFor(() => expect(memOf(d)!.known).toEqual(['idle-wait']));
+    expect(memOf(d)!.facts).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(memOf(d)!.facts.map((f) => f.text)).toEqual(['Ops already sends it to me']));
+    expect(screen.getByTestId('coach-toast')).toHaveTextContent(/No more tips on this.*I saved: "Ops already sends it to me"/);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(d.actions.setView).toHaveBeenCalledWith('plugin:coach:coach');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(memOf(d)).toMatchObject({ known: [], facts: [] }));
+  });
+
+  it('a fact the person does not confirm is not saved', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not helpful' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Why? (optional)' }), { target: { value: 'I am in finance' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(await screen.findByRole('button', { name: "Don't save" }));
+    await waitFor(() => expect(screen.getByTestId('coach-toast')).toHaveTextContent('Fewer tips like this'));
+    expect(memOf(d)!.facts).toEqual([]);
+  });
+
+  it('👎 with no reason only lowers the weight: the type is not muted, and the card closes', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not helpful' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByTestId('coach-toast');
+    await waitFor(() => expect(memOf(d)).toMatchObject({ weights: { 'idle-wait': -1 }, muted: [], known: [] }));
+    expect((d.docs.get('cardState') as Record<string, { state: string }>)[CARD.id].state).toBe('down');
+  });
+
+  it('Not now is a rest only: the memory does not change and the type counts one dismissal', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not helpful' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByTestId('coach-toast')).toHaveTextContent('Paused');
+    await waitFor(() => expect((d.docs.get('cadence') as { dismissCount: Record<string, number> }).dismissCount['idle-wait']).toBe(1));
+    expect(memOf(d)?.weights ?? {}).toEqual({});
+  });
+
+  it('👍 raises the weight and says so; Cancel closes the reasons with no change', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Not helpful' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Too basic' })).toBeNull();
+    expect(d.docs.has('memory')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Helpful' }));
+    expect(await screen.findByTestId('coach-toast')).toHaveTextContent('More tips like this');
+    await waitFor(() => expect(memOf(d)!.weights['idle-wait']).toBe(1));
+  });
+
+  it('Turn off this type mutes it, and other cards of that type stop showing', async () => {
+    const other = { ...CARD, id: 'idle-wait:t1:y', at: '2026-11-20T10:58:00Z' };
+    const { d } = await mount({ cards: [other, CARD] });
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Turn off this type' }));
+    const toast = await screen.findByTestId('coach-toast');
+    expect(toast).toHaveTextContent('This type of tip is off');
+    await waitFor(() => expect(memOf(d)!.muted.map((m) => m.type)).toEqual(['idle-wait']));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByTestId('coach-toast')).toBeNull());
+    expect(screen.queryByTestId('coach-card')).toBeNull();
+  });
+
+  it('Fewer tips like this lowers the weight by two', async () => {
+    const { d } = await mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Fewer tips like this' }));
+    await screen.findByTestId('coach-toast');
+    await waitFor(() => expect(memOf(d)!.weights['idle-wait']).toBe(-2));
+  });
+
+  it('the third dismissal of a type offers to turn it off', async () => {
+    const { d } = await mount({ cadence: { ...SEASONED, dismissCount: { 'idle-wait': 2 } } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss (not now)' }));
+    const offer = await screen.findByTestId('coach-offer');
+    expect(offer).toHaveTextContent('Turn off this type?');
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
+    await waitFor(() => expect(memOf(d)!.muted.map((m) => m.type)).toEqual(['idle-wait']));
+  });
+});
+
+describe('What the Coach knows (coach plan Task 11)', () => {
+  async function screenWith(memory: unknown) {
+    const d = fakeD({ docs: { cadence: SEASONED, memory, signals: { v: 1 }, cards: { items: [CARD] }, candidates: { items: [{ id: 'c', evidence: { excerpt: 'my words' } }], seen: ['c'] } } });
+    const coach = createCoach(d, { now: () => NOW });
+    await coach.ready;
+    const View = (d.registered.coach.views[0] as unknown as { Component: () => JSX.Element }).Component;
+    render(<View />);
+    return d;
+  }
+  const MEM = {
+    facts: [{ id: 'f1', text: 'Not a developer', source: 'Feedback on "X"', at: '2026-11-01T00:00:00Z', confirmedAt: '2026-11-01T00:00:00Z' }],
+    known: ['repeated-prompt'], levelAdjust: { reuse: 1 }, muted: [{ type: 'idle-wait', until: null, reason: 'off', at: '2026-11-02T00:00:00Z' }], weights: {}, bad: [], dates: { 'known:repeated-prompt': '2026-11-03T00:00:00Z', 'level:reuse': '2026-11-04T00:00:00Z' },
+  };
+
+  it('lists every item with its source, and each has Delete; a fact has Edit', async () => {
+    const d = await screenWith(MEM);
+    const list = await screen.findByTestId('coach-knows');
+    expect(list).toHaveTextContent('Not a developer');
+    expect(list).toHaveTextContent('You already do this: Repeated prompts');
+    expect(list).toHaveTextContent('Off: Waiting on one thread');
+    expect(list).toHaveTextContent('aim higher');
+    expect(list).toHaveTextContent('You said "Too basic"');
+    expect(screen.getAllByRole('button', { name: /^Delete/ })).toHaveLength(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Not a developer' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Fact' }), { target: { value: 'Finance, not a developer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(memOf(d)!.facts[0].text).toBe('Finance, not a developer'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Off: Waiting on one thread' }));
+    await waitFor(() => expect(memOf(d)!.muted).toEqual([]));
+  });
+
+  it('Pause mutes the Coach until you turn it on; Reset clears the memory and the excerpts after you confirm', async () => {
+    const d = await screenWith(MEM);
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect((d.docs.get('cadence') as { mutedUntil: string }).mutedUntil).toMatch(/^9999/));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, reset' }));
+    await waitFor(() => expect(memOf(d)).toMatchObject({ facts: [], known: [], muted: [] }));
+    await waitFor(() => expect(JSON.stringify(d.docs.get('cards'))).not.toContain(CARD.excerpt));
+    expect(JSON.stringify(d.docs.get('candidates'))).not.toContain('my words');
+    expect(d.docs.has('signals')).toBe(false);
+    expect(await screen.findByText('The Coach knows nothing about you yet.')).toBeInTheDocument();
+  });
+
+  it('a fact older than 6 months asks Still true?; a type muted 75 days ago asks Show these again? once', async () => {
+    const d = await screenWith({ ...MEM, facts: [{ ...MEM.facts[0], confirmedAt: '2026-04-01T00:00:00Z' }], muted: [{ type: 'idle-wait', until: null, reason: 'off', at: '2026-08-20T00:00:00Z' }] });
+    expect(await screen.findByText('Still true?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, still true' }));
+    await waitFor(() => expect(memOf(d)!.facts[0].confirmedAt).toBe(NOW.toISOString()));
+    expect(screen.getByTestId('coach-review')).toHaveTextContent('You turned off "Waiting on one thread" in August. Show these again?');
+    fireEvent.click(screen.getByRole('button', { name: 'Keep off' }));
+    await waitFor(() => expect(screen.queryByTestId('coach-review')).toBeNull());
+    expect((memOf(d)!.muted[0] as { reviewedAt?: string }).reviewedAt).toBeTruthy();
+  });
+});
