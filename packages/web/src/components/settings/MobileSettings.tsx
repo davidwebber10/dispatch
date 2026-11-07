@@ -1,5 +1,6 @@
 import { CaretRight } from '@phosphor-icons/react';
 import { SETTINGS_SECTIONS, SETTINGS_GROUPS, settingsSection, type SettingsSectionKey } from './sections';
+import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
  * Mobile settings, presented as an iOS-style drill-down rather than the desktop page:
@@ -13,6 +14,8 @@ import { SETTINGS_SECTIONS, SETTINGS_GROUPS, settingsSection, type SettingsSecti
 export function MobileSettingsList({ onOpen }: { onOpen: (key: SettingsSectionKey) => void }) {
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '4px 14px 16px' }}>
+      {/* An update that waits heads the list (2026-11-07); the Settings tab's dot points here. */}
+      <div style={{ marginTop: 8 }}><UpdateBanner compact /></div>
       {SETTINGS_GROUPS.map((g) => {
         const rows = SETTINGS_SECTIONS.filter((s) => s.group === g);
         return (

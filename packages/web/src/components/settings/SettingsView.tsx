@@ -5,6 +5,7 @@ import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUpdate } from '../../stores/update';
 import { useUI } from '../../stores/ui';
+import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
  * Desktop settings as a full page (design: "Dispatch Settings") — a view beside
@@ -83,6 +84,8 @@ export function SettingsView() {
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 18px 40px' }}>
           <div style={{ maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* An update that waits sits above every section, not only About & updates (2026-11-07). */}
+            <UpdateBanner />
             {/* onDone exists for the setup wizard: leave settings so the wizard isn't buried. */}
             <Body onDone={() => useUI.getState().setView('workspace')} />
           </div>

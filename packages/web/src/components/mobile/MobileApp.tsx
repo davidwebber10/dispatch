@@ -8,6 +8,7 @@ import { UsageChip } from '../layout/UsageChip';
 import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
+import { UpdateDot } from '../update/UpdateDot';
 import { ProjectMenu } from './ProjectMenu';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
@@ -503,7 +504,11 @@ export function MobileApp() {
             return (
               <button key={key} onClick={() => onTab(key)}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '8px 0 6px', background: 'none', border: 'none', cursor: 'pointer', color: on ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
-                <Icon size={23} weight={on ? 'fill' : 'regular'} />
+                {/* The Settings tab carries a plain dot while an update waits (2026-11-07). */}
+                <span style={{ position: 'relative', display: 'flex' }}>
+                  <Icon size={23} weight={on ? 'fill' : 'regular'} />
+                  {key === 'settings' && <UpdateDot style={{ top: -2, right: -4 }} />}
+                </span>
                 <span style={{ fontSize: 11, fontWeight: on ? 600 : 500 }}>{label}</span>
               </button>
             );

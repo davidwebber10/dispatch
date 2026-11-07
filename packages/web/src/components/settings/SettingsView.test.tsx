@@ -60,3 +60,15 @@ test('the rail Settings item and ⌘, both navigate to the settings view', () =>
   fireEvent.keyDown(window, { key: ',', metaKey: true });
   expect(useUI.getState().view).toBe('settings');
 });
+
+test('an update that waits heads the page above every section, and dots the rail (2026-11-07)', () => {
+  useUpdate.setState({ available: { version: 'v3.26.1', url: null, publishedAt: null }, inProgress: false, doneVersion: null });
+  render(<><IconRail /><SettingsView /></>);
+  expect(screen.getByRole('region', { name: 'Update available' })).toBeInTheDocument();
+  expect(screen.getByText('Dispatch v3.26.1 is available')).toBeInTheDocument();
+  expect(within(screen.getByRole('button', { name: /Settings/ })).getByLabelText('Update available')).toBeInTheDocument();
+  // Another section keeps the banner.
+  fireEvent.click(screen.getByRole('button', { name: 'Secrets' }));
+  expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument();
+  useUpdate.setState({ available: null });
+});

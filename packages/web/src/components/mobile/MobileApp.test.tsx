@@ -1,9 +1,10 @@
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useConnection } from '../../stores/connection';
+import { useUpdate } from '../../stores/update';
 import { api } from '../../api/client';
 import * as sock from '../../api/structured-socket';
 
@@ -183,6 +184,21 @@ describe('MobileApp — Settings as a bottom-rail destination', () => {
     // Drilling in pushes a history entry so back / edge-swipe walk out of it, and the
     // back button labels the screen it returns TO (iOS convention).
     expect(history.state).toMatchObject({ nav: 1, settingsSection: 'dictation' });
+  });
+
+  it('dots the Settings tab and heads the list with a banner while an update waits (2026-11-07)', () => {
+    useUpdate.setState({ available: { version: 'v3.26.1', url: null, publishedAt: null }, currentVersion: '3.19.0', inProgress: false, doneVersion: null });
+    try {
+      seedThreadAt('/', { type: 'shell', config: {} });
+      render(<MobileApp />);
+      const tab = screen.getByRole('button', { name: /Settings/ });
+      const dot = within(tab).getByLabelText('Update available');
+      expect(dot.textContent).toBe('');
+      fireEvent.click(tab);
+      expect(screen.getByRole('region', { name: 'Update available' })).toBeInTheDocument();
+      expect(screen.getByText('Dispatch v3.26.1 is available')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument();
+    } finally { useUpdate.setState({ available: null }); }
   });
 });
 

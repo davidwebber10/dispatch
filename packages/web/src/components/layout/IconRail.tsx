@@ -7,6 +7,7 @@ import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { UsageChip } from './UsageChip';
+import { UpdateDot } from '../update/UpdateDot';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -15,8 +16,10 @@ const CONN = {
   closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
 } as const;
 
-function RailItem({ icon: I, label, active, onClick, title, badge = 0 }: {
+function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = false }: {
   icon: Icon; label: string; active: boolean; onClick: () => void; title: string; badge?: number;
+  /** A plain dot (no count) at the icon's corner: Settings while an update waits. */
+  dot?: boolean;
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -29,7 +32,10 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0 }: {
         background: active ? 'rgba(62,207,106,0.10)' : hover ? 'var(--color-elevated)' : 'transparent',
         color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)',
       }}>
-      <I size={18} weight={active ? 'fill' : 'regular'} />
+      <span style={{ position: 'relative', display: 'flex' }}>
+        <I size={18} weight={active ? 'fill' : 'regular'} />
+        {dot && <UpdateDot style={{ top: -3, right: -5 }} />}
+      </span>
       <span style={{ font: '400 8.5px var(--font-sans)', letterSpacing: '0.01em' }}>{label}</span>
       {badge > 0 && (
         <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -103,7 +109,7 @@ export function IconRail() {
           {serverLabel}
         </span>
       </div>
-      <RailItem icon={Gear} label="Settings" title="Settings (⌘,)"
+      <RailItem icon={Gear} label="Settings" title="Settings (⌘,)" dot
         active={view === 'settings'} onClick={() => setView('settings')} />
     </nav>
   );

@@ -118,3 +118,12 @@ export const useUpdate = create<UpdateState>((set, get) => ({
   },
   dismiss: () => set({ dismissedVersion: get().available?.version ?? null }),
 }));
+
+/**
+ * An update is waiting for the user: one is available and no client has started applying it.
+ * Drives the dot on the Settings tab / rail item and the banner at the top of Settings. The
+ * modal's Dismiss does not clear it on purpose: the dot is the reminder after the modal is gone.
+ */
+export function updatePending(s: Pick<UpdateState, 'available' | 'inProgress' | 'doneVersion'>): boolean {
+  return s.available !== null && !s.inProgress && s.doneVersion === null;
+}
