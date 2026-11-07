@@ -103,7 +103,8 @@ self.addEventListener('push', (event) => {
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       tag: d.terminalId || d.tag || undefined,   // coalesce repeated pings per thread (or per usage window, #127)
-      data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null },
+      // A plugin's push (`notify:push`) may name an app path to open; never another origin.
+      data: { terminalId: d.terminalId || null, sessionId: d.sessionId || null, url: typeof d.url === 'string' && /^\/(?![/\\])/.test(d.url) ? d.url : null },
     });
     // Bump the app-icon count too, so the home screen shows how many alerts are waiting.
     await bumpBadge();
@@ -112,7 +113,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const { terminalId, sessionId } = event.notification.data || {};
+  const { terminalId, sessionId, url } = event.notification.data || {};
   event.waitUntil((async () => {
     // Park the target BEFORE touching any client. postMessage is fire-and-forget:
     // if the page isn't listening at this instant the intent is discarded, not
@@ -131,9 +132,10 @@ self.addEventListener('notificationclick', (event) => {
       // Fast path for a client that IS awake and listening — it navigates without
       // waiting for the visibilitychange drain. Harmless if it lands nowhere.
       if (terminalId && sessionId) existing.postMessage({ type: 'open-thread', terminalId, sessionId });
+      else if (url && 'navigate' in existing) { try { await existing.navigate(url); } catch { /* focused is enough */ } }
       return;
     }
     // Cold path: the mobile shell restores /p/<s>/t/<t> natively; desktop parses it at boot.
-    await self.clients.openWindow(terminalId && sessionId ? `/p/${sessionId}/t/${terminalId}` : '/');
+    await self.clients.openWindow(terminalId && sessionId ? `/p/${sessionId}/t/${terminalId}` : (url || '/'));
   })());
 });

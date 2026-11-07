@@ -107,6 +107,14 @@ export class PushService {
     await this.fanOut(JSON.stringify({ title: input.title, body: input.body, tag: input.tag }), () => false);
   }
 
+  /**
+   * A plugin's push (`notify:push`, coach spec section 9a.5): every device, tagged by the plugin so
+   * a repeat replaces the last one. `url` is an app path a tap opens.
+   */
+  async notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> {
+    await this.fanOut(JSON.stringify({ title: input.title, body: input.body, tag: `plugin:${input.pluginId}`, ...(input.url ? { url: input.url } : {}) }), () => false);
+  }
+
   private async fanOut(payload: string, skip: (deviceId: string) => boolean): Promise<void> {
     for (const sub of pushDb.list(this.db)) {
       // A subscription stored before the host check may point anywhere. Keep it, but never send to it.

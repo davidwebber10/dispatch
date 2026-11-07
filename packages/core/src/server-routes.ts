@@ -153,6 +153,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
     summary: d.usageLimits?.summary,
     defaultAccount: accountsForAssist ? (h) => accountsForAssist.defaultId(h) : undefined,
+    push: d.pushService,
   }));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));

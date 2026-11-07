@@ -212,6 +212,17 @@ describe('permissions on the Plugins page (2026-11-07)', () => {
   });
 });
 
+describe('the coach permissions on the Plugins page (coach plan, Task 5)', () => {
+  it('read:usage, read:analytics and notify:push show their meaning', async () => {
+    rows = [row('coach', { permissions: ['read:usage', 'read:analytics', 'notify:push'] } as Partial<PluginRow>)];
+    render(<PluginsSection />);
+    const chips = within(await screen.findByTestId('plugin-row-coach')).getByRole('list', { name: 'Permissions' });
+    expect(within(chips).getByTitle('Reads your usage limits')).toHaveTextContent('read:usage');
+    expect(within(chips).getByTitle('Reads your usage analytics')).toHaveTextContent('read:analytics');
+    expect(within(chips).getByTitle('Sends you push notifications')).toHaveTextContent('notify:push');
+  });
+});
+
 describe('model calls on the Plugins page (coach plan, Task 2)', () => {
   it('a plugin row shows calls and tokens for 7 days when it has assist usage', async () => {
     rows = [

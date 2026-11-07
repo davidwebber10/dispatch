@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { policyRouter } from '../auth/route-policy.js';
+import { policyRouter, keyRoute, needs } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { summary, series, top, records } from '../analytics/queries.js';
@@ -34,6 +34,8 @@ export function trackingStartedAt(db: Database.Database): string {
 
 export function createAnalyticsRouter(db: Database.Database): Router {
   const router = policyRouter();
+  // A plugin key with `read:analytics` reads every analytics route (coach spec section 7.5); all of them only read.
+  const readAnalytics = keyRoute({ plugin: needs('read:analytics') });
 
   const range = (q: Record<string, any>) => ({
     from: typeof q.from === 'string' ? q.from : undefined,
@@ -46,11 +48,11 @@ export function createAnalyticsRouter(db: Database.Database): Router {
     provider: typeof q.provider === 'string' ? q.provider : undefined,
   });
 
-  router.get('/summary', (req, res) => {
+  router.get('/summary', readAnalytics, (req, res) => {
     res.json(summary(db, range(req.query)));
   });
 
-  router.get('/series', (req, res) => {
+  router.get('/series', readAnalytics, (req, res) => {
     const metric = String(req.query.metric ?? 'tokens');
     const groupBy = String(req.query.groupBy ?? 'none');
     if (!METRICS.has(metric)) { res.status(400).json({ error: `unknown metric: ${metric}` }); return; }
@@ -58,26 +60,26 @@ export function createAnalyticsRouter(db: Database.Database): Router {
     res.json(series(db, { ...range(req.query), metric: metric as Metric, groupBy: groupBy as GroupBy }));
   });
 
-  router.get('/top', (req, res) => {
+  router.get('/top', readAnalytics, (req, res) => {
     const dimension = String(req.query.dimension ?? 'project');
     if (!DIMENSIONS.has(dimension)) { res.status(400).json({ error: `unknown dimension: ${dimension}` }); return; }
     res.json(top(db, { ...range(req.query), dimension: dimension as Dimension }));
   });
 
-  router.get('/records', (_req, res) => {
+  router.get('/records', readAnalytics, (_req, res) => {
     res.json(records(db));
   });
 
   // The Control Plane view (spec 2026-09-29-control-plane-analytics-design.md): one payload per
   // refresh. The same filters as the Usage routes; every value is a bound parameter.
-  router.get('/control-plane', (req, res) => {
+  router.get('/control-plane', readAnalytics, (req, res) => {
     res.json(controlPlaneAnalytics(db, range(req.query)));
   });
 
   // When measurement began — the honest floor under every chart. The old
   // /backfill routes are gone with the history importer; nothing may write
   // turns for the time before this stamp.
-  router.get('/tracking', (_req, res) => {
+  router.get('/tracking', readAnalytics, (_req, res) => {
     res.json({ trackingStartedAt: trackingStartedAt(db) });
   });
 

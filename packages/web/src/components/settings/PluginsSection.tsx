@@ -30,7 +30,10 @@ const PERMISSION_MEANING: Record<string, string> = {
   'threads:write-storage': 'Lets threads write its documents',
   'threads:call-worker': 'Lets threads call its worker',
   'model:assist': 'Makes model calls of its own',
-  'network': 'Its worker makes calls out to the internet',
+  'read:usage': 'Reads your usage limits',
+  'read:analytics': 'Reads your usage analytics',
+  'notify:push': 'Sends you push notifications',
+  'network':'Its worker makes calls out to the internet',
 };
 
 /** One word for the row's state chip, from the daemon's row and the host's load status. */

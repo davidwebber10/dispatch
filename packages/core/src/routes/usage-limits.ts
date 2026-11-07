@@ -1,5 +1,5 @@
 import type { Router } from 'express';
-import { policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
+import { policyRouter, ownerOnlyStrict, keyRoute, needs } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
@@ -27,7 +27,8 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   const refreshCodex = opts.refreshCodex ?? createCodexRefresh(snapshots, opts);
 
   /** GET /api/usage-limits/summary: the same body as the `usage-limits` broadcast, for a first load or a reconnect. */
-  router.get('/usage-limits/summary', (_req, res) => {
+  // A plugin key with `read:usage` reads it too (coach spec section 7.5); the rest stays the owner's.
+  router.get('/usage-limits/summary', keyRoute({ plugin: needs('read:usage') }), (_req, res) => {
     if (!opts.summary) { res.status(503).json({ error: 'usage gauge unavailable' }); return; }
     res.json(opts.summary());
   });

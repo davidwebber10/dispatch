@@ -33,6 +33,8 @@ function fail(res: import('express').Response, e: unknown): void {
 
 const OK = { ok: true } as const;
 export const ASSIST_INFLIGHT_MAX = 3;
+/** A plugin sends at most one push in this time (coach plan, Task 5). */
+export const PUSH_GAP_MS = 3_600_000;
 /** A model or account id a caller may name: no spaces, at most 120 characters. */
 const ASSIST_ID_RE = /^[^\s]{1,120}$/;
 
@@ -186,6 +188,8 @@ export interface AssistLimitsDeps {
   summary?: () => UsageSummary | null;
   /** A harness's default account (accounts.json); `cli` when absent. */
   defaultAccount?: (harness: 'claude' | 'codex') => string;
+  /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
+  push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
 
 export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
@@ -573,6 +577,35 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (body) up.end(body);
     else if (req.method === 'GET' || req.method === 'HEAD') up.end();
     else req.pipe(up);
+  });
+
+  // ── plugin push (coach spec section 9a.5): its own key with notify:push, at most one an hour ──
+  // There are no daemon-wide quiet hours today; a plugin keeps its own (the Coach's do).
+  const lastPush = new Map<string, number>();
+  const notifyRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('notify:push')(req, ctx) : own; };
+  router.post('/plugins/:id/notify', keyRoute({ plugin: notifyRule }), async (req, res) => {
+    let kind: string;
+    try { kind = principalOf(req).kind; } catch { kind = 'owner'; }
+    if (kind !== 'plugin') return void res.status(403).json({ error: 'out_of_scope', message: "A plugin's push comes from its own key." });
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { title?: unknown; body?: unknown; url?: unknown };
+    const title = typeof body.title === 'string' ? body.title.trim() : '';
+    const text = typeof body.body === 'string' ? body.body.trim() : '';
+    if (!title || title.length > 120 || !text || text.length > 500) return void res.status(400).json({ error: 'bad_body', message: 'Send { title (1-120 characters), body (1-500), url? }.' });
+    // An app path only: never another origin.
+    if (body.url !== undefined && !(typeof body.url === 'string' && /^\/(?![/\\])[^\s]{0,500}$/.test(body.url))) {
+      return void res.status(400).json({ error: 'bad_url', message: 'url is an app path that starts with one /.' });
+    }
+    if (!limits.push) return void res.status(503).json({ error: 'no_push', message: 'Push is not available on this daemon.' });
+    const now = Date.now();
+    const last = lastPush.get(req.params.id);
+    if (last !== undefined && now - last < PUSH_GAP_MS) {
+      return void res.status(429).json({ error: 'rate_limited', message: 'A plugin sends at most one push an hour.', retryAfterSeconds: Math.ceil((PUSH_GAP_MS - (now - last)) / 1000) });
+    }
+    lastPush.set(req.params.id, now);
+    try { await limits.push.notifyPlugin({ pluginId: req.params.id, title, body: text, ...(typeof body.url === 'string' ? { url: body.url } : {}) }); }
+    catch { return void res.status(502).json({ error: 'push_failed', message: 'The push could not be sent.' }); }
+    res.json({ ok: true });
   });
 
   // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
