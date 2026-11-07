@@ -118,3 +118,113 @@ export function getFile(db: Database.Database, pluginId: string, fileId: string)
 export function removeFile(db: Database.Database, pluginId: string, fileId: string): boolean {
   return db.prepare('DELETE FROM plugin_files WHERE plugin_id = ? AND file_id = ?').run(pluginId, fileId).changes > 0;
 }
+
+/**
+ * Export and import (owner, 2026-11-07): one JSON file with a plugin's documents, settings and
+ * file references. A file reference is a path in a project, not the bytes: the bytes stay in the
+ * project, and the daemon re-checks the path against the project's folder when it serves it.
+ */
+export const EXPORT_FORMAT = 'dispatch-plugin-data';
+export const EXPORT_VERSION = 1;
+export interface PluginExport {
+  format: typeof EXPORT_FORMAT;
+  version: typeof EXPORT_VERSION;
+  pluginId: string;
+  exportedAt: string;
+  settings: unknown;
+  docs: Array<{ key: string; value: unknown; updatedAt: string }>;
+  files: PluginFile[];
+}
+
+/** True when the plugin has any document, settings or file stored. */
+export function hasData(db: Database.Database, pluginId: string): boolean {
+  return ['plugin_data', 'plugin_settings', 'plugin_files'].some((t) => !!db.prepare(`SELECT 1 FROM ${t} WHERE plugin_id = ? LIMIT 1`).get(pluginId));
+}
+
+export function exportPlugin(db: Database.Database, pluginId: string): PluginExport {
+  const files = (db.prepare('SELECT * FROM plugin_files WHERE plugin_id = ? ORDER BY created_at, file_id').all(pluginId) as FileRow[]).map(toFile);
+  return {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    pluginId,
+    exportedAt: new Date().toISOString(),
+    settings: getSettings(db, pluginId)?.value ?? null,
+    docs: listDocs(db, pluginId, { values: true }).map((d) => ({ key: d.key, value: d.value, updatedAt: d.updatedAt })),
+    files,
+  };
+}
+
+/** A refused import: `status` is the HTTP status (400 for a bad file, 413 over the caps). */
+export class ImportError extends Error {
+  constructor(public status: 400 | 413, public code: string, message: string) { super(message); }
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const isoOrNow = (v: unknown): string => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : new Date().toISOString());
+
+/**
+ * Write an export file into `pluginId` in one transaction: all of it or nothing.
+ * merge: each document, the settings (when not null) and each file overwrite the same key;
+ * replace: the plugin's data is cleared first. Throws ImportError.
+ */
+export function importPlugin(
+  db: Database.Database, pluginId: string, data: unknown, opts: { mode: 'merge' | 'replace'; force?: boolean },
+): { docs: number; files: number; settings: boolean } {
+  if (!isObj(data) || data.format !== EXPORT_FORMAT) throw new ImportError(400, 'bad_format', `This is not a ${EXPORT_FORMAT} file.`);
+  if (data.version !== EXPORT_VERSION) throw new ImportError(400, 'bad_version', `This file is version ${String(data.version)}; Dispatch reads version ${EXPORT_VERSION}.`);
+  if (!str(data.pluginId)) throw new ImportError(400, 'bad_format', 'The file names no plugin.');
+  if (data.pluginId !== pluginId && !opts.force) {
+    throw new ImportError(400, 'other_plugin', `This file holds the data of "${data.pluginId}", not "${pluginId}". Add ?force=1 to import it anyway.`);
+  }
+  const docsIn = data.docs ?? [];
+  const filesIn = data.files ?? [];
+  if (!Array.isArray(docsIn) || !Array.isArray(filesIn)) throw new ImportError(400, 'bad_format', 'docs and files must be lists.');
+
+  // Check everything before the first write.
+  const docs = docsIn.map((d: unknown) => {
+    if (!isObj(d) || typeof d.key !== 'string') throw new ImportError(400, 'bad_format', 'Each document needs a key.');
+    try { checkKey(d.key); } catch { throw new ImportError(400, 'bad_key', `"${d.key}" is not a valid key.`); }
+    let text: string;
+    try { text = serialize(d.value); } catch { throw new ImportError(413, 'too_large', `The document "${d.key}" is over ${DOC_MAX_BYTES} bytes.`); }
+    return { key: d.key, text, updatedAt: isoOrNow(d.updatedAt) };
+  });
+  let settings: string | null = null;
+  if (data.settings !== undefined && data.settings !== null) {
+    try { settings = serialize(data.settings); } catch { throw new ImportError(413, 'too_large', `The settings are over ${DOC_MAX_BYTES} bytes.`); }
+  }
+  const files = filesIn.map((f: unknown) => {
+    if (!isObj(f) || !str(f.fileId) || !str(f.sessionId) || !str(f.path) || !str(f.name) || !str(f.mime)
+      || typeof f.size !== 'number' || !Number.isFinite(f.size) || f.size < 0) {
+      throw new ImportError(400, 'bad_format', 'Each file needs fileId, sessionId, path, name, mime and size.');
+    }
+    return { fileId: f.fileId, sessionId: f.sessionId, path: f.path, name: f.name, mime: f.mime, size: f.size, createdAt: isoOrNow(f.createdAt) };
+  });
+
+  db.transaction(() => {
+    if (opts.mode === 'replace') clearPlugin(db, pluginId);
+    const has = db.prepare('SELECT 1 FROM plugin_data WHERE plugin_id = ? AND key = ?');
+    const existing = (db.prepare('SELECT COUNT(*) AS n FROM plugin_data WHERE plugin_id = ?').get(pluginId) as { n: number }).n;
+    const fresh = new Set(docs.filter((d) => !has.get(pluginId, d.key)).map((d) => d.key)).size;
+    if (existing + fresh > DOCS_MAX) {
+      throw new ImportError(413, 'too_many', `A plugin holds at most ${DOCS_MAX} documents; this import would make ${existing + fresh}.`);
+    }
+    const upsertDoc = db.prepare(`INSERT INTO plugin_data (plugin_id, key, value, writer, updated_at) VALUES (?, ?, ?, NULL, ?)
+      ON CONFLICT(plugin_id, key) DO UPDATE SET value = excluded.value, writer = NULL, updated_at = excluded.updated_at`);
+    for (const d of docs) upsertDoc.run(pluginId, d.key, d.text, d.updatedAt);
+    if (settings !== null) {
+      db.prepare(`INSERT INTO plugin_settings (plugin_id, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(plugin_id) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(pluginId, settings, new Date().toISOString());
+    }
+    // file_id is unique across all plugins: a reference that another plugin holds gets a new id here.
+    const holder = db.prepare('SELECT plugin_id FROM plugin_files WHERE file_id = ?');
+    const upsertFile = db.prepare(`INSERT INTO plugin_files (plugin_id, file_id, session_id, path, name, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(file_id) DO UPDATE SET session_id = excluded.session_id, path = excluded.path, name = excluded.name, mime = excluded.mime, size = excluded.size, created_at = excluded.created_at`);
+    for (const f of files) {
+      const held = holder.get(f.fileId) as { plugin_id: string } | undefined;
+      const fileId = held && held.plugin_id !== pluginId ? randomUUID() : f.fileId;
+      upsertFile.run(pluginId, fileId, f.sessionId, f.path, f.name, f.mime, f.size, f.createdAt);
+    }
+  })();
+  return { docs: docs.length, files: files.length, settings: settings !== null };
+}

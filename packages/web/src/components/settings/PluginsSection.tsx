@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { api } from '../../api/client';
+import { useEffect, useRef, useState } from 'react';
+import { api, readFileText } from '../../api/client';
 import type { PluginRow, Marketplace, CatalogEntry, MarketVersion } from '../../api/types';
 import { usePluginRegistry, PROMOTED_MAX, type PluginStatus } from '../../plugins/registry';
 import { isSafeMode, setSafeMode, reloadPlugin } from '../../plugins/host';
@@ -12,6 +12,8 @@ import { sectionLabel, row, item, ghostBtn, solidBtn, fieldInput, miniChip, Togg
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 const card: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
+const radioLabel: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 8, color: 'var(--color-text-primary)', cursor: 'pointer' };
 
 /** One line per permission, for the chip's title (docs/plugins.md lists the same). */
 const PERMISSION_MEANING: Record<string, string> = {
@@ -83,6 +85,13 @@ export function PluginsSection() {
   // Off by default: kept data can be deleted later, deleted data cannot come back (2026-11-07).
   const [deleteData, setDeleteData] = useState(false);
   const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
+  // Export and import of a plugin's data (2026-11-07): the row's ⋯ menu, the chosen file, and the
+  // result or error shown on the row.
+  const [menuOf, setMenuOf] = useState<string | null>(null);
+  const [importing, setImporting] = useState<{ row: PluginRow; file: File; docs: number; settings: boolean } | null>(null);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [dataMsg, setDataMsg] = useState<{ id: string; text: string; error: boolean } | null>(null);
+  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [safe, setSafe] = useState(isSafeMode());
   const [safeTouched, setSafeTouched] = useState(false);
   // Marketplaces and the catalog (spec section 7): loaded with the page; the catalog after any change.
@@ -131,6 +140,32 @@ export function PluginsSection() {
   const promote = (key: string, on: boolean) => {
     const next = on ? [...promoted.filter((k) => k !== key), key] : promoted.filter((k) => k !== key);
     usePluginRegistry.getState().setPromoted(next);
+  };
+  const exportData = async (r: PluginRow) => {
+    setMenuOf(null);
+    try { await api.exportPluginData(r.id); } catch (e) { setDataMsg({ id: r.id, text: e instanceof Error ? e.message : String(e), error: true }); }
+  };
+  const pickImport = async (r: PluginRow, file: File | undefined) => {
+    if (!file) return;
+    setDataMsg(null);
+    let parsed: { docs?: unknown; settings?: unknown };
+    try { parsed = JSON.parse(await readFileText(file)) as typeof parsed; } catch { setDataMsg({ id: r.id, text: 'This is not a valid export file.', error: true }); return; }
+    setImportMode('merge');
+    setImporting({ row: r, file, docs: Array.isArray(parsed?.docs) ? parsed.docs.length : 0, settings: parsed?.settings !== null && parsed?.settings !== undefined });
+  };
+  const runImport = async () => {
+    if (!importing) return;
+    const { row: r, file } = importing;
+    setImporting(null);
+    setBusy(r.id);
+    try {
+      const out = await api.importPluginData(r.id, file, importMode);
+      const parts = [`${out.docs} document${out.docs === 1 ? '' : 's'}`, ...(out.files ? [`${out.files} file${out.files === 1 ? '' : 's'}`] : []), ...(out.settings ? ['the settings'] : [])];
+      const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+      // The daemon announces each changed document and the settings, so an open plugin sees them.
+      setDataMsg({ id: r.id, text: `Imported ${list}.`, error: false });
+    } catch (e) { setDataMsg({ id: r.id, text: e instanceof Error ? e.message : String(e), error: true }); }
+    setBusy(null);
   };
   const toggleSafe = () => { const next = !safe; setSafeMode(next); setSafe(next); setSafeTouched(true); };
 
@@ -208,7 +243,26 @@ export function PluginsSection() {
           <button type="button" style={ghostBtn} onClick={() => void copyText(`~/.dispatch/plugins/${r.id}`).then(() => useHint.getState().show('Path copied')).catch(() => {})}>Copy path</button>
           {!r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</button>}
           {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
+          {/* The data actions sit in a ⋯ menu: the row already has four buttons (2026-11-07). */}
+          <span style={{ position: 'relative' }}>
+            <button type="button" style={{ ...ghostBtn, padding: '0 10px' }} aria-label={`More actions for ${r.id}`} aria-haspopup="menu" aria-expanded={menuOf === r.id}
+              disabled={busy === r.id} onClick={() => setMenuOf(menuOf === r.id ? null : r.id)}>⋯</button>
+            {menuOf === r.id && (
+              <>
+                <div onClick={() => setMenuOf(null)} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+                <div role="menu" aria-label={`More actions for ${r.name}`} style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 301, minWidth: 168, background: '#1B1B1E', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px rgba(0,0,0,.8)' }}>
+                  <button type="button" role="menuitem" style={menuItem} onClick={() => void exportData(r)}>Export data</button>
+                  <button type="button" role="menuitem" style={menuItem} onClick={() => { setMenuOf(null); fileInputs.current[r.id]?.click(); }}>Import data…</button>
+                </div>
+              </>
+            )}
+            <input ref={(el) => { fileInputs.current[r.id] = el; }} type="file" accept="application/json,.json" aria-label={`Import file for ${r.id}`} style={{ display: 'none' }}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pickImport(r, f); }} />
+          </span>
         </div>
+        {dataMsg?.id === r.id && (
+          <div role={dataMsg.error ? 'alert' : 'status'} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere', color: dataMsg.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{dataMsg.text}</div>
+        )}
         {copying?.id === r.id && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <input aria-label="New plugin id" value={copying.newId} onChange={(e) => setCopying({ id: r.id, newId: e.target.value })} style={{ ...fieldInput, width: 180 }} />
@@ -355,10 +409,27 @@ export function PluginsSection() {
       <ConfirmModal open={removing !== null} title="Remove this plugin?" danger confirmLabel="Remove plugin"
         message={removing ? `The folder ~/.dispatch/plugins/${removing.id} will be deleted. Its saved data and settings are kept, and come back if you install it again.` : ''}
         onConfirm={() => removing && remove(removing)} onCancel={() => setRemoving(null)}>
+        <div style={{ marginTop: 12 }}>
+          <button type="button" style={ghostBtn} onClick={() => removing && void api.exportPluginData(removing.id).catch((e) => setErr(e instanceof Error ? e.message : String(e)))}>Download data and settings</button>
+        </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, color: 'var(--color-text-primary)', cursor: 'pointer' }}>
           <input type="checkbox" checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)} />
           Also delete its data and settings
         </label>
+      </ConfirmModal>
+      <ConfirmModal open={importing !== null} title="Import data?" confirmLabel="Import"
+        message={importing ? `Import ${importing.docs} document${importing.docs === 1 ? '' : 's'}${importing.settings ? ' and settings' : ''} into ${importing.row.name}?` : ''}
+        onConfirm={() => void runImport()} onCancel={() => setImporting(null)}>
+        <div role="radiogroup" aria-label="Import mode" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+          <label style={radioLabel}>
+            <input type="radio" name="import-mode" checked={importMode === 'merge'} onChange={() => setImportMode('merge')} />
+            <span>Merge: <span style={{ color: 'var(--color-text-secondary)' }}>overwrite the same keys, keep the others</span></span>
+          </label>
+          <label style={radioLabel}>
+            <input type="radio" name="import-mode" checked={importMode === 'replace'} onChange={() => setImportMode('replace')} />
+            <span>Replace: <span style={{ color: 'var(--color-text-secondary)' }}>delete the current data and settings first</span></span>
+          </label>
+        </div>
       </ConfirmModal>
     </div>
   );
