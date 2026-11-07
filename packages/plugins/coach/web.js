@@ -210,6 +210,14 @@ export function createCoach(d, deps = {}) {
     else void setCardState(card.id, 'used');
   }
 
+  /** Turn the Coach off (the welcome card): the plugin is disabled, as on the Plugins page. */
+  async function turnOff() {
+    await saveCadence({ ...store.getState().cadence, welcomeDone: true }).catch(() => {});
+    const api = d.api || {};
+    if (typeof api.disablePlugin === 'function') await api.disablePlugin(PLUGIN).catch(() => {});
+    else if (d.actions && typeof d.actions.openSettings === 'function') d.actions.openSettings('plugins');
+  }
+
   /** Feedback on a card: one exact effect, said in one line with Undo (coach spec section 4.4). */
   async function giveFeedback(card, reason, text, terminalId) {
     const r = applyFeedback(store.getState().memory, { cardType: card.type, measure: card.measure, reason, text, headline: card.headline, situation: card.id || undefined }, now());
@@ -337,6 +345,8 @@ export function createCoach(d, deps = {}) {
       h('div', { style: S.row },
         h('button', { type: 'button', style: S.primary, onClick: () => tryIt(card, ctx, better) }, better ? 'Use this prompt' : (card.action && card.action.label) || 'Try it'),
         !welcome && h('button', { type: 'button', style: S.btn, onClick: () => { if (open) setOpen(false); else { setOpen(true); void loadMore(card); } } }, open ? 'Less' : 'More'),
+        // On by default (owner, 2026-11-07): the welcome card is where the person can say no.
+        welcome && h('button', { type: 'button', style: S.btn, onClick: () => { void turnOff(); } }, 'Turn off'),
         h('span', { style: { flex: 1 } }),
         !welcome && h('button', { type: 'button', 'aria-label': 'Helpful', title: 'Helpful', style: S.icon, onClick: () => { void giveFeedback(card, 'up', '', ctx.terminalId); } }, icon('thumbs-up', 'Yes')),
         !welcome && h('button', { type: 'button', 'aria-label': 'Not helpful', title: 'Not helpful', 'aria-expanded': fb, style: S.icon, onClick: () => setFb(!fb) }, icon('thumbs-down', 'No')),

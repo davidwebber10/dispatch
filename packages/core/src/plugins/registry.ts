@@ -73,8 +73,8 @@ interface StateFile { disabled: string[]; enabled: string[] }
 
 /**
  * Bundled plugins that replaced another one (old id → new id). The owner's choice carries over
- * once: an old id the owner had turned on turns the new one on, unless the owner already chose
- * for the new one. The old id leaves the state at the next write. (Coach replaced the Prompt
+ * once: an old id the owner had turned on turns the new one on, and one the owner had turned off
+ * keeps the new one off, unless the owner already chose for the new one. The old id leaves the state at the next write. (Coach replaced the Prompt
  * coach on 2026-11-07, coach spec section 9a.6.)
  */
 const REPLACED: Record<string, string> = { 'prompt-coach': 'coach' };
@@ -86,6 +86,8 @@ function carryOver(state: StateFile, exists: (id: string) => boolean): StateFile
     if ((!enabled.includes(old) && !disabled.includes(old)) || exists(old)) continue;
     const chose = enabled.includes(next) || disabled.includes(next);
     if (enabled.includes(old) && !chose) enabled = [...enabled, next];
+    // An owner who turned the old one off keeps the new one off (the Coach is on by default, 2026-11-07).
+    if (disabled.includes(old) && !chose) disabled = [...disabled, next];
     enabled = enabled.filter((x) => x !== old);
     disabled = disabled.filter((x) => x !== old);
   }

@@ -161,6 +161,15 @@ describe('Coach card (coach plan Task 10)', () => {
     expect((d.docs.get('cadence') as { welcomeDone: boolean }).welcomeDone).toBe(true);
   });
 
+  it('the welcome card comes first, says what the Coach looks at, and has Turn off, which disables the plugin', async () => {
+    const { d } = await mount({ cadence: emptyCadence(new Date(2026, 10, 18)) });
+    const card = await screen.findByTestId('coach-card');
+    expect(card).toHaveTextContent('Get one small tip at a time');
+    expect(card).toHaveTextContent('looks at the prompts you send');
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
+    await waitFor(() => expect(d.api.disablePlugin).toHaveBeenCalledWith('coach'));
+  });
+
   it('the card and the muted banner show icons, never emoji; the feedback buttons are named Helpful and Not helpful', async () => {
     const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
     await mount();

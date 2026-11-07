@@ -7,6 +7,7 @@
   "dispatch": ">=3.27",
   "sdk": 1,
   "web": "web.js",
+  "enabledByDefault": true,
   "contributes": {
     "views": [{ "id": "coach", "label": "Coach", "icon": "sparkle" }],
     "settings": [{ "id": "coach", "label": "Coach" }],

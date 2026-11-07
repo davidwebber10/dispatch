@@ -340,12 +340,12 @@ a caller can step down before it is refused. No budget: no cap.
 
 ## Bundled plugins
 
-`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Coach (it replaced the Prompt coach; an owner who had the Prompt coach on gets the Coach on) are the two.
+`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Coach (it replaced the Prompt coach; it is on by default, and an owner who had turned the Prompt coach off keeps the Coach off) are the two.
 A bundled plugin updates with Dispatch, cannot be removed, and is not edited in place; "Copy
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
-`"enabledByDefault": true`: the Coach makes model calls, so turning it on is the
-owner's choice on the Plugins page. A local plugin made with New plugin… or Copy to local… starts
+`"enabledByDefault": true`, as the Coach's does (owner, 2026-11-07: improving is the baseline;
+its welcome card comes first and has Turn off, and its model calls stay under its budget). A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).
 
 The Coach (`packages/plugins/coach`) is also a worked example of the plugin features: its worker

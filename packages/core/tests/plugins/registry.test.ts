@@ -372,9 +372,9 @@ describe('Coach replaces the Prompt coach (2026-11-07, coach spec section 9a.6)'
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-coach-')); dir = path.join(tmp, 'plugins'); keys = new KeyRegistry(); fs.mkdirSync(dir, { recursive: true }); });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-  it('coach is bundled and off by default', () => {
+  it('coach is bundled and on by default (owner, 2026-11-07: a new install, or an owner who never chose)', () => {
     const row = reg().get('coach');
-    expect(row).toMatchObject({ id: 'coach', name: 'Coach', bundled: true, enabled: false });
+    expect(row).toMatchObject({ id: 'coach', name: 'Coach', bundled: true, enabled: true });
     expect(row!.error).toBeUndefined();
     expect(row!.permissions).toEqual(expect.arrayContaining(['read:prompts', 'read:threads', 'read:projects', 'read:usage', 'read:analytics', 'model:assist', 'notify:push']));
     expect(row!.worker?.jobs).toEqual([{ id: 'weekly', cron: '0 8 * * 1' }]);
@@ -397,9 +397,15 @@ describe('Coach replaces the Prompt coach (2026-11-07, coach spec section 9a.6)'
     expect(saved.enabled).not.toContain('prompt-coach');
   });
 
-  it('a prompt-coach that was off leaves coach off; a coach the owner turned off stays off', () => {
+  it('a prompt-coach the owner turned off keeps coach off, also after a restart; a coach the owner turned off stays off', () => {
     state({ disabled: ['prompt-coach'] });
-    expect(reg().get('coach')!.enabled).toBe(false);
+    let r = reg();
+    expect(r.get('coach')!.enabled).toBe(false);
+    r.issueKeys();
+    r = reg();
+    expect(r.get('coach')!.enabled).toBe(false);
+    r.setEnabled('coach', true);
+    expect(reg().get('coach')!.enabled).toBe(true);
     state({ enabled: ['prompt-coach'], disabled: ['coach'] });
     expect(reg().get('coach')!.enabled).toBe(false);
   });

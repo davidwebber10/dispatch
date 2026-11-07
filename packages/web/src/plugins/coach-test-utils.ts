@@ -72,6 +72,7 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
       pluginAssistUsage: vi.fn(async () => ({ calls: 0, failed: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, byModel: [] })),
       pluginAssistShare: vi.fn(async () => ({ fiveHour: null, sevenDay: null })),
       pluginBudget: vi.fn(async () => ({ percentWeekly: 3, usdWeekly: 5 })),
+      disablePlugin: vi.fn(async (id: string) => ({ id, enabled: false })),
       setPluginBudget: vi.fn(async (_id: string, b: Record<string, unknown>) => ({ percentWeekly: 3, usdWeekly: 5, ...b })),
       ...(over.api ?? {}),
     },

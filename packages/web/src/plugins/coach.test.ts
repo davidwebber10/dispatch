@@ -8,7 +8,7 @@ import { fakeD } from './coach-test-utils';
 describe('Coach: the plugin skeleton (coach plan Task 7)', () => {
   it('the manifest is the Coach: id, permissions, contributions and the weekly job', () => {
     expect(manifest).toMatchObject({ id: 'coach', name: 'Coach', web: 'web.js' });
-    expect((manifest as { enabledByDefault?: boolean }).enabledByDefault).toBeUndefined();
+    expect((manifest as { enabledByDefault?: boolean }).enabledByDefault).toBe(true); // on by default (owner, 2026-11-07)
     expect(manifest.permissions).toEqual(['read:prompts', 'read:threads', 'read:projects', 'read:usage', 'read:analytics', 'model:assist', 'notify:push']);
     expect(manifest.contributes.views.map((v: { id: string }) => v.id)).toEqual(['coach']);
     expect(manifest.contributes.slots).toEqual(['composer.before']);
