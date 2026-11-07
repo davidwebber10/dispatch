@@ -79,6 +79,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const body = (data: unknown) => JSON.stringify(data);
 
+export interface PluginImportResult { docs: number; files: number; settings: boolean }
+
+/** A picked file's text. FileReader, not File.text(): older Safari and jsdom do not have the latter. */
+export function readFileText(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ''));
+    r.onerror = () => reject(r.error ?? new Error('Could not read the file.'));
+    r.readAsText(file);
+  });
+}
+
+/** Save a blob as a file through a temporary link. */
+export function saveBlob(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 /**
  * A catalog harness plus what this daemon can actually do with it — the daemon's
  * `GET /api/setup/harnesses` shape, taken straight from `core/src/providers/capabilities.ts`
@@ -409,6 +430,26 @@ export const api = {
   disablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
   removePlugin: (id: string, opts: { keepData?: boolean } = {}) => req<void>(`/api/plugins/${encodeURIComponent(id)}${opts.keepData ? '?keepData=1' : ''}`, { method: 'DELETE' }),
+  /** Download a plugin's documents, settings and file references as `<id>-data-<date>.json`. */
+  exportPluginData: async (id: string): Promise<void> => {
+    const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/export`), { cache: 'no-store' });
+    if (!res.ok) throw new ApiError(`Export failed: ${res.status}`, res.status);
+    const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? `${id}-data.json`;
+    saveBlob(await res.blob(), name);
+  },
+  /** Send an exported file back in. merge overwrites the same keys; replace clears the plugin's data first. */
+  importPluginData: async (id: string, file: File, mode: 'merge' | 'replace' = 'merge', opts: { force?: boolean } = {}): Promise<PluginImportResult> => {
+    const text = await readFileText(file);
+    const q = new URLSearchParams({ mode, ...(opts.force ? { force: '1' } : {}) });
+    const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/import?${q}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text });
+    if (!res.ok) {
+      let message = '';
+      try { const b = await res.json(); message = typeof b?.message === 'string' ? b.message : typeof b?.error === 'string' ? b.error : ''; } catch { /* not JSON */ }
+      if (!message && res.status === 400) message = 'This is not a valid export file.';
+      throw new ApiError(message || `Import failed: ${res.status}`, res.status);
+    }
+    return (await res.json()) as PluginImportResult;
+  },
   pluginAssist: (id: string, body: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) => req<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
   pluginLogs: async (id: string, lines = 200): Promise<string> => {
     const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/logs?lines=${lines}`), { cache: 'no-store' });

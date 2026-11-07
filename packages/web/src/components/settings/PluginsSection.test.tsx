@@ -105,6 +105,60 @@ describe('Settings → Plugins (2026-11-07)', () => {
     expect(screen.getByRole('checkbox', { name: /Also delete its data/ })).not.toBeChecked();
   });
 
+  it('the Remove dialog downloads the data and settings before you confirm, and stays open (2026-11-07)', async () => {
+    rows = [row('p')];
+    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
+    render(<PluginsSection />);
+    fireEvent.click(within(await screen.findByTestId('plugin-row-p')).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Download data and settings' }));
+    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(api.removePlugin).not.toHaveBeenCalled();
+  });
+
+  it('the row menu exports the data (2026-11-07)', async () => {
+    rows = [row('p')];
+    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
+    render(<PluginsSection />);
+    const item = await screen.findByTestId('plugin-row-p');
+    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
+    fireEvent.click(within(item).getByRole('menuitem', { name: 'Export data' }));
+    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
+  });
+
+  it('Import data… picks a file, asks Merge or Replace (Merge by default), imports and shows the result on the row (2026-11-07)', async () => {
+    rows = [row('p', { name: 'Pins' })];
+    const imp = vi.spyOn(api, 'importPluginData').mockResolvedValue({ docs: 2, files: 0, settings: true });
+    render(<PluginsSection />);
+    const item = await screen.findByTestId('plugin-row-p');
+    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
+    fireEvent.click(within(item).getByRole('menuitem', { name: 'Import data…' }));
+    const data = { format: 'dispatch-plugin-data', version: 1, pluginId: 'p', exportedAt: 't', settings: { a: 1 }, docs: [{ key: 'a', value: 1, updatedAt: 't' }, { key: 'b', value: 2, updatedAt: 't' }], files: [] };
+    const file = new File([JSON.stringify(data)], 'p-data.json', { type: 'application/json' });
+    fireEvent.change(within(item).getByLabelText('Import file for p'), { target: { files: [file] } });
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Import 2 documents and settings into Pins?');
+    expect(within(dialog).getByRole('radio', { name: /Merge/ })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Replace/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'replace'));
+    expect(await within(screen.getByTestId('plugin-row-p')).findByRole('status')).toHaveTextContent('Imported 2 documents and the settings.');
+  });
+
+  it('a refused import shows the error on the row (2026-11-07)', async () => {
+    rows = [row('p')];
+    const imp = vi.spyOn(api, 'importPluginData').mockRejectedValue(new Error('A plugin holds at most 2000 documents; this import would make 2001.'));
+    render(<PluginsSection />);
+    const item = await screen.findByTestId('plugin-row-p');
+    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
+    fireEvent.click(within(item).getByRole('menuitem', { name: 'Import data…' }));
+    const file = new File([JSON.stringify({ format: 'dispatch-plugin-data', version: 1, pluginId: 'p', settings: null, docs: [], files: [] })], 'p.json');
+    fireEvent.change(within(item).getByLabelText('Import file for p'), { target: { files: [file] } });
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'merge'));
+    expect(await within(screen.getByTestId('plugin-row-p')).findByRole('alert')).toHaveTextContent('at most 2000 documents');
+  });
+
   it('a broken plugin shows its error, and a plugin whose bundle failed shows that', async () => {
     rows = [row('broken', { error: 'plugin.json is not valid JSON: x', enabled: false }), row('crashy')];
     usePluginRegistry.setState({ status: { crashy: { state: 'error', error: 'activate threw', at: 1 } } });
