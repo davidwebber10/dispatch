@@ -507,6 +507,43 @@ Rules:
 Not included in PK-4: cross-project watches, cross-project `message_agent`, and any
 cross-project write. Each would be a separate, reviewed change to the policy table.
 
+#### 6.4.2 Cross-project reach for every thread (owner decision PK-5, 2026-11-06)
+
+**This loosens 6.4.1 on purpose.** On 2026-11-06 the owner asked that any thread can load
+the threads of other projects, read them, and send them messages, and that a thread id
+copied from the thread menu ("Copy thread ID") works at once in another thread. The rows
+of the thread-key table above change as follows; everything else in 6.4 and 6.4.1 stays.
+
+| Action | Any thread key (overseer or not) | Role-run key | Chat key |
+|---|---|---|---|
+| List projects (`GET /api/sessions`) | Any thread. The answer stays trimmed to `id`, `name`, `coordinatorId`. | Refused | Unchanged |
+| List threads, read a thread, read a pending question | Any project | Own project only | Unchanged |
+| Message a thread | Any agent thread of any project (not itself, not a shell tab) | Own project only | Unchanged |
+| Post a preview (`POST /api/sessions/SID/previews`) | Own project only (a write; it no longer follows the read rule) | Own project only | Unchanged |
+| Start, archive, answer, spawn, queue, ledger, watches | Unchanged: own project only | Unchanged | Unchanged |
+
+Rules:
+
+- **The sender line names the thread.** A cross-project message from a project's live
+  overseer keeps the PK-4 line. A cross-project message from any other thread gets
+  `[From thread "LABEL" of project "NAME" (thread ID). This is not a message from the
+  owner.]`. The label and the name come from the database at request time; quotes become
+  apostrophes, control characters are removed, and each is cut at 80 characters.
+- **No forged sender line.** The marker check of 6.4.1 now refuses both `[From the
+  overseer of project` and `[From thread`, with the same folding.
+- **The rate limit is unchanged.** 10 messages per sender and target pair per hour,
+  cross-project or not.
+- **The agency MCP no longer pre-checks the project.** `read_thread`, `read_agent` and
+  `message_thread` fetch the target and let the daemon decide; a daemon refusal shows as
+  itself. `watch_thread` keeps its same-project check.
+- **The Chat key and role runs do not change.** A role run (6.1) reads and messages its own
+  project only, as before.
+
+Threat note (updates K-13): any injected thread can now read every project's transcripts
+and message any agent thread of any project, 10 messages an hour per target. The sender
+line tells the receiver that the text came from another project's thread and is not the
+owner's. No thread can start, stop, archive, answer, spawn or write in another project.
+
 **Chat key (`dck_`)**
 
 | Method and route | Rule |
