@@ -28,9 +28,9 @@ export const CONNECTION_STATUS = {
 
 export function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }
 
-export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
+export function Toggle({ on, onClick, label, disabled }: { on: boolean; onClick: () => void; label?: string; disabled?: boolean }) {
   return (
-    <button type="button" onClick={onClick} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: 'pointer', background: on ? 'var(--color-accent)' : 'var(--color-border-hover)', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
+    <button type="button" onClick={onClick} disabled={disabled} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, background: on ? 'var(--color-accent)' : 'var(--color-border-hover)', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 2, left: on ? 19 : 2, width: 17, height: 17, borderRadius: '50%', background: on ? 'var(--color-on-accent)' : 'var(--color-text-primary)', transition: 'left .15s ease' }} />
     </button>
   );

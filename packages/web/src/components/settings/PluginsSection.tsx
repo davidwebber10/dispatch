@@ -1,80 +1,121 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CaretLeft, CaretRight, Copy as CopyIcon } from '@phosphor-icons/react';
 import { api, readFileText } from '../../api/client';
 import type { PluginRow, Marketplace, CatalogEntry, MarketVersion } from '../../api/types';
-import { usePluginRegistry, PROMOTED_MAX, type PluginStatus } from '../../plugins/registry';
+import { usePluginRegistry, PROMOTED_MAX, type PluginStatus, type PluginView } from '../../plugins/registry';
 import { isSafeMode, setSafeMode, reloadPlugin } from '../../plugins/host';
+import { pluginIcon } from '../../plugins/sdk';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { Modal } from '../common/Modal';
 import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
-import { sectionLabel, row, item, ghostBtn, solidBtn, fieldInput, miniChip, Toggle } from './ui';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle } from './ui';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
-const card: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const menuItem: React.CSSProperties = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
 const radioLabel: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 8, color: 'var(--color-text-primary)', cursor: 'pointer' };
+/** The grouped card every list on this page sits in: the same shape as the phone's Settings list. */
+const group: React.CSSProperties = { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' };
+const groupRow = (i: number): React.CSSProperties => ({ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 12px', minWidth: 0, borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' });
+const stack: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 };
+const title: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const oneLine: React.CSSProperties = { display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const body: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)' };
+const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' };
+const buttons: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
+const iconTile = (size: number): React.CSSProperties => ({ width: size, height: size, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' });
+const toneColor = { red: 'var(--color-status-red)', yellow: 'var(--color-status-yellow)', accent: 'var(--color-accent)', muted: 'var(--color-text-tertiary)' } as const;
+type Tone = keyof typeof toneColor;
 
-/** One line per permission, for the chip's title (docs/plugins.md lists the same). */
-const PERMISSION_MEANING: Record<string, string> = {
-  'read:projects': 'Reads the project list',
-  'read:threads': 'Reads threads and transcripts',
-  'read:ledger': 'Reads project ledgers',
-  'write:ledger': 'Adds to project ledgers',
-  'read:prompts': 'Sees the text of your prompts in hooks',
-  'message:threads': 'Sends messages to threads',
-  'spawn:threads': 'Starts threads',
-  'notify': 'Sends push notifications and hints',
-  'storage': 'Keeps its own documents and settings',
-  'threads:read-storage': 'Lets threads read its documents',
-  'threads:write-storage': 'Lets threads write its documents',
-  'threads:call-worker': 'Lets threads call its worker',
-  'model:assist': 'Makes model calls of its own',
-  'read:usage': 'Reads your usage limits',
-  'read:analytics': 'Reads your usage analytics',
-  'notify:push': 'Sends you push notifications',
-  'network':'Its worker makes calls out to the internet',
+/** Plain words for each permission id (docs/plugins.md lists the same ids). An unknown id shows as it is. */
+export const PERMISSION_WORDS: Record<string, string> = {
+  'read:projects': 'Read the project list',
+  'read:threads': 'Read threads',
+  'read:ledger': 'Read project ledgers',
+  'write:ledger': 'Add to project ledgers',
+  'read:prompts': 'Read your prompts',
+  'message:threads': 'Send messages to threads',
+  'spawn:threads': 'Start threads',
+  'notify': 'Show notifications and hints',
+  'storage': 'Keep its own data and settings',
+  'threads:read-storage': 'Let threads read its data',
+  'threads:write-storage': 'Let threads change its data',
+  'threads:call-worker': 'Let threads call its worker',
+  'model:assist': 'Use a model on your behalf',
+  'read:usage': 'Read usage',
+  'read:analytics': 'Read usage analytics',
+  'notify:push': 'Send push notifications',
+  'network': 'Connect to the internet',
 };
 
-/** One word for the row's state chip, from the daemon's row and the host's load status. */
-function stateOf(r: PluginRow, s: PluginStatus | undefined): { label: string; tone: 'accent' | 'red' | 'muted'; detail?: string } {
-  if (r.error) return { label: 'Broken', tone: 'red', detail: r.error };
-  if (!r.enabled) return { label: 'Disabled', tone: 'muted' };
-  if (!s) return { label: r.web ? 'Not loaded' : 'Ready', tone: 'muted' };
-  if (s.state === 'error') return { label: 'Error', tone: 'red', detail: s.error };
-  if (s.state === 'loading') return { label: 'Loading', tone: 'muted' };
-  return { label: 'Ready', tone: 'accent' };
-}
-
-/**
- * Settings → Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.5): local
- * plugins first, then the installed ones, then safe mode. Browse and install come with the
- * marketplace slice.
- */
-/** "Worker running · pid 4242 · 2 restarts", "Worker crashed · exit 1 · 10 restarts", "Worker backing off", "Worker stopped". */
 const kTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-/** The row's meter line: calls, failures, tokens and the known cost over the last days (coach spec section 4.5). */
+/** The meter line: calls, failures, tokens and the known cost over the last days (coach spec section 4.5). */
 export function assistLine(a: NonNullable<PluginRow['assist']>): string {
   const failed = a.failed ? ` (${a.failed} failed)` : '';
   const cost = a.costUsd ? ` · $${a.costUsd.toFixed(2)}` : '';
   return `Model calls, ${a.days ?? 7} days: ${a.calls}${failed} · ${kTokens(a.inputTokens)} in · ${kTokens(a.outputTokens)} out tokens${cost}`;
 }
 
+/** "Worker running · 2 restarts", "Worker crashed · exit 1 · 10 restarts". The pid is under Developer. */
 function workerLabel(w: PluginRow['workerStats']): string {
   if (!w) return 'Worker stopped';
   const restarts = w.restarts > 0 ? ` · ${w.restarts} restart${w.restarts === 1 ? '' : 's'}` : '';
-  if (w.state === 'running') return `Worker running${w.pid ? ` · pid ${w.pid}` : ''}${restarts}`;
+  if (w.state === 'running') return `Worker running${restarts}`;
   if (w.state === 'crashed') return `Worker crashed${w.lastExit ? ` · ${w.lastExit.signal ? `signal ${w.lastExit.signal}` : `exit ${w.lastExit.code ?? '?'}`}` : ''}${restarts}`;
-  if (w.state === 'backoff') return `Worker backing off${restarts}`;
+  if (w.state === 'backoff') return `Worker restarting${restarts}`;
   return 'Worker stopped';
 }
-const workerTone = (w: PluginRow['workerStats']): string => (w?.state === 'running' ? 'var(--color-accent)' : w?.state === 'crashed' ? 'var(--color-status-red)' : w?.state === 'backoff' ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)');
+const workerTone = (w: PluginRow['workerStats']): Tone => (w?.state === 'running' ? 'accent' : w?.state === 'crashed' ? 'red' : w?.state === 'backoff' ? 'yellow' : 'muted');
 
+/** The load error, from the daemon's row or the host's load status. */
+const loadError = (r: PluginRow, s: PluginStatus | undefined): string | undefined => r.error ?? (r.enabled && s?.state === 'error' ? s.error ?? 'The plugin failed to load.' : undefined);
+
+/** The list row's one status mark, only when something needs attention; null when all is well or the plugin is off. */
+export function attentionOf(r: PluginRow, s: PluginStatus | undefined): { label: string; tone: Tone } | null {
+  if (r.error) return { label: 'Error', tone: 'red' };
+  if (!r.enabled) return null;
+  if (s?.state === 'error') return { label: 'Error', tone: 'red' };
+  if (r.worker) {
+    const st = r.workerStats?.state;
+    if (st === 'crashed') return { label: 'Worker crashed', tone: 'red' };
+    if (st === 'backoff') return { label: 'Worker restarting', tone: 'yellow' };
+    if (st !== 'running') return { label: 'Worker stopped', tone: 'yellow' };
+  }
+  if (r.marketplaceGone) return { label: 'Marketplace removed', tone: 'yellow' };
+  if (r.update) return { label: 'Update available', tone: 'accent' };
+  return null;
+}
+
+function Dot({ tone }: { tone: Tone }) {
+  return <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: toneColor[tone], flexShrink: 0 }} />;
+}
+
+/** A small heading over a group card. */
+function GroupLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 30, padding: '0 4px' }}>
+      <span style={sectionLabel}>{children}</span>
+      {action}
+    </div>
+  );
+}
+
+/**
+ * Settings → Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.5), redesigned
+ * 2026-11-07: a calm list, one row per plugin (icon, name, one line, a status mark only when
+ * something needs attention, an on/off switch). A tap on a row opens the plugin's own page:
+ * header, switches, permissions in plain words, status, actions, and a collapsed Developer part.
+ * On the phone the page covers the screen with the same back header as the other pushed screens.
+ */
 export function PluginsSection() {
+  const isMobile = useIsMobile();
   const manifests = usePluginRegistry((s) => s.manifests);
   const status = usePluginRegistry((s) => s.status);
   const views = usePluginRegistry((s) => s.views);
   const promoted = usePluginRegistry((s) => s.promoted);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState('');
@@ -96,13 +137,11 @@ export function PluginsSection() {
   // Off by default: kept data can be deleted later, deleted data cannot come back (2026-11-07).
   const [deleteData, setDeleteData] = useState(false);
   const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
-  // Export and import of a plugin's data (2026-11-07): the row's ⋯ menu, the chosen file, and the
-  // result or error shown on the row.
-  const [menuOf, setMenuOf] = useState<string | null>(null);
+  // Export and import of a plugin's data (2026-11-07): the chosen file, and the result or error shown on its page.
   const [importing, setImporting] = useState<{ row: PluginRow; file: File; docs: number; settings: boolean } | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [dataMsg, setDataMsg] = useState<{ id: string; text: string; error: boolean } | null>(null);
-  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const [safe, setSafe] = useState(isSafeMode());
   const [safeTouched, setSafeTouched] = useState(false);
   // Marketplaces and the catalog (spec section 7): loaded with the page; the catalog after any change.
@@ -147,13 +186,12 @@ export function PluginsSection() {
     if (!name) { setErr('Give the plugin a name.'); return; }
     void run(id, async () => { await api.scaffoldPlugin(id, name); setCreating(false); setNewId(''); setNewName(''); });
   };
-  const remove = (r: PluginRow) => { setRemoving(null); void run(r.id, async () => { await api.removePlugin(r.id, { keepData: !deleteData }); usePluginRegistry.getState().unregister(r.id); }); };
+  const remove = (r: PluginRow) => { setRemoving(null); setOpenId(null); void run(r.id, async () => { await api.removePlugin(r.id, { keepData: !deleteData }); usePluginRegistry.getState().unregister(r.id); }); };
   const promote = (key: string, on: boolean) => {
     const next = on ? [...promoted.filter((k) => k !== key), key] : promoted.filter((k) => k !== key);
     usePluginRegistry.getState().setPromoted(next);
   };
   const exportData = async (r: PluginRow) => {
-    setMenuOf(null);
     try { await api.exportPluginData(r.id); } catch (e) { setDataMsg({ id: r.id, text: e instanceof Error ? e.message : String(e), error: true }); }
   };
   const pickImport = async (r: PluginRow, file: File | undefined) => {
@@ -179,141 +217,270 @@ export function PluginsSection() {
     setBusy(null);
   };
   const toggleSafe = () => { const next = !safe; setSafeMode(next); setSafe(next); setSafeTouched(true); };
+  const copy = (r: PluginRow) => { const newId = (copying?.newId ?? '').trim(); if (!ID_RE.test(newId)) { setErr('The new id is lowercase letters, digits and dashes.'); return; } void run(r.id, async () => { await api.copyPlugin(r.id, newId); setCopying(null); }); };
+  const open = (id: string) => { setOpenId(id); setErr(''); setCopying(null); setPinning(null); setNotesOpen(null); };
+  const close = () => { setOpenId(null); setErr(''); setCopying(null); setPinning(null); };
 
   const local = manifests.filter((m) => !m.install && !m.bundled);
   const installed = manifests.filter((m) => m.install);
   const bundled = manifests.filter((m) => m.bundled);
-  const copy = (r: PluginRow) => { const newId = (copying?.newId ?? '').trim(); if (!ID_RE.test(newId)) { setErr('The new id is lowercase letters, digits and dashes.'); return; } void run(r.id, async () => { await api.copyPlugin(r.id, newId); setCopying(null); }); };
+  const viewsOf = (id: string): PluginView[] => views.filter((v) => v.plugin === id);
+  const iconOf = (r: PluginRow) => pluginIcon(r.contributes?.views?.[0]?.icon ?? viewsOf(r.id)[0]?.icon);
+  const sourceOf = (r: PluginRow): string => (r.bundled ? 'Bundled' : r.install ? (r.marketplaceGone ? 'Marketplace removed' : marketName(r.install.marketplace) ?? 'Marketplace') : 'Local');
 
-  const renderRow = (r: PluginRow) => {
-    const st = stateOf(r, status[r.id]);
-    const mine = views.filter((v) => v.plugin === r.id);
-    const chipColor = st.tone === 'accent' ? 'var(--color-accent)' : st.tone === 'red' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
+  /** The on/off switch, the same on the row and on the page. Clicks do not reach the row under it. */
+  const enableSwitch = (r: PluginRow) => (
+    <span onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexShrink: 0 }}>
+      <Toggle on={r.enabled} label={`Enable ${r.name}`} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)} />
+    </span>
+  );
+
+  const renderRow = (r: PluginRow, i: number) => {
+    const att = attentionOf(r, status[r.id]);
+    const Icon = iconOf(r);
     return (
-      <div key={r.id} data-testid={`plugin-row-${r.id}`} style={card}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{r.name}</span>
-          <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{r.version}</span>
-          <span style={{ ...miniChip, color: chipColor, borderColor: chipColor }}>{st.label}</span>
-          {r.bundled && <span style={miniChip} title="Ships with Dispatch and updates with it">Bundled</span>}
-          {r.shadowsBundled && <span style={miniChip} title="A bundled plugin with this id is hidden by this local one">Shadows bundled</span>}
-        </div>
-        {r.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{r.description}</div>}
-        {st.detail && <div role="note" style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{st.detail}</div>}
-        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>~/.dispatch/plugins/{r.id}</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {r.permissions && r.permissions.length > 0 ? (
-            <ul role="list" aria-label="Permissions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: 0, padding: 0, listStyle: 'none' }}>
-              {r.permissions.map((perm) => (
-                <li key={perm} title={PERMISSION_MEANING[perm] ?? 'A permission this Dispatch does not know'} style={{ ...miniChip, textTransform: 'none', letterSpacing: 0, color: PERMISSION_MEANING[perm] ? 'var(--color-text-secondary)' : 'var(--color-status-yellow)' }}>{perm}</li>
-              ))}
-            </ul>
-          ) : <span style={note}>No permissions</span>}
-          {r.keyed && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} title="The plugin's processes can use ~/.dispatch/keys/plugin-{r.id}">Key issued</span>}
-        </div>
-        {r.assist && r.assist.calls > 0 && (
-          <span data-testid={`plugin-assist-${r.id}`} style={note}>{assistLine(r.assist)}</span>
-        )}
-        {r.install && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              {r.marketplaceGone
-                ? <span style={{ ...miniChip, color: 'var(--color-status-yellow)', borderColor: 'var(--color-status-yellow)' }} title={r.install.marketplace}>Marketplace removed</span>
-                : <span style={miniChip} title={r.install.marketplace}>{marketName(r.install.marketplace) ?? 'Marketplace'}</span>}
-              {r.pinned && <span style={miniChip} title="No update past this version">Pinned v{r.pinned}</span>}
-              {r.update && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>v{r.update.to} available</span>}
-              {r.update?.changelog && <button type="button" style={ghostBtn} onClick={() => setNotesOpen(notesOpen === r.id ? null : r.id)}>What's new</button>}
-            </div>
-            {notesOpen === r.id && r.update?.changelog && <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{r.update.changelog}</pre>}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="button" style={ghostBtn} disabled={busy === r.id || !r.update || r.marketplaceGone} onClick={() => run(r.id, () => api.updatePlugin(r.id))}>Update</button>
-              <button type="button" style={ghostBtn} disabled={busy === r.id} onClick={() => run(r.id, () => api.rollbackPlugin(r.id))}>Roll back</button>
-              <button type="button" style={ghostBtn} disabled={busy === r.id} onClick={() => void api.pluginVersions(r.id).then((v) => setPinning({ id: r.id, versions: v.versions })).catch(() => setPinning({ id: r.id, versions: [] }))}>Pin…</button>
-              <span style={{ ...item, marginLeft: 'auto' }}>Auto-update</span>
-              <Toggle on={r.autoUpdate === true} label="Auto-update" onClick={() => run(r.id, () => api.setPluginAutoUpdate(r.id, !r.autoUpdate))} />
-            </div>
-            {pinning?.id === r.id && (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select aria-label="Pin to version" value={r.pinned ?? ''} onChange={(e) => { const v = e.target.value || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ ...fieldInput, width: 180 }}>
-                  <option value="">No pin</option>
-                  {pinning.versions.map((v) => <option key={v.version} value={v.version}>v{v.version}</option>)}
-                </select>
-                <button type="button" style={ghostBtn} onClick={() => setPinning(null)}>Cancel</button>
-                <span style={note}>A pin stops updates past that version.</span>
-              </div>
-            )}
-          </div>
-        )}
-        {r.worker && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ ...miniChip, textTransform: 'none', letterSpacing: 0, color: workerTone(r.workerStats), borderColor: workerTone(r.workerStats) }}>{workerLabel(r.workerStats)}</span>
-            <button type="button" style={ghostBtn} onClick={() => { setLogText(''); setLogsOf(r.id); }}>Logs</button>
-            <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => { setBusy(r.id); void api.restartPluginWorker(r.id).then(() => refresh()).catch(() => {}).finally(() => setBusy(null)); }}>Restart</button>
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" style={ghostBtn} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)}>{r.enabled ? 'Disable' : 'Enable'}</button>
-          <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => void reload(r)}>Reload</button>
-          <button type="button" style={ghostBtn} onClick={() => void copyText(`~/.dispatch/plugins/${r.id}`).then(() => useHint.getState().show('Path copied')).catch(() => {})}>Copy path</button>
-          {!r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</button>}
-          {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
-          {/* The data actions sit in a ⋯ menu: the row already has four buttons (2026-11-07). */}
-          <span style={{ position: 'relative' }}>
-            <button type="button" style={{ ...ghostBtn, padding: '0 10px' }} aria-label={`More actions for ${r.id}`} aria-haspopup="menu" aria-expanded={menuOf === r.id}
-              disabled={busy === r.id} onClick={() => setMenuOf(menuOf === r.id ? null : r.id)}>⋯</button>
-            {menuOf === r.id && (
-              <>
-                <div onClick={() => setMenuOf(null)} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-                <div role="menu" aria-label={`More actions for ${r.name}`} style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 301, minWidth: 168, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-                  <button type="button" role="menuitem" style={menuItem} onClick={() => void exportData(r)}>Export data</button>
-                  <button type="button" role="menuitem" style={menuItem} onClick={() => { setMenuOf(null); fileInputs.current[r.id]?.click(); }}>Import data…</button>
-                </div>
-              </>
-            )}
-            <input ref={(el) => { fileInputs.current[r.id] = el; }} type="file" accept="application/json,.json" aria-label={`Import file for ${r.id}`} style={{ display: 'none' }}
-              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pickImport(r, f); }} />
+      <div key={r.id} data-testid={`plugin-row-${r.id}`} onClick={() => open(r.id)} style={{ ...groupRow(i), cursor: 'pointer' }}>
+        <button type="button" aria-label={`Open ${r.name}`} onClick={(e) => { e.stopPropagation(); open(r.id); }}
+          style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12, padding: 0, background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
+          <span style={{ ...iconTile(32), opacity: r.enabled ? 1 : 0.55 }}><Icon size={17} /></span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ ...title, display: 'block', color: r.enabled ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{r.name}</span>
+            {att ? (
+              <span data-testid={`plugin-attention-${r.id}`} style={{ ...oneLine, display: 'flex', alignItems: 'center', gap: 6, color: toneColor[att.tone] }}><Dot tone={att.tone} />{att.label}</span>
+            ) : r.description ? <span style={oneLine}>{r.description}</span> : null}
           </span>
-        </div>
-        {dataMsg?.id === r.id && (
-          <div role={dataMsg.error ? 'alert' : 'status'} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere', color: dataMsg.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{dataMsg.text}</div>
-        )}
-        {copying?.id === r.id && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input aria-label="New plugin id" value={copying.newId} onChange={(e) => setCopying({ id: r.id, newId: e.target.value })} style={{ ...fieldInput, width: 180 }} />
-            <button type="button" style={solidBtn(true)} disabled={busy === r.id} onClick={() => copy(r)}>Copy</button>
-            <button type="button" style={ghostBtn} onClick={() => setCopying(null)}>Cancel</button>
-            <span style={note}>A local copy you can change; the bundled one stays as it is.</span>
-          </div>
-        )}
-        {mine.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={note}>Phone tabs:</span>
-            {mine.map((v) => {
-              const on = promoted.includes(v.key);
-              const full = !on && promoted.length >= PROMOTED_MAX;
-              return (
-                <button key={v.key} type="button" style={{ ...ghostBtn, opacity: full ? 0.5 : 1 }} disabled={full}
-                  aria-label={on ? `Remove the tab for ${v.label}` : `Promote ${v.label} to a tab`} onClick={() => promote(v.key, !on)}>
-                  {on ? `${v.label}: tab on` : `${v.label}: give it a tab`}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        </button>
+        {enableSwitch(r)}
+        <CaretRight aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
       </div>
     );
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <section aria-label="Local plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div style={row}>
-          <span style={sectionLabel}>LOCAL</span>
-          <button type="button" style={ghostBtn} onClick={() => { setCreating((c) => !c); setErr(''); }}>New plugin…</button>
+  const renderDetail = (r: PluginRow) => {
+    const s = status[r.id];
+    const Icon = iconOf(r);
+    const mine = viewsOf(r.id);
+    const loadErr = loadError(r, s);
+    const showStatus = !!loadErr || !!r.worker || (r.assist?.calls ?? 0) > 0 || !!r.hooks;
+    const disabled = busy === r.id;
+    const path = `~/.dispatch/plugins/${r.id}`;
+    const contributes = r.contributes ? Object.entries(r.contributes).filter(([, v]) => Array.isArray(v) ? v.length > 0 : !!v).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : (x as { id: string }).id)).join(', ') : Object.keys(v as object).join(', ')}`) : [];
+    const devRow = (label: string, value: React.ReactNode, i: number, extra?: React.ReactNode) => (
+      <div key={label} style={{ ...groupRow(i), alignItems: 'flex-start' }}>
+        <span style={{ ...note, width: 92, flexShrink: 0 }}>{label}</span>
+        <span style={{ ...mono, flex: 1, color: 'var(--color-text-secondary)' }}>{value}</span>
+        {extra}
+      </div>
+    );
+    const dev: [string, React.ReactNode, React.ReactNode?][] = [
+      ['Folder', path, <button key="cp" type="button" style={{ ...ghostBtn, height: 26, padding: '0 8px', display: 'flex', alignItems: 'center', gap: 5 }} onClick={() => void copyText(path).then(() => useHint.getState().show('Path copied')).catch(() => {})}><CopyIcon size={13} />Copy path</button>],
+      ['Id', r.id],
+      ['Version', r.version],
+      ['Key', r.keyed ? `Key issued · ~/.dispatch/keys/plugin-${r.id}` : 'No key'],
+      ...(r.worker ? [['Worker', `${[r.worker.command, ...r.worker.args].join(' ')}${r.workerStats?.pid ? ` · pid ${r.workerStats.pid}` : ''}`] as [string, React.ReactNode]] : []),
+      ...(r.worker?.jobs.length ? [['Jobs', r.worker.jobs.map((j) => `${j.id} (${j.cron})`).join(', ')] as [string, React.ReactNode]] : []),
+      ...(r.web ? [['Web bundle', r.web] as [string, React.ReactNode]] : []),
+      ...(r.sdk !== undefined ? [['SDK', String(r.sdk)] as [string, React.ReactNode]] : []),
+      ...(r.dispatch ? [['Dispatch', r.dispatch] as [string, React.ReactNode]] : []),
+      ...(r.author ? [['Author', r.author] as [string, React.ReactNode]] : []),
+      ...(contributes.length ? [['Contributes', contributes.join(' · ')] as [string, React.ReactNode]] : []),
+      ...(r.hooks ? [['Hooks', `${r.hooks.runs} runs · ${r.hooks.failures} failed · ${r.hooks.dropped} dropped`] as [string, React.ReactNode]] : []),
+      ...(r.install ? [['Installed from', r.install.marketplace] as [string, React.ReactNode]] : []),
+      ...(r.shadowsBundled ? [['Note', 'This local folder hides a bundled plugin with the same id.'] as [string, React.ReactNode]] : []),
+    ];
+    return (
+      <div data-testid={`plugin-detail-${r.id}`} style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 640, width: '100%' }}>
+        {!isMobile && (
+          <button type="button" aria-label="Back to plugins" onClick={close} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 2, padding: '2px 0', background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+            <CaretLeft size={15} weight="bold" />Plugins
+          </button>
+        )}
+
+        <div data-testid="plugin-detail-header" style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <span style={iconTile(48)}><Icon size={26} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{r.name}</div>
+            <div style={{ marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>v{r.version} · {sourceOf(r)}</div>
+            {r.description && <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{r.description}</div>}
+          </div>
         </div>
-        <div style={note}>A folder under ~/.dispatch/plugins is a plugin. Edit its files and the app reloads it as you save. A thread can write one too.</div>
+
+        <div style={group}>
+          <div style={groupRow(0)}>
+            <span style={{ ...body, flex: 1 }}>Enabled</span>
+            {enableSwitch(r)}
+          </div>
+          {mine.map((v, i) => {
+            const on = promoted.includes(v.key);
+            const full = !on && promoted.length >= PROMOTED_MAX;
+            const label = mine.length === 1 && v.label === r.name ? 'Show as a phone tab' : `Show ${v.label} as a phone tab`;
+            return (
+              <div key={v.key} style={{ ...groupRow(i + 1), flexWrap: 'wrap' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ ...body, display: 'block' }}>{label}</span>
+                  {full && <span style={{ ...note, display: 'block' }}>The phone has room for two tabs. Turn one off first.</span>}
+                </span>
+                <Toggle on={on} disabled={full} label={`Show ${v.label} as a phone tab`} onClick={() => promote(v.key, !on)} />
+              </div>
+            );
+          })}
+        </div>
+
+        {r.install && (
+          <section aria-label="Updates" style={stack}>
+            <GroupLabel>UPDATES</GroupLabel>
+            <div style={group}>
+              <div style={{ ...groupRow(0), flexWrap: 'wrap' }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ ...body, display: 'block' }}>{r.update ? `v${r.update.to} available` : 'Up to date'}</span>
+                  <span style={{ ...note, display: 'block' }} title={r.install.marketplace}>
+                    {r.marketplaceGone ? 'Marketplace removed' : `From ${marketName(r.install.marketplace) ?? 'a marketplace'}`}{r.pinned ? ` · Pinned to v${r.pinned}` : ''}
+                  </span>
+                </span>
+                {r.update?.changelog && <button type="button" style={ghostBtn} onClick={() => setNotesOpen(notesOpen === r.id ? null : r.id)}>What's new</button>}
+                <button type="button" style={solidBtn(!(disabled || !r.update || r.marketplaceGone))} disabled={disabled || !r.update || r.marketplaceGone} onClick={() => run(r.id, () => api.updatePlugin(r.id))}>Update</button>
+              </div>
+              {notesOpen === r.id && r.update?.changelog && (
+                <div style={{ ...groupRow(1), display: 'block' }}>
+                  <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)' }}>{r.update.changelog}</pre>
+                </div>
+              )}
+              <div style={groupRow(1)}>
+                <span style={{ ...body, flex: 1 }}>Auto-update</span>
+                <Toggle on={r.autoUpdate === true} label="Auto-update" onClick={() => run(r.id, () => api.setPluginAutoUpdate(r.id, !r.autoUpdate))} />
+              </div>
+              <div style={{ ...groupRow(1), flexWrap: 'wrap' }}>
+                {pinning?.id === r.id ? (
+                  <>
+                    <select aria-label="Pin to version" value={r.pinned ?? ''} onChange={(e) => { const v = e.target.value || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ ...fieldInput, width: 160 }}>
+                      <option value="">No pin</option>
+                      {pinning.versions.map((v) => <option key={v.version} value={v.version}>v{v.version}</option>)}
+                    </select>
+                    <button type="button" style={ghostBtn} onClick={() => setPinning(null)}>Cancel</button>
+                    <span style={note}>A pin stops updates past that version.</span>
+                  </>
+                ) : (
+                  <div style={buttons}>
+                    <button type="button" style={ghostBtn} disabled={disabled} onClick={() => run(r.id, () => api.rollbackPlugin(r.id))}>Roll back</button>
+                    <button type="button" style={ghostBtn} disabled={disabled} onClick={() => void api.pluginVersions(r.id).then((v) => setPinning({ id: r.id, versions: v.versions })).catch(() => setPinning({ id: r.id, versions: [] }))}>Pin…</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section aria-label="Permissions section" style={stack}>
+          <GroupLabel>PERMISSIONS</GroupLabel>
+          {r.permissions && r.permissions.length > 0 ? (
+            <ul role="list" aria-label="Permissions" style={{ ...group, margin: 0, padding: 0, listStyle: 'none' }}>
+              {r.permissions.map((perm, i) => {
+                const words = PERMISSION_WORDS[perm];
+                return (
+                  <li key={perm} style={{ ...groupRow(i), justifyContent: 'space-between', flexWrap: 'wrap', rowGap: 2 }}>
+                    <span style={body}>{words ?? perm}</span>
+                    {words && <span style={mono}>{perm}</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : <div style={{ ...group, ...groupRow(0), ...note, borderTop: '1px solid var(--color-border)' }}>No permissions</div>}
+        </section>
+
+        {showStatus && (
+          <section aria-label="Status" style={stack}>
+            <GroupLabel>STATUS</GroupLabel>
+            <div style={group}>
+              {loadErr && (
+                <div role="note" style={{ ...groupRow(0), alignItems: 'flex-start', fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
+                  <Dot tone="red" /><span style={{ marginTop: -4 }}>{loadErr}</span>
+                </div>
+              )}
+              {r.worker && (
+                <div style={{ ...groupRow(loadErr ? 1 : 0), flexWrap: 'wrap' }}>
+                  <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Dot tone={workerTone(r.workerStats)} />
+                    <span style={body}>{workerLabel(r.workerStats)}</span>
+                  </span>
+                  <div style={buttons}>
+                    <button type="button" style={ghostBtn} onClick={() => { setLogText(''); setLogsOf(r.id); }}>Logs</button>
+                    <button type="button" style={ghostBtn} disabled={disabled || !r.enabled} onClick={() => { setBusy(r.id); void api.restartPluginWorker(r.id).then(() => refresh()).catch(() => {}).finally(() => setBusy(null)); }}>Restart</button>
+                  </div>
+                </div>
+              )}
+              {r.assist && r.assist.calls > 0 && (
+                <div style={groupRow(loadErr || r.worker ? 1 : 0)}>
+                  <span data-testid={`plugin-assist-${r.id}`} style={{ ...note, fontSize: 12 }}>{assistLine(r.assist)}</span>
+                </div>
+              )}
+              {r.hooks && (
+                <div style={groupRow(loadErr || r.worker || (r.assist?.calls ?? 0) > 0 ? 1 : 0)}>
+                  <span style={{ ...note, fontSize: 12 }}>Hooks: {r.hooks.runs} runs{r.hooks.failures ? `, ${r.hooks.failures} failed` : ''}{r.hooks.dropped ? `, ${r.hooks.dropped} dropped` : ''}</span>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        <section aria-label="Actions" style={stack}>
+          <GroupLabel>ACTIONS</GroupLabel>
+          <div style={{ ...group, padding: '12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={buttons}>
+              <button type="button" style={ghostBtn} disabled={disabled || !r.enabled} onClick={() => void reload(r)}>Reload</button>
+              <button type="button" style={ghostBtn} disabled={disabled} onClick={() => void exportData(r)}>Export data</button>
+              <button type="button" style={ghostBtn} disabled={disabled} onClick={() => fileInput.current?.click()}>Import data…</button>
+              {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
+              {!r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={disabled} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</button>}
+              <input ref={fileInput} type="file" accept="application/json,.json" aria-label={`Import file for ${r.id}`} style={{ display: 'none' }}
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pickImport(r, f); }} />
+            </div>
+            {copying?.id === r.id && (
+              <div style={buttons}>
+                <input aria-label="New plugin id" value={copying.newId} onChange={(e) => setCopying({ id: r.id, newId: e.target.value })} style={{ ...fieldInput, width: 180 }} />
+                <button type="button" style={solidBtn(true)} disabled={disabled} onClick={() => copy(r)}>Copy</button>
+                <button type="button" style={ghostBtn} onClick={() => setCopying(null)}>Cancel</button>
+                <span style={note}>A local copy you can change. The bundled one stays as it is.</span>
+              </div>
+            )}
+            {dataMsg?.id === r.id && (
+              <div role={dataMsg.error ? 'alert' : 'status'} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere', color: dataMsg.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{dataMsg.text}</div>
+            )}
+            {err && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
+          </div>
+        </section>
+
+        <details data-testid="plugin-developer" style={{ ...group }}>
+          <summary style={{ padding: '11px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>Developer</summary>
+          {dev.map(([label, value, extra], i) => devRow(label, value, i + 1, extra))}
+        </details>
+      </div>
+    );
+  };
+
+  const opened = openId ? manifests.find((m) => m.id === openId) : undefined;
+
+  const list = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>Plugins add screens and tools to Dispatch. Bundled ones update with the app.</div>
+
+      {bundled.length > 0 && (
+        <section aria-label="Bundled plugins" style={stack}>
+          <GroupLabel>BUNDLED</GroupLabel>
+          <div style={group}>{bundled.map(renderRow)}</div>
+        </section>
+      )}
+
+      {installed.length > 0 && (
+        <section aria-label="Installed plugins" style={stack}>
+          <GroupLabel>INSTALLED</GroupLabel>
+          <div style={group}>{installed.map(renderRow)}</div>
+        </section>
+      )}
+
+      <section aria-label="Local plugins" style={stack}>
+        <GroupLabel action={<button type="button" style={ghostBtn} onClick={() => { setCreating((c) => !c); setErr(''); }}>New plugin…</button>}>LOCAL</GroupLabel>
         {creating && (
-          <div style={{ ...card, gap: 10 }}>
+          <div style={{ ...group, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
               Plugin id
               <input aria-label="Plugin id" value={newId} onChange={(e) => setNewId(e.target.value)} placeholder="daily-rundown" style={fieldInput} />
@@ -328,93 +495,108 @@ export function PluginsSection() {
             </div>
           </div>
         )}
-        {err && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
+        {err && !opened && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
+        {local.length > 0 && <div style={group}>{local.map(renderRow)}</div>}
         {loaded && local.length === 0 && !creating && (
-          <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>No plugins yet. New plugin… writes a starter folder you or a thread can edit; it shows up here as it is saved.</div>
+          <div style={{ ...note, fontSize: 12.5, padding: '0 4px' }}>
+            {manifests.length === 0 ? 'No plugins yet. ' : 'No local plugins. '}New plugin… writes a starter folder under ~/.dispatch/plugins that you or a thread can edit. It reloads as you save.
+          </div>
         )}
-        {local.map(renderRow)}
       </section>
 
-      {bundled.length > 0 && (
-        <section aria-label="Bundled plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span style={sectionLabel}>BUNDLED</span>
-          <div style={note}>Ship with Dispatch and update with it. Disable one here; copy it to local to change it.</div>
-          {bundled.map(renderRow)}
-        </section>
-      )}
-
-      {installed.length > 0 && (
-        <section aria-label="Installed plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span style={sectionLabel}>INSTALLED</span>
-          {installed.map(renderRow)}
-        </section>
-      )}
-
-      <section aria-label="Marketplaces" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={sectionLabel}>MARKETPLACES</span>
-        <div style={note}>A marketplace is a git repository. Add it by URL (https, ssh, or a path); the daemon clones it with your own git login, so a private repository is a private marketplace.</div>
+      <section aria-label="Marketplaces" style={stack}>
+        <GroupLabel>MARKETPLACES</GroupLabel>
+        {markets.length > 0 && (
+          <div style={group}>
+            {markets.map((m, i) => (
+              <div key={m.slug} data-testid={`marketplace-${m.slug}`} style={{ ...groupRow(i), flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ ...title, display: 'block' }}>{m.name ?? m.slug}</span>
+                    <span style={{ ...oneLine, fontFamily: 'var(--font-mono)', fontSize: 11 }} title={m.url}>{m.url}</span>
+                  </span>
+                  <span style={{ ...note, fontSize: 12 }} title="Plugins from a trusted marketplace update on their own">Trusted</span>
+                  <Toggle on={m.trusted} label="Trusted" onClick={() => void marketRun(m.slug, () => api.setMarketplaceTrusted(m.slug, !m.trusted))} />
+                </div>
+                {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
+                {m.error && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</div>}
+                <div style={buttons}>
+                  <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</button>
+                  <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</button>
+                  {m.lastPulledAt && <span style={{ ...note, marginLeft: 'auto' }}>Checked {new Date(m.lastPulledAt).toLocaleString()}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)} placeholder="https://github.com/your-org/plugins.git" style={{ ...fieldInput, flex: 1, minWidth: 220 }} />
+          <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)} placeholder="https://github.com/your-org/plugins.git" style={{ ...fieldInput, flex: 1, minWidth: 200 }} />
           <button type="button" style={solidBtn(marketUrl.trim().length > 0)} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
         </div>
         {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
-        {markets.map((m) => (
-          <div key={m.slug} data-testid={`marketplace-${m.slug}`} style={card}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{m.name ?? m.slug}</span>
-              <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' }}>{m.url}</span>
-              {m.error && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</span>}
-            </div>
-            {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</button>
-              <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</button>
-              <span style={{ ...item, marginLeft: 'auto' }} title="Plugins from a trusted marketplace update on their own">Trusted</span>
-              <Toggle on={m.trusted} label="Trusted" onClick={() => void marketRun(m.slug, () => api.setMarketplaceTrusted(m.slug, !m.trusted))} />
-            </div>
-            {m.lastPulledAt && <div style={note}>Checked {new Date(m.lastPulledAt).toLocaleString()}.</div>}
-          </div>
-        ))}
+        <div style={{ ...note, padding: '0 4px' }}>A marketplace is a git repository. Add it by URL (https, ssh, or a path). The daemon clones it with your own git login, so a private repository is a private marketplace.</div>
       </section>
 
       {catalog.length > 0 && (
-        <section aria-label="Browse" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span style={sectionLabel}>BROWSE</span>
+        <section aria-label="Browse" style={stack}>
+          <GroupLabel>BROWSE</GroupLabel>
           {markets.map((m) => {
             const mine = catalog.filter((e) => e.marketplace === m.slug);
             if (mine.length === 0) return null;
+            const entries = (['plugin', 'skill'] as const).flatMap((kind) => mine.filter((e) => e.kind === kind));
             return (
-              <div key={m.slug} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{m.name ?? m.slug}</div>
-                {(['plugin', 'skill'] as const).map((kind) => mine.filter((e) => e.kind === kind).map((e) => (
-                  <div key={`${kind}:${e.id}`} data-testid={`catalog-${kind}-${e.id}`} style={{ ...card, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{e.name}</span>
-                        <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{e.version}</span>
-                        <span style={miniChip}>{kind}</span>
-                      </div>
-                      {e.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{e.description}</div>}
+              <div key={m.slug} style={stack}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', padding: '0 4px' }}>{m.name ?? m.slug}</div>
+                <div style={group}>
+                  {entries.map((e, i) => (
+                    <div key={`${e.kind}:${e.id}`} data-testid={`catalog-${e.kind}-${e.id}`} style={groupRow(i)}>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ ...title, display: 'block' }}>{e.name}</span>
+                        <span style={oneLine}>{e.kind === 'skill' ? 'Skill' : 'Plugin'} · v{e.version}{e.description ? ` · ${e.description}` : ''}</span>
+                      </span>
+                      {e.installed
+                        ? <span style={{ ...note, fontSize: 12, flexShrink: 0 }}>Installed v{e.installed.version}</span>
+                        : <button type="button" style={solidBtn(marketBusy === null)} disabled={marketBusy !== null} onClick={() => void marketRun(`${e.kind}:${e.id}`, () => (e.kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</button>}
                     </div>
-                    {e.installed
-                      ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>Installed v{e.installed.version}</span>
-                      : <button type="button" style={solidBtn(marketBusy === null)} disabled={marketBusy !== null} onClick={() => void marketRun(`${kind}:${e.id}`, () => (kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</button>}
-                  </div>
-                )))}
+                  ))}
+                </div>
               </div>
             );
           })}
         </section>
       )}
 
-      <section aria-label="Safe mode" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={sectionLabel}>SAFE MODE</span>
-        <div style={row}>
-          <span style={item}>Load no plugins</span>
-          <Toggle on={safe} onClick={toggleSafe} label="Safe mode" />
+      <section aria-label="Safe mode" style={stack}>
+        <GroupLabel>SAFE MODE</GroupLabel>
+        <div style={group}>
+          <div style={groupRow(0)}>
+            <span style={{ ...body, flex: 1 }}>Load no plugins</span>
+            <Toggle on={safe} onClick={toggleSafe} label="Safe mode" />
+          </div>
         </div>
-        <div style={note}>{safeTouched ? 'Reload the app to apply. ' : ''}Adding ?safe to the app's address does the same for one visit.</div>
+        <div style={{ ...note, padding: '0 4px' }}>{safeTouched ? 'Reload the app to apply. ' : ''}Adding ?safe to the app's address does the same for one visit.</div>
       </section>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop: the page takes the section's place. Phone: the list stays under a full-screen page. */}
+      {opened && !isMobile ? renderDetail(opened) : list}
+      {opened && isMobile && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
+          <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+            <button type="button" aria-label="Back to plugins" onClick={close} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px' }}>
+              <CaretLeft size={20} weight="bold" />
+              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Plugins</span>
+            </button>
+          </header>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', padding: '16px 14px 32px' }}>
+            {renderDetail(opened)}
+          </div>
+        </div>,
+        document.body,
+      )}
 
       <Modal open={logsOf !== null} onClose={() => setLogsOf(null)} title={logsOf ? `Worker log · ${logsOf}` : 'Worker log'} maxWidth={760}>
         <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
@@ -445,6 +627,6 @@ export function PluginsSection() {
           </label>
         </div>
       </ConfirmModal>
-    </div>
+    </>
   );
 }
