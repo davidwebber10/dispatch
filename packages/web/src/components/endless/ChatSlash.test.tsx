@@ -71,4 +71,13 @@ describe('Chat', () => {
     await waitFor(() => expect(send).toHaveBeenCalled());
     expect(send.mock.calls[0][0]).toBe('check the exporter');
   });
+
+  it('a refused Chat change is a visible line above the box (review round 1)', async () => {
+    put.mockRejectedValueOnce(new Error('Chat is unavailable'));
+    render(<EndlessColumn />);
+    await screen.findByRole('button', { name: 'Opus' });
+    typeAndEnter('/model haiku');
+    await waitFor(() => expect(screen.getAllByRole('alert').map((a) => a.textContent).join(' ')).toMatch(/Model change refused: Chat is unavailable/));
+    expect(box().value).toBe('/model haiku');
+  });
 });

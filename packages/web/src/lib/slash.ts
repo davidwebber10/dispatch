@@ -4,3 +4,4 @@ export {
   parseSlash, slashCommandsFor, resolveModelArg, resolveEffortArg, EFFORT_LEVELS,
 } from '../../../core/src/providers/slash-commands';
 export type { SlashCommand, SlashSurface, SlashHarness, ParsedSlash } from '../../../core/src/providers/slash-commands';
+export { codexEffortsFor, CODEX_COMMON_EFFORTS, CODEX_ALL_EFFORTS } from '../../../core/src/providers/codex-efforts';

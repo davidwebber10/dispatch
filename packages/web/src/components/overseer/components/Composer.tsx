@@ -22,7 +22,7 @@ import { PillComposer } from '../../composer/PillComposer';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
-import { ThreadModelControl, applyThreadSettings, useThreadSettings } from '../../composer/ThreadModelControl';
+import { ThreadModelControl, applyThreadSettings, useThreadSettings, useEffortLevels } from '../../composer/ThreadModelControl';
 import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
 import { usePickerRequest } from '../../../stores/pickerRequest';
 import { modLabel } from '../../../lib/hostkeys';
@@ -164,8 +164,9 @@ export function Composer() {
   // coordinator tier, so the owner may change it freely. /compact and /stop have buttons elsewhere too.
   const overseer = useThreadSettings(coordinatorId ?? '');
   const slashHarness = overseer.harness ?? 'claude-code';
+  const effortLevels = useEffortLevels(overseer.harness, overseer.model, coordinatorModel);
   const slash = useSlashMenu({
-    surface: 'overseer', harness: slashHarness, value: composer, setValue: setComposer, model: overseer.model, effort: overseer.effort, mobile: isMobile,
+    surface: 'overseer', harness: slashHarness, value: composer, setValue: setComposer, model: overseer.model, effort: overseer.effort, mobile: isMobile, effortLevels,
     run: async (name, args) => {
       if (name === 'stop') { doStop(); return; }
       if (!coordinatorId) throw new Error('The Control Plane session has not started yet.');

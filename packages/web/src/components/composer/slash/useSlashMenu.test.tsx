@@ -11,9 +11,9 @@ let sent: string[];
 let run: ReturnType<typeof vi.fn>;
 beforeEach(() => { sent = []; run = vi.fn().mockResolvedValue(undefined); });
 
-function Host({ harness = 'claude-code', surface = 'thread', mobile = false, model = null, effort = null }: { harness?: SlashHarness; surface?: SlashSurface; mobile?: boolean; model?: string | null; effort?: string | null }) {
+function Host({ harness = 'claude-code', surface = 'thread', mobile = false, model = null, effort = null, effortLevels }: { harness?: SlashHarness; surface?: SlashSurface; mobile?: boolean; model?: string | null; effort?: string | null; effortLevels?: readonly string[] }) {
   const [value, setValue] = useState('');
-  const slash = useSlashMenu({ surface, harness, value, setValue, mobile, run, model, effort });
+  const slash = useSlashMenu({ surface, harness, value, setValue, mobile, run, model, effort, effortLevels });
   return (
     <PillComposer
       value={value} onChange={setValue} canSend placeholder="Message…" onAddFile={() => {}} dictation={dictation} sttConfigured
@@ -80,6 +80,12 @@ describe('the "/" menu', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith('model', 'sonnet'));
   });
 
+  it('lists the efforts the host gives (a Codex model\'s own), instead of the fixed list', () => {
+    render(<Host harness="codex" effortLevels={['low', 'medium', 'high', 'xhigh', 'max']} />);
+    type('/effort ');
+    expect(names()).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
   it('lists the effort levels for the harness', () => {
     const { unmount } = render(<Host />);
     type('/effort ');
@@ -87,7 +93,7 @@ describe('the "/" menu', () => {
     unmount();
     render(<Host harness="codex" effort="high" />);
     type('/effort ');
-    expect(names()).toHaveLength(4);
+    expect(names()).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']); // all that any model takes, until the host gives the model's own
   });
 
   it('a mouse click on a command runs it', async () => {
@@ -198,13 +204,42 @@ describe('sending text that starts with a slash', () => {
     expect(sent).toEqual(['/usr/local/bin is on my path']);
   });
 
-  it('a failing command shows its message and the text is gone from the box', async () => {
+  it('a failing command shows its message and keeps what was typed, so it can be fixed', async () => {
     run.mockRejectedValueOnce(new Error('No live structured session to compact'));
     render(<Host />);
     type('/compact');
     send();
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No live structured session to compact'));
+    expect(box().value).toBe('/compact');
+  });
+
+  it('a bad value keeps the typed text (review round 1)', async () => {
+    run.mockRejectedValueOnce(new Error('Unknown model "banana".'));
+    render(<Host />);
+    type('/model banana');
+    send();
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Unknown model'));
+    expect(box().value).toBe('/model banana');
+  });
+
+  it('a command that worked clears the box', async () => {
+    render(<Host />);
+    type('/effort high');
+    send();
+    await waitFor(() => expect(run).toHaveBeenCalled());
     expect(box().value).toBe('');
+  });
+
+  it('does not bring the old text back over something the user typed meanwhile', async () => {
+    let fail!: (e: Error) => void;
+    run.mockReturnValueOnce(new Promise((_, rej) => { fail = rej; }));
+    render(<Host />);
+    type('/compact');
+    send();
+    type('new words');
+    fail(new Error('nope'));
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(box().value).toBe('new words');
   });
 
   it('a note from a command is shown', async () => {

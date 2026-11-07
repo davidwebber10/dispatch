@@ -1,10 +1,12 @@
 // The "/" menu and the model/effort picker in a Pretty thread (slash menu, 2026-11-06).
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ChatView } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 import { useTabs } from '../../../stores/tabs';
+import { useThreadStatus } from '../../../stores/threadStatus';
+import { resetCodexEffortsCache } from '../../composer/ThreadModelControl';
 import type { Terminal } from '../../../api/types';
 
 beforeAll(() => {
@@ -32,6 +34,8 @@ beforeEach(() => {
   vi.spyOn(api, 'setThreadSettings').mockImplementation(settings as never);
   vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
   useTabs.setState({ byProject: { s1: [thread('claude-code', { model: 'sonnet' })] } } as never);
+  useThreadStatus.setState({ byTerminal: {} });
+  resetCodexEffortsCache();
 });
 
 const box = () => screen.findByPlaceholderText('Message…') as Promise<HTMLTextAreaElement>;
@@ -117,5 +121,132 @@ describe('a Grok thread', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/not yet available/i);
     expect(settings).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---- Review round 1 (PR #155) ----
+
+describe('/cli asks first when the thread is working (item 8)', () => {
+  it('switches at once when the thread is idle', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), externalId: 'e1' }] } } as never);
+    const sw = vi.spyOn(api, 'switchTransport').mockResolvedValue(thread('claude-code'));
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+    await typeAndEnter('/cli');
+    await waitFor(() => expect(sw).toHaveBeenCalledWith('t1', 'pty'));
+  });
+
+  it('while working it asks, and switches (with force) only on Stop and switch', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), externalId: 'e1' }] } } as never);
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    const sw = vi.spyOn(api, 'switchTransport').mockResolvedValue(thread('claude-code'));
+    await typeAndEnter('/cli');
+    expect(await screen.findByText(/Switch to CLI now\?/)).toBeInTheDocument();
+    expect(sw).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop and switch' }));
+    await waitFor(() => expect(sw).toHaveBeenCalledWith('t1', 'pty', { force: true }));
+  });
+
+  it('Cancel leaves the thread alone', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: 'e1' }] } } as never);
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    const sw = vi.spyOn(api, 'switchTransport').mockResolvedValue(thread('claude-code'));
+    await typeAndEnter('/cli');
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+    expect(sw).not.toHaveBeenCalled();
+  });
+
+  it('a thread with no session yet says why it cannot switch', async () => {
+    const sw = vi.spyOn(api, 'switchTransport');
+    await typeAndEnter('/cli'); // thread() has externalId 'e'... make it empty
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: null }] } } as never);
+    await typeAndEnter('/cli');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Send a message first/));
+    expect(sw).not.toHaveBeenCalledWith('t1', 'pty', expect.anything());
+  });
+});
+
+describe('a bad value keeps the typed text (item 7)', () => {
+  it('/model banana is refused with a reason and stays in the box', async () => {
+    await typeAndEnter('/model banana');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Unknown model "banana"/));
+    expect((await box()).value).toBe('/model banana');
+    expect(settings).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+  it('a change the daemon refuses keeps the text too', async () => {
+    settings.mockRejectedValueOnce(new Error("Model 'x' not found"));
+    await typeAndEnter('/model haiku');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Model 'x' not found"));
+    expect((await box()).value).toBe('/model haiku');
+  });
+});
+
+describe('a refused change is shown in the thread (items 6 and 10)', () => {
+  it('a notice from the daemon becomes a visible error line in the thread', async () => {
+    let onEvent: ((e: any) => void) | undefined;
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((h: any) => { onEvent = h.onEvent; return { close: () => {} } as any; });
+    render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    act(() => onEvent!({ type: 'system', subtype: 'settings_refused', message: "Could not change the model: Model 'x' not found" }));
+    expect(await screen.findByText("Could not change the model: Model 'x' not found")).toBeInTheDocument();
+  });
+
+  it('the picker shows what the thread runs after the daemon rolled the config back', async () => {
+    render(<ChatView terminalId="t1" />);
+    await screen.findByRole('button', { name: /Sonnet/ });
+    act(() => useTabs.setState({ byProject: { s1: [thread('claude-code', { model: 'opus' })] } } as never));
+    expect(screen.getByRole('button', { name: /Opus/ })).toBeInTheDocument();
+    act(() => useTabs.setState({ byProject: { s1: [thread('claude-code', { model: 'sonnet' })] } } as never)); // the reload after a rollback
+    expect(await screen.findByRole('button', { name: /Sonnet/ })).toBeInTheDocument();
+  });
+});
+
+describe('Codex efforts follow the model (item 9)', () => {
+  const luna = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const astra = [...luna, 'ultra'];
+  beforeEach(() => {
+    vi.spyOn(api, 'codexModelEfforts').mockResolvedValue({ live: { 'gpt-6-luna': luna, 'gpt-6-astra': astra } });
+  });
+
+  it('the picker offers ultra for Astra and not for Luna', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-astra' })] } } as never);
+    const { unmount } = render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Astra/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ultra' })).toBeInTheDocument());
+    unmount();
+    resetCodexEffortsCache();
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-luna' })] } } as never);
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /gpt-6-luna|Luna/ }));
+    expect(await screen.findByRole('button', { name: 'max' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ultra' })).toBeNull();
+  });
+
+  it('/effort lists the current model\'s efforts', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-luna' })] } } as never);
+    render(<ChatView terminalId="t1" />);
+    const ta = await box();
+    await waitFor(() => expect(api.codexModelEfforts).toHaveBeenCalled());
+    fireEvent.change(ta, { target: { value: '/effort ' } });
+    await waitFor(() => expect(screen.getAllByRole('option').map((o) => o.firstElementChild?.textContent)).toEqual(luna));
+  });
+
+  it('a model switch that dropped the effort says so', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-astra', effort: 'ultra' })] } } as never);
+    settings.mockResolvedValue({ terminal: thread('codex'), applied: 'now', clearedEffort: 'ultra' });
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Astra/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Luna/ }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Effort ultra is not available on this model, so it was cleared.'));
+  });
+
+  it('an older daemon with no list falls back to the built-in table', async () => {
+    (api.codexModelEfforts as any).mockRejectedValue(new Error('404'));
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-luna' })] } } as never);
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Luna|gpt-6-luna/ }));
+    expect(await screen.findByRole('button', { name: 'max' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ultra' })).toBeNull();
   });
 });

@@ -33,6 +33,8 @@ export interface UseSlashMenuOptions {
   effort?: string | null;
   run: (name: string, args: string) => Promise<string | void> | string | void;
   mobile: boolean;
+  /** The efforts to list after `/effort `. Default: the harness's fixed list. Codex: the current model's own. */
+  effortLevels?: readonly string[];
 }
 
 export interface SlashMenu {
@@ -66,13 +68,17 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
   }, []);
 
   /** Run a command through the host, then clear the box and say what happened. */
+  const valueRef = useRef(value); valueRef.current = value;
   const exec = useCallback(async (name: string, args: string, clear = true) => {
+    const typed = valueRef.current;
     if (clear) setValue('');
     setSheet(false);
     try {
       const note = await o.run(name, args);
       if (note) say(note);
     } catch (e) {
+      // A command that did not go through keeps what was typed, so it can be fixed and sent again.
+      if (clear && !valueRef.current) setValue(typed);
       say(e instanceof Error ? e.message : 'The command did not go through.', true);
     }
   }, [o.run, setValue, say]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -102,11 +108,11 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
           .filter((m) => (m.model ?? 'default').toLowerCase().startsWith(q) || m.label.toLowerCase().startsWith(q))
           .map((m) => ({ key: `m:${m.model}`, label: m.label, description: m.model ?? 'the default', current: (o.model ?? null) === m.model, run: () => void exec('model', m.model ?? 'default') }));
       }
-      const levels = harness === 'claude-code' || harness === 'codex' ? EFFORT_LEVELS[harness] : [];
+      const levels = o.effortLevels ?? (harness === 'claude-code' || harness === 'codex' ? EFFORT_LEVELS[harness] : []);
       return levels.filter((l) => l.startsWith(q)).map((l) => ({ key: `e:${l}`, label: l, current: o.effort === l, run: () => void exec('effort', l) }));
     }
     return [];
-  }, [value, dismissedFor, commands, harness, o.model, o.effort, setValue, exec]);
+  }, [value, dismissedFor, commands, harness, o.model, o.effort, o.effortLevels, setValue, exec]);
 
   // A new list starts at its first line.
   useEffect(() => { setActive(0); }, [items.length, value]);
@@ -161,6 +167,11 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
     <>
       {items.length > 0 ? (
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'calc(100% + 6px)', zIndex: 40, padding: 6, maxHeight: 320, overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 12px 34px -10px rgba(0,0,0,.7)' }}>
+          {notice && (
+            <div role={notice.error ? 'alert' : 'status'} style={{ padding: '4px 10px 6px', font: '400 12.5px var(--font-sans)', lineHeight: 1.4, color: notice.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>
+              {notice.text}
+            </div>
+          )}
           <SlashList items={items} active={active} onHover={setActive} mobile={mobile} />
         </div>
       ) : notice ? (

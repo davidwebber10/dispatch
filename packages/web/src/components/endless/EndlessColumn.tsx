@@ -163,13 +163,18 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
 
   // The "/" menu: Chat's short list (/model, /effort, /stop). The model and effort are one Chat-wide setting.
   const chat = useChatSettings();
+  // A refused change is also a visible line above the box (not only the picker's own status), like a failed send.
+  const applyChat = async (change: { model?: string | null; effort?: string | null }): Promise<string> => {
+    try { return await chat.apply(change); }
+    catch (err) { setSendError(`Model change refused: ${errorText(err)}`); throw err; }
+  };
   const slash = useSlashMenu({
     surface: 'chat', harness: 'claude-code', value: text, setValue: setText, model: chat.settings?.model ?? null, effort: chat.settings?.effort ?? null, mobile,
     run: async (name, args) => {
       if (name === 'stop') { await useEndless.getState().stop(); return; }
       if (!chat.settings) throw new Error('Chat settings are not available on this daemon.');
       if (name === 'model' || name === 'effort') {
-        return runModelEffortCommand({ harness: 'claude-code', name, args, openPicker: () => usePickerRequest.getState().request('chat'), apply: chat.apply });
+        return runModelEffortCommand({ harness: 'claude-code', name, args, openPicker: () => usePickerRequest.getState().request('chat'), apply: applyChat });
       }
     },
   });
@@ -346,7 +351,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         {/* The model and effort of all of Chat: the button opens the picker. */}
         {chat.settings && (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <ModelControl owner="chat" harness="claude-code" model={chat.settings.model} effort={chat.settings.effort} defaultModel={chat.settings.defaultModel} mobile={mobile} onApply={chat.apply} />
+            <ModelControl owner="chat" harness="claude-code" model={chat.settings.model} effort={chat.settings.effort} defaultModel={chat.settings.defaultModel} mobile={mobile} onApply={applyChat} />
           </div>
         )}
       </div>

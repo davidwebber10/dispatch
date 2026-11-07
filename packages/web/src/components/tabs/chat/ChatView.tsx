@@ -28,7 +28,8 @@ import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../Workin
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
-import { ThreadModelControl, applyThreadSettings, useThreadSettings } from '../../composer/ThreadModelControl';
+import { ThreadModelControl, applyThreadSettings, useThreadSettings, useEffortLevels } from '../../composer/ThreadModelControl';
+import { useTransportSwitch } from '../../layout/TransportToggle';
 import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
 import { usePickerRequest } from '../../../stores/pickerRequest';
 import { textToSend } from '../../../lib/slashEscape';
@@ -246,8 +247,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // picker in the status row, or change at once with a value.
   const thread = useThreadSettings(terminalId);
   const slashHarness = thread.harness ?? 'claude-code';
+  const effortLevels = useEffortLevels(thread.harness, thread.model, model);
+  // /cli asks first when the thread is mid-turn, like the CLI/Pretty switch does.
+  const transport = useTransportSwitch(terminalId);
   const slash = useSlashMenu({
-    surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, model: thread.model, effort: thread.effort, mobile: isMobile,
+    surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, model: thread.model, effort: thread.effort, mobile: isMobile, effortLevels,
     run: async (name, args) => {
       if (name === 'model' || name === 'effort') {
         return runModelEffortCommand({
@@ -258,7 +262,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       }
       if (name === 'compact') { await api.compactTerminal(terminalId); return; }
       if (name === 'stop') { await api.interrupt(terminalId); return; }
-      if (name === 'cli') { await api.switchTransport(terminalId, 'pty'); return; }
+      if (name === 'cli') {
+        if (!transport.canSwitch) throw new Error(transport.tip ?? 'This thread cannot switch to the CLI right now.');
+        transport.request('cli');
+        return;
+      }
       if (name === 'restart') { await api.relaunchTerminal(terminalId); return; }
     },
   });
@@ -455,6 +463,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} modelControl={<ThreadModelControl terminalId={terminalId} liveModel={model} mobile={isMobile} />} />
         </div>
       </div>
+      {transport.confirmUi}
       <DocViewer owner={terminalId} />
     </div>
     </ThreadDocsContext.Provider>

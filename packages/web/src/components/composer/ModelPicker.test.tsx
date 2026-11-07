@@ -19,6 +19,8 @@ describe('modelControlLabel', () => {
     expect(modelControlLabel(props({ model: 'sonnet' }))).toBe('Sonnet 5.5');
     expect(modelControlLabel(props({ model: 'opus' }))).toBe('Opus'); // saved now, live next turn
     expect(modelControlLabel(props({ harness: 'codex', model: 'gpt-6-astra', liveModel: 'gpt-5.6-sol' }))).toBe('6 Astra');
+    expect(modelControlLabel(props({ harness: 'codex', model: 'gpt-6-luna' }))).toBe('gpt-6-luna'); // not in the catalog: shown whole
+    expect(modelControlLabel(props({ harness: 'codex', model: null, liveModel: 'gpt-5.6-sol' }))).toBe('5.6 Sol');
   });
   it('falls back to the default model (Chat) and to "Model"', () => {
     expect(modelControlLabel(props({ liveModel: undefined, defaultModel: 'opus' }))).toBe('Opus');
@@ -77,12 +79,18 @@ describe('ModelControl', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('Codex offers its own efforts and no Default model', () => {
+  it('Codex has no Default model row, and offers the efforts it is given for the model (Luna: no ultra)', () => {
+    render(<ModelControl {...props({ harness: 'codex', model: 'gpt-6-luna', liveModel: 'gpt-6-luna', efforts: ['low', 'medium', 'high', 'xhigh', 'max'] })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'gpt-6-luna' }));
+    expect(screen.queryByRole('button', { name: 'Default' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'max' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'ultra' })).toBeNull();
+  });
+
+  it('Codex with no per-model list offers every effort any model takes', () => {
     render(<ModelControl {...props({ harness: 'codex', model: 'gpt-6-astra', liveModel: 'gpt-6-astra' })} />);
     fireEvent.click(screen.getByRole('button', { name: /Astra/ }));
-    expect(screen.queryByRole('button', { name: 'Default' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'max' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'xhigh' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ultra' })).toBeInTheDocument();
   });
 
   it('Chat: the Default row names the model that runs', () => {

@@ -32,6 +32,8 @@ export interface ModelControlProps {
   disabledReason?: string;
   onApply: (change: { model?: string | null; effort?: string }) => Promise<string | void>;
   mobile: boolean;
+  /** The efforts to offer, when they depend on the model (Codex). Default: the harness's fixed list. */
+  efforts?: readonly string[];
 }
 
 /** The catalog models for a harness; Codex has no "Default" (a thread cannot go back to it). */
@@ -44,12 +46,15 @@ export function pickerModels(harness: SlashHarness): { label: string; model: str
 /** "Opus", "Opus 5.5 · high": the trigger's text. */
 export function modelControlLabel(p: Pick<ModelControlProps, 'harness' | 'model' | 'effort' | 'liveModel' | 'defaultModel'>): string {
   const catalog = pickerModels(p.harness);
+  // A Codex id is shown whole when the catalog has no name for it ('gpt-6-luna'); the Claude name shortener would cut it to 'Gpt 6'.
+  const nameOf = (id: string) => catalog.find((m) => m.model === id)?.label ?? (p.harness === 'codex' ? id : modelDisplayName(id));
   let name: string | undefined;
   if (p.model) {
     const family = /^claude-([a-z]+)-/.exec(p.liveModel ?? '')?.[1];
-    name = family && family === p.model ? modelDisplayName(p.liveModel) : catalog.find((m) => m.model === p.model)?.label ?? modelDisplayName(p.model);
+    name = family && family === p.model ? modelDisplayName(p.liveModel) : nameOf(p.model);
   } else {
-    name = modelDisplayName(p.liveModel ?? p.defaultModel);
+    const id = p.liveModel ?? p.defaultModel;
+    name = id ? nameOf(id) : undefined;
   }
   name ??= 'Model';
   return p.effort ? `${name} · ${p.effort}` : name;
@@ -96,7 +101,7 @@ export function ModelControl(props: ModelControlProps) {
   }
 
   const models = pickerModels(harness);
-  const levels = harness === 'claude-code' || harness === 'codex' ? EFFORT_LEVELS[harness] : [];
+  const levels = props.efforts ?? (harness === 'claude-code' || harness === 'codex' ? EFFORT_LEVELS[harness] : []);
   const row = (selected: boolean) => ({
     display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: mobile ? '12px 12px' : '7px 10px', background: selected ? 'var(--color-hover, rgba(255,255,255,.06))' : 'none',
     border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: `500 ${mobile ? 15 : 13}px var(--font-sans)`, cursor: 'pointer', textAlign: 'left' as const,

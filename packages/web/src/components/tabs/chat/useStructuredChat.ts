@@ -560,6 +560,14 @@ export function useStructuredChat(
           return;
         }
 
+        // A model/effort change the agent refused after it was accepted: the daemon put the earlier values
+        // back and says so here, in the thread, so the owner does not think it took.
+        if (type === 'system' && event.subtype === 'settings_refused') {
+          const why = typeof event.message === 'string' && event.message ? event.message : 'The model or effort change was refused.';
+          setItems((p) => [...p, { kind: 'result', isError: true, text: why }]);
+          return;
+        }
+
         if (type === 'system' && event.subtype === 'api_retry') {
           setApiRetry({
             attempt: typeof event.attempt === 'number' ? event.attempt : 0,
