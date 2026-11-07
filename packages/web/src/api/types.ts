@@ -572,3 +572,25 @@ export interface Account { id: string; label: string; email?: string; plan?: str
 /** A thread pinned to an account (the delete notice lists them). */
 export interface AccountThread { id: string; label: string; sessionId: string }
 export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }
+
+/** Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): one row of GET /api/plugins. */
+export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string }
+export interface PluginRow {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  author?: string;
+  dispatch?: string;
+  sdk?: number;
+  web?: string;
+  contributes?: { views?: { id: string; label: string; icon?: string }[]; settings?: { id: string; label: string }[]; menus?: { thread?: string[]; project?: string[] }; slots?: string[]; tools?: string[] };
+  permissions?: string[];
+  enabled: boolean;
+  /** The newest mtime in the folder: the bundle's cache-busting version. */
+  stamp: number;
+  /** Set when the folder is not a loadable plugin. */
+  error?: string;
+  /** The marketplace install record; null for a local plugin. */
+  install: PluginInstall | null;
+}
