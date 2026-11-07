@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EditorView, basicSetup } from 'codemirror';
 import { EditorState } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { tokenEditorTheme } from '../../themes/codemirror';
 import { Markdown } from '../Markdown';
 import { DocsScope } from '../DocsScope';
 import { api } from '../../api/client';
@@ -92,7 +92,7 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
       doc: content,
       extensions: [
         basicSetup,
-        oneDark,
+        tokenEditorTheme,
         ...languageFor(path),
         EditorView.updateListener.of((u) => { if (u.docChanged) applyEdit(u.state.doc.toString()); }),
       ],
@@ -143,7 +143,7 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
   // markdown reads "view | edit"; a CSV reads "table | raw" — same two modes underneath.
   const label = (m: 'view' | 'edit') => (csv ? (m === 'view' ? 'table' : 'raw') : m);
   const tab = (m: 'view' | 'edit') => (
-    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? '#08240F' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
+    <button key={m} onClick={() => setMode(m)} style={{ padding: '3px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, textTransform: 'capitalize', background: mode === m ? 'var(--color-accent)' : 'transparent', color: mode === m ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: mode === m ? 600 : 400 }}>{label(m)}</button>
   );
 
   return (
@@ -152,11 +152,11 @@ export function FileEditorTab({ terminal }: { terminal: Terminal }) {
         <span style={{ fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{path}</span>
         {dirty && <span style={{ color: 'var(--color-status-yellow)', fontSize: 11 }}>● unsaved</span>}
         {rich && (
-          <div style={{ display: 'inline-flex', marginLeft: 6, background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', padding: 2 }}>
+          <div style={{ display: 'inline-flex', marginLeft: 6, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: 2 }}>
             {tab('view')}{tab('edit')}
           </div>
         )}
-        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: dirty ? '#08240F' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
+        <button onClick={trySave} disabled={!dirty} style={{ marginLeft: 'auto', height: 26, padding: '0 12px', background: dirty ? 'var(--color-accent)' : 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: dirty ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: 600, fontSize: 12 }}>Save</button>
       </div>
       {loadError && !dirty && !fileCache.has(ck)
         ? <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start' }}>

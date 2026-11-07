@@ -20,7 +20,7 @@ vi.mock('codemirror', () => ({
 vi.mock('@codemirror/state', () => ({
   EditorState: { create: (cfg: { doc: string }) => { codeMirrorState.capturedDoc = cfg.doc; return {}; } },
 }));
-vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: {} }));
+vi.mock('../../themes/codemirror', () => ({ tokenEditorTheme: [] }));
 
 import { FileEditorTab } from './FileEditorTab';
 import { api } from '../../api/client';
