@@ -10,7 +10,7 @@ import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
-import { Marquee } from '../common/Marquee';
+import { LeafHeaderTitle } from './LeafHeaderTitle';
 import type { Icon } from '@phosphor-icons/react';
 import { usePluginRegistry, usePromotedViews, anyBadge, useInspectorTabs } from '../../plugins/registry';
 import { pluginIcon, tabIcon } from '../../plugins/sdk';
@@ -100,6 +100,8 @@ export function MobileApp() {
   // and drilling into a section pushes it onto level 1 (where a project's threads
   // would otherwise be), so back / edge-swipe walk out of it like any other screen.
   const [settingsKey, setSettingsKey] = useState<string | null>(null);
+  // The plugin screen opened from the Plugins tab: pushed onto level 1, like a settings section.
+  const [pluginKey, setPluginKey] = useState<string | null>(null);
   const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
   useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
   // The thread list highlights a row ONLY for the thread you last opened (set in
@@ -206,6 +208,11 @@ export function MobileApp() {
     setSettingsKey(key); setLevel(1);
     pushNav({ nav: 1, settingsSection: key }, '', location.pathname);
   };
+  // A plugin screen from the Plugins tab: same idea as a settings section (level 1, no URL change).
+  const openPluginScreen = (key: string) => {
+    setPluginKey(key); setLevel(1);
+    pushNav({ nav: 1, pluginView: key }, '', location.pathname);
+  };
   const back = () => history.back();
 
   // View's "open file" button raises a cross-shell intent; navigate to that tab.
@@ -267,10 +274,11 @@ export function MobileApp() {
       pushNav({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
     }
     const onPop = (e: PopStateEvent) => {
-      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string };
+      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string; pluginView?: string };
       // Returning to a settings section (edge-swipe forward, or back into one)
       // re-selects the tab too, so the level-1 slot renders the right screen.
       if (s.settingsSection) { setSettingsKey(s.settingsSection); setBottomTab('settings'); }
+      if (s.pluginView) { setPluginKey(s.pluginView); setBottomTab('plugins'); }
       if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
       if (s.leaf) setLeaf(s.leaf);
       if (s.tabId) { useAgentUI.getState().blur(); setLeafTabId(s.tabId); useTabs.getState().setActiveTab(s.tabId); }
@@ -287,11 +295,14 @@ export function MobileApp() {
   // project detail goes back to "Projects"; a thread/agent goes back to its
   // project.
   const inSettings = bottomTab === 'settings';
+  const inPlugins = bottomTab === 'plugins';
   const promotedViews = usePromotedViews();
   const badges = usePluginRegistry((s) => s.badges);
   const pluginsDot = usePluginRegistry((st) => anyBadge(st, true));
   const anyPlugin = usePluginRegistry((s) => s.views.length > 0 || s.manifests.length > 0);
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
+  const pluginLabel = usePluginRegistry((s) => (pluginKey ? s.views.find((v) => v.key === pluginKey)?.label : undefined));
+  const pluginScreen = level === 1 && inPlugins && pluginKey ? { label: pluginLabel ?? 'Plugin' } : null;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
   // In a thread (2026-11-06, header option C): the title is the thread's own name, with its status,
   // status dot and account underneath (no project or Pretty/CLI label since 2026-11-06: the Back
@@ -321,7 +332,7 @@ export function MobileApp() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--color-base)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
       {transport.confirmUi}
-      {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !leafTab} onClose={() => setProjectMenu(false)} onArchived={back} />}
+      {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !inPlugins && !leafTab} onClose={() => setProjectMenu(false)} onArchived={back} />}
       <Slot name="app.overlay" />
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
         lead={(close, row) => (
@@ -374,18 +385,15 @@ export function MobileApp() {
           </>
         ) : (
           leafTab ? (
-            <>
-              <button onClick={back} aria-label={`Back to ${project?.name ?? 'project'}`} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px 2px', flexShrink: 0 }}>
-                <CaretLeft size={22} weight="bold" />
-              </button>
-              <div data-testid="thread-title" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-                <Marquee text={leafTab.label} style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)' }} />
+            <LeafHeaderTitle title={leafTab.label} onBack={back} backLabel={`Back to ${project?.name ?? 'project'}`} testId="thread-title"
+              subtitle={(
                 <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
                   {leafAccount ? shortAccountLabel(leafAccount.label) : ''}
                 </span>
-              </div>
-            </>
+              )} />
+          ) : pluginScreen ? (
+            <LeafHeaderTitle title={pluginScreen.label} onBack={back} backLabel="Back to Plugins" testId="plugin-title" />
           ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
@@ -398,8 +406,8 @@ export function MobileApp() {
           <UsageChip variant="phone" />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
-          {level === 1 && !inSettings && project && !leafTab && <Slot name="project.header.actions" session={project} />}
-          {level === 1 && !inSettings && project && !leafTab && (
+          {level === 1 && !inSettings && !inPlugins && project && !leafTab && <Slot name="project.header.actions" session={project} />}
+          {level === 1 && !inSettings && !inPlugins && project && !leafTab && (
             <button type="button" aria-label="Project menu" title="Project options"
               onClick={() => setProjectMenu(true)}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
@@ -436,7 +444,7 @@ export function MobileApp() {
             ) : bottomTab === 'settings' ? (
               <MobileSettingsList onOpen={openSettingsSection} />
             ) : bottomTab === 'plugins' ? (
-              <PluginsTab onOpen={(key) => setBottomTab(key as `plugin:${string}`)} />
+              <PluginsTab onOpen={openPluginScreen} />
             ) : bottomTab.startsWith('plugin:') ? (
               <PluginView viewKey={bottomTab} />
             ) : bottomTab === 'agents' ? (
@@ -490,8 +498,10 @@ export function MobileApp() {
 
           {/* Level 1 — the project's threads + agents, with a Dispatch button at the
               top of the card (opens the coordinator as a full-screen overlay). */}
-          <div style={scrollSlot}>
-            {inSettings ? (
+          <div style={inPlugins ? { ...slot, display: 'flex', flexDirection: 'column' } : scrollSlot}>
+            {inPlugins ? (
+              pluginKey ? <PluginView viewKey={pluginKey} /> : null
+            ) : inSettings ? (
               settingsKey ? <MobileSettingsSection sectionKey={settingsKey} /> : null
             ) : project ? (
               <div style={{ padding: '8px 4px' }}>
