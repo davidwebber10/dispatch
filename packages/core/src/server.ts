@@ -104,6 +104,7 @@ import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { ThreadEvents } from './plugins/thread-events.js';
+import { PluginHooks } from './plugins/hooks.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
@@ -629,6 +630,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
   sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
+  // Hook scripts run on thread events (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
+  const pluginHooks = new PluginHooks(plugins, threadEvents, { api: () => daemonApi });
+  plugins.setHookStatsProvider((id) => pluginHooks.stats(id));
     },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
@@ -1241,6 +1245,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     for (const g of loopbackGuards) g.close();
     telemetryLoop.stop();
     plugins.stop();
+    pluginHooks.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
