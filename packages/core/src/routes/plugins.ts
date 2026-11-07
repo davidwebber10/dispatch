@@ -14,6 +14,8 @@ import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugin
 import type { PluginRegistry } from '../plugins/registry.js';
 import type { AssistRunner } from '../assist/run.js';
 import type { PluginWorkers } from '../plugins/workers.js';
+import type { MarketplaceService } from '../plugins/marketplaces.js';
+import type { PluginInstaller } from '../plugins/installer.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): the manifests, the owner's
@@ -229,6 +231,106 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!known(req, res)) return;
     if (!pluginData.removeFile(db, req.params.id, req.params.fileId)) return void res.status(404).json({ error: 'file not found' });
     res.status(204).end();
+  });
+
+  // ── marketplaces and installs (spec section 7): owner-only ───────────────────────────────
+  const marketsOf = (req: Request): MarketplaceService | null => (req.app.locals.marketplaces as MarketplaceService | undefined) ?? null;
+  const installerOf = (req: Request): PluginInstaller | null => (req.app.locals.installer as PluginInstaller | undefined) ?? null;
+  const installError = (res: import('express').Response, e: unknown): void => {
+    const msg = e instanceof Error ? e.message : String(e);
+    const status = /unknown marketplace|not in the marketplace|no version|no longer in/.test(msg) ? 404
+      : /already installed|bundled plugin|local plugin .* exists|nothing to roll back|marketplace of this plugin is gone/.test(msg) ? 409
+      : /not an installed plugin|bad id|needs Dispatch|needs SDK|not a marketplace url/.test(msg) ? 400 : 500;
+    res.status(status).json({ error: msg });
+  };
+
+  router.get('/plugins/marketplaces', ownerOnlyStrict, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ marketplaces: marketsOf(req)?.list() ?? [] });
+  });
+  router.post('/plugins/marketplaces', ownerOnlyStrict, async (req, res) => {
+    const m = marketsOf(req);
+    if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    const { url } = (req.body ?? {}) as { url?: unknown };
+    if (typeof url !== 'string') return void res.status(400).json({ error: 'url is required' });
+    try { res.status(201).json(await m.add(url.trim())); } catch (e) { installError(res, e); }
+  });
+  router.delete('/plugins/marketplaces/:slug', ownerOnlyStrict, (req, res) => {
+    const m = marketsOf(req);
+    if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    try { m.remove(req.params.slug); res.status(204).end(); } catch (e) { installError(res, e); }
+  });
+  router.post('/plugins/marketplaces/:slug/pull', ownerOnlyStrict, async (req, res) => {
+    const m = marketsOf(req);
+    if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    try { res.json(await m.pull(req.params.slug)); } catch (e) { installError(res, e); }
+  });
+  router.post('/plugins/marketplaces/:slug/trusted', ownerOnlyStrict, (req, res) => {
+    const m = marketsOf(req);
+    if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    try { res.json(m.setTrusted(req.params.slug, (req.body as { on?: unknown })?.on === true)); } catch (e) { installError(res, e); }
+  });
+  // The catalog, with what is installed beside each plugin.
+  router.get('/plugins/catalog', ownerOnlyStrict, async (req, res) => {
+    const m = marketsOf(req);
+    if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    const entries = (await m.catalog()).map((e) => {
+      const row = e.kind === 'plugin' ? plugins.get(e.id) : undefined;
+      return { ...e, folder: undefined, ...(row?.install ? { installed: { version: row.install.version } } : {}) };
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ entries });
+  });
+  router.get('/plugins/updates', ownerOnlyStrict, async (req, res) => {
+    const i = installerOf(req);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ updates: i ? await i.updates() : [] });
+  });
+  router.post('/plugins/updates/check', ownerOnlyStrict, async (req, res) => {
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    try { res.json(await i.checkNow()); } catch (e) { installError(res, e); }
+  });
+  router.post('/plugins/install', ownerOnlyStrict, async (req, res) => {
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    const { marketplace, id, version } = (req.body ?? {}) as { marketplace?: unknown; id?: unknown; version?: unknown };
+    if (typeof marketplace !== 'string' || typeof id !== 'string') return void res.status(400).json({ error: 'marketplace and id are required' });
+    try { res.status(201).json(await i.install(marketplace, id, typeof version === 'string' ? version : undefined)); } catch (e) { installError(res, e); }
+  });
+  router.get('/plugins/:id/versions', ownerOnlyStrict, async (req, res) => {
+    const m = marketsOf(req);
+    const row = plugins.get(req.params.id);
+    if (!row) return void res.status(404).json({ error: 'unknown plugin' });
+    const market = row.install ? m?.list().find((x) => x.url === row.install!.marketplace) : null;
+    res.json({ versions: market && m ? await m.versions(market.slug, req.params.id) : [] });
+  });
+  router.post('/plugins/:id/update', ownerOnlyStrict, async (req, res) => {
+    if (!known(req, res)) return;
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    try { res.json(await i.update(req.params.id)); } catch (e) { installError(res, e); }
+  });
+  router.post('/plugins/:id/rollback', ownerOnlyStrict, async (req, res) => {
+    if (!known(req, res)) return;
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    try { res.json(await i.rollback(req.params.id)); } catch (e) { installError(res, e); }
+  });
+  router.post('/plugins/:id/pin', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    const v = (req.body as { version?: unknown })?.version;
+    i.pin(req.params.id, typeof v === 'string' && v ? v : null);
+    res.json(plugins.get(req.params.id));
+  });
+  router.post('/plugins/:id/auto-update', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    const i = installerOf(req);
+    if (!i) return void res.status(503).json({ error: 'no_installer' });
+    i.setAutoUpdate(req.params.id, (req.body as { on?: unknown })?.on === true);
+    res.json(plugins.get(req.params.id));
   });
 
   // ── the worker (spec section 4): logs, restart, and the socket proxy ──────────────────────

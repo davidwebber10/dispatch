@@ -107,6 +107,8 @@ import { migratePreviews } from './plugins/previews-migration.js';
 import { ThreadEvents } from './plugins/thread-events.js';
 import { PluginHooks } from './plugins/hooks.js';
 import { PluginWorkers } from './plugins/workers.js';
+import { MarketplaceService } from './plugins/marketplaces.js';
+import { PluginInstaller } from './plugins/installer.js';
 import { createAssistRunner, commandAssistRunner, type AssistRunner } from './assist/run.js';
 import * as pluginData from './db/plugin-data.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
@@ -408,6 +410,10 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   plugins.issueKeys();
   try { migratePreviews(db); } catch (e) { console.warn('[plugins] the previews migration failed; the daemon runs without it:', e instanceof Error ? e.message : e); }
   app.locals.plugins = plugins;
+  // Marketplaces and installs (spec section 7): the router reads them from app.locals.
+  const marketplaces = new MarketplaceService(path.join(dispatchDir, 'marketplaces'), path.join(dispatchDir, 'marketplaces.json'));
+  app.locals.marketplaces = marketplaces;
+  app.locals.installer = new PluginInstaller(plugins, marketplaces, options.pluginsDir ?? path.join(dispatchDir, 'plugins'), getRunningVersion(), path.join(dispatchDir, 'installer.json'));
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   app.locals.threadEvents = threadEvents;
@@ -594,6 +600,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   plugins.issueKeys();
   try { migratePreviews(db); } catch (e) { console.warn('[plugins] the previews migration failed; the daemon runs without it:', e instanceof Error ? e.message : e); }
   plugins.start();
+  const marketplaces = new MarketplaceService(path.join(dataDir, 'marketplaces'), path.join(dataDir, 'marketplaces.json'));
+  const installer = new PluginInstaller(plugins, marketplaces, path.join(dataDir, 'plugins'), getRunningVersion(), path.join(dataDir, 'installer.json'));
+  // Pull every marketplace on the updater's schedule (and once soon after boot); auto-updates apply then.
+  const marketplaceCheck = setInterval(() => { void installer.checkNow().catch(() => {}); }, 45 * 60 * 1000);
+  marketplaceCheck.unref?.();
+  const marketplaceFirstCheck = setTimeout(() => { void installer.checkNow().catch(() => {}); }, 20_000);
+  marketplaceFirstCheck.unref?.();
   const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   const authRequestService = new AuthRequestService(broadcaster);
 
@@ -660,6 +673,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   plugins.setWorkerSync(() => pluginWorkers.sync());
   app.locals.pluginWorkers = pluginWorkers;
   pluginWorkers.sync();
+  app.locals.marketplaces = marketplaces;
+  app.locals.installer = installer;
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
@@ -1271,6 +1286,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     plugins.stop();
     pluginHooks.stop();
     void pluginWorkers.stop();
+    clearInterval(marketplaceCheck);
+    clearTimeout(marketplaceFirstCheck);
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
