@@ -44,24 +44,86 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
-describe('Settings → Plugins (2026-11-07)', () => {
-  it('lists local plugins with state, and Disable / Enable call the API and refresh the row', async () => {
-    rows = [row('daily-rundown', { name: 'Daily rundown', version: '0.3.0' }), row('shop-one', { install: { marketplace: 'dispatchd', version: '1.0.0', sha256: 'x', installedAt: 't' } })];
+/** Opens a plugin's detail page from its list row; returns the detail page. */
+async function openDetail(id: string) {
+  const item = await screen.findByTestId(`plugin-row-${id}`);
+  fireEvent.click(within(item).getByRole('button', { name: /^Open / }));
+  return screen.findByTestId(`plugin-detail-${id}`);
+}
+/** Back from a detail page to the list. */
+const backToList = () => fireEvent.click(screen.getByRole('button', { name: 'Back to plugins' }));
+
+describe('the Plugins list (redesign 2026-11-07)', () => {
+  it('one calm row per plugin: name, a one-line description and an on/off switch; no path, permissions or button wall', async () => {
+    rows = [
+      row('daily-rundown', { name: 'Daily rundown', version: '0.3.0', description: 'A short summary of the day', permissions: ['read:threads'], keyed: true }),
+      row('shop-one', { install: { marketplace: 'dispatchd', version: '1.0.0', sha256: 'x', installedAt: 't' } }),
+      row('coach', { name: 'Coach', bundled: true }),
+    ];
     usePluginRegistry.setState({ status: { 'daily-rundown': { state: 'ready', version: '0.3.0', at: 1 } } });
     render(<PluginsSection />);
     const item = await screen.findByTestId('plugin-row-daily-rundown');
     expect(item).toHaveTextContent('Daily rundown');
-    expect(item).toHaveTextContent('v0.3.0');
-    expect(item).toHaveTextContent('Ready');
-    expect(within(screen.getByRole('region', { name: 'Local plugins' })).queryByTestId('plugin-row-shop-one')).toBeNull();
-    expect(screen.getByRole('region', { name: 'Installed plugins' })).toHaveTextContent('shop-one');
-    fireEvent.click(within(item).getByRole('button', { name: 'Disable' }));
-    await waitFor(() => expect(api.disablePlugin).toHaveBeenCalledWith('daily-rundown'));
-    await waitFor(() => expect(within(screen.getByTestId('plugin-row-daily-rundown')).getByRole('button', { name: 'Enable' })).toBeInTheDocument());
-    expect(screen.getByTestId('plugin-row-daily-rundown')).toHaveTextContent('Disabled');
+    expect(item).toHaveTextContent('A short summary of the day');
+    expect(item).not.toHaveTextContent('~/.dispatch/plugins');
+    expect(item).not.toHaveTextContent('read:threads');
+    expect(item).not.toHaveTextContent('Key issued');
+    expect(within(item).queryByRole('button', { name: 'Reload' })).toBeNull();
+    expect(within(item).queryByRole('button', { name: 'Remove' })).toBeNull();
+    // Healthy: no status mark at all.
+    expect(within(item).queryByTestId('plugin-attention-daily-rundown')).toBeNull();
+    // Bundled, installed and local stay as quiet groups.
+    expect(within(screen.getByRole('region', { name: 'Local plugins' })).getByTestId('plugin-row-daily-rundown')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Installed plugins' })).getByTestId('plugin-row-shop-one')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Bundled plugins' })).getByTestId('plugin-row-coach')).toBeInTheDocument();
   });
 
-  it('New plugin scaffolds and the new row appears', async () => {
+  it('the switch disables and enables a plugin and refreshes the row', async () => {
+    rows = [row('daily-rundown', { name: 'Daily rundown' })];
+    render(<PluginsSection />);
+    const sw = within(await screen.findByTestId('plugin-row-daily-rundown')).getByRole('switch', { name: 'Enable Daily rundown' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(sw);
+    await waitFor(() => expect(api.disablePlugin).toHaveBeenCalledWith('daily-rundown'));
+    await waitFor(() => expect(within(screen.getByTestId('plugin-row-daily-rundown')).getByRole('switch', { name: 'Enable Daily rundown' })).toHaveAttribute('aria-checked', 'false'));
+    expect(screen.queryByTestId('plugin-detail-daily-rundown')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('plugin-row-daily-rundown')).getByRole('switch', { name: 'Enable Daily rundown' }));
+    await waitFor(() => expect(api.enablePlugin).toHaveBeenCalledWith('daily-rundown'));
+  });
+
+  it('a row shows a status mark only when something needs attention', async () => {
+    const spec = { command: 'node', args: ['w.js'], env: {}, jobs: [] };
+    rows = [
+      row('broken', { error: 'plugin.json is not valid JSON: x', enabled: false }),
+      row('crashy'),
+      row('fallen', { worker: spec, workerStats: { state: 'crashed', pid: null, restarts: 3, startedAt: null, lastExit: { code: 1, signal: null, at: 't' }, socket: null, queued: 0 } }),
+      row('idle', { worker: spec }),
+      row('fine', { worker: spec, workerStats: { state: 'running', pid: 1, restarts: 0, startedAt: 't', lastExit: null, socket: null, queued: 0 } }),
+      row('off', { enabled: false, worker: spec }),
+      row('fresh', { install: { marketplace: 'u', version: '1.0.0', sha256: '', installedAt: 't' }, update: { to: '1.1.0', changelog: null } }),
+    ];
+    usePluginRegistry.setState({ status: { crashy: { state: 'error', error: 'activate threw', at: 1 } } });
+    render(<PluginsSection />);
+    expect(await screen.findByTestId('plugin-attention-broken')).toHaveTextContent('Error');
+    expect(screen.getByTestId('plugin-attention-crashy')).toHaveTextContent('Error');
+    expect(screen.getByTestId('plugin-attention-fallen')).toHaveTextContent('Worker crashed');
+    expect(screen.getByTestId('plugin-attention-idle')).toHaveTextContent('Worker stopped');
+    expect(screen.getByTestId('plugin-attention-fresh')).toHaveTextContent('Update available');
+    expect(screen.queryByTestId('plugin-attention-fine')).toBeNull();
+    expect(screen.queryByTestId('plugin-attention-off')).toBeNull();
+    // A broken plugin cannot be switched on.
+    expect(within(screen.getByTestId('plugin-row-broken')).getByRole('switch')).toBeDisabled();
+  });
+
+  it('the intro is one plain line', async () => {
+    rows = [row('coach', { bundled: true })];
+    render(<PluginsSection />);
+    await screen.findByTestId('plugin-row-coach');
+    expect(screen.getByText('Plugins add screens and tools to Dispatch. Bundled ones update with the app.')).toBeInTheDocument();
+    expect(screen.queryByText(/copy it to local to change it/)).toBeNull();
+  });
+
+  it('New plugin scaffolds and the new row appears; its folder is under Developer on its page', async () => {
     render(<PluginsSection />);
     expect(await screen.findByText(/No plugins yet/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New plugin…' }));
@@ -70,119 +132,8 @@ describe('Settings → Plugins (2026-11-07)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(api.scaffoldPlugin).toHaveBeenCalledWith('my-plugin', 'My plugin'));
     expect(await screen.findByTestId('plugin-row-my-plugin')).toHaveTextContent('My plugin');
-    expect(screen.getByTestId('plugin-row-my-plugin')).toHaveTextContent('~/.dispatch/plugins/my-plugin');
-  });
-
-  it('Remove asks first, then calls the API and drops the row', async () => {
-    rows = [row('p')];
-    render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-p');
-    fireEvent.click(within(item).getByRole('button', { name: 'Remove' }));
-    expect(api.removePlugin).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
-    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: true }));
-    await waitFor(() => expect(screen.queryByTestId('plugin-row-p')).toBeNull());
-  });
-
-  it('a plugin installed from a marketplace has Remove too; a bundled one does not (2026-11-07)', async () => {
-    rows = [row('shop', { install: { marketplace: 'https://github.com/example-org/plugins.git', version: '1.0.0', sha256: 'x', installedAt: 't' } }), row('coach', { bundled: true })];
-    render(<PluginsSection />);
-    expect(within(await screen.findByTestId('plugin-row-shop')).getByRole('button', { name: 'Remove' })).toBeInTheDocument();
-    expect(within(screen.getByTestId('plugin-row-coach')).queryByRole('button', { name: 'Remove' })).toBeNull();
-  });
-
-  it('Remove keeps the plugin data unless you tick "Also delete its data" (2026-11-07)', async () => {
-    rows = [row('p'), row('q')];
-    render(<PluginsSection />);
-    fireEvent.click(within(await screen.findByTestId('plugin-row-p')).getByRole('button', { name: 'Remove' }));
-    const box = screen.getByRole('checkbox', { name: /Also delete its data/ });
-    expect(box).not.toBeChecked();
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(/kept.*install it again/i);
-    fireEvent.click(box);
-    fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
-    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: false }));
-    fireEvent.click(within(await screen.findByTestId('plugin-row-q')).getByRole('button', { name: 'Remove' }));
-    expect(screen.getByRole('checkbox', { name: /Also delete its data/ })).not.toBeChecked();
-  });
-
-  it('the Remove dialog downloads the data and settings before you confirm, and stays open (2026-11-07)', async () => {
-    rows = [row('p')];
-    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
-    render(<PluginsSection />);
-    fireEvent.click(within(await screen.findByTestId('plugin-row-p')).getByRole('button', { name: 'Remove' }));
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Download data and settings' }));
-    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-    expect(api.removePlugin).not.toHaveBeenCalled();
-  });
-
-  it('the row menu exports the data (2026-11-07)', async () => {
-    rows = [row('p')];
-    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
-    render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-p');
-    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
-    fireEvent.click(within(item).getByRole('menuitem', { name: 'Export data' }));
-    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
-  });
-
-  it('Import data… picks a file, asks Merge or Replace (Merge by default), imports and shows the result on the row (2026-11-07)', async () => {
-    rows = [row('p', { name: 'Pins' })];
-    const imp = vi.spyOn(api, 'importPluginData').mockResolvedValue({ docs: 2, files: 0, settings: true });
-    render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-p');
-    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
-    fireEvent.click(within(item).getByRole('menuitem', { name: 'Import data…' }));
-    const data = { format: 'dispatch-plugin-data', version: 1, pluginId: 'p', exportedAt: 't', settings: { a: 1 }, docs: [{ key: 'a', value: 1, updatedAt: 't' }, { key: 'b', value: 2, updatedAt: 't' }], files: [] };
-    const file = new File([JSON.stringify(data)], 'p-data.json', { type: 'application/json' });
-    fireEvent.change(within(item).getByLabelText('Import file for p'), { target: { files: [file] } });
-    const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Import 2 documents and settings into Pins?');
-    expect(within(dialog).getByRole('radio', { name: /Merge/ })).toBeChecked();
-    fireEvent.click(within(dialog).getByRole('radio', { name: /Replace/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
-    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'replace'));
-    expect(await within(screen.getByTestId('plugin-row-p')).findByRole('status')).toHaveTextContent('Imported 2 documents and the settings.');
-  });
-
-  it('a refused import shows the error on the row (2026-11-07)', async () => {
-    rows = [row('p')];
-    const imp = vi.spyOn(api, 'importPluginData').mockRejectedValue(new Error('A plugin holds at most 2000 documents; this import would make 2001.'));
-    render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-p');
-    fireEvent.click(within(item).getByRole('button', { name: 'More actions for p' }));
-    fireEvent.click(within(item).getByRole('menuitem', { name: 'Import data…' }));
-    const file = new File([JSON.stringify({ format: 'dispatch-plugin-data', version: 1, pluginId: 'p', settings: null, docs: [], files: [] })], 'p.json');
-    fireEvent.change(within(item).getByLabelText('Import file for p'), { target: { files: [file] } });
-    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Import' }));
-    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'merge'));
-    expect(await within(screen.getByTestId('plugin-row-p')).findByRole('alert')).toHaveTextContent('at most 2000 documents');
-  });
-
-  it('a broken plugin shows its error, and a plugin whose bundle failed shows that', async () => {
-    rows = [row('broken', { error: 'plugin.json is not valid JSON: x', enabled: false }), row('crashy')];
-    usePluginRegistry.setState({ status: { crashy: { state: 'error', error: 'activate threw', at: 1 } } });
-    render(<PluginsSection />);
-    expect(await screen.findByTestId('plugin-row-broken')).toHaveTextContent('plugin.json is not valid JSON: x');
-    expect(screen.getByTestId('plugin-row-crashy')).toHaveTextContent('activate threw');
-  });
-
-  it('Promote to a tab stores the view key, at most two; Reload calls the API', async () => {
-    rows = [row('a'), row('b'), row('c')];
-    const reg = usePluginRegistry.getState().register;
-    reg('a', { views: [{ id: 'v', label: 'A view', Component: () => null }] });
-    reg('b', { views: [{ id: 'v', label: 'B view', Component: () => null }] });
-    reg('c', { views: [{ id: 'v', label: 'C view', Component: () => null }] });
-    render(<PluginsSection />);
-    const a = await screen.findByTestId('plugin-row-a');
-    fireEvent.click(within(a).getByRole('button', { name: 'Promote A view to a tab' }));
-    fireEvent.click(within(screen.getByTestId('plugin-row-b')).getByRole('button', { name: 'Promote B view to a tab' }));
-    expect(usePluginRegistry.getState().promoted).toEqual(['plugin:a:v', 'plugin:b:v']);
-    expect(within(screen.getByTestId('plugin-row-c')).getByRole('button', { name: 'Promote C view to a tab' })).toBeDisabled();
-    fireEvent.click(within(screen.getByTestId('plugin-row-a')).getByRole('button', { name: 'Remove the tab for A view' }));
-    expect(usePluginRegistry.getState().promoted).toEqual(['plugin:b:v']);
-    fireEvent.click(within(screen.getByTestId('plugin-row-a')).getByRole('button', { name: 'Reload' }));
-    await waitFor(() => expect(api.reloadPlugin).toHaveBeenCalledWith('a'));
+    const detail = await openDetail('my-plugin');
+    expect(within(detail).getByTestId('plugin-developer')).toHaveTextContent('~/.dispatch/plugins/my-plugin');
   });
 
   it('the safe-mode switch writes the flag and says to reload', async () => {
@@ -197,84 +148,273 @@ describe('Settings → Plugins (2026-11-07)', () => {
   });
 });
 
-describe('permissions on the Plugins page (2026-11-07)', () => {
-  it("a row lists the plugin's permissions with their meaning, says when there are none, and shows the key state", async () => {
-    rows = [row('reader', { permissions: ['read:threads', 'notify'], keyed: true } as Partial<PluginRow>), row('bare', { keyed: false } as Partial<PluginRow>)];
+describe('a plugin detail page (redesign 2026-11-07)', () => {
+  it('a tap on the row opens the page: icon, name, version, description; Back returns to the list', async () => {
+    rows = [row('coach', { name: 'Coach', version: '2.1.0', description: 'Coaches your prompts', bundled: true }), row('other')];
     render(<PluginsSection />);
-    const reader = await screen.findByTestId('plugin-row-reader');
-    const chips = within(reader).getByRole('list', { name: 'Permissions' });
-    expect(within(chips).getByTitle(/threads and transcripts/i)).toHaveTextContent('read:threads');
-    expect(within(chips).getByText('notify')).toBeInTheDocument();
-    expect(reader).toHaveTextContent('Key issued');
-    const bare = screen.getByTestId('plugin-row-bare');
-    expect(bare).toHaveTextContent('No permissions');
-    expect(bare).not.toHaveTextContent('Key issued');
+    const detail = await openDetail('coach');
+    const header = within(detail).getByTestId('plugin-detail-header');
+    expect(header).toHaveTextContent('Coach');
+    expect(header).toHaveTextContent('v2.1.0');
+    expect(header).toHaveTextContent('Coaches your prompts');
+    expect(header).toHaveTextContent('Bundled');
+    expect(screen.queryByTestId('plugin-row-other')).toBeNull();
+    backToList();
+    expect(await screen.findByTestId('plugin-row-other')).toBeInTheDocument();
+    expect(screen.queryByTestId('plugin-detail-coach')).toBeNull();
   });
-});
 
-describe('the coach permissions on the Plugins page (coach plan, Task 5)', () => {
-  it('read:usage, read:analytics and notify:push show their meaning', async () => {
-    rows = [row('coach', { permissions: ['read:usage', 'read:analytics', 'notify:push'] } as Partial<PluginRow>)];
+  it('the page has the same on/off switch as the row', async () => {
+    rows = [row('p', { name: 'Pins' })];
     render(<PluginsSection />);
-    const chips = within(await screen.findByTestId('plugin-row-coach')).getByRole('list', { name: 'Permissions' });
-    expect(within(chips).getByTitle('Reads your usage limits')).toHaveTextContent('read:usage');
-    expect(within(chips).getByTitle('Reads your usage analytics')).toHaveTextContent('read:analytics');
-    expect(within(chips).getByTitle('Sends you push notifications')).toHaveTextContent('notify:push');
+    const detail = await openDetail('p');
+    fireEvent.click(within(detail).getByRole('switch', { name: 'Enable Pins' }));
+    await waitFor(() => expect(api.disablePlugin).toHaveBeenCalledWith('p'));
+    await waitFor(() => expect(within(screen.getByTestId('plugin-detail-p')).getByRole('switch', { name: 'Enable Pins' })).toHaveAttribute('aria-checked', 'false'));
   });
-});
 
-describe('model calls on the Plugins page (coach plan, Task 2)', () => {
-  it('a plugin row shows calls and tokens for 7 days when it has assist usage', async () => {
+  it('permissions read as plain words with the raw id beside; unknown ids show as they are; none says so', async () => {
     rows = [
-      row('coach', { assist: { calls: 42, failed: 2, inputTokens: 12345, outputTokens: 2100, costUsd: 0.4567, days: 7 } }),
-      row('quiet'),
+      row('coach', { permissions: ['read:prompts', 'read:threads', 'read:usage', 'model:assist', 'notify:push', 'weird:thing'] }),
+      row('bare'),
     ];
     render(<PluginsSection />);
-    const coach = await screen.findByTestId('plugin-row-coach');
-    const meter = within(coach).getByTestId('plugin-assist-coach');
-    expect(meter).toHaveTextContent('Model calls, 7 days: 42 (2 failed)');
-    expect(meter).toHaveTextContent('12.3k in · 2.1k out tokens');
-    expect(meter).toHaveTextContent('$0.46');
-    expect(within(screen.getByTestId('plugin-row-quiet')).queryByTestId('plugin-assist-quiet')).toBeNull();
+    const detail = await openDetail('coach');
+    const list = within(detail).getByRole('list', { name: 'Permissions' });
+    const items = within(list).getAllByRole('listitem');
+    expect(items).toHaveLength(6);
+    expect(items[0]).toHaveTextContent('Read your prompts');
+    expect(items[0]).toHaveTextContent('read:prompts');
+    expect(items[1]).toHaveTextContent('Read threads');
+    expect(items[2]).toHaveTextContent('Read usage');
+    expect(items[3]).toHaveTextContent('Use a model on your behalf');
+    expect(items[4]).toHaveTextContent('Send push notifications');
+    expect(items[5]).toHaveTextContent('weird:thing');
+    backToList();
+    const bare = await openDetail('bare');
+    expect(bare).toHaveTextContent('No permissions');
   });
-});
 
-describe('bundled plugins on the Plugins page (2026-11-07)', () => {
-  it('a bundled plugin shows under BUNDLED with no Remove and a Copy to local that asks for an id', async () => {
-    rows = [row('prompt-coach', { name: 'Prompt coach', bundled: true } as Partial<PluginRow>)];
+  it('"Show as a phone tab" switches store the view key, at most two', async () => {
+    rows = [row('a', { name: 'A' }), row('b', { name: 'B' }), row('c', { name: 'C' }), row('none', { name: 'None' })];
+    const reg = usePluginRegistry.getState().register;
+    reg('a', { views: [{ id: 'v', label: 'A view', Component: () => null }] });
+    reg('b', { views: [{ id: 'v', label: 'B view', Component: () => null }] });
+    reg('c', { views: [{ id: 'v', label: 'C view', Component: () => null }] });
     render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-prompt-coach');
-    expect(within(screen.getByRole('region', { name: 'Bundled plugins' })).getByTestId('plugin-row-prompt-coach')).toBeInTheDocument();
-    expect(item).toHaveTextContent('Bundled');
-    expect(within(item).queryByRole('button', { name: 'Remove' })).toBeNull();
-    fireEvent.click(within(item).getByRole('button', { name: 'Copy to local…' }));
-    fireEvent.change(within(item).getByLabelText('New plugin id'), { target: { value: 'my-coach' } });
-    fireEvent.click(within(item).getByRole('button', { name: 'Copy' }));
-    await waitFor(() => expect(api.copyPlugin).toHaveBeenCalledWith('prompt-coach', 'my-coach'));
-    expect(await screen.findByTestId('plugin-row-my-coach')).toBeInTheDocument();
+    let d = await openDetail('a');
+    fireEvent.click(within(d).getByRole('switch', { name: 'Show A view as a phone tab' }));
+    backToList();
+    d = await openDetail('b');
+    fireEvent.click(within(d).getByRole('switch', { name: 'Show B view as a phone tab' }));
+    expect(usePluginRegistry.getState().promoted).toEqual(['plugin:a:v', 'plugin:b:v']);
+    backToList();
+    d = await openDetail('c');
+    expect(within(d).getByRole('switch', { name: 'Show C view as a phone tab' })).toBeDisabled();
+    expect(d).toHaveTextContent(/two tabs/i);
+    backToList();
+    d = await openDetail('a');
+    const sw = within(d).getByRole('switch', { name: 'Show A view as a phone tab' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(sw);
+    expect(usePluginRegistry.getState().promoted).toEqual(['plugin:b:v']);
+    backToList();
+    d = await openDetail('none');
+    expect(within(d).queryByRole('switch', { name: /phone tab/ })).toBeNull();
   });
 
-  it('a plugin with a worker shows its state; Logs opens the tail; Restart calls the API; a crashed worker says so', async () => {
+  it('Status shows the worker with Restart and Logs; a crashed worker and a load error say so there', async () => {
     const spec = { command: 'node', args: ['worker/index.js'], env: {}, jobs: [] };
     rows = [
       row('runner', { worker: spec, workerStats: { state: 'running', pid: 4242, restarts: 2, startedAt: '2026-11-07T10:00:00Z', lastExit: null, socket: '/tmp/s', queued: 0 } }),
       row('fallen', { worker: spec, workerStats: { state: 'crashed', pid: null, restarts: 10, startedAt: null, lastExit: { code: 1, signal: null, at: '2026-11-07T10:05:00Z' }, socket: null, queued: 0 } }),
+      row('crashy'),
     ];
+    usePluginRegistry.setState({ status: { crashy: { state: 'error', error: 'activate threw', at: 1 } } });
     render(<PluginsSection />);
-    const runner = await screen.findByTestId('plugin-row-runner');
-    expect(within(runner).getByText(/Worker running · pid 4242 · 2 restarts/)).toBeInTheDocument();
-    fireEvent.click(within(runner).getByRole('button', { name: 'Logs' }));
+    const runner = await openDetail('runner');
+    const status = within(runner).getByRole('region', { name: 'Status' });
+    expect(status).toHaveTextContent('Worker running');
+    expect(status).not.toHaveTextContent('pid 4242');
+    fireEvent.click(within(status).getByRole('button', { name: 'Logs' }));
     const dialog = await screen.findByRole('dialog');
     expect(await within(dialog).findByText(/line two/)).toBeInTheDocument();
     expect(api.pluginLogs).toHaveBeenCalledWith('runner', 200);
     fireEvent.keyDown(document, { key: 'Escape' });
-    fireEvent.click(within(runner).getByRole('button', { name: 'Restart' }));
+    fireEvent.click(within(status).getByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(api.restartPluginWorker).toHaveBeenCalledWith('runner'));
-    const fallen = screen.getByTestId('plugin-row-fallen');
-    expect(within(fallen).getByText(/Worker crashed · exit 1 · 10 restarts/)).toBeInTheDocument();
-    expect(within(screen.getByTestId('plugin-row-runner')).queryByText(/crashed/)).toBeNull();
+    backToList();
+    const fallen = await openDetail('fallen');
+    expect(within(fallen).getByRole('region', { name: 'Status' })).toHaveTextContent(/Worker crashed · exit 1 · 10 restarts/);
+    backToList();
+    const crashy = await openDetail('crashy');
+    expect(within(crashy).getByRole('region', { name: 'Status' })).toHaveTextContent('activate threw');
   });
 
+  it('Status shows model calls for 7 days when the plugin has assist usage', async () => {
+    rows = [row('coach', { assist: { calls: 42, failed: 2, inputTokens: 12345, outputTokens: 2100, costUsd: 0.4567, days: 7 } }), row('quiet')];
+    render(<PluginsSection />);
+    const coach = await openDetail('coach');
+    const meter = within(coach).getByTestId('plugin-assist-coach');
+    expect(meter).toHaveTextContent('Model calls, 7 days: 42 (2 failed)');
+    expect(meter).toHaveTextContent('12.3k in · 2.1k out tokens');
+    expect(meter).toHaveTextContent('$0.46');
+    backToList();
+    const quiet = await openDetail('quiet');
+    expect(within(quiet).queryByTestId('plugin-assist-quiet')).toBeNull();
+  });
+
+  it('Developer is collapsed; open, it holds the path with Copy path, the pid, the key state and the manifest', async () => {
+    const spec = { command: 'node', args: ['worker/index.js'], env: {}, jobs: [] };
+    rows = [row('runner', { keyed: true, sdk: 1, worker: spec, workerStats: { state: 'running', pid: 4242, restarts: 0, startedAt: 't', lastExit: null, socket: null, queued: 0 } })];
+    render(<PluginsSection />);
+    const detail = await openDetail('runner');
+    const dev = within(detail).getByTestId('plugin-developer');
+    expect(dev.tagName).toBe('DETAILS');
+    expect(dev).not.toHaveAttribute('open');
+    fireEvent.click(within(dev).getByText('Developer'));
+    expect(dev).toHaveTextContent('~/.dispatch/plugins/runner');
+    expect(dev).toHaveTextContent('4242');
+    expect(dev).toHaveTextContent('Key issued');
+    expect(dev).toHaveTextContent('node worker/index.js');
+    expect(within(dev).getByRole('button', { name: 'Copy path' })).toBeInTheDocument();
+  });
+
+  it('Reload calls the API', async () => {
+    rows = [row('a')];
+    render(<PluginsSection />);
+    const d = await openDetail('a');
+    fireEvent.click(within(d).getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(api.reloadPlugin).toHaveBeenCalledWith('a'));
+  });
+
+  it('Remove asks first, then calls the API, drops the plugin and returns to the list', async () => {
+    rows = [row('p'), row('q')];
+    render(<PluginsSection />);
+    const d = await openDetail('p');
+    fireEvent.click(within(d).getByRole('button', { name: 'Remove' }));
+    expect(api.removePlugin).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
+    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: true }));
+    await waitFor(() => expect(screen.queryByTestId('plugin-detail-p')).toBeNull());
+    expect(await screen.findByTestId('plugin-row-q')).toBeInTheDocument();
+    expect(screen.queryByTestId('plugin-row-p')).toBeNull();
+  });
+
+  it('a plugin installed from a marketplace has Remove too; a bundled one does not', async () => {
+    rows = [row('shop', { install: { marketplace: 'https://github.com/example-org/plugins.git', version: '1.0.0', sha256: 'x', installedAt: 't' } }), row('coach', { bundled: true })];
+    render(<PluginsSection />);
+    expect(within(await openDetail('shop')).getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    backToList();
+    expect(within(await openDetail('coach')).queryByRole('button', { name: 'Remove' })).toBeNull();
+  });
+
+  it('Remove keeps the plugin data unless you tick "Also delete its data"', async () => {
+    rows = [row('p'), row('q')];
+    render(<PluginsSection />);
+    fireEvent.click(within(await openDetail('p')).getByRole('button', { name: 'Remove' }));
+    const box = screen.getByRole('checkbox', { name: /Also delete its data/ });
+    expect(box).not.toBeChecked();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/kept.*install it again/i);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
+    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: false }));
+    fireEvent.click(within(await openDetail('q')).getByRole('button', { name: 'Remove' }));
+    expect(screen.getByRole('checkbox', { name: /Also delete its data/ })).not.toBeChecked();
+  });
+
+  it('the Remove dialog downloads the data and settings before you confirm, and stays open', async () => {
+    rows = [row('p')];
+    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
+    render(<PluginsSection />);
+    fireEvent.click(within(await openDetail('p')).getByRole('button', { name: 'Remove' }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Download data and settings' }));
+    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(api.removePlugin).not.toHaveBeenCalled();
+  });
+
+  it('Export data downloads the data', async () => {
+    rows = [row('p')];
+    const exp = vi.spyOn(api, 'exportPluginData').mockResolvedValue(undefined);
+    render(<PluginsSection />);
+    fireEvent.click(within(await openDetail('p')).getByRole('button', { name: 'Export data' }));
+    await waitFor(() => expect(exp).toHaveBeenCalledWith('p'));
+  });
+
+  it('Import data… picks a file, asks Merge or Replace (Merge by default), imports and shows the result', async () => {
+    rows = [row('p', { name: 'Pins' })];
+    const imp = vi.spyOn(api, 'importPluginData').mockResolvedValue({ docs: 2, files: 0, settings: true });
+    render(<PluginsSection />);
+    const d = await openDetail('p');
+    const data = { format: 'dispatch-plugin-data', version: 1, pluginId: 'p', exportedAt: 't', settings: { a: 1 }, docs: [{ key: 'a', value: 1, updatedAt: 't' }, { key: 'b', value: 2, updatedAt: 't' }], files: [] };
+    const file = new File([JSON.stringify(data)], 'p-data.json', { type: 'application/json' });
+    expect(within(d).getByRole('button', { name: 'Import data…' })).toBeInTheDocument();
+    fireEvent.change(within(d).getByLabelText('Import file for p'), { target: { files: [file] } });
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Import 2 documents and settings into Pins?');
+    expect(within(dialog).getByRole('radio', { name: /Merge/ })).toBeChecked();
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Replace/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'replace'));
+    expect(await within(screen.getByTestId('plugin-detail-p')).findByRole('status')).toHaveTextContent('Imported 2 documents and the settings.');
+  });
+
+  it('a refused import shows the error on the page', async () => {
+    rows = [row('p')];
+    const imp = vi.spyOn(api, 'importPluginData').mockRejectedValue(new Error('A plugin holds at most 2000 documents; this import would make 2001.'));
+    render(<PluginsSection />);
+    const d = await openDetail('p');
+    const file = new File([JSON.stringify({ format: 'dispatch-plugin-data', version: 1, pluginId: 'p', settings: null, docs: [], files: [] })], 'p.json');
+    fireEvent.change(within(d).getByLabelText('Import file for p'), { target: { files: [file] } });
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(imp).toHaveBeenCalledWith('p', file, 'merge'));
+    expect(await within(screen.getByTestId('plugin-detail-p')).findByRole('alert')).toHaveTextContent('at most 2000 documents');
+  });
+
+  it('a bundled plugin has Copy to local… that asks for an id; the copy appears in the list', async () => {
+    rows = [row('prompt-coach', { name: 'Prompt coach', bundled: true })];
+    render(<PluginsSection />);
+    const d = await openDetail('prompt-coach');
+    fireEvent.click(within(d).getByRole('button', { name: 'Copy to local…' }));
+    fireEvent.change(within(d).getByLabelText('New plugin id'), { target: { value: 'my-coach' } });
+    fireEvent.click(within(d).getByRole('button', { name: 'Copy' }));
+    await waitFor(() => expect(api.copyPlugin).toHaveBeenCalledWith('prompt-coach', 'my-coach'));
+    backToList();
+    expect(await screen.findByTestId('plugin-row-my-coach')).toBeInTheDocument();
+  });
+
+  it('an installed plugin shows its update with notes, and Update, Roll back, Pin and Auto-update call the API; a gone marketplace is said', async () => {
+    markets = [{ url: 'u', slug: 'm1', name: 'Test market', description: null, trusted: false, addedAt: 't', lastPulledAt: 't', error: null }];
+    rows = [
+      row('hello', { install: { marketplace: 'u', version: '1.0.0', sha256: '', installedAt: 't', commit: 'a' }, update: { to: '1.1.0', changelog: '## 1.1.0\n\nFaster.' }, autoUpdate: false }),
+      row('orphan', { install: { marketplace: 'gone', version: '1.0.0', sha256: '', installedAt: 't', commit: 'a' }, marketplaceGone: true }),
+    ];
+    render(<PluginsSection />);
+    await waitFor(() => expect(api.listMarketplaces).toHaveBeenCalled());
+    const d = await openDetail('hello');
+    await waitFor(() => expect(d).toHaveTextContent('Test market'));
+    expect(d).toHaveTextContent('v1.1.0 available');
+    fireEvent.click(within(d).getByRole('button', { name: "What's new" }));
+    expect(d).toHaveTextContent('Faster.');
+    fireEvent.click(within(d).getByRole('button', { name: 'Update' }));
+    await waitFor(() => expect(api.updatePlugin).toHaveBeenCalledWith('hello'));
+    await waitFor(() => expect(within(screen.getByTestId('plugin-detail-hello')).getByTestId('plugin-detail-header')).toHaveTextContent('v1.1.0'));
+    const page = () => screen.getByTestId('plugin-detail-hello');
+    fireEvent.click(within(page()).getByRole('button', { name: 'Roll back' }));
+    await waitFor(() => expect(api.rollbackPlugin).toHaveBeenCalledWith('hello'));
+    fireEvent.click(within(page()).getByRole('switch', { name: 'Auto-update' }));
+    await waitFor(() => expect(api.setPluginAutoUpdate).toHaveBeenCalledWith('hello', true));
+    fireEvent.click(within(page()).getByRole('button', { name: 'Pin…' }));
+    const pick = await within(page()).findByLabelText('Pin to version');
+    fireEvent.change(pick, { target: { value: '1.0.0' } });
+    await waitFor(() => expect(api.pinPlugin).toHaveBeenCalledWith('hello', '1.0.0'));
+    backToList();
+    expect(await openDetail('orphan')).toHaveTextContent('Marketplace removed');
+  });
+});
+
+describe('marketplaces and browse on the Plugins page (2026-11-07)', () => {
   it('marketplaces: add by URL, a bad URL shows the daemon\'s message, Check now and Remove call the API', async () => {
     render(<PluginsSection />);
     const section = await screen.findByRole('region', { name: 'Marketplaces' });
@@ -313,32 +453,6 @@ describe('bundled plugins on the Plugins page (2026-11-07)', () => {
     fireEvent.click(within(tidy).getByRole('button', { name: 'Install' }));
     await waitFor(() => expect(api.installSkill).toHaveBeenCalledWith('m1', 'tidy'));
     expect(within(browse).getByTestId('catalog-skill-have-skill')).toHaveTextContent('Installed v0.2.0');
-  });
-
-  it('an installed row shows the update with its notes, and Update, Roll back, Pin and Auto-update call the API; a gone marketplace is said', async () => {
-    markets = [{ url: 'u', slug: 'm1', name: 'Test market', description: null, trusted: false, addedAt: 't', lastPulledAt: 't', error: null }];
-    rows = [
-      row('hello', { install: { marketplace: 'u', version: '1.0.0', sha256: '', installedAt: 't', commit: 'a' }, update: { to: '1.1.0', changelog: '## 1.1.0\n\nFaster.' }, autoUpdate: false }),
-      row('orphan', { install: { marketplace: 'gone', version: '1.0.0', sha256: '', installedAt: 't', commit: 'a' }, marketplaceGone: true }),
-    ];
-    render(<PluginsSection />);
-    const item = await screen.findByTestId('plugin-row-hello');
-    expect(item).toHaveTextContent('Test market');
-    expect(item).toHaveTextContent('v1.1.0 available');
-    fireEvent.click(within(item).getByRole('button', { name: "What's new" }));
-    expect(item).toHaveTextContent('Faster.');
-    fireEvent.click(within(item).getByRole('button', { name: 'Update' }));
-    await waitFor(() => expect(api.updatePlugin).toHaveBeenCalledWith('hello'));
-    await waitFor(() => expect(screen.getByTestId('plugin-row-hello')).toHaveTextContent('v1.1.0'));
-    fireEvent.click(within(screen.getByTestId('plugin-row-hello')).getByRole('button', { name: 'Roll back' }));
-    await waitFor(() => expect(api.rollbackPlugin).toHaveBeenCalledWith('hello'));
-    fireEvent.click(within(screen.getByTestId('plugin-row-hello')).getByRole('switch', { name: 'Auto-update' }));
-    await waitFor(() => expect(api.setPluginAutoUpdate).toHaveBeenCalledWith('hello', true));
-    fireEvent.click(within(screen.getByTestId('plugin-row-hello')).getByRole('button', { name: 'Pin…' }));
-    const pick = await within(screen.getByTestId('plugin-row-hello')).findByLabelText('Pin to version');
-    fireEvent.change(pick, { target: { value: '1.0.0' } });
-    await waitFor(() => expect(api.pinPlugin).toHaveBeenCalledWith('hello', '1.0.0'));
-    expect(screen.getByTestId('plugin-row-orphan')).toHaveTextContent('Marketplace removed');
   });
 
   it('names no marketplace: Dispatch has no public one; the owner adds a marketplace by its URL', async () => {
