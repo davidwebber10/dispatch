@@ -311,6 +311,12 @@ At the cap, or with the account at 90% of its 5-hour window, assist answers 429
 Calls in flight count as reserved at their `maxTokens`. Each answer carries
 `X-Budget-Used-Percent` and `X-Budget-Cap-Percent` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
 a caller can step down before it is refused. No budget: no cap.
+**Fail safe:** with a percent budget but no weekly figure for the account (no usage data yet, a
+poll gap after a restart), the cap becomes tokens, never unlimited: `percentWeekly` x 50,000
+tokens over the plugin's subscription calls of the last 7 days (3% = 150,000; input, output and
+cache writes count in full, a cache read counts one tenth). The answer then carries
+`X-Budget-Used-Tokens` and `X-Budget-Cap-Tokens`, and at the cap assist answers 429
+`{ error: 'budget', window: 'unknown', usedTokens, capTokens }`.
 
 ## The worker
 

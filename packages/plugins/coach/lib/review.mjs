@@ -10,6 +10,8 @@ import { normalize, hashText } from './signals.mjs';
 export const CHUNK_CHARS = 12_000;
 /** A chunk's estimated share of the weekly limit, in percent (the large model, ~3k tokens in, ~600 out). An estimate. */
 export const PERCENT_PER_CHUNK = 0.05;
+/** With the cost unknown, the smaller scope offered first: the newest threads up to this many chunks. */
+export const UNKNOWN_SCOPE_CHUNKS = 8;
 /** A review reads at most this many threads (the newest). */
 export const MAX_THREADS = 40;
 const ITEM_CHARS = 800;
@@ -42,13 +44,24 @@ const pct = (b) => (b && typeof b.usedPercent === 'number' && typeof b.capPercen
  * The estimate before a review starts. `threads`: [{ id, chunks }] newest first (the threads in the
  * scope, with the chunks their transcripts make). `fits`: the estimate stays under the budget cap.
  * Over the cap, `smallerScope` names the newest threads that fit (or is absent when none does).
+ * With no percent figure (no budget heard, or no usage data for the account), the cost is
+ * unknown: `costUnknown`, `fits: null` (never true), and a smaller scope first when there is one.
  */
 export function planReview(scope, threads, budget) {
   const list = (threads || []).slice(0, MAX_THREADS);
   const chunks = list.reduce((n, t) => n + Math.max(0, t.chunks || 0), 0);
   const estPercent = Math.round(chunks * PERCENT_PER_CHUNK * 100) / 100;
   const b = pct(budget);
-  const room = b ? b.capPercent - b.usedPercent : Infinity;
+  if (!b) {
+    const out = { scope, threads: list.map((t) => t.id), chunks, estPercent, fits: null, costUnknown: true };
+    if (chunks > UNKNOWN_SCOPE_CHUNKS) {
+      let n = 0; let used = 0;
+      while (n < list.length && used + (list[n].chunks || 0) <= UNKNOWN_SCOPE_CHUNKS) { used += list[n].chunks || 0; n++; }
+      if (n > 0) out.smallerScope = { kind: 'thread', ids: list.slice(0, n).map((t) => t.id) };
+    }
+    return out;
+  }
+  const room = b.capPercent - b.usedPercent;
   const fits = estPercent <= room;
   const out = { scope, threads: list.map((t) => t.id), chunks, estPercent, fits };
   if (!fits) {

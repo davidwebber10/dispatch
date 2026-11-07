@@ -8,6 +8,7 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as pluginData from '../../src/db/plugin-data.js';
+import { WEEKLY_TOKENS_PER_PERCENT } from '../../src/plugins/assist-share.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { LimitSnapshots } from '../../src/limits/snapshot.js';
@@ -178,5 +179,20 @@ describe('plugin budget (coach plan, Task 4)', () => {
     plugin('reader', ['model:assist', 'read:usage']);
     app = build(runner);
     expect((await request(app).get('/api/plugins/reader/assist/share').set(asPlugin('reader'))).status).toBe(200);
+  });
+  it('with no usage window for the account, calls stop at the weekly token fallback (fail safe)', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    summary = null; // no usage data at all: the share is unknown
+    const cap = 3 * WEEKLY_TOKENS_PER_PERCENT;
+    pluginData.recordAssist(db, 'coach', { at: new Date(now - 86_400_000).toISOString(), model: 'claude-haiku-4-5', harness: 'claude', accountId: 'cli', inputTokens: cap - 300, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: 1, ok: true });
+    const under = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }], harness: 'claude', maxTokens: 100 });
+    expect(under.status).toBe(200);
+    expect(under.headers['x-budget-cap-tokens']).toBe(String(cap));
+    // The answer's 400 output tokens pass the cap: the next call is refused, and no model runs.
+    const n = calls.length;
+    const r = await ask();
+    expect(r.status).toBe(429);
+    expect(r.body).toMatchObject({ error: 'budget', window: 'unknown', capTokens: cap });
+    expect(calls).toHaveLength(n);
   });
 });

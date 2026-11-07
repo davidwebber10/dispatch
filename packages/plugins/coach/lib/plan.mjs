@@ -24,6 +24,8 @@ export function budgetFraction(budget) {
   if (!budget) return null;
   const usedP = num(budget.usedPercent); const capP = num(budget.capPercent);
   if (usedP !== null && capP !== null && capP > 0) return usedP / capP;
+  const usedT = num(budget.usedTokens); const capT = num(budget.capTokens);
+  if (usedT !== null && capT !== null && capT > 0) return usedT / capT;
   const usedU = num(budget.usedUsd); const capU = num(budget.capUsd);
   if (usedU !== null && capU !== null && capU > 0) return usedU / capU;
   if (capU === 0) return 1;

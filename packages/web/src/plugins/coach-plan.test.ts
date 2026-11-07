@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { planCall, LARGE_DEFAULT } from '../../../plugins/coach/lib/plan.mjs';
+import { planCall, LARGE_DEFAULT, budgetFraction } from '../../../plugins/coach/lib/plan.mjs';
 import { confirmPrompt, writePrompt, morePrompt, recapPrompt, parseAnswer, checkCard } from '../../../plugins/coach/lib/prompts.mjs';
 import { judgeCandidate, budgetFromHeaders, joinCards } from '../../../plugins/coach/lib/judge.mjs';
 import { makeAssist } from '../../../plugins/coach/lib/client.mjs';
@@ -160,6 +160,10 @@ describe('Coach judge: the budget headers and the cards document (coach plan Tas
     expect(budgetFromHeaders(new Headers({ 'X-Budget-Used-Percent': '1.25', 'X-Budget-Cap-Percent': '3' }))).toEqual({ usedPercent: 1.25, capPercent: 3 });
     expect(budgetFromHeaders(new Headers({ 'X-Budget-Used-Usd': '0.4', 'X-Budget-Cap-Usd': '5' }))).toEqual({ usedUsd: 0.4, capUsd: 5 });
     expect(budgetFromHeaders(new Headers())).toBeNull();
+    // The daemon's fail-safe token cap (no usage figures): the tokens count, and the plan steps down on them.
+    const tok = budgetFromHeaders(new Headers({ 'X-Budget-Cap-Percent': '3', 'X-Budget-Used-Tokens': '149000', 'X-Budget-Cap-Tokens': '150000' }));
+    expect(tok).toMatchObject({ usedTokens: 149000, capTokens: 150000 });
+    expect(budgetFraction(tok)).toBeCloseTo(149000 / 150000);
   });
   it('makeAssist posts to the plugin route with the key, and reads the budget headers; a 429 budget is a refusal', async () => {
     const fetch = vi.fn()

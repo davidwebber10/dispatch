@@ -138,6 +138,16 @@ export function assistCostSince(db: Database.Database, pluginId: string, harness
 }
 
 /**
+ * A plugin's subscription tokens since `from` (every harness but OpenRouter), for the fail-safe
+ * token cap: input, output and cache writes, and a tenth of the cache reads (their price share).
+ */
+export function assistTokensSince(db: Database.Database, pluginId: string, from: string): number {
+  const r = db.prepare(`SELECT COALESCE(SUM(input_tokens + output_tokens + COALESCE(cache_create_tokens, 0) + COALESCE(cache_read_tokens, 0) / 10.0), 0) AS n
+    FROM plugin_assist WHERE plugin_id = ? AND COALESCE(harness, '') <> 'openrouter' AND at >= ?`).get(pluginId, from) as { n: number };
+  return Math.round(r.n);
+}
+
+/**
  * A plugin's model budget (coach spec sections 4.5, 7.4): at most `percentWeekly` % of the weekly
  * limit of the account a call runs on, and at most `usdWeekly` dollars a week on OpenRouter.
  * Null = no cap of that kind.

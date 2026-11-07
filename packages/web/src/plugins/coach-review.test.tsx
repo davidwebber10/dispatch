@@ -36,6 +36,19 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
     expect(tight.smallerScope).toEqual({ kind: 'thread', ids: ['a', 'b'] });
     expect(planReview({ kind: 'thread', ids: ['a'] }, [{ id: 'a', chunks: 100 }], { usedPercent: 2.9, capPercent: 3 }).smallerScope).toBeUndefined();
   });
+  it('planReview with an unknown budget says the cost is unknown, never claims it fits, and offers a smaller scope', () => {
+    const threads = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, chunks: 4 }));
+    for (const budget of [null, { usedPercent: null, capPercent: 3 }, { usedTokens: 1000, capTokens: 150000 }]) {
+      const p = planReview({ kind: 'range', from: '', to: '' }, threads, budget);
+      expect(p.fits).not.toBe(true);
+      expect(p.costUnknown).toBe(true);
+      expect(p.smallerScope).toEqual({ kind: 'thread', ids: ['t0', 't1'] });
+    }
+    // A small scope with an unknown cost: still not "fits", and no smaller scope to offer.
+    const one = planReview({ kind: 'thread', ids: ['t0'] }, [{ id: 't0', chunks: 2 }], null);
+    expect(one).toMatchObject({ costUnknown: true, fits: null });
+    expect(one.smallerScope).toBeUndefined();
+  });
   it('reviewPrompt carries the goals; parseReview keeps only findings that quote the transcript', () => {
     const memory = addGoal(emptyMemory(), { text: 'Hand off whole tasks', measures: ['ambition'], detectors: [], source: 'user' }, NOW).memory;
     const chunk = chunkTranscript(TRANSCRIPT)[0];
@@ -92,7 +105,7 @@ async function step(e: ReturnType<typeof createEngine>, key: string) { await e.h
 
 describe('Coach reviews in the worker (coach plan Task 12f)', () => {
   it('planning writes the estimate and makes no model call; nothing runs until Start', async () => {
-    const f = daemon({ answers: [GOOD] });
+    const f = daemon({ answers: [GOOD], status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
     f.docs.set('reviews:r1', { id: 'r1', scope: { kind: 'thread', ids: ['t1'] }, state: 'planning' });
     const e = createEngine(f.io); await e.load();
     await step(e, 'reviews:r1');
@@ -206,6 +219,17 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     expect(report).toHaveTextContent('"now fix parseInvoice"');
     expect(report).toHaveTextContent('Give it every parser at once.');
     expect(report).toHaveTextContent('Ask for all parsers at once.');
+  });
+
+  it('an estimate with an unknown cost shows "Cost unknown" and asks for the smaller scope first', async () => {
+    const plan = { threads: ['a', 'b', 'c'], chunks: 30, estPercent: 1.5, fits: null, costUnknown: true, smallerScope: { kind: 'thread', ids: ['a'] } };
+    const { View } = await boot({ 'reviews:r6': { id: 'r6', at: NOW.toISOString(), scope: { kind: 'project', ids: ['s1'] }, state: 'estimate', plan } });
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    expect(panel).toHaveTextContent('Cost unknown');
+    expect(panel).not.toHaveTextContent('about 1.5% of your weekly limit');
+    expect(within(panel).getByRole('button', { name: 'Start' })).toBeDisabled();
+    expect(within(panel).getByRole('button', { name: 'Review the newest 1 thread instead' })).toBeInTheDocument();
   });
 
   it('the look back is offered once on the Coach screen; Start-first: it asks for an estimate', async () => {

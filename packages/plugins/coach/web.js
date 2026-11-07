@@ -523,15 +523,19 @@ export function createCoach(d, deps = {}) {
     const plan = r.plan || {};
     const n = (plan.threads || []).length;
     let body;
+    // Start waits while the estimate passes the budget, or while the cost is unknown and a smaller scope exists.
+    const blocked = plan.fits === false || n === 0 || !!(plan.costUnknown && plan.smallerScope);
     if (r.state === 'planning') body = h('div', { style: S.note }, 'Working out what this review costs…');
     else if (r.state === 'estimate') {
       body = h('div', null,
         n === 0 ? h('div', null, 'There is nothing the Coach can read in this scope.')
-          : h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}): about ${plan.estPercent}% of your weekly limit, an estimate.`),
+          : plan.costUnknown ? h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}). Cost unknown: the Coach has no usage figures for this account yet.`)
+            : h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}): about ${plan.estPercent}% of your weekly limit, an estimate.`),
         plan.fits === false && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, 'That is more than the budget has left this week.'),
+        plan.costUnknown && plan.smallerScope && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, 'Start with a smaller scope while the cost is unknown.'),
         h('div', { style: S.row },
-          h('button', { type: 'button', style: { ...S.primary, opacity: plan.fits === false || n === 0 ? 0.5 : 1 }, disabled: plan.fits === false || n === 0, onClick: () => { void patchReview(key, { state: 'queued', startedAt: now().toISOString() }); } }, 'Start'),
-          plan.fits === false && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
+          h('button', { type: 'button', style: { ...S.primary, opacity: blocked ? 0.5 : 1 }, disabled: blocked, onClick: () => { void patchReview(key, { state: 'queued', startedAt: now().toISOString() }); } }, 'Start'),
+          (plan.fits === false || plan.costUnknown) && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
           h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel')));
     } else if (r.state === 'queued' || r.state === 'reading') {
       const p = r.progress || { done: 0, total: n };

@@ -14,7 +14,7 @@ import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugin
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
 import { notionalValueUsd } from '../analytics/pricing.js';
-import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT } from '../plugins/assist-share.js';
+import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT, WEEKLY_TOKENS_PER_PERCENT } from '../plugins/assist-share.js';
 import type { UsageSummary } from '../limits/gauge.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
@@ -91,7 +91,7 @@ const DAY_MS = 86_400_000;
 
 /** The default model a harness runs when the caller names none, to price a reservation. */
 const DEFAULT_MODEL: Record<AssistHarness, string> = { claude: ASSIST_CLAUDE_MODEL, codex: 'gpt-5.6-terra', openrouter: ASSIST_OPENROUTER_MODEL };
-interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number }
+interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number; tokens: number }
 interface BudgetCheck { refuse: Record<string, unknown> | null; headers: Record<string, string>; release: () => void }
 const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
 
@@ -102,6 +102,10 @@ const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
  * OpenRouter has no limit windows: its cap is dollars over the last 7 days. A call in flight is
  * reserved at its prompt (about 4 characters a token) and its maxTokens of output, at the model's
  * price, until it ends; then the metered row takes its place. No budget = no cap.
+ *
+ * Fail safe: with a percent budget but no weekly figure for the account (no usage data yet, a poll
+ * gap), the cap becomes tokens: `percentWeekly` x `WEEKLY_TOKENS_PER_PERCENT` (or `tokensPerPercent`)
+ * over the plugin's subscription calls of the last 7 days (429 `budget`, window `unknown`).
  */
 function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
   const reserved = new Map<string, Set<Reservation>>();
@@ -114,6 +118,7 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
       const mine = reserved.get(pluginId) ?? new Set<Reservation>();
       const same = [...mine].filter((r) => r.harness === harness && r.accountId === accountId);
       const weight = tokenWeight(call.model ?? DEFAULT_MODEL[harness], { input: Math.ceil(call.promptChars / 4), output: call.maxTokens });
+      const tokens = Math.ceil(call.promptChars / 4) + call.maxTokens;
       const headers: Record<string, string> = {};
       let refuse: Record<string, unknown> | null = null;
 
@@ -135,6 +140,13 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
           if (budget.percentWeekly !== null && used >= budget.percentWeekly) {
             refuse = { error: 'budget', window: 'seven_day', usedPercent: used, capPercent: budget.percentWeekly, message: `The plugin has used its ${budget.percentWeekly}% of the weekly limit.` };
           }
+        } else if (budget.percentWeekly !== null) {
+          // No weekly figure: never unlimited. The plugin's tokens over 7 days, with the calls in flight.
+          const cap = Math.round(budget.percentWeekly * (limits.tokensPerPercent ?? WEEKLY_TOKENS_PER_PERCENT));
+          const usedT = pluginData.assistTokensSince(db, pluginId, new Date(Date.now() - 7 * DAY_MS).toISOString()) + [...mine].filter((r) => r.harness !== 'openrouter').reduce((n, r) => n + r.tokens, 0);
+          headers['X-Budget-Used-Tokens'] = String(usedT);
+          headers['X-Budget-Cap-Tokens'] = String(cap);
+          if (usedT >= cap) refuse = { error: 'budget', window: 'unknown', usedTokens: usedT, capTokens: cap, message: `The usage figures for this account are unknown, so the plugin is held to ${cap} tokens a week; it has used them.` };
         }
         if (budget.percentWeekly !== null) {
           headers['X-Budget-Cap-Percent'] = String(budget.percentWeekly);
@@ -146,7 +158,7 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
         }
       }
       if (refuse) return { refuse, headers, release: () => {} };
-      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6 };
+      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6, tokens };
       mine.add(r); reserved.set(pluginId, mine);
       return { refuse: null, headers, release: () => { mine.delete(r); if (mine.size === 0) reserved.delete(pluginId); } };
     },
@@ -189,6 +201,8 @@ export interface AssistLimitsDeps {
   summary?: () => UsageSummary | null;
   /** A harness's default account (accounts.json); `cli` when absent. */
   defaultAccount?: (harness: 'claude' | 'codex') => string;
+  /** The fail-safe token cap per budget percent when a weekly figure is unknown. Default WEEKLY_TOKENS_PER_PERCENT. */
+  tokensPerPercent?: number;
   /** Whether an account id exists for a harness (accounts.json). Absent: only the default account is known. */
   hasAccount?: (harness: 'claude' | 'codex', id: string) => boolean;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
