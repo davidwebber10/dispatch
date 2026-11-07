@@ -38,10 +38,10 @@ describe('agency-mcp', () => {
     expect(names).toEqual([
       'answer_agent', 'complete_agent', 'ledger_add', 'ledger_add_from_agent', 'ledger_decide_self', 'ledger_import',
       'ledger_list', 'ledger_mark_default', 'ledger_note', 'ledger_resolve', 'ledger_set_title', 'ledger_show', 'list_agents', 'list_missions',
-      'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'post_image', 'queue_agent', 'read_agent',
-      'read_thread', 'report_status', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
+      'list_projects', 'list_threads', 'list_watches', 'message_agent', 'message_thread', 'plugin_list', 'post_image', 'queue_agent', 'read_agent',
+      'read_thread', 'report_status', 'skill_list', 'spawn_agent', 'start_agent', 'unwatch_thread', 'watch_thread',
     ]);
-    expect(TOOLS).toHaveLength(28);
+    expect(TOOLS).toHaveLength(30);
   });
 
   it('initialize returns protocolVersion + tools capability', async () => {
@@ -982,6 +982,28 @@ describe('agency-mcp', () => {
     expect(send.inputSchema.properties.title.description).toContain('Required unless you set one before with ledger_set_title.');
     const resolve = TOOLS.find((t) => t.name === 'ledger_resolve') as any;
     expect(resolve.description).toContain('A parked item can still take the answer later: set it to "answered" with the user\'s words from after the park.');
+  });
+});
+
+describe('agency-mcp plugin_list and skill_list (read-only)', () => {
+  const origFetch = global.fetch; const origApi = process.env.DISPATCH_API;
+  beforeEach(() => { process.env.DISPATCH_API = 'http://localhost:9999'; });
+  afterEach(() => { global.fetch = origFetch; if (origApi === undefined) delete process.env.DISPATCH_API; else process.env.DISPATCH_API = origApi; vi.restoreAllMocks(); });
+
+  it('plugin_list and skill_list read the daemon lists and shape them for the model', async () => {
+    const answers: Record<string, unknown> = {
+      '/api/plugins': { plugins: [{ id: 'previews', name: 'Previews', version: '1.0.0', enabled: true, bundled: true }, { id: 'hello', name: 'Hello', version: '1.1.0', enabled: false, install: { marketplace: 'u' } }, { id: 'mine', name: 'Mine', version: '0.1.0', enabled: true }] },
+      '/api/skills': { skills: [{ id: 'tidy', name: 'Tidy', version: '0.1.0', description: 'tidy helps', enabled: true, text: '…' }] },
+    };
+    global.fetch = vi.fn().mockImplementation(async (url: string) => ({ ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(answers[new URL(url).pathname] ?? null) })) as any;
+    const plugins = await callTool('plugin_list', {});
+    expect(JSON.parse((plugins.content[0] as any).text)).toEqual([
+      { id: 'previews', name: 'Previews', version: '1.0.0', enabled: true, source: 'bundled' },
+      { id: 'hello', name: 'Hello', version: '1.1.0', enabled: false, source: 'installed' },
+      { id: 'mine', name: 'Mine', version: '0.1.0', enabled: true, source: 'local' },
+    ]);
+    const skills = await callTool('skill_list', {});
+    expect(JSON.parse((skills.content[0] as any).text)).toEqual([{ id: 'tidy', name: 'Tidy', version: '0.1.0', description: 'tidy helps', enabled: true }]);
   });
 });
 

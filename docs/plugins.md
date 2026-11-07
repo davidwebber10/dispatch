@@ -242,6 +242,51 @@ hides the bundled one. A bundled plugin starts **disabled** unless its manifest 
 `"enabledByDefault": true`: the coach makes a model call per prompt, so turning it on is the
 owner's choice on the Plugins page. A local plugin starts enabled.
 
+## Marketplaces, install, update
+
+A marketplace is a git repository (spec section 7.1). Settings → Plugins → Marketplaces takes
+its URL (https, ssh, `git@host:path`, or an absolute path); the daemon clones it under
+`~/.dispatch/marketplaces/<slug>` with your own git login (ssh keys, the credential helper,
+`gh auth`), so a private repository is a private marketplace for the people who can read it.
+No token is stored. The repository's layout is the catalog:
+
+```
+marketplace.json          { "name": "...", "description": "..." }   (optional)
+plugins/<id>/             plugin.json, web.js, README.md, CHANGELOG.md, …
+skills/<id>/              skill.json, SKILL.md, …
+```
+
+- **Browse** on the Plugins page lists every marketplace's plugins and skills at the clone's
+  HEAD; **Install** copies `plugins/<id>` into `~/.dispatch/plugins/<id>` with
+  `.dispatch-install.json` (the marketplace, the version, the commit) and enables it. An id that
+  a local or bundled plugin already has is refused.
+- The daemon pulls every marketplace about every 45 minutes and on **Check now**. A newer
+  `plugin.json` version is an update: the Settings dot and banner list it under Dispatch's own,
+  with Update; the Installed row shows it with "What's new" (the `CHANGELOG.md`).
+- **Update** stages the new folder and swaps it in; the old one stays as `<id>.prev`, so **Roll
+  back** swaps them again. Storage and settings are untouched. The web part hears
+  `plugin:updated { id, from, to }` once. **Pin…** stops updates past a version. **Auto-update**
+  (off by default) applies updates at the check; every plugin of a **Trusted** marketplace
+  auto-updates.
+- A marketplace removed while a plugin installed from it stays: the plugin keeps working and its
+  row says "Marketplace removed".
+
+## Skills
+
+A skill is a folder under `~/.dispatch/skills/<id>` with a `skill.json` (`id`, `name`,
+`version`, `description`, optional `harnesses`) and a `SKILL.md`. Install one from a marketplace
+(Browse) or write the folder yourself. Settings → Skills switches each skill on or off
+everywhere, or for one project. The enabled skills' texts go into every thread's system prompt
+under `## Skill: <name>` with the folder's absolute path, so the model can read the skill's
+other files; Dispatch never writes into a project for this. A thread's `skill_list` tool lists
+them; `plugin_list` lists the plugins (both read-only).
+
+## Commands
+
+`commands: [{ id, label, run }]` in `register` adds rows to the command palette (⌘K / Ctrl+K on
+the desktop, after the views and the settings sections) and to the phone's Plugins tab under
+COMMANDS. `run` is called with no arguments.
+
 ## Reloading, errors and safe mode
 
 - Save any file in the folder: the daemon tells the app, which re-imports the bundle and

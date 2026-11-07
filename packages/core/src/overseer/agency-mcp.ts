@@ -335,6 +335,17 @@ export const TOOLS = [
       required: ['path'],
     },
   },
+  // --- plugins and skills (read-only; docs/superpowers/specs/2026-11-07-plugins-design.md, section 9) ---
+  {
+    name: 'plugin_list',
+    description: 'The plugins this Dispatch has: id, name, version, enabled, and whether each is local, bundled or installed. Read-only. To build one, write a folder under ~/.dispatch/plugins/<id> (plugin.json + web.js); the app reloads it as you save.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'skill_list',
+    description: 'The skills this Dispatch has: id, name, version, description, and whether each is enabled. Read-only. Enabled skills are already in your system prompt under "## Skill:".',
+    inputSchema: { type: 'object', properties: {} },
+  },
   // --- peer/thread tools: every non-archived thread in the project, not just typed agents ---
   {
     name: 'list_projects',
@@ -905,6 +916,16 @@ function requireSelf(action: string): string {
  * excludes archived and runner tabs) — plain threads and typed agents alike, unlike
  * list_agents which stays filtered to typed agents only.
  */
+async function pluginList(): Promise<Array<{ id: string; name: string; version: string; enabled: boolean; source: 'local' | 'bundled' | 'installed' }>> {
+  const r = await httpJson('GET', `${apiBase()}/api/plugins`);
+  return (Array.isArray(r?.plugins) ? r.plugins : []).map((p: any) => ({ id: p.id, name: p.name, version: p.version, enabled: p.enabled === true, source: p.bundled ? 'bundled' : p.install ? 'installed' : 'local' }));
+}
+
+async function skillList(): Promise<Array<{ id: string; name: string; version: string; description: string | null; enabled: boolean }>> {
+  const r = await httpJson('GET', `${apiBase()}/api/skills`);
+  return (Array.isArray(r?.skills) ? r.skills : []).map((s: any) => ({ id: s.id, name: s.name, version: s.version, description: s.description ?? null, enabled: s.enabled === true }));
+}
+
 async function listProjects(): Promise<Array<{ id: string; name: string; coordinatorId: string | null; isOwn: boolean }>> {
   const rows = await httpJson('GET', `${apiBase()}/api/sessions`);
   const own = sessionId();
@@ -1260,6 +1281,8 @@ export async function callTool(
       case 'read_agent': result = await readAgent(args ?? {}); break;
       case 'complete_agent': result = await completeAgent(args ?? {}); break;
       case 'list_projects': result = await listProjects(); break;
+      case 'plugin_list': result = await pluginList(); break;
+      case 'skill_list': result = await skillList(); break;
       case 'list_threads': result = await listThreads(args ?? {}); break;
       case 'read_thread': result = await readThread(args ?? {}); break;
       case 'message_thread': result = await messageThread(args ?? {}); break;

@@ -28,7 +28,7 @@ const NATIVE_ORCHESTRATION_TOOLS = ['Agent', 'Task', 'Workflow'];
 // ALLOWLIST (read, report, watch), so a Dispatch tool added later is denied until someone decides.
 const DISPATCH_MCP_PREFIX = 'mcp__dispatch__';
 const ROLE_DISPATCH_TOOLS_ALLOWED = new Set([
-  'list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions',
+  'list_threads', 'read_thread', 'list_agents', 'read_agent', 'list_missions', 'plugin_list', 'skill_list',
   'report_status', 'post_image', 'watch_thread', 'unwatch_thread', 'list_watches',
 ]);
 /** The native orchestration tools and the known Dispatch delegation/steering tools, stripped from

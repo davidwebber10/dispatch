@@ -353,6 +353,7 @@ export function buildPeerPrompt(ctx: {
     'projects, list_threads({ projectId }) lists one, and read_thread/message_thread take a thread id ' +
     'from any project — including an id the user pastes to you (the thread menu has "Copy thread ID").\n\n' +
     `${roster}\n\n` +
+    'You can extend this Dispatch with a plugin: write a folder under ~/.dispatch/plugins/<id> with a plugin.json and a web.js; the app reloads it as you save, and plugin_list shows what exists. The SDK reference is docs/plugins.md in the Dispatch checkout.\n\n' +
     'Peer tools (a "dispatch" MCP server):\n' +
     '- list_projects() — every project: id, name, coordinatorId, isOwn.\n' +
     '- list_threads({ projectId? }) — the live roster of your project (or another): id, label, type, role, agentType, status, lastActivityAt; your own row is tagged isSelf.\n' +
