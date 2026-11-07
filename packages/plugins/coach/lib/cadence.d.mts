@@ -27,3 +27,6 @@ export function noteShown(state: Partial<Cadence>, now: When): Cadence;
 export function dismiss(state: Partial<Cadence>, type: string, now: When): { state: Cadence; offerTurnOff: boolean };
 export function mute(state: Partial<Cadence>, how: 'hour' | 'today' | 'on', now: When): Cadence;
 export function unmute(state: Partial<Cadence>): Cadence;
+export function mayCallModel(state: Partial<Cadence> | null, settings: CoachSettings | null, now: When): boolean;
+export const CARD_MAX_AGE_HOURS: number;
+export function isStale(card: { at?: string } | null, settings: CoachSettings | null, now: When): boolean;

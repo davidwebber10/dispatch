@@ -353,7 +353,9 @@ A bundled plugin updates with Dispatch, cannot be removed, and is not edited in 
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
 `"enabledByDefault": true`, as the Coach's does (owner, 2026-11-07: improving is the baseline;
-its welcome card comes first and has Turn off, and its model calls stay under its budget). A local plugin made with New plugin… or Copy to local… starts
+its welcome card comes first and has Turn off, and its model calls stay under its budget). A
+manifest may also say `"budget": { "percentWeekly": 3, "usdWeekly": 5 }`: that budget holds from
+the plugin's first call until the owner sets one (`PUT /budget`; an owner's `null` stays). A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).
 
 The Coach (`packages/plugins/coach`) is also a worked example of the plugin features: its worker
@@ -362,7 +364,9 @@ asks `assist` with a harness and a model per tier, reading the `X-Budget-*` head
 before the budget refuses (it also reads `GET /budget` and the share at start, every 15 minutes,
 on a settings change, and before it settles on no call, so a reset or a raised budget resumes it); its web part fills the `composer.before` slot, a right-column tab, a
 view, a settings section and two commands, and opens the schedule and new-thread dialogs through
-`d.actions`. It sets its own budget (`PUT /budget`) from its settings, and its weekly job pushes
+`d.actions`. Its default budget is in `plugin.json`; the settings write a change (`PUT /budget`).
+Its worker makes no model call before the person has seen the welcome card and the first week has
+passed (the rules still collect, at no cost), nor during a mute or quiet hours; and its weekly job pushes
 the recap through `notify:push` only when the person turns that on. Its documents: `signals`,
 `candidates`, `cards`, `cardState`, `cadence`, `memory`, `status`, `measures`, `recap`, `chat`,
 and `reviews:<id>` (one per review job: the web part writes the request and Start, the worker

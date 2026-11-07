@@ -25,7 +25,7 @@ export interface CoachSettings {
   budgetUsdWeekly: number;
   recap: { inApp: boolean; push: boolean };
   showMeasures: boolean;
-  advanced: { thresholds: Thresholds; minConfidence: number };
+  advanced: { thresholds: Thresholds; minConfidence: number; maxCardAgeHours?: number };
 }
 export const DEFAULT_THRESHOLDS: Thresholds;
 export const DEFAULT_SETTINGS: CoachSettings;

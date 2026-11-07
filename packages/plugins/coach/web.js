@@ -9,7 +9,7 @@
 // (lib/memory.mjs), `status` (the worker: the budget it last heard, and the harness it ran on). Reset also
 // strips excerpts from `cards` and `candidates` and drops `signals`.
 import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
-import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
+import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours, isStale, CARD_MAX_AGE_HOURS } from './lib/cadence.mjs';
 import { planCall, LARGE_DEFAULT, liveBudget } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
 import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
@@ -144,17 +144,10 @@ export function createCoach(d, deps = {}) {
     await saveCadence({ ...store.getState().cadence, recapSeen: r.at });
     if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, 0);
   }
-  // The budget is the daemon's (a hard stop it enforces, spec section 7.4). A daemon with none gets
-  // the settings' budget once, so the default 3% holds before anyone opens the settings.
-  async function syncBudget() {
-    const api = d.api || {};
-    if (typeof api.pluginBudget !== 'function' || typeof api.setPluginBudget !== 'function') return;
-    const b = await api.pluginBudget(PLUGIN).catch(() => undefined);
-    if (!b || b.percentWeekly !== null || b.usdWeekly !== null) return;
-    const s = store.getState().settings;
-    await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch(() => {});
-  }
-  const ready = load().then(() => { void syncBudget(); });
+  // The budget is the daemon's (a hard stop it enforces, spec section 7.4). Its default comes from
+  // plugin.json, so it holds before this part loads; the web part writes it only when the person
+  // changes it (an owner's "no cap" is never undone here).
+  const ready = load();
   events.on(['plugin:data', 'plugin:settings'], (e) => { if (e.id === PLUGIN) void load(); });
   events.on('thread:prompt', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: true } }); });
   events.on('thread:turn', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: false } }); });
@@ -170,7 +163,8 @@ export function createCoach(d, deps = {}) {
   const doUnmute = () => saveCadence(unmute(store.getState().cadence));
 
   async function markShown(card) {
-    if (card.id === WELCOME.id) return;
+    // The worker makes no model call until the person has seen the welcome card (review finding 5).
+    if (card.id === WELCOME.id) { if (!store.getState().cadence.welcomeSeenAt) await saveCadence({ ...store.getState().cadence, welcomeSeenAt: now().toISOString() }); return; }
     await saveCadence(noteShown(store.getState().cadence, now()));
     await setCardState(card.id, 'shown');
   }
@@ -257,7 +251,7 @@ export function createCoach(d, deps = {}) {
   /** The card for this thread now, and whether it is new (not shown before). */
   function pick(st, terminalId, phone) {
     const t = now();
-    if (mayShow(st.cadence, st.settings, t, 'card', { welcome: true, phone })) return { card: WELCOME, fresh: false };
+    if (mayShow(st.cadence, st.settings, t, 'card', { welcome: true, phone })) return { card: WELCOME, fresh: !st.cadence.welcomeSeenAt };
     const live = st.settings.howOften !== 'off' && st.settings.howOften !== 'quiet' && !inQuietHours(st.settings.quietHours, t) && !(phone && !st.settings.phone);
     // Newest first; a card that serves an active goal comes before the rest (spec section 4.6).
     const goals = new Set(activeGoals(st.memory).map((g) => g.id));
@@ -265,6 +259,8 @@ export function createCoach(d, deps = {}) {
     order.sort((a, b) => Number(!!(b.goal && goals.has(b.goal))) - Number(!!(a.goal && goals.has(a.goal))));
     for (const c of order) {
       if (c.terminalId && c.terminalId !== terminalId) continue;
+      // A card about something long past is not "what you just did" (default 48 hours; Advanced).
+      if (isStale(c, st.settings, t)) continue;
       const cs = st.cardState[c.id];
       if (cs && CLOSED.has(cs.state)) continue;
       if (!allows(st.memory, c, t)) continue;
@@ -954,6 +950,9 @@ export function createCoach(d, deps = {}) {
       h(Line, { label: 'Show a card at this confidence or more', hint: 'The small model says how sure it is, from 0 to 1.' },
         h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, minConfidence: v } }) }),
         h('span', { style: S.src }, 'default 0.7')),
+      h(Line, { label: 'Hide a card after this many hours', hint: 'A card about something long past does not show.' },
+        h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, maxCardAgeHours: v } }) }),
+        h('span', { style: S.src }, `default ${CARD_MAX_AGE_HOURS}`)),
       ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Line, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
         ...Object.entries(fields).map(([field, def]) => h('span', { key: field, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
           h('span', { style: S.src }, field),

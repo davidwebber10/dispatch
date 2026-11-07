@@ -7,8 +7,10 @@ const T0 = Date.parse('2026-11-20T10:00:00Z');
 const BIG = 'Pull last week returns by reason from the warehouse table. Chart them by week and by store. Compare them with the prior month and list the three biggest changes. Then email the summary to Sam with the chart attached. Keep it short and plain for the ops team, who read it on their phones between meetings. '.repeat(2);
 const GOOD = { fit: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'Your prompt had 4 parts and no plan step.', action: { kind: 'compose', label: 'Try it: ask for a plan', text: 'Before you start, write a short plan and wait for my OK.' } };
 
+/** Past the first week, with the welcome card seen: the worker may call a model. */
+const SEASONED = { ...emptyCadence(new Date(T0 - 10 * 86400_000)), welcomeSeenAt: new Date(T0 - 10 * 86400_000).toISOString() };
 function fakeIo(over: { docs?: Record<string, unknown>; settings?: unknown; answers?: unknown[]; budget?: unknown } = {}) {
-  const docs = new Map<string, unknown>(Object.entries(over.docs ?? {}));
+  const docs = new Map<string, unknown>(Object.entries({ cadence: SEASONED, ...(over.docs ?? {}) }));
   let t = T0;
   const answers = [...(over.answers ?? [GOOD, GOOD])];
   const assist = vi.fn(async () => {
@@ -151,6 +153,36 @@ describe('Coach worker: the budget comes from the daemon, not only from answers 
     await turn(e);
     // At the cap the Coach asks the daemon once more before it decides on no call.
     expect(readBudget).toHaveBeenCalledTimes(2);
+    expect(f.assist).not.toHaveBeenCalled();
+  });
+});
+
+describe('Coach worker: no model call before the person has met the Coach, or while it should be quiet (review finding 5)', () => {
+  const turn = async (e: ReturnType<typeof createEngine>) => {
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+  };
+  it('no assist call in the first week or before the welcome card is seen; the rules still collect, at no cost', async () => {
+    const firstWeekSeen = { ...emptyCadence(new Date(T0 - 2 * 86400_000)), welcomeSeenAt: new Date(T0 - 86400_000).toISOString() };
+    const oldNotSeen = emptyCadence(new Date(T0 - 30 * 86400_000));
+    for (const cadence of [firstWeekSeen, oldNotSeen, undefined]) {
+      const f = fakeIo({ docs: cadence ? { cadence } : {} });
+      if (!cadence) f.docs.delete('cadence');
+      const e = createEngine(f.io);
+      await e.load();
+      await turn(e);
+      expect(f.assist).not.toHaveBeenCalled();
+      expect((f.docs.get('candidates') as { items: { type: string }[] }).items.map((c) => c.type)).toContain('no-plan-big-task');
+    }
+  });
+  it('no assist call in quiet hours', async () => {
+    const h = new Date(T0).getHours();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const f = fakeIo({ settings: { quietHours: { from: `${pad(h)}:00`, to: `${pad((h + 2) % 24)}:00` } } });
+    const e = createEngine(f.io);
+    await e.load();
+    await turn(e);
     expect(f.assist).not.toHaveBeenCalled();
   });
 });

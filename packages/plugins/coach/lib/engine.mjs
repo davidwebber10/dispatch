@@ -16,7 +16,7 @@ import { withDefaults } from './settings.mjs';
 import { collect, emptyState } from './signals.mjs';
 import { detect, proposeNew } from './detectors.mjs';
 import { allows, normalizeMemory, emptyMemory } from './memory.mjs';
-import { isMuted, mayShow } from './cadence.mjs';
+import { isMuted, mayShow, mayCallModel } from './cadence.mjs';
 import { effectiveLevel, planCall, liveBudget, mergeBudget } from './plan.mjs';
 import { measures, weakest, snapshot, scoresBefore, scoresOnly } from './measures.mjs';
 import { buildRecap } from './recap.mjs';
@@ -115,6 +115,9 @@ export function createEngine(io) {
       await io.putDoc('cards', joinCards(cardsDoc, fresh.map((c) => ({ id: c.id, outcome: 'muted', card: null, calls: [] })), at));
       return;
     }
+    // No model call before the welcome card is seen and the first week has passed, nor in quiet
+    // hours: the candidates stay (rules only, at no cost) and go stale on their own.
+    if (!mayCallModel(cadence, settings, t)) return;
     const results = [];
     const before = await currentBudget(t, 'confirm');
     let budget = before;
@@ -176,7 +179,9 @@ export function createEngine(io) {
     const draft = buildRecap(state, { memory, measures: measuresDoc && measuresDoc.scores, now: t });
     if (!draft) { log('recap: fewer than 5 active days'); return; }
     let recap = { ...draft, weakest: w };
-    const plan = planCall('recap', settings, await currentBudget(t, 'recap'), { harness: status.harness });
+    const cadence = await io.getDoc('cadence', null);
+    // During a mute, in quiet hours, or before the person has met the Coach, the recap is the rules' own: no model call.
+    const plan = mayCallModel(cadence, settings, t) ? planCall('recap', settings, await currentBudget(t, 'recap'), { harness: status.harness }) : { tier: 'none' };
     if (plan.tier !== 'none') {
       const r = await io.assist({ ...recapPrompt(draft, memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
       if (r && r.budget) heard(r.budget);
@@ -185,7 +190,6 @@ export function createEngine(io) {
       const lines = j && Array.isArray(j.patterns) ? j.patterns.filter((x) => typeof x === 'string' && x.trim() && !/\bshould\b/i.test(x)) : [];
       if (lines.length === draft.patterns.length) recap = { ...recap, patterns: lines.map((x) => x.trim()) };
     }
-    const cadence = await io.getDoc('cadence', null);
     const announce = mayShow(cadence, settings, t, 'recap');
     recap = { ...recap, at: t.toISOString(), announce };
     await io.putDoc('recap', recap);

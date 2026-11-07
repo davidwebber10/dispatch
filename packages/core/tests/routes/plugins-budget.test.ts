@@ -10,6 +10,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as pluginData from '../../src/db/plugin-data.js';
 import { WEEKLY_TOKENS_PER_PERCENT } from '../../src/plugins/assist-share.js';
 import { createApp } from '../../src/server.js';
+import { parseManifest } from '../../src/plugins/manifest.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { LimitSnapshots } from '../../src/limits/snapshot.js';
 import type { UsageSummary } from '../../src/limits/gauge.js';
@@ -225,5 +226,26 @@ describe('plugin budget (coach plan, Task 4)', () => {
     expect(share.body.sevenDay).toBeNull();
     expect(share.body.fallback).toMatchObject({ capTokens: 3 * WEEKLY_TOKENS_PER_PERCENT });
     expect(share.body.fallback.usedTokens).toBeGreaterThan(0);
+  });
+  it('the plugin\'s default budget (its manifest) holds when none was set, before any web part loads; an owner\'s "no cap" stays', async () => {
+    const dir = path.join(tmp, 'plugins', 'coach');
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({ id: 'coach', name: 'coach', version: '1.0.0', permissions: ['model:assist'], budget: { percentWeekly: 3, usdWeekly: 5 } }));
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: 3, usdWeekly: 5 });
+    usage(7000, 3000); // 3% of the week: at the default cap
+    expect((await ask()).status).toBe(429);
+    expect(calls).toHaveLength(0);
+    // The owner's choice wins, "no cap" included, and it survives a restart.
+    expect((await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: null })).body).toEqual({ percentWeekly: null, usdWeekly: 5 });
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: null, usdWeekly: 5 });
+    expect((await request(app).put('/api/plugins/coach/budget').send({ usdWeekly: null })).body).toEqual({ percentWeekly: null, usdWeekly: null });
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: null, usdWeekly: null });
+  });
+
+  it('the bundled Coach declares its default budget: 3% of the weekly limit, $5 a week on OpenRouter', () => {
+    const raw = fs.readFileSync(path.join(__dirname, '../../../plugins/coach/plugin.json'), 'utf8');
+    const m = parseManifest(raw, 'coach');
+    expect(m.ok && m.manifest.budget).toEqual({ percentWeekly: 3, usdWeekly: 5 });
   });
 });

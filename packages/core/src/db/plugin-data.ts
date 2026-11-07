@@ -155,18 +155,19 @@ export function assistTokensSince(db: Database.Database, pluginId: string, from:
  * Null = no cap of that kind.
  */
 export interface PluginBudget { percentWeekly: number | null; usdWeekly: number | null }
-export function getBudget(db: Database.Database, pluginId: string): PluginBudget {
+/** The owner's budget row, or null when the owner never set one (then the plugin's manifest default applies). */
+export function getBudgetRow(db: Database.Database, pluginId: string): PluginBudget | null {
   const r = db.prepare('SELECT percent_weekly AS p, usd_weekly AS u FROM plugin_budget WHERE plugin_id = ?').get(pluginId) as { p: number | null; u: number | null } | undefined;
-  return { percentWeekly: r?.p ?? null, usdWeekly: r?.u ?? null };
+  return r ? { percentWeekly: r.p ?? null, usdWeekly: r.u ?? null } : null;
 }
+export function getBudget(db: Database.Database, pluginId: string): PluginBudget {
+  return getBudgetRow(db, pluginId) ?? { percentWeekly: null, usdWeekly: null };
+}
+/** The owner's budget. A row is kept even with both caps null: "no cap" is a choice the manifest default must not undo. */
 export function setBudget(db: Database.Database, pluginId: string, budget: PluginBudget): PluginBudget {
-  if (budget.percentWeekly === null && budget.usdWeekly === null) {
-    db.prepare('DELETE FROM plugin_budget WHERE plugin_id = ?').run(pluginId);
-  } else {
-    db.prepare(`INSERT INTO plugin_budget (plugin_id, percent_weekly, usd_weekly, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(plugin_id) DO UPDATE SET percent_weekly = excluded.percent_weekly, usd_weekly = excluded.usd_weekly, updated_at = excluded.updated_at`)
-      .run(pluginId, budget.percentWeekly, budget.usdWeekly, new Date().toISOString());
-  }
+  db.prepare(`INSERT INTO plugin_budget (plugin_id, percent_weekly, usd_weekly, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(plugin_id) DO UPDATE SET percent_weekly = excluded.percent_weekly, usd_weekly = excluded.usd_weekly, updated_at = excluded.updated_at`)
+    .run(pluginId, budget.percentWeekly, budget.usdWeekly, new Date().toISOString());
   return getBudget(db, pluginId);
 }
 

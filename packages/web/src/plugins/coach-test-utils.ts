@@ -23,7 +23,7 @@ export interface FakeD {
   [k: string]: unknown;
 }
 
-export function fakeD(over: { actions?: Record<string, unknown>; settings?: unknown; docs?: Record<string, unknown>; api?: Record<string, unknown> } = {}): FakeD {
+export function fakeD(over: { actions?: Record<string, unknown>; settings?: unknown; docs?: Record<string, unknown>; api?: Record<string, unknown>; mobile?: boolean } = {}): FakeD {
   const docs = new Map<string, unknown>(Object.entries(over.docs ?? {}));
   const settingsValue = { current: over.settings ?? null as unknown };
   const registered: Record<string, Record<string, unknown[]>> = {};
@@ -36,7 +36,7 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     React,
     h,
     Fragment: React.Fragment,
-    hooks: { useState, useEffect, useMemo, useCallback, useRef, useIsMobile: () => false },
+    hooks: { useState, useEffect, useMemo, useCallback, useRef, useIsMobile: () => !!over.mobile },
     zustand: { create },
     // The names the SDK's icon map gives (sdk.tsx ICONS).
     icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle, 'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, gear: Icons.Gear },

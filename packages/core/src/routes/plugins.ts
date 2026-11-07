@@ -119,7 +119,7 @@ const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
  * gap), the cap becomes tokens: `percentWeekly` x `WEEKLY_TOKENS_PER_PERCENT` (or `tokensPerPercent`)
  * over the plugin's subscription calls of the last 7 days (429 `budget`, window `unknown`).
  */
-function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
+function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps, budgetOf: (pluginId: string) => pluginData.PluginBudget) {
   const reserved = new Map<string, Set<Reservation>>();
   /** The fail-safe token cap for a percent budget with no weekly figure: the plugin's 7-day tokens and the calls in flight. */
   const tokenFallback = (pluginId: string, percentWeekly: number): { usedTokens: number; capTokens: number } => {
@@ -133,7 +133,7 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
       const harness: AssistHarness = call.harness === 'codex' || call.harness === 'openrouter' ? call.harness : 'claude';
       const sub: 'claude' | 'codex' = harness === 'codex' ? 'codex' : 'claude';
       const accountId = harness === 'openrouter' ? 'openrouter' : call.accountId ?? limits.defaultAccount?.(sub) ?? 'cli';
-      const budget = pluginData.getBudget(db, pluginId);
+      const budget = budgetOf(pluginId);
       const mine = reserved.get(pluginId) ?? new Set<Reservation>();
       const same = [...mine].filter((r) => r.harness === harness && r.accountId === accountId);
       const weight = tokenWeight(call.model ?? DEFAULT_MODEL[harness], { input: Math.ceil(call.promptChars / 4), output: call.maxTokens });
@@ -657,17 +657,20 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
-  const budgets = createBudgetGuard(db, limits);
+  // The owner's budget, else the plugin's manifest default (set by the plugin, so it holds from the
+  // first call, before any web part loads), else no cap.
+  const budgetOf = (id: string): pluginData.PluginBudget => pluginData.getBudgetRow(db, id) ?? (plugins.get(id)?.budget ? { ...plugins.get(id)!.budget! } : { percentWeekly: null, usdWeekly: null });
+  const budgets = createBudgetGuard(db, limits, budgetOf);
   // The owner, or the plugin's own key: its worker reads the cap it plans by (never writes it).
   router.get('/plugins/:id/budget', keyRoute({ plugin: ownPluginRule }), (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json(pluginData.getBudget(db, req.params.id));
+    res.json(budgetOf(req.params.id));
   });
   router.put('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
     if (!known(req, res)) return;
     const body = (req.body ?? {}) as { percentWeekly?: unknown; usdWeekly?: unknown };
-    const next = pluginData.getBudget(db, req.params.id);
+    const next = budgetOf(req.params.id);
     if (body.percentWeekly !== undefined) {
       if (body.percentWeekly !== null && !(typeof body.percentWeekly === 'number' && body.percentWeekly >= 0.1 && body.percentWeekly <= 100)) {
         return void res.status(400).json({ error: 'bad_budget', message: 'percentWeekly is 0.1 to 100, or null for no cap.' });
@@ -763,7 +766,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     res.setHeader('Cache-Control', 'no-store');
     const sevenDay = estimateShare(db, summary, { ...opts, window: 'seven_day' });
     // With no weekly figure and a percent budget, the guard holds the plugin to a token cap: say so.
-    const budget = pluginData.getBudget(db, req.params.id);
+    const budget = budgetOf(req.params.id);
     const fallback = !sevenDay && budget.percentWeekly !== null ? budgets.tokenFallback(req.params.id, budget.percentWeekly) : null;
     res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay, ...(fallback ? { fallback } : {}) });
   });

@@ -91,10 +91,11 @@ describe('Coach settings (coach plan Task 13)', () => {
     await waitFor(() => expect(saved().budgetPercentWeekly).toBe(100));
   });
 
-  it('a daemon with no budget gets the default one when the Coach loads', async () => {
-    const setPluginBudget = vi.fn(async () => ({ percentWeekly: 3, usdWeekly: 5 }));
+  it('loading the Coach never writes the budget: the default is the daemon\'s (plugin.json), and an owner\'s "no cap" stays', async () => {
+    const setPluginBudget = vi.fn(async () => ({ percentWeekly: null, usdWeekly: null }));
     await boot({ api: { pluginBudget: vi.fn(async () => ({ percentWeekly: null, usdWeekly: null })), setPluginBudget } });
-    await waitFor(() => expect(setPluginBudget).toHaveBeenCalledWith('coach', { percentWeekly: 3, usdWeekly: 5 }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(setPluginBudget).not.toHaveBeenCalled();
   });
 
   it('Advanced shows every threshold with its default, and a change writes it', async () => {
