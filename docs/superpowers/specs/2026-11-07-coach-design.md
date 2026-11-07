@@ -119,6 +119,19 @@ as an optional summary on the Coach screen. The five measures compare a person o
 - The memory is part of the context of every model call, so advice improves without training.
 - One 👎 never mutes a whole category without asking.
 
+### 4.6 Your goals (owner, 2026-11-07)
+- The person says how they want to improve: "I want to hand off whole reports", "I want to automate my Monday
+  work", "I want to run more things at once". Free text, up to 3 active goals.
+- The Coach **suggests goals** from what it sees (the weakest measure, repeated work, the detectors that fire
+  most), each as one line with **Add**. The person can edit a suggestion before adding it.
+- Goals steer the Coach: each goal maps to one or more measures and detectors (the small model maps free text);
+  cards that serve an active goal rank first and may use the daily cap before other cards; the gate rule (§3)
+  still applies.
+- The weekly recap reports progress on each goal (what moved, one next step) and asks once a month whether each
+  goal is still right: Keep · Done · Change.
+- Goals live in the Coach screen and the right-column tab (a short "Working on" line), and are part of "What the
+  Coach knows" (edit, delete).
+
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
   (5-hour and weekly) on the account it used, and the budget with a meter.
