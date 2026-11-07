@@ -67,7 +67,7 @@ export function DictationControl({ dictation }: { dictation: Dictation }) {
         <Spinner size={16} />
         <span role="status" style={{ flexShrink: 0 }}>{state === 'uploading' ? `Uploading ${pct}%` : `Transcribing… ${progress?.elapsedS ?? 0}s`}</span>
         {state === 'uploading' && (
-          <span role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Upload" style={{ flex: 1, minWidth: 30, height: 4, borderRadius: 2, background: 'var(--color-hover)', overflow: 'hidden' }}>
+          <span role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Upload" style={{ flex: 1, minWidth: 30, height: 4, borderRadius: 'var(--radius-xs)', background: 'var(--color-hover)', overflow: 'hidden' }}>
             <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: 'var(--color-accent)', transition: 'width .2s ease' }} />
           </span>
         )}
