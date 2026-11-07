@@ -3,6 +3,8 @@ import { principalOf, scopeOf, type Principal } from './request-principal.js';
 import type { KeyPrincipal } from './principals.js';
 import type { CallerFacts, KeyScope } from './key-scope.js';
 import { redactKeys } from './redact-keys.js';
+import { pluginFactsOf, type PluginFacts } from './plugin-facts.js';
+export { configurePluginFacts, type PluginFacts } from './plugin-facts.js';
 
 /**
  * Route policy (spec 6.4). Default deny: a route with no key policy is owner only.
@@ -21,10 +23,19 @@ export type RuleResult =
 export interface RuleCtx {
   principal: KeyPrincipal;
   caller: CallerFacts | null;
+  /** Set for a plugin key: the plugin and its manifest permissions. */
+  plugin: PluginFacts | null;
   scope: KeyScope;
 }
 export type Rule = (req: Request, ctx: RuleCtx) => RuleResult;
-export interface KeyRules { thread?: Rule; roleRun?: Rule; chat?: Rule; summarizer?: Rule; shell?: Rule }
+export interface KeyRules { thread?: Rule; roleRun?: Rule; chat?: Rule; summarizer?: Rule; shell?: Rule; plugin?: Rule }
+
+/** A plugin rule: the key's plugin must list the permission in its manifest. */
+export function needs(permission: string): Rule {
+  return (_req, ctx) => (ctx.plugin?.permissions.includes(permission)
+    ? { ok: true }
+    : { ok: false, status: 403, error: 'owner_only', message: `The plugin "${ctx.plugin?.id ?? ctx.principal.kind}" lacks the permission "${permission}".` });
+}
 
 export type PolicyKind = 'owner' | 'key' | 'public';
 export const POLICY_TAG: unique symbol = Symbol('dispatch.routePolicy');
@@ -53,6 +64,7 @@ export function configureRefusalLog(opts: { log?: (line: string) => void; now?: 
 
 function describe(p: KeyPrincipal | Extract<Principal, { kind: 'none' }>): string {
   if (p.kind === 'none') return 'keyless caller';
+  if (p.kind === 'plugin') return `plugin ${p.pluginId}`;
   return p.kind === 'chat' ? `chat(${p.startedBy})` : `${p.kind} ${p.terminalId}`;
 }
 
@@ -61,7 +73,7 @@ export function refuse(res: Response, result: Extract<RuleResult, { ok: false }>
   const req = res.req as Request;
   try {
     const p = principalOf(req);
-    if (p.kind === 'thread' || p.kind === 'chat' || p.kind === 'shell' || p.kind === 'none') {
+    if (p.kind === 'thread' || p.kind === 'chat' || p.kind === 'shell' || p.kind === 'plugin' || p.kind === 'none') {
       const route = `${req.baseUrl ?? ''}${req.route?.path ?? ''}`;
       const id = `${p.kind === 'none' ? 'none' : p.handle}|${req.method}|${route}|${result.error}`;
       const t = nowFn();
@@ -129,7 +141,7 @@ function principalOrNone(req: Request): Principal {
   try { return principalOf(req); } catch { return { kind: 'none', via: 'test' }; }
 }
 
-const KEY_LABEL: Record<string, string> = { thread: 'thread', chat: 'Chat', shell: 'shell' };
+const KEY_LABEL: Record<string, string> = { thread: 'thread', chat: 'Chat', shell: 'shell', plugin: 'plugin' };
 
 /**
  * The owner_only refusal. It names the method and the route, and says the refusal covers only this
@@ -175,9 +187,16 @@ export function keyRoute(rules: KeyRules): RequestHandler {
     if (principal.kind === 'owner' || principal.kind === 'none') return next();
     const scope = scopeOf(req);
     let caller: CallerFacts | null = null;
+    let plugin: PluginFacts | null = null;
     let rule: Rule | undefined;
     if (principal.kind === 'chat') {
       rule = principal.startedBy === 'summarizer' ? rules.summarizer : rules.chat;
+    } else if (principal.kind === 'plugin') {
+      plugin = pluginFactsOf(principal.pluginId);
+      if (!plugin) {
+        return void res.status(401).json({ error: 'auth_required', message: 'This plugin key is not valid any more: the plugin is disabled or removed.' });
+      }
+      rule = rules.plugin;
     } else {
       caller = scope.caller(principal.terminalId);
       if (!caller || caller.archived) {
@@ -186,7 +205,7 @@ export function keyRoute(rules: KeyRules): RequestHandler {
       rule = principal.kind === 'shell' ? rules.shell : caller.roleRun ? rules.roleRun : rules.thread;
     }
     if (!rule) return refuse(res, ownerOnlyResult(req));
-    const result = rule(req, { principal, caller, scope });
+    const result = rule(req, { principal, caller, plugin, scope });
     if (!result.ok) return refuse(res, result);
     next();
   }, 'key');

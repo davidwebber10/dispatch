@@ -5,8 +5,9 @@ import { KeyRegistry } from './principals.js';
 import { nullKeyScope, type CallerFacts, type KeyScope } from './key-scope.js';
 import { createPrincipalMiddleware } from './request-principal.js';
 import {
-  POLICY_TAG, configureRefusalLog, keyRoute, ownerOnly, policyKindOf, policyRouter, publicRoute, type Rule,
+  POLICY_TAG, configureRefusalLog, configurePluginFacts, keyRoute, needs, ownerOnly, policyKindOf, policyRouter, publicRoute, type Rule,
 } from './route-policy.js';
+import { whoamiHandler } from './request-principal.js';
 
 const facts = (over: Partial<CallerFacts> = {}): CallerFacts => ({
   id: 't1', sessionId: 's1', type: 'claude-code', role: 'agent', depth: 1, spawnedBy: null,
@@ -201,5 +202,56 @@ describe('peer address normalisation', () => {
     expect(isLoopbackAddress('::ffff:127.0.0.1')).toBe(true);
     expect(isLoopbackAddress('::1')).toBe(true);
     expect(isLoopbackAddress('::ffff:192.168.1.9')).toBe(false);
+  });
+});
+
+describe('plugin keys in keyRoute (2026-11-07)', () => {
+  beforeEach(() => { configurePluginFacts((id) => (id === 'daily-rundown' ? { id, permissions: ['read:threads', 'storage'] } : null)); });
+
+  test('a plugin key reaches a keyRoute with a plugin rule; without one it gets 403 owner_only', async () => {
+    const app = build(nullKeyScope);
+    const r = policyRouter();
+    r.get('/with', keyRoute({ plugin: allow }), (_req, res) => res.json({ ok: true }));
+    r.get('/without', keyRoute({ thread: allow }), (_req, res) => res.json({ ok: true }));
+    app.use('/api', r);
+    const { key } = registry.mint({ kind: 'plugin', pluginId: 'daily-rundown' });
+    expect((await request(app).get('/api/with').set('Authorization', `Bearer ${key}`)).status).toBe(200);
+    const refused = await request(app).get('/api/without').set('Authorization', `Bearer ${key}`);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toBe('owner_only');
+    expect(refused.body.message).toContain('A plugin key');
+  });
+
+  test('needs(permission) passes when the plugin lists it and refuses with the plugin and permission named', async () => {
+    const app = build(nullKeyScope);
+    const r = policyRouter();
+    r.get('/threads', keyRoute({ plugin: needs('read:threads') }), (_req, res) => res.json({ ok: true }));
+    r.get('/ledger', keyRoute({ plugin: needs('read:ledger') }), (_req, res) => res.json({ ok: true }));
+    app.use('/api', r);
+    const { key } = registry.mint({ kind: 'plugin', pluginId: 'daily-rundown' });
+    expect((await request(app).get('/api/threads').set('Authorization', `Bearer ${key}`)).status).toBe(200);
+    const refused = await request(app).get('/api/ledger').set('Authorization', `Bearer ${key}`);
+    expect(refused.status).toBe(403);
+    expect(refused.body).toEqual({ error: 'owner_only', message: 'The plugin "daily-rundown" lacks the permission "read:ledger".' });
+    expect(lines.some((l) => l.includes('plugin daily-rundown'))).toBe(true);
+  });
+
+  test("a removed plugin's key is refused with 401", async () => {
+    const app = build(nullKeyScope);
+    const r = policyRouter();
+    r.get('/x', keyRoute({ plugin: allow }), (_req, res) => res.json({ ok: true }));
+    app.use('/api', r);
+    const { key } = registry.mint({ kind: 'plugin', pluginId: 'gone' });
+    const refused = await request(app).get('/api/x').set('Authorization', `Bearer ${key}`);
+    expect(refused.status).toBe(401);
+    expect(refused.body.error).toBe('auth_required');
+  });
+
+  test('whoami for a plugin key names the plugin and its permissions', async () => {
+    const app = build(nullKeyScope);
+    app.get('/api/whoami', publicRoute, whoamiHandler);
+    const { key } = registry.mint({ kind: 'plugin', pluginId: 'daily-rundown' });
+    const r = await request(app).get('/api/whoami').set('Authorization', `Bearer ${key}`);
+    expect(r.body).toEqual({ kind: 'plugin', pluginId: 'daily-rundown', permissions: ['read:threads', 'storage'] });
   });
 });

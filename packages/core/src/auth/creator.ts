@@ -9,10 +9,12 @@ import { principalOf, scopeOf } from './request-principal.js';
  *    thread that calls the daemon without its key, so the record cannot tell those two apart.
  *  - thread / shell: a call that carries a per-thread key, with the thread's id and name.
  *  - chat: a Chat key.
+ *  - plugin: a plugin's own key (docs/superpowers/specs/2026-11-07-plugins-design.md, section 6).
  */
 export type Creator =
   | { kind: 'owner' | 'local' | 'tailscale' | 'chat' }
-  | { kind: 'thread' | 'shell'; terminalId: string; name: string | null };
+  | { kind: 'thread' | 'shell'; terminalId: string; name: string | null }
+  | { kind: 'plugin'; pluginId: string; name: string | null };
 
 const NAME_MAX = 80;
 
@@ -29,6 +31,7 @@ export function creatorOf(req: Request): Creator {
       try { name = scopeOf(req).caller(p.terminalId)?.label?.trim().slice(0, NAME_MAX) || null; } catch { /* no scope: id only */ }
       return { kind: p.kind, terminalId: p.terminalId, name };
     }
+    case 'plugin': return { kind: 'plugin', pluginId: p.pluginId, name: null };
     case 'none': return { kind: p.via === 'tailscale' ? 'tailscale' : 'local' };
   }
 }
@@ -46,6 +49,9 @@ export function decodeCreator(raw: string | null | undefined): Creator | null {
     case 'thread': case 'shell':
       if (typeof v.terminalId !== 'string' || !v.terminalId) return null;
       return { kind: v.kind, terminalId: v.terminalId, name: typeof v.name === 'string' && v.name ? v.name.slice(0, NAME_MAX) : null };
+    case 'plugin':
+      if (typeof v.pluginId !== 'string' || !v.pluginId) return null;
+      return { kind: 'plugin', pluginId: v.pluginId, name: typeof v.name === 'string' && v.name ? v.name.slice(0, NAME_MAX) : null };
     default: return null;
   }
 }

@@ -1,3 +1,4 @@
+import { pluginFactsOf } from './plugin-facts.js';
 import crypto from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Request, RequestHandler } from 'express';
@@ -165,6 +166,7 @@ export const whoamiHandler: RequestHandler = (req, res) => {
   }
   if (p.kind === 'chat') return void res.json({ kind: 'chat', startedBy: p.startedBy });
   if (p.kind === 'shell') return void res.json({ kind: 'shell', terminalId: p.terminalId });
+  if (p.kind === 'plugin') return void res.json({ kind: 'plugin', pluginId: p.pluginId, permissions: pluginFactsOf(p.pluginId)?.permissions ?? [] });
   res.json({ kind: p.kind });
 };
 
@@ -172,7 +174,7 @@ export const whoamiHandler: RequestHandler = (req, res) => {
 export function noCredentialStatsHandler(stats: NoCredentialStats): RequestHandler {
   return (req, res) => {
     const p = principalOf(req);
-    if (p.kind === 'thread' || p.kind === 'chat' || p.kind === 'shell') {
+    if (p.kind === 'thread' || p.kind === 'chat' || p.kind === 'shell' || p.kind === 'plugin') {
       return void res.status(403).json({ error: 'owner_only', message: 'Only the owner can read these counts.' });
     }
     res.json(stats.snapshot());

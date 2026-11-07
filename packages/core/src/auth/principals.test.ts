@@ -83,3 +83,28 @@ describe('keyKindOf', () => {
     expect(keyKindOf('dtk_')).toBeNull();
   });
 });
+
+describe('plugin keys (2026-11-07)', () => {
+  it('a plugin key has the dpk_ prefix and resolves to its plugin; a second mint for the same plugin revokes the first', () => {
+    const r = new KeyRegistry();
+    const a = r.mint({ kind: 'plugin', pluginId: 'daily-rundown' });
+    expect(a.key).toMatch(/^dpk_[A-Za-z0-9_-]{43}$/);
+    expect(keyKindOf(a.key)).toBe('plugin');
+    expect(KEY_PREFIX.plugin).toBe('dpk_');
+    expect(r.resolve(a.key)).toEqual({ kind: 'plugin', pluginId: 'daily-rundown', handle: a.handle });
+    expect(r.liveHandleForPlugin('daily-rundown')).toBe(a.handle);
+    const b = r.mint({ kind: 'plugin', pluginId: 'daily-rundown' });
+    expect(r.resolve(a.key)).toBeNull();
+    expect(r.resolve(b.key)).toMatchObject({ kind: 'plugin', pluginId: 'daily-rundown' });
+    r.revoke(b.handle);
+    expect(r.liveHandleForPlugin('daily-rundown')).toBeUndefined();
+  });
+
+  it('a plugin key and a thread key for the same id string do not collide', () => {
+    const r = new KeyRegistry();
+    const t = r.mint({ kind: 'thread', terminalId: 'x' });
+    const p = r.mint({ kind: 'plugin', pluginId: 'x' });
+    expect(r.resolve(t.key)).toMatchObject({ kind: 'thread' });
+    expect(r.resolve(p.key)).toMatchObject({ kind: 'plugin' });
+  });
+});
