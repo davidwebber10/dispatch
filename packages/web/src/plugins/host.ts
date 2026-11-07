@@ -3,7 +3,7 @@ import type { ServerEvent } from '../api/events-socket';
 import type { PluginRow } from '../api/types';
 import { usePluginRegistry, isPluginView, pluginView } from './registry';
 import { useUI } from '../stores/ui';
-import { installSdk, type DispatchSdk } from './sdk';
+import { installSdk, notifyDocChanged, type DispatchSdk } from './sdk';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.1): loads every enabled
@@ -80,6 +80,7 @@ export async function reloadPlugin(m: PluginRow, importer: Importer = defaultImp
 
 /** `plugin:changed` from the daemon: the plugin's files changed, its state changed, or it was removed. */
 export function applyPluginEvent(e: ServerEvent, importer: Importer = defaultImporter): void {
+  if (e.type === 'plugin:data' && typeof e.id === 'string' && typeof e.key === 'string') { notifyDocChanged(e.id, e.key); return; }
   if (e.type !== 'plugin:changed' || typeof e.id !== 'string' || isSafeMode()) return;
   const reg = usePluginRegistry.getState();
   const m = (e.plugin ?? null) as PluginRow | null;

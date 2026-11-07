@@ -594,3 +594,8 @@ export interface PluginRow {
   /** The marketplace install record; null for a local plugin. */
   install: PluginInstall | null;
 }
+
+/** A plugin's stored document (spec section 5); `writer` is set when a thread key wrote it. */
+export interface PluginDocWriter { terminalId: string; sessionId: string; label: string | null }
+export interface PluginDocMeta { key: string; writer: PluginDocWriter | null; updatedAt: string; bytes: number }
+export interface PluginDoc extends PluginDocMeta { value: unknown }

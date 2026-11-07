@@ -101,13 +101,49 @@ The SDK object, in full:
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,
   `item`, `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
 - `icons`: the map above.
-- `storage`: `get(plugin, key, fallback)`, `set(plugin, key, value)`, `remove`, `list`. In this
-  slice it is the browser's localStorage; the daemon's plugin storage follows.
+- `storage`: `get(plugin, key, fallback)`, `set(plugin, key, value)`, `remove(plugin, key)`,
+  `list(plugin)`, all async. Documents live on the daemon (`~/.dispatch/dispatch.db`), so they
+  are the same on every device. Writes to one plugin land in order. A document is at most
+  256 KB; a plugin holds at most 2000.
+- `settings`: `get(plugin, fallback)` and `set(plugin, value)`, one document per plugin.
+- `hooks.useDoc(plugin, key, fallback)` gives `[value, setValue, loading]` and refreshes when
+  another client (or a thread) writes that document.
+- `fetch(plugin, path, init)`: the app's fetch with an `X-Dispatch-Plugin` header, for a
+  plugin's own calls to the API.
 - `hint(text)`, `copyText(text)`.
 - `register(id, contributions)`, `unregister(id)`.
 
 A selector that returns a new array on every call loops React. Use `useContributions`, or
 `useMemo` over a store's list.
+
+## Permissions and the plugin key
+
+`permissions` in the manifest is the full list of what the plugin's own key may do. The web
+part runs with your credentials; the key is for the plugin's processes (an MCP server, a
+worker: later slices). While a plugin is enabled, its key sits in
+`~/.dispatch/keys/plugin-<id>` (mode 0600) and is revoked when the plugin is disabled or
+removed. Anything not listed is refused: `The plugin "<id>" lacks the permission "<name>".`
+
+| Permission | Grants |
+| --- | --- |
+| `read:projects` | the project list |
+| `read:threads` | a project's threads and a thread's transcript |
+| `read:ledger` | a project's ledger card and item sources |
+| `read:previews` | the previews lists |
+| `threads:read-storage` | a thread key may read this plugin's documents |
+| `threads:write-storage` | a thread key may write them; the daemon stamps the writing thread on the document |
+| `storage` | implied: the plugin's own documents and settings |
+
+## Storage and settings routes
+
+For a plugin's processes (or `d.fetch`):
+
+- `GET /api/plugins/<id>/data` lists documents (key, writer, size, time).
+- `GET`, `PUT`, `DELETE /api/plugins/<id>/data/<key>`; the PUT body is `{ "value": ... }`.
+- `GET`, `PUT /api/plugins/<id>/settings`; the PUT body is `{ "value": ... }`.
+
+The owner (the browser) reaches everything. A plugin key reaches its own plugin only. A thread
+key reaches a plugin's documents only with the grants above.
 
 ## Reloading, errors and safe mode
 

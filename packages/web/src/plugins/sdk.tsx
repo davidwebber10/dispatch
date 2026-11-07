@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import * as Icons from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
+import { apiPath } from '../lib/basePath';
 import { useUI } from '../stores/ui';
 import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
@@ -36,24 +37,71 @@ const ICONS: Record<string, Icon> = {
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
 
-/** Per-plugin key-value storage. localStorage in this slice; slice 2 moves it to the daemon. */
+/**
+ * Per-plugin storage on the daemon (spec section 5). Writes queue per plugin so two sets in a row
+ * land in order; a read waits for the queued writes of that plugin.
+ */
+const queues = new Map<string, Promise<unknown>>();
+function queued<T>(plugin: string, work: () => Promise<T>): Promise<T> {
+  const prev = queues.get(plugin) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(work);
+  queues.set(plugin, next);
+  return next;
+}
 const storage = {
-  get<T = unknown>(plugin: string, key: string, fallback: T): T {
-    try { const raw = localStorage.getItem(`dispatch:plugin:${plugin}:${key}`); return raw === null ? fallback : (JSON.parse(raw) as T); } catch { return fallback; }
+  async get<T = unknown>(plugin: string, key: string, fallback: T): Promise<T> {
+    return queued(plugin, async () => { const doc = await api.getPluginDoc(plugin, key); return doc ? (doc.value as T) : fallback; });
   },
-  set(plugin: string, key: string, value: unknown): void {
-    try { localStorage.setItem(`dispatch:plugin:${plugin}:${key}`, JSON.stringify(value)); } catch { /* ignore */ }
+  set(plugin: string, key: string, value: unknown): Promise<void> {
+    return queued(plugin, async () => { await api.setPluginDoc(plugin, key, value); });
   },
-  remove(plugin: string, key: string): void {
-    try { localStorage.removeItem(`dispatch:plugin:${plugin}:${key}`); } catch { /* ignore */ }
+  remove(plugin: string, key: string): Promise<void> {
+    return queued(plugin, async () => { try { await api.deletePluginDoc(plugin, key); } catch (e) { if (!(e instanceof ApiError && e.status === 404)) throw e; } });
   },
-  list(plugin: string): string[] {
-    const prefix = `dispatch:plugin:${plugin}:`;
-    const out: string[] = [];
-    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k?.startsWith(prefix)) out.push(k.slice(prefix.length)); } } catch { /* ignore */ }
-    return out.sort();
+  list(plugin: string): Promise<string[]> {
+    return queued(plugin, async () => (await api.listPluginDocs(plugin)).docs.map((d) => d.key));
   },
 };
+const settings = {
+  async get<T = unknown>(plugin: string, fallback: T): Promise<T> {
+    const r = await api.getPluginSettings(plugin);
+    return r.value === null || r.value === undefined ? fallback : (r.value as T);
+  },
+  async set(plugin: string, value: unknown): Promise<void> { await api.setPluginSettings(plugin, value); },
+};
+
+/** Listeners for `plugin:data` events, keyed `plugin/key`; the host feeds them (host.ts). */
+const docListeners = new Map<string, Set<() => void>>();
+export function notifyDocChanged(plugin: string, key: string): void {
+  for (const fn of docListeners.get(`${plugin}/${key}`) ?? []) fn();
+}
+
+/** A document as React state: `[value, setValue, loading]`; refreshes when another client writes it. */
+function useDoc<T = unknown>(plugin: string, key: string, fallback: T): [T, (next: T) => Promise<void>, boolean] {
+  const [value, setValue] = useState<T>(fallback);
+  const [loading, setLoading] = useState(true);
+  const fallbackRef = useRef(fallback);
+  const load = useCallback(async () => {
+    try { setValue(await storage.get(plugin, key, fallbackRef.current)); } catch { /* keep what is shown */ }
+    setLoading(false);
+  }, [plugin, key]);
+  useEffect(() => {
+    void load();
+    const id = `${plugin}/${key}`;
+    const set = docListeners.get(id) ?? new Set();
+    set.add(load); docListeners.set(id, set);
+    return () => { set.delete(load); if (set.size === 0) docListeners.delete(id); };
+  }, [plugin, key, load]);
+  const update = useCallback(async (next: T) => { setValue(next); await storage.set(plugin, key, next); }, [plugin, key]);
+  return [value, update, loading];
+}
+
+/** A fetch that names the plugin, so the daemon's log can say which plugin called what. */
+function pluginFetch(plugin: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('X-Dispatch-Plugin', plugin);
+  return fetch(apiPath(path), { ...init, headers });
+}
 
 export interface DispatchSdk {
   version: string;
@@ -63,6 +111,7 @@ export interface DispatchSdk {
   hooks: {
     useState: typeof useState; useEffect: typeof useEffect; useMemo: typeof useMemo; useCallback: typeof useCallback; useRef: typeof useRef;
     useIsMobile: typeof useIsMobile; useContributions: typeof useContributions;
+    useDoc: typeof useDoc;
     /** Read a store with a selector; memoise an array-returning selector yourself, or use useContributions. */
     useStore: <S, T>(store: UseBoundStore<StoreApi<S>>, selector: (s: S) => T) => T;
   };
@@ -73,6 +122,9 @@ export interface DispatchSdk {
   ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
   icons: Record<string, Icon>;
   storage: typeof storage;
+  settings: typeof settings;
+  /** fetch with the plugin named in a header. */
+  fetch: typeof pluginFetch;
   hint: (msg: string) => void;
   copyText: (text: string) => Promise<void>;
   register: (plugin: string, c: Contributions) => void;
@@ -86,7 +138,7 @@ export function buildSdk(): DispatchSdk {
     h: React.createElement,
     Fragment: React.Fragment,
     hooks: {
-      useState, useEffect, useMemo, useCallback, useRef, useIsMobile, useContributions,
+      useState, useEffect, useMemo, useCallback, useRef, useIsMobile, useContributions, useDoc,
       useStore: (store, selector) => store(selector),
     },
     zustand: { create },
@@ -100,6 +152,8 @@ export function buildSdk(): DispatchSdk {
     ui: { Modal, Markdown, FileViewer, Toggle, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },
     icons: ICONS,
     storage,
+    settings,
+    fetch: pluginFetch,
     hint: (msg) => useHint.getState().show(msg),
     copyText,
     register: (plugin, c) => usePluginRegistry.getState().register(plugin, c),
