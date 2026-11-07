@@ -98,3 +98,17 @@ lists for Codex (a fixed list is offered; Codex answers with an error text if a 
 - An effort-only rollback of an overseer or tier thread restores its tier model, not the CLI default.
 - A failed `/cli` shows the daemon's reason, also after the confirmation.
 - Claude writes `requestedModel: claude-opus-5-5` (no `[1m]`) after `set_model('opus')`; the pin lets go as designed.
+
+## Review round 3
+
+- A queued pick that is superseded before it runs is dropped field by field: the request number of each setting must
+  still be the latest, or it is not sent. Saved and live end on the same value.
+- `loadModelEfforts` waits at most 5 seconds (`modelListTimeoutMs`) for the app-server to be ready, then falls back to
+  the built-in table, so a silent app-server cannot hold a thread's settings lock.
+- The Codex race tests give the first caller the longest wait, so they fail if the lock is removed (checked by removing it).
+  The request-number check in `restoreSettings` cannot be reached through `setThreadSettings` any more (the lock and the
+  drop above leave no path), so it is tested directly as a second line of defence.
+- The "Could not switch" line clears when the thread's mode changes some other way, when the pane shows another thread,
+  and has a close button.
+- A Codex model switch with no saved effort sends, saves and reports the new model's default effort. The picker marks the
+  effort that really runs ("model default") when none is saved. `GET /api/codex/model-efforts` also returns `defaults`.
