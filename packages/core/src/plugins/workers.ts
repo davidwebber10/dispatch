@@ -30,12 +30,16 @@ export interface WorkerStats {
   lastExit: { code: number | null; signal: string | null; at: string } | null;
   /** The socket path the worker was given; null until a listener is there. */
   socket: string | null;
-  /** Lines waiting for the worker to read its stdin. */
+  /** Lines waiting for the worker to read its stdin, and their size. */
   queued: number;
+  queuedBytes: number;
 }
 
 export const LOG_MAX_BYTES = 5 * 1024 * 1024;
 const QUEUE_MAX = 500;
+/** The feed queue is bounded in bytes too: a deaf worker must not hold the daemon's memory. */
+export const QUEUE_MAX_BYTES = 4 * 1024 * 1024;
+const LINE_MAX_BYTES = 1024 * 1024;
 const STOP_GRACE_MS = 3000;
 /** A Unix socket path is short: 104 bytes on macOS, 108 on Linux (with the terminator). */
 export const SOCKET_PATH_MAX = 100;
@@ -47,10 +51,24 @@ export const SOCKET_PATH_MAX = 100;
 export function socketPathFor(runDir: string, id: string): string {
   const plain = path.join(runDir, `plugin-${id}.sock`);
   if (Buffer.byteLength(plain) <= SOCKET_PATH_MAX) return plain;
-  const dir = path.join(realTmp(), 'dispatch-run');
-  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* exists */ }
   const h = createHash('sha256').update(`${runDir}\n${id}`).digest('hex').slice(0, 12);
-  return path.join(dir, `${h}.sock`);
+  return path.join(privateRunDir(), `${h}.sock`);
+}
+/**
+ * A folder under the temp dir that is this user's and closed to others (0700). A folder another
+ * local user made first (a shared /tmp) is refused: a socket there could be swapped for theirs.
+ */
+function privateRunDir(): string {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : -1;
+  for (const name of ['dispatch-run', `dispatch-run-${uid}`]) {
+    const dir = path.join(realTmp(), name);
+    try { fs.mkdirSync(dir, { mode: 0o700 }); } catch { /* exists: checked below */ }
+    try {
+      const st = fs.statSync(dir);
+      if (st.isDirectory() && (uid < 0 || st.uid === uid) && (st.mode & 0o777) === 0o700) return dir;
+    } catch { /* try the next */ }
+  }
+  return fs.mkdtempSync(path.join(realTmp(), 'dispatch-run-'));
 }
 function realTmp(): string { try { return fs.realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } }
 
@@ -66,6 +84,8 @@ interface Worker {
   lastExit: WorkerStats['lastExit'];
   socket: string;
   queue: string[];
+  queueBytes: number;
+  readPrompts: boolean;
   blocked: boolean;
   stopping: boolean;
   timer: NodeJS.Timeout | null;
@@ -121,17 +141,19 @@ export class PluginWorkers {
     return {
       state: w.state, pid: w.child?.pid ?? null, restarts: w.restarts,
       startedAt: w.startedAt ? new Date(w.startedAt).toISOString() : null, lastExit: w.lastExit,
-      socket: fs.existsSync(w.socket) ? w.socket : null, queued: w.queue.length,
+      socket: fs.existsSync(w.socket) ? w.socket : null, queued: w.queue.length, queuedBytes: w.queueBytes,
     };
   }
 
   /** The owner's Restart: a fresh start, the crash count forgotten. */
   restart(id: string): void {
+    if (this.stopped) return;
     const w = this.workers.get(id);
     if (w) { w.crashes = 0; w.restarts = 0; if (w.timer) { clearTimeout(w.timer); w.timer = null; } }
-    if (w?.child) { w.stopping = true; ee(w.child).once('exit', () => { w.stopping = false; const row = this.registry.get(id); if (row?.worker && row.enabled && !row.error) this.start(row); }); this.kill(w); return; }
-    const row = this.registry.get(id);
-    if (row?.worker && row.enabled && !row.error) this.start(row);
+    const wanted = (): PluginRow | null => { const row = this.registry.get(id); return row?.worker && row.enabled && !row.error && row.keyed ? row : null; };
+    if (w?.child?.pid) { w.stopping = true; ee(w.child).once('exit', () => { w.stopping = false; const row = wanted(); if (row) this.start(row); }); this.kill(w); return; }
+    const row = wanted();
+    if (row) this.start(row);
   }
 
   /** The last `lines` lines of the plugin's log. */
@@ -173,7 +195,7 @@ export class PluginWorkers {
     if (!folder || !spec) return;
     let w = this.workers.get(row.id);
     if (!w) {
-      w = { id: row.id, child: null, state: 'stopped', restarts: 0, crashes: 0, startedAt: null, lastExit: null, socket: socketPathFor(this.runDir, row.id), queue: [], blocked: false, stopping: false, timer: null, log: null, logBytes: 0, fired: new Map() };
+      w = { id: row.id, child: null, state: 'stopped', restarts: 0, crashes: 0, startedAt: null, lastExit: null, socket: socketPathFor(this.runDir, row.id), queue: [], queueBytes: 0, readPrompts: false, blocked: false, stopping: false, timer: null, log: null, logBytes: 0, fired: new Map() };
       this.workers.set(row.id, w);
     }
     if (w.child) return;
@@ -195,11 +217,16 @@ export class PluginWorkers {
       return;
     }
     w.child = child; w.state = 'running'; w.startedAt = Date.now(); w.blocked = false;
+    w.readPrompts = (row.permissions ?? []).includes('read:prompts');
     child.stdout?.on('data', (c: Buffer) => this.logChunk(w!, c));
     child.stderr?.on('data', (c: Buffer) => this.logChunk(w!, c));
     child.stdin?.on('error', () => { /* the worker closed its stdin; the queue just waits */ });
     child.stdin?.on('drain', () => { w!.blocked = false; this.flush(w!); });
-    ee(child).on('error', (e: Error) => { this.logLine(w!, `[dispatch] worker error: ${e.message}`); });
+    ee(child).on('error', (e: Error) => {
+      this.logLine(w!, `[dispatch] cannot start the worker: ${e.message}`);
+      // A command that cannot run (ENOENT, EACCES) emits `error` and never `exit`: count it as a crash here.
+      if (w!.child === child && child.pid === undefined) { w!.child = null; this.onExit(w!, null, null); }
+    });
     ee(child).on('exit', (code: number | null, signal: string | null) => { if (w!.child === child) this.onExit(w!, code, signal); });
     this.flush(w);
   }
@@ -210,10 +237,15 @@ export class PluginWorkers {
     w.lastExit = { code, signal, at: new Date().toISOString() };
     this.logLine(w, `[dispatch] worker exited (code ${code ?? 'null'}${signal ? `, signal ${signal}` : ''})`);
     try { fs.unlinkSync(w.socket); } catch { /* none */ }
-    if (w.stopping || this.stopped) { w.state = 'stopped'; w.stopping = false; this.closeLog(w); return; }
+    if (w.stopping || this.stopped) {
+      w.state = 'stopped'; w.stopping = false; this.closeLog(w);
+      // Enabled again while it was stopping: the next sync starts it.
+      if (!this.stopped) queueMicrotask(() => { try { this.sync(); } catch { /* the next announce retries */ } });
+      return;
+    }
     if (ran >= this.healthyMs) w.crashes = 0;
     w.crashes += 1;
-    if (w.crashes > this.maxCrashes) {
+    if (w.crashes >= this.maxCrashes) {
       w.state = 'crashed';
       this.logLine(w, `[dispatch] the worker crashed ${w.crashes} times in a row; not restarting (Restart on the Plugins page)`);
       this.closeLog(w);
@@ -234,7 +266,7 @@ export class PluginWorkers {
 
   private stopOne(w: Worker): Promise<void> {
     if (w.timer) { clearTimeout(w.timer); w.timer = null; }
-    if (!w.child) { w.state = 'stopped'; this.closeLog(w); return Promise.resolve(); }
+    if (!w.child?.pid) { w.child = null; w.state = 'stopped'; this.closeLog(w); return Promise.resolve(); }
     w.stopping = true;
     return new Promise((resolve) => { ee(w.child!).once('exit', () => resolve()); this.kill(w); });
   }
@@ -244,18 +276,16 @@ export class PluginWorkers {
     if (!child) return;
     try { child.kill('SIGTERM'); } catch { /* gone */ }
     const hard = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* gone */ } }, STOP_GRACE_MS);
-    hard.unref?.();
+    // While the daemon shuts down the timer stays referenced: a worker that ignores SIGTERM is killed before the daemon goes.
+    if (!this.stopped) hard.unref?.();
     ee(child).once('exit', () => clearTimeout(hard));
   }
 
   // ── the feed ─────────────────────────────────────────────────────────────────────────────
   private onThreadEvent(e: ThreadEvent): void {
-    for (const [id, w] of this.workers) {
+    for (const w of this.workers.values()) {
       if (w.state !== 'running') continue;
-      const row = this.registry.get(id);
-      if (!row) continue;
-      const canReadPrompts = (row.permissions ?? []).includes('read:prompts');
-      this.write(w, canReadPrompts ? e : redactThreadEvent(e));
+      this.write(w, w.readPrompts ? e : redactThreadEvent(e));
     }
   }
 
@@ -268,8 +298,10 @@ export class PluginWorkers {
   private write(w: Worker, event: unknown): void {
     let line: string;
     try { line = JSON.stringify(event) + '\n'; } catch { return; }
-    w.queue.push(line);
-    if (w.queue.length > QUEUE_MAX) w.queue.splice(0, w.queue.length - QUEUE_MAX);
+    const bytes = Buffer.byteLength(line);
+    if (bytes > LINE_MAX_BYTES) { this.logLine(w, `[dispatch] dropped a ${String((event as { type?: unknown })?.type ?? 'line')} line of ${bytes} bytes (over the ${LINE_MAX_BYTES} byte line cap)`); return; }
+    w.queue.push(line); w.queueBytes += bytes;
+    while (w.queue.length > QUEUE_MAX || w.queueBytes > QUEUE_MAX_BYTES) { const dropped = w.queue.shift()!; w.queueBytes -= Buffer.byteLength(dropped); }
     this.flush(w);
   }
 
@@ -278,6 +310,7 @@ export class PluginWorkers {
     if (!stdin || !stdin.writable || w.blocked) return;
     while (w.queue.length > 0) {
       const line = w.queue.shift()!;
+      w.queueBytes -= Buffer.byteLength(line);
       let ok = true;
       try { ok = stdin.write(line); } catch { return; }
       if (!ok) { w.blocked = true; return; }

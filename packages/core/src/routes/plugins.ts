@@ -252,19 +252,22 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   // The proxy: the caller's principal in headers, never its credential; the worker answers as itself.
   const workerRule = keyRoute({ plugin: ownPluginRule, thread: grantRule(plugins, 'call-worker'), roleRun: grantRule(plugins, 'call-worker') });
-  router.all('/plugins/:id/worker/*', workerRule, (req, res) => {
+  router.all(['/plugins/:id/worker', '/plugins/:id/worker/*'], workerRule, (req, res) => {
     if (!known(req, res)) return;
     const stats = workersOf(req)?.stats(req.params.id);
     if (!stats?.socket) return void res.status(502).json({ error: 'no_worker', message: 'The plugin has no worker listening.' });
-    const rest = String(req.params[0] ?? '');
-    const q = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    // The path as the caller encoded it (Express decodes params): sliced from the raw URL after /worker.
+    const marker = `/plugins/${req.params.id}/worker`;
+    const at = req.originalUrl.indexOf(marker);
+    const tail = at >= 0 ? req.originalUrl.slice(at + marker.length) : '';
+    const upstreamPath = tail === '' ? '/' : tail.startsWith('/') ? tail : `/${tail}`;
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(k.toLowerCase()) && typeof v === 'string') headers[k] = v;
     Object.assign(headers, principalHeaders(req));
     const hasJson = req.is('application/json') && req.body !== undefined && typeof req.body === 'object';
     const body = hasJson ? Buffer.from(JSON.stringify(req.body)) : null;
     if (body) { headers['content-type'] = 'application/json'; headers['content-length'] = String(body.length); }
-    const up = http.request({ socketPath: stats.socket, path: `/${rest}${q}`, method: req.method, headers }, (r) => {
+    const up = http.request({ socketPath: stats.socket, path: upstreamPath, method: req.method, headers }, (r) => {
       res.status(r.statusCode ?? 502);
       for (const [k, v] of Object.entries(r.headers)) if (v !== undefined && !['connection', 'keep-alive', 'transfer-encoding'].includes(k)) res.setHeader(k, v as string | string[]);
       r.pipe(res);

@@ -134,6 +134,7 @@ removed. Anything not listed is refused: `The plugin "<id>" lacks the permission
 | `read:ledger` | a project's ledger card and item sources |
 | `threads:read-storage` | a thread key may read this plugin's documents |
 | `threads:write-storage` | a thread key may write them; the daemon stamps the writing thread on the document |
+| `threads:call-worker` | a thread key may call the plugin's worker through the proxy |
 | `storage` | implied: the plugin's own documents and settings |
 
 ## Storage and settings routes
@@ -205,6 +206,32 @@ page, and at most three run at once per plugin (a fourth gets 429). A plugin's p
 `POST /api/plugins/<id>/assist` with the same body. A plugin that judges in the browser
 should claim its result document before it calls (the Prompt coach does), or every open tab
 pays for the same call.
+
+## The worker
+
+`worker` in `plugin.json` names a process the daemon runs while the plugin is enabled:
+
+```json
+"worker": { "command": "node", "args": ["worker/index.js"], "env": {}, "jobs": [{ "id": "morning", "cron": "0 7 * * 1-5" }] }
+```
+
+- It starts in the plugin folder with the daemon's environment (minus its keys), `DISPATCH_PLUGIN`,
+  `DISPATCH_PLUGIN_AUTH_FILE` (the plugin's key), `DISPATCH_API`, and `DISPATCH_PLUGIN_SOCKET` (a
+  Unix socket path it may listen on). It restarts on exit with backoff (1 s, 2 s, 4 s … 60 s) and
+  stays down after ten crashes in a row (the first run counts); the Plugins page shows the state and offers Restart. A worker exits on SIGTERM; the daemon sends SIGKILL three seconds later.
+- Its stdout and stderr go to `~/Library/Logs/dispatch/plugins/<id>.log` (rotated at 5 MB); the
+  Plugins page shows the last lines (Logs), and `GET /api/plugins/<id>/logs?lines=200` serves them to the owner.
+- **The feed**: the daemon writes events to the worker's **stdin**, one JSON object per line: the
+  `thread:*` events (without prompt text unless the plugin has `read:prompts`), the plugin's own
+  `plugin:data` and `plugin:settings`, and `plugin:job { id, at }` when a job's cron minute comes
+  (`min hour dom mon dow`, local wall time, so a job in the repeated hour of a fall-back night fires twice and one in the skipped hour of a spring-forward night not at all; a minute missed while the daemon was down is not replayed).
+  No key may open the events WebSocket, so this is how a worker hears the daemon. A worker that
+  does not read its stdin loses the oldest lines past 500 lines or 4 MB (a single line over 1 MB is dropped with a note in the log); the daemon never waits for it.
+- **The socket**: a worker that listens on `DISPATCH_PLUGIN_SOCKET` is reachable at
+  `/api/plugins/<id>/worker/<path>`: the owner, the plugin's own key, and thread keys when the
+  plugin grants `threads:call-worker`. The daemon forwards the method, path, query, headers and
+  body, drops the caller's credential, and adds `X-Dispatch-Principal` (`owner`, `thread:<id>`,
+  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialised (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch(d.id, 'jobs/run', { method: 'POST' })`.
 
 ## Bundled plugins
 

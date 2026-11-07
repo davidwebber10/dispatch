@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
-import { PluginWorkers, LOG_MAX_BYTES, socketPathFor, SOCKET_PATH_MAX } from '../../src/plugins/workers.js';
+import { PluginWorkers, LOG_MAX_BYTES, QUEUE_MAX_BYTES, socketPathFor, SOCKET_PATH_MAX } from '../../src/plugins/workers.js';
 import { ThreadEvents } from '../../src/plugins/thread-events.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
 
@@ -80,9 +80,9 @@ describe('PluginWorkers', () => {
     plugin('w3', [], { args: ['worker.js', '--crash'] });
     const ww = start({ maxCrashes: 3 });
     await until(() => ww.stats('w3')?.state === 'crashed');
-    expect(ww.stats('w3')).toMatchObject({ state: 'crashed', pid: null, restarts: 3 });
+    expect(ww.stats('w3')).toMatchObject({ state: 'crashed', pid: null, restarts: 2 });
     expect(ww.stats('w3')!.lastExit).toMatchObject({ code: 1 });
-    expect(lines('w3').filter((l) => l.start)).toHaveLength(4); // the first run and three retries
+    expect(lines('w3').filter((l) => l.start)).toHaveLength(3); // three crashes in a row is the cap: the first run and two retries
     // The author fixes the worker and presses Restart.
     fs.writeFileSync(path.join(dir, 'w3', 'plugin.json'), JSON.stringify({ id: 'w3', name: 'w3', version: '1', worker: { command: process.execPath, args: ['worker.js'], env: { OUT: outFile('w3') } } }));
     ww.restart('w3');
@@ -116,6 +116,52 @@ describe('PluginWorkers', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(ww.stats('deaf')!.queued).toBeLessThanOrEqual(500);
     expect(ww.stats('deaf')!.state).toBe('running');
+  });
+
+  it('a command that is not on PATH shows crashed with the error in the log; disable and enable work after it', async () => {
+    plugin('ghost', [], { command: 'definitely-not-a-command-xyz' });
+    const ww = start({ maxCrashes: 2 });
+    await until(() => ww.stats('ghost')?.state === 'crashed');
+    expect(ww.stats('ghost')).toMatchObject({ pid: null, state: 'crashed' });
+    expect(ww.logTail('ghost', 20)).toMatch(/ENOENT|cannot start/);
+    reg.setEnabled('ghost', false); ww.sync();
+    await until(() => ww.stats('ghost')?.state === 'stopped');
+    fs.writeFileSync(path.join(dir, 'ghost', 'plugin.json'), JSON.stringify({ id: 'ghost', name: 'ghost', version: '1', worker: { command: process.execPath, args: ['worker.js'], env: { OUT: outFile('ghost') } } }));
+    reg.setEnabled('ghost', true); ww.sync();
+    await until(() => ww.stats('ghost')?.state === 'running');
+  });
+
+  it('enable right after disable ends with the worker running', async () => {
+    plugin('flip', [], {});
+    const ww = start();
+    await until(() => ww.stats('flip')?.state === 'running');
+    reg.setEnabled('flip', false); ww.sync();
+    reg.setEnabled('flip', true); ww.sync();
+    await until(() => ww.stats('flip')?.state === 'running' && !ww.stats('flip')!.lastExit === false, 6000);
+    await until(() => ww.stats('flip')?.state === 'running');
+    expect(ww.stats('flip')!.lastExit).not.toBeNull();
+  });
+
+  it('the feed queue is capped in bytes as well as lines, and a single oversize line is dropped with a note', async () => {
+    plugin('deaf2', ['read:prompts'], { args: ['worker.js', '--ignore-stdin'] });
+    const ww = start();
+    await until(() => ww.stats('deaf2')?.state === 'running');
+    const big = 'x'.repeat(200_000);
+    for (let i = 0; i < 100; i++) te.onPrompt('t1', `${big} ${i}`, 'user');
+    expect(ww.stats('deaf2')!.queuedBytes).toBeLessThanOrEqual(QUEUE_MAX_BYTES);
+    te.onPrompt('t1', 'y'.repeat(QUEUE_MAX_BYTES + 10), 'user');
+    await until(() => ww.logTail('deaf2', 5).includes('dropped'));
+  });
+
+  it('the temp-folder fallback for the socket refuses a folder it does not own or that is open to others', () => {
+    const longRun = path.join(os.tmpdir(), 'y'.repeat(120));
+    const shared = path.join(fs.realpathSync(os.tmpdir()), 'dispatch-run');
+    fs.rmSync(shared, { recursive: true, force: true });
+    fs.mkdirSync(shared, { mode: 0o777 }); fs.chmodSync(shared, 0o777);
+    const moved = socketPathFor(longRun, 'daily-rundown');
+    expect(moved.startsWith(shared + path.sep)).toBe(false);
+    expect((fs.statSync(path.dirname(moved)).mode & 0o777)).toBe(0o700);
+    fs.rmSync(shared, { recursive: true, force: true });
   });
 
   it('a socket path that would be too long for a Unix socket moves to a short private folder under the temp dir', () => {

@@ -85,6 +85,13 @@ describe('plugin worker routes', () => {
     expect((await request(app).get('/api/plugins/open/worker/ping').set(asPlugin('closed'))).status).toBe(403);
   });
 
+  it('the path reaches the worker as the caller encoded it', async () => {
+    const r = await request(app).get('/api/plugins/open/worker/files/a%20b/c%2Fd?q=x%20y');
+    expect(r.status).toBe(200);
+    expect(r.body.url).toBe('/files/a%20b/c%2Fd?q=x%20y');
+    expect((await request(app).get('/api/plugins/open/worker')).body.url).toBe('/');
+  });
+
   it('no worker: 502 no_worker; an unknown plugin is 404', async () => {
     const r = await request(app).get('/api/plugins/noworker/worker/ping');
     expect(r.status).toBe(502);

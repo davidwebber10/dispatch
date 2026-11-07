@@ -243,7 +243,7 @@ export function PluginsSection() {
 
       <Modal open={logsOf !== null} onClose={() => setLogsOf(null)} title={logsOf ? `Worker log · ${logsOf}` : 'Worker log'} maxWidth={760}>
         <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
-        <div style={{ ...note, marginTop: 8 }}>The last 200 lines of ~/Library/Logs/dispatch/plugins/{logsOf}.log, refreshed every two seconds.</div>
+        <div style={{ ...note, marginTop: 8 }}>The last 200 lines of plugins/{logsOf}.log in the daemon's log folder, refreshed every two seconds.</div>
       </Modal>
       <ConfirmModal open={removing !== null} title="Remove this plugin?" danger confirmLabel="Remove plugin"
         message={removing ? `The folder ~/.dispatch/plugins/${removing.id} and everything in it will be deleted.` : ''}
