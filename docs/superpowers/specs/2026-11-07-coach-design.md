@@ -66,6 +66,8 @@ works on Judgment first.
 
 A level name (1–6: Asker, Briefer, Delegator, Parallel operator, Systems builder, Agent manager) may appear only
 as an optional summary on the Coach screen. The five measures compare a person only with their own past.
+The five measure bars (0–100, a trend arrow, a "focus" label on the weakest) **show on the Coach screen by
+default** (owner, 2026-11-07); a setting hides them, and the Coach uses the measures either way.
 
 ## 4. What the person sees
 
@@ -83,8 +85,12 @@ as an optional summary on the Coach screen. The five measures compare a person o
 
 ### 4.2 Where cards appear
 - **Under the message box, after a turn finishes** (never while typing). Desktop and phone (phone can be off).
-- **The Coach tab in the right column** (the new core `inspectorTabs` contribution, built 2026-11-07): one card
-  for the open thread, and the five measures. On the phone it opens from the thread's ⋯ menu.
+- **The Coach tab in the right column** (the new core `inspectorTabs` contribution, built 2026-11-07) is **about
+  the open thread** (owner, 2026-11-07): this thread's card(s); what the Coach sees in this thread (for example
+  your turns vs its hands-off time, whether a plan was asked for, repeats of other threads); the goal lines that
+  this thread touches; **Review this thread**; and the chat, scoped to this thread by default ("About this
+  thread" · "About me"). With no thread open, it says so and links to the Coach screen. The five measure bars
+  live on the Coach screen, not in the tab. On the phone it opens from the thread's ⋯ menu.
 - **The Coach screen** (its plugin view): card history, the five measures, "What the Coach knows", cost, settings.
 - **The weekly recap** (mockup part 5): in the app, Monday, only after 5 active days of data. Three observed
   patterns linked to outcomes, one "stretch" for the week with a one-click start, one line on what the Coach
