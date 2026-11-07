@@ -73,6 +73,8 @@ describe('<AllThreadsView>', () => {
     render(<AllThreadsView onOpenThread={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Thread options' }));
     const menu = screen.getByRole('menu');
+    // The maintenance rows (Copy thread ID, Reload) sit behind the sheet's More (2026-11-07).
+    fireEvent.click(within(menu).getByRole('button', { name: 'More' }));
     for (const name of ['Thread details', 'Rename thread', 'Copy thread ID', 'Branch thread', 'Reload thread', 'Archive thread']) {
       expect(within(menu).getByRole('button', { name })).toBeInTheDocument();
     }
@@ -85,6 +87,9 @@ describe('<AllThreadsView>', () => {
     useTabs.setState({ byProject: { A: [t('c1', 'A', 'Codex work', '2026-10-28T10:00:00Z', { type: 'codex' })], B: [] } } as any);
     render(<AllThreadsView onOpenThread={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Thread options' }));
+    // On a phone the row sits behind the sheet's More (2026-11-07); a desktop menu lists it directly.
+    const more = within(screen.getByRole('menu')).queryByRole('button', { name: 'More' });
+    if (more) fireEvent.click(more);
     fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Copy thread ID' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('c1'));
     const { useHint } = await import('../../stores/hint');

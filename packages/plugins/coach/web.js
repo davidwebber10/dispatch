@@ -1036,7 +1036,7 @@ export function createCoach(d, deps = {}) {
     settings: [{ id: 'coach', label: 'Coach', blurb: 'How often, what it may spend, what it remembers', icon: 'sparkle', Component: Settings }],
     slots: [{ id: 'card', slot: 'composer.before', Component: Card }],
     inspectorTabs: [{ id: 'coach', label: 'Coach', icon: 'sparkle', Component: CoachTab }],
-    threadMenu: [{ id: 'review', label: 'Review this thread', onPick: ({ tab }) => { if (tab && tab.id) void requestReview({ kind: 'thread', ids: [tab.id] }); if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }],
+    threadMenu: [{ id: 'review', label: 'Review this thread', icon: 'list', onPick: ({ tab }) => { if (tab && tab.id) void requestReview({ kind: 'thread', ids: [tab.id] }); if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }],
     commands: [
       { id: 'mute-coach', label: 'Mute coach', run: () => { void muteAs('hour'); } },
       { id: 'unmute-coach', label: 'Unmute coach', run: () => { void doUnmute(); } },
