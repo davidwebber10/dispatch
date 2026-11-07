@@ -31,6 +31,8 @@ export interface PluginRow extends Partial<PluginManifest> {
   keyed: boolean;
   /** Hook script counters, when the daemon runs hooks (slice 3). */
   hooks?: { runs: number; failures: number; dropped: number };
+  /** The worker's state (spec section 4), when the manifest has one and a supervisor runs. */
+  workerStats?: import('./workers.js').WorkerStats;
   /** The assist meter, once the plugin made a call. */
   assist?: { calls: number; inputTokens: number; outputTokens: number };
   /** Served from the Dispatch checkout (spec section 10): updates with Dispatch, cannot be removed. */
@@ -77,6 +79,14 @@ export class PluginRegistry {
   private hookStats: ((id: string) => { runs: number; failures: number; dropped: number }) | null = null;
   setHookStatsProvider(fn: (id: string) => { runs: number; failures: number; dropped: number }): void { this.hookStats = fn; }
   private assistTotals: ((id: string) => { calls: number; inputTokens: number; outputTokens: number }) | null = null;
+  private workerStats: ((id: string) => import('./workers.js').WorkerStats | null) | null = null;
+  setWorkerStatsProvider(fn: (id: string) => import('./workers.js').WorkerStats | null): void { this.workerStats = fn; }
+  /** Called after every announcement (a folder change, enable, disable): the workers follow. */
+  private workerSync: (() => void) | null = null;
+  setWorkerSync(fn: () => void): void { this.workerSync = fn; }
+  private taps = new Set<(e: Record<string, unknown>) => void>();
+  /** Hear every event this registry broadcasts (plugin:changed, plugin:data, plugin:settings). */
+  tapBroadcast(fn: (e: Record<string, unknown>) => void): () => void { this.taps.add(fn); return () => { this.taps.delete(fn); }; }
   setAssistTotalsProvider(fn: (id: string) => { calls: number; inputTokens: number; outputTokens: number }): void { this.assistTotals = fn; }
 
   constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string; bundledDir?: string } = {}) {
@@ -97,6 +107,8 @@ export class PluginRegistry {
 
   // ── keys (spec section 6): one live key per enabled plugin, in ~/.dispatch/keys/plugin-<id> ──
   private keyFile(id: string): string | null { return this.keyDir ? path.join(this.keyDir, `plugin-${id}`) : null; }
+  /** Where the plugin's key file lives (for processes the daemon starts for it). */
+  keyFilePath(id: string): string | null { return this.keyFile(id); }
 
   private issueKey(id: string): void {
     if (!this.keys) return;
@@ -239,8 +251,9 @@ export class PluginRegistry {
     if (m.model?.instructions && !this.resolveInside(folder, m.model.instructions)) return this.broken(id, stamp, `plugin.json "model.instructions" names a file that does not exist: ${m.model.instructions}`);
     for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
     const assist = this.assistTotals?.(id);
+    const worker = m.worker ? this.workerStats?.(id) ?? null : null;
     const enabled = state.disabled.includes(id) ? false : where.bundled ? (m.enabledByDefault === true || state.enabled.includes(id)) : true;
-    return { ...m, enabled, stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...place };
+    return { ...m, enabled, stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...(worker ? { workerStats: worker } : {}), ...place };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
@@ -334,14 +347,18 @@ export class PluginRegistry {
   }
 
   /** Send any plugin event to every client (the routes use it for storage changes). */
-  broadcast(event: Record<string, unknown>): void { this.broadcaster.broadcast(event); }
+  broadcast(event: Record<string, unknown>): void {
+    this.broadcaster.broadcast(event);
+    for (const fn of this.taps) { try { fn(event); } catch { /* a tap must not break a broadcast */ } }
+  }
 
   /** Tell every client the plugin changed (or went away): `plugin:changed { id, plugin }`. */
   announce(id: string): void {
     const row = this.get(id);
     // A folder that appeared, was fixed, or went away: its key follows (spec section 6).
     this.syncKey(row, id);
-    this.broadcaster.broadcast({ type: 'plugin:changed', id, plugin: row ? this.get(id) ?? null : null });
+    this.broadcast({ type: 'plugin:changed', id, plugin: row ? this.get(id) ?? null : null });
+    try { this.workerSync?.(); } catch { /* a worker failure must not break an announcement */ }
   }
 
   /** Watch the folder; a burst of writes to one plugin becomes one announcement. */

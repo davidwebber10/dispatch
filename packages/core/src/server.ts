@@ -106,6 +106,7 @@ import { PluginRegistry } from './plugins/registry.js';
 import { migratePreviews } from './plugins/previews-migration.js';
 import { ThreadEvents } from './plugins/thread-events.js';
 import { PluginHooks } from './plugins/hooks.js';
+import { PluginWorkers } from './plugins/workers.js';
 import { createAssistRunner, commandAssistRunner, type AssistRunner } from './assist/run.js';
 import * as pluginData from './db/plugin-data.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
@@ -653,6 +654,12 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Hook scripts run on thread events (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
   const pluginHooks = new PluginHooks(plugins, threadEvents, { api: () => daemonApi });
   plugins.setHookStatsProvider((id) => pluginHooks.stats(id));
+  // Workers (spec section 4): one process per enabled plugin with a worker, fed on stdin.
+  const pluginWorkers = new PluginWorkers(plugins, threadEvents, { logDir: platform.logDir(), runDir: path.join(dataDir, 'run'), api: () => daemonApi });
+  plugins.setWorkerStatsProvider((id) => pluginWorkers.stats(id));
+  plugins.setWorkerSync(() => pluginWorkers.sync());
+  app.locals.pluginWorkers = pluginWorkers;
+  pluginWorkers.sync();
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
@@ -1263,6 +1270,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     telemetryLoop.stop();
     plugins.stop();
     pluginHooks.stop();
+    void pluginWorkers.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
