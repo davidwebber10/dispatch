@@ -376,6 +376,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
   });
 
+  // GET /api/codex/model-efforts — the efforts each Codex model takes, as the running app-server reports them
+  // (they differ by model). `live` is null when no Codex app-server is running; the client then uses the
+  // built-in table (providers/codex-efforts.ts).
+  router.get('/codex/model-efforts', async (_req, res) => {
+    try { res.json({ live: await sessionService.codexModelEfforts() }); }
+    catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
+  });
+
   // PATCH /api/terminals/:terminalId/settings { model?, effort? } — change a Pretty thread's model and/or
   // effort (the picker, a typed /model). Saved in the thread's config first, then applied to the live
   // agent with no restart (Claude waits for a turn in flight). `model: null` resets a Claude thread to its
@@ -392,9 +400,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       change.effort = effort;
     }
     try {
-      const { terminal, applied } = await sessionService.setThreadSettings(req.params.terminalId, change);
+      const { terminal, applied, clearedEffort } = await sessionService.setThreadSettings(req.params.terminalId, change);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
-      res.json({ terminal, applied });
+      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort } : {}) });
     } catch (e: any) {
       res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }

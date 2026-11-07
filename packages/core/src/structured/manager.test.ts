@@ -84,6 +84,8 @@ rl.on('line', (l) => {
   const id = m.request_id;
   if (m.request.subtype === 'set_model' && m.request.model === 'bad') {
     console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: id, error: "Model 'bad' not found" } }));
+  } else if (m.request.subtype === 'apply_flag_settings' && m.request.settings.effortLevel === 'refused') {
+    console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: id, error: 'effort refused' } }));
   } else if (m.request.subtype === 'set_model' && m.request.model === 'silent') {
     // never answers
   } else {
@@ -165,6 +167,25 @@ rl.on('line', (l) => {
       expect(t.mgr.isTurnOpen('t1')).toBe(false);
       t.mgr.sendMessage('t1', 'hi');
       expect(t.mgr.isTurnOpen('t1')).toBe(true);
+    } finally { t.done(); }
+  });
+
+  it('says the model was already changed when the effort is refused afterwards (review round 1)', async () => {
+    const t = await boot();
+    try {
+      const r = await t.mgr.applySettings('t1', { model: 'opus', effort: 'refused' });
+      expect(r).toEqual({ ok: false, error: 'effort refused', partial: { model: true } });
+      const effortOnly = await t.mgr.applySettings('t1', { effort: 'refused' });
+      expect(effortOnly).toEqual({ ok: false, error: 'effort refused' });
+    } finally { t.done(); }
+  });
+
+  it('postNotice puts a line in the replay ring and shows it to the viewers', async () => {
+    const t = await boot();
+    try {
+      t.mgr.postNotice('t1', 'Could not change the model.');
+      expect(t.events.some((e) => e.type === 'system' && e.subtype === 'settings_refused' && e.message === 'Could not change the model.')).toBe(true);
+      expect(t.mgr.getEvents('t1').some((e: any) => e.subtype === 'settings_refused')).toBe(true);
     } finally { t.done(); }
   });
 });

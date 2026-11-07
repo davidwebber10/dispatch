@@ -159,8 +159,13 @@ export interface StructuredSpawnOpts {
 }
 
 /** A model and/or effort change for a live thread (see IStructuredManager.applySettings). */
-export interface ThreadSettingsChange { model?: string | null; effort?: string }
-export type ApplyResult = { ok: true } | { ok: false; error: string };
+export interface ThreadSettingsChange {
+  model?: string | null;
+  /** A level, or null to drop the picked one (Codex: the new model does not take it). Never sent by a client. */
+  effort?: string | null;
+}
+/** `partial.model`: the model change went through before the effort was refused (the caller puts it back). */
+export type ApplyResult = { ok: true } | { ok: false; error: string; partial?: { model?: boolean } };
 
 /** A permission decision written back to a blocked structured session. */
 export type PermissionDecision =
@@ -237,6 +242,12 @@ export interface IStructuredManager extends EventEmitter {
   applySettings?(terminalId: string, change: ThreadSettingsChange, timeoutMs?: number): Promise<ApplyResult>;
   /** True while a turn is in flight (Claude only; absent elsewhere). A settings change waits for it. */
   isTurnOpen?(terminalId: string): boolean;
+  /** Show the viewers a line in the thread (a refused model/effort change), kept in the replay ring. */
+  postNotice?(terminalId: string, message: string): void;
+  /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
+  modelEfforts?(): Record<string, string[]> | null;
+  /** Codex: ask the app-server for them now (cached for a while). null when no app-server is running. */
+  loadModelEfforts?(): Promise<Record<string, string[]> | null>;
   noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void;
   getPending(terminalId: string): PendingPermission | null;
   getSessionId(terminalId: string): string | undefined;
@@ -755,11 +766,21 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       const r = await this.control(terminalId, { subtype: 'set_model', model: change.model }, timeoutMs);
       if (!r.ok) return r;
     }
-    if (change.effort !== undefined) {
+    if (change.effort !== undefined && change.effort !== null) {
       const r = await this.control(terminalId, { subtype: 'apply_flag_settings', settings: { effortLevel: change.effort } }, timeoutMs);
-      if (!r.ok) return r;
+      // The model was already changed on the process: say so, so the caller can put it back.
+      if (!r.ok) return change.model !== undefined ? { ...r, partial: { model: true } } : r;
     }
     return { ok: true };
+  }
+
+  postNotice(terminalId: string, message: string): void {
+    const s = this.sessions.get(terminalId);
+    if (!s) return;
+    const ev = { type: 'system', subtype: 'settings_refused', message };
+    s.events.push(ev);
+    if (s.events.length > MAX_EVENTS) s.events.shift();
+    this.emit('event', terminalId, ev);
   }
 
   isTurnOpen(terminalId: string): boolean { return this.sessions.get(terminalId)?.turnOpen === true; }

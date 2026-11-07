@@ -61,4 +61,26 @@ describe('thread settings routes', () => {
     expect(res.body.error).toMatch(/effort/);
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('PATCH passes the cleared effort back (Codex model switch)', async () => {
+    vi.spyOn(svc, 'setThreadSettings').mockResolvedValue({ terminal, applied: 'now', clearedEffort: 'ultra' });
+    const res = await request(app).patch('/api/terminals/t1/settings').send({ model: 'gpt-6-luna' }).expect(200);
+    expect(res.body).toEqual({ terminal, applied: 'now', clearedEffort: 'ultra' });
+  });
+
+  it('GET /codex/model-efforts returns the app-server list, or null', async () => {
+    const spy = vi.spyOn(svc, 'codexModelEfforts').mockResolvedValue({ 'gpt-6-luna': ['low', 'max'] });
+    const res = await request(app).get('/api/codex/model-efforts').expect(200);
+    expect(res.body).toEqual({ live: { 'gpt-6-luna': ['low', 'max'] } });
+    spy.mockResolvedValue(null);
+    expect((await request(app).get('/api/codex/model-efforts').expect(200)).body).toEqual({ live: null });
+  });
+
+  it('a refused pick the daemon rolled back reloads the web: the listener broadcasts tabs-changed', async () => {
+    const events: any[] = [];
+    const { wireTerminalChanged } = await import('../../src/server.js');
+    wireTerminalChanged(svc, { broadcast: (e: any) => events.push(e) } as never);
+    (svc as any).onTerminalChanged('s9');
+    expect(events).toEqual([{ type: 'session:tabs-changed', sessionId: 's9' }]);
+  });
 });

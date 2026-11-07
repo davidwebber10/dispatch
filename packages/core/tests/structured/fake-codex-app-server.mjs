@@ -265,6 +265,15 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.method === 'thread/compact/start') { respond(msg.id, {}); return; }
+  if (msg.method === 'model/list') {
+    logRequest('model/list', msg.params);
+    const eff = (list) => list.map((reasoningEffort) => ({ reasoningEffort, description: '' }));
+    respond(msg.id, { data: [
+      { model: 'gpt-6-astra', id: 'gpt-6-astra', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) },
+      { model: 'gpt-6-luna', id: 'gpt-6-luna', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max']) },
+    ], nextCursor: null });
+    return;
+  }
   // Unknown requests still need a response so the client's pending map drains.
   if (msg.id !== undefined && msg.method) respond(msg.id, {});
 });

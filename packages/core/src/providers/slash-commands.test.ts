@@ -91,7 +91,7 @@ describe('validateThreadSettings', () => {
     expect(validateThreadSettings('claude-code', {})).toMatch(/model or an effort/);
     expect(validateThreadSettings('codex', { model: null })).toMatch(/pick a model/i);
     expect(validateThreadSettings('claude-code', { effort: 'bogus' })).toMatch(/effort/);
-    expect(validateThreadSettings('codex', { effort: 'max' })).toMatch(/effort/);
+    expect(validateThreadSettings('codex', { effort: 'turbo' })).toMatch(/effort/);
     expect(validateThreadSettings('claude-code', { model: 'a b' })).toMatch(/model/);
     expect(validateThreadSettings('claude-code', { model: 42 as any })).toMatch(/model/);
   });
@@ -103,5 +103,14 @@ describe('validateThreadSettings', () => {
 
 it('exposes the effort levels the picker offers', () => {
   expect(EFFORT_LEVELS['claude-code']).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
-  expect(EFFORT_LEVELS.codex).toEqual(['low', 'medium', 'high', 'xhigh']);
+  expect(EFFORT_LEVELS.codex).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']);
+});
+
+describe('validateThreadSettings — Codex efforts per model', () => {
+  it('checks against the efforts of the thread\'s model when given', () => {
+    const luna = ['low', 'medium', 'high', 'xhigh', 'max'];
+    expect(validateThreadSettings('codex', { effort: 'ultra' }, { codexEfforts: luna, codexModel: 'gpt-6-luna' })).toMatch(/gpt-6-luna does not take that effort.*low, medium, high, xhigh, max/);
+    expect(validateThreadSettings('codex', { effort: 'max' }, { codexEfforts: luna })).toBeNull();
+    expect(validateThreadSettings('codex', { effort: 'ultra' })).toBeNull(); // no model known: any model's effort
+  });
 });

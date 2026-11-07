@@ -1,6 +1,7 @@
 // The "/" command registry for Pretty threads, overseers and Chat. Pure and import-light on
 // purpose: the web imports it too (like catalog.ts), so the menu and the daemon's checks cannot drift.
 import { HARNESSES } from './catalog.js';
+import { CODEX_ALL_EFFORTS } from './codex-efforts.js';
 
 export type SlashSurface = 'thread' | 'overseer' | 'chat';
 export type SlashHarness = 'claude-code' | 'codex' | 'grok' | 'opencode';
@@ -28,7 +29,8 @@ const KNOWN = new Set(DEFS.map((d) => d.name));
 /** The effort levels each harness offers. Claude's list is `CLAUDE_EFFORT_LEVELS` (sessions/cc-sessions.ts). */
 export const EFFORT_LEVELS: Record<'claude-code' | 'codex', readonly string[]> = {
   'claude-code': ['low', 'medium', 'high', 'xhigh', 'max'],
-  codex: ['low', 'medium', 'high', 'xhigh'],
+  // Every effort any Codex model takes. Which of them a given model takes is codexEffortsFor (codex-efforts.ts).
+  codex: CODEX_ALL_EFFORTS,
 };
 
 const LATER = 'Not yet available for this agent';
@@ -94,7 +96,12 @@ const MODEL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,79}$/;
  * Check a model/effort change for a harness. Returns an error text, or null when it is fine.
  * `model: null` resets a Claude thread to the default; Codex cannot unset a thread's model.
  */
-export function validateThreadSettings(harness: string, change: { model?: string | null; effort?: string }): string | null {
+export function validateThreadSettings(
+  harness: string,
+  change: { model?: string | null; effort?: string },
+  /** Codex: the efforts the thread's model (after this change) takes. Default: all that any model takes. */
+  ctx?: { codexEfforts?: readonly string[]; codexModel?: string },
+): string | null {
   if (harness !== 'claude-code' && harness !== 'codex') return LATER + '.';
   if (change.model === undefined && change.effort === undefined) return 'Send a model or an effort to change.';
   if (change.model !== undefined) {
@@ -109,8 +116,12 @@ export function validateThreadSettings(harness: string, change: { model?: string
       return 'That model does not run on Codex. Pick a Codex model.';
     }
   }
-  if (change.effort !== undefined && !EFFORT_LEVELS[harness].includes(change.effort as string)) {
-    return `Unknown effort level. Choose one of: ${EFFORT_LEVELS[harness].join(', ')}.`;
+  if (change.effort !== undefined) {
+    const allowed = harness === 'codex' && ctx?.codexEfforts ? ctx.codexEfforts : EFFORT_LEVELS[harness];
+    if (!allowed.includes(change.effort as string)) {
+      const who = harness === 'codex' && ctx?.codexModel ? `${ctx.codexModel} does not take that effort. ` : 'Unknown effort level. ';
+      return `${who}Choose one of: ${allowed.join(', ')}.`;
+    }
   }
   return null;
 }

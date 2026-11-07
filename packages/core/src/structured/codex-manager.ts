@@ -242,6 +242,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private conn?: CodexConnection;
   private connSpec?: { command: string; args: string[]; cwd: string; env: Record<string, string> };
   private defaultEnv: Record<string, string> = {};
+  private effortCache?: { at: number; map: Record<string, string[]> };
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly releaseTimeoutMs: number;
@@ -748,8 +749,47 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       // init() resets the usage gauge, so it waits for a turn in flight to end; the web shows the pick meanwhile.
       if (!session.turnActive) this.applyActions(session, session.translator.init(change.model));
     }
-    if (change.effort) session.picked.effort = change.effort;
+    if (change.effort === null) delete session.picked.effort; // the new model does not take the old pick
+    else if (change.effort) session.picked.effort = change.effort;
     return { ok: true };
+  }
+
+  postNotice(terminalId: string, message: string): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message });
+  }
+
+  /** The efforts each model takes, from the last `model/list` (see loadModelEfforts), or null if never asked. */
+  modelEfforts(): Record<string, string[]> | null { return this.effortCache?.map ?? null; }
+
+  /**
+   * Ask the running app-server which efforts each model takes (live-checked: they differ by model). Cached
+   * for ten minutes. null when no app-server is running or it did not answer: the caller falls back to
+   * the built-in table (codex-efforts.ts).
+   */
+  async loadModelEfforts(): Promise<Record<string, string[]> | null> {
+    const c = this.effortCache;
+    if (c && Date.now() - c.at < 10 * 60_000) return c.map;
+    const conn = this.conn;
+    if (!conn?.alive) return c?.map ?? null;
+    try {
+      await conn.ready;
+      const map: Record<string, string[]> = {};
+      let cursor: string | null = null;
+      for (let page = 0; page < 5; page++) {
+        const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, 5000);
+        for (const m of res?.data ?? []) {
+          const efforts = (m?.supportedReasoningEfforts ?? []).map((e: any) => e?.reasoningEffort).filter((e: unknown): e is string => typeof e === 'string' && !!e);
+          if (typeof m?.model === 'string' && efforts.length) map[m.model] = efforts;
+        }
+        cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : null;
+        if (!cursor) break;
+      }
+      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map };
+      return this.effortCache?.map ?? null;
+    } catch {
+      return c?.map ?? null;
+    }
   }
 
   /**

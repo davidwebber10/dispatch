@@ -164,3 +164,50 @@ describe('a model or effort changed inside the thread survives a relaunch', () =
     expect(structured.opts[0].args).not.toContain('--effort');
   });
 });
+
+// Review round 1 (PR #155): the picker's saved choice survives a relaunch even when the transcript still shows the old model.
+describe('a model or effort picked in the picker survives a relaunch', () => {
+  it('Pretty -> CLI before the next turn: the CLI starts with the pick, not the transcript', async () => {
+    seed('p1', { config: { model: 'fable', transport: 'structured' }, status: 'waiting' });
+    writeTranscript('ext-1', [turn('claude-fable-5-1', 'high')]);
+    structured.live.add('p1');
+    await svc.setThreadSettings('p1', { model: 'haiku', effort: 'low' });
+    structured.live.delete('p1');
+    await svc.switchTransport('p1', 'pty');
+    const argv = pty.argvs[pty.argvs.length - 1];
+    expect(flag(argv, '--model')).toBe('haiku');
+    expect(flag(argv, '--effort')).toBe('low');
+    expect(cfg('p1')).toMatchObject({ model: 'haiku', effort: 'low' });
+  });
+
+  it('a daemon restart or /restart before the next turn keeps the pick', async () => {
+    seed('p2', { config: { model: 'fable', effort: 'high', transport: 'structured' }, status: 'waiting' });
+    await svc.setThreadSettings('p2', { model: 'sonnet', effort: 'low' }); // not running: saved only
+    writeTranscript('ext-1', [turn('claude-fable-5-1', 'high')]);
+    expect(svc.ensureStructuredAlive('p2')).toBe(true);
+    expect(flag(structured.opts[0].args, '--model')).toBe('sonnet');
+    expect(flag(structured.opts[0].args, '--effort')).toBe('low');
+  });
+
+  it('Default sticks: a Claude thread reset to Default restarts without --model', async () => {
+    seed('p3', { config: { model: 'opus', transport: 'structured' }, status: 'waiting' });
+    writeTranscript('ext-1', [turn('claude-opus-5-5', 'high')]);
+    await svc.setThreadSettings('p3', { model: null }); // not running: saved only
+    await svc.switchTransport('p3', 'pty');
+    expect(pty.argvs[pty.argvs.length - 1]).not.toContain('--model');
+    expect(cfg('p3').model).toBeUndefined();
+  });
+
+  it('after the pick took hold, a later /model in the CLI is followed again', async () => {
+    seed('p4', { config: { model: 'fable', transport: 'structured' }, status: 'waiting' });
+    await svc.setThreadSettings('p4', { model: 'haiku' });
+    writeTranscript('ext-1', [turn('claude-haiku-5-5', 'high')]); // a turn ran on the pick
+    await svc.switchTransport('p4', 'pty');
+    expect(cfg('p4').settingsPinned).toBeUndefined();
+    structured.live.delete('p4');
+    writeTranscript('ext-1', [turn('claude-haiku-5-5', 'high'), turn('claude-opus-5-5', 'high')]); // the owner ran /model in the CLI
+    pty.alive.delete('p4');
+    await svc.switchTransport('p4', 'structured');
+    expect(flag(structured.opts[structured.opts.length - 1].args, '--model')).toBe('opus');
+  });
+});
