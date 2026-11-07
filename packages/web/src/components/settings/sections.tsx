@@ -2,7 +2,7 @@ import { useMemo, type ComponentType } from 'react';
 import { usePluginRegistry, type PluginSettingsSection } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 import { PluginBoundary } from '../../plugins/PluginBoundary';
-import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle } from '@phosphor-icons/react';
+import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle, PuzzlePiece } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { AppearanceSection } from './AppearanceSection';
 import { NotificationsSection } from './NotificationsSection';
@@ -15,6 +15,7 @@ import { SecretsSection } from './SecretsSection';
 import { ToolsSection } from './ToolsSection';
 import { AccessSection } from './AccessSection';
 import { ServersSection } from './ServersSection';
+import { PluginsSection } from './PluginsSection';
 import { AboutSection } from './AboutSection';
 
 /**
@@ -30,7 +31,7 @@ import { AboutSection } from './AboutSection';
 export type SettingsSectionKey =
   | 'appearance' | 'notifications' | 'dictation'
   | 'agents' | 'accounts' | 'usage' | 'integrations' | 'secrets' | 'tools'
-  | 'devices' | 'servers' | 'about';
+  | 'devices' | 'servers' | 'plugins' | 'about';
 
 export type SettingsGroup = 'YOU' | 'AGENTS' | 'THIS MAC' | 'PLUGINS';
 export const SETTINGS_GROUPS: readonly SettingsGroup[] = ['YOU', 'AGENTS', 'THIS MAC'];
@@ -58,6 +59,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { key: 'tools', group: 'AGENTS', label: 'Tools', blurb: 'CLI tools installed and signed in', icon: Wrench, Component: ToolsSection },
   { key: 'devices', group: 'THIS MAC', label: 'Devices & access', blurb: 'Sign in a phone, signed-in devices', icon: DeviceMobile, Component: AccessSection },
   { key: 'servers', group: 'THIS MAC', label: 'Servers', blurb: 'Other Dispatch machines', icon: HardDrives, Component: ServersSection },
+  { key: 'plugins', group: 'THIS MAC', label: 'Plugins', blurb: 'Local plugins, safe mode', icon: PuzzlePiece, Component: PluginsSection },
   { key: 'about', group: 'THIS MAC', label: 'About & updates', blurb: 'Version, updates, setup, usage stats', icon: Info, Component: AboutSection },
 ];
 

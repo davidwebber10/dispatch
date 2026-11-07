@@ -17,7 +17,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test('renders the section nav, the daemon block, and the autosave footer', () => {
   render(<SettingsView />);
-  for (const label of ['Appearance', 'Notifications', 'Dictation', 'Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'About & updates']) {
+  for (const label of ['Appearance', 'Notifications', 'Dictation', 'Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'Plugins', 'About & updates']) {
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   }
   expect(screen.queryByRole('button', { name: 'General' })).toBeNull();
@@ -31,7 +31,7 @@ test('the nav is grouped YOU / AGENTS / THIS MAC, each holding its sections', ()
   const names = (g: string) => within(screen.getByRole('group', { name: g })).getAllByRole('button').map((b) => b.textContent);
   expect(names('YOU')).toEqual(['Appearance', 'Notifications', 'Dictation']);
   expect(names('AGENTS')).toEqual(['Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools']);
-  expect(names('THIS MAC')).toEqual(['Devices & access', 'Servers', 'About & updates']);
+  expect(names('THIS MAC')).toEqual(['Devices & access', 'Servers', 'Plugins', 'About & updates']);
 });
 
 test('opens on Appearance, and a deep link opens its section (old keys still work)', () => {
