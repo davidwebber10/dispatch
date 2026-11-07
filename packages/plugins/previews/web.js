@@ -244,7 +244,7 @@ export default function activate(d) {
   d.register(ID, {
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
-    threadMenu: [{ id: 'open', label: 'Previews', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId) }],
+    threadMenu: [{ id: 'open', label: 'Previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId) }],
     slots: [
       { id: 'project-eye', slot: 'project.header.actions', Component: ProjectEye },
       { id: 'thread-eye', slot: 'thread.header.actions', Component: ThreadEye },

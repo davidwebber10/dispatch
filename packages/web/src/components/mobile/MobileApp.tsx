@@ -335,28 +335,26 @@ export function MobileApp() {
       {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !inPlugins && !leafTab} onClose={() => setProjectMenu(false)} onArchived={back} />}
       <Slot name="app.overlay" />
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
-        lead={(close, row) => (
-          <>
-            {transport.applies && (
-              <button type="button" style={{ ...row, opacity: transport.canSwitch ? 1 : 0.5 }} disabled={!transport.canSwitch} title={transport.tip}
-                onClick={() => { close(); transport.request(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
-                <TerminalWindow size={17} />{transport.current === 'pretty' ? 'Switch to CLI' : 'Switch to Pretty'}
-                {!transport.canSwitch && transport.tip && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-tertiary)' }}>after a message</span>}
-                {transport.canSwitch && transport.midTurn && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-status-yellow)' }}>stops this turn</span>}
-              </button>
-            )}
-            {threadMenu && pluginTabs.map((p) => {
-              const PIcon = tabIcon(p.icon);
-              const tab = threadMenu.tab;
-              return (
-                <button key={p.key} type="button" style={row} onClick={() => { close(); setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }); }}>
-                  <PIcon size={17} />{p.label}
-                </button>
-              );
-            })}
-            <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />
-          </>
-        )} />
+        leadView={transport.applies ? (close, row) => {
+          // A short, quiet second line: why the switch is off, or that it stops the running turn.
+          const note = !transport.canSwitch && transport.tip ? 'After a message' : transport.canSwitch && transport.midTurn ? 'Stops this turn' : null;
+          return (
+            <button type="button" style={{ ...row, alignItems: note ? 'flex-start' : 'center', opacity: transport.canSwitch ? 1 : 0.5 }} disabled={!transport.canSwitch} title={transport.tip}
+              onClick={() => { close(); transport.request(transport.current === 'pretty' ? 'cli' : 'pretty'); }}>
+              {transport.current === 'pretty'
+                ? <TerminalWindow size={20} style={{ flexShrink: 0, marginTop: note ? 1 : 0 }} />
+                : <ChatCircleDots size={20} style={{ flexShrink: 0, marginTop: note ? 1 : 0 }} />}
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span>{transport.current === 'pretty' ? 'Switch to CLI' : 'Switch to Pretty'}</span>
+                {note && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{note}</span>}
+              </span>
+            </button>
+          );
+        } : undefined}
+        pluginRows={pluginTabs.map((p) => ({
+          key: p.key, label: p.label, icon: tabIcon(p.icon),
+          onPick: (tab) => setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }),
+        }))} />
       <PluginTabSheet tabKey={pluginSheet?.key ?? null} terminalId={pluginSheet?.terminalId ?? null} sessionId={pluginSheet?.sessionId ?? null} onClose={() => setPluginSheet(null)} />
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
