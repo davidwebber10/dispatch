@@ -102,6 +102,8 @@ import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
+import { PluginRegistry } from './plugins/registry.js';
+import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
@@ -253,6 +255,8 @@ interface CreateAppOptions {
   secretsDir?: string;
   /** Directory for bundled CLI tools (defaults to <secretsDir>/tools). */
   toolsDir?: string;
+  /** The plugins folder (defaults to <secretsDir>/plugins). */
+  pluginsDir?: string;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
   /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
@@ -385,6 +389,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
   const dispatchDir = options.secretsDir ?? platform.dataDir();
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
+  // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): no watcher here; startServer runs one.
+  const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion());
+  app.locals.plugins = plugins;
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dispatchDir, 'keys') });
   const agentService = new AgentService(db, sessionService, broadcaster);
@@ -425,7 +432,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     claudeLogin: new ClaudeLoginService(dispatchDir), secretsService, integrationsService, pushService,
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
-    broadcaster, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
+    broadcaster, plugins, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits,
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 
@@ -439,6 +446,8 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // SPA fallback returns index.html for any non-/api, non-WS GET.
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
+  // Plugin files, with or without a web build (the dev server proxies /plugins here).
+  app.get('/plugins/:id/*', ...pluginAssetHandler(plugins));
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
     app.get('/icons/:name', publicRoute, customIconHandler(dispatchDir));
     app.use('/assets', compressedAssets(path.join(webDist, 'assets')));
@@ -555,6 +564,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create broadcaster
   const broadcaster = createEventsBroadcaster(eventsWss);
+  const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion());
+  plugins.start();
   const authRequestService = new AuthRequestService(broadcaster);
 
   // Name once from the first submitted user prompt; transcript activity is a legacy
@@ -910,7 +921,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     db, sessionService, statusService, agentService, rolesService, authRequestService,
     claudeLogin, accounts, secretsService, integrationsService, pushService, ledgerService,
     toolsBase, toolsAuth, dataDir, repoRoot: resolveRepoRoot(),
-    broadcaster, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
+    broadcaster, plugins, terminalsBroadcaster: broadcaster, noCredentialStats, pairCodes, devices, cookiePath: BASE_PATH || '/',
     reachableAddresses: async () => {
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
@@ -923,6 +934,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // SPA fallback returns index.html for any non-/api, non-WS GET.
   const webDist = process.env.DISPATCH_WEB_DIST
     ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist');
+  // Plugin files, with or without a web build (the dev server proxies /plugins here).
+  app.get('/plugins/:id/*', ...pluginAssetHandler(plugins));
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
     // index.html is transformed (not sent as a file) so <base href> matches the mount
     // prefix. Read once at boot: the bundle is immutable for the life of the process.
@@ -1207,6 +1220,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     clearInterval(updateCheckInterval);
     for (const g of loopbackGuards) g.close();
     telemetryLoop.stop();
+    plugins.stop();
     clearInterval(agentSchedulerInterval);
     clearInterval(autoArchiveInterval);
     clearInterval(interimRecapInterval);
