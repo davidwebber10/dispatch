@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { PluginRegistry, PluginRow } from './registry.js';
 import type { ThreadEvents, ThreadEvent } from './thread-events.js';
 import { redactThreadEvent } from './thread-events.js';
@@ -35,6 +37,23 @@ export interface WorkerStats {
 export const LOG_MAX_BYTES = 5 * 1024 * 1024;
 const QUEUE_MAX = 500;
 const STOP_GRACE_MS = 3000;
+/** A Unix socket path is short: 104 bytes on macOS, 108 on Linux (with the terminator). */
+export const SOCKET_PATH_MAX = 100;
+/**
+ * The worker's socket path: `<runDir>/plugin-<id>.sock`, or, when that would be too long for a
+ * Unix socket (a long home folder, a long id), a hashed name in a private folder under the
+ * system temp dir. The folder is 0700, so only this user's processes can reach the socket.
+ */
+export function socketPathFor(runDir: string, id: string): string {
+  const plain = path.join(runDir, `plugin-${id}.sock`);
+  if (Buffer.byteLength(plain) <= SOCKET_PATH_MAX) return plain;
+  const dir = path.join(realTmp(), 'dispatch-run');
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* exists */ }
+  const h = createHash('sha256').update(`${runDir}\n${id}`).digest('hex').slice(0, 12);
+  return path.join(dir, `${h}.sock`);
+}
+function realTmp(): string { try { return fs.realpathSync(os.tmpdir()); } catch { return os.tmpdir(); } }
+
 const DEFAULT_BACKOFF = (n: number): number => Math.min(60_000, 1000 * 2 ** Math.max(0, n - 1));
 
 interface Worker {
@@ -154,7 +173,7 @@ export class PluginWorkers {
     if (!folder || !spec) return;
     let w = this.workers.get(row.id);
     if (!w) {
-      w = { id: row.id, child: null, state: 'stopped', restarts: 0, crashes: 0, startedAt: null, lastExit: null, socket: path.join(this.runDir, `plugin-${row.id}.sock`), queue: [], blocked: false, stopping: false, timer: null, log: null, logBytes: 0, fired: new Map() };
+      w = { id: row.id, child: null, state: 'stopped', restarts: 0, crashes: 0, startedAt: null, lastExit: null, socket: socketPathFor(this.runDir, row.id), queue: [], blocked: false, stopping: false, timer: null, log: null, logBytes: 0, fired: new Map() };
       this.workers.set(row.id, w);
     }
     if (w.child) return;

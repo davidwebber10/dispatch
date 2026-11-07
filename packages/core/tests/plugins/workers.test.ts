@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
-import { PluginWorkers, LOG_MAX_BYTES } from '../../src/plugins/workers.js';
+import { PluginWorkers, LOG_MAX_BYTES, socketPathFor, SOCKET_PATH_MAX } from '../../src/plugins/workers.js';
 import { ThreadEvents } from '../../src/plugins/thread-events.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
 
@@ -116,6 +116,17 @@ describe('PluginWorkers', () => {
     expect(Date.now() - t0).toBeLessThan(2000);
     expect(ww.stats('deaf')!.queued).toBeLessThanOrEqual(500);
     expect(ww.stats('deaf')!.state).toBe('running');
+  });
+
+  it('a socket path that would be too long for a Unix socket moves to a short private folder under the temp dir', () => {
+    const short = socketPathFor('/Users/me/.dispatch/run', 'daily-rundown');
+    expect(short).toBe(path.join('/Users/me/.dispatch/run', 'plugin-daily-rundown.sock'));
+    const longRun = path.join(os.tmpdir(), 'x'.repeat(120));
+    const moved = socketPathFor(longRun, 'daily-rundown');
+    expect(Buffer.byteLength(moved)).toBeLessThanOrEqual(SOCKET_PATH_MAX);
+    expect(moved.startsWith(fs.realpathSync(os.tmpdir()))).toBe(true);
+    expect(moved).not.toBe(socketPathFor(longRun, 'other'));
+    expect(moved).toBe(socketPathFor(longRun, 'daily-rundown'));
   });
 
   it('a job fires plugin:job on its cron minute, once per minute', async () => {
