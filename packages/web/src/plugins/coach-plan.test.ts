@@ -165,6 +165,22 @@ describe('Coach judge: the budget headers and the cards document (coach plan Tas
     expect(tok).toMatchObject({ usedTokens: 149000, capTokens: 150000 });
     expect(budgetFraction(tok)).toBeCloseTo(149000 / 150000);
   });
+  it('makeAssist marks a passing failure (429 busy, 503, 502, a network error or a timeout) as transient; a refusal or an answer is not', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'busy' }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'no_model' }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'no_answer' }), { status: 502 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'budget', usedPercent: 3, capPercent: 3 }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ text: 'not json' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'bad_body' }), { status: 400 }));
+    const assist = makeAssist({ fetch, api: 'http://x', plugin: 'coach', key: () => 'k1' });
+    const out = [];
+    for (let i = 0; i < 8; i++) out.push(!!(await assist({ messages: [{ role: 'user', content: 'hi' }] })).transient);
+    expect(out).toEqual([true, true, true, true, true, false, false, false]);
+  });
+
   it('makeAssist posts to the plugin route with the key, and reads the budget headers; a 429 budget is a refusal', async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ text: '{}', harness: 'codex' }), { status: 200, headers: { 'X-Budget-Used-Percent': '0.5', 'X-Budget-Cap-Percent': '3' } }))

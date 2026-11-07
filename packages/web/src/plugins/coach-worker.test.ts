@@ -186,3 +186,72 @@ describe('Coach worker: no model call before the person has met the Coach, or wh
     expect(f.assist).not.toHaveBeenCalled();
   });
 });
+
+describe('Coach worker: a passing failure keeps the candidate; a restart never strands a review (review finding 8)', () => {
+  const BUSY = { result: null, budget: null, refused: null, transient: true };
+  const ok = (a: unknown) => ({ result: { text: JSON.stringify(a), harness: 'claude' }, budget: { usedPercent: 0.4, capPercent: 3 }, refused: null });
+  const later = async (e: ReturnType<typeof createEngine>, f: ReturnType<typeof fakeIo>, min: number) => {
+    f.advance(min);
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: 'ok', at: new Date(T0 + min * 60_000).toISOString() }));
+    await e.handle(ev('thread:turn', 0, { ms: 1000, at: new Date(T0 + min * 60_000).toISOString() }));
+    await e.idle();
+  };
+
+  it('a 429, then a success, gives a card', async () => {
+    const f = fakeIo();
+    f.assist.mockReset();
+    f.assist.mockResolvedValueOnce(BUSY as never).mockResolvedValue(ok(GOOD));
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    expect((f.docs.get('cards') ?? { items: [] }) as { items: unknown[] }).toMatchObject({ items: [] });
+    // Retried after the backoff, on the next run.
+    await later(e, f, 5);
+    const cards = f.docs.get('cards') as { items: { headline: string }[]; judged: { outcome: string }[] };
+    expect(cards.items.map((c) => c.headline)).toEqual(['Ask for a plan first']);
+    expect(cards.judged.map((j) => j.outcome)).toEqual(['card']);
+  });
+
+  it('a candidate is dropped after 3 passing failures, not before', async () => {
+    const f = fakeIo();
+    f.assist.mockReset();
+    f.assist.mockResolvedValue(BUSY as never);
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    await later(e, f, 5);
+    expect((f.docs.get('cards') as { judged?: unknown[] } | undefined)?.judged ?? []).toEqual([]);
+    await later(e, f, 30);
+    expect(f.assist).toHaveBeenCalledTimes(3);
+    expect((f.docs.get('cards') as { judged: { outcome: string }[] }).judged.map((j) => j.outcome)).toEqual(['failed']);
+  });
+
+  it('a malformed answer still drops the candidate', async () => {
+    const f = fakeIo({ answers: ['{"fit": tr'] });
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    expect((f.docs.get('cards') as { judged: { outcome: string }[] }).judged.map((j) => j.outcome)).toEqual(['dropped']);
+    await later(e, f, 10);
+    expect(f.assist).toHaveBeenCalledTimes(1);
+  });
+
+  it('a review that was reading before a restart shows failed, with Run again', async () => {
+    const f = fakeIo({ docs: {
+      'reviews:r1': { id: 'r1', scope: { kind: 'thread', ids: ['t1'] }, state: 'reading', progress: { done: 1, total: 3 } },
+      'reviews:r2': { id: 'r2', scope: { kind: 'thread', ids: ['t1'] }, state: 'queued' },
+      'reviews:r3': { id: 'r3', scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [], nextSteps: [] } },
+    } });
+    const listDocs = vi.fn(async () => [...f.docs.keys()]);
+    const e = createEngine({ ...f.io, listDocs });
+    await e.load();
+    for (const k of ['reviews:r1', 'reviews:r2']) expect(f.docs.get(k)).toMatchObject({ state: 'failed', error: 'Stopped when the Coach restarted — Run again', restartable: true });
+    expect(f.docs.get('reviews:r3')).toMatchObject({ state: 'done' });
+  });
+});

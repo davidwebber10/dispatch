@@ -307,6 +307,15 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     expect([...d.docs.values()].some((v) => (v as { state?: string }).state === 'planning')).toBe(true);
   });
 
+  it('a review stopped by a restart offers Run again, which asks for a new estimate', async () => {
+    const { d, View } = await boot({ 'reviews:r5': { id: 'r5', at: NOW.toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'failed', error: 'Stopped when the Coach restarted — Run again', restartable: true, plan: { threads: ['t1'], chunks: 1, estPercent: 0.05, fits: true } } });
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    expect(panel).toHaveTextContent('Stopped when the Coach restarted');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Run again' }));
+    await waitFor(() => expect(d.docs.get('reviews:r5')).toMatchObject({ state: 'planning' }));
+  });
+
   it('the thread menu has Review this thread', async () => {
     const { d } = await boot();
     const menu = (d.registered.coach as Record<string, { id: string; label: string; onPick: (x: unknown) => void }[]>).threadMenu;

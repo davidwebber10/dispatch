@@ -559,7 +559,11 @@ export function createCoach(d, deps = {}) {
         h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel review')));
     } else if (r.state === 'writing') body = h('div', null, 'Writing the report…');
     else if (r.state === 'cancelled') body = h('div', { style: S.note }, 'The review was cancelled. Nothing more was read.');
-    else if (r.state === 'failed') body = h('div', { style: S.note }, r.error || 'The review stopped.');
+    else if (r.state === 'failed') {
+      body = h('div', null, h('div', { style: S.note }, r.error || 'The review stopped.'),
+        // A review the restart stopped: a new estimate first, then Start, as before.
+        r.restartable && h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'planning', error: null, restartable: false, progress: null, cancel: false }); } }, 'Run again')));
+    }
     else if (r.state === 'done' && r.report) {
       const rep = r.report;
       body = h('div', null,

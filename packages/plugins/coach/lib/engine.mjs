@@ -31,6 +31,10 @@ const SAVE_DELAY_MS = 5_000;
 export const JUDGE_PER_RUN = 3;
 /** A candidate older than this is no longer "what you just did": it is not judged. */
 export const FRESH_MS = 2 * 3600_000;
+/** A candidate a passing failure stopped is tried again after these waits; the third failure drops it. */
+export const RETRY_BACKOFF_MS = Object.freeze([2 * 60_000, 10 * 60_000]);
+export const MAX_TRIES = 3;
+export const RESTART_ERROR = 'Stopped when the Coach restarted — Run again';
 /** The budget is read from the daemon at least this often. */
 export const BUDGET_TTL_MS = 15 * 60_000;
 /** Before it settles on no call, the worker asks the daemon again, at most this often. */
@@ -69,6 +73,22 @@ export function createEngine(io) {
     } catch (err) { log('load failed:', err.message); }
     // A restart reads the budget again: never trust the last answer's headers alone.
     await readBudget(now());
+    await strandedReviews();
+  }
+
+  /** A review the last worker was running when it stopped: failed, with Run again (never left "Reading…"). */
+  async function strandedReviews() {
+    if (typeof io.listDocs !== 'function') return;
+    let keys = [];
+    try { keys = (await io.listDocs()) || []; } catch (err) { log('list failed:', err && err.message ? err.message : err); return; }
+    for (const key of keys.filter((k) => typeof k === 'string' && k.startsWith('reviews:'))) {
+      const doc = await io.getDoc(key, null).catch(() => null);
+      if (!doc) continue;
+      if (doc.state === 'queued' || doc.state === 'reading' || doc.state === 'writing') {
+        await io.putDoc(key, { ...doc, state: 'failed', error: RESTART_ERROR, restartable: true, updatedAt: now().toISOString() });
+        log(`review ${key}: stopped by the restart`);
+      }
+    }
   }
 
   /** The budget from the daemon's routes; a failed read keeps what the worker had. */
@@ -106,7 +126,10 @@ export function createEngine(io) {
   async function judge() {
     const t = now();
     const cardsDoc = await io.getDoc('cards', null);
-    const fresh = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t));
+    // `retry`: { [candidateId]: { n, next } } for candidates a passing failure stopped.
+    const retry = (cardsDoc && cardsDoc.retry && typeof cardsDoc.retry === 'object') ? cardsDoc.retry : {};
+    const fresh = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t)
+      && !(retry[c.id] && Date.parse(retry[c.id].next) > t.getTime()));
     if (!fresh.length) return;
     const at = t.toISOString();
     // Nothing queues during a mute (coach spec section 4.3): the candidates are recorded as muted, never judged.
@@ -127,16 +150,30 @@ export function createEngine(io) {
       const r = await judgeCandidate(c, { settings, memory, budget, assist: io.assist, now: t, harness });
       budget = r.budget; harness = r.harness;
       results.push(r);
-      if (r.outcome === 'budget') break;
+      if (r.outcome === 'budget' || r.outcome === 'retry') break;
     }
+    // A passing failure: try again after a wait; the third one drops the candidate ('failed').
+    const nextRetry = {};
+    const live = new Set(candidates.items.map((c) => c.id));
+    for (const [id, v] of Object.entries(retry)) if (live.has(id)) nextRetry[id] = v;
+    let soonest = null;
+    for (const r of results) {
+      if (r.outcome !== 'retry') { delete nextRetry[r.id]; continue; }
+      const n = ((retry[r.id] && retry[r.id].n) || 0) + 1;
+      if (n >= MAX_TRIES) { r.outcome = 'failed'; delete nextRetry[r.id]; continue; }
+      const wait = RETRY_BACKOFF_MS[n - 1];
+      nextRetry[r.id] = { n, next: new Date(t.getTime() + wait).toISOString() };
+      soonest = soonest === null ? wait : Math.min(soonest, wait);
+    }
+    if (soonest !== null && typeof io.setTimer === 'function') io.setTimer(soonest + 1000, () => { void queue(judge); });
     const lvl = effectiveLevel(settings, budget);
     const heardNew = budget !== before;
     status = { ...status, budget: heardNew ? mergeBudget(budget, status.budget) : status.budget, ...(heardNew ? { budgetAt: at } : {}), level: lvl.level, stepped: lvl.stepped, at, harness };
     await io.putDoc('status', status);
-    if (results.some((r) => r.outcome !== 'budget')) {
+    if (results.some((r) => r.outcome !== 'budget') || Object.keys(retry).length !== Object.keys(nextRetry).length) {
       // Read again: the web part may have written the document (Reset) while the model answered.
       const latest = await io.getDoc('cards', cardsDoc);
-      await io.putDoc('cards', joinCards(latest, results, at));
+      await io.putDoc('cards', { ...joinCards(latest, results, at), retry: nextRetry });
       for (const r of results) if (r.outcome === 'card') log(`card ${r.id}`);
     }
   }

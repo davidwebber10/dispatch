@@ -32,6 +32,8 @@ const engine = createEngine({
     return { ok: !!res && res.ok, status: res ? res.status : 0 };
   },
   getJson: (route) => call('GET', route),
+  listDocs: async () => { const r = await call('GET', `${base}/data`); return r && Array.isArray(r.docs) ? r.docs.map((x) => x.key) : []; },
+  setTimer: (ms, fn) => { setTimeout(fn, ms).unref(); },
   // The budget from the daemon's own routes (review finding 1): undefined when a read fails.
   readBudget: async (harness) => {
     try {
