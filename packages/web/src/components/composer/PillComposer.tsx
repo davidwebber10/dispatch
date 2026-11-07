@@ -85,7 +85,7 @@ export function PillComposer({
 
   // Recording and transcribing take the text box's place. An error does not: it is a line above
   // the box (a long message squeezed in beside the keys wrapped into a column, 2026-11-05).
-  const recording = dictation.state === 'recording' || dictation.state === 'transcribing';
+  const recording = dictation.state === 'recording' || dictation.state === 'uploading' || dictation.state === 'transcribing';
   const failed = dictation.state === 'error';
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
   // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:

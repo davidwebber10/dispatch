@@ -81,3 +81,5 @@ createRoot(document.getElementById('root')!).render(
 
 // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): load the enabled plugins' bundles.
 void loadPlugins();
+// Dictations kept on this device: one left mid-way by a closed app shows as failed in Recordings; old ones go.
+void import('./lib/recordings').then(async (r) => { await r.markInterrupted(); await r.pruneRecordings(); }).catch(() => {});

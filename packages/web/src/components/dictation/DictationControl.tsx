@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { RecordingsSheet } from './RecordingsSheet';
 import { Check, X } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
 import { Spinner } from '../common/Spinner';
@@ -41,22 +42,35 @@ function Waveform({ dictation }: { dictation: Dictation }) {
 }
 
 export function DictationControl({ dictation }: { dictation: Dictation }) {
-  const { state, error } = dictation;
+  const { state, error, progress } = dictation;
+  const [sheet, setSheet] = useState(false);
+  const link = { background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: 0 } as const;
+  const recordings = <RecordingsSheet open={sheet} onClose={() => setSheet(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />;
 
   if (state === 'error') {
     return (
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--color-status-red)' }}>{error}</span>
-        <button type="button" onClick={() => void dictation.start()} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
-        <button type="button" onClick={dictation.reset} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+        <button type="button" onClick={() => void dictation.retry()} style={{ ...link, color: 'var(--color-accent)' }}>Retry</button>
+        {dictation.recordingId && <button type="button" onClick={() => setSheet(true)} style={{ ...link, color: 'var(--color-text-secondary)' }}>Recordings</button>}
+        <button type="button" onClick={dictation.reset} style={{ ...link, color: 'var(--color-text-secondary)' }}>Dismiss</button>
+        {recordings}
       </div>
     );
   }
 
-  if (state === 'transcribing') {
+  // Say what is happening (2026-11-07): the upload with its percentage, then the seconds the provider takes.
+  if (state === 'uploading' || state === 'transcribing') {
+    const pct = Math.round((progress?.pct ?? 0) * 100);
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--color-text-secondary)', fontSize: 13 }}>
-        <Spinner size={16} /> Transcribing…
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, color: 'var(--color-text-secondary)', fontSize: 13 }}>
+        <Spinner size={16} />
+        <span role="status" style={{ flexShrink: 0 }}>{state === 'uploading' ? `Uploading ${pct}%` : `Transcribing… ${progress?.elapsedS ?? 0}s`}</span>
+        {state === 'uploading' && (
+          <span role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Upload" style={{ flex: 1, minWidth: 30, height: 4, borderRadius: 2, background: 'var(--color-hover)', overflow: 'hidden' }}>
+            <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: 'var(--color-accent)', transition: 'width .2s ease' }} />
+          </span>
+        )}
       </div>
     );
   }

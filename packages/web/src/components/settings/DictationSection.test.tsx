@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { DictationSection } from './DictationSection';
 import { useSettings } from '../../stores/settings';
 
@@ -36,4 +36,18 @@ it('does not say dictation is mobile only', () => {
   render(<DictationSection />);
   expect(screen.queryByText(/on mobile/i)).toBeNull();
   expect(screen.getByText('ALL DEVICES')).toBeInTheDocument();
+});
+
+describe('recent recordings (2026-11-07)', () => {
+  it('Settings → Dictation opens the Recordings sheet', async () => {
+    const rec = await import('../../lib/recordings');
+    rec.setRecordingBackend(rec.memoryBackend());
+    await rec.saveRecording({ mimeType: 'audio/webm', durationMs: 3000, status: 'done', text: 'kept words' }, new Blob(['a']));
+    render(<DictationSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Recent recordings' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Recordings' });
+    expect(await within(sheet).findByText(/kept words/)).toBeInTheDocument();
+    expect(within(sheet).getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: 'Insert' })).toBeNull();
+  });
 });

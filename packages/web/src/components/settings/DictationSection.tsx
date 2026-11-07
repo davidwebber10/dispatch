@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useSettings } from '../../stores/settings';
 import { PROVIDERS, getProvider } from '../../lib/transcription-providers';
 import { api } from '../../api/client';
-import { sectionLabel, summaryLine } from './ui';
+import { sectionLabel, summaryLine, ghostBtn } from './ui';
+import { RecordingsSheet } from '../dictation/RecordingsSheet';
 
 const selectStyle = {
   height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
@@ -22,6 +23,7 @@ export function DictationSection() {
   const { setSttProvider, setSttModel, setSttSecretName } = useSettings.getState();
   const [secrets, setSecrets] = useState<string[]>([]);
   const [secretsErr, setSecretsErr] = useState('');
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
 
   useEffect(() => {
     api.listSecrets().then((s) => setSecrets(s.map((x) => x.name)))
@@ -78,6 +80,14 @@ export function DictationSection() {
         {secretsErr && <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>{secretsErr}</div>}
         <div style={summaryLine}>The same on every device: a change here applies to your phone and computers.</div>
       </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+        <span style={sectionLabel}>THIS DEVICE</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" style={ghostBtn} onClick={() => setRecordingsOpen(true)}>Recent recordings</button>
+          <span style={summaryLine}>Every dictation is kept here until it is transcribed, so a failed upload can be sent again.</span>
+        </div>
+      </div>
+      <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} />
     </div>
   );
 }
