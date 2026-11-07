@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { PreviewItem, previewFileKind } from './PreviewItem';
 import { api } from '../../api/client';
 import type { Preview } from '../../api/types';
@@ -33,19 +33,23 @@ describe('<PreviewItem>', () => {
     expect(screen.getByTestId('preview-item')).toHaveAttribute('data-unseen', 'true');
   });
 
-  it('an image opens the lightbox; a pdf opens a new tab; a markdown file opens the in-app reader with Copy', async () => {
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+  it('any file opens the viewer on all files at that one: the image, the pdf in a frame with Open, the markdown rendered with Copy', async () => {
     vi.spyOn(api, 'previewFileText').mockResolvedValue('# hello');
     render(<PreviewItem preview={base} />);
     fireEvent.click(screen.getByRole('button', { name: /shot\.png/ }));
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'shot.png' })).toBeInTheDocument();
+    expect(screen.getByLabelText('File 1 of 3')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /report\.pdf/ }));
-    expect(open).toHaveBeenCalledWith(expect.stringContaining('/api/previews/pv1/files/1'), '_blank', 'noopener');
+    expect(await screen.findByRole('dialog', { name: 'report.pdf' })).toBeInTheDocument();
+    expect(document.querySelector('iframe[title="report.pdf"]')).not.toBeNull();
+    expect(screen.getByLabelText('Open in a new tab')).toHaveAttribute('href', expect.stringContaining('/api/previews/pv1/files/1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     fireEvent.click(screen.getByRole('button', { name: /notes\.md/ }));
-    expect(await screen.findByRole('dialog', { name: 'notes.md' })).toBeInTheDocument();
+    const reader = await screen.findByRole('dialog', { name: 'notes.md' });
     expect(await screen.findByText('hello')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+    expect(within(reader).getByLabelText('Copy text')).toBeInTheDocument();
   });
 
   it('Delete calls back with the id; without a handler there is no button', () => {

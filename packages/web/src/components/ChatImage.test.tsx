@@ -61,11 +61,14 @@ it('opens as a modal dialog, takes focus, traps Tab, and gives focus back on Esc
   expect(dialog.contains(document.activeElement)).toBe(true);
   expect(document.activeElement).toBe(close);
   // Tab on the last control wraps to the first; Shift+Tab on the first wraps to the last.
-  expect(fireEvent.keyDown(close, { key: 'Tab' })).toBe(false);
-  expect(document.activeElement).toBe(screen.getByLabelText('Copy image').hasAttribute('disabled') ? screen.getByLabelText('Download image') : screen.getByLabelText('Copy image'));
-  const first = document.activeElement as HTMLElement;
+  const controls = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled])')];
+  const first = controls[0]; const last = controls[controls.length - 1];
+  expect(first).toBe(close); // the viewer's Close is its first control
+  last.focus();
+  expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(false);
+  expect(document.activeElement).toBe(first);
   expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(false);
-  expect(document.activeElement).toBe(close);
+  expect(document.activeElement).toBe(last);
   fireEvent.keyDown(window, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(document.activeElement).toBe(opener);

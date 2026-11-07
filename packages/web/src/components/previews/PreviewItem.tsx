@@ -1,17 +1,16 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { Copy, Check, Trash, ArrowSquareOut, Image as ImageIcon, FilePdf, FileHtml, FileText, FileCsv, Code, X } from '@phosphor-icons/react';
+import { Copy, Check, Trash, Image as ImageIcon, FilePdf, FileHtml, FileText, FileCsv } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import type { Preview, PreviewFile } from '../../api/types';
 import { api, previewFileUrl } from '../../api/client';
-import { ImageLightbox } from '../ChatImage';
-import { Markdown } from '../Markdown';
-import { Modal } from '../common/Modal';
+import { FileViewer, type ViewerFile } from '../viewer/FileViewer';
 
 /**
  * One preview, the same on the phone's sheet and the desktop view: title, context line, note,
- * the text with Copy, and a chip per file. An image opens the app's lightbox; md/txt/csv/json
- * open an in-app reader with Copy; pdf and html open in a new tab (the browser's own viewer;
- * html runs sandboxed, see routes/previews.ts).
+ * the text with Copy, and a chip per file. Any file opens the full-screen FileViewer on all of
+ * the preview's files at that one (2026-11-07): swipe or step between them, zoom a picture,
+ * read markdown and text in place, a pdf or html page in a frame with Open for a new tab
+ * (html runs sandboxed, see routes/previews.ts).
  */
 export function previewFileKind(f: Pick<PreviewFile, 'mime'>): 'image' | 'pdf' | 'html' | 'markdown' | 'text' {
   if (f.mime.startsWith('image/')) return 'image';
@@ -69,42 +68,15 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
   );
 }
 
-/** The in-app reader for a text-like file: Markdown rendered, others monospace; Copy on top. */
-function TextFileOverlay({ preview, k, onClose }: { preview: Preview; k: number; onClose: () => void }) {
-  const file = preview.files[k];
-  const [body, setBody] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let on = true;
-    api.previewFileText(preview.id, k).then((t) => { if (on) setBody(t); }).catch(() => { if (on) setError('Could not load the file.'); });
-    return () => { on = false; };
-  }, [preview.id, k]);
-  const kind = previewFileKind(file);
-  // The app's shared slide-up sheet, wide enough to read in; Copy sits above the text.
-  return (
-    <Modal open sheet title={file.name} maxWidth={820} onClose={onClose}>
-      {body !== null && <div style={{ marginBottom: 10 }}><CopyButton text={body} /></div>}
-      {error && <div role="alert" style={{ color: 'var(--color-status-red)', fontSize: 13 }}>{error}</div>}
-      {body === null && !error && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>Loading…</div>}
-      {body !== null && (kind === 'markdown'
-        ? <Markdown source={body} />
-        : <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)' }}>{body}</pre>)}
-    </Modal>
-  );
-}
-
 export function PreviewItem({ preview, onDelete, showProject = true }: { preview: Preview; onDelete?: (id: string) => void; showProject?: boolean }) {
-  const [lightbox, setLightbox] = useState<number | null>(null);
-  const [reader, setReader] = useState<number | null>(null);
+  const [viewing, setViewing] = useState<number | null>(null);
   const unseen = !preview.seenAt;
 
-  const open = (k: number) => {
-    const f = preview.files[k];
-    const kind = previewFileKind(f);
-    if (kind === 'image') setLightbox(k);
-    else if (kind === 'pdf' || kind === 'html') window.open(previewFileUrl(preview.id, k), '_blank', 'noopener');
-    else setReader(k);
-  };
+  const open = (k: number) => setViewing(k);
+  const viewerFiles: ViewerFile[] = preview.files.map((f, k) => ({
+    src: previewFileUrl(preview.id, k), name: f.name, mime: f.mime, size: f.size,
+    loadText: () => api.previewFileText(preview.id, k),
+  }));
 
   // The thread it came from; the date and time sit on their own beside the title, never cut off.
   const context = [showProject ? preview.sessionName : null, preview.terminalLabel].filter(Boolean).join(' · ');
@@ -156,24 +128,18 @@ export function PreviewItem({ preview, onDelete, showProject = true }: { preview
             const kind = previewFileKind(f);
             if (kind === 'image') return null;
             const I = KIND_ICON[kind];
-            const external = kind === 'pdf' || kind === 'html';
             return (
               <button key={k} type="button" onClick={() => open(k)} title={`${f.name} · ${fmtSize(f.size)}`} style={chipStyle}>
                 <I size={16} style={{ flexShrink: 0 }} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-                {external ? <ArrowSquareOut size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} /> : <Code size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />}
+                <span style={{ flexShrink: 0, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{fmtSize(f.size)}</span>
               </button>
             );
           })}
         </div>
       )}
-      {/* The lightbox's own z-index (1000) sits under the sheet (1200): a wrapper raises it above both. */}
-      {lightbox !== null && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1300 }}>
-          <ImageLightbox src={previewFileUrl(preview.id, lightbox)} alt={preview.files[lightbox]?.name} onClose={() => setLightbox(null)} />
-        </div>
-      )}
-      {reader !== null && <TextFileOverlay preview={preview} k={reader} onClose={() => setReader(null)} />}
+      {/* The viewer portals to <body> above the phone's sheet. */}
+      {viewing !== null && <FileViewer files={viewerFiles} index={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
