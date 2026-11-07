@@ -208,6 +208,18 @@ export const resolveDoc: DocResolver = async (project, ref, opts = {}) => {
     return r;
   }
 
+  // 3. The same name elsewhere in the checkout: a message names a file by its bare name or a short
+  // tail ("LEARNINGS.md" for abliteration/LEARNINGS.md). The newest match wins; the note says where.
+  if (!leadsOut(rel)) {
+    looked.push(`**/${posix(rel)}`);
+    const byName = await findByTail(realRoot, posix(rel));
+    if (byName) {
+      const r = await fromDisk(byName.real, byName.rel);
+      if (r.kind === 'doc') r.doc.note = `Found at ${posix(byName.rel)}.`;
+      if (r.kind !== 'not_found') return r;
+    }
+  }
+
   // 4. Unmerged branches, newest first.
   for (const b of await unmerged()) {
     const r = await tryBranch(b.name, rel);
@@ -215,3 +227,36 @@ export const resolveDoc: DocResolver = async (project, ref, opts = {}) => {
   }
   return { kind: 'not_found', looked };
 };
+
+const SKIP_FOLDERS = new Set(['node_modules', '.git']);
+const FIND_MAX_DEPTH = 8;
+const FIND_MAX_ENTRIES = 20000;
+/**
+ * The newest file in the checkout whose path ends with `tail` (a bare name or a folder tail), by a
+ * bounded walk that skips .git, node_modules and dot folders. Null when none, or when the walk
+ * gives up (a huge tree is not scanned to the end).
+ */
+async function findByTail(realRoot: string, tail: string): Promise<{ real: string; rel: string } | null> {
+  const want = `/${tail}`;
+  let seen = 0;
+  const hits: { real: string; rel: string; mtime: number }[] = [];
+  const walk = async (dir: string, rel: string, depth: number): Promise<void> => {
+    if (depth > FIND_MAX_DEPTH || seen > FIND_MAX_ENTRIES) return;
+    let entries: fs.Dirent[];
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (++seen > FIND_MAX_ENTRIES) return;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (SKIP_FOLDERS.has(e.name) || e.name.startsWith('.')) continue;
+        await walk(path.join(dir, e.name), childRel, depth + 1);
+      } else if (e.isFile() && `/${childRel}`.endsWith(want)) {
+        const real = path.join(dir, e.name);
+        try { hits.push({ real, rel: childRel, mtime: (await fs.promises.stat(real)).mtimeMs }); } catch { /* gone */ }
+      }
+    }
+  };
+  await walk(realRoot, '', 0);
+  hits.sort((a, b) => b.mtime - a.mtime);
+  return hits[0] ? { real: hits[0].real, rel: hits[0].rel } : null;
+}

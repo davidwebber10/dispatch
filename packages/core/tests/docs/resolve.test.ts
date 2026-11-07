@@ -21,6 +21,24 @@ describe('resolveDoc', () => {
     expect(JSON.stringify(res)).not.toContain(folder);
   });
 
+  it('a bare name (or a short tail) that lives in a subfolder opens from there, with a note; a plain folder without git too', async () => {
+    r = makeRepo();
+    r.write('abliteration/LEARNINGS.md', '# L\n'); r.commit('a');
+    const d = doc(await resolveDoc(project(), 'LEARNINGS.md'));
+    expect(d).toMatchObject({ source: 'main', path: 'abliteration/LEARNINGS.md', note: 'Found at abliteration/LEARNINGS.md.' });
+    // A folder tail matches too, and an untracked file counts.
+    r.write('abliteration/notes/LEARNINGS.md', '# N\n');
+    expect(doc(await resolveDoc(project(), 'notes/LEARNINGS.md')).path).toBe('abliteration/notes/LEARNINGS.md');
+    // Nothing under node_modules or a dot folder is a candidate.
+    r.write('node_modules/x/MISSING.md', '# x'); r.write('.venv/MISSING.md', '# y');
+    expect((await resolveDoc(project(), 'MISSING.md')).kind).toBe('not_found');
+    // A plain folder (no git) is searched the same way.
+    const plain = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'plain-'));
+    fs.mkdirSync(path.join(plain, 'deep/er'), { recursive: true }); fs.writeFileSync(path.join(plain, 'deep/er/LEARNINGS.md'), '# P');
+    expect(doc(await resolveDoc({ id: 'p', folder: plain }, 'LEARNINGS.md')).path).toBe('deep/er/LEARNINGS.md');
+    fs.rmSync(plain, { recursive: true, force: true });
+  });
+
   it('the main checkout copy, same as main, with its status line', async () => {
     r = makeRepo();
     r.write(SPEC, '# A\n\nStatus: draft, awaiting owner review\n');
