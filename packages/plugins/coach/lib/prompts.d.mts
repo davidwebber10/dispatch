@@ -1,6 +1,6 @@
 /** Types for the Coach's prompts module (the tests import it). */
 export interface AssistReq { system: string; messages: { role: 'user'; content: string }[]; maxTokens: number }
-export interface CardAction { kind: 'compose' | 'schedule' | 'threads'; label: string; text?: string; prompt?: string; cron?: string; prompts?: string[] }
+export interface CardAction { kind: 'compose' | 'schedule' | 'threads' | 'plugin'; label: string; text?: string; prompt?: string; cron?: string; prompts?: string[] }
 export const CONFIRM_SYSTEM: string;
 export const WRITE_SYSTEM: string;
 export const MORE_SYSTEM: string;
@@ -13,3 +13,7 @@ export function recapPrompt(draft: unknown, memory: unknown): AssistReq;
 export function parseAnswer(text: unknown): Record<string, unknown> | null;
 export function cleanAction(a: unknown): CardAction | null;
 export function checkCard(ans: unknown, minConfidence: number): null | 'malformed' | 'no-fit' | 'unsure' | 'copy';
+export const PLUGIN_PARTS: readonly ('view' | 'button' | 'worker' | 'hook')[];
+export function partWords(parts: string[] | null | undefined): string;
+export function cleanParts(parts: unknown): ('view' | 'button' | 'worker' | 'hook')[];
+export function buildPluginPrompt(card: { plugin: string; parts?: string[]; excerpt?: string }): string;

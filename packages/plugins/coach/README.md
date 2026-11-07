@@ -19,6 +19,9 @@ It replaces the Prompt coach. It is off by default; if the Prompt coach was on, 
 - **Five measures:** ambition, delegation, reuse, judgment and breadth, each from 0 to 100 over
   30 days. They compare you only with your own past. The Coach works on the weakest one, and
   works on judgment before it suggests a bigger handoff.
+- **A plugin, when it fits:** when you run the same multi-step workflow 3 times in 30 days and no
+  schedule covers it, the Coach may suggest building a plugin for it. Try it opens a new thread,
+  for you to confirm, that asks an agent to build the plugin; it starts disabled for your review.
 - **Your goals:** up to 3, in your own words or from a suggestion. Tips that serve a goal come
   first. The recap reports each goal and asks once a month whether it is still right.
 - **What it costs:** it runs on your own subscription. The budget (default: 3% of the weekly

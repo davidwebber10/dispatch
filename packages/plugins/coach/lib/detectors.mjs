@@ -2,6 +2,7 @@
 // state that PROPOSE candidate cards. A rule never shows a card alone: the judge (plan Task 9)
 // confirms and writes it. Every threshold is a setting under advanced.thresholds.
 import { DEFAULT_THRESHOLDS } from './settings.mjs';
+import { hashText } from './signals.mjs';
 
 /** The v1 detectors: the measure each one works on, and its tip type (Settings → Coach → tip types). */
 export const DETECTORS = Object.freeze({
@@ -12,6 +13,8 @@ export const DETECTORS = Object.freeze({
   'no-plan-big-task': { measure: 'judgment', tip: 'prompt' },
   'fast-approve': { measure: 'judgment', tip: 'prompt' },
   'narrow-breadth': { measure: 'breadth', tip: 'thinkBigger' },
+  // Reuse's top step (spec section 4.7): a workflow that belongs in Dispatch as a plugin.
+  'plugin-fit': { measure: 'reuse', tip: 'thinkBigger' },
 });
 
 const MIN = 60_000;
@@ -142,6 +145,42 @@ function narrowBreadth(s, th, now) {
   return [candidate('narrow-breadth', { id: `${kind}:${month}`, evidence: { kind, threads: n, total, days: th.days } })];
 }
 
+/**
+ * The same multi-step workflow (the same first `minSteps` work prompts, in order, in one thread)
+ * `minRepeats` times in `days`, that no schedule covers: no thread a schedule started begins with
+ * the workflow's first step.
+ */
+function pluginFit(s, th, now) {
+  const from = now - th.days * DAY;
+  const byThread = new Map();
+  for (const p of s.prompts) {
+    const t = ms(p.at);
+    if (t < from || t > now || p.ok) continue;
+    const list = byThread.get(p.t) || [];
+    list.push(p); byThread.set(p.t, list);
+  }
+  const groups = new Map();
+  for (const [t, list] of byThread) {
+    if (list.length < th.minSteps) continue;
+    const sig = list.slice(0, th.minSteps).map((p) => p.h).join('.');
+    const g = groups.get(sig) || [];
+    g.push({ t, list }); groups.set(sig, g);
+  }
+  const scheduled = new Set(Object.values(s.threads).map((x) => x.auto).filter(Boolean));
+  const out = [];
+  for (const [sig, g] of groups) {
+    if (g.length < th.minRepeats) continue;
+    if (scheduled.has(g[0].list[0].h)) continue;
+    // The steps all runs share, in order.
+    let steps = Math.min(...g.map((x) => x.list.length));
+    while (steps > th.minSteps && !g.every((x) => x.list[steps - 1].h === g[0].list[steps - 1].h)) steps--;
+    const latest = g.reduce((a, b) => (ms(b.list[0].at) > ms(a.list[0].at) ? b : a));
+    const first = latest.list[0];
+    out.push(candidate('plugin-fit', { id: hashText(sig), terminalId: latest.t, projectId: first.p, evidence: { steps, repeats: g.length, days: th.days, excerpt: first.ex, hashes: latest.list.slice(0, steps).map((p) => p.h) } }));
+  }
+  return out;
+}
+
 const RUN = {
   'repeated-prompt': (s, t, n) => repeatedPrompt(s, t.repeatedPrompt, n),
   'serial-independent': (s, t, n) => serialIndependent(s, t.serialIndependent, n),
@@ -150,6 +189,7 @@ const RUN = {
   'no-plan-big-task': (s, t, n) => noPlanBigTask(s, t.noPlanBigTask, n),
   'fast-approve': (s, t, n) => fastApprove(s, t.fastApprove, n),
   'narrow-breadth': (s, t, n) => narrowBreadth(s, t.narrowBreadth, n),
+  'plugin-fit': (s, t, n) => pluginFit(s, t.pluginFit, n),
 };
 
 /**
@@ -171,7 +211,9 @@ export function detect(state, settings, now, ctx = {}) {
       out.push(c);
     }
   }
-  return out;
+  // A step of a workflow that is a plugin candidate is not also a repeated prompt: one card, not two.
+  const inWorkflow = new Set(out.filter((c) => c.type === 'plugin-fit').flatMap((c) => c.evidence.hashes || []));
+  return inWorkflow.size ? out.filter((c) => !(c.type === 'repeated-prompt' && inWorkflow.has(c.id.slice('repeated-prompt:'.length)))) : out;
 }
 
 const KEEP_CANDIDATES = 50;

@@ -65,7 +65,14 @@ export function collect(event, state, settings) {
   const t = e.terminalId;
   const p = e.sessionId || null;
   if (e.type === 'thread:prompt') {
-    if (e.source !== 'user' || typeof e.text !== 'string') return state;
+    if (e.source !== 'user' || typeof e.text !== 'string') {
+      // A thread a schedule (or another agent) started: keep only the hash of its first prompt, so
+      // the plugin-fit rule can see that a schedule already covers a workflow. No text is kept.
+      const th = s.threads[t];
+      if (typeof e.text !== 'string' || (th && (th.prompts > 0 || th.auto))) return state;
+      s.threads[t] = { ...(th || { p, first: e.at, end: null, kind: 'other', prompts: 0, tools: 0 }), auto: hashText(e.text) };
+      return prune(s, e.at);
+    }
     const text = e.text;
     const prev = s.last[t];
     const trimmed = text.trim();

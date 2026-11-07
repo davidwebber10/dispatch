@@ -1,7 +1,7 @@
 /** Types for the Coach's signals module (the tests import it). */
 export interface PromptRec { t: string; p: string | null; at: string; ex: string; h: string; len: number; lines: number; parts: number; plan: boolean; ok: boolean; gap: number | null; prev: number | null }
 export interface TurnRec { t: string; p: string | null; start: string; end: string; ms: number; outcome: string | null }
-export interface ThreadRec { p: string | null; first: string; end: string | null; kind: string; prompts: number; tools: number }
+export interface ThreadRec { p: string | null; first: string; end: string | null; kind: string; prompts: number; tools: number; /** The hash of the first prompt, when a schedule or an agent (not the person) started the thread. */ auto?: string }
 export interface SignalsState {
   v: 1;
   prompts: PromptRec[];

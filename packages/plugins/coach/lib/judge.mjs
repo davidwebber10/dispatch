@@ -6,7 +6,7 @@
 // `assist(req)` is injected: it resolves to { result: { text, harness } | null, budget, refused }
 // (lib/client.mjs in the worker). The worker joins the outcomes into the `cards` document.
 import { planCall } from './plan.mjs';
-import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction } from './prompts.mjs';
+import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt } from './prompts.mjs';
 
 const KEEP_CARDS = 60;
 const KEEP_JUDGED = 300;
@@ -31,12 +31,29 @@ export function reasonFor(c) {
     case 'step-by-step': return `You sent ${e.prompts} one-line prompts in ${e.minutes} minutes in one thread.`;
     case 'no-plan-big-task': return `Your prompt had ${e.parts} parts and did not ask for a plan first.`;
     case 'fast-approve': return `You approved ${e.seconds} seconds after a ${e.turnMinutes}-minute answer.`;
+    case 'plugin-fit': return `You ran the same ${e.steps}-step workflow ${e.repeats} times in ${e.days} days, and no schedule covers it.`;
     case 'narrow-breadth': return `${e.threads} of your ${e.total} threads in ${e.days} days were one kind of work (${e.kind}).`;
     default: return 'The Coach saw this in your recent threads.';
   }
 }
 
+/** A plugin-fit answer: whole only with a plugin line and at least one known part; the action is ours. */
+function pluginAnswer(c, ans) {
+  if (c.type !== 'plugin-fit' || !ans || typeof ans !== 'object') return ans;
+  const parts = cleanParts(ans.parts);
+  const plugin = typeof ans.plugin === 'string' ? ans.plugin.trim() : '';
+  if (!plugin || !parts.length) return { ...ans, action: null };
+  const excerpt = c.evidence && typeof c.evidence.excerpt === 'string' ? c.evidence.excerpt : '';
+  return { ...ans, plugin, parts, action: { kind: 'plugin', label: 'Try it: build the plugin', prompt: buildPluginPrompt({ plugin, parts, excerpt }) } };
+}
+
 function cardOf(c, ans, at) {
+  if (c.type === 'plugin-fit') {
+    return { ...cardBase(c, ans, at), action: ans.action, plugin: ans.plugin, parts: ans.parts };
+  }
+  return cardBase(c, ans, at);
+}
+function cardBase(c, ans, at) {
   return {
     id: c.id, type: c.type, measure: c.measure, tip: c.tip, terminalId: c.terminalId ?? null, projectId: c.projectId ?? null,
     headline: ans.headline.trim(), why: ans.why.trim(), action: cleanAction(ans.action),
@@ -69,6 +86,7 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   if (p1.tier === 'none') return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
   const r1 = await step('confirm', confirmPrompt(c, memory), p1);
   if (r1.refused) return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
+  r1.ans = pluginAnswer(c, r1.ans);
   const why1 = checkCard(r1.ans, min);
   calls.push({ step: 'confirm', tier: p1.tier, ok: !!r1.ans && why1 !== 'malformed' });
   if (why1) return { id: c.id, card: null, outcome: 'dropped', reason: why1, calls, budget: b, harness: ran };
@@ -79,9 +97,10 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
     const r2 = await step('write', writePrompt(c, memory, r1.ans), p2);
     if (!r2.refused) {
       // The large model's card replaces the small one only when it is whole and keeps to the copy rules.
-      const ok = !!r2.ans && checkCard({ fit: true, confidence: 1, ...r2.ans }, 0) === null;
+      const merged = r2.ans ? pluginAnswer(c, { ...r1.ans, ...r2.ans }) : null;
+      const ok = !!merged && checkCard({ ...merged, fit: true, confidence: 1 }, 0) === null;
       calls.push({ step: 'write', tier: p2.tier, ok });
-      if (ok) final = { ...r1.ans, ...r2.ans };
+      if (ok) final = merged;
     }
   }
   return { id: c.id, card: cardOf(c, final, at), outcome: 'card', calls, budget: b, harness: ran };

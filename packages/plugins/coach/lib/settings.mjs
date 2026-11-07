@@ -11,6 +11,7 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
   noPlanBigTask: { minChars: 400, minParts: 3 },
   fastApprove: { seconds: 10, longTurnMinutes: 2 },
   narrowBreadth: { share: 0.9, days: 30, minThreads: 10 },
+  pluginFit: { minRepeats: 3, days: 30, minSteps: 3 },
 });
 
 export const DEFAULT_SETTINGS = Object.freeze({

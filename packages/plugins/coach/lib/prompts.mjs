@@ -16,6 +16,9 @@ const RULES = [
   'one action. Plain words, US spelling. Never write "should". Never grade the person. No jargon for business users.',
   'Every "think bigger" card also says how to check the result.',
   'Use what the Coach knows about the person: never suggest a skill they already have, or a kind of tip they turned off.',
+  'When the rule saw "Repeated workflows" (plugin-fit), the card suggests building a Dispatch plugin for that workflow:',
+  'also answer "plugin" (one line: what the plugin would do) and "parts" (a list of: view, button, worker, hook),',
+  'and let the why line say why a plugin beats a template or a schedule here. The action is made for you; leave it out.',
 ].join('\n');
 
 const ACTION_SHAPE = '"action": {"kind": "compose" | "schedule" | "threads", "label": "the button, at most 6 words, e.g. Try it: ask for a plan", "text": "for compose: the prompt to put in the message box", "prompt": "for schedule: the prompt to run", "cron": "for schedule: min hour dom mon dow", "prompts": ["for threads: one prompt per thread"]}';
@@ -51,6 +54,28 @@ function candidateText(c) {
 }
 
 const call = (system, user, memory, maxTokens) => ({ system, messages: [{ role: 'user', content: `${memoryContext(memory)}\n\n${user}` }], maxTokens });
+
+const PART_WORD = { view: 'a screen', button: 'a button', worker: 'a worker', hook: 'a hook' };
+export const PLUGIN_PARTS = Object.freeze(Object.keys(PART_WORD));
+export const partWords = (parts) => (parts || []).map((p) => PART_WORD[p] || p).join(', ');
+/** The known plugin parts in an answer, without repeats. */
+export const cleanParts = (parts) => (Array.isArray(parts) ? [...new Set(parts.filter((p) => PLUGIN_PARTS.includes(p)))] : []);
+
+/**
+ * The first prompt of the thread "Try it" opens for a plugin-fit card (spec section 4.7): an agent
+ * builds the plugin as a local folder, which starts disabled, so the person reviews it first.
+ */
+export function buildPluginPrompt(card) {
+  return [
+    'Build a Dispatch plugin for me. Follow docs/plugins.md in the Dispatch repository (the plugin guide).',
+    `What it does: ${card.plugin}`,
+    `Parts: ${partWords(card.parts) || 'whatever it needs'}.`,
+    card.excerpt ? `It replaces a workflow I repeat, which starts with: "${card.excerpt}"` : null,
+    'Make it a local plugin folder under ~/.dispatch/plugins/<id> with plugin.json and web.js, plus a worker or hooks only if the parts above name them.',
+    'Ask for the fewest permissions it needs. Do not enable it: it starts disabled, and I will review it on the Plugins page before I turn it on.',
+    'When you finish, tell me what you built, the permissions it asks for, and what I need to check.',
+  ].filter(Boolean).join('\n');
+}
 
 export const confirmPrompt = (candidate, memory) => call(CONFIRM_SYSTEM, candidateText(candidate), memory, 500);
 export const writePrompt = (candidate, memory, draft) => call(WRITE_SYSTEM, `${candidateText(candidate)}\n\nThe confirmed card: ${JSON.stringify({ headline: draft && draft.headline, why: draft && draft.why, action: draft && draft.action })}`, memory, 700);

@@ -12,11 +12,11 @@ import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
 import { planCall, LARGE_DEFAULT } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
-import { morePrompt, parseAnswer } from './lib/prompts.mjs';
+import { morePrompt, parseAnswer, partWords } from './lib/prompts.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
 /** The detector each threshold group tunes (Settings → Coach → Advanced). */
-const DETECTOR_OF_THRESHOLD = { repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
+const DETECTOR_OF_THRESHOLD = { pluginFit: 'plugin-fit', repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
 const CLOSED = new Set(['dismissed', 'used', 'down']);
 const WELCOME = Object.freeze({
@@ -188,6 +188,8 @@ export function createCoach(d, deps = {}) {
     if (text) ctx.set(text);
     else if (a.kind === 'schedule' && typeof acts.openSchedule === 'function') acts.openSchedule({ projectId, prompt: a.prompt, cron: a.cron, label: a.label });
     else if (a.kind === 'threads' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ projectId, prompts: a.prompts || [] });
+    // A plugin to build (spec section 4.7): a new thread whose first prompt asks an agent to build it; the person confirms.
+    else if (a.kind === 'plugin' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ projectId, prompts: [a.prompt] });
     else if (a.kind === 'settings') { if (typeof acts.openSettings === 'function') acts.openSettings(`plugin:${PLUGIN}:coach`); }
     else {
       // Without the dialog (or for a prompt tip), the composer gets the text: the person sends it, or not.
@@ -309,6 +311,7 @@ export function createCoach(d, deps = {}) {
       h('div', { style: S.kicker }, 'COACH', card.measure && MEASURES[card.measure] ? h('span', { style: S.axis }, ` · ${MEASURES[card.measure]}`) : null),
       h('div', { style: S.head }, card.headline),
       h('div', { style: S.why }, card.why),
+      card.plugin && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, `The plugin: ${card.plugin}${Array.isArray(card.parts) && card.parts.length ? ` Parts: ${partWords(card.parts)}.` : ''}`),
       open && h('div', { style: S.more },
         (!more || more.status === 'loading') && h('div', { style: S.note }, 'Getting more detail…'),
         more && more.status === 'none' && h('div', { style: S.note }, 'The Coach could not get more detail just now.'),
@@ -703,6 +706,7 @@ export function createCoach(d, deps = {}) {
     idleWait: 'A thread busy this long while nothing else runs', stepByStep: 'One-line prompts in a row in one thread',
     noPlanBigTask: 'A long prompt with this many parts and no plan', fastApprove: 'An approval this soon after a long answer',
     narrowBreadth: 'This share of threads being one kind of work',
+    pluginFit: 'The same multi-step workflow this many times in this many days, with no schedule',
   };
   function Advanced({ s }) {
     const th = s.advanced.thresholds;

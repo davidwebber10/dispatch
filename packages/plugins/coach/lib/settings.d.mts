@@ -7,6 +7,7 @@ export interface Thresholds {
   noPlanBigTask: { minChars: number; minParts: number };
   fastApprove: { seconds: number; longTurnMinutes: number };
   narrowBreadth: { share: number; days: number; minThreads: number };
+  pluginFit: { minRepeats: number; days: number; minSteps: number };
 }
 export type TierModel = { harness: string; model: string };
 export interface CoachSettings {
