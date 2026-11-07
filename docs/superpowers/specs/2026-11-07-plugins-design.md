@@ -518,6 +518,24 @@ change it.
 The coach is also the proof for `model:assist`, `read:prompts`, `composer.before` and the
 weekly job, so it ships in slice 3 with the model part.
 
+- **Usage planner** (the owner's idea, 2026-11-07): the quota is a budget that resets, and an
+  unspent budget is wasted. The plugin watches the usage store (the per-account windows the
+  Usage card shows) and, when a window has a good share left and the reset is near, it
+  proposes work: "40% of this week's Claude budget is left and it resets tomorrow. Scan the
+  repos for dependency vulnerabilities, work the three open Jira tickets tagged small, or
+  write tests for last week's untested changes?" Each proposal is a card (a view and a phone
+  notification through the push hook) with Start / Not now / Never this; Start spawns threads
+  through the Control Plane with a brief the plugin wrote, scoped to the budget. It learns
+  the owner's answers (what they never want, what they accept) and the projects' shape (what
+  has a test suite, a lockfile, an issue tracker). Sources are other plugins' data where they
+  exist (a Jira plugin, a CI plugin) and the projects' files otherwise. It needs: a worker
+  (slice 5: a scheduled job that reads usage and the projects while no browser is open),
+  `model:assist` to rank and phrase the proposals, `read:projects`, the Control Plane's
+  `spawn_agent` through its key, and a settings section for the floor (never propose below
+  this share), the hours, and the project list. It never spends without a Start. It ships
+  after the worker slice; its proposals are the proof that a plugin can plan work, not only
+  react to it.
+
 ## 11. Delivery slices
 
 1. **Host and SDK** (from the spike): registry, loader, boundary, safe mode, hot reload,
