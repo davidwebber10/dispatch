@@ -1,5 +1,5 @@
 import { HEADER_BOX, HEADER_INNER, HEADER_PAD } from './headerButton';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
@@ -38,6 +38,9 @@ export function useTransportSwitch(terminalId: string | null | undefined, given?
   // A turn is in flight when the CLI is starting or actively working (this also covers a native
   // compaction, which the StatusService reports as working).
   const midTurn = threadStatus === 'working' || threadStatus === 'starting';
+  // The reason belongs to that thread in that mode: another thread in this pane, or a switch that worked (here, in the header
+  // toggle or the phone menu), makes it old news.
+  useEffect(() => { setError(null); }, [terminalId, current]);
   const canSwitch = applies && !!tab?.externalId && !busy;
   const tip = !tab?.externalId ? 'Send a message first to enable switching' : undefined;
   /** Resolves with the reason when the switch did not go through, else null. */

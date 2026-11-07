@@ -70,10 +70,11 @@ describe('thread settings routes', () => {
 
   it('GET /codex/model-efforts returns the app-server list, or null', async () => {
     const spy = vi.spyOn(svc, 'codexModelEfforts').mockResolvedValue({ 'gpt-6-luna': ['low', 'max'] });
+    vi.spyOn(svc, 'codexModelDefaults').mockReturnValue({ 'gpt-6-luna': 'low' });
     const res = await request(app).get('/api/codex/model-efforts').expect(200);
-    expect(res.body).toEqual({ live: { 'gpt-6-luna': ['low', 'max'] } });
+    expect(res.body).toEqual({ live: { 'gpt-6-luna': ['low', 'max'] }, defaults: { 'gpt-6-luna': 'low' } });
     spy.mockResolvedValue(null);
-    expect((await request(app).get('/api/codex/model-efforts').expect(200)).body).toEqual({ live: null });
+    expect((await request(app).get('/api/codex/model-efforts').expect(200)).body).toEqual({ live: null, defaults: null });
   });
 
   it('a refused pick the daemon rolled back reloads the web: the listener broadcasts tabs-changed', async () => {

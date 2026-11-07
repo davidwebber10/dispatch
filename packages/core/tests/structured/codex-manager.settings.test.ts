@@ -98,3 +98,17 @@ it('postNotice puts a line in the thread', async () => {
   m.postNotice('t1', 'Could not change the effort.');
   expect(m.getEvents('t1').some((e: any) => e.subtype === 'settings_refused' && e.message === 'Could not change the effort.')).toBe(true);
 });
+
+
+// ---- Review round 3 (PR #155) ----
+
+it('loadModelEfforts gives up on an app-server that never answers initialize, instead of waiting for ever', async () => {
+  const slow = new CodexStructuredSessionManager({ modelListTimeoutMs: 150 });
+  try {
+    slow.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { CODEX_FAKE_INIT_HANG: '1' } });
+    const t0 = Date.now();
+    const map = await slow.loadModelEfforts();
+    expect(map).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(2000);
+  } finally { slow.killAll(); }
+});

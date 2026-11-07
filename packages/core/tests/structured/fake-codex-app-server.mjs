@@ -77,6 +77,8 @@ rl.on('line', (line) => {
     return;
   }
 
+  // CODEX_FAKE_INIT_HANG=1: an app-server that is alive but never answers `initialize` (round 3 test).
+  if (msg.method === 'initialize' && process.env.CODEX_FAKE_INIT_HANG) return;
   if (msg.method === 'initialize') { respond(msg.id, { userAgent: 'fake', codexHome: '/tmp/.codex', platformFamily: 'unix', platformOs: 'macos' }); return; }
   if (msg.method === 'initialized') { return; }
 

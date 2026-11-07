@@ -33,12 +33,15 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   defaults: Record<string, string> | null = null;
   boundModel: string | undefined;
   loadDelayMs = 0;
+  /** Delays for the next loads, first to last (then loadDelayMs): lets a test make the FIRST caller the slowest. */
+  loadDelays: number[] = [];
   postNotice(_id: string, message: string) { this.notices.push(message); }
   modelEfforts() { return this.efforts; }
   modelDefaultEfforts() { return this.defaults; }
   currentModel() { return this.boundModel; }
   async loadModelEfforts() {
-    if (this.loadDelayMs) await new Promise((r) => setTimeout(r, this.loadDelayMs));
+    const delay = this.loadDelays.length ? this.loadDelays.shift()! : this.loadDelayMs;
+    if (delay) await new Promise((r) => setTimeout(r, delay));
     return this.efforts;
   }
   setDefaultEnv() {}
@@ -535,7 +538,8 @@ describe('two identical picks never leave saved and live apart (round 2, item 2)
 describe('concurrent Codex changes are checked one after the other (round 2, item 3)', () => {
   beforeEach(() => {
     codex.efforts = { 'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'], 'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
-    codex.loadDelayMs = 15; // both calls are waiting for the app-server's list when the other starts
+    // The FIRST caller waits longest for the list: without the lock the second one validates and saves before it.
+    codex.loadDelays = [30, 5];
   });
 
   it('a model change and an effort that the NEW model cannot take, sent together: the effort is refused', async () => {
@@ -544,8 +548,7 @@ describe('concurrent Codex changes are checked one after the other (round 2, ite
     const b = svc.setThreadSettings('x1', { effort: 'ultra' });
     await a;
     await expect(b).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/gpt-6-luna does not take that effort/) });
-    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna' });
-    expect(cfg('x1').effort).toBeUndefined();
+    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna', effort: 'medium' }); // the switch brought Luna's own default, never ultra
   });
 
   it('an effort and then a model change that cannot take it: the model switch brings its own default effort', async () => {
@@ -593,5 +596,90 @@ describe('putting a model back goes to the tier model of an overseer (round 2, i
     claude.script = [{ ok: false, error: 'effort refused', partial: { model: true } }, { ok: true }];
     await expect(svc.setThreadSettings('t1', { model: 'opus', effort: 'max' })).rejects.toThrow();
     expect(claude.applied[1].change).toEqual({ model: null });
+  });
+});
+
+// ---- Review round 3 (PR #155) ----
+
+describe('an older queued pick never lands after a newer one (round 3, item 1)', () => {
+  it('Opus is waiting for the turn, a newer Haiku is already in line when the turn ends: Haiku is the last thing Claude gets', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.turnOpen = true;
+    await svc.setThreadSettings('t1', { model: 'opus' }); // waits for the turn
+    claude.turnOpen = false;
+    const newer = svc.setThreadSettings('t1', { model: 'haiku' }); // queued for the lock, not yet run
+    claude.emit('idle', 't1', { declared: false });                  // the turn ends: the stale Opus is queued behind it
+    await newer;
+    await tick(); await tick();
+    expect(claude.applied.map((a) => a.change)).toEqual([{ model: 'haiku' }]); // the stale Opus is not sent at all
+    expect(cfg('t1').model).toBe('haiku');
+  });
+
+  it('only the superseded field is dropped: an Opus + effort pick loses the model to a newer Haiku but keeps its effort', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.turnOpen = true;
+    await svc.setThreadSettings('t1', { model: 'opus', effort: 'max' });
+    claude.turnOpen = false;
+    const newer = svc.setThreadSettings('t1', { model: 'haiku' });
+    claude.emit('idle', 't1', { declared: false });
+    await newer;
+    await tick(); await tick();
+    expect(claude.applied.map((a) => a.change)).toEqual([{ model: 'haiku' }, { effort: 'max' }]);
+    expect(cfg('t1')).toMatchObject({ model: 'haiku', effort: 'max' });
+  });
+});
+
+describe('restoreSettings holds a refusal to its own request (round 3, item 3)', () => {
+  // With the per-thread lock no request can write a setting between another request's save and its refusal, so no
+  // call through setThreadSettings reaches this check: it is a second line of defence. It is tested on its own.
+  it('puts a value back only for a setting that the refused request still holds', () => {
+    seed('t1', { config: { model: 'opus', effort: 'max', settingsPinned: { model: true, effort: true } } });
+    const inner = svc as any;
+    inner.settingsWriter.set('t1', { model: 7, effort: 9 }); // a newer request (9) has since written the effort
+    inner.restoreSettings('t1', { model: 'opus', effort: 'max' }, { model: 7, effort: 8 }, { model: 'sonnet', effort: 'low' }, {});
+    expect(cfg('t1')).toMatchObject({ model: 'sonnet', effort: 'max' }); // model restored (7 holds it), effort left to request 9
+  });
+});
+
+describe('a model switch with no saved effort runs at the new model\'s default (round 3, item 5)', () => {
+  beforeEach(() => { codex.efforts = { 'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'], 'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] }; });
+
+  it('sends and saves the new model\'s own default effort, and reports it', async () => {
+    codex.defaults = { 'gpt-6-luna': 'low' };
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    const r = await svc.setThreadSettings('x1', { model: 'gpt-6-luna' });
+    expect(codex.applied[0].change).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+    expect(cfg('x1').effort).toBe('low');
+    expect(r.effortNow).toBe('low');
+    expect(r.clearedEffort).toBeUndefined(); // there was no effort of the owner's to drop
+  });
+
+  it('works for a thread with no saved model too (the model the app-server bound)', async () => {
+    seed('x1', { type: 'codex', config: {} });
+    codex.boundModel = 'gpt-6-astra';
+    await svc.setThreadSettings('x1', { model: 'gpt-6-luna' });
+    expect(codex.applied[0].change).toEqual({ model: 'gpt-6-luna', effort: 'medium' }); // table default for Luna
+  });
+
+  it('leaves the effort alone when the model does not change, or when the owner gave one', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    await svc.setThreadSettings('x1', { model: 'gpt-6-astra' });
+    expect(codex.applied[0].change).toEqual({ model: 'gpt-6-astra' });
+    await svc.setThreadSettings('x1', { model: 'gpt-6-luna', effort: 'high' });
+    expect(codex.applied[1].change).toEqual({ model: 'gpt-6-luna', effort: 'high' });
+  });
+
+  it('keeps a saved effort the new model also takes (it is already sent with each turn)', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra', effort: 'high' } });
+    const r = await svc.setThreadSettings('x1', { model: 'gpt-6-luna' });
+    expect(codex.applied[0].change).toEqual({ model: 'gpt-6-luna' });
+    expect(r.effortNow).toBeUndefined();
+  });
+
+  it('does nothing of the kind for a Claude thread (the CLI picks the new model\'s own effort)', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    const r = await svc.setThreadSettings('t1', { model: 'opus' });
+    expect(claude.applied[0].change).toEqual({ model: 'opus' });
+    expect(r.effortNow).toBeUndefined();
   });
 });

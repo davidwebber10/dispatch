@@ -234,6 +234,8 @@ export interface CodexManagerOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** How long a `thread/unsubscribe` may stay unanswered before we stop waiting (default 5s). */
   releaseTimeoutMs?: number;
+  /** How long `loadModelEfforts` waits for the app-server to be ready and to answer `model/list` (default 5s). */
+  modelListTimeoutMs?: number;
 }
 
 export class CodexStructuredSessionManager extends EventEmitter implements IStructuredManager {
@@ -246,11 +248,13 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly releaseTimeoutMs: number;
+  private readonly modelListTimeoutMs: number;
 
   constructor(opts: CodexManagerOptions = {}) {
     super();
     this.setMaxListeners(0);
     this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
+    this.modelListTimeoutMs = opts.modelListTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
     this.sandbox = opts.sandbox ?? 'workspace-write';
   }
@@ -776,12 +780,20 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const conn = this.conn;
     if (!conn?.alive) return c?.map ?? null;
     try {
-      await conn.ready;
+      // An app-server that is alive but never answers `initialize` would otherwise hold every caller (the
+      // settings lock of a thread) for ever: give up after the same limit as model/list itself.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          conn.ready,
+          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('app-server not ready')), this.modelListTimeoutMs); timer.unref?.(); }),
+        ]);
+      } finally { clearTimeout(timer); }
       const map: Record<string, string[]> = {};
       const defaults: Record<string, string> = {};
       let cursor: string | null = null;
       for (let page = 0; page < 5; page++) {
-        const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, 5000);
+        const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, this.modelListTimeoutMs);
         for (const m of res?.data ?? []) {
           const efforts = (m?.supportedReasoningEfforts ?? []).map((e: any) => e?.reasoningEffort).filter((e: unknown): e is string => typeof e === 'string' && !!e);
           if (typeof m?.model === 'string' && efforts.length) {

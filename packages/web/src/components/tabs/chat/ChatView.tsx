@@ -466,7 +466,13 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       </div>
       {transport.confirmUi}
       {transport.error && (
-        <div role="alert" style={{ flexShrink: 0, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>Could not switch: {transport.error}</div>
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>Could not switch: {transport.error}</span>
+          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={transport.clearError}
+            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
+            <X size={13} weight="bold" />
+          </button>
+        </div>
       )}
       <DocViewer owner={terminalId} />
     </div>

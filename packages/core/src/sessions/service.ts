@@ -2098,6 +2098,11 @@ export class SessionService {
     return (await this.structuredManagerFor('codex')?.loadModelEfforts?.().catch(() => null)) ?? null;
   }
 
+  /** The effort each Codex model runs at by default, as the app-server reports it (call after codexModelEfforts), or null. */
+  codexModelDefaults(): Record<string, string> | null {
+    return this.structuredManagerFor('codex')?.modelDefaultEfforts?.() ?? null;
+  }
+
   /** The efforts a Codex model takes: the app-server's own list when it has answered, else the table. */
   private codexEffortsFor(model: string | null | undefined): readonly string[] {
     return codexEffortsFor(model, this.structuredManagerFor('codex')?.modelEfforts?.() ?? null);
@@ -2164,15 +2169,20 @@ export class SessionService {
       const tier = this.tierModelOf(cur);
       if (tier) change = { ...change, model: tier };
     }
-    // A Codex model switch that leaves the saved effort unsupported sends the new model's own default effort
-    // instead: a thread keeps the effort of its last turn when the model changes (live-checked on codex-cli 0.166),
-    // so leaving the field out would run the new model at the old, unsupported level.
+    // A Codex model switch must say which effort the new model runs at. A thread keeps the effort of its last turn when
+    // the model changes (live-checked on codex-cli 0.166), so leaving the field out runs the new model at the old
+    // model's level. If the owner has a saved effort the new model takes, it is already sent with each turn. Otherwise
+    // (none saved, or one the new model does not take) the new model's own default is sent, saved and reported.
     let clearedEffort: string | undefined;
     let effortNow: string | undefined;
-    if (row.type === 'codex' && change.model && change.effort === undefined && typeof cur.effort === 'string' && !codexEfforts!.includes(cur.effort)) {
-      clearedEffort = cur.effort;
-      effortNow = codexDefaultEffortFor(codexModel, manager?.modelDefaultEfforts?.() ?? null);
-      change = { ...change, effort: effortNow };
+    if (row.type === 'codex' && typeof change.model === 'string' && change.effort === undefined) {
+      const was = typeof cur.model === 'string' ? cur.model : manager?.currentModel?.(terminalId);
+      const kept = typeof cur.effort === 'string' && codexEfforts!.includes(cur.effort);
+      if (!kept && change.model !== was) {
+        if (typeof cur.effort === 'string') clearedEffort = cur.effort;
+        effortNow = codexDefaultEffortFor(codexModel, manager?.modelDefaultEfforts?.() ?? null);
+        change = { ...change, effort: effortNow };
+      }
     }
 
     const alive = !!manager?.isAlive(terminalId) && !!manager.applySettings;
@@ -2185,7 +2195,8 @@ export class SessionService {
     const seqs = this.saveSettings(terminalId, change);
     const done = (applied: 'now' | 'after-turn' | 'next-start') => ({
       terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!), applied,
-      ...(clearedEffort ? { clearedEffort, effortNow } : {}),
+      ...(clearedEffort ? { clearedEffort } : {}),
+      ...(effortNow ? { effortNow } : {}),
     });
 
     if (!alive) return done('next-start');
@@ -2257,6 +2268,15 @@ export class SessionService {
     seqs: SettingsSeqs,
   ): Promise<{ ok: true; stopped?: true } | { ok: false; error: string }> {
     type Res = import('../structured/manager.js').ApplyResult;
+    // A newer pick may have written a setting while this one waited (a queued Opus behind a newer Haiku): the newer
+    // request owns it and sends it itself. Applying the old one now would leave Claude on it while the config says
+    // the new one. Only the superseded fields are dropped.
+    {
+      const writer = this.settingsWriter.get(terminalId) ?? {};
+      if (change.model !== undefined && writer.model !== seqs.model) { const { model: _m, ...rest } = change; change = rest; seqs = { ...seqs, model: undefined }; }
+      if (change.effort !== undefined && writer.effort !== seqs.effort) { const { effort: _e, ...rest } = change; change = rest; seqs = { ...seqs, effort: undefined }; }
+      if (change.model === undefined && change.effort === undefined) return { ok: true };
+    }
     const inc = this.liveSettings.get(terminalId);
     if (!inc || !manager.isAlive(terminalId)) return { ok: true, stopped: true };
     const before = { ...inc }; // what the process runs now, copied before anything is asked of it

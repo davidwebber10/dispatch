@@ -378,9 +378,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
 
   // GET /api/codex/model-efforts — the efforts each Codex model takes, as the running app-server reports them
   // (they differ by model). `live` is null when no Codex app-server is running; the client then uses the
-  // built-in table (providers/codex-efforts.ts).
+  // built-in table (providers/codex-efforts.ts). `defaults` is the effort each model runs at when none is sent.
   router.get('/codex/model-efforts', async (_req, res) => {
-    try { res.json({ live: await sessionService.codexModelEfforts() }); }
+    try { const live = await sessionService.codexModelEfforts(); res.json({ live, defaults: live ? sessionService.codexModelDefaults() : null }); }
     catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
@@ -402,7 +402,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     try {
       const { terminal, applied, clearedEffort, effortNow } = await sessionService.setThreadSettings(req.params.terminalId, change);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
-      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort, effortNow } : {}) });
+      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort } : {}), ...(effortNow ? { effortNow } : {}) });
     } catch (e: any) {
       res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }

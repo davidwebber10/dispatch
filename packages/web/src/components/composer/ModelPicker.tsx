@@ -34,6 +34,8 @@ export interface ModelControlProps {
   mobile: boolean;
   /** The efforts to offer, when they depend on the model (Codex). Default: the harness's fixed list. */
   efforts?: readonly string[];
+  /** Codex: the effort the model runs at when none is saved. Shown as the current one, so the picker says what really runs. */
+  defaultEffort?: string;
 }
 
 /** The catalog models for a harness; Codex has no "Default" (a thread cannot go back to it). */
@@ -123,15 +125,16 @@ export function ModelControl(props: ModelControlProps) {
       })}
       <div style={{ ...heading, paddingTop: 10 }}>Effort</div>
       {levels.map((l) => {
-        const selected = effort === l;
+        const selected = (effort ?? props.defaultEffort) === l;
+        const isDefault = effort === null && selected;
         return (
           <button key={l} type="button" aria-pressed={selected} style={row(selected)} onClick={() => void apply({ effort: l })}>
-            <span style={{ flex: 1 }}>{l}</span>
+            <span style={{ flex: 1 }}>{l}{isDefault ? <span style={{ marginLeft: 8, font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>model default</span> : null}</span>
             {selected && <Check size={14} weight="bold" color="var(--color-accent)" />}
           </button>
         );
       })}
-      {effort === null && <div style={{ padding: '2px 10px', font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>No effort set: the model's own default.</div>}
+      {effort === null && !props.defaultEffort && <div style={{ padding: '2px 10px', font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>No effort set: the model's own default.</div>}
       <div role="status" style={{ padding: '8px 10px 4px', font: '400 11.5px var(--font-sans)', minHeight: 16, color: status?.kind === 'error' ? 'var(--color-status-red)' : 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
         {status?.kind === 'busy' ? <Spinner size={10} /> : null}
         {status?.kind === 'busy' ? 'Saving…' : status?.text ?? NOTE}

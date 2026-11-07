@@ -184,6 +184,38 @@ describe('a failed /cli says why (round 2, item 7)', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not switch: No session to resume yet'));
   });
 
+  // ---- Review round 3 (PR #155), item 4 ----
+  async function failedSwitch() {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), externalId: 'e1' }, { ...thread('claude-code'), id: 't2', externalId: 'e2' }] } } as never);
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    vi.spyOn(api, 'switchTransport').mockRejectedValue(new Error('No session to resume yet'));
+    const view = render(<ChatView terminalId="t1" />);
+    const ta = await box();
+    fireEvent.change(ta, { target: { value: '/cli' } });
+    fireEvent.keyDown(ta, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and switch' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not switch: No session to resume yet'));
+    return view;
+  }
+
+  it('the line goes away when the thread\'s mode changes some other way (the header toggle, the phone menu)', async () => {
+    await failedSwitch();
+    act(() => useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { transport: 'pty' }), externalId: 'e1' }] } } as never));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it('the line does not follow the pane to another thread', async () => {
+    const view = await failedSwitch();
+    view.rerender(<ChatView terminalId="t2" />);
+    await waitFor(() => expect(screen.queryByText(/Could not switch/)).toBeNull());
+  });
+
+  it('the line has a close button', async () => {
+    await failedSwitch();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/Could not switch/)).toBeNull();
+  });
+
   it('a switch that works shows nothing', async () => {
     useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: 'e1' }] } } as never);
     vi.spyOn(api, 'switchTransport').mockResolvedValue(thread('claude-code'));
@@ -276,5 +308,48 @@ describe('Codex efforts follow the model (item 9)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Luna|gpt-6-luna/ }));
     expect(await screen.findByRole('button', { name: 'max' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'ultra' })).toBeNull();
+  });
+});
+
+// ---- Review round 3 (PR #155), item 5 ----
+describe('the picker shows the effort that really runs (Codex, no effort saved)', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'codexModelEfforts').mockResolvedValue({
+      live: { 'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'], 'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+      defaults: { 'gpt-6-luna': 'low', 'gpt-6-astra': 'medium' },
+    });
+  });
+
+  it('marks the model\'s default as the current effort, and says it is the default', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-luna' })] } } as never);
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /gpt-6-luna/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^low/, pressed: true })).toHaveTextContent('model default'));
+    expect(screen.getByRole('button', { name: 'medium', pressed: false })).toBeInTheDocument();
+    expect(screen.queryByText(/No effort set/)).toBeNull();
+  });
+
+  it('a saved effort wins over the default', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-luna', effort: 'high' })] } } as never);
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /gpt-6-luna/ }));
+    expect(await screen.findByRole('button', { name: 'high', pressed: true })).not.toHaveTextContent('model default');
+    expect(screen.getByRole('button', { name: 'low', pressed: false })).toBeInTheDocument();
+  });
+
+  it('a model switch that brought the new default says so', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-astra' })] } } as never);
+    settings.mockResolvedValue({ terminal: thread('codex'), applied: 'now', effortNow: 'low' });
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Astra/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Luna/ }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent("Effort is now low, this model's default."));
+  });
+
+  it('a Claude thread has no default effort to show', async () => {
+    render(<ChatView terminalId="t1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Sonnet/ }));
+    expect(screen.queryByText('model default')).toBeNull();
+    expect(screen.getByText(/No effort set/)).toBeInTheDocument();
   });
 });

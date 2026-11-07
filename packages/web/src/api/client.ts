@@ -215,7 +215,7 @@ export const api = {
   setThreadSettings: (terminalId: string, change: { model?: string | null; effort?: string }) =>
     req<{ terminal: Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string; effortNow?: string }>(`/api/terminals/${terminalId}/settings`, { method: 'PATCH', body: body(change) }),
   // The efforts each Codex model takes, as the running app-server reports them; live is null when none runs.
-  codexModelEfforts: () => req<{ live: Record<string, string[]> | null }>('/api/codex/model-efforts'),
+  codexModelEfforts: () => req<{ live: Record<string, string[]> | null; defaults?: Record<string, string> | null }>('/api/codex/model-efforts'),
   // Trigger native Claude Code compaction on the thread's current context.
   compactTerminal: (terminalId: string) => req<void>(`/api/terminals/${terminalId}/compact`, { method: 'POST' }),
   // Should the Pretty view offer to summarize before resuming this thread?
