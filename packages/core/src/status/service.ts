@@ -177,6 +177,7 @@ export class StatusService {
     /** Optional watch-wake signal (feeds WatchDispatcher.onStatus). Fires on the same edge as onActivity, above. */
     private onWatchStatus?: (terminalId: string, status: ThreadStatus) => void,
     private onUserPrompt?: (terminalId: string, prompt: string) => void,
+    private onHook?: (provider: string, terminalId: string, payload: unknown) => void,
   ) {}
 
   /**
@@ -187,6 +188,8 @@ export class StatusService {
   addThreadSettledListener(fn: SettledListener): void {
     this.settledListeners.push(fn);
   }
+
+  setHookListener(fn: (provider: string, terminalId: string, payload: unknown) => void): void { this.onHook = fn; }
 
   ingest(provider: string, terminalId: string, payload: unknown): void {
     if (!this.db.open) return;
@@ -199,6 +202,8 @@ export class StatusService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!harness || !terminal || terminal.type !== harness.name) return;
     const norm = harness.telemetry.normalizeHook(payload);
+    // Plugins see every hook payload (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
+    try { this.onHook?.(provider, terminalId, payload); } catch { /* never blocks the status flow */ }
     if (norm.turn === 'start' && typeof (payload as any)?.prompt === 'string') this.onUserPrompt?.(terminalId, (payload as any).prompt);
 
     // Capture the session/thread id at the source — no more filesystem polling. First-write

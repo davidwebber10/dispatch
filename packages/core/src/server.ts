@@ -103,6 +103,7 @@ import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { ThreadEvents } from './plugins/thread-events.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
@@ -303,8 +304,10 @@ class NoopPTYManager extends PTYManager {
  * once answered, 'resolved' (→ working). Routing it through StatusService means it
  * broadcasts terminal:status + fires the same push/notify path the PTY/hook flow uses.
  */
-function wirePermissionMembrane(manager: IStructuredManager, status: StatusService, sessions: SessionService, db: Database.Database, _broadcaster: EventBroadcaster): void {
-  subscribeHarnessEvents(manager, id => db.open ? terminalsDb.getById(db, id)?.type : undefined, event => status.accept(event, committed => {
+function wirePermissionMembrane(manager: IStructuredManager, status: StatusService, sessions: SessionService, db: Database.Database, _broadcaster: EventBroadcaster, threadEvents?: ThreadEvents): void {
+  // Plugins observe every native frame (tool_use blocks) and every harness event (turns, usage).
+  if (threadEvents) manager.on('event', (id: string, frame: unknown) => { try { threadEvents.onNativeFrame(id, frame); } catch { /* observers never block */ } });
+  subscribeHarnessEvents(manager, id => db.open ? terminalsDb.getById(db, id)?.type : undefined, event => { try { threadEvents?.onHarnessEvent(event); } catch { /* observers never block */ } status.accept(event, committed => {
     const id = committed.terminalId;
     if (committed.type === 'permission.requested') {
       if (sessions.routeAgentQuestionToCoordinator(id, { toolName: committed.toolName, questions: committed.questions })) status.markWorking(id, 'Asking Control Plane…');
@@ -319,17 +322,17 @@ function wirePermissionMembrane(manager: IStructuredManager, status: StatusServi
         sessions.noteAgentNeedsHelp(id, detail.ask ?? 'Needs your input');
       }
     }
-  }));
+  }); });
 }
 
 /** Every additional harness receives identical registration, lifecycle and accounting wiring. */
-function wireHarnesses(sessionService: SessionService, status: StatusService, db: Database.Database, broadcaster: EventBroadcaster, injected?: Map<string, IStructuredManager>): Map<string, IStructuredManager> {
+function wireHarnesses(sessionService: SessionService, status: StatusService, db: Database.Database, broadcaster: EventBroadcaster, injected?: Map<string, IStructuredManager>, threadEvents?: ThreadEvents): Map<string, IStructuredManager> {
   const managers = new Map<string, IStructuredManager>();
   if (injected) {
     // Test seam: the caller's managers stand in for the real CLI managers, so no CLI runs.
     for (const [name, manager] of injected) {
       sessionService.registerStructuredManager(name, manager);
-      wirePermissionMembrane(manager, status, sessionService, db, broadcaster);
+      wirePermissionMembrane(manager, status, sessionService, db, broadcaster, threadEvents);
       managers.set(name, manager);
     }
     return managers;
@@ -340,7 +343,7 @@ function wireHarnesses(sessionService: SessionService, status: StatusService, db
       : provider.structured.protocol === 'acp' ? new GrokStructuredSessionManager(provider.structured.dialect)
       : new CodexStructuredSessionManager();
     sessionService.registerStructuredManager(provider.name, manager);
-    wirePermissionMembrane(manager, status, sessionService, db, broadcaster);
+    wirePermissionMembrane(manager, status, sessionService, db, broadcaster, threadEvents);
     managers.set(provider.name, manager);
   }
   return managers;
@@ -395,6 +398,8 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   app.locals.plugins = plugins;
+  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
+  app.locals.threadEvents = threadEvents;
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dispatchDir, 'keys') });
   const agentService = new AgentService(db, sessionService, broadcaster);
@@ -417,7 +422,12 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   // optional StatusService dependency, same shape as onActivity below.
   const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
-  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers);
+  // Plugins observe hook payloads, spawns, declarations and prompts (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
+  statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
+  sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
+  sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
+  sessionService.setUserPromptListener((id, text) => threadEvents.onPrompt(id, text, 'user'));
+  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -571,6 +581,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   plugins.start();
+  const threadEvents = new ThreadEvents(broadcaster, (id) => { const t = db.open ? terminalsDb.getById(db, id) : null; return t ? { sessionId: t.session_id, harness: t.type } : null; });
   const authRequestService = new AuthRequestService(broadcaster);
 
   // Name once from the first submitted user prompt; transcript activity is a legacy
@@ -589,7 +600,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dataDir, 'keys') });
-  sessionService.setUserPromptListener((id, text) => threadAutoNamer.notifyPrompt(id, text));
+  sessionService.setUserPromptListener((id, text) => { threadAutoNamer.notifyPrompt(id, text); threadEvents.onPrompt(id, text, 'user'); });
   sessionService.setDaemonPort(preferredPort); // corrected below if the daemon falls back to another port
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope
   // spec 2026-10-07, Unit 1). Only the real daemon sets it; createApp (tests) leaves it unset.
@@ -614,10 +625,14 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       // Endless first, in its own try: a throw in either hook must not drop the other.
       try { onEndlessStatus?.(terminalId, status); } catch (err) { console.warn('[endless] status edge failed:', err); }
       watchDispatcher.onStatus(terminalId, status);
+  // Plugins observe hook payloads, spawns and declarations; prompts join the auto-namer's listener below.
+  statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
+  sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
+  sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
     },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
-  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster);
+  const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
   agentService.setLifecycleService(statusService);

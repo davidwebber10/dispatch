@@ -303,6 +303,10 @@ export class SessionService {
   setPluginInjection(fn: (harness: string) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
     this.pluginInjection = fn;
   }
+  private onSpawned: ((terminalId: string, toolsAvailable: string[]) => void) | null = null;
+  setSpawnListener(fn: (terminalId: string, toolsAvailable: string[]) => void): void { this.onSpawned = fn; }
+  private onStatusDeclared: ((terminalId: string, decl: import('../structured/manager.js').StatusDeclaration) => void) | null = null;
+  setStatusDeclaredListener(fn: (terminalId: string, decl: import('../structured/manager.js').StatusDeclaration) => void): void { this.onStatusDeclared = fn; }
 
   setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
     this.integrationsSpecs = fn;
@@ -321,6 +325,7 @@ export class SessionService {
       const t = this.getTerminal(terminalId);
       if (t) terminalsDb.updateConfig(this.db, terminalId, { ...((t.config ?? {}) as Record<string, unknown>), toolsAvailable });
     } catch { /* the record is informational */ }
+    try { this.onSpawned?.(terminalId, toolsAvailable); } catch { /* observers never block a spawn */ }
   }
 
   setToolsAwareness(fn: () => string | null): void {
@@ -2093,6 +2098,7 @@ export class SessionService {
    */
   reportStatus(terminalId: string, decl: import('../structured/manager.js').StatusDeclaration): boolean {
     decl = redactKeysDeep(decl);
+    try { this.onStatusDeclared?.(terminalId, decl); } catch { /* observers never block a declaration */ }
     const manager = this.structuredManagerForTerminal(terminalId);
     if (manager && manager.isAlive(terminalId)) {
       manager.noteDeclaredStatus(terminalId, decl);
