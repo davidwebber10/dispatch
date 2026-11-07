@@ -11,8 +11,9 @@ import { UsageBanner } from '../layout/UsageBanner';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { usePluginRegistry, usePromotedViews, anyBadge } from '../../plugins/registry';
-import { pluginIcon } from '../../plugins/sdk';
+import { usePluginRegistry, usePromotedViews, anyBadge, useInspectorTabs } from '../../plugins/registry';
+import { pluginIcon, tabIcon } from '../../plugins/sdk';
+import { PluginTabSheet } from '../../plugins/PluginTabSheet';
 import { PluginView, Slot } from '../../plugins/PluginView';
 import { PluginsTab } from './PluginsTab';
 import { ProjectMenu } from './ProjectMenu';
@@ -301,6 +302,9 @@ export function MobileApp() {
     : leafStatus === 'needs_input' ? 'var(--color-status-yellow)'
       : leafStatus === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
   const [threadMenu, setThreadMenu] = useState<ThreadMenuAt | null>(null);
+  // Plugins' right-column tabs: rows in the thread's ⋯ menu, each opening a full-height sheet.
+  const pluginTabs = useInspectorTabs();
+  const [pluginSheet, setPluginSheet] = useState<{ key: string; terminalId: string; sessionId: string } | null>(null);
   // The project screen's ⋯ menu (2026-11-06): its header matches the thread screen's.
   const [projectMenu, setProjectMenu] = useState(false);
   const connection = useShownStatus();
@@ -328,9 +332,19 @@ export function MobileApp() {
                 {transport.canSwitch && transport.midTurn && <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-status-yellow)' }}>stops this turn</span>}
               </button>
             )}
+            {threadMenu && pluginTabs.map((p) => {
+              const PIcon = tabIcon(p.icon);
+              const tab = threadMenu.tab;
+              return (
+                <button key={p.key} type="button" style={row} onClick={() => { close(); setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }); }}>
+                  <PIcon size={17} />{p.label}
+                </button>
+              );
+            })}
             <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />
           </>
         )} />
+      <PluginTabSheet tabKey={pluginSheet?.key ?? null} terminalId={pluginSheet?.terminalId ?? null} sessionId={pluginSheet?.sessionId ?? null} onClose={() => setPluginSheet(null)} />
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>

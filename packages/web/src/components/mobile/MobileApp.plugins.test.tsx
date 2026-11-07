@@ -102,3 +102,38 @@ describe('MobileApp plugin slots (plugins slice 4)', () => {
     expect(eye.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+describe('MobileApp plugin right-column tabs (inspectorTabs)', () => {
+  it("the thread's ⋯ menu lists each plugin tab; tapping one opens its component in a sheet with the thread and project ids", () => {
+    const t1 = { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } };
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    useTabs.setState({ byProject: { s1: [t1 as any] } });
+    vi.spyOn(api, 'getTerminal').mockResolvedValue(t1 as any);
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([t1] as any);
+    usePluginRegistry.getState().register('notes', { inspectorTabs: [{ id: 'n', label: 'Notes', icon: 'note', Component: ({ terminalId, sessionId }) => <div>notes for {terminalId} in {sessionId}</div> }] });
+    window.history.pushState({}, '', '/p/s1/t/t1');
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Thread menu' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: /Notes/ }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    const sheet = screen.getByTestId('sheet-panel');
+    expect(sheet).toHaveAttribute('aria-label', 'Notes');
+    expect(within(sheet).getByText('notes for t1 in s1')).toBeInTheDocument();
+  });
+
+  it('a plugin tab that throws in the sheet shows the plugin error card', () => {
+    const t1 = { id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    useTabs.setState({ byProject: { s1: [t1 as any] } });
+    vi.spyOn(api, 'getTerminal').mockResolvedValue(t1 as any);
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([t1] as any);
+    usePluginRegistry.getState().register('bad', { inspectorTabs: [{ id: 'x', label: 'Bad', Component: () => { throw new Error('kaboom'); } }] });
+    window.history.pushState({}, '', '/p/s1/t/t1');
+    render(<MobileApp />);
+    fireEvent.click(screen.getByRole('button', { name: 'Thread menu' }));
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: /Bad/ }));
+    expect(within(screen.getByTestId('sheet-panel')).getByRole('alert')).toHaveTextContent('The plugin "bad" failed');
+    expect(screen.getByTestId('thread-title')).toHaveTextContent('Fix it');
+  });
+});
