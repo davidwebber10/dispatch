@@ -1,7 +1,7 @@
 import { untrustedBlock } from '../security/untrusted-text.js';
 import { harnessCapabilities } from '../providers/capabilities.js';
 import type { Router } from 'express';
-import { keyRoute, policyRouter, requireOwnerProof, ownerOnlyStrict } from '../auth/route-policy.js';
+import { needs, keyRoute, policyRouter, requireOwnerProof, ownerOnlyStrict } from '../auth/route-policy.js';
 import { allowRule, answerRule, chatAnswerRule, chatMessageRule, chatQuestionReadRule, chatTargetRule, archiveRule, createBodyRule, directRule, messageRule, readRule, readSessionRule, selfRule } from '../auth/key-rules.js';
 import type { SessionService } from '../sessions/service.js';
 import { isPtyType } from '../db/terminals.js';
@@ -86,7 +86,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/sessions/:id/terminals — list all active tabs for a session
-  router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule, roleRun: readSessionRule }), (req, res) => {
+  router.get('/sessions/:id/terminals', keyRoute({ thread: readSessionRule, roleRun: readSessionRule, plugin: needs('read:threads') }), (req, res) => {
     try {
       const terminals = sessionService.listTerminals(req.params.id);
       res.json(redactKeysDeep(terminals));
@@ -96,7 +96,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId — get a single terminal
-  router.get('/terminals/:terminalId', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
+  router.get('/terminals/:terminalId', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule , plugin: needs('read:threads') }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
     res.json(redactKeysDeep(terminal));
@@ -118,7 +118,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
   // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
   // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
-  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule }), (req, res) => {
+  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule , plugin: needs('read:threads') }), (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
     res.json(redactKeysDeep(sessionService.getConversation(req.params.terminalId, {

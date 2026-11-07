@@ -1,5 +1,5 @@
 import { type Request, type Response, type Router } from 'express';
-import { keyRoute, policyRouter } from '../auth/route-policy.js';
+import { needs, keyRoute, policyRouter } from '../auth/route-policy.js';
 import { ledgerRule } from '../auth/key-rules.js';
 import { LedgerError, type LedgerService } from '../overseer/ledger-service.js';
 import { clientMessage } from '../http/client-message.js';
@@ -25,8 +25,10 @@ export function createLedgerRouter(ledger: LedgerService): Router {
     }
   };
 
-  router.get('/sessions/:sessionId/ledger/card', handle(200, (req) => ledger.card(req.params.sessionId)));
-  router.get('/sessions/:sessionId/ledger/:itemId/source', handle(200, (req) =>
+  // A plugin reads the ledger through the card and the source (docs/superpowers/specs/2026-11-07-plugins-design.md, section 6);
+  // the thread routes below carry a thread's identity, and a plugin actor for writes comes with the model slice.
+  router.get('/sessions/:sessionId/ledger/card', keyRoute({ plugin: needs('read:ledger') }), handle(200, (req) => ledger.card(req.params.sessionId)));
+  router.get('/sessions/:sessionId/ledger/:itemId/source', keyRoute({ plugin: needs('read:ledger') }), handle(200, (req) =>
     ledger.source(req.params.sessionId, req.params.itemId, { heading: typeof req.query.heading === 'string' ? req.query.heading : undefined })));
   router.post('/sessions/:sessionId/ledger', keyRoute({ thread: ledgerRule }), handle(201, (req) => ledger.add(req.params.sessionId, req.body?.caller, req.body ?? {})));
   router.post('/sessions/:sessionId/ledger/list', keyRoute({ thread: ledgerRule }), handle(200, (req) => ledger.list(req.params.sessionId, req.body?.caller, { forRecap: req.body?.forRecap === true })));

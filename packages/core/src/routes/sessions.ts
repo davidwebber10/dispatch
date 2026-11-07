@@ -1,6 +1,7 @@
 import type { Router } from 'express';
 import { keyRoute, policyRouter, ownerOnlyStrict, requireOwnerProof } from '../auth/route-policy.js';
 import { allowRule, isKeyRequest, projectListRule, workerDefaultsRule } from '../auth/key-rules.js';
+import { needs } from '../auth/route-policy.js';
 import type Database from 'better-sqlite3';
 import type { SessionService } from '../sessions/service.js';
 import type { EventBroadcaster } from '../ws/events.js';
@@ -39,7 +40,7 @@ export function createSessionsRouter(sessionService: SessionService, broadcaster
   });
 
   // GET /api/sessions — list sessions
-  router.get('/', keyRoute({ thread: projectListRule }), (req, res) => {
+  router.get('/', keyRoute({ thread: projectListRule, plugin: needs('read:projects') }), (req, res) => {
     const status = req.query.status as string | undefined;
     const sessions = sessionService.list(status);
     // A key (any thread, PK-5) sees only the project list it needs to find other projects and their overseers.
