@@ -7,28 +7,28 @@ import type { TerminalType } from '../../api/types';
 // Provider distinction in thread rows is shown as a small colored dot.
 export function providerColor(type: TerminalType): string {
   switch (type) {
-    case 'claude-code': return '#0091FF'; // Claude → blue
-    case 'codex': return '#30D158';        // Codex → green
-    case 'grok': return '#E9E9EC';          // Grok → xAI white
-    case 'opencode': return '#F5A97F';      // OpenCode → open-model amber
-    case 'shell': return '#8E8E96';         // Terminal → neutral
-    case 'browser': return '#56B6C2';
-    case 'notes': return '#C792EA';
-    default: return '#8E8E96';
+    case 'claude-code': return 'var(--color-blue)'; // Claude → blue
+    case 'codex': return 'var(--color-green)'; // Codex → green
+    case 'grok': return 'var(--color-text-primary)'; // Grok → xAI white
+    case 'opencode': return 'var(--color-orange)'; // OpenCode → open-model amber
+    case 'shell': return 'var(--color-text-secondary)'; // Terminal → neutral
+    case 'browser': return 'var(--color-cyan)';
+    case 'notes': return 'var(--color-purple)';
+    default: return 'var(--color-text-secondary)';
   }
 }
 
 export function fileVisual(name: string): { Icon: Icon; color: string } {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  if (['ts', 'tsx'].includes(ext)) return { Icon: FileTs, color: '#4F90D0' };
-  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) return { Icon: FileJs, color: '#E5C07B' };
-  if (ext === 'json') return { Icon: FileCode, color: '#E5C07B' };
-  if (['css', 'scss', 'less'].includes(ext)) return { Icon: FileCss, color: '#56B6C2' };
-  if (['html', 'htm', 'xml', 'svg', 'vue'].includes(ext)) return { Icon: FileHtml, color: '#E06C75' };
-  if (ext === 'py') return { Icon: FilePy, color: '#7FBE6E' };
-  if (['md', 'markdown', 'mdx', 'txt'].includes(ext)) return { Icon: FileText, color: '#C792EA' };
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'].includes(ext)) return { Icon: FileImage, color: '#56B6C2' };
-  if (['sh', 'bash', 'zsh', 'go', 'rs', 'rb', 'java', 'c', 'cpp', 'h'].includes(ext)) return { Icon: FileCode, color: '#7FBE6E' };
-  if (['yml', 'yaml', 'toml', 'ini', 'env', 'lock'].includes(ext)) return { Icon: FileCode, color: '#8E8E96' };
-  return { Icon: FileGlyph, color: '#8E8E96' };
+  if (['ts', 'tsx'].includes(ext)) return { Icon: FileTs, color: 'var(--color-blue)' };
+  if (['js', 'jsx', 'mjs', 'cjs'].includes(ext)) return { Icon: FileJs, color: 'var(--color-yellow)' };
+  if (ext === 'json') return { Icon: FileCode, color: 'var(--color-yellow)' };
+  if (['css', 'scss', 'less'].includes(ext)) return { Icon: FileCss, color: 'var(--color-cyan)' };
+  if (['html', 'htm', 'xml', 'svg', 'vue'].includes(ext)) return { Icon: FileHtml, color: 'var(--color-red)' };
+  if (ext === 'py') return { Icon: FilePy, color: 'var(--color-green)' };
+  if (['md', 'markdown', 'mdx', 'txt'].includes(ext)) return { Icon: FileText, color: 'var(--color-purple)' };
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'].includes(ext)) return { Icon: FileImage, color: 'var(--color-cyan)' };
+  if (['sh', 'bash', 'zsh', 'go', 'rs', 'rb', 'java', 'c', 'cpp', 'h'].includes(ext)) return { Icon: FileCode, color: 'var(--color-green)' };
+  if (['yml', 'yaml', 'toml', 'ini', 'env', 'lock'].includes(ext)) return { Icon: FileCode, color: 'var(--color-text-secondary)' };
+  return { Icon: FileGlyph, color: 'var(--color-text-secondary)' };
 }

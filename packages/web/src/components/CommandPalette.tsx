@@ -40,8 +40,8 @@ export function CommandPalette() {
 
   const pick = (r: Row) => { setOpen(false); try { r.run(); } catch (e) { console.error('[command]', e); } };
   return (
-    <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '14vh' }}>
-      <div role="dialog" aria-modal="true" aria-label="Commands" onClick={(e) => e.stopPropagation()} style={{ width: 'min(560px, 92vw)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+    <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'var(--color-overlay)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '14vh' }}>
+      <div role="dialog" aria-modal="true" aria-label="Commands" onClick={(e) => e.stopPropagation()} style={{ width: 'min(560px, 92vw)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', boxShadow: '0 20px 60px var(--color-shadow)', overflow: 'hidden' }}>
         <input ref={input} role="combobox" aria-label="Command" aria-expanded="true" aria-controls="command-list" value={q} placeholder="Type a command…"
           onChange={(e) => { setQ(e.target.value); setCursor(0); }}
           onKeyDown={(e) => {

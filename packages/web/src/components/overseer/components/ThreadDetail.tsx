@@ -260,7 +260,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
               padding: '6px 11px',
               borderRadius: 'var(--radius-sm)',
               background: 'var(--acc)',
-              color: '#06140B',
+              color: 'var(--color-on-accent)',
               border: 'none',
               fontSize: 11.5,
               fontWeight: 600,

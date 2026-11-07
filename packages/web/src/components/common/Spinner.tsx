@@ -4,7 +4,7 @@ export function Spinner({ size = 11, color = 'var(--color-accent)' }: { size?: n
       aria-label="loading"
       style={{
         display: 'inline-block', width: size, height: size, borderRadius: '50%',
-        border: '1.5px solid rgba(255,255,255,0.16)', borderTopColor: color,
+        border: '1.5px solid color-mix(in srgb, var(--color-text-emphasis) 16%, transparent)', borderTopColor: color,
         animation: 'dispatchSpin 0.7s linear infinite', flexShrink: 0, boxSizing: 'border-box',
         // Promote to its own compositor layer. An odd-size spinner centered in an even-height
         // slot (e.g. 11px in an 18px row) sits on a half-pixel, so a plain rotate() re-samples

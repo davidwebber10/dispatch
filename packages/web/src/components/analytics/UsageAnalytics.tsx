@@ -22,7 +22,7 @@ const CALENDAR_WEEKS = 26;
 const CALENDAR_DAYS = CALENDAR_WEEKS * 7;
 
 /** The heatmap ramp: one hue, monotonic lightness, near-surface to full accent. */
-const HEAT = ['#1B1B1E', '#1E3D28', '#256B3C', '#2E9C52', '#3ECF6A'];
+const HEAT = ['var(--color-elevated)', 'color-mix(in srgb, var(--color-accent) 20%, var(--color-elevated))', 'color-mix(in srgb, var(--color-accent) 45%, var(--color-elevated))', 'color-mix(in srgb, var(--color-accent) 72%, var(--color-elevated))', 'var(--color-accent)'];
 
 /** Everything a filter changes. Re-fetched whenever a select moves. */
 interface Loaded {

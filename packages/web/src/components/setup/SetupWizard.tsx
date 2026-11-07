@@ -40,8 +40,8 @@ export function SetupWizard() {
   const back = () => setStep(ORDER[Math.max(idx - 1, 0)]);
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,.6)' }}>
-      <div style={{ width: 'min(560px, 94vw)', maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: 22, boxShadow: '0 24px 60px -12px rgba(0,0,0,.7)' }}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-overlay)' }}>
+      <div style={{ width: 'min(560px, 94vw)', maxHeight: '88vh', overflowY: 'auto', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-xl)', padding: 22, boxShadow: '0 24px 60px -12px var(--color-shadow)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
           <strong style={{ fontSize: 16 }}>Set up Dispatch</strong>
           <button onClick={finish} style={{ background: 'none', border: 'none', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 13 }}>Skip all</button>
@@ -67,7 +67,7 @@ export function SetupWizard() {
 }
 
 export function btn(primary: boolean): React.CSSProperties {
-  return { height: 34, padding: '0 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: primary ? 'var(--color-accent)' : 'transparent', color: primary ? '#08240F' : 'var(--color-text-secondary)' };
+  return { height: 34, padding: '0 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', cursor: 'pointer', fontWeight: 600, fontSize: 13, background: primary ? 'var(--color-accent)' : 'transparent', color: primary ? 'var(--color-on-accent)' : 'var(--color-text-secondary)' };
 }
 
 function AgentsStep({ providers: initial }: { providers: ProviderStatus[] }) {
@@ -137,6 +137,7 @@ function MobileStep({ tailscale: initial }: { tailscale: TailscaleStatus }) {
       <p style={{ color: 'var(--color-text-secondary)', fontSize: 13, marginTop: 0 }}>Reach Dispatch from your phone privately over Tailscale — no public exposure.</p>
       {ts.running && ts.url ? (
         <div style={{ textAlign: 'center' }}>
+          {/* literal color: a QR code needs a white quiet zone to scan, in every theme */}
           {qr && <img src={qr} alt="Open on phone" style={{ borderRadius: 'var(--radius-md)', background: '#fff', padding: 8 }} />}
           <div style={{ font: '500 13px var(--font-mono)', marginTop: 10, wordBreak: 'break-all' }}>{ts.url}</div>
           <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Install the Tailscale app on your phone, sign into the same account, then open this URL.</p>

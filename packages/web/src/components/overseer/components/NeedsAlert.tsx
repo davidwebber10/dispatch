@@ -120,7 +120,7 @@ export function NeedsAlert() {
             background: 'var(--base)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius-lg)',
-            boxShadow: '0 24px 70px -28px rgba(0,0,0,.85)',
+            boxShadow: '0 24px 70px -28px var(--color-shadow-strong)',
             zIndex: 50,
           }}
         >

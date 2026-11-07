@@ -23,7 +23,7 @@ const toggle: React.CSSProperties = {
 const panel: React.CSSProperties = {
   marginTop: 4, textAlign: 'left',
   maxHeight: 'min(45vh, 320px)', overflowY: 'auto', overscrollBehavior: 'contain',
-  background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)',
+  background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)',
   padding: '10px 12px',
 };
 
@@ -49,7 +49,7 @@ function ReleaseEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) 
   const date = formatDate(entry.publishedAt);
 
   return (
-    <section style={{ marginTop: first ? 0 : 14, paddingTop: first ? 0 : 12, borderTop: first ? 'none' : '1px solid #2C2C32' }}>
+    <section style={{ marginTop: first ? 0 : 14, paddingTop: first ? 0 : 12, borderTop: first ? 'none' : '1px solid var(--color-border-strong)' }}>
       {/* Title row: the version leads; the date and the publishing account are
           metadata beside it. The author comes off the GitHub release itself. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

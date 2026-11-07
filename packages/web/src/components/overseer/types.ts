@@ -126,7 +126,7 @@ export interface AgentCardInfo {
 export interface NeedAction {
   label: string;
   bg: string;                 // primary→var(--acc), else var(--pane)
-  fg: string;                 // primary→#06140B,   else var(--ts)
+  fg: string;                 // primary→var(--color-on-accent),   else var(--ts)
   bd: string;                 // primary→1px solid var(--acc), else 1px solid var(--border)
 }
 

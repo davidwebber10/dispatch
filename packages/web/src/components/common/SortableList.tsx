@@ -96,7 +96,7 @@ export function SortableList<T extends { id: string }>({ items, onReorder, rende
       {createPortal(
         <DragOverlay>
           {activeItem ? (
-            <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px rgba(0,0,0,.65)', borderRadius: 'var(--radius-md)', cursor: 'grabbing' }}>
+            <div className="dispatch-wiggle" style={{ transform: 'scale(1.03)', boxShadow: '0 14px 34px -10px var(--color-shadow)', borderRadius: 'var(--radius-md)', cursor: 'grabbing' }}>
               {(renderOverlay ?? ((it: T) => renderItem(it, { dragging: true })))(activeItem)}
             </div>
           ) : null}

@@ -27,9 +27,9 @@ export function ThreadAskBanner({ terminalId, onAnswer }: { terminalId: string; 
         alignItems: 'center',
         gap: 10,
         padding: '8px 14px',
-        background: 'rgba(232,176,75,.08)',
-        borderTop: '1px solid rgba(232,176,75,.35)',
-        borderBottom: '1px solid rgba(232,176,75,.35)',
+        background: 'color-mix(in srgb, var(--color-status-amber) 8%, transparent)',
+        borderTop: '1px solid color-mix(in srgb, var(--color-status-amber) 35%, transparent)',
+        borderBottom: '1px solid color-mix(in srgb, var(--color-status-amber) 35%, transparent)',
       }}
     >
       <span aria-hidden style={{ color: 'var(--color-status-yellow)', fontSize: 13, flexShrink: 0 }}>⏸</span>
@@ -59,7 +59,7 @@ export function ThreadAskBanner({ terminalId, onAnswer }: { terminalId: string; 
             flexShrink: 0,
             background: 'transparent',
             color: 'var(--color-status-yellow)',
-            border: '1px solid rgba(232,176,75,.6)',
+            border: '1px solid color-mix(in srgb, var(--color-status-amber) 60%, transparent)',
             borderRadius: 'var(--radius-sm)',
             padding: '4px 12px',
             fontSize: 12,

@@ -11,7 +11,7 @@ export function PluginView({ viewKey }: { viewKey: string }) {
     return (
       <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start', color: 'var(--color-text-tertiary)', fontSize: 13 }}>
         <span>This plugin screen is not loaded.</span>
-        <button type="button" onClick={() => useUI.getState().setView('workspace')} style={{ height: 30, padding: '0 12px', background: 'transparent', border: '1px solid #2c2c32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' }}>Back to Threads</button>
+        <button type="button" onClick={() => useUI.getState().setView('workspace')} style={{ height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' }}>Back to Threads</button>
       </div>
     );
   }

@@ -6,8 +6,8 @@ import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
 import { Blaster, blasterActivity } from './blaster/Blaster';
 
-const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
-const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13.5, cursor: 'pointer' };
+const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13.5, cursor: 'pointer' };
 
 /**
  * Update prompt as a CENTERED, dismissable modal. The old top-anchored banner
@@ -56,7 +56,7 @@ export function UpdateModal() {
   return (
     <div
       onClick={arena ? undefined : dismiss}
-      style={{ position: 'fixed', inset: 0, zIndex: 280, background: arena ? 'transparent' : 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 280, background: arena ? 'transparent' : 'var(--color-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))' }}
     >
       {/* While the update runs, the backdrop is the game arena, and the card becomes liquid
           glass — translucent, backdrop-blurred — so the game stays visible behind it. The
@@ -76,13 +76,13 @@ export function UpdateModal() {
           // Glass, not smoked glass: a low fill alpha and a MODERATE blur — 22px averaged the
           // arena into a flat wash, so the card read as near-opaque however low the fill went.
           // At ~10px individual glyph streaks stay recognizably falling behind the text.
-          background: arena ? 'rgba(27,27,30,.55)' : '#1B1B1E',
+          background: arena ? 'color-mix(in srgb, var(--color-pane) 55%, transparent)' : 'var(--color-elevated)',
           ...(arena ? { backdropFilter: 'blur(10px) saturate(1.4)', WebkitBackdropFilter: 'blur(10px) saturate(1.4)' } : {}),
           // A faint light edge reads as a glass rim; the idle prompt keeps its solid border.
-          border: arena ? '1px solid rgba(255,255,255,.14)' : '1px solid #2C3A4A',
+          border: arena ? '1px solid color-mix(in srgb, var(--color-text-emphasis) 14%, transparent)' : '1px solid color-mix(in srgb, var(--color-status-blue) 45%, var(--color-border))',
           borderRadius: 'var(--radius-xl)',
           padding: '22px 20px',
-          boxShadow: '0 30px 80px -20px rgba(0,0,0,.85)',
+          boxShadow: '0 30px 80px -20px var(--color-shadow-strong)',
           textAlign: 'center',
         }}>
         {done ? (
@@ -100,7 +100,7 @@ export function UpdateModal() {
             </div>
             <ReleaseNotes notes={notes} onToggle={setNotesOpen} />
             {failReason && (
-              <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
+              <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
                 Couldn't update automatically: {failReason}
                 <br />
                 {/* A hosted workspace has no checkout and no shell, so the manual
@@ -109,7 +109,7 @@ export function UpdateModal() {
                   ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
                   : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code></>}
                 {failDirty && failDirty.length > 0 && (
-                  <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'rgba(0,0,0,.2)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
+                  <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
                     {/* `pre` on the status only: porcelain codes carry a meaningful leading
                         space (' M' vs '??') that HTML would collapse, misaligning the list. */}
                     {failDirty.map((d, i) => (

@@ -59,11 +59,11 @@ export function MemoryInspector({ open, onClose, sheet = false }: { open: boolea
           style={{ resize: 'vertical', padding: 10, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', fontSize: 16, font: 'inherit' }} />
         <div>
           <button type="button" onClick={save} disabled={!loaded}
-            style={{ opacity: loaded ? 1 : 0.5, padding: '6px 14px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: '#06140B', cursor: 'pointer', fontWeight: 600 }}>
+            style={{ opacity: loaded ? 1 : 0.5, padding: '6px 14px', borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--color-accent)', color: 'var(--color-on-accent)', cursor: 'pointer', fontWeight: 600 }}>
             {saved ? 'Saved' : 'Save instructions'}
           </button>
-          {loadFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-danger, #e5484d)' }}>Instructions could not be loaded.</span>}
-          {saveFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-danger, #e5484d)' }}>Could not save</span>}
+          {loadFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-status-red)' }}>Instructions could not be loaded.</span>}
+          {saveFailed && <span role="alert" style={{ marginLeft: 10, fontSize: 12.5, color: 'var(--color-status-red)' }}>Could not save</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <label htmlFor="endless-doc-editor" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Open docs in</label>

@@ -20,8 +20,8 @@ export type Scheme = 'scoped' | 'global';
 export interface Tokens { border: string; dim: string; accent: string; accentFg: string; surface: string; danger: string; }
 
 export const SCHEMES: Record<Scheme, Tokens> = {
-  scoped: { border: 'var(--border)', dim: 'var(--ts)', accent: 'var(--acc)', accentFg: '#06140B', surface: 'var(--elev)', danger: 'var(--red)' },
-  global: { border: 'var(--color-border)', dim: 'var(--color-text-secondary)', accent: 'var(--color-accent)', accentFg: '#06140B', surface: 'var(--color-elevated)', danger: 'var(--color-status-red)' },
+  scoped: { border: 'var(--border)', dim: 'var(--ts)', accent: 'var(--acc)', accentFg: 'var(--color-on-accent)', surface: 'var(--elev)', danger: 'var(--red)' },
+  global: { border: 'var(--color-border)', dim: 'var(--color-text-secondary)', accent: 'var(--color-accent)', accentFg: 'var(--color-on-accent)', surface: 'var(--color-elevated)', danger: 'var(--color-status-red)' },
 };
 
 function modeOf(autonomy: unknown): Mode {

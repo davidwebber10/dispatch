@@ -5,22 +5,22 @@
  * the module cannot bleed into the rest of the Dispatch app. */
 
 :where(.overseer-root) {
-  --canvas: #08080A;          /* app backdrop behind the panel */
-  --base: #0F0F11;            /* main app surface (left column, composer, footers) */
-  --pane: #141416;            /* right rail surface, headers, chips' inner boxes */
-  --elev: #1B1B1E;            /* raised cards / chips / inputs */
-  --hover: #26262B;           /* thread chip hover bg */
-  --border: #29292E;          /* hairline borders, dividers, progress track */
-  --acc: #3ECF6A;             /* green accent: Overseer, working, primary actions */
-  --accDim: rgba(62, 207, 106, 0.12);   /* accent tint backgrounds */
-  --accLine: rgba(62, 207, 106, 0.4);   /* accent borders */
-  --yellow: #F5C542;          /* "needs you" / waiting / escalation */
-  --yellowDim: rgba(245, 197, 66, 0.1);
-  --yellowLine: rgba(245, 197, 66, 0.35);
-  --red: #F0616D;             /* interrupt / error */
-  --tp: #E9E9EC;              /* text primary */
-  --ts: #8E8E96;              /* text secondary */
-  --tt: #5A5A61;              /* text tertiary / placeholders */
+  --canvas: var(--color-canvas);          /* app backdrop behind the panel */
+  --base: var(--color-base);            /* main app surface (left column, composer, footers) */
+  --pane: var(--color-pane);            /* right rail surface, headers, chips' inner boxes */
+  --elev: var(--color-elevated);            /* raised cards / chips / inputs */
+  --hover: var(--color-hover);           /* thread chip hover bg */
+  --border: var(--color-border);          /* hairline borders, dividers, progress track */
+  --acc: var(--color-accent);             /* green accent: Overseer, working, primary actions */
+  --accDim: color-mix(in srgb, var(--color-accent) 12%, transparent);   /* accent tint backgrounds */
+  --accLine: color-mix(in srgb, var(--color-accent) 40%, transparent);   /* accent borders */
+  --yellow: var(--color-status-yellow);          /* "needs you" / waiting / escalation */
+  --yellowDim: color-mix(in srgb, var(--color-status-yellow) 10%, transparent);
+  --yellowLine: color-mix(in srgb, var(--color-status-yellow) 35%, transparent);
+  --red: var(--color-status-red);             /* interrupt / error */
+  --tp: var(--color-text-primary);              /* text primary */
+  --ts: var(--color-text-secondary);              /* text secondary */
+  --tt: var(--color-text-tertiary);              /* text tertiary / placeholders */
   --mono: 'JetBrains Mono', monospace;
   --pulse: 2.4s;              /* breathe animation duration; 0s when motion disabled */
 }
@@ -31,14 +31,14 @@
   box-sizing: border-box;
 }
 .overseer-root ::selection {
-  background: rgba(62, 207, 106, 0.25);
+  background: var(--color-selection);
 }
 .overseer-root ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 .overseer-root ::-webkit-scrollbar-thumb {
-  background: #26262b;
+  background: var(--color-hover);
   border-radius: var(--radius-sm);
   border: 2px solid transparent;
   background-clip: content-box;
@@ -48,7 +48,7 @@
 }
 .overseer-root textarea::placeholder,
 .overseer-root input::placeholder {
-  color: #5a5a61;
+  color: var(--color-text-tertiary);
 }
 
 /* keyframes (spec §6) */

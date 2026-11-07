@@ -238,7 +238,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   function selStyle(r: number, c: number): React.CSSProperties {
     if (!inSel(r, c)) return {};
     return {
-      background: '#33333c',
+      background: 'var(--color-selected)',
       ...(isFocus(r, c) ? { boxShadow: 'inset 0 0 0 1.5px var(--color-accent)' } : {}),
     };
   }

@@ -32,26 +32,26 @@ interface StateStyle {
 const STATE_STYLES: Record<'done' | 'needs_you' | 'blocked', StateStyle> = {
   needs_you: {
     label: 'NEEDS YOU',
-    dot: '#F37165',
-    accent: '#f0a79f',
-    border: '#7d4640',
-    background: 'rgba(243,113,101,.06)',
+    dot: 'var(--color-status-coral)',
+    accent: 'color-mix(in srgb, var(--color-status-coral) 60%, var(--color-text-primary))',
+    border: 'color-mix(in srgb, var(--color-status-coral) 45%, var(--color-border))',
+    background: 'color-mix(in srgb, var(--color-status-coral) 6%, transparent)',
     meta: 'paused',
   },
   blocked: {
     label: 'BLOCKED',
-    dot: '#5CA7E8',
-    accent: '#8fc1ea',
-    border: 'rgba(92,167,232,.45)',
-    background: 'rgba(92,167,232,.07)',
+    dot: 'var(--color-status-blue)',
+    accent: 'color-mix(in srgb, var(--color-status-blue) 60%, var(--color-text-primary))',
+    border: 'color-mix(in srgb, var(--color-status-blue) 45%, transparent)',
+    background: 'color-mix(in srgb, var(--color-status-blue) 7%, transparent)',
     meta: 'waiting',
   },
   done: {
     label: 'DONE',
-    dot: '#3ECF6A',
-    accent: '#8bc994',
-    border: 'rgba(62,207,106,.3)',
-    background: 'rgba(62,207,106,.06)',
+    dot: 'var(--color-status-green)',
+    accent: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))',
+    border: 'color-mix(in srgb, var(--color-status-green) 30%, transparent)',
+    background: 'color-mix(in srgb, var(--color-status-green) 6%, transparent)',
   },
 };
 

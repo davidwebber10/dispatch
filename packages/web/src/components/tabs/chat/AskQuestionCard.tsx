@@ -116,10 +116,10 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
   // label + right meta — the same visual state as a needs_you StatusNotice, because to the
   // reader both mean exactly one thing: the thread is paused on them.
   return (
-    <div style={{ border: '1px solid #7d4640', borderRadius: 'var(--radius-sm)', background: 'rgba(243,113,101,.06)', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ border: '1px solid color-mix(in srgb, var(--color-status-coral) 45%, var(--color-border))', borderRadius: 'var(--radius-sm)', background: 'color-mix(in srgb, var(--color-status-coral) 6%, transparent)', padding: '12px 13px', display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-        <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: '#F37165', flexShrink: 0 }} />
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: '#f0a79f' }}>NEEDS YOU</span>
+        <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-status-coral)', flexShrink: 0 }} />
+        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'color-mix(in srgb, var(--color-status-coral) 60%, var(--color-text-primary))' }}>NEEDS YOU</span>
         <span style={{ flex: 1 }} />
         <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>paused · {questions.length} question{questions.length !== 1 ? 's' : ''}</span>
       </div>
@@ -203,7 +203,7 @@ export function AskQuestionCard({ questions, onAnswer, onReply, onDeny }: {
           style={{
             border: 'none', borderRadius: 'var(--radius-sm)', height: 30, padding: '0 16px', fontWeight: 600, fontSize: 12.5,
             background: allAnswered && !submitted ? 'var(--color-accent)' : 'var(--color-hover)',
-            color: allAnswered && !submitted ? '#06140B' : 'var(--color-text-tertiary)',
+            color: allAnswered && !submitted ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)',
             cursor: allAnswered && !submitted ? 'pointer' : 'default', transition: 'background .15s',
           }}
         >

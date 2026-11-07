@@ -21,7 +21,7 @@ export class PluginBoundary extends Component<{ plugin: string; resetKey?: unkno
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div role="alert" style={{ margin: 12, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-status-red)', background: 'rgba(255,80,80,0.08)', color: 'var(--color-text-primary)', fontSize: 13 }}>
+      <div role="alert" style={{ margin: 12, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-status-red)', background: 'color-mix(in srgb, var(--color-status-red) 8%, transparent)', color: 'var(--color-text-primary)', fontSize: 13 }}>
         <div style={{ fontWeight: 600 }}>The plugin "{this.props.plugin}" failed</div>
         <pre style={{ margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)' }}>{this.state.error.message}</pre>
         <div style={{ marginTop: 6, fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Fix the plugin's file and save: the app reloads it. Settings → Plugins can disable it.</div>

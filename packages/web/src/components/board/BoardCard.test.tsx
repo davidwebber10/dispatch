@@ -41,15 +41,6 @@ function assertOnlyFired(cbs: Callbacks, fired: keyof Callbacks) {
   });
 }
 
-// jsdom's CSSOM re-serializes rgba() with spaces + a leading zero regardless of how it was
-// authored, so string-matching the mockup's compact `rgba(232,176,75,.55)` literally would
-// fail even though the color is correct. Parse channels out instead of trusting formatting.
-function rgbaChannels(css: string): number[] {
-  const m = css.match(/rgba?\(([^)]+)\)/);
-  if (!m) return [];
-  return m[1].split(',').map((s) => parseFloat(s.trim()));
-}
-
 // Open #8A — the ✓✓ bug. Asserts the OUTPUT string the helper produces, never internals (no
 // regex/implementation reach-in), per the guard against over-specified unit tests.
 describe('stripLeadingCheckmark', () => {
@@ -100,7 +91,7 @@ describe('BoardCard — needs help, declared', () => {
   it('uses the full-strength amber border', () => {
     render(<BoardCard card={makeCard()} {...makeCallbacks()} />);
     const el = screen.getByTestId('board-card');
-    expect(rgbaChannels(el.style.borderColor)).toEqual([232, 176, 75, 0.55]);
+    expect(el.style.borderColor).toBe('color-mix(in srgb, var(--color-status-amber) 55%, transparent)');
   });
 
   it('clicking Answer fires onOpen, and only onOpen', () => {
@@ -131,7 +122,7 @@ describe('BoardCard — needs help, inferred', () => {
   it('uses a dimmer amber border than a declared ask', () => {
     render(<BoardCard card={inferredCard()} {...makeCallbacks()} />);
     const el = screen.getByTestId('board-card');
-    expect(rgbaChannels(el.style.borderColor)).toEqual([232, 176, 75, 0.3]);
+    expect(el.style.borderColor).toBe('color-mix(in srgb, var(--color-status-amber) 30%, transparent)');
   });
 
   it('clicking Open fires onOpen, and only onOpen', () => {
@@ -166,7 +157,7 @@ describe('BoardCard — complete', () => {
   it('uses the blue complete border', () => {
     render(<BoardCard card={completeCard()} {...makeCallbacks()} />);
     const el = screen.getByTestId('board-card');
-    expect(rgbaChannels(el.style.borderColor)).toEqual([90, 141, 214, 0.5]);
+    expect(el.style.borderColor).toBe('color-mix(in srgb, var(--color-status-blue) 50%, transparent)');
   });
 
   // Open #8A — the ✓✓ bug. An agent-supplied leading tick in its own summary must never survive

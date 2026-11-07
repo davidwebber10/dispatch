@@ -16,7 +16,7 @@
 //
 // Uses ONLY app-global `var(--color-*)` tokens (never `--tp`/`--ts`/`--elev`/`--acc`/`--border`/
 // `--mono`, which are scoped to `:where(.overseer-root)` and resolve to nothing here) plus the
-// two literal column accents (#e8b04b needs-help, #5A8DD6 complete) — the same rule BoardCard.tsx
+// two status tokens for the column accents (--color-status-amber needs-help, --color-status-blue complete) — the same rule BoardCard.tsx
 // and MoveToMenu.tsx already follow. `--color-accent` is user-customisable (Working's own accent),
 // so nothing here assumes it's green. The one exception is `WorkerLightbox` itself, wrapped in its
 // own `.overseer-root` div below, per the plan's global constraints.
@@ -49,8 +49,8 @@ const COLUMN_TITLE: Record<RealColumn, string> = {
 // Header text treatment, per the canvas: only Needs Help/Complete get an explicit hue — Working's
 // header stays the default text colour, distinguished by opacity alone.
 const COLUMN_HEADER_STYLE: Record<RealColumn, CSSProperties> = {
-  needs_help: { color: '#e8b04b' },
-  complete: { color: '#5A8DD6' },
+  needs_help: { color: 'var(--color-status-amber)' },
+  complete: { color: 'var(--color-status-blue)' },
   working: { color: 'var(--color-text-primary)', opacity: 0.85 },
 };
 
@@ -65,14 +65,14 @@ const COLUMN_FLEX: Record<RealColumn, number> = {
 // The same three accents chips use for their status dot — needs_help/complete get their literal
 // hex, working gets the user-customisable accent token (never assumed green).
 const CHIP_DOT_COLOR: Record<RealColumn, string> = {
-  needs_help: '#e8b04b',
-  complete: '#5A8DD6',
+  needs_help: 'var(--color-status-amber)',
+  complete: 'var(--color-status-blue)',
   working: 'var(--color-accent)',
 };
 
 // "Clear all" per the canvas: plain text, inheriting the Complete header's own colour/opacity
 // treatment — the canvas's row has no color of its own, just font-weight/opacity/size overrides
-// on top of the header's #5A8DD6.
+// on top of the header's --color-status-blue.
 const clearAllButtonStyle: CSSProperties = {
   background: 'none',
   border: 'none',
@@ -136,7 +136,7 @@ const projectMenuStyle: CSSProperties = {
   borderStyle: 'solid',
   borderColor: 'var(--color-border)',
   borderRadius: 'var(--radius-md)',
-  boxShadow: '0 20px 50px rgba(0,0,0,.5)',
+  boxShadow: '0 20px 50px var(--color-shadow)',
   padding: 6,
 };
 
@@ -405,8 +405,8 @@ export function BoardView() {
             overflowX: 'auto',
             flex: 1,
             minWidth: 0,
-            WebkitMaskImage: 'linear-gradient(90deg, #000 92%, transparent)',
-            maskImage: 'linear-gradient(90deg, #000 92%, transparent)',
+            WebkitMaskImage: 'linear-gradient(90deg, var(--color-text-primary) 92%, transparent)',
+            maskImage: 'linear-gradient(90deg, var(--color-text-primary) 92%, transparent)',
           }}
         >
           {chipProjects.map((p) => (

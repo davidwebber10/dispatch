@@ -78,8 +78,8 @@ function Ring({ fraction }: { fraction: number }) {
   const r = 15, c = 2 * Math.PI * r;
   return (
     <svg width={38} height={38} viewBox="0 0 38 38" aria-hidden="true" style={{ position: 'absolute' }}>
-      <circle cx={19} cy={19} r={r} fill="none" stroke="rgba(255,255,255,.25)" strokeWidth={3} />
-      <circle cx={19} cy={19} r={r} fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round"
+      <circle cx={19} cy={19} r={r} fill="none" stroke="color-mix(in srgb, var(--color-on-media) 25%, transparent)" strokeWidth={3} />
+      <circle cx={19} cy={19} r={r} fill="none" stroke="var(--color-on-media)" strokeWidth={3} strokeLinecap="round"
         strokeDasharray={c} strokeDashoffset={c * (1 - fraction)} transform="rotate(-90 19 19)" style={{ transition: 'stroke-dashoffset .15s linear' }} />
     </svg>
   );
@@ -98,13 +98,13 @@ export function UploadTray({ uploads, onCancel }: { uploads: Upload[]; onCancel:
             {u.preview
               ? <img src={u.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
               : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}><FileText size={24} /></div>}
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: u.state === 'failed' ? 'rgba(60,0,0,.55)' : 'rgba(0,0,0,.5)', color: '#fff' }}>
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: u.state === 'failed' ? 'color-mix(in srgb, color-mix(in srgb, var(--color-status-red) 25%, var(--color-media-bg)) 55%, transparent)' : 'color-mix(in srgb, var(--color-media-bg) 50%, transparent)', color: 'var(--color-on-media)' }}>
               {u.state === 'failed'
                 ? <WarningCircle size={22} weight="fill" color="var(--color-status-red)" />
                 : <><Ring fraction={u.state === 'finishing' ? 1 : u.fraction} /><span style={{ position: 'relative', font: '600 10.5px var(--font-mono)' }}>{u.state === 'finishing' ? '✓' : `${pct}%`}</span></>}
             </div>
             <button type="button" aria-label={u.state === 'failed' ? `Remove ${u.name}` : `Cancel upload of ${u.name}`} onClick={() => onCancel(u.id)}
-              style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, padding: 0, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,.7)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+              style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, padding: 0, borderRadius: '50%', border: 'none', background: 'color-mix(in srgb, var(--color-media-bg) 70%, transparent)', color: 'var(--color-on-media)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
               <X size={11} weight="bold" />
             </button>
           </div>

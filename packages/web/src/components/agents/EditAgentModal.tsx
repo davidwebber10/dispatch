@@ -55,8 +55,8 @@ function initSched(existing: AgentSchedule | null): SchedState {
   return base;
 }
 
-const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
-const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? '#08240F' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
+const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
+const seg = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12.5, textTransform: 'capitalize', background: active ? 'var(--color-accent)' : 'transparent', color: active ? 'var(--color-on-accent)' : 'var(--color-text-secondary)', fontWeight: active ? 600 : 400 });
 
 export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }: { scheduleId: string | null; presetProjectId?: string | null; onClose: () => void; onSaved?: (id: string) => void }) {
   const existing = useAgents((s) => s.schedules.find((x) => x.id === scheduleId)) ?? null;
@@ -96,7 +96,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }
           {sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <input style={input} placeholder="Automation name" value={name} onChange={(e) => setName(e.target.value)} />
-        <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 3, width: 'fit-content' }}>
+        <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3, width: 'fit-content' }}>
           {(['claude-code', 'codex'] as const).map((p) => (
             <button key={p} onClick={() => setProvider(p)} style={seg(provider === p)}>{p === 'claude-code' ? 'Claude Code' : 'Codex'}</button>
           ))}
@@ -106,14 +106,14 @@ export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }
         {/* Schedule */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
           <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>SCHEDULE</span>
-          <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 3, gap: 2, width: 'fit-content' }}>
+          <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3, gap: 2, width: 'fit-content' }}>
             {MODES.map((m) => <button key={m} onClick={() => set({ mode: m })} style={seg(sched.mode === m)}>{m}</button>)}
           </div>
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', minHeight: 34 }}>
             {sched.mode === 'interval' && (<>
               <input type="number" min={1} value={sched.intervalN} onChange={(e) => set({ intervalN: Math.max(1, Number(e.target.value)) })} style={{ ...input, width: 80 }} />
-              <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', padding: 3 }}>
+              <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3 }}>
                 {(['minutes', 'hours'] as const).map((u) => <button key={u} onClick={() => set({ intervalUnit: u })} style={seg(sched.intervalUnit === u)}>{u}</button>)}
               </div>
             </>)}
@@ -125,7 +125,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }
                   const on = sched.days.includes(w.d);
                   return (
                     <button key={i} onClick={() => set({ days: on ? sched.days.filter((x) => x !== w.d) : [...sched.days, w.d] })}
-                      style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', font: '600 11px var(--font-mono)', background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? '#08240F' : 'var(--color-text-tertiary)', border: on ? 'none' : '1px solid #2C2C32' }}>{w.l}</button>
+                      style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', font: '600 11px var(--font-mono)', background: on ? 'var(--color-accent)' : 'var(--color-elevated)', color: on ? 'var(--color-on-accent)' : 'var(--color-text-tertiary)', border: on ? 'none' : '1px solid var(--color-border-strong)' }}>{w.l}</button>
                   );
                 })}
               </div>
@@ -139,8 +139,8 @@ export function EditAgentModal({ scheduleId, presetProjectId, onClose, onSaved }
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Cancel</button>
-        <button disabled={busy} onClick={() => void save()} style={{ height: 32, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', fontWeight: 600, cursor: 'pointer' }}>Save Automation</button>
+        <button onClick={onClose} style={{ height: 32, padding: '0 14px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Cancel</button>
+        <button disabled={busy} onClick={() => void save()} style={{ height: 32, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, cursor: 'pointer' }}>Save Automation</button>
       </div>
     </Modal>
   );

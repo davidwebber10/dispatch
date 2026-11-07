@@ -142,7 +142,7 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
   }
 
   const field: React.CSSProperties = {
-    background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
+    background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
     color: 'var(--color-text-primary)', boxSizing: 'border-box',
   };
 
@@ -165,13 +165,13 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
       {open && createPortal(
         <div ref={popRef} onKeyDown={onKey} style={{
           position: 'fixed', zIndex: 1000, ...(pos ?? { top: 0, left: 0, width: 260 }),
-          background: '#18181B', border: '1px solid #2F2F35', borderRadius: 'var(--radius-md)', boxShadow: '0 20px 50px -12px rgba(0,0,0,.8)',
+          background: 'var(--color-modal)', border: '1px solid var(--color-border-hover)', borderRadius: 'var(--radius-md)', boxShadow: '0 20px 50px -12px var(--color-shadow-strong)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
           <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} placeholder={searchPlaceholder}
             aria-label={`Search ${ariaLabel.toLowerCase()}`} aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
             autoComplete="off" spellCheck={false}
-            style={{ ...field, border: 'none', borderBottom: '1px solid #26262B', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? 16 : 13, background: 'transparent', outline: 'none' }} />
+            style={{ ...field, border: 'none', borderBottom: '1px solid var(--color-hover)', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? 16 : 13, background: 'transparent', outline: 'none' }} />
           <ul ref={listRef} id={listId} role="listbox" aria-label={ariaLabel} style={{ listStyle: 'none', margin: 0, padding: 4, maxHeight: lg ? 264 : 240, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {filtered.length === 0 && (
               <li aria-disabled="true" style={{ padding: '10px 12px', fontSize: lg ? 14 : 12.5, color: 'var(--color-text-tertiary)' }}>{emptyText}</li>

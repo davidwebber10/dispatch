@@ -5,6 +5,8 @@ import { readBest, recordBest } from '../popScore';
 /** The time of the last key, mouse or touch input (UpdateModal reloads after a quiet spell once the update is done). */
 export const blasterActivity = { last: 0 };
 
+// literal color: the blaster is a self-contained game scene drawn on a dark canvas in every theme, so its palette and the canvas fills below stay literal.
+const BG = '#060908';
 const GREEN = '#3ecf6a';
 const PALE = '#d6ffe4';
 const AMBER = '#f5c542';
@@ -37,7 +39,7 @@ function rockShape(seed: number): number[] {
 
 function draw(ctx: CanvasRenderingContext2D, g: Game, wall: Rect | null, joy: { origin: Vec; at: Vec } | null): void {
   const { w, h } = g;
-  ctx.fillStyle = '#060908';
+  ctx.fillStyle = BG;
   ctx.fillRect(0, 0, w, h);
   // A quiet star field.
   ctx.fillStyle = 'rgba(62,207,106,.22)';
@@ -264,7 +266,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
   };
 
   const mono = 'ui-monospace, SFMono-Regular, Menlo, monospace';
-  const label: React.CSSProperties = { fontSize: 10.5, letterSpacing: 2, color: 'rgba(62,207,106,.72)' };
+  const label: React.CSSProperties = { fontSize: 10.5, letterSpacing: 2, color: `color-mix(in srgb, ${GREEN} 72%, transparent)` };
   const value: React.CSSProperties = { fontSize: 22, fontWeight: 700, color: GREEN, lineHeight: 1.1 };
   return (
     <div style={{ position: 'absolute', inset: 0, fontFamily: mono }}>
@@ -283,7 +285,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
             <div style={label}>BEST</div>
             <div style={{ ...value, fontSize: 16 }}>{Math.max(best, hud.score).toLocaleString()}</div>
             <div aria-label={`${hud.lives} lives`} style={{ marginTop: 4, fontSize: 13, color: PALE, letterSpacing: 3 }}>{'▲'.repeat(Math.max(0, hud.lives))}</div>
-            <div style={{ fontSize: 10.5, letterSpacing: 2, color: 'rgba(62,207,106,.6)' }}>WAVE {hud.wave}</div>
+            <div style={{ fontSize: 10.5, letterSpacing: 2, color: `color-mix(in srgb, ${GREEN} 60%, transparent)` }}>WAVE {hud.wave}</div>
           </div>
           {/* The loadout: key, name, and a cooldown bar (the A-bomb shows its ammo instead). */}
           <ul aria-label="Loadout" style={{ position: 'absolute', left: 0, right: 0, bottom: 'max(10px, env(safe-area-inset-bottom))', margin: 0, padding: 0, listStyle: 'none', display: touchMode ? 'none' : 'flex', justifyContent: 'center', gap: 8, pointerEvents: 'none' }}>
@@ -291,14 +293,14 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
               const left = Number(hud.cd.split(',')[k] ?? 0) / 10;
               const empty = l.weapon === 'bomb' && hud.bombs <= 0;
               return (
-                <li key={l.weapon} style={{ minWidth: 92, padding: '5px 8px 6px', border: '1px solid rgba(62,207,106,.3)', borderRadius: 'var(--radius-sm)', background: 'rgba(6,9,8,.75)', opacity: empty ? 0.35 : 1 }}>
+                <li key={l.weapon} style={{ minWidth: 92, padding: '5px 8px 6px', border: `1px solid color-mix(in srgb, ${GREEN} 30%, transparent)`, borderRadius: 'var(--radius-sm)', background: `color-mix(in srgb, ${BG} 75%, transparent)`, opacity: empty ? 0.35 : 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}>
                     <span style={{ color: PALE }}>{l.label}</span>
                     <span style={{ color: l.weapon === 'bomb' ? RED : GREEN }}>{l.name}</span>
                   </div>
                   {l.weapon === 'bomb'
                     ? <div aria-label={`A-bombs: ${hud.bombs}`} style={{ marginTop: 3, fontSize: 11, color: RED, letterSpacing: 2 }}>{'●'.repeat(hud.bombs) || '—'}</div>
-                    : <div style={{ marginTop: 4, height: 3, background: 'rgba(62,207,106,.15)', borderRadius: 'var(--radius-xs)' }}><div style={{ width: `${(1 - left) * 100}%`, height: '100%', background: left > 0 ? 'rgba(62,207,106,.5)' : GREEN, borderRadius: 'var(--radius-xs)' }} /></div>}
+                    : <div style={{ marginTop: 4, height: 3, background: `color-mix(in srgb, ${GREEN} 15%, transparent)`, borderRadius: 'var(--radius-xs)' }}><div style={{ width: `${(1 - left) * 100}%`, height: '100%', background: left > 0 ? `color-mix(in srgb, ${GREEN} 50%, transparent)` : GREEN, borderRadius: 'var(--radius-xs)' }} /></div>}
                 </li>
               );
             })}
@@ -308,7 +310,7 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
               {LOADOUT.filter((l) => l.weapon !== 'blaster').map((l) => (
                 <button key={l.weapon} type="button" aria-label={`Fire ${l.name}`}
                   onPointerDown={(e) => { e.stopPropagation(); touch(); input.current.trigger = [...(input.current.trigger ?? []), l.weapon]; }}
-                  style={{ height: 46, borderRadius: 'var(--radius-md)', border: `1px solid ${l.weapon === 'bomb' ? RED : 'rgba(62,207,106,.5)'}`, background: 'rgba(6,9,8,.8)', color: l.weapon === 'bomb' ? RED : GREEN, fontFamily: mono, fontSize: 10.5, touchAction: 'none', opacity: l.weapon === 'bomb' && hud.bombs <= 0 ? 0.35 : 1 }}>
+                  style={{ height: 46, borderRadius: 'var(--radius-md)', border: `1px solid ${l.weapon === 'bomb' ? RED : `color-mix(in srgb, ${GREEN} 50%, transparent)`}`, background: `color-mix(in srgb, ${BG} 80%, transparent)`, color: l.weapon === 'bomb' ? RED : GREEN, fontFamily: mono, fontSize: 10.5, touchAction: 'none', opacity: l.weapon === 'bomb' && hud.bombs <= 0 ? 0.35 : 1 }}>
                   {l.name}{l.weapon === 'bomb' ? ` ${hud.bombs}` : ''}
                 </button>
               ))}
@@ -317,10 +319,10 @@ export function Blaster({ getWall, paused }: { getWall: () => Rect | null; pause
         </>
       )}
       {(!started || hud.over) && (
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'max(28px, env(safe-area-inset-bottom))', textAlign: 'center', pointerEvents: 'none', color: 'rgba(214,255,228,.85)', fontSize: 13, letterSpacing: 1 }}>
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'max(28px, env(safe-area-inset-bottom))', textAlign: 'center', pointerEvents: 'none', color: `color-mix(in srgb, ${PALE} 85%, transparent)`, fontSize: 13, letterSpacing: 1 }}>
           {hud.over && <div style={{ fontSize: 18, fontWeight: 700, color: RED, marginBottom: 6 }}>GAME OVER · {hud.score.toLocaleString()}</div>}
           {hud.over ? 'Press any key or tap to play again' : 'Press any key or tap to play'}
-          <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(214,255,228,.5)' }}>Up thrusts · Left/Right turn · Down brakes · Space blaster · Q missile · E seeker · R mortar · F A-bomb · On a phone, drag to move</div>
+          <div style={{ marginTop: 6, fontSize: 11, color: `color-mix(in srgb, ${PALE} 50%, transparent)` }}>Up thrusts · Left/Right turn · Down brakes · Space blaster · Q missile · E seeker · R mortar · F A-bomb · On a phone, drag to move</div>
         </div>
       )}
     </div>

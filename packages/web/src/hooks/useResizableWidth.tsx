@@ -81,7 +81,7 @@ export function DragHandle({ onStart }: { onStart: () => void }) {
       onMouseLeave={() => setHover(false)}
       role="separator"
       aria-orientation="vertical"
-      style={{ width: 4, cursor: 'col-resize', background: hover ? 'rgba(62,207,106,0.45)' : 'transparent', flexShrink: 0, transition: 'background 0.15s ease', zIndex: 10 }}
+      style={{ width: 4, cursor: 'col-resize', background: hover ? 'color-mix(in srgb, var(--color-accent) 45%, transparent)' : 'transparent', flexShrink: 0, transition: 'background 0.15s ease', zIndex: 10 }}
     />
   );
 }

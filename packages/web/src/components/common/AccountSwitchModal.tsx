@@ -96,7 +96,7 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
               <button type="button" onClick={onClose} style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
               <button type="button" disabled={!target || busy} onClick={() => void confirm()}
-                style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: '#08240F', font: 'inherit', fontSize: 13, fontWeight: 600, cursor: !target || busy ? 'default' : 'pointer', opacity: !target || busy ? 0.6 : 1 }}>
+                style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', font: 'inherit', fontSize: 13, fontWeight: 600, cursor: !target || busy ? 'default' : 'pointer', opacity: !target || busy ? 0.6 : 1 }}>
                 {busy ? 'Switching…' : 'Switch and restart'}
               </button>
             </div>
