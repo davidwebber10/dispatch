@@ -8,8 +8,8 @@ import type { CSSProperties } from 'react';
 export const HEADER_H = 36;
 export const HEADER_BOX: CSSProperties = {
   height: HEADER_H, flexShrink: 0, boxSizing: 'border-box',
-  // Bare (2026-11-06, header option C): no fill, no outline; a usage warning still colours the
-  // chip's outline. The transparent border keeps the size the same.
+  // Bare (2026-11-06, header option C): no fill, no outline (2026-11-07: a usage warning colours
+  // only the rings, never an outline). The transparent border keeps the size the same.
   background: 'transparent', border: '1px solid transparent', borderRadius: 'var(--radius-md)',
 };
 /** Padding of a segmented header control, and its segments' height (36 - 2 border - 2 x 3 padding). */

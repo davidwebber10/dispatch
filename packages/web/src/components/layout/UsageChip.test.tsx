@@ -79,4 +79,17 @@ describe('UsageChip', () => {
     act(() => { useUsageLimits.getState().applyEvent({ type: 'usage-limits', ...summary(70), warnPercent: 65 }); });
     expect(screen.getByTestId('usage-chip').getAttribute('data-tone')).toBe('amber');
   });
+
+  it('a warning never draws a colored outline around the rings: the rings carry the color (2026-11-07)', () => {
+    useUsageLimits.setState({ summary: summary(85) });
+    const { unmount } = render(<UsageChip variant="phone" />);
+    let chip = screen.getByTestId('usage-chip');
+    expect(chip.getAttribute('data-tone')).toBe('amber');
+    expect(chip.style.borderColor === '' || chip.style.borderColor === 'transparent').toBe(true);
+    unmount();
+    render(<UsageChip variant="rail" />);
+    chip = screen.getByTestId('usage-chip');
+    expect(chip.style.border).not.toMatch(/var\(--color-(warning|danger|amber|red)/);
+    expect(chip.style.borderColor === '' || chip.style.borderColor === 'transparent').toBe(true);
+  });
 });

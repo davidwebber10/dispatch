@@ -96,7 +96,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     return (
       <>
         <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} onClick={() => setOpen(true)}
-          style={{ ...HEADER_BOX, minWidth: 44, padding: '0 7px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, ...(tone === 'normal' ? {} : { borderColor: color }), cursor: 'pointer' }}>
+          style={{ ...HEADER_BOX, minWidth: 44, padding: '0 7px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, cursor: 'pointer' }}>
           {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={24} />)}
         </button>
         <Modal open={open} sheet title="Usage" onClose={() => setOpen(false)}>
@@ -109,7 +109,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
   return (
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
-        style={{ width: 52, padding: '6px 0', borderRadius: 'var(--radius-md)', border: `1px solid ${tone === 'normal' ? 'transparent' : color}`, background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+        style={{ width: 52, padding: '6px 0', borderRadius: 'var(--radius-md)', border: '1px solid transparent', background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
         {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
       </button>
       {open && (
