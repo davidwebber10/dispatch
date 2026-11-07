@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ChartBar, ChatCircleDots, Eye, Gear, Rows } from '@phosphor-icons/react';
+import { ChartBar, ChatCircleDots, Eye, Gear, Rows, Folders } from '@phosphor-icons/react';
+import { useProjectsView } from '../../stores/projectsView';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
 import { useShownStatus } from '../../stores/connection';
@@ -72,6 +73,8 @@ export function IconRail() {
   const serverLabel = currentLabel(servers, window.location.origin);
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
+  // The first item is named after the Projects ⇄ Threads switch (2026-11-07).
+  const projectsView = useProjectsView((s) => s.view);
   const badges = usePluginRegistry((s) => s.badges);
 
   // ⌘, — the platform-standard preferences shortcut, now that Settings is a page.
@@ -92,7 +95,7 @@ export function IconRail() {
       padding: '10px 0 8px', gap: 4, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)',
     }}>
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
-      {NAV.map((n) => (
+      {NAV.map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? Rows : Folders } : n).map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}

@@ -25,6 +25,7 @@ import { ProjectCard } from '../sidebar/ProjectCard';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { AllThreadsView } from './AllThreadsView';
+import { useProjectsView } from '../../stores/projectsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
 import { TabHost } from '../tabs/TabHost';
@@ -110,8 +111,9 @@ export function MobileApp() {
   const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'agents' | 'analytics' | 'settings' | 'plugins' | `plugin:${string}`>('projects');
   // The Projects tab shows either the project list or every thread across projects (2026-10-28,
   // replaced the Pinned tab). Remembered per device.
-  const [projectsView, setProjectsView] = useState<'projects' | 'threads'>(() => { try { return localStorage.getItem('dispatch:mobileProjectsView') === 'threads' ? 'threads' : 'projects'; } catch { return 'projects'; } });
-  useEffect(() => { try { localStorage.setItem('dispatch:mobileProjectsView', projectsView); } catch { /* ignore */ } }, [projectsView]);
+  // Projects ⇄ Threads: one switch shared with the desktop's left panel (stores/projectsView.ts).
+  const projectsView = useProjectsView((st) => st.view);
+  const setProjectsView = useProjectsView.getState().setView;
   // Dispatch mode (mobile): the coordinator view opens as a full-screen overlay
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);

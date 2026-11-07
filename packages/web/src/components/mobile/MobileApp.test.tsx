@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { MobileApp } from './MobileApp';
+import { useProjectsView } from '../../stores/projectsView';
 import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useConnection } from '../../stores/connection';
@@ -25,6 +26,7 @@ function seedThreadAt(path: string, tab: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  useProjectsView.setState({ view: 'projects' });
   // Present as a phone: TabHost gates its own floating desktop TransportToggle on
   // `!isMobile`, so without this jsdom's default 1024px viewport renders BOTH controls and
   // the header assertion below can't tell which one it found.
@@ -274,7 +276,7 @@ describe('MobileApp bottom tab bar on a thread', () => {
   });
 
   it('with the Threads view on, the tab goes straight back to the thread list', () => {
-    localStorage.setItem('dispatch:mobileProjectsView', 'threads');
+    useProjectsView.setState({ view: 'threads' });
     seedThreadAt('/p/s1/t/t1', { type: 'shell', config: {} });
     const go = vi.spyOn(history, 'go').mockImplementation(() => {});
     const back = vi.spyOn(history, 'back').mockImplementation(() => {});

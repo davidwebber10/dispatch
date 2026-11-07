@@ -19,7 +19,7 @@ test('renders the app shell with the icon-rail navigation', () => {
   render(<App />);
   // The brand text moved into the rail logo's dropdown; the rail's nav items are
   // the always-visible identity of the shell now.
-  expect(screen.getByRole('button', { name: 'Threads' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^(Projects|Threads)$/ })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Board' })).not.toBeInTheDocument();
 });
 

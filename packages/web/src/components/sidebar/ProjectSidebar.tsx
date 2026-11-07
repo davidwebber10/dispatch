@@ -8,6 +8,9 @@ import { SortableList } from '../common/SortableList';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useStableOrder } from '../../hooks/useStableOrder';
 import { revealIn } from '../../lib/reveal';
+import { useProjectsView } from '../../stores/projectsView';
+import { AllThreadsView } from '../mobile/AllThreadsView';
+import { useAgentUI } from '../../stores/agentUI';
 
 type Sort = 'recent' | 'alpha' | 'custom';
 
@@ -35,6 +38,10 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
   useEffect(() => { if (activeId) setExpanded((e) => (e.has(activeId) ? e : new Set(e).add(activeId))); }, [activeId]);
   const toggleExpand = (id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const isMobile = useIsMobile();
+  const view = useProjectsView((s) => s.view);
+  const threads = view === 'threads';
+  // A thread from any project: make its project active, then select the thread.
+  const openFromList = (projectId: string, tabId: string) => { useProjects.getState().setActive(projectId); useAgentUI.getState().blur(); onSelectTab(tabId); };
 
   /* Keep the highlighted row visible.
 
@@ -113,11 +120,23 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div ref={scrollRef} className="sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' }}>
+      {/* Projects ⇄ Threads, above the search line (2026-11-07). */}
+      <div role="tablist" aria-label="Projects view" style={{ display: 'flex', margin: '8px 8px 0', padding: 3, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', flexShrink: 0 }}>
+        {([['projects', 'Projects'], ['threads', 'Threads']] as const).map(([key, label]) => {
+          const on = view === key;
+          return (
+            <button key={key} type="button" role="tab" aria-selected={on} onClick={() => useProjectsView.getState().setView(key)}
+              style={{ flex: 1, height: 28, border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12.5, fontWeight: on ? 600 : 500, background: on ? 'var(--color-pane)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)', boxShadow: on ? '0 1px 2px rgba(0,0,0,.35)' : 'none' }}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div ref={scrollRef} className="sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', display: threads ? 'flex' : undefined, flexDirection: threads ? 'column' : undefined }}>
       <div style={{ position: 'sticky', top: 0, zIndex: 2, display: 'flex', gap: 6, alignItems: 'center', padding: '8px 8px 10px', background: 'rgba(22,22,26,0.62)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={threads ? 'Search threads' : 'Search projects'}
           style={{ flex: 1, minWidth: 0, height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid #2C2C32', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 13 }} />
-        <div style={{ position: 'relative' }}>
+        {!threads && <div style={{ position: 'relative' }}>
           <button title="Sort" aria-label="Sort projects" onClick={() => setSortOpen((o) => !o)} style={{ ...icon, background: 'var(--color-elevated)', border: '1px solid #2C2C32', color: 'var(--color-text-secondary)' }}><ArrowsDownUp size={16} weight="bold" /></button>
           {sortOpen && (
             <>
@@ -132,9 +151,10 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
               </div>
             </>
           )}
-        </div>
-        <button title="New project" onClick={() => setShowNew(true)} style={{ ...icon, background: 'var(--color-accent)', border: 'none', color: '#08240F' }}><Plus size={16} weight="bold" /></button>
+        </div>}
+        {!threads && <button title="New project" onClick={() => setShowNew(true)} style={{ ...icon, background: 'var(--color-accent)', border: 'none', color: '#08240F' }}><Plus size={16} weight="bold" /></button>}
       </div>
+      {threads ? <AllThreadsView onOpenThread={openFromList} query={query} /> : (
       <div style={{ padding: '0 8px 8px' }}>
       <SortableList
         items={filtered}
@@ -146,6 +166,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
       />
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
       </div>
+      )}
       </div>
       <NewProjectModal open={showNew} onClose={() => setShowNew(false)} />
     </div>

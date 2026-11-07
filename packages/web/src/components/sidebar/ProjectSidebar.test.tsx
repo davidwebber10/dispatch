@@ -1,9 +1,10 @@
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { render, screen, act, waitFor, fireEvent, within } from '@testing-library/react';
 import { vi, beforeEach, afterEach, test, expect, describe, it } from 'vitest';
 import { ProjectSidebar } from './ProjectSidebar';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
+import { useProjectsView } from '../../stores/projectsView';
 
 beforeEach(() => {
   vi.spyOn(api, 'listTerminals').mockResolvedValue([
@@ -315,5 +316,40 @@ describe('ProjectSidebar never yanks back to a superseded selection', () => {
     // Nothing after the user moved to B may scroll them back to A's row.
     const yankedBack = revealed.some((e) => (e as HTMLElement).dataset.threadId === 't1');
     expect(yankedBack).toBe(false);
+  });
+});
+
+describe('Projects ⇄ Threads on the desktop (2026-11-07)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useProjectsView.setState({ view: 'projects' });
+    useProjects.setState({ sessions: [{ id: 's1', name: 'alpha', workingDir: '/a', status: 'idle' } as any, { id: 's2', name: 'beta', workingDir: '/b', status: 'idle' } as any], activeId: 's1' });
+    useTabs.setState({
+      byProject: {
+        s1: [{ id: 'old', sessionId: 's1', type: 'claude-code', label: 'Older thread', status: 'waiting', lastActivityAt: '2026-11-01T10:00:00Z' } as any],
+        s2: [{ id: 'new', sessionId: 's2', type: 'claude-code', label: 'Newest thread', status: 'waiting', lastActivityAt: '2026-11-07T10:00:00Z' } as any],
+      },
+      activeTabId: null,
+    });
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+  });
+
+  it('the switch sits above the search line; Threads lists every thread, last active first, and opening one selects it', async () => {
+    const onSelectTab = vi.fn();
+    render(<ProjectSidebar onSelectTab={onSelectTab} />);
+    const tablist = screen.getByRole('tablist', { name: 'Projects view' });
+    const search = screen.getByPlaceholderText('Search projects');
+    expect(tablist.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(within(tablist).getByRole('tab', { name: 'Threads' }));
+    expect(useProjectsView.getState().view).toBe('threads');
+    expect(screen.getByPlaceholderText('Search threads')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sort projects' })).toBeNull();
+    const labels = await screen.findAllByText(/thread$/);
+    expect(labels.map((l) => l.textContent)).toEqual(['Newest thread', 'Older thread']);
+    fireEvent.click(screen.getByText('Newest thread'));
+    expect(useProjects.getState().activeId).toBe('s2');
+    expect(onSelectTab).toHaveBeenCalledWith('new');
+    fireEvent.click(within(tablist).getByRole('tab', { name: 'Projects' }));
+    expect(screen.getByPlaceholderText('Search projects')).toBeInTheDocument();
   });
 });
