@@ -41,7 +41,7 @@ import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
-import { PluginView } from './plugins/PluginView';
+import { PluginView, Slot } from './plugins/PluginView';
 import { isPluginView } from './plugins/registry';
 import { useHost } from './stores/host';
 import { useAgents } from './stores/agents';
@@ -264,6 +264,7 @@ export default function App() {
       <UpdateModal />
       <HighScoreCelebration />
       <PreviewSheet />
+      <Slot name="app.overlay" />
       <AppShell>
         {view === 'settings'
           ? <SettingsView />

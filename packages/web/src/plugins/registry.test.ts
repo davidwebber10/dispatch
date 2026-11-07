@@ -77,3 +77,15 @@ describe('plugin contributions store (2026-11-07)', () => {
     expect(result.current.map((v) => v.key)).toEqual(['plugin:p:a']);
   });
 });
+
+describe('view badges (plugins slice 4)', () => {
+  it('setBadge stores a count per view key, drops a zero, and anyBadge says whether any view has one', async () => {
+    const { usePluginRegistry, anyBadge } = await import('./registry');
+    usePluginRegistry.getState().setBadge('plugin:previews:history', 3);
+    expect(usePluginRegistry.getState().badges).toEqual({ 'plugin:previews:history': 3 });
+    expect(anyBadge(usePluginRegistry.getState())).toBe(true);
+    usePluginRegistry.getState().setBadge('plugin:previews:history', 0);
+    expect(usePluginRegistry.getState().badges).toEqual({});
+    expect(anyBadge(usePluginRegistry.getState())).toBe(false);
+  });
+});

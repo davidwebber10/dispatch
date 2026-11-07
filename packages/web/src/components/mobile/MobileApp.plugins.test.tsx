@@ -4,6 +4,7 @@ import { MobileApp } from './MobileApp';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
 import { usePluginRegistry } from '../../plugins/registry';
+import { useProjects } from '../../stores/projects';
 
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true });
@@ -11,7 +12,7 @@ beforeEach(() => {
   useTabs.setState({ byProject: {}, openTabIds: [], activeTabId: null, tabSession: {} });
   vi.spyOn(api, 'listSessions').mockResolvedValue([] as any);
   vi.spyOn(api, 'listTerminals').mockResolvedValue([] as any);
-  usePluginRegistry.setState({ views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [], manifests: [], status: {} });
+  usePluginRegistry.setState({ views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [], manifests: [], status: {}, badges: {} });
   localStorage.clear();
   window.history.pushState({}, '', '/');
 });
@@ -55,5 +56,49 @@ describe('MobileApp plugin screens (2026-11-07)', () => {
     expect(tabLabels()).toEqual(['Projects', 'Chat', 'Analytics', 'Alpha', 'Beta', 'Plugins', 'Settings']);
     fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
     expect(screen.getByText('alpha screen')).toBeInTheDocument();
+  });
+
+  it('a badge on a promoted view shows its count on that tab and dots the Plugins tab for an unpromoted one', () => {
+    const reg = usePluginRegistry.getState().register;
+    reg('a', { views: [{ id: 'v', label: 'Alpha', Component: () => null }] });
+    reg('b', { views: [{ id: 'v', label: 'Beta', Component: () => null }] });
+    usePluginRegistry.getState().setPromoted(['plugin:a:v']);
+    usePluginRegistry.getState().setBadge('plugin:a:v', 4);
+    usePluginRegistry.getState().setBadge('plugin:b:v', 1);
+    render(<MobileApp />);
+    const tabs = screen.getByTestId('bottom-tabs');
+    expect(within(tabs).getByRole('button', { name: /Alpha/ })).toHaveTextContent('4');
+    expect(within(within(tabs).getByRole('button', { name: /Plugins/ })).getByRole('status', { name: 'Plugin news' })).toBeInTheDocument();
+    expect(within(within(tabs).getByRole('button', { name: /Alpha/ })).queryByRole('status')).toBeNull();
+  });
+});
+
+describe('MobileApp plugin slots (plugins slice 4)', () => {
+  it('project.header.actions renders before the project ⋯ with the session; app.overlay renders at the root', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    usePluginRegistry.getState().register('previews', { slots: [
+      { id: 'eye', slot: 'project.header.actions', Component: ({ session }: any) => <button type="button">eye for {session?.name}</button> },
+      { id: 'sheet', slot: 'app.overlay', Component: () => <div>the sheet</div> },
+    ] });
+    window.history.pushState({}, '', '/p/s1');
+    render(<MobileApp />);
+    const eye = screen.getByRole('button', { name: 'eye for Proj' });
+    const menu = screen.getByRole('button', { name: 'Project menu' });
+    expect(eye.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('the sheet')).toBeInTheDocument();
+  });
+
+  it('thread.header.actions renders before the thread ⋯ with the terminal', () => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
+    useTabs.setState({ byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } } as any] } });
+    vi.spyOn(api, 'getTerminal').mockResolvedValue({ id: 't1', sessionId: 's1', type: 'claude-code', label: 'Fix it', config: { transport: 'structured' } } as any);
+    usePluginRegistry.getState().register('previews', { slots: [
+      { id: 'eye', slot: 'thread.header.actions', Component: ({ terminal }: any) => <button type="button">eye for {terminal?.label}</button> },
+    ] });
+    window.history.pushState({}, '', '/p/s1/t/t1');
+    render(<MobileApp />);
+    const eye = screen.getByRole('button', { name: 'eye for Fix it' });
+    const menu = screen.getByRole('button', { name: 'Thread menu' });
+    expect(eye.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

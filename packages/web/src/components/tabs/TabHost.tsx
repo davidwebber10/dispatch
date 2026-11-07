@@ -10,6 +10,7 @@ import { CliStatusCard } from './CliStatusCard';
 import { useTabs } from '../../stores/tabs';
 import { TransportToggle } from '../layout/TransportToggle';
 import { AlertBell } from '../layout/AlertBell';
+import { Slot } from '../../plugins/PluginView';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { isImage, isSvg } from '../../lib/fileType';
 import { Spinner } from '../common/Spinner';
@@ -72,6 +73,7 @@ function AiThread({ tab }: { tab: Terminal }) {
           switch now; mobile keeps the same control in its header). */}
       {!isMobile && (
         <div ref={floatingRef} data-testid="thread-floating-controls" style={{ position: 'absolute', top: 4, right: FLOATING_RIGHT, zIndex: 12, display: 'flex', gap: 6 }}>
+          <Slot name="thread.header.actions" terminal={tab} floating />
           <AlertBell terminalId={tab.id} floating />
           <TransportToggle terminalId={tab.id} floating />
         </div>

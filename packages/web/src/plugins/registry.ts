@@ -53,11 +53,14 @@ interface PluginRegistryState extends Lists {
   status: Record<string, PluginStatus>;
   /** View keys the owner gave a tab of their own on the phone (at most two). */
   promoted: string[];
+  /** Unseen counts per view key, set by the plugin (a count on the rail item or the promoted tab; a dot on the Plugins tab). */
+  badges: Record<string, number>;
   setManifests: (m: PluginRow[]) => void;
   setStatus: (plugin: string, s: PluginStatus) => void;
   register: (plugin: string, c: Contributions) => void;
   unregister: (plugin: string) => void;
   setPromoted: (keys: string[]) => void;
+  setBadge: (viewKey: string, n: number) => void;
 }
 
 export const viewKey = (plugin: string, id: string): string => `plugin:${plugin}:${id}`;
@@ -82,6 +85,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
   composerActions: [],
   slots: [],
   promoted: loadPromoted(),
+  badges: {},
   setManifests: (manifests) => set({ manifests }),
   setStatus: (plugin, s) => set({ status: { ...get().status, [plugin]: s } }),
   register: (plugin, c) => {
@@ -107,7 +111,20 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
     try { localStorage.setItem(PROMOTED_KEY, JSON.stringify(promoted)); } catch { /* ignore */ }
     set({ promoted });
   },
+  setBadge: (viewKey, n) => {
+    const badges = { ...get().badges };
+    if (n > 0) badges[viewKey] = Math.floor(n); else delete badges[viewKey];
+    set({ badges });
+  },
 }));
+
+/** Whether any view has a badge; the phone's Plugins tab dots when an unpromoted one has. */
+export const anyBadge = (s: Pick<PluginRegistryState, 'badges' | 'promoted'>, unpromotedOnly = false): boolean =>
+  Object.keys(s.badges).some((k) => !unpromotedOnly || !s.promoted.includes(k));
+
+export function useViewBadge(viewKey: string): number {
+  return usePluginRegistry((s) => s.badges[viewKey] ?? 0);
+}
 
 /**
  * A plugin's contributions of one kind, memoised: a selector that filtered inside would hand

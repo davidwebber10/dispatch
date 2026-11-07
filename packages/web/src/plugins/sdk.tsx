@@ -141,7 +141,7 @@ export interface DispatchSdk {
   };
   zustand: { create: typeof create };
   stores: { useUI: typeof useUI; useProjects: typeof useProjects; useTabs: typeof useTabs; usePreviews: typeof usePreviews; useUpdate: typeof useUpdate; useThreadStatus: typeof useThreadStatus };
-  actions: { setView: (key: string) => void; openThread: (projectId: string, terminalId: string) => Promise<void>; openSettings: (sectionKey: string) => void };
+  actions: { setView: (key: string) => void; openThread: (projectId: string, terminalId: string) => Promise<void>; openSettings: (sectionKey: string) => void; /** An unseen count on a view (`plugin:<id>:<view>`); 0 clears it. */ setBadge: (viewKey: string, n: number) => void };
   api: typeof api;
   ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
   icons: Record<string, Icon>;
@@ -173,6 +173,7 @@ export function buildSdk(): DispatchSdk {
       setView: (key) => useUI.getState().setView(key as never),
       openThread: (projectId, terminalId) => openThreadInPlace(projectId, terminalId),
       openSettings: (sectionKey) => useUI.getState().requestSettings(sectionKey),
+      setBadge: (viewKey, n) => usePluginRegistry.getState().setBadge(viewKey, n),
     },
     api,
     ui: { Modal, Markdown, FileViewer, Toggle, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },

@@ -11,9 +11,9 @@ import { PreviewSheet, PreviewBadge } from '../previews/PreviewSheet';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { usePluginRegistry, usePromotedViews } from '../../plugins/registry';
+import { usePluginRegistry, usePromotedViews, anyBadge } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
-import { PluginView } from '../../plugins/PluginView';
+import { PluginView, Slot } from '../../plugins/PluginView';
 import { PluginsTab } from './PluginsTab';
 import { ProjectMenu } from './ProjectMenu';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
@@ -284,6 +284,8 @@ export function MobileApp() {
   // project.
   const inSettings = bottomTab === 'settings';
   const promotedViews = usePromotedViews();
+  const badges = usePluginRegistry((s) => s.badges);
+  const pluginsDot = usePluginRegistry((st) => anyBadge(st, true));
   const anyPlugin = usePluginRegistry((s) => s.views.length > 0 || s.manifests.length > 0);
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
@@ -316,6 +318,7 @@ export function MobileApp() {
       <PreviewSheet />
       {transport.confirmUi}
       {project && <ProjectMenu project={project} open={projectMenu && level === 1 && !inSettings && !leafTab} unseen={unseenHere} onClose={() => setProjectMenu(false)} onArchived={back} />}
+      <Slot name="app.overlay" />
       <ThreadMenu at={threadMenu} onClose={() => setThreadMenu(null)} onBranched={(t) => openThread(t.id)}
         lead={(close, row) => (
           <>
@@ -387,6 +390,7 @@ export function MobileApp() {
           <UsageChip variant="phone" />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
+          {level === 1 && !inSettings && project && !leafTab && <Slot name="project.header.actions" session={project} />}
           {level === 1 && !inSettings && project && !leafTab && (
             <button type="button" aria-label="Project menu" title="Previews and project options"
               onClick={() => setProjectMenu(true)}
@@ -395,6 +399,7 @@ export function MobileApp() {
               <PreviewBadge count={unseenHere} />
             </button>
           )}
+          {leafTab && <Slot name="thread.header.actions" terminal={leafTab} />}
           {leafTab && <AlertBell terminalId={leafTab.id} />}
           {leafTab && (
             <button type="button" aria-label="Thread menu" title="Previews, Pretty / CLI and thread options"
@@ -521,6 +526,13 @@ export function MobileApp() {
                 <span style={{ position: 'relative', display: 'flex' }}>
                   <Icon size={23} weight={on ? 'fill' : 'regular'} />
                   {key === 'settings' && <UpdateDot style={{ top: -2, right: -4 }} />}
+                  {/* A promoted plugin screen carries its unseen count; the Plugins tab a plain dot when a screen inside it has one. */}
+                  {(badges[key] ?? 0) > 0 && (
+                    <span aria-label={`${badges[key]} new`} style={{ position: 'absolute', top: -5, left: '100%', marginLeft: -6, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#08240F', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--color-pane)' }}>
+                      {badges[key] > 99 ? '99+' : badges[key]}
+                    </span>
+                  )}
+                  {key === 'plugins' && pluginsDot && <span aria-label="Plugin news" role="status" style={{ position: 'absolute', top: -2, right: -4, width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', boxShadow: '0 0 0 2px var(--color-pane)' }} />}
                 </span>
                 <span style={{ fontSize: 11, fontWeight: on ? 600 : 500 }}>{label}</span>
               </button>

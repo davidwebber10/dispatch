@@ -8,7 +8,7 @@ import { useUI, type View } from '../../stores/ui';
 import { usePreviews, unseenPreviews } from '../../stores/previews';
 import { UsageChip } from './UsageChip';
 import { UpdateDot } from '../update/UpdateDot';
-import { usePluginViews } from '../../plugins/registry';
+import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 
 const CONN = {
@@ -75,6 +75,7 @@ export function IconRail() {
   const unseen = usePreviews((s) => unseenPreviews(s.items));
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
+  const badges = usePluginRegistry((s) => s.badges);
   // The badge needs the list before the view is ever opened.
   useEffect(() => { void usePreviews.getState().load(); }, []);
 
@@ -102,7 +103,7 @@ export function IconRail() {
       ))}
       {pluginViews.map((v) => (
         <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}
-          active={view === v.key} onClick={() => setView(v.key as View)} />
+          active={view === v.key} onClick={() => setView(v.key as View)} badge={badges[v.key] ?? 0} />
       ))}
       <div style={{ flex: 1 }} />
       {/* Account usage (#127): above the connection dot, hidden until a provider reports. */}

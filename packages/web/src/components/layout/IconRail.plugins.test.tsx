@@ -7,7 +7,7 @@ import { usePluginRegistry } from '../../plugins/registry';
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ previews: [], unseen: 0 }) }));
   useUI.setState({ view: 'workspace' });
-  usePluginRegistry.setState({ views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [], manifests: [], status: {} });
+  usePluginRegistry.setState({ views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [], manifests: [], status: {}, badges: {} });
 });
 
 describe('IconRail plugin views (2026-11-07)', () => {
@@ -26,5 +26,12 @@ describe('IconRail plugin views (2026-11-07)', () => {
     render(<IconRail />);
     expect(screen.getAllByRole('button').map((b) => b.getAttribute('title'))).toEqual(expect.arrayContaining(['Threads', 'Chat', 'Analytics', 'Previews', 'Settings (⌘,)']));
     expect(screen.queryByTitle('Rundown')).toBeNull();
+  });
+
+  it('a plugin item shows its badge count', () => {
+    usePluginRegistry.getState().register('previews', { views: [{ id: 'history', label: 'Previews+', icon: 'eye', Component: () => null }] });
+    usePluginRegistry.getState().setBadge('plugin:previews:history', 2);
+    render(<IconRail />);
+    expect(screen.getByLabelText('2 new').closest('button')).toHaveAttribute('title', 'Previews+');
   });
 });
