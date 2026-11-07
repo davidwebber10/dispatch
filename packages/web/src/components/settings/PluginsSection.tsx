@@ -147,7 +147,6 @@ export function PluginsSection() {
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{r.name}</span>
           <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{r.version}</span>
           <span style={{ ...miniChip, color: chipColor, borderColor: chipColor }}>{st.label}</span>
-          {r.install && <span style={miniChip}>{r.install.marketplace}</span>}
           {r.bundled && <span style={miniChip} title="Ships with Dispatch and updates with it">Bundled</span>}
           {r.shadowsBundled && <span style={miniChip} title="A bundled plugin with this id is hidden by this local one">Shadows bundled</span>}
         </div>
@@ -327,7 +326,7 @@ export function PluginsSection() {
                       </div>
                       {e.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', marginTop: 2 }}>{e.description}</div>}
                     </div>
-                    {kind === 'plugin' && e.installed
+                    {e.installed
                       ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>Installed v{e.installed.version}</span>
                       : <button type="button" style={solidBtn(marketBusy === null)} disabled={marketBusy !== null} onClick={() => void marketRun(`${kind}:${e.id}`, () => (kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</button>}
                   </div>

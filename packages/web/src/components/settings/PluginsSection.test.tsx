@@ -198,6 +198,7 @@ describe('bundled plugins on the Plugins page (2026-11-07)', () => {
       { marketplace: 'm1', kind: 'plugin', id: 'hello', name: 'The hello plugin', version: '1.0.0', description: 'hello does things', changelog: null },
       { marketplace: 'm1', kind: 'plugin', id: 'have', name: 'Have', version: '2.0.0', description: null, changelog: null, installed: { version: '2.0.0' } },
       { marketplace: 'm1', kind: 'skill', id: 'tidy', name: 'Tidy', version: '0.1.0', description: 'tidy helps', changelog: null },
+      { marketplace: 'm1', kind: 'skill', id: 'have-skill', name: 'Have skill', version: '0.2.0', description: null, changelog: null, installed: { version: '0.2.0' } },
     ];
     render(<PluginsSection />);
     const browse = await screen.findByRole('region', { name: 'Browse' });
@@ -209,6 +210,7 @@ describe('bundled plugins on the Plugins page (2026-11-07)', () => {
     const tidy = within(browse).getByTestId('catalog-skill-tidy');
     fireEvent.click(within(tidy).getByRole('button', { name: 'Install' }));
     await waitFor(() => expect(api.installSkill).toHaveBeenCalledWith('m1', 'tidy'));
+    expect(within(browse).getByTestId('catalog-skill-have-skill')).toHaveTextContent('Installed v0.2.0');
   });
 
   it('an installed row shows the update with its notes, and Update, Roll back, Pin and Auto-update call the API; a gone marketplace is said', async () => {

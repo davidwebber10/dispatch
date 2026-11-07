@@ -235,6 +235,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   // ── marketplaces and installs (spec section 7): owner-only ───────────────────────────────
+  const skillsOf = (req: Request): SkillsService | null => (req.app.locals.skills as SkillsService | undefined) ?? null;
   const marketsOf = (req: Request): MarketplaceService | null => (req.app.locals.marketplaces as MarketplaceService | undefined) ?? null;
   const installerOf = (req: Request): PluginInstaller | null => (req.app.locals.installer as PluginInstaller | undefined) ?? null;
   const installError = (res: import('express').Response, e: unknown): void => {
@@ -275,9 +276,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/catalog', ownerOnlyStrict, async (req, res) => {
     const m = marketsOf(req);
     if (!m) return void res.status(503).json({ error: 'no_marketplaces' });
+    const skillRows = skillsOf(req)?.list() ?? [];
     const entries = (await m.catalog()).map((e) => {
-      const row = e.kind === 'plugin' ? plugins.get(e.id) : undefined;
-      return { ...e, folder: undefined, ...(row?.install ? { installed: { version: row.install.version } } : {}) };
+      const installed = e.kind === 'plugin' ? plugins.get(e.id)?.install ?? null : skillRows.find((s) => s.id === e.id) ?? null;
+      return { ...e, folder: undefined, ...(installed ? { installed: { version: installed.version } } : {}) };
     });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ entries });
@@ -335,7 +337,6 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   // ── skills (spec section 8): the list is readable by every key; the rest is the owner's ──
-  const skillsOf = (req: Request): SkillsService | null => (req.app.locals.skills as SkillsService | undefined) ?? null;
   const skillError = (res: import('express').Response, e: unknown): void => {
     const msg = e instanceof Error ? e.message : String(e);
     res.status(/unknown skill|unknown marketplace|not in the marketplace/.test(msg) ? 404 : /already installed/.test(msg) ? 409 : 400).json({ error: msg });

@@ -110,6 +110,7 @@ describe('marketplace routes', () => {
     const inst = await post('/api/skills/install', { marketplace: slug, id: 'tidy' });
     expect(inst.status).toBe(201);
     expect(inst.body).toMatchObject({ id: 'tidy', name: 'The tidy skill', enabled: true });
+    expect((await request(app).get('/api/plugins/catalog')).body.entries.find((e: any) => e.kind === 'skill').installed).toEqual({ version: '0.1.0' });
     expect((await request(app).get('/api/skills?project=A')).body.skills.map((s: any) => [s.id, s.enabledHere])).toEqual([['tidy', true]]);
     expect((await post('/api/skills/tidy/disable', { project: 'A' })).body.enabledHere).toBe(false);
     expect((await request(app).get('/api/skills?project=B')).body.skills[0].enabledHere).toBe(true);
