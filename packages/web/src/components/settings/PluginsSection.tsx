@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { CaretLeft, CaretRight, Copy as CopyIcon } from '@phosphor-icons/react';
 import { api, readFileText } from '../../api/client';
 import type { PluginRow, Marketplace, CatalogEntry, MarketVersion } from '../../api/types';
@@ -11,6 +10,7 @@ import { Modal } from '../common/Modal';
 import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useMobileNav, openSettingsPluginPage, closeSettingsPluginPage } from '../../stores/mobileNav';
 import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle } from './ui';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
@@ -115,7 +115,16 @@ export function PluginsSection() {
   const status = usePluginRegistry((s) => s.status);
   const views = usePluginRegistry((s) => s.views);
   const promoted = usePluginRegistry((s) => s.promoted);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // The open plugin's page. On a phone it is a screen of the Settings tab, kept in stores/mobileNav
+  // with a history entry, so back closes it and the tab bar can bring it back (2026-11-07).
+  const [deskOpenId, setDeskOpenId] = useState<string | null>(null);
+  const phoneOpenId = useMobileNav((s) => s.settingsPluginId);
+  const openId = isMobile ? phoneOpenId : deskOpenId;
+  const setOpenId = (id: string | null) => {
+    if (!isMobile) setDeskOpenId(id);
+    else if (id) openSettingsPluginPage(id);
+    else closeSettingsPluginPage();
+  };
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState('');
@@ -581,22 +590,9 @@ export function PluginsSection() {
 
   return (
     <>
-      {/* Desktop: the page takes the section's place. Phone: the list stays under a full-screen page. */}
-      {opened && !isMobile ? renderDetail(opened) : list}
-      {opened && isMobile && createPortal(
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--color-base)', display: 'flex', flexDirection: 'column', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
-          <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-            <button type="button" aria-label="Back to plugins" onClick={close} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px' }}>
-              <CaretLeft size={20} weight="bold" />
-              <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Plugins</span>
-            </button>
-          </header>
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', padding: '16px 14px 32px' }}>
-            {renderDetail(opened)}
-          </div>
-        </div>,
-        document.body,
-      )}
+      {/* The page takes the section's place. On a phone the app header carries its back arrow and
+          name, and the tab bar stays below it. */}
+      {opened ? renderDetail(opened) : list}
 
       <Modal open={logsOf !== null} onClose={() => setLogsOf(null)} title={logsOf ? `Worker log · ${logsOf}` : 'Worker log'} maxWidth={760}>
         <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
