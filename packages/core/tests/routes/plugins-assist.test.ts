@@ -79,6 +79,27 @@ describe('plugin assist route (2026-11-07)', () => {
     expect(other.status).toBe(403);
   });
 
+  it('passes harness, model and account to the runner (coach plan, Task 1)', async () => {
+    const r = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }], harness: 'codex', model: 'gpt-5.6-sol', accountId: 'work' });
+    expect(r.status).toBe(200);
+    expect(calls[0]).toMatchObject({ harness: 'codex', model: 'gpt-5.6-sol', accountId: 'work' });
+    await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }] });
+    expect(calls[1].harness).toBeUndefined();
+    expect(calls[1].model).toBeUndefined();
+  });
+
+  it('400 for an unknown harness or a model with spaces or over 120 chars', async () => {
+    const send = (extra: Record<string, unknown>) => request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }], ...extra });
+    expect((await send({ harness: 'gemini' })).status).toBe(400);
+    expect((await send({ harness: 7 })).status).toBe(400);
+    expect((await send({ model: 'claude opus' })).status).toBe(400);
+    expect((await send({ model: 'm'.repeat(121) })).status).toBe(400);
+    expect((await send({ model: '' })).status).toBe(400);
+    expect((await send({ accountId: 'a b' })).status).toBe(400);
+    expect((await send({ harness: 'auto', model: 'm'.repeat(120) })).status).toBe(200);
+    expect(calls).toHaveLength(1);
+  });
+
   it('assist with no runner answers 503 with a plain message', async () => {
     app = build(null);
     const r = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }] });

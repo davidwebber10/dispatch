@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import * as Icons from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, type PluginAssistRequest } from '../api/client';
 import type { ServerEvent } from '../api/events-socket';
 import { apiPath } from '../lib/basePath';
 import { useUI } from '../stores/ui';
@@ -96,7 +96,7 @@ const events = {
 };
 
 /** One model call through the daemon (spec section 3.4); needs the plugin's `model:assist` permission. */
-function assist(plugin: string, req: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) {
+function assist(plugin: string, req: PluginAssistRequest) {
   return api.pluginAssist(plugin, req);
 }
 

@@ -625,7 +625,13 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Model assist for plugins (spec section 3.4): the same signed-in CLI the titles use, else the OpenRouter key.
   const assistRunner = process.env.DISPATCH_ASSIST_COMMAND
     ? commandAssistRunner(process.env.DISPATCH_ASSIST_COMMAND)
-    : createAssistRunner({ cli: titleCliDeps, getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null) });
+    : createAssistRunner({
+      cli: titleCliDeps, getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
+      // The account a call signs in as (multi-account): the same overlay a thread on that account gets.
+      // `accounts` is built below; these run per call, after boot.
+      accountEnv: (h, id) => accounts.spawnEnv(h === 'claude' ? 'claude-code' : 'codex', { accountId: id }),
+      defaultAccount: (h) => accounts.defaultId(h),
+    });
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),

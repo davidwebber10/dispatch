@@ -12,7 +12,7 @@ import { insideRealRoot } from '../files/confine.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import type { AssistRunner } from '../assist/run.js';
+import { ASSIST_HARNESSES, type AssistRunner, type AssistHarness } from '../assist/run.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
 import type { PluginInstaller } from '../plugins/installer.js';
@@ -30,6 +30,8 @@ function fail(res: import('express').Response, e: unknown): void {
 
 const OK = { ok: true } as const;
 export const ASSIST_INFLIGHT_MAX = 3;
+/** A model or account id a caller may name: no spaces, at most 120 characters. */
+const ASSIST_ID_RE = /^[^\s]{1,120}$/;
 
 /** A plugin key reaches the storage and settings of its own plugin only. */
 const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
@@ -475,18 +477,31 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   const inflight = new Map<string, number>();
   router.post('/plugins/:id/assist', keyRoute({ plugin: assistRule }), async (req, res) => {
     if (!known(req, res)) return;
-    const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown };
+    const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown; harness?: unknown; model?: unknown; accountId?: unknown };
     const messages = Array.isArray(body.messages) ? body.messages.filter((m): m is { role: 'user' | 'assistant'; content: string } => !!m && typeof m === 'object' && ((m as { role?: unknown }).role === 'user' || (m as { role?: unknown }).role === 'assistant') && typeof (m as { content?: unknown }).content === 'string') : [];
-    if (messages.length === 0) return void res.status(400).json({ error: 'bad_body', message: 'Send { messages: [{ role: "user", content: "..." }], system?, maxTokens? }.' });
+    if (messages.length === 0) return void res.status(400).json({ error: 'bad_body', message: 'Send { messages: [{ role: "user", content: "..." }], system?, maxTokens?, harness?, model? }.' });
     const maxTokens = Math.max(1, Math.min(2000, typeof body.maxTokens === 'number' ? Math.floor(body.maxTokens) : 800));
-    if (!assist || !(await assist.available().catch(() => false))) {
+    // The harness and model the caller chose (coach spec section 7.1): a known harness, a model id with no spaces.
+    if (body.harness !== undefined && !(typeof body.harness === 'string' && (body.harness === 'auto' || (ASSIST_HARNESSES as readonly string[]).includes(body.harness)))) {
+      return void res.status(400).json({ error: 'bad_harness', message: `harness is one of ${[...ASSIST_HARNESSES, 'auto'].join(', ')}.` });
+    }
+    if (body.model !== undefined && !(typeof body.model === 'string' && ASSIST_ID_RE.test(body.model))) {
+      return void res.status(400).json({ error: 'bad_model', message: 'model is a model id: 1 to 120 characters, no spaces.' });
+    }
+    if (body.accountId !== undefined && !(typeof body.accountId === 'string' && ASSIST_ID_RE.test(body.accountId))) {
+      return void res.status(400).json({ error: 'bad_account', message: 'accountId is an account id: 1 to 120 characters, no spaces.' });
+    }
+    const harness = body.harness as AssistHarness | 'auto' | undefined;
+    const model = body.model as string | undefined;
+    const accountId = body.accountId as string | undefined;
+    if (!assist || !(await assist.available(harness).catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
     const busy = inflight.get(req.params.id) ?? 0;
     if (busy >= ASSIST_INFLIGHT_MAX) return void res.status(429).json({ error: 'busy', message: `At most ${ASSIST_INFLIGHT_MAX} assist calls run at once for a plugin.` });
     inflight.set(req.params.id, busy + 1);
     let result;
-    try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens }).catch(() => null); }
+    try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens, ...(harness ? { harness } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}) }).catch(() => null); }
     finally { inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1); }
     if (!result) return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
     pluginData.recordAssist(db, req.params.id, result.usage, result.ms);

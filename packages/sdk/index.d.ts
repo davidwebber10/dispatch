@@ -127,8 +127,27 @@ export interface DispatchSdk {
   settings: { get<T>(plugin: string, fallback: T): Promise<T>; set(plugin: string, value: unknown): Promise<void> };
   /** The daemon's event stream; listeners are dropped when the plugin reloads. */
   events: { on(type: string | string[], handler: (e: ServerEvent) => void): () => void };
-  /** One model call through the daemon (`model:assist`). */
-  assist(plugin: string, req: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>;
+  /**
+   * One model call through the daemon (`model:assist`). `harness` runs one harness only (no
+   * fallback); `auto` runs on the account with the most room; absent = Claude, then OpenRouter.
+   * `model` is that harness's model id.
+   */
+  assist(plugin: string, req: {
+    system?: string;
+    messages: { role: 'user' | 'assistant'; content: string }[];
+    maxTokens?: number;
+    harness?: 'claude' | 'codex' | 'openrouter' | 'auto';
+    model?: string;
+    accountId?: string;
+  }): Promise<{
+    text: string;
+    usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number };
+    ms: number;
+    model: string;
+    harness?: 'claude' | 'codex' | 'openrouter';
+    accountId?: string | null;
+    costUsd?: number | null;
+  }>;
   /** fetch with the plugin named in a header; `path` is app-root-relative (`/api/...`, `/plugins/...`). */
   fetch(plugin: string, path: string, init?: RequestInit): Promise<Response>;
   /** This plugin's worker through the daemon's proxy. */
