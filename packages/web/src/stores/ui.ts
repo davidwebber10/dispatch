@@ -6,7 +6,8 @@ import { create } from 'zustand';
 // that bypasses Workspace entirely (see App.tsx).
 // `plugin:<id>:<view>` is a plugin's screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
 export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | `plugin:${string}`;
-export type InspectorTab = 'details' | 'files';
+// `plugin:<id>:<tab>` is a plugin's right-column tab (the `inspectorTabs` contribution).
+export type InspectorTab = 'details' | 'files' | `plugin:${string}`;
 
 const LKEY = 'dispatch:left-collapsed';
 const RKEY = 'dispatch:right-collapsed';

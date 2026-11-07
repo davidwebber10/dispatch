@@ -35,7 +35,9 @@ export interface PluginSlotContent { plugin: string; id: string; slot: string; p
 /** The open thread's ids, as a right-column tab gets them: null when no thread (or project) is open. */
 export interface InspectorTabProps { terminalId: string | null; sessionId: string | null }
 /** A tab in the desktop right column after Details and Files (a row in the phone thread's ⋯ menu). */
-export interface PluginInspectorTab { plugin: string; id: string; key: string; label: string; icon?: string; priority?: number; Component: ComponentType<InspectorTabProps> }
+/** An icon by name (the names `views` take: `note`, `eye`, …) or a phosphor icon component. */
+export type InspectorTabIcon = string | ComponentType<{ size?: number | string }>;
+export interface PluginInspectorTab { plugin: string; id: string; key: string; label: string; icon?: InspectorTabIcon; priority?: number; Component: ComponentType<InspectorTabProps> }
 export type PluginStatus = { state: 'loading' | 'ready' | 'error'; error?: string; version?: string; at: number };
 
 /** What a plugin hands to `register`: the same lists, without the fields the store derives. */

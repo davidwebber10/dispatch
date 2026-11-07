@@ -18,7 +18,7 @@ import { FileViewer } from '../components/viewer/FileViewer';
 import { copyText } from '../lib/clipboard';
 import { openThreadInPlace } from '../components/endless/openThread';
 import { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput, Toggle } from '../components/settings/ui';
-import { usePluginRegistry, useContributions, type Contributions } from './registry';
+import { usePluginRegistry, useContributions, type Contributions, type InspectorTabIcon } from './registry';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.2): the object a plugin's
@@ -37,6 +37,8 @@ const ICONS: Record<string, Icon> = {
   copy: Icons.Copy, check: Icons.Check, trash: Icons.Trash, image: Icons.Image, file: Icons.FileText, pdf: Icons.FilePdf, html: Icons.FileHtml, csv: Icons.FileCsv, x: Icons.X,
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
+/** A right-column tab's icon: a name from the list above, or the phosphor component itself. */
+export const tabIcon = (icon: InspectorTabIcon | undefined): Icon => (typeof icon === 'string' || !icon ? pluginIcon(icon) : (icon as Icon));
 
 /**
  * Per-plugin storage on the daemon (spec section 5). Writes queue per plugin so two sets in a row
