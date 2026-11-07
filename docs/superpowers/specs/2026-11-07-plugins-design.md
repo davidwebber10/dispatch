@@ -448,6 +448,36 @@ The `previews` table migrates into the plugin's storage; the file-serving route 
 daemon as a generic "serve a file inside a project folder, checked" route the plugin's tool
 registers a reference to. The thread menu's "Previews" item comes from the plugin.
 
+## 14. Plugin conflicts
+
+Two plugins will touch the same thing. The rules, so the result is intentional:
+
+- **Namespaces**: every contribution is keyed by its plugin id (`plugin:<id>:<view>`,
+  storage per plugin, settings sections per plugin, MCP server `plugin-<id>` so tool names
+  cannot collide across plugins: a harness sees `mcp__plugin-<id>__<tool>`). Two plugins
+  cannot overwrite each other's keys.
+- **Load order**: plugins load in the order of the owner's list on the Plugins page
+  (default: bundled, then installed, then local, alphabetical within each). The page lets the
+  owner drag to reorder. Order is the tie-break everywhere below, and it is stored in
+  `~/.dispatch/plugins.json` with the enabled state.
+- **Slots**: every plugin's content renders, in load order; a contribution may set
+  `priority` (higher first) to override that. The same for menu items and composer actions.
+- **Overrides**: compose in load order (the later plugin wraps the earlier plugin's result).
+  The Plugins page shows, per override target, every plugin that touches it, in order.
+- **Instructions and skills**: concatenated in load order, each under its own heading. The
+  Plugins page shows the assembled instructions for a project so the owner can read what
+  the model reads.
+- **Hooks**: every plugin's hook runs; a `block` from any one blocks, and the thread's
+  notice names the plugin. Added context from several `prompt` hooks is concatenated.
+- **Same id in two places**: a local folder and an installed plugin with the same id
+  cannot both exist; install refuses when a local folder has the id, and the page says so.
+  A bundled plugin copied to local gets a new id.
+- **Conflict report**: Settings → Plugins has a "Touches" view: for each slot, override,
+  instruction target and hook, the plugins that use it, in order. A plugin's install screen
+  lists the same for that plugin, with "also used by …" lines.
+- **Same name, different plugin**: two plugins may both contribute a view called
+  "Rundown"; the rail and the Plugins tab show the plugin's name under a duplicate label.
+
 ## 13. Key plugins Dispatch ships
 
 Beyond Previews, Dispatch ships a few plugins that show what the surface can do and that
