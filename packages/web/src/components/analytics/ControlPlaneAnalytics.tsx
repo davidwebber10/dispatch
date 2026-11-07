@@ -6,6 +6,7 @@ import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { OTHER, SERIES, resolveChartTheme } from './chartTheme';
+import { useActiveTheme } from '../../themes/apply';
 import { Block, Kpi, NoData, chartTooltip, fmtDay, fmtSeconds, fmtTokens, labelStyle, muted } from './parts';
 import type {
   AgentSeriesKey, ControlPlaneAnalytics as Payload, ControlPlaneProjectRow, MissionStatus,
@@ -74,7 +75,9 @@ const isActive = (r: ControlPlaneProjectRow) => r.active;
 export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: string; projectId: string; provider: string }) {
   const isMobile = useIsMobile();
   // Recharts cannot read `var(--color-*)`, so the theme resolves to literals once.
-  const theme = useMemo(() => resolveChartTheme(), []);
+  // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
+  const themeId = useActiveTheme((s) => s.theme.id);
+  const theme = useMemo(() => resolveChartTheme(), [themeId]);
   // The same live signal as Usage: the daemon bumps it every time a turn closes.
   const rev = useAnalyticsFeed((s) => s.rev);
   const [data, setData] = useState<Payload | null>(null);
