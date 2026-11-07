@@ -462,16 +462,11 @@ build the real version in this order: storage and permissions, the Plugins setti
 local install, the model block (tools, instructions, hooks), then the marketplace, then
 workers. Previews moves into a plugin when the model block lands, since its tool needs it.
 
-## 9. Open questions for the owner
+## 9. Open questions, answered (2026-11-07)
 
-1. **Trust**: is "a marketplace plugin runs with the same power as the app" acceptable with
-   a permissions list and a review step, or must marketplace plugins be sandboxed (option A)
-   while local plugins get option B?
-2. **Previews**: move it into a plugin in the first real version (proves the surface, but
-   costs a migration), or leave it built in?
-3. **Marketplace hosting**: a GitHub-based index first (zero infrastructure), or dispatchd.app
-   as a service from the start (accounts, publishing, org visibility)?
-4. **Skills**: Dispatch-managed skill library injected per harness, or a thin page over Claude
-   Code's own plugin marketplaces?
-5. **The fifth tab**: a fixed "Plugins" tab that lists plugin screens, or a tab per plugin
-   that asks for one (the manifest's `mobileTab`), with a cap?
+The owner took every recommendation: (1) a marketplace plugin runs with the same power as a
+local one, with permissions shown and enforced on its key and a review on the public index;
+(2) Previews becomes a plugin in the first real version; (3) the first marketplace is a
+GitHub repository with an index file; (4) a Dispatch skill library injected per harness; (5) a
+fixed Plugins tab plus up to two promoted tabs; and the Plugins page lists local plugins
+first. The design is `2026-11-07-plugins-design.md`.

@@ -1,0 +1,432 @@
+# Plugins: anyone changes Dispatch without a Dispatch release
+
+Date: 2026-11-07. Status: approved in chat (the owner answered the brainstorm's questions; the
+calls marked "builder's call" are open to the builder). Brainstorm and spike:
+`2026-11-07-plugins-brainstorm.md`; spike code on branch `spike/plugins`.
+
+## Intent
+
+A person, or the person's own agent, changes Dispatch without waiting for a release: a new
+screen, a settings section, an item in a menu, buttons under the composer, a tool every
+harness gets, an instruction every model reads, a hook that sees every prompt and every tool
+call, a change to what an existing screen does. The change is a folder. The folder is a plugin.
+It loads into the running app, and it reloads as its files are saved.
+
+A plugin does not have to be published. A local plugin is complete. Publishing to a
+marketplace is a separate step for a plugin someone else should install. A marketplace is a
+JSON index at a URL: the public one on dispatchd.app, or an organisation's private one.
+
+Skills (prompt packages the harnesses read) travel the same way, as a second kind.
+
+## Goals
+
+- An agent inside a thread can scaffold a plugin, write its files, and see it in the app
+  within a second of saving, with no build of Dispatch and no restart.
+- A plugin reaches every surface the owner asked for: the desktop rail, the phone's tabs,
+  Settings, the thread and project menus, the composer, the thread header, the message row,
+  the inspector, and (through overrides) any component.
+- A plugin reaches the model: tools (an MCP server), instructions (system prompt text), hooks
+  (every prompt, every tool call, every turn end), and an audit of the tools a thread had.
+- A plugin can run a process: jobs on a clock, event handlers, its own endpoints.
+- A broken plugin never takes the app down. A plugin's power is declared and visible.
+- Install, update, roll back, pin and remove from the Plugins page, on desktop and phone.
+- Previews becomes a plugin, as the proof the surface is complete.
+
+## Non-goals
+
+- A sandbox for plugin UI. A plugin's web part runs in the app with the app's power
+  (decision 1). Safety comes from permissions on the daemon side, the boundary, safe mode,
+  and the marketplace's review.
+- A hosted marketplace service. The first marketplace is a GitHub repository (decision 3).
+- Plugin code inside the daemon's process. Server-side plugin code is always a process the
+  daemon runs, talking to the daemon over its API with a key.
+- Themes and keyboard shortcuts as first slices. They are registries a later slice adds.
+
+## Anti-goals
+
+- A plugin that reads the daemon's database file, the access token, or another plugin's
+  storage. Every server-side read goes through the API with the plugin's key.
+- A plugin bundle fetched from another origin. Bundles are served by the daemon only.
+- A plugin that keeps working after the owner disabled it (a worker left running, an MCP
+  server still injected, a hook still firing).
+
+## The decisions
+
+1. **Trust**: a marketplace plugin runs with the same power as a local one. The manifest's
+   `permissions` are enforced by the daemon on the plugin's key and shown before install.
+   The public marketplace reviews before listing.
+2. **Previews** moves into a plugin in the first real version (slice 4).
+3. **Marketplace hosting**: a GitHub repository with an index file; publishing is a pull
+   request; an organisation uses a private repository and a token.
+4. **Skills**: a Dispatch skill library in `~/.dispatch/skills`, installed from the same
+   marketplaces, injected per thread into each harness.
+5. **The fifth tab**: a fixed "Plugins" tab that lists plugin screens, plus a tab of its own
+   for up to two plugins the owner promotes in Settings.
+6. **Plugins page**: local plugins first (open folder, reload, disable, remove), then the
+   installed marketplace plugins, then browse.
+
+## Constraints
+
+- The daemon's CSP stays `script-src 'self'`; bundles are same-origin.
+- Thread keys and route policy (`2026-10-23-per-thread-key-design.md`) stay the authority.
+  A plugin's process gets a key of a new principal kind, `plugin`, scoped by its permissions.
+- `~/.dispatch` is the data dir; plugins and skills live under it.
+- The web client is React 18 and zustand 5 with inline styles and design tokens; a plugin's
+  web part uses those through the SDK and ships no framework of its own.
+- Every harness (Claude Code, Codex, OpenCode, Grok) keeps working with no plugins installed.
+- Hosted boxes (no checkout, no shell) can still install from a marketplace.
+
+## 1. The plugin folder and manifest
+
+```
+~/.dispatch/plugins/<id>/
+  plugin.json
+  web.js              optional: the browser bundle
+  instructions.md     optional: text for the model
+  mcp/                optional: an MCP server (any language)
+  worker/             optional: a process the daemon runs
+  hooks/              optional: scripts for the model hooks
+  skills/             optional: skills the plugin bundles
+  README.md           shown on the Plugins page and in the marketplace
+  CHANGELOG.md        shown as the release note on update
+```
+
+`plugin.json`:
+
+```json
+{
+  "id": "daily-rundown",
+  "name": "Daily rundown",
+  "version": "1.2.0",
+  "description": "What happened yesterday, every morning.",
+  "author": "dispatchd",
+  "dispatch": ">=3.28",
+  "sdk": 1,
+  "web": "web.js",
+  "model": {
+    "instructions": "instructions.md",
+    "mcp": { "command": "node", "args": ["mcp/server.js"] },
+    "hooks": {
+      "prompt":   { "run": "hooks/on-prompt.js" },
+      "turnEnd":  { "run": "hooks/on-turn-end.js" },
+      "toolCall": { "run": "hooks/on-tool.js", "tools": ["Bash", "secrets_*"] },
+      "spawn":    { "run": "hooks/on-spawn.js" }
+    },
+    "harnesses": ["claude-code", "codex", "opencode", "grok"]
+  },
+  "worker": { "command": "node", "args": ["worker/index.js"], "jobs": [{ "id": "morning", "cron": "0 7 * * 1-5" }] },
+  "contributes": {
+    "views": [{ "id": "rundown", "label": "Rundown", "icon": "sun" }],
+    "settings": [{ "id": "rundown", "label": "Daily rundown" }],
+    "menus": { "thread": ["pin"], "project": [] },
+    "slots": ["composer.actions"],
+    "overrides": [],
+    "tools": ["rundown_note"]
+  },
+  "permissions": ["read:projects", "read:threads", "read:ledger", "notify", "storage"],
+  "skills": ["skills/*"]
+}
+```
+
+Rules:
+
+- `id` is `[a-z0-9][a-z0-9-]{0,63}` and equals the folder name. The daemon refuses a mismatch
+  and shows the reason on the Plugins page (the folder still lists, as broken).
+- `dispatch` is a semver range the running daemon must satisfy. `sdk` is the SDK major the
+  web part was built against; the daemon serves the current SDK major and one before it.
+- `contributes` is informational for the app and the marketplace (what a plugin touches,
+  shown before install); the web part's `register` is the truth at runtime. A contribution
+  the web part registers but the manifest did not list is allowed and logged once.
+- `permissions` is the full list of what the plugin's key may do (section 6). Anything not
+  listed is refused by the daemon, whichever part asks.
+- A plugin folder that is a symlink is followed (an agent develops in a project folder and
+  links it in); files are still confined to the resolved folder.
+- A marketplace plugin's folder carries a `.dispatch-install.json` the daemon writes
+  (marketplace, version, hash, installedAt). A folder without it is local.
+
+## 2. The web part
+
+### 2.1 Loading
+
+- `GET /api/plugins` returns every plugin's manifest, its state (`local` or the install
+  record, enabled, broken with the reason) and a `stamp` (the newest mtime in the folder).
+- `GET /plugins/<id>/<path>` serves a file from an enabled plugin's folder, confined to it,
+  `Cache-Control: no-cache`. HTML under a plugin folder is served with the same sandbox CSP
+  as an HTML preview (a plugin page in a frame is possible, never with the app's origin).
+- The client imports `web.js` with `import(/* @vite-ignore */ url + '?v=' + stamp)` after
+  the first state load, and renders nothing plugin-related until the manifests are known.
+  A `?safe` query, or the Settings → Plugins "Safe mode" switch (kept in localStorage),
+  loads no plugin.
+- The daemon watches `~/.dispatch/plugins` and sends `plugin:changed { id, plugin }`
+  (debounced 150 ms). The client unregisters that plugin, re-imports with the new stamp, and
+  re-registers. A removed folder sends `plugin: null`, which unregisters.
+
+### 2.2 The SDK
+
+`window.dispatch` is the SDK object, installed before any plugin loads. It is also published
+as the npm package `@dispatchd/sdk` (types only, plus a build template whose esbuild config
+maps `react`, `react-dom` and `zustand` to the global). A plugin may use plain `h()` calls
+with no build step, or JSX through the template.
+
+The object:
+
+- `version` (SDK major.minor), `React`, `h`, `Fragment`, `hooks` (the React hooks the app
+  uses plus `useIsMobile`), `zustand.create`.
+- `stores`: the app's stores, read-only by convention, with explicit actions exposed where a
+  plugin should write (`setView`, `openThread`, `openSettings`, `openPreview`).
+- `useContributions(kind)` and `useStore(store, selector)`: memoised selectors, because a
+  selector that returns a new array every call loops React under zustand 5 (spike finding).
+- `api`: the app's API client (same-origin, the owner's credentials).
+- `plugin.storage.get/set/list/remove` and `plugin.settings`: per plugin, backed by section 5.
+- `plugin.events.on(type, handler)`: the daemon's event stream, filtered by type.
+- `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `Row`, `Button`, `Chip`, the style
+  tokens, the icon map (named phosphor icons; a plugin may also pass its own component).
+- `hint(text)`, `notify({ title, body, url })` (needs `notify`), `copyText(text)`.
+- `register(id, contributions)`, `unregister(id)`, `override(name, wrap)`.
+
+### 2.3 Contributions and slots
+
+Registries (lists the existing screens read beside their own):
+
+- `views`: `{ id, label, icon, Component, mobileTab? }`. Desktop: a rail item after the
+  built-in ones. Phone: listed in the Plugins tab; the first two the owner promoted in
+  Settings get a tab of their own.
+- `settings`: `{ id, label, blurb, icon, Component }` under a PLUGINS group.
+- `menus.thread`, `menus.project`, `menus.coordinator`: `{ id, label, when?, onPick }` with
+  the thread/project in the context.
+- `composerActions`: `{ id, label, icon?, when?, onClick }` with
+  `{ surface, terminalId, sessionId, value, insert, set, send }`. `send(text)` sends through the
+  composer's own path so it behaves like a typed message.
+- `commands`: `{ id, label, run }` for the command palette (slice 6).
+- `toolRenderers`: `{ toolName, Component }` for a custom tool-call card in Pretty mode.
+
+Slots (named places; a plugin registers `{ slot, id, Component }`):
+
+| Slot | Where | Props |
+| --- | --- | --- |
+| `composer.actions` | the row under the composer (registry above renders here) | composer context |
+| `composer.before` | above the composer (a template form) | composer context |
+| `thread.header.actions` | the thread header, before the ⋯ | `{ terminal }` |
+| `thread.row.meta` | a thread row's right side | `{ terminal }` |
+| `project.header.actions` | the project header | `{ session }` |
+| `message.actions` | a chat message's hover/long-press actions | `{ terminalId, item }` |
+| `inspector.tabs` | beside Details and Files | `{ terminal, session }` |
+| `details.rows` | the end of Thread details | `{ terminal }` |
+| `analytics.panels` | the end of the Analytics page | `{}` |
+| `settings.about` | the end of About & updates | `{}` |
+| `app.overlay` | a global layer (tours, focus mode) | `{}` |
+
+Every slot and every view renders inside a `PluginBoundary` with the plugin's name. A throw
+shows a red card in place; the rest of the screen stays.
+
+### 2.4 Overrides
+
+`override('ChatView', (Original) => (props) => ...)` replaces a named component. The app
+exports a map of overridable components (`ChatView`, `Markdown`, `ThreadRow`, `Composer`,
+`BoardView`, `AuthBanner`, `MobileApp`, `IconRail`, `FileViewer`, `UpdateModal`, and the
+builder adds to it as plugins ask). An override wraps the original; two plugins overriding the
+same name compose in load order. Documented as the escape hatch: no promise across SDK majors.
+
+### 2.5 The Plugins page and the fifth tab
+
+Settings → Plugins (desktop and phone), three lists:
+
+1. **Local**: folder name, version, state, "Open folder", "Reload", enable/disable, "Remove
+   (deletes the folder)". A broken one shows its error. "New plugin…" scaffolds from the
+   template into `~/.dispatch/plugins/<id>` and opens the folder.
+2. **Installed**: name, version, the marketplace, "update available" with the changelog,
+   Update, Roll back, Pin, enable/disable, Remove. Auto-update switch per plugin.
+3. **Browse**: per marketplace, search, a plugin's README, its permissions and contributions,
+   Install. "Add marketplace…" takes a URL and an optional token.
+
+The phone's fifth tab, "Plugins", lists every plugin view as a row and opens it at level 1.
+Settings → Plugins → "Promote to a tab" on up to two views gives them tabs of their own
+between Analytics and Settings.
+
+## 3. The model part
+
+### 3.1 Instructions
+
+`model.instructions` names a Markdown file. The daemon appends its text to the thread's
+system prompt after Dispatch's own prompts, under a heading with the plugin's name, for the
+harnesses in `model.harnesses` (default all). Per project, the plugin's settings may turn it
+off (`plugin.settings` holds `projects: { [sessionId]: { instructions: false } }`; the daemon
+reads the same storage).
+
+### 3.2 Tools
+
+`model.mcp` is an MCP server spec. The daemon adds it to every eligible thread's injected
+servers, named `plugin-<id>`, with `DISPATCH_API`, `DISPATCH_SESSION`, `DISPATCH_TERMINAL`,
+and `DISPATCH_AUTH` (the thread's key) in its environment, plus `DISPATCH_PLUGIN` (the id)
+and `DISPATCH_PLUGIN_AUTH` (the plugin's own key, section 6). The server may act as the
+thread (thread key) or as the plugin (plugin key). The peer prompt lists the plugin's tools
+under the plugin's name, from the manifest's `contributes.tools`.
+
+### 3.3 Hooks
+
+The daemon raises these events for every thread, whichever harness:
+
+| Event | When | Payload |
+| --- | --- | --- |
+| `thread:spawned` | a thread starts | id, session, type, model, `tools_available` (every MCP server and tool name injected) |
+| `thread:prompt` | the user sends a message | id, text (or `textLength` only, if the plugin lacks `read:prompts`), source (user, coordinator, other thread) |
+| `thread:tool` | the model calls a tool | id, tool, input summary, output summary, ok, ms |
+| `thread:turn` | a turn ends | id, ms, input tokens, output tokens, cost, stop reason |
+| `thread:status` | report_status or a derived status change | id, state, summary |
+
+Sources: the structured stream for Pretty threads; the PTY monitor, the hooks Dispatch
+already installs for Claude Code (UserPromptSubmit, Stop, PreToolUse, PostToolUse), and
+`report_status` for CLI threads. Where a harness gives less (Grok and OpenCode CLI mode),
+the payload says `partial: true`.
+
+`model.hooks` runs a script per event with the payload on stdin and the thread's identity in
+the environment. For `prompt` and `toolCall` on Claude Code, the script runs as a native hook
+and may answer `{ "decision": "block", "reason": "..." }` (PreToolUse) or
+`{ "context": "..." }` (UserPromptSubmit adds text). Elsewhere the script observes only, and
+the Plugins page says which harnesses give a plugin's hook the power to block.
+
+`tools_available` is also stored on the thread row and shown in Thread details.
+
+## 4. The worker
+
+`worker.command` is started by the daemon when the plugin is enabled, with the plugin's key,
+`DISPATCH_API`, and `DISPATCH_PLUGIN`. It is restarted on exit with backoff; its stdout and
+stderr go to `~/Library/Logs/dispatch/plugins/<id>.log` and the Plugins page shows the tail.
+`worker.jobs` run on their cron by the daemon sending `plugin:job { id }` to the worker's
+event stream (the worker subscribes to `/api/events` like the web client). A worker may
+listen on a Unix socket the daemon gives it (`DISPATCH_PLUGIN_SOCKET`); the daemon proxies
+`/plugins/<id>/api/*` to it with the caller's principal in a header, so the web part and other
+plugins can call the worker. Disabling the plugin stops the worker and removes the proxy.
+
+## 5. Storage and settings
+
+- `GET/PUT/DELETE /api/plugins/<id>/data/<key>` and `GET /api/plugins/<id>/data`: JSON
+  documents per plugin, 256 KB each, 50 MB per plugin (builder's call on the figures), in a
+  `plugin_data` table. The owner's credentials and the plugin's own key may read and write;
+  a thread key may read if the plugin granted `threads:read-storage`.
+- `GET/PUT /api/plugins/<id>/settings`: one JSON document the Plugins page and the plugin's
+  settings section edit. The daemon reads it for the model part (instructions per project).
+- Both are copied before an update and kept until the plugin reports its migration done or
+  the owner rolls back (section 7).
+
+## 6. Permissions and keys
+
+A plugin's processes (MCP server, worker, hooks) get a key of principal kind `plugin`, issued
+when the plugin is enabled and revoked when disabled, stored at `~/.dispatch/keys/plugin-<id>`
+(0600). Route policy adds `plugin` to `keyRoute`, with `permissions` read from the manifest:
+
+| Permission | Grants |
+| --- | --- |
+| `read:projects`, `read:threads` | the lists and transcripts (what a thread key can read) |
+| `read:prompts` | prompt text in `thread:prompt`; without it only the length |
+| `read:ledger`, `write:ledger` | the ledger routes |
+| `message:threads` | `message_thread` as the plugin (sender line names the plugin) |
+| `spawn:threads` | spawn and start threads |
+| `notify` | push notifications and in-app hints |
+| `storage` | its own data and settings (implied; listed for honesty) |
+| `secrets:<NAME>` | one named secret from the daemon's secrets store, by reference |
+| `network` | informational: the worker makes outbound calls (shown before install) |
+
+The web part runs with the owner's credentials (decision 1); its `permissions` are shown,
+not enforced, except that `api` calls from a plugin carry an `X-Dispatch-Plugin: <id>`
+header the daemon logs, so the audit log can name the plugin.
+
+## 7. Marketplaces, install, update
+
+### 7.1 The index
+
+A marketplace is a URL that returns:
+
+```json
+{
+  "name": "dispatchd",
+  "plugins": [{
+    "id": "daily-rundown", "name": "Daily rundown", "description": "...", "author": "...",
+    "kind": "plugin",
+    "versions": [{ "version": "1.2.0", "dispatch": ">=3.28", "sdk": 1, "url": "https://.../daily-rundown-1.2.0.tgz", "sha256": "...", "publishedAt": "...", "notes": "..." }],
+    "permissions": ["read:threads", "notify"], "contributes": { ... }, "readme": "https://.../README.md"
+  }],
+  "skills": [{ "id": "release-notes", "name": "...", "kind": "skill", "versions": [...] }]
+}
+```
+
+The public index is `https://raw.githubusercontent.com/davidwebber10/dispatch-plugins/main/index.json`
+(builder's call on the repository name); publishing is a pull request that adds a version
+with its tarball URL (a GitHub release asset) and hash. An organisation's index is any URL;
+Settings stores the URL and an optional token in the daemon's secrets store.
+
+### 7.2 Install, update, roll back, pin
+
+- Install: download the tarball to a staging folder, check the hash, check `dispatch` and
+  `sdk`, unpack to `~/.dispatch/plugins/<id>`, write `.dispatch-install.json`, enable.
+- Check: the daemon polls each marketplace on the updater's schedule (about 45 minutes) and
+  stores "updates available"; the Settings dot and banner from v3.27.0 list plugin updates
+  under the Dispatch one.
+- Update: staging, hash, swap the folder (the old one kept as `<id>.prev`), copy storage and
+  settings, raise `plugin:changed`, restart the worker, re-inject the MCP server for new
+  threads. The plugin's web part and worker receive `{ from, to }` once; `plugin.migrated()`
+  tells the daemon to drop the copies. Auto-update per plugin, default off; a marketplace the
+  owner marked trusted defaults on.
+- Roll back: swap `.prev` back and restore the copies. Pin: no update past a version.
+- Remove: stop the worker, revoke the key, delete the folder and the storage (after confirm).
+- A local plugin never checks an index. Publishing one (`dispatch plugin publish`, slice 7)
+  builds the tarball and opens the pull request; the local copy stays local.
+
+## 8. Skills
+
+- `~/.dispatch/skills/<id>/` with a `skill.json` (`id`, `name`, `version`, `description`,
+  `harnesses`) and the skill files (`SKILL.md` and anything it references).
+- Installed from the same marketplaces (`kind: "skill"`), or local, or bundled by a plugin.
+- Injection per thread: Claude Code through the per-thread plugin dir Dispatch already passes;
+  Codex and OpenCode through their instruction files; Grok through its plugin dir. Enabled
+  per project in Settings → Skills (a section beside Plugins; the desktop rail gets no
+  Skills item, builder's call).
+- The Plugins page's Browse lists skills under their own heading.
+
+## 9. Agent tools
+
+The `dispatch` MCP server gains: `plugin_scaffold({ id, name, parts })`, `plugin_list()`,
+`plugin_enable({ id })`, `plugin_disable({ id })`, `plugin_remove({ id })`,
+`plugin_reload({ id })`, `plugin_logs({ id, tail })`, `skill_list()`. Scaffold and remove are
+owner-approved: the thread's call creates a needs-you decision the owner confirms in the app,
+like a spawn. The peer prompt gets one paragraph: "You can build a plugin for this Dispatch:
+plugin_scaffold, then edit the files under ~/.dispatch/plugins/<id>; the app reloads it as
+you save. The SDK reference is at /plugins/sdk/README.md."
+
+## 10. Previews as a plugin
+
+The `previews` plugin ships with Dispatch (under `packages/plugins/previews`, installed as a
+local plugin on first run, and updated with Dispatch). It carries: the `preview` and
+`post_image` tools (its MCP server, using the thread key), the Previews view, the phone sheet
+(a `project.header.actions` slot and a `menus.project` item), the unseen badge
+(`thread.header.actions`), the list and item components, and `FileViewer` use from the SDK.
+The `previews` table migrates into the plugin's storage; the file-serving route stays in the
+daemon as a generic "serve a file inside a project folder, checked" route the plugin's tool
+registers a reference to. The thread menu's "Previews" item comes from the plugin.
+
+## 11. Delivery slices
+
+1. **Host and SDK** (from the spike): registry, loader, boundary, safe mode, hot reload,
+   `plugin:changed`, views, settings, thread/project menus, `composer.actions`, the phone's
+   Plugins tab, the local list on the Plugins page, scaffold template, tests.
+2. **Storage, settings, permissions, keys**: `plugin_data`, the `plugin` principal, the
+   permissions table, audit header.
+3. **The model part**: instructions, MCP injection, the five thread events across harnesses,
+   native hooks for Claude Code, `tools_available`.
+4. **Previews as a plugin**, plus the remaining slots and overrides the migration needs.
+5. **Workers**: supervision, logs, jobs, the socket proxy.
+6. **Marketplaces**: index, install, update, roll back, pin, browse, skills install, the
+   Settings dot and banner for plugin updates, commands registry and palette.
+7. **Publishing and the public index**: `dispatch plugin publish`, the dispatch-plugins
+   repository, the review checklist, `@dispatchd/sdk` on npm, docs.
+
+Each slice ships on its own release and leaves Dispatch working with no plugins installed.
+
+## 12. Left to the builder
+
+- Exact table schemas, size limits, debounce times, backoff curves.
+- The look of the Plugins page within the existing Settings style.
+- The scaffold template's contents and the SDK README.
+- Which overridable components to export first beyond the list in 2.4.
+- How the phone's Plugins tab lists views (rows with icons; builder's call on grouping).
+- Test strategy per slice (the existing suites plus plugin fixtures under a fake HOME).
