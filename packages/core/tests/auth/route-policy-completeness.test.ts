@@ -24,6 +24,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/plugins/:id/settings',
   'PUT /api/plugins/:id/settings',
   'POST /api/plugins/:id/files',
+  'GET /api/skills',
   // One route with two patterns (the bare /worker and /worker/*): Express lists the array as one path.
   '_ALL /api/plugins/:id/worker,/plugins/:id/worker/*',
   'DELETE /api/plugins/:id/files/:fileId',

@@ -16,6 +16,7 @@ import type { AssistRunner } from '../assist/run.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
 import type { PluginInstaller } from '../plugins/installer.js';
+import type { SkillsService } from '../plugins/skills.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): the manifests, the owner's
@@ -332,6 +333,41 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     i.setAutoUpdate(req.params.id, (req.body as { on?: unknown })?.on === true);
     res.json(plugins.get(req.params.id));
   });
+
+  // ── skills (spec section 8): the list is readable by every key; the rest is the owner's ──
+  const skillsOf = (req: Request): SkillsService | null => (req.app.locals.skills as SkillsService | undefined) ?? null;
+  const skillError = (res: import('express').Response, e: unknown): void => {
+    const msg = e instanceof Error ? e.message : String(e);
+    res.status(/unknown skill|unknown marketplace|not in the marketplace/.test(msg) ? 404 : /already installed/.test(msg) ? 409 : 400).json({ error: msg });
+  };
+  router.get('/skills', keyRoute({ thread: projectListRule, roleRun: projectListRule, plugin: needs('read:projects') }), (req, res) => {
+    const project = typeof req.query.project === 'string' ? req.query.project : undefined;
+    res.setHeader('Cache-Control', 'no-store');
+    // The text stays out of the list (a thread reads a skill it has); the owner's page shows it on demand.
+    res.json({ skills: (skillsOf(req)?.list(project) ?? []).map((s) => ({ ...s, text: s.text.length > 400 ? `${s.text.slice(0, 400)}…` : s.text })) });
+  });
+  router.post('/skills/install', ownerOnlyStrict, async (req, res) => {
+    const sv = skillsOf(req);
+    if (!sv) return void res.status(503).json({ error: 'no_skills' });
+    const { marketplace, id } = (req.body ?? {}) as { marketplace?: unknown; id?: unknown };
+    if (typeof marketplace !== 'string' || typeof id !== 'string') return void res.status(400).json({ error: 'marketplace and id are required' });
+    try { res.status(201).json(await sv.install(marketplace, id)); } catch (e) { skillError(res, e); }
+  });
+  router.delete('/skills/:id', ownerOnlyStrict, (req, res) => {
+    const sv = skillsOf(req);
+    if (!sv) return void res.status(503).json({ error: 'no_skills' });
+    try { sv.remove(req.params.id); res.status(204).end(); } catch (e) { skillError(res, e); }
+  });
+  for (const [action, on] of [['enable', true], ['disable', false]] as const) {
+    router.post(`/skills/:id/${action}`, ownerOnlyStrict, (req, res) => {
+      const sv = skillsOf(req);
+      if (!sv) return void res.status(503).json({ error: 'no_skills' });
+      if (!sv.list().some((s) => s.id === req.params.id)) return void res.status(404).json({ error: 'unknown skill' });
+      const project = (req.body as { project?: unknown })?.project;
+      sv.setEnabled(req.params.id, on, typeof project === 'string' && project ? project : undefined);
+      res.json(sv.list(typeof project === 'string' ? project : undefined).find((s) => s.id === req.params.id));
+    });
+  }
 
   // ── the worker (spec section 4): logs, restart, and the socket proxy ──────────────────────
   const workersOf = (req: Request): PluginWorkers | null => (req.app.locals.pluginWorkers as PluginWorkers | undefined) ?? null;

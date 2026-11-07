@@ -139,7 +139,7 @@ export class SessionService {
   /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
   private integrationsSpecs: (() => McpServerSpec[]) | null = null;
   /** Plugins' MCP servers and instruction blocks per harness (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3). */
-  private pluginInjection: ((harness: string) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }) | null = null;
+  private pluginInjection: ((harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private terminalStatusWriter?: (id: string, status: 'queued' | 'waiting' | 'error') => void;
   setTerminalStatusWriter(writer: (id: string, status: 'queued' | 'waiting' | 'error') => void): void { this.terminalStatusWriter = writer; }
@@ -303,7 +303,7 @@ export class SessionService {
     this.secretsServerSpec = fn;
   }
 
-  setPluginInjection(fn: (harness: string) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
+  setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
     this.pluginInjection = fn;
   }
   private onSpawned: ((terminalId: string, toolsAvailable: string[]) => void) | null = null;
@@ -321,7 +321,8 @@ export class SessionService {
    */
   private applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
     if (!this.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
-    const inj = this.pluginInjection(harness);
+    // The thread's project: a project's skills reach its threads and not another's (spec section 8).
+    const inj = this.pluginInjection(harness, this.getTerminal(terminalId)?.sessionId ?? null);
     // A plugin's server must find the daemon under every harness: Codex passes only the listed
     // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
     const api = this.apiUrl();

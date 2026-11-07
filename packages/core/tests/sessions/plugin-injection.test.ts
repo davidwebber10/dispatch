@@ -31,8 +31,8 @@ function makeService() {
   const pty = new CapturingPty();
   const svc = new SessionService(db, pty, configPath);
   svc.setIntegrationsSpecs(() => [{ name: 'fs', command: 'npx', args: ['-y', 'server-fs'] }]);
-  svc.setPluginInjection((harness) => (harness === 'claude-code'
-    ? { specs: [{ name: 'plugin-coach', command: 'node', args: ['/plugins/coach/mcp/server.js'], env: { DISPATCH_PLUGIN: 'coach' }, authEnv: true }], prompts: ['## Plugin: Coach\n\nRun the tests before you report done.'], toolNames: ['plugin-coach'] }
+  svc.setPluginInjection((harness, sessionId) => (harness === 'claude-code'
+    ? { specs: [{ name: 'plugin-coach', command: 'node', args: ['/plugins/coach/mcp/server.js'], env: { DISPATCH_PLUGIN: 'coach' }, authEnv: true }], prompts: ['## Plugin: Coach\n\nRun the tests before you report done.', ...(sessionId === 's1' ? ['## Skill: Review\n\nFolder: /skills/review\n\nRead the diff twice.'] : [])], toolNames: ['plugin-coach'] }
     : { specs: [], prompts: [], toolNames: [] }));
   return { svc, pty };
 }
@@ -62,6 +62,17 @@ describe('plugin injection at spawn (2026-11-07)', () => {
     const terminal = svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude-2');
     const cfg = JSON.parse(fs.readFileSync(path.join(tmpDir, `thread-${terminal.id}.mcp.json`), 'utf8'));
     expect(cfg.mcpServers['plugin-coach'].env).toMatchObject({ DISPATCH_API: 'http://127.0.0.1:4321', DISPATCH_PORT: '4321', DISPATCH_PLUGIN: 'coach' });
+  });
+
+  it("the injection hears the thread's project, so a project's skills reach its spawn and not another's", () => {
+    const { svc, pty } = makeService();
+    const terminal = svc.createTerminal('s1', 'claude-code', 'CC', true, undefined, 'ext-claude-3');
+    const call = pty.calls.find((c) => c.command === 'claude')!;
+    const i = call.args.findIndex((a) => a === '--append-system-prompt' || a === '--append-system-prompt-file');
+    const prompt = call.args[i] === '--append-system-prompt' ? call.args[i + 1] : fs.readFileSync(call.args[i + 1], 'utf8');
+    expect(prompt).toContain('## Skill: Review');
+    expect(prompt.indexOf('## Plugin: Coach')).toBeLessThan(prompt.indexOf('## Skill: Review'));
+    expect(terminal.id).toBeTruthy();
   });
 
   it('a harness the plugin does not list gets nothing from it', () => {

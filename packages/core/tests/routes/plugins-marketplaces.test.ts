@@ -104,4 +104,21 @@ describe('marketplace routes', () => {
       expect((await request(app).post(`/api/plugins/marketplaces/${slug}/pull`).set(who)).status).toBe(403);
     }
   });
+
+  it('skills: install from a marketplace, list per project, enable and disable, remove; the list is open to a thread key, the rest is the owner\'s', async () => {
+    const slug = (await post('/api/plugins/marketplaces', { url: m.url })).body.slug as string;
+    const inst = await post('/api/skills/install', { marketplace: slug, id: 'tidy' });
+    expect(inst.status).toBe(201);
+    expect(inst.body).toMatchObject({ id: 'tidy', name: 'The tidy skill', enabled: true });
+    expect((await request(app).get('/api/skills?project=A')).body.skills.map((s: any) => [s.id, s.enabledHere])).toEqual([['tidy', true]]);
+    expect((await post('/api/skills/tidy/disable', { project: 'A' })).body.enabledHere).toBe(false);
+    expect((await request(app).get('/api/skills?project=B')).body.skills[0].enabledHere).toBe(true);
+    expect((await post('/api/skills/tidy/disable')).body.enabled).toBe(false);
+    expect((await post('/api/skills/tidy/enable')).body.enabled).toBe(true);
+    expect((await request(app).get('/api/skills').set(asThread())).status).toBe(200);
+    expect((await post('/api/skills/install', { marketplace: slug, id: 'tidy' })).status).toBe(409);
+    expect((await request(app).post('/api/skills/tidy/disable').set(asThread())).status).toBe(403);
+    expect((await request(app).delete('/api/skills/tidy').set(O)).status).toBe(204);
+    expect((await request(app).delete('/api/skills/tidy').set(O)).status).toBe(404);
+  });
 });
