@@ -112,11 +112,10 @@ describe('plugin routes', () => {
     await request(app).delete('/api/plugins/p').expect(404);
   });
 
-  it('remove refuses an installed plugin with 400', async () => {
+  it('remove deletes an installed plugin too (spec 7.2); only a bundled one is refused', async () => {
     plugin('shop', { '.dispatch-install.json': '{"marketplace":"m","version":"1","sha256":"x","installedAt":"t"}' });
-    const r = await request(app).delete('/api/plugins/shop');
-    expect(r.status).toBe(400);
-    expect(r.body.error).toMatch(/not local/);
+    expect((await request(app).delete('/api/plugins/shop')).status).toBe(204);
+    expect((await request(app).get('/api/plugins')).body.plugins.map((p: any) => p.id)).not.toContain('shop');
   });
 
   it("a plugin key lists plugins and calls whoami; a disabled plugin's key is 401 (2026-11-07)", async () => {

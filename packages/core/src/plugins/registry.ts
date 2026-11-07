@@ -14,7 +14,7 @@ import { pluginTemplate } from './template.js';
  * folder, scaffolds and removes local plugins, and watches the folder so the web client can
  * reload a plugin as its author saves (`plugin:changed`).
  */
-export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string }
+export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string; commit: string }
 
 export interface PluginRow extends Partial<PluginManifest> {
   id: string;
@@ -33,6 +33,11 @@ export interface PluginRow extends Partial<PluginManifest> {
   hooks?: { runs: number; failures: number; dropped: number };
   /** The worker's state (spec section 4), when the manifest has one and a supervisor runs. */
   workerStats?: import('./workers.js').WorkerStats;
+  /** For an installed plugin (spec section 7.2): the update waiting, the pin, the auto-update switch, a gone marketplace. */
+  update?: { to: string; changelog: string | null };
+  pinned?: string;
+  autoUpdate?: boolean;
+  marketplaceGone?: boolean;
   /** The assist meter, once the plugin made a call. */
   assist?: { calls: number; inputTokens: number; outputTokens: number };
   /** Served from the Dispatch checkout (spec section 10): updates with Dispatch, cannot be removed. */
@@ -80,6 +85,8 @@ export class PluginRegistry {
   setHookStatsProvider(fn: (id: string) => { runs: number; failures: number; dropped: number }): void { this.hookStats = fn; }
   private assistTotals: ((id: string) => { calls: number; inputTokens: number; outputTokens: number }) | null = null;
   private workerStats: ((id: string) => import('./workers.js').WorkerStats | null) | null = null;
+  private installInfo: ((id: string) => import('./installer.js').InstallInfo | null) | null = null;
+  setInstallInfoProvider(fn: (id: string) => import('./installer.js').InstallInfo | null): void { this.installInfo = fn; }
   setWorkerStatsProvider(fn: (id: string) => import('./workers.js').WorkerStats | null): void { this.workerStats = fn; }
   /** Called after every announcement (a folder change, enable, disable): the workers follow. */
   private workerSync: (() => void) | null = null;
@@ -252,8 +259,10 @@ export class PluginRegistry {
     for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
     const assist = this.assistTotals?.(id);
     const worker = m.worker ? this.workerStats?.(id) ?? null : null;
+    const installed = this.readInstall(folder);
+    const info = installed && this.installInfo ? this.installInfo(id) : null;
     const enabled = state.disabled.includes(id) ? false : where.bundled ? (m.enabledByDefault === true || state.enabled.includes(id)) : true;
-    return { ...m, enabled, stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...(worker ? { workerStats: worker } : {}), ...place };
+    return { ...m, enabled, stamp, install: installed, keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...(worker ? { workerStats: worker } : {}), ...(info ?? {}), ...place };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
@@ -265,7 +274,7 @@ export class PluginRegistry {
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(folder, INSTALL_FILE), 'utf8')) as Partial<PluginInstall>;
       if (typeof raw.marketplace !== 'string' || typeof raw.version !== 'string') return null;
-      return { marketplace: raw.marketplace, version: raw.version, sha256: String(raw.sha256 ?? ''), installedAt: String(raw.installedAt ?? '') };
+      return { marketplace: raw.marketplace, version: raw.version, sha256: String(raw.sha256 ?? ''), installedAt: String(raw.installedAt ?? ''), commit: String(raw.commit ?? '') };
     } catch { return null; }
   }
 
@@ -319,11 +328,11 @@ export class PluginRegistry {
     const row = this.get(id);
     if (!row) throw new Error('unknown plugin');
     if (row.bundled) throw new Error('bundled');
-    if (row.install) throw new Error('not local');
     this.revokeKey(id);
     const folder = path.join(this.dir, id);
     if (fs.lstatSync(folder).isSymbolicLink()) fs.unlinkSync(folder);
     else fs.rmSync(folder, { recursive: true, force: true });
+    fs.rmSync(`${folder}.prev`, { recursive: true, force: true });
     const state = this.readState();
     if (state.disabled.includes(id) || state.enabled.includes(id)) this.writeState({ disabled: state.disabled.filter((x) => x !== id), enabled: state.enabled.filter((x) => x !== id) });
   }

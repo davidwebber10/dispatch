@@ -68,7 +68,7 @@ describe('PluginRegistry', () => {
   it('reads an install record when present', () => {
     plugin('shop', {});
     fs.writeFileSync(path.join(dir, 'shop', '.dispatch-install.json'), JSON.stringify({ marketplace: 'dispatchd', version: '1.0.0', sha256: 'abc', installedAt: '2026-11-07T00:00:00Z' }));
-    expect(reg().get('shop')?.install).toEqual({ marketplace: 'dispatchd', version: '1.0.0', sha256: 'abc', installedAt: '2026-11-07T00:00:00Z' });
+    expect(reg().get('shop')?.install).toEqual({ marketplace: 'dispatchd', version: '1.0.0', sha256: 'abc', installedAt: '2026-11-07T00:00:00Z', commit: '' });
   });
 
   it('setEnabled persists across a new registry over the same dir', () => {
@@ -119,13 +119,16 @@ describe('PluginRegistry', () => {
     expect(() => r.scaffold('Bad Id', 'x')).toThrow('bad id');
   });
 
-  it('remove deletes a local plugin and refuses one with an install record', () => {
+  it('remove deletes a local plugin and an installed one (its .prev too); a bundled one and an unknown id are refused', () => {
     plugin('local', {}); plugin('shop', {});
     fs.writeFileSync(path.join(dir, 'shop', '.dispatch-install.json'), '{"marketplace":"m","version":"1","sha256":"x","installedAt":"t"}');
     const r = reg();
     r.remove('local');
     expect(fs.existsSync(path.join(dir, 'local'))).toBe(false);
-    expect(() => r.remove('shop')).toThrow('not local');
+    fs.mkdirSync(path.join(dir, 'shop.prev'));
+    r.remove('shop');
+    expect(fs.existsSync(path.join(dir, 'shop'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'shop.prev'))).toBe(false);
     expect(() => r.remove('nope')).toThrow('unknown plugin');
   });
 
