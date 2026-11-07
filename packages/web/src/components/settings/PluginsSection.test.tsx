@@ -238,4 +238,12 @@ describe('bundled plugins on the Plugins page (2026-11-07)', () => {
     await waitFor(() => expect(api.pinPlugin).toHaveBeenCalledWith('hello', '1.0.0'));
     expect(screen.getByTestId('plugin-row-orphan')).toHaveTextContent('Marketplace removed');
   });
+
+  it('names the public marketplace with an Add button until it is added', async () => {
+    render(<PluginsSection />);
+    const section = await screen.findByRole('region', { name: 'Marketplaces' });
+    expect(section).toHaveTextContent('https://github.com/polywood/dispatch-plugins.git');
+    fireEvent.click(within(section).getByRole('button', { name: 'Add it' }));
+    await waitFor(() => expect(api.addMarketplace).toHaveBeenCalledWith('https://github.com/polywood/dispatch-plugins.git'));
+  });
 });

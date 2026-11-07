@@ -99,7 +99,7 @@ export async function publishPlugin(o: PublishOptions): Promise<PublishResult> {
     run('git', ['add', '-A', '--', `plugins/${id}`], { cwd: repo });
     const commit = run('git', ['-c', 'user.name=dispatch plugin publish', '-c', 'user.email=dispatch@localhost', 'commit', '-q', '-m', `plugins: ${id} ${version}`], { cwd: repo });
     if (commit.code !== 0) throw new Error(`nothing to publish: ${lastLine(commit.stderr) || 'the marketplace already has these files'}`);
-    if (o.dryRun) { log(`Dry run: ${branch} is ready in ${repo} (not pushed).`); return { id, version, branch, prUrl: null, compareUrl: null }; }
+    if (o.dryRun) { log(`Dry run: ${id} ${version} would go to ${url} on ${branch}. Nothing was pushed.`); return { id, version, branch, prUrl: null, compareUrl: null }; }
     log(`Pushing ${branch}…`);
     const push = run('git', ['push', '-q', '-u', 'origin', branch], { cwd: repo });
     if (push.code !== 0) throw new Error(`push failed: ${lastLine(push.stderr)}`);

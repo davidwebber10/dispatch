@@ -10,6 +10,8 @@ import { useHint } from '../../stores/hint';
 import { sectionLabel, row, item, ghostBtn, solidBtn, fieldInput, miniChip, Toggle } from './ui';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
+/** The public marketplace (spec section 7.1): a git repository like any other. */
+export const PUBLIC_MARKETPLACE = 'https://github.com/polywood/dispatch-plugins.git';
 const card: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -288,6 +290,12 @@ export function PluginsSection() {
           <button type="button" style={solidBtn(marketUrl.trim().length > 0)} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
         </div>
         {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
+        {!markets.some((m) => /github\.com\/polywood\/dispatch-plugins/.test(m.url)) && (
+          <div style={{ ...note, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>The public marketplace is {PUBLIC_MARKETPLACE}.</span>
+            <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun('add', () => api.addMarketplace(PUBLIC_MARKETPLACE))}>Add it</button>
+          </div>
+        )}
         {markets.map((m) => (
           <div key={m.slug} data-testid={`marketplace-${m.slug}`} style={card}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
