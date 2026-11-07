@@ -241,7 +241,7 @@ call) is not in this slice.
 `{ text, usage, ms, model }`. It needs `model:assist`; every call is metered on the Plugins
 page, and at most three run at once per plugin (a fourth gets 429). A plugin's processes call
 `POST /api/plugins/<id>/assist` with the same body. A plugin that judges in the browser
-should claim its result document before it calls (the Prompt coach does), or every open tab
+should claim its result document before it calls, or every open tab
 pays for the same call.
 
 ## The worker
@@ -272,11 +272,11 @@ pays for the same call.
 
 ## Bundled plugins
 
-`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Prompt coach are the two.
+`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Coach (it replaced the Prompt coach; an owner who had the Prompt coach on gets the Coach on) are the two.
 A bundled plugin updates with Dispatch, cannot be removed, and is not edited in place; "Copy
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
-`"enabledByDefault": true`: the coach makes a model call per prompt, so turning it on is the
+`"enabledByDefault": true`: the Coach makes model calls, so turning it on is the
 owner's choice on the Plugins page. A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).
 
