@@ -57,8 +57,9 @@ Skills (prompt packages the harnesses read) travel the same way, as a second kin
    `permissions` are enforced by the daemon on the plugin's key and shown before install.
    The public marketplace reviews before listing.
 2. **Previews** moves into a plugin in the first real version (slice 4).
-3. **Marketplace hosting**: a GitHub repository with an index file; publishing is a pull
-   request; an organisation uses a private repository and a token.
+3. **Marketplace hosting**: a git repository is a marketplace (section 7.1); publishing is a
+   pull request; an organisation uses a private repository and the git login its members
+   already have.
 4. **Skills**: a Dispatch skill library in `~/.dispatch/skills`, installed from the same
    marketplaces, injected per thread into each harness.
 5. **The fifth tab**: a fixed "Plugins" tab that lists plugin screens, plus a tab of its own
@@ -369,38 +370,48 @@ header the daemon logs, so the audit log can name the plugin.
 
 ## 7. Marketplaces, install, update
 
-### 7.1 The index
+### 7.1 A marketplace is a git repository (owner decision, 2026-11-07)
 
-A marketplace is a URL that returns:
+A marketplace is a git repository. Its URL is the marketplace; the ability to clone it is the
+access control. There is no index service and no token kept by Dispatch: the daemon clones
+with the same git credentials the owner already has on this machine (ssh keys, the git
+credential helper, `gh auth`), so a private repository is a private marketplace for exactly the
+people who can read it.
 
-```json
-{
-  "name": "dispatchd",
-  "plugins": [{
-    "id": "daily-rundown", "name": "Daily rundown", "description": "...", "author": "...",
-    "kind": "plugin",
-    "versions": [{ "version": "1.2.0", "dispatch": ">=3.28", "sdk": 1, "url": "https://.../daily-rundown-1.2.0.tgz", "sha256": "...", "publishedAt": "...", "notes": "..." }],
-    "permissions": ["read:threads", "notify"], "contributes": { ... }, "readme": "https://.../README.md"
-  }],
-  "skills": [{ "id": "release-notes", "name": "...", "kind": "skill", "versions": [...] }]
-}
+The repository's layout is the catalog:
+
+```
+<repo>/
+  marketplace.json          { "name": "dispatchd", "description": "..." }   (optional)
+  plugins/<id>/             one plugin per folder, with its plugin.json, web.js, README.md, CHANGELOG.md
+  skills/<id>/              one skill per folder, with its skill.json and SKILL.md
 ```
 
-The public index is `https://raw.githubusercontent.com/davidwebber10/dispatch-plugins/main/index.json`
-(builder's call on the repository name); publishing is a pull request that adds a version
-with its tarball URL (a GitHub release asset) and hash. An organisation's index is any URL;
-Settings stores the URL and an optional token in the daemon's secrets store.
+- The daemon keeps one clone per marketplace under `~/.dispatch/marketplaces/<slug>/` and
+  pulls it on the updater's schedule (about 45 minutes) and on "Check now".
+- A plugin's version is its `plugin.json` version at the clone's HEAD; its release note is its
+  `CHANGELOG.md`. Older versions are in git history: roll back and pin check out the commit
+  that last carried the wanted version (`git log -- plugins/<id>/plugin.json`).
+- Install copies `plugins/<id>` from the clone into `~/.dispatch/plugins/<id>` and writes
+  `.dispatch-install.json` with the marketplace URL, the commit and the version. Git gives the
+  integrity; no hashes.
+- The public marketplace is the repository `dispatch-plugins` on GitHub (the owner creates it,
+  or the builder does, at slice 7); publishing is a pull request, or `dispatch plugin publish`,
+  which commits the plugin folder on a branch and opens one.
+- Settings → Plugins → Marketplaces takes a repository URL (https or ssh). If the clone needs
+  a login the owner does not have, the page shows git's own message and a hint to sign in
+  with `gh auth login` or add an ssh key.
 
 ### 7.2 Install, update, roll back, pin
 
-- Install: download the tarball to a staging folder, check the hash, check `dispatch` and
-  `sdk`, unpack to `~/.dispatch/plugins/<id>`, write `.dispatch-install.json`, enable.
+- Install: pull the marketplace clone, check `dispatch` and `sdk`, copy `plugins/<id>` into
+  `~/.dispatch/plugins/<id>`, write `.dispatch-install.json`, enable.
 - Check: the daemon polls each marketplace on the updater's schedule (about 45 minutes) and
   stores "updates available"; the Settings dot and banner from v3.27.0 list plugin updates
   under the Dispatch one.
-- Update: staging, hash, swap the folder (the old one kept as `<id>.prev`), copy storage and
-  settings, raise `plugin:changed`, restart the worker, re-inject the MCP server for new
-  threads. The plugin's web part and worker receive `{ from, to }` once; `plugin.migrated()`
+- Update: pull, copy into a staging folder, swap the folder (the old one kept as `<id>.prev`),
+  copy storage and settings, raise `plugin:changed`, restart the worker, re-inject the MCP
+  server for new threads. The plugin's web part and worker receive `{ from, to }` once; `plugin.migrated()`
   tells the daemon to drop the copies. Auto-update per plugin, default off; a marketplace the
   owner marked trusted defaults on.
 - Roll back: swap `.prev` back and restore the copies. Pin: no update past a version.
