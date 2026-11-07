@@ -595,6 +595,12 @@ export interface PluginRow {
   install: PluginInstall | null;
   /** True while the plugin holds a live key (enabled and not broken). */
   keyed?: boolean;
+  /** Served from the Dispatch checkout: updates with Dispatch, cannot be removed. */
+  bundled?: boolean;
+  /** A local folder with this id hides a bundled plugin of the same id. */
+  shadowsBundled?: boolean;
+  hooks?: { runs: number; failures: number; dropped: number };
+  assist?: { calls: number; inputTokens: number; outputTokens: number };
 }
 
 /** A plugin's stored document (spec section 5); `writer` is set when a thread key wrote it. */

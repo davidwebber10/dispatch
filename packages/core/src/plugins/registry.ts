@@ -33,6 +33,10 @@ export interface PluginRow extends Partial<PluginManifest> {
   hooks?: { runs: number; failures: number; dropped: number };
   /** The assist meter, once the plugin made a call. */
   assist?: { calls: number; inputTokens: number; outputTokens: number };
+  /** Served from the Dispatch checkout (spec section 10): updates with Dispatch, cannot be removed. */
+  bundled?: boolean;
+  /** A local folder with this id hides a bundled plugin of the same id. */
+  shadowsBundled?: boolean;
 }
 
 const DEBOUNCE_MS = 150;
@@ -67,14 +71,27 @@ export class PluginRegistry {
 
   private readonly keys: KeyRegistry | null;
   private readonly keyDir: string | null;
+  /** The checkout's packages/plugins, when it exists. */
+  private readonly bundledDir: string | null;
   private hookStats: ((id: string) => { runs: number; failures: number; dropped: number }) | null = null;
   setHookStatsProvider(fn: (id: string) => { runs: number; failures: number; dropped: number }): void { this.hookStats = fn; }
   private assistTotals: ((id: string) => { calls: number; inputTokens: number; outputTokens: number }) | null = null;
   setAssistTotalsProvider(fn: (id: string) => { calls: number; inputTokens: number; outputTokens: number }): void { this.assistTotals = fn; }
 
-  constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string } = {}) {
+  constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string; bundledDir?: string } = {}) {
     this.keys = opts.keys ?? null;
     this.keyDir = opts.keyDir ?? null;
+    this.bundledDir = opts.bundledDir ?? null;
+  }
+
+  /** Where a plugin's folder is: the local one wins over a bundled one of the same id. */
+  private folderOf(id: string): { folder: string; bundled: boolean; shadows: boolean } | null {
+    const local = path.join(this.dir, id);
+    const bundled = this.bundledDir ? path.join(this.bundledDir, id) : null;
+    const has = (p: string | null) => { try { return !!p && fs.statSync(p).isDirectory(); } catch { return false; } };
+    if (has(local)) return { folder: local, bundled: false, shadows: has(bundled) };
+    if (has(bundled)) return { folder: bundled!, bundled: true, shadows: false };
+    return null;
   }
 
   // ── keys (spec section 6): one live key per enabled plugin, in ~/.dispatch/keys/plugin-<id> ──
@@ -133,8 +150,9 @@ export class PluginRegistry {
       const model = row.model;
       if (!model || !row.enabled || row.error || !this.keyed(row.id)) continue;
       if (model.harnesses && !model.harnesses.includes(harness)) continue;
+      const where = this.folderOf(row.id);
       let folder: string;
-      try { folder = fs.realpathSync(path.join(this.dir, row.id)); } catch { continue; }
+      try { folder = fs.realpathSync(where ? where.folder : path.join(this.dir, row.id)); } catch { continue; }
       const abs = (a: string): string => (!path.isAbsolute(a) && this.resolveInside(folder, a) ? path.join(folder, a) : a);
       if (model.mcp) {
         const keyFile = this.keyFile(row.id);
@@ -178,11 +196,14 @@ export class PluginRegistry {
 
   /** Every plugin folder, sorted by id; a broken one carries `error`. */
   list(): PluginRow[] {
-    let names: string[] = [];
-    try { names = fs.readdirSync(this.dir); } catch { return []; }
+    const names = new Set<string>();
+    for (const root of [this.dir, this.bundledDir]) {
+      if (!root) continue;
+      try { for (const n of fs.readdirSync(root)) if (PLUGIN_ID_RE.test(n)) names.add(n); } catch { /* no such folder */ }
+    }
     const disabled = new Set(this.readState().disabled);
     const out: PluginRow[] = [];
-    for (const id of names.filter((n) => PLUGIN_ID_RE.test(n)).sort()) {
+    for (const id of [...names].sort()) {
       const row = this.read(id, disabled);
       if (row) out.push(row);
     }
@@ -195,10 +216,12 @@ export class PluginRegistry {
   }
 
   private read(id: string, disabled: Set<string>): PluginRow | undefined {
-    const folder = path.join(this.dir, id);
+    const where = this.folderOf(id);
+    if (!where) return undefined;
+    const folder = where.folder;
+    const place = { ...(where.bundled ? { bundled: true } : {}), ...(where.shadows ? { shadowsBundled: true } : {}) };
     let folderStat: fs.Stats;
     try { folderStat = fs.statSync(folder); } catch { return undefined; }
-    if (!folderStat.isDirectory()) return undefined;
     const manifestFile = path.join(folder, 'plugin.json');
     let raw: string;
     try { raw = fs.readFileSync(manifestFile, 'utf8'); } catch { return this.broken(id, folderStat.mtimeMs, 'no plugin.json in the folder'); }
@@ -214,11 +237,12 @@ export class PluginRegistry {
     if (m.model?.instructions && !this.resolveInside(folder, m.model.instructions)) return this.broken(id, stamp, `plugin.json "model.instructions" names a file that does not exist: ${m.model.instructions}`);
     for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
     const assist = this.assistTotals?.(id);
-    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}) };
+    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...place };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
-    return { id, name: id, version: '0.0.0', enabled: false, stamp: Math.round(stamp), error, install: this.readInstall(path.join(this.dir, id)), keyed: false };
+    const where = this.folderOf(id);
+    return { id, name: id, version: '0.0.0', enabled: false, stamp: Math.round(stamp), error, install: where ? this.readInstall(where.folder) : null, keyed: false, ...(where?.bundled ? { bundled: true } : {}) };
   }
 
   private readInstall(folder: string): PluginInstall | null {
@@ -240,11 +264,15 @@ export class PluginRegistry {
     return this.get(id)!;
   }
 
+  /** The plugin's real folder (local, else bundled), for processes that run inside it. */
+  folderPath(id: string): string | null { const w = this.folderOf(id); try { return w ? fs.realpathSync(w.folder) : null; } catch { return null; } }
+
   /** The real path of a regular file inside the plugin's real folder, or null when it escapes, is missing, or the plugin is unknown or disabled. */
   resolveFile(id: string, requested: string): string | null {
     const row = this.get(id);
     if (!row || !row.enabled) return null;
-    return this.resolveInside(path.join(this.dir, id), requested);
+    const where = this.folderOf(id);
+    return where ? this.resolveInside(where.folder, requested) : null;
   }
 
   private resolveInside(folder: string, requested: string): string | null {
@@ -270,10 +298,11 @@ export class PluginRegistry {
     return this.get(id)!;
   }
 
-  /** Delete a local plugin's folder (a symlinked folder: only the link). Throws 'unknown plugin' | 'not local'. */
+  /** Delete a local plugin's folder (a symlinked folder: only the link). Throws 'unknown plugin' | 'not local' | 'bundled'. */
   remove(id: string): void {
     const row = this.get(id);
     if (!row) throw new Error('unknown plugin');
+    if (row.bundled) throw new Error('bundled');
     if (row.install) throw new Error('not local');
     this.revokeKey(id);
     const folder = path.join(this.dir, id);
@@ -281,6 +310,24 @@ export class PluginRegistry {
     else fs.rmSync(folder, { recursive: true, force: true });
     const state = this.readState();
     if (state.disabled.includes(id)) this.writeState({ disabled: state.disabled.filter((x) => x !== id) });
+  }
+
+  /** Copy a plugin (bundled or local) to a new local folder under a new id (spec section 10). Throws 'unknown plugin' | 'bad id' | 'exists'. */
+  copyToLocal(id: string, newId: string): PluginRow {
+    const where = this.folderOf(id);
+    if (!where) throw new Error('unknown plugin');
+    if (!PLUGIN_ID_RE.test(newId)) throw new Error('bad id');
+    const target = path.join(this.dir, newId);
+    if (this.folderOf(newId)) throw new Error('exists');
+    fs.mkdirSync(this.dir, { recursive: true });
+    fs.cpSync(fs.realpathSync(where.folder), target, { recursive: true, dereference: true, filter: (src) => !src.includes(`${path.sep}node_modules${path.sep}`) && path.basename(src) !== INSTALL_FILE });
+    try {
+      const file = path.join(target, 'plugin.json');
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+      fs.writeFileSync(file, JSON.stringify({ ...raw, id: newId }, null, 2) + '\n');
+    } catch { /* the copy lists as broken with the reason */ }
+    this.syncKey(this.get(newId), newId);
+    return this.get(newId)!;
   }
 
   /** Send any plugin event to every client (the routes use it for storage changes). */

@@ -271,3 +271,47 @@ describe('PluginRegistry keys (2026-11-07)', () => {
     expect(r.facts('p')).toBeNull();
   });
 });
+
+describe('bundled plugins (2026-11-07, spec section 10)', () => {
+  let tmp: string; let dir: string; let bundled: string; let keys: KeyRegistry;
+  const reg = (b: string | undefined = bundled) => new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys'), bundledDir: b });
+  const write = (root: string, id: string, extra: Record<string, unknown> = {}) => {
+    fs.mkdirSync(path.join(root, id), { recursive: true });
+    fs.writeFileSync(path.join(root, id, 'plugin.json'), JSON.stringify({ id, name: `B ${id}`, version: '2.0.0', web: 'web.js', ...extra }));
+    fs.writeFileSync(path.join(root, id, 'web.js'), 'export default () => {}');
+  };
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-bundled-')); dir = path.join(tmp, 'plugins'); bundled = path.join(tmp, 'bundled'); keys = new KeyRegistry(); fs.mkdirSync(dir, { recursive: true }); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('a bundled plugin lists with bundled: true, serves its files, gets a key, cannot be removed, and copies to local under a new id', () => {
+    write(bundled, 'prompt-coach');
+    const r = reg(); r.issueKeys();
+    const row = r.get('prompt-coach')!;
+    expect(row).toMatchObject({ id: 'prompt-coach', name: 'B prompt-coach', bundled: true, enabled: true, keyed: true, install: null });
+    expect(r.list().map((p) => p.id)).toEqual(['prompt-coach']);
+    expect(r.resolveFile('prompt-coach', 'web.js')).toBe(fs.realpathSync(path.join(bundled, 'prompt-coach', 'web.js')));
+    expect(() => r.remove('prompt-coach')).toThrow('bundled');
+    const copy = r.copyToLocal('prompt-coach', 'my-coach');
+    expect(copy).toMatchObject({ id: 'my-coach', name: 'B prompt-coach', install: null });
+    expect(copy.bundled).toBeUndefined();
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'my-coach', 'plugin.json'), 'utf8')).id).toBe('my-coach');
+    expect(fs.existsSync(path.join(dir, 'my-coach', 'web.js'))).toBe(true);
+    expect(() => r.copyToLocal('prompt-coach', 'my-coach')).toThrow('exists');
+    expect(() => r.copyToLocal('nope', 'x')).toThrow('unknown plugin');
+  });
+
+  it('a local plugin with the same id shadows the bundled one, and the row says so', () => {
+    write(bundled, 'twin'); write(dir, 'twin', { name: 'Local twin' });
+    const rows = reg().list();
+    expect(rows.map((p) => [p.id, p.name, p.bundled ?? false, p.shadowsBundled ?? false])).toEqual([['twin', 'Local twin', false, true]]);
+  });
+
+  it('disable works on a bundled plugin and persists; a missing bundled dir lists nothing', () => {
+    write(bundled, 'b');
+    const r = reg();
+    expect(r.setEnabled('b', false).enabled).toBe(false);
+    expect(reg().get('b')!.enabled).toBe(false);
+    expect(reg(path.join(tmp, 'nowhere')).list()).toEqual([]);
+    expect(new PluginRegistry(dir, { broadcast: () => {} }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys') }).list()).toEqual([]);
+  });
+});

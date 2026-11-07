@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.spyOn(api, 'scaffoldPlugin').mockImplementation(async (id, name) => { const r = row(id, { name, version: '0.1.0' }); rows.push(r); return r; });
   vi.spyOn(api, 'removePlugin').mockImplementation(async (id) => { rows = rows.filter((x) => x.id !== id); });
   vi.spyOn(api, 'reloadPlugin').mockImplementation(async (id) => rows.find((x) => x.id === id)!);
+  vi.spyOn(api, 'copyPlugin').mockImplementation(async (id, newId) => { const src = rows.find((x) => x.id === id)!; const r = row(newId, { name: src.name }); rows.push(r); return r; });
   vi.spyOn(host, 'reloadPlugin').mockResolvedValue(undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -114,5 +115,21 @@ describe('permissions on the Plugins page (2026-11-07)', () => {
     const bare = screen.getByTestId('plugin-row-bare');
     expect(bare).toHaveTextContent('No permissions');
     expect(bare).not.toHaveTextContent('Key issued');
+  });
+});
+
+describe('bundled plugins on the Plugins page (2026-11-07)', () => {
+  it('a bundled plugin shows under BUNDLED with no Remove and a Copy to local that asks for an id', async () => {
+    rows = [row('prompt-coach', { name: 'Prompt coach', bundled: true } as Partial<PluginRow>)];
+    render(<PluginsSection />);
+    const item = await screen.findByTestId('plugin-row-prompt-coach');
+    expect(within(screen.getByRole('region', { name: 'Bundled plugins' })).getByTestId('plugin-row-prompt-coach')).toBeInTheDocument();
+    expect(item).toHaveTextContent('Bundled');
+    expect(within(item).queryByRole('button', { name: 'Remove' })).toBeNull();
+    fireEvent.click(within(item).getByRole('button', { name: 'Copy to local…' }));
+    fireEvent.change(within(item).getByLabelText('New plugin id'), { target: { value: 'my-coach' } });
+    fireEvent.click(within(item).getByRole('button', { name: 'Copy' }));
+    await waitFor(() => expect(api.copyPlugin).toHaveBeenCalledWith('prompt-coach', 'my-coach'));
+    expect(await screen.findByTestId('plugin-row-my-coach')).toBeInTheDocument();
   });
 });

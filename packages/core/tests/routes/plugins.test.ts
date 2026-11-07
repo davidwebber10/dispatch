@@ -132,6 +132,20 @@ describe('plugin routes', () => {
     expect((await request(app).get('/api/plugins').set(auth)).status).toBe(401);
   });
 
+  it('POST /api/plugins/:id/copy copies a bundled plugin to local; DELETE on a bundled one is 400', async () => {
+    fs.mkdirSync(path.join(tmp, 'bundled', 'coach'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'bundled', 'coach', 'plugin.json'), JSON.stringify({ id: 'coach', name: 'Coach', version: '1.0.0' }));
+    const mgr = new KeysManager();
+    app = createApp({ db, skipPty: true, pluginsDir: dir, bundledDir: path.join(tmp, 'bundled'), secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]) });
+    expect((await request(app).get('/api/plugins')).body.plugins.find((p: any) => p.id === 'coach').bundled).toBe(true);
+    await request(app).delete('/api/plugins/coach').expect(400);
+    const r = await request(app).post('/api/plugins/coach/copy').send({ id: 'my-coach' });
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ id: 'my-coach', name: 'Coach' });
+    await request(app).post('/api/plugins/coach/copy').send({ id: 'my-coach' }).expect(409);
+    await request(app).post('/api/plugins/coach/copy').send({ id: 'Bad' }).expect(400);
+  });
+
   describe('events (the router alone, with a recording broadcaster)', () => {
     it('POST /api/plugins/:id/reload broadcasts plugin:changed', async () => {
       plugin('p');

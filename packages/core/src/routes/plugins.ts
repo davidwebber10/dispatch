@@ -16,7 +16,7 @@ import type { AssistRunner } from '../assist/run.js';
  */
 function fail(res: import('express').Response, e: unknown): void {
   const msg = e instanceof Error ? e.message : String(e);
-  const status = msg === 'unknown plugin' ? 404 : msg === 'exists' ? 409 : msg === 'bad id' || msg === 'not local' ? 400 : 500;
+  const status = msg === 'unknown plugin' ? 404 : msg === 'exists' ? 409 : msg === 'bad id' || msg === 'not local' || msg === 'bundled' ? 400 : 500;
   res.status(status).json({ error: msg });
 }
 
@@ -84,6 +84,13 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!row) return void res.status(404).json({ error: 'unknown plugin' });
     plugins.announce(row.id);
     res.json(row);
+  });
+
+  // Copy a bundled (or local) plugin to a new local id: the way to change a bundled one (spec section 10).
+  router.post('/plugins/:id/copy', ownerOnlyStrict, (req, res) => {
+    const { id } = (req.body ?? {}) as { id?: unknown };
+    if (typeof id !== 'string') return void res.status(400).json({ error: 'bad id' });
+    try { const row = plugins.copyToLocal(req.params.id, id); plugins.announce(row.id); res.status(201).json(row); } catch (e) { fail(res, e); }
   });
 
   router.delete('/plugins/:id', ownerOnlyStrict, (req, res) => {

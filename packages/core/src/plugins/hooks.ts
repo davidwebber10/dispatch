@@ -94,8 +94,8 @@ export class PluginHooks {
 
   private run(row: PluginRow, script: string, e: ThreadEvent): Promise<void> {
     return new Promise((resolve) => {
-      let folder: string;
-      try { folder = fs.realpathSync(path.join(this.registry.dir, row.id)); } catch { resolve(); return; }
+      const folder = this.registry.folderPath(row.id);
+      if (!folder) { resolve(); return; }
       const file = path.join(folder, script);
       const canReadPrompts = (row.permissions ?? []).includes('read:prompts');
       const payload = JSON.stringify(canReadPrompts ? e : redactThreadEvent(e));

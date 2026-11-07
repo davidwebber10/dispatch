@@ -264,6 +264,8 @@ interface CreateAppOptions {
   pluginsDir?: string;
   /** Model assist for plugins; tests inject a fake, and omit it for none. */
   assistRunner?: AssistRunner | null;
+  /** The bundled plugins folder (defaults to <repo>/packages/plugins; tests pass a temp one or none). */
+  bundledDir?: string | null;
   /** Inject a pre-built SecretsService (e.g. with a fake Doppler client) for tests. */
   secretsService?: SecretsService;
   /** Override the structured command (test seam: spawn fake-claude instead of real claude). */
@@ -399,7 +401,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const dispatchDir = options.secretsDir ?? platform.dataDir();
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): no watcher here; startServer runs one.
-  const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dispatchDir, 'keys') });
+  const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dispatchDir, 'keys'), bundledDir: options.bundledDir === undefined ? undefined : options.bundledDir ?? undefined });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   app.locals.plugins = plugins;
@@ -583,7 +585,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create broadcaster
   const broadcaster = createEventsBroadcaster(eventsWss);
-  const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dataDir, 'keys') });
+  const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dataDir, 'keys'), bundledDir: path.join(resolveRepoRoot(), 'packages', 'plugins') });
   configurePluginFacts((id) => plugins.facts(id));
   plugins.issueKeys();
   plugins.start();

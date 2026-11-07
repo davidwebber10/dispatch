@@ -57,6 +57,7 @@ export function PluginsSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState('');
   const [removing, setRemoving] = useState<PluginRow | null>(null);
+  const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
   const [safe, setSafe] = useState(isSafeMode());
   const [safeTouched, setSafeTouched] = useState(false);
 
@@ -89,8 +90,10 @@ export function PluginsSection() {
   };
   const toggleSafe = () => { const next = !safe; setSafeMode(next); setSafe(next); setSafeTouched(true); };
 
-  const local = manifests.filter((m) => !m.install);
+  const local = manifests.filter((m) => !m.install && !m.bundled);
   const installed = manifests.filter((m) => m.install);
+  const bundled = manifests.filter((m) => m.bundled);
+  const copy = (r: PluginRow) => { const newId = (copying?.newId ?? '').trim(); if (!ID_RE.test(newId)) { setErr('The new id is lowercase letters, digits and dashes.'); return; } void run(r.id, async () => { await api.copyPlugin(r.id, newId); setCopying(null); }); };
 
   const renderRow = (r: PluginRow) => {
     const st = stateOf(r, status[r.id]);
@@ -103,6 +106,8 @@ export function PluginsSection() {
           <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>v{r.version}</span>
           <span style={{ ...miniChip, color: chipColor, borderColor: chipColor }}>{st.label}</span>
           {r.install && <span style={miniChip}>{r.install.marketplace}</span>}
+          {r.bundled && <span style={miniChip} title="Ships with Dispatch and updates with it">Bundled</span>}
+          {r.shadowsBundled && <span style={miniChip} title="A bundled plugin with this id is hidden by this local one">Shadows bundled</span>}
         </div>
         {r.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{r.description}</div>}
         {st.detail && <div role="note" style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{st.detail}</div>}
@@ -121,8 +126,17 @@ export function PluginsSection() {
           <button type="button" style={ghostBtn} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)}>{r.enabled ? 'Disable' : 'Enable'}</button>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => void reload(r)}>Reload</button>
           <button type="button" style={ghostBtn} onClick={() => void copyText(`~/.dispatch/plugins/${r.id}`).then(() => useHint.getState().show('Path copied')).catch(() => {})}>Copy path</button>
-          {!r.install && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => setRemoving(r)}>Remove</button>}
+          {!r.install && !r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => setRemoving(r)}>Remove</button>}
+          {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
         </div>
+        {copying?.id === r.id && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input aria-label="New plugin id" value={copying.newId} onChange={(e) => setCopying({ id: r.id, newId: e.target.value })} style={{ ...fieldInput, width: 180 }} />
+            <button type="button" style={solidBtn(true)} disabled={busy === r.id} onClick={() => copy(r)}>Copy</button>
+            <button type="button" style={ghostBtn} onClick={() => setCopying(null)}>Cancel</button>
+            <span style={note}>A local copy you can change; the bundled one stays as it is.</span>
+          </div>
+        )}
         {mine.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={note}>Phone tabs:</span>
@@ -172,6 +186,14 @@ export function PluginsSection() {
         )}
         {local.map(renderRow)}
       </section>
+
+      {bundled.length > 0 && (
+        <section aria-label="Bundled plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <span style={sectionLabel}>BUNDLED</span>
+          <div style={note}>Ship with Dispatch and update with it. Disable one here; copy it to local to change it.</div>
+          {bundled.map(renderRow)}
+        </section>
+      )}
 
       {installed.length > 0 && (
         <section aria-label="Installed plugins" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
