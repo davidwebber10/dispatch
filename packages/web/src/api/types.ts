@@ -234,6 +234,11 @@ export interface ConvItem {
   toolTitle?: string;
   toolDetail?: string;
   toolId?: string;    // tool_use id, for pairing tool ↔ tool-result across interleaving
+  // The per-block key a streamed block was first rendered under (`s-<turn>-<index>`), kept when
+  // its `uuid` is upgraded to the message's real uuid. Per-block UI state (an open thought) keys
+  // off it, so the upgrade — which changes `uuid` for every block of the message at once — does
+  // not reset what the reader opened (2026-11-06).
+  blockKey?: string;
   isError?: boolean;
   ts?: string;
   uuid?: string;

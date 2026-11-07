@@ -806,3 +806,43 @@ describe('renderTimeline — ext.frame and ext.prose (the hooks Chat uses)', () 
     expect(screen.getByText('a7: hello')).toBeInTheDocument();
   });
 });
+
+// An open thought or stray tool result used to snap shut while the turn streamed (2026-11-06):
+// every appended block re-anchors the turn's MessageScroller.Item key, and the whole-message
+// event upgrades every block's uuid from its `s-` key to the message uuid. Both remount the row,
+// and a plain useState inside it forgot the reader's click. The open state now lives under the
+// block's stable key (toolId, else the first streamed key kept as `blockKey`, else uuid).
+describe('an open thought and tool result stay open while the turn streams (2026-11-06)', () => {
+  const thought = (over: Partial<ConvItem>): ConvItem => ({ kind: 'thinking', text: 'Let me think about the plan here', ...over });
+
+  it('a thought stays open after its uuid is upgraded and another block is appended', () => {
+    const { rerender } = renderTimelineItems([{ kind: 'user', text: 'q', uuid: 'u0' }, thought({ uuid: 's-1-0' })]);
+    fireEvent.click(screen.getByRole('button', { name: /Let me think/ }));
+    expect(screen.getByText('Thinking')).toBeInTheDocument(); // the header shows only while open
+    const open = (items: ConvItem[]) => rerender(
+      <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+        {renderTimeline(items, () => {}, new Set())}
+      </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>,
+    );
+    // The model keeps writing: a text block lands after the thought (the group key moves to it).
+    open([{ kind: 'user', text: 'q', uuid: 'u0' }, thought({ uuid: 's-1-0' }), { kind: 'assistant', text: 'Here is the plan', uuid: 's-1-1' }]);
+    expect(screen.getByText('Thinking')).toBeInTheDocument();
+    // The whole-message event upgrades both blocks to the message uuid; the first key is kept.
+    open([{ kind: 'user', text: 'q', uuid: 'u0' }, thought({ uuid: 'm1', blockKey: 's-1-0' }), { kind: 'assistant', text: 'Here is the plan', uuid: 'm1', blockKey: 's-1-1' }]);
+    expect(screen.getByText('Thinking')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
+    expect(screen.queryByText('Thinking')).toBeNull();
+  });
+
+  it('two thoughts of one message open and close on their own', () => {
+    renderTimelineItems([
+      { kind: 'user', text: 'q', uuid: 'u0' },
+      thought({ uuid: 'm1', blockKey: 's-2-0', text: 'First thought about apples' }),
+      { kind: 'assistant', text: 'between', uuid: 'm1', blockKey: 's-2-1' },
+      thought({ uuid: 'm1', blockKey: 's-2-2', text: 'Second thought about pears' }),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /First thought/ }));
+    expect(screen.getAllByText('Thinking')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Second thought/ })).toBeInTheDocument(); // still folded
+  });
+});

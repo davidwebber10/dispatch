@@ -29,7 +29,7 @@ import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
-import { useToolGroupExpanded } from '../../../hooks/useToolUIState';
+import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
 import { openFileTab } from '../../../lib/openFileTab';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
@@ -744,7 +744,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     if (custom !== undefined) node = custom;
     else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '', it) : <AssistantText text={it.text ?? ''} />;
     else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
-    else if (it.kind === 'thinking') node = <Thinking text={it.text ?? ''} />;
+    else if (it.kind === 'thinking') node = <Thinking id={uiKeyOf(it)} text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
       // A result paired by ADJACENCY (neither side has a toolId — the shape REST-paged
@@ -890,7 +890,7 @@ export type ToolPair = { tool: ConvItem; result?: ConvItem };
  * `group:<uuid>` key and share one expansion toggle. `toolId` is unique per tool_use.
  */
 export function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
-  const firstId = pairs[0].tool.toolId ?? pairs[0].tool.uuid;
+  const firstId = uiKeyOf(pairs[0].tool);
   const running = pairs.some((p) => !p.result);
   const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
   const expanded = manualOpen === undefined ? running : manualOpen;
@@ -1029,8 +1029,10 @@ export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerC
 // identical "Thinking" rows is unscannable, but so is a column of full-width ragged prose —
 // hence the single ellipsized line, width-capped so it doesn't stretch edge to edge. The word
 // "Thinking" returns as the header only while the row is open.
-export function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+/** `id`: the block's stable key (hooks/useToolUIState `uiKeyOf`). The open state lives under it, so
+ *  it survives the remount that every appended block and the uuid upgrade cause (2026-11-06). */
+export function Thinking({ id, text }: { id?: string; text: string }) {
+  const [open, setOpen] = useThoughtExpanded(id, false);
   if (!text.trim()) return null;
   // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
   // so literal backticks are just clutter in a preview.

@@ -1474,3 +1474,21 @@ test("a failed send shows the server's reason", async () => {
   const err = result.current.items.find((i) => i.kind === 'result' && i.isError);
   expect(err?.text).toBe('Failed to send message: could not start the thread: spawn claude ENOENT');
 });
+
+// The whole-message event upgrades every streamed block's uuid to the message uuid. The block's
+// first key is kept as `blockKey`, so per-block UI state (an open thought) survives the upgrade.
+test('the uuid upgrade keeps each streamed block\'s first key as blockKey (2026-11-06)', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  act(() => cbs.onEvent({ type: 'stream_event', event: { type: 'message_start' } }));
+  act(() => cbs.onEvent(start(0, { type: 'thinking' })));
+  act(() => cbs.onEvent(thinkDelta(0, 'hmm')));
+  act(() => cbs.onEvent(start(1, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(1, 'Answer')));
+  drainRaf();
+  const before = result.current.items.filter((i) => i.kind === 'thinking' || i.kind === 'assistant');
+  expect(before.map((i) => i.uuid)).toEqual(['s-1-0', 's-1-1']);
+  expect(before.every((i) => i.blockKey === undefined)).toBe(true);
+  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'text', text: 'Answer' }] } }));
+  const after = result.current.items.filter((i) => i.kind === 'thinking' || i.kind === 'assistant');
+  expect(after.map((i) => [i.uuid, i.blockKey])).toEqual([['real-1', 's-1-0'], ['real-1', 's-1-1']]);
+});

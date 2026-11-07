@@ -2,7 +2,7 @@ import { CaretRight, FileText } from '@phosphor-icons/react';
 import type { ConvItem } from '../../api/types';
 import { highlightCode, langFromPath } from '../../lib/markdown';
 import { getToolView, parseToolInput } from './toolviews/registry';
-import { useToolExpanded, useToolTab } from '../../hooks/useToolUIState';
+import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
 
 /**
  * One mono glyph per tool family (2026-08-16 pretty-chat redesign): the leading column of a
@@ -91,7 +91,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
   // lands, so in a settled message with parallel tool calls every ToolCall would otherwise
   // share one expansion key — expanding one expands all of them, including members of
   // sibling ToolGroups (which key off `toolId ?? uuid` for the same reason).
-  const id = tool.toolId ?? tool.uuid;
+  const id = uiKeyOf(tool);
   const [open, setOpen] = useToolExpanded(id, false);
   const [tab, setTab] = useToolTab(id, 'output');
   const name = tool.toolTitle ?? tool.toolName ?? 'Tool';
@@ -195,7 +195,9 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 /** A tool result, minimized to a one-line summary and expandable on click. */
 export function ToolResult({ item }: { item: ConvItem }) {
-  const [open, setOpen] = useToolExpanded(item.uuid ?? item.toolId, false);
+  // Keyed like ToolCall (tool id first): a stray result's uuid is upgraded mid-turn, which used to
+  // reset an open shelf (2026-11-06).
+  const [open, setOpen] = useToolExpanded(uiKeyOf(item), false);
   const text = item.text ?? '';
   if (!text.trim()) return null;
   const lines = text.split('\n').length;

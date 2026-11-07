@@ -749,7 +749,8 @@ export function useStructuredChat(
                 const haveIds = new Set(p.filter((i) => i.kind === 'tool' && i.toolId).map((i) => i.toolId));
                 const next = p.map((it) => {
                   const patch: Partial<ConvItem> = {};
-                  if (uuid && it.uuid && blockKeys.has(it.uuid)) patch.uuid = uuid;
+                  // The uuid upgrade keeps the block's first key, so per-block UI state survives it.
+                  if (uuid && it.uuid && blockKeys.has(it.uuid)) { patch.uuid = uuid; if (!it.blockKey) patch.blockKey = it.uuid; }
                   if (it.kind === 'tool' && it.toolId) {
                     const m = tools.find((b: any) => b.id === it.toolId);
                     if (m) { patch.toolInput = safeJson(m.input); patch.toolFile = m.input?.file_path ?? m.input?.path ?? it.toolFile; }

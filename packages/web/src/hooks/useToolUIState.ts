@@ -27,6 +27,18 @@ function createPersistedState<T>() {
 
 /** Whether a tool call/result's expanded shelf is open, keyed by tool id. */
 export const useToolExpanded = createPersistedState<boolean>();
+/** Whether a thought (thinking block) is open, keyed by the block's stable key (2026-11-06). */
+export const useThoughtExpanded = createPersistedState<boolean>();
+
+/**
+ * The key per-block UI state lives under: the tool id when there is one, else the key the block
+ * was first streamed under (kept across the uuid upgrade), else the item's uuid. Every block of a
+ * settled message shares one `uuid`, so `uuid` alone would make all the thoughts of a message open
+ * and close together, and the upgrade from the synthetic `s-` key to that uuid would reset them.
+ */
+export function uiKeyOf(it: { toolId?: string; blockKey?: string; uuid?: string }): string | undefined {
+  return it.toolId ?? it.blockKey ?? it.uuid;
+}
 /** Which tab (Input/Output) a tool call's generic shelf has selected, keyed by tool id. */
 export const useToolTab = createPersistedState<'input' | 'output'>();
 /**
