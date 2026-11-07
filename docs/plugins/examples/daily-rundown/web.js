@@ -1,8 +1,10 @@
 // Daily rundown — a spike plugin. Plain ES module, no build step: it uses the app's React
 // through window.dispatch (handed in as `d`). `h` is React.createElement.
 export default function activate(d) {
+  // The id the host gave this copy: a copy under another id runs as itself.
+  const ID = d.id || 'daily-rundown';
   const { h, hooks: { useState, useEffect, useDoc }, api, ui, storage, hint } = d;
-  const PLUGIN = 'daily-rundown';
+  const PLUGIN = ID;
   // Documents live on the daemon (Settings → Plugins shows them); useDoc keeps them as React state.
 
   function timeAgo(iso) {
