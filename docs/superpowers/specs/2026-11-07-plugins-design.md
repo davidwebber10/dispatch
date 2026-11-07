@@ -1,7 +1,8 @@
 # Plugins: anyone changes Dispatch without a Dispatch release
 
-Date: 2026-11-07. Status: approved in chat (the owner answered the brainstorm's questions; the
-calls marked "builder's call" are open to the builder). Brainstorm and spike:
+Date: 2026-11-07. Status: approved in chat (the owner answered the brainstorm's questions; a
+builder check raised six questions, settled in sections 3.3, 3.4, 5, 6, 8 and 10; the calls
+marked "builder's call" are open to the builder). Brainstorm and spike:
 `2026-11-07-plugins-brainstorm.md`; spike code on branch `spike/plugins`.
 
 ## Intent
@@ -285,7 +286,20 @@ and may answer `{ "decision": "block", "reason": "..." }` (PreToolUse) or
 `{ "context": "..." }` (UserPromptSubmit adds text). Elsewhere the script observes only, and
 the Plugins page says which harnesses give a plugin's hook the power to block.
 
+A native hook hands the script the full prompt or tool input, which the daemon cannot trim.
+So a plugin without `read:prompts` gets no native `prompt` or `toolCall` hook: it receives
+the derived events only, and the Plugins page says so under its permissions.
+
 `tools_available` is also stored on the thread row and shown in Thread details.
+
+### 3.4 Model assist
+
+A plugin that judges, summarises or drafts needs a model call of its own (the prompt coach,
+section 13). `POST /api/plugins/<id>/assist` with `{ system, messages, maxTokens }` runs one
+turn on the daemon's assist model (the one that names threads and writes summaries today),
+with no tools, and returns the text and the usage. It needs `model:assist`; the daemon
+meters calls and tokens per plugin and shows them on the Plugins page and in Analytics.
+Nothing a plugin sends through assist reaches a thread.
 
 ## 4. The worker
 
@@ -306,6 +320,16 @@ plugins can call the worker. Disabling the plugin stops the worker and removes t
   a thread key may read if the plugin granted `threads:read-storage`.
 - `GET/PUT /api/plugins/<id>/settings`: one JSON document the Plugins page and the plugin's
   settings section edit. The daemon reads it for the model part (instructions per project).
+- A thread key may write a plugin's data when the plugin granted `threads:write-storage`
+  (and read with `threads:read-storage`). The daemon stamps every document a thread key
+  writes with `writer: { terminalId, sessionId }` from the key, never from the body, so the
+  per-thread key rule holds. Previews uses this: the `preview` tool writes as the thread.
+- File references: `POST /api/plugins/<id>/files` with `{ path }` from a thread key checks
+  the path against that thread's project folder (the previews rules: inside the real root,
+  a known type, a regular file, size cap) and returns `{ fileId, name, mime, size }`. The
+  daemon serves it at `GET /api/plugins/<id>/files/<fileId>` with the same re-check and the
+  same sandbox headers as a preview file today, for as long as the plugin keeps the record.
+  This is the "generic checked file route" section 10 relies on.
 - Both are copied before an update and kept until the plugin reports its migration done or
   the owner rolls back (section 7).
 
@@ -324,8 +348,20 @@ when the plugin is enabled and revoked when disabled, stored at `~/.dispatch/key
 | `spawn:threads` | spawn and start threads |
 | `notify` | push notifications and in-app hints |
 | `storage` | its own data and settings (implied; listed for honesty) |
-| `secrets:<NAME>` | one named secret from the daemon's secrets store, by reference |
+| `secrets:<NAME>` | one named secret, delivered as `NAME` in the environment of the plugin's processes at start (never over a route) |
+| `model:assist` | one model call per request through `POST /api/plugins/<id>/assist` (section 3.4), metered per plugin |
 | `network` | informational: the worker makes outbound calls (shown before install) |
+
+A plugin principal in the key rules: a thread a plugin spawns gets `createdBy: { kind:
+'plugin', id }` (a new kind the decoder accepts), spawn depth 1, and the plugin's project
+is the one named in the call; a plugin may message any agent thread with the sender line
+`[From plugin "NAME" (id). This is not a message from the owner.]`, under the same per-pair
+rate limit a thread has, and never itself. Spawn needs the owner's one-time approval per
+plugin, the way a thread's first spawn does today.
+
+Where a secret lives: a Doppler reference when Doppler is set up, else a local file
+`~/.dispatch/plugin-secrets.json` (0600) that Settings → Plugins edits. Marketplace tokens
+(section 7.1) live in the same place. A hosted box without Doppler still works.
 
 The web part runs with the owner's credentials (decision 1); its `permissions` are shown,
 not enforced, except that `api` calls from a plugin carry an `X-Dispatch-Plugin: <id>`
@@ -377,10 +413,14 @@ Settings stores the URL and an optional token in the daemon's secrets store.
 - `~/.dispatch/skills/<id>/` with a `skill.json` (`id`, `name`, `version`, `description`,
   `harnesses`) and the skill files (`SKILL.md` and anything it references).
 - Installed from the same marketplaces (`kind: "skill"`), or local, or bundled by a plugin.
-- Injection per thread: Claude Code through the per-thread plugin dir Dispatch already passes;
-  Codex and OpenCode through their instruction files; Grok through its plugin dir. Enabled
-  per project in Settings → Skills (a section beside Plugins; the desktop rail gets no
-  Skills item, builder's call).
+- Injection per thread: the enabled skills' `SKILL.md` texts are joined into the thread's
+  system prompt (the same path as plugin instructions, section 3.1), each under its name with
+  the absolute path of its folder so the model can read its other files. Dispatch never
+  writes into the user's project (no `AGENTS.md` or `CLAUDE.md` edits). Where a harness
+  takes a skill folder directly (Grok's plugin dir; Claude Code if its CLI accepts one, the
+  builder verifies the flag), the folder is passed as well. Enabled per project in
+  Settings → Skills (a section beside Plugins; the desktop rail gets no Skills item,
+  builder's call).
 - The Plugins page's Browse lists skills under their own heading.
 
 ## 9. Agent tools
@@ -395,14 +435,47 @@ you save. The SDK reference is at /plugins/sdk/README.md."
 
 ## 10. Previews as a plugin
 
-The `previews` plugin ships with Dispatch (under `packages/plugins/previews`, installed as a
-local plugin on first run, and updated with Dispatch). It carries: the `preview` and
+The `previews` plugin ships with Dispatch under `packages/plugins/previews` and is served
+from there in place: a third state, **bundled**, beside local and installed. A bundled plugin
+updates with Dispatch, never checks an index, can be disabled but not removed, and is not
+edited in place; "Copy to local…" on the Plugins page duplicates it under a new id for the
+owner to change. Its storage migration (the `previews` table into plugin data) runs at
+daemon start, whatever the plugin's enabled state. It carries: the `preview` and
 `post_image` tools (its MCP server, using the thread key), the Previews view, the phone sheet
 (a `project.header.actions` slot and a `menus.project` item), the unseen badge
 (`thread.header.actions`), the list and item components, and `FileViewer` use from the SDK.
 The `previews` table migrates into the plugin's storage; the file-serving route stays in the
 daemon as a generic "serve a file inside a project folder, checked" route the plugin's tool
 registers a reference to. The thread menu's "Previews" item comes from the plugin.
+
+## 13. Key plugins Dispatch ships
+
+Beyond Previews, Dispatch ships a few plugins that show what the surface can do and that
+the owner wants on day one. Each is bundled (section 10's state), disabled or enabled from
+the Plugins page, and written against the public SDK so a user can copy it to local and
+change it.
+
+- **Composer favourites**: your own buttons under every composer, edited in Settings.
+- **Daily rundown**: yesterday per project, every morning, with a push; pin from a thread.
+- **Prompt coach**: the one the owner cares most about. Its goal is to level a person up in
+  how they engage with AI: not as a parrot (the person types what the model should type),
+  not as a file editor (the person asks for one small change at a time), but with leverage
+  (outcomes, context, delegation, verification, plans before edits, parallel work). It
+  watches `thread:prompt` and `thread:turn` (with `read:prompts`) and, through `model:assist`,
+  judges each prompt and each exchange against a rubric: did the prompt state the outcome or
+  dictate the steps; did it give the context the model needed (what, why, constraints, done
+  looks like); was the scope one file or the whole task; did it ask for a plan or a spike
+  when the task was open; did it ask for verification; could it have been delegated or run
+  in parallel; and over time, is the person repeating the same correction. It shows a short
+  card under the composer after a send (`composer.before` slot) with one observation and one
+  better version of the prompt, never more; a Coach view with the person's patterns over the
+  week and the habits that changed; and a settings section for the coaching style (quiet,
+  normal, direct), per-project opt-out, and what it may read. It never changes a prompt on its
+  own; it never posts to a thread. The rubric is a Markdown file in the plugin folder so the
+  owner can edit it.
+
+The coach is also the proof for `model:assist`, `read:prompts`, `composer.before` and the
+weekly job, so it ships in slice 3 with the model part.
 
 ## 11. Delivery slices
 
@@ -412,13 +485,14 @@ registers a reference to. The thread menu's "Previews" item comes from the plugi
 2. **Storage, settings, permissions, keys**: `plugin_data`, the `plugin` principal, the
    permissions table, audit header.
 3. **The model part**: instructions, MCP injection, the five thread events across harnesses,
-   native hooks for Claude Code, `tools_available`.
+   native hooks for Claude Code, `tools_available`, `model:assist`, the Prompt coach.
 4. **Previews as a plugin**, plus the remaining slots and overrides the migration needs.
 5. **Workers**: supervision, logs, jobs, the socket proxy.
 6. **Marketplaces**: index, install, update, roll back, pin, browse, skills install, the
    Settings dot and banner for plugin updates, commands registry and palette.
 7. **Publishing and the public index**: `dispatch plugin publish`, the dispatch-plugins
-   repository, the review checklist, `@dispatchd/sdk` on npm, docs.
+   repository (owner creates it; the owner said the builder may), the review checklist,
+   `@dispatchd/sdk` on npm (owner step: needs the npm account), docs.
 
 Each slice ships on its own release and leaves Dispatch working with no plugins installed.
 
