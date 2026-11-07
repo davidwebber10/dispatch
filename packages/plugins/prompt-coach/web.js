@@ -75,7 +75,7 @@ export default function activate(d) {
     const latest = useCoach((s) => (terminalId ? s.latest[terminalId] : undefined));
     const busy = useCoach((s) => (terminalId ? !!s.busy[terminalId] : false));
     const dismissedAt = useCoach((s) => (terminalId ? s.dismissed[terminalId] : undefined));
-    if (!terminalId || ctx.surface !== 'thread') return null;
+    if (!terminalId || (ctx.surface !== 'thread' && ctx.surface !== 'terminal')) return null;
     if (busy) return h('div', { style: { padding: '6px 10px 8px', fontSize: 12, color: 'var(--color-text-tertiary)' } }, 'Coach: looking at that prompt…');
     if (!latest || dismissedAt === latest.at) return null;
     if (latest.habit === 'good' && !latest.note) return null;

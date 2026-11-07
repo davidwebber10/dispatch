@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Levels you up in how you work with AI: one observation and one better version after each prompt, and your habits over the week.",
   "author": "dispatch",
-  "dispatch": ">=3.28",
+  "dispatch": ">=3.27",
   "sdk": 1,
   "web": "web.js",
   "contributes": {
