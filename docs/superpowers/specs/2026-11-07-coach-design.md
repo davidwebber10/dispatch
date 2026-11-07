@@ -146,6 +146,20 @@ as an optional summary on the Coach screen. The five measures compare a person o
   is created without the person's confirmation.
 - The same applies when the Coach sees a better way to do something that only a plugin can give.
 
+### 4.8 Suggest a skill, created in one click (owner, 2026-11-07)
+- The Coach proactively suggests **skills**: when the person repeats the same instructions, conventions or
+  checklist across threads ("always run the tests and list the files you changed", "use our brand voice",
+  "follow the month-end steps"), the Coach drafts a skill that carries them, so every thread gets them.
+- Detector `skill-fit` (measure `reuse`): the same instruction block (normalized, ≥ 3 sentences or ≥ 200 chars)
+  in prompts of 3+ threads in 30 days, or the same correction given 3+ times. The large model drafts the skill:
+  a name, a one-line description, and the `SKILL.md` body, from the repeated text (never other prompt content).
+- The card shows the skill's name and one line. **Create skill** opens a review sheet with the draft (name,
+  description, body editable, and which projects get it: all, or this project). One click on **Create** there
+  writes it and enables it. Nothing is written before that click.
+- Core: `POST /api/skills { id, name, description, body, projects?: string[] }` (owner only; the id must be new,
+  lower-case slug; the body ≤ 64 KB) writes `~/.dispatch/skills/<id>/SKILL.md` + `skill.json` and enables it;
+  SDK `d.actions.createSkill(draft)` opens the review sheet and resolves with the created skill or null.
+
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
   (5-hour and weekly) on the account it used, and the budget with a meter.
