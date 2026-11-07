@@ -178,7 +178,7 @@ describe('Coach card (coach plan Task 10)', () => {
   it('the SDK icon map has the icons the Coach uses', async () => {
     const { buildSdk } = await import('./sdk');
     const icons = buildSdk().icons;
-    for (const name of ['thumbs-up', 'thumbs-down', 'dots', 'bell-slash', 'x']) expect(icons[name]).toBeTruthy();
+    for (const name of ['thumbs-up', 'thumbs-down', 'dots', 'bell-slash', 'x', 'arrow-up', 'arrow-down', 'arrow-right', 'target', 'plus', 'gear']) expect(icons[name]).toBeTruthy();
   });
 
   it('the mute commands mute and unmute', async () => {

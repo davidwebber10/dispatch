@@ -17,11 +17,13 @@ export interface FakeD {
   emit: (e: Record<string, unknown>) => void;
   hint: ReturnType<typeof vi.fn>;
   actions: Record<string, ReturnType<typeof vi.fn>>;
+  api: Record<string, ReturnType<typeof vi.fn>>;
+  copyText: ReturnType<typeof vi.fn>;
   assist: ReturnType<typeof vi.fn>;
   [k: string]: unknown;
 }
 
-export function fakeD(over: { actions?: Record<string, unknown>; settings?: unknown; docs?: Record<string, unknown> } = {}): FakeD {
+export function fakeD(over: { actions?: Record<string, unknown>; settings?: unknown; docs?: Record<string, unknown>; api?: Record<string, unknown> } = {}): FakeD {
   const docs = new Map<string, unknown>(Object.entries(over.docs ?? {}));
   const settingsValue = { current: over.settings ?? null as unknown };
   const registered: Record<string, Record<string, unknown[]>> = {};
@@ -37,7 +39,7 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     hooks: { useState, useEffect, useMemo, useCallback, useRef, useIsMobile: () => false },
     zustand: { create },
     // The names the SDK's icon map gives (sdk.tsx ICONS).
-    icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle },
+    icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle, 'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, gear: Icons.Gear },
     stores: { useProjects: create(() => ({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] })) },
     ui: {
       styles: { sectionLabel: {}, row: {}, item: {}, ghostBtn: {}, solidBtn: () => ({}), chip: {}, fieldInput: {} },
@@ -62,8 +64,17 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     },
     emit(e: Record<string, unknown>) { for (const k of [String(e.type), '*']) for (const fn of listeners.get(k) ?? []) fn(e); },
     assist: vi.fn(),
-    actions: { setView: vi.fn(), openSettings: vi.fn(), ...(over.actions ?? {}) },
+    actions: { setView: vi.fn(), openSettings: vi.fn(), setBadge: vi.fn(), ...(over.actions ?? {}) },
     hint: vi.fn(),
+    copyText: vi.fn(async () => {}),
+    // The owner's API client: the Coach reads its own cost and writes its budget through it.
+    api: {
+      pluginAssistUsage: vi.fn(async () => ({ calls: 0, failed: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, byModel: [] })),
+      pluginAssistShare: vi.fn(async () => ({ fiveHour: null, sevenDay: null })),
+      pluginBudget: vi.fn(async () => ({ percentWeekly: 3, usdWeekly: 5 })),
+      setPluginBudget: vi.fn(async (_id: string, b: Record<string, unknown>) => ({ percentWeekly: 3, usdWeekly: 5, ...b })),
+      ...(over.api ?? {}),
+    },
     register: (id: string, c: Record<string, unknown[]>) => { registered[id] = c; },
     unregister: vi.fn(),
     docs,

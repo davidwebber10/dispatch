@@ -53,6 +53,8 @@ const S = {
   label: { font: '600 10.5px var(--font-mono)', letterSpacing: 1, color: 'var(--color-text-tertiary)' },
   fact: { display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '7px 0', borderBottom: '1px solid var(--color-border)' },
   src: { color: 'var(--color-text-tertiary)', fontSize: 11 },
+  bar: { display: 'inline-block', height: 6, borderRadius: 'var(--radius-pill)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 'var(--radius-pill)' },
 };
 const fmtDate = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''; };
 
@@ -67,6 +69,7 @@ export function createCoach(d, deps = {}) {
   const { h, hooks: { useState, useEffect }, storage, settings, events } = d;
   // The id the host gave this copy: a copy to local runs under its own id.
   const PLUGIN = d.id || 'coach';
+  const VIEW_KEY = `plugin:${PLUGIN}:coach`;
   const now = deps.now || (() => new Date());
   // Icons come from the app's icon map (d.icons, Phosphor); never emoji. A missing icon falls back to a short word.
   const icon = (name, fallback, size = 15) => { const I = d.icons && d.icons[name]; return I ? h(I, { size, 'aria-hidden': true }) : fallback; };
@@ -99,21 +102,34 @@ export function createCoach(d, deps = {}) {
     memory: emptyMemory(),
     status: { budget: null, harness: null, level: null, stepped: false }, // the worker's last word on the budget
     toast: null,    // { terminalId, effect, undo, fact, saved, cardId, closed }: what the last feedback changed
+    measures: null, // the worker's `measures` document: { scores, weakest, at }
+    recap: null,    // the worker's weekly recap
   }));
 
   async function load() {
-    const [s, cadence, cards, cardState, memory, status] = await Promise.all([
+    const [s, cadence, cards, cardState, memory, status, measuresDoc, recap] = await Promise.all([
       settings.get(PLUGIN, null).catch(() => null),
       storage.get(PLUGIN, 'cadence', null).catch(() => null),
       storage.get(PLUGIN, 'cards', null).catch(() => null),
       storage.get(PLUGIN, 'cardState', null).catch(() => null),
       storage.get(PLUGIN, 'memory', null).catch(() => null),
       storage.get(PLUGIN, 'status', null).catch(() => null),
+      storage.get(PLUGIN, 'measures', null).catch(() => null),
+      storage.get(PLUGIN, 'recap', null).catch(() => null),
     ]);
     const firstRun = !cadence || !cadence.firstSeenAt;
     const cad = firstRun ? { ...emptyCadence(now()), ...(cadence || {}), firstSeenAt: now().toISOString() } : cadence;
-    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) } });
+    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) }, measures: measuresDoc, recap });
     if (firstRun) await storage.set(PLUGIN, 'cadence', cad).catch(() => {});
+    // A new recap the worker may announce (not written in a mute or quiet hours) dots the Coach view until seen.
+    const unseen = !!(recap && recap.announce && recap.at && cad.recapSeen !== recap.at);
+    if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, unseen ? 1 : 0);
+  }
+  async function markRecapSeen() {
+    const r = store.getState().recap;
+    if (!r || !r.at || store.getState().cadence.recapSeen === r.at) return;
+    await saveCadence({ ...store.getState().cadence, recapSeen: r.at });
+    if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, 0);
   }
   const ready = load();
   events.on(['plugin:data', 'plugin:settings'], (e) => { if (e.id === PLUGIN) void load(); });
@@ -380,16 +396,150 @@ export function createCoach(d, deps = {}) {
         })));
   }
 
+  // ── the five measures (coach spec section 3; mockup part 4) ──────────────────────────────
+  const MEASURE_LABEL = { ambition: 'Ambition', delegation: 'Delegation', reuse: 'Reuse', judgment: 'Judgment', breadth: 'Breadth' };
+  const TREND = { 1: ['arrow-up', 'up'], 0: ['arrow-right', 'steady'], '-1': ['arrow-down', 'down'] };
+  function Measures() {
+    const doc = store((s) => s.measures);
+    const scores = doc && doc.scores;
+    return h('div', { 'data-testid': 'coach-measures', style: S.section },
+      h('div', { style: S.label }, 'YOUR FIVE MEASURES · 30 DAYS'),
+      !scores
+        ? h('div', { style: { ...S.note, fontSize: 12.5 } }, 'The Coach shows your measures after a few days of work.')
+        : h('div', { style: { marginTop: 8, display: 'flex', flexDirection: 'column', gap: 7 } }, ...Object.keys(MEASURE_LABEL).map((id) => {
+          const m = scores[id] || { score: 0, trend: 0, enough: false };
+          const [ico, word] = TREND[String(m.trend)] || TREND[0];
+          const focus = doc.weakest === id;
+          return h('div', { key: id, 'data-testid': `measure-${id}`, style: { display: 'grid', gridTemplateColumns: '84px 1fr 70px', alignItems: 'center', gap: 8, fontSize: 12.5 } },
+            h('span', { style: { color: 'var(--color-text-primary)' } }, MEASURE_LABEL[id]),
+            m.enough
+              ? h('div', { style: S.bar }, h('div', { style: { ...S.barFill, width: `${Math.max(2, Math.min(100, m.score))}%`, background: focus ? 'var(--color-accent)' : 'var(--color-text-tertiary)' } }))
+              : h('span', { style: S.src }, 'Not enough data yet'),
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: focus ? 'var(--color-accent)' : 'var(--color-text-tertiary)', fontSize: 11.5 } },
+              m.enough ? h('span', { role: 'img', 'aria-label': `${MEASURE_LABEL[id]}: ${word}`, title: word, style: { display: 'inline-flex' } }, icon(ico, word, 13)) : null,
+              focus ? 'focus' : null));
+        })),
+      h('div', { style: { ...S.note, fontSize: 11.5 } }, 'Bars compare you with your own past, never with other people.'));
+  }
+
+  // ── the right-column tab: the open thread's card, and the measures (spec section 4.2) ─────
+  function CoachTab({ terminalId, sessionId }) {
+    const st = store((s) => s);
+    if (!st.loaded) return null;
+    let body;
+    if (!terminalId) body = h('div', { style: { ...S.note, fontSize: 13 } }, 'Open a thread to see its tip.');
+    else if (st.toast && st.toast.terminalId === terminalId) body = h(Toast, { toast: st.toast });
+    else {
+      const t = now();
+      const card = [...st.cards].reverse().find((c) => c.terminalId === terminalId && !(st.cardState[c.id] && CLOSED.has(st.cardState[c.id].state)) && allows(st.memory, c, t));
+      // The tab has no message box: a prompt is copied for the person to paste. The tab works during a
+      // mute and never counts toward the daily cap (mockup part 7).
+      const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (typeof d.copyText === 'function') void d.copyText(text); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }, insert: () => {} };
+      body = card ? h(CardView, { key: card.id, card, ctx, fresh: false }) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
+    }
+    return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 12 } }, body, h(Measures));
+  }
+
+  // ── cost this week (spec section 4.5; mockup part 5, right) ────────────────────────────────
+  const LEVEL_NAME = { 'small-only': 'the small model only', economy: 'Economy', balanced: 'Balanced', thorough: 'Thorough', none: 'rules only' };
+  const kTok = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n || 0));
+  const pctTxt = (n) => `${Math.round(n * 10) / 10}%`;
+  function Cost() {
+    const status = store((s) => s.status);
+    const harness = status && status.harness === 'codex' ? 'codex' : 'claude';
+    const [data, setData] = useState(null);
+    useEffect(() => {
+      let live = true;
+      const api = d.api || {};
+      const call = (fn, ...a) => (typeof fn === 'function' ? fn(PLUGIN, ...a).catch(() => null) : Promise.resolve(null));
+      Promise.all([call(api.pluginAssistUsage), call(api.pluginAssistShare, { harness }), call(api.pluginBudget)])
+        .then(([usage, share, budget]) => { if (live) setData({ usage, share, budget }); });
+      return () => { live = false; };
+    }, [harness]);
+    const usage = data && data.usage;
+    const week = data && data.share && data.share.sevenDay;
+    const five = data && data.share && data.share.fiveHour;
+    const cap = data && data.budget && typeof data.budget.percentWeekly === 'number' ? data.budget.percentWeekly : null;
+    const used = status && status.budget && typeof status.budget.usedPercent === 'number' ? status.budget.usedPercent : (week ? week.pluginPercent : null);
+    const row = (k, v) => h('div', { key: k, style: { display: 'flex', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--color-border)', fontSize: 12.5 } },
+      h('span', { style: { width: 150, flexShrink: 0, color: 'var(--color-text-tertiary)' } }, k), h('span', { style: { color: 'var(--color-text-primary)', minWidth: 0 } }, v));
+    return h('div', { 'data-testid': 'coach-cost', style: S.section },
+      h('div', { style: S.label }, 'COST THIS WEEK'),
+      !data ? h('div', { style: S.note }, 'Loading…') : h('div', { style: { marginTop: 6 } },
+        row('Calls', usage ? `${usage.calls}${usage.byModel && usage.byModel.length ? ` (${usage.byModel.map((m) => `${m.model} ${m.calls}`).join(' · ')})` : ''}` : 'Not available right now'),
+        row('Tokens', usage ? `${kTok(usage.inputTokens)} in · ${kTok(usage.outputTokens)} out` : '–'),
+        row(`Share of your weekly ${harness === 'codex' ? 'Codex' : 'Claude'} limit`, week ? `≈ ${pctTxt(week.pluginPercent)} (estimate)${five ? ` · 5-hour: ≈ ${pctTxt(five.pluginPercent)}` : ''}` : 'Not known yet (estimate)'),
+        row('Budget', cap === null ? 'No budget set' : h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+          `${cap}% of your weekly limit`,
+          h('span', { role: 'meter', 'aria-label': 'Budget used', 'aria-valuemin': 0, 'aria-valuemax': cap, 'aria-valuenow': used === null ? 0 : Math.round(used * 100) / 100, style: { ...S.bar, width: 120 } },
+            h('span', { style: { ...S.barFill, display: 'block', width: `${used === null ? 0 : Math.min(100, (used / cap) * 100)}%`, background: 'var(--color-accent)' } })),
+          used === null ? null : h('span', { style: S.src }, `${pctTxt(used)} used`)))),
+      status && status.stepped && status.level && h('div', { style: { ...S.note, fontSize: 12.5 } }, `Near the budget, the Coach stepped down to ${LEVEL_NAME[status.level] || status.level}.`),
+      h('div', { style: { ...S.note, fontSize: 11.5 } }, 'Runs on your own subscription. The share is an estimate: use outside Dispatch makes it read high.'),
+      h('div', { style: { ...S.row, marginTop: 8 } }, h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.openSettings === 'function') d.actions.openSettings(VIEW_KEY); } }, icon('gear', null, 14), 'Coach settings')));
+  }
+
+  // ── card history ──────────────────────────────────────────────────────────────────────────
+  const STATE_WORD = { shown: 'Shown', dismissed: 'Dismissed', used: 'Used', down: 'Not helpful' };
+  function History() {
+    const cards = store((s) => s.cards);
+    const cardState = store((s) => s.cardState);
+    const list = [...cards].reverse();
+    return h('div', { style: S.section },
+      h('div', { style: S.label }, 'CARD HISTORY'),
+      list.length === 0
+        ? h('div', { style: { ...S.note, fontSize: 13 } }, 'No cards yet. The Coach shows one after it sees a pattern in your work.')
+        : h('ul', { 'data-testid': 'coach-history', style: { listStyle: 'none', margin: '6px 0 0', padding: 0 } }, ...list.map((c) => {
+          const cs = cardState[c.id];
+          return h('li', { key: c.id, style: S.fact },
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', { style: { color: 'var(--color-text-primary)' } }, c.headline),
+              h('div', { style: S.src }, [c.why, fmtDate(c.at)].filter(Boolean).join(' · '))),
+            h('span', { style: S.src }, cs ? STATE_WORD[cs.state] || cs.state : 'New'));
+        })));
+  }
+
+  // ── the weekly recap (spec section 4.2; mockup part 5) ─────────────────────────────────────
+  function Recap() {
+    const recap = store((s) => s.recap);
+    const [hidden, setHidden] = useState(false);
+    useEffect(() => { void markRecapSeen(); }, [recap && recap.at]);
+    if (!recap || !Array.isArray(recap.patterns)) return null;
+    const st = recap.stats || {};
+    const stretch = recap.stretch;
+    const start = () => {
+      const a = (stretch && stretch.action) || {};
+      const acts = d.actions || {};
+      if (a.kind === 'schedule' && typeof acts.openSchedule === 'function') acts.openSchedule({ prompt: a.prompt, cron: a.cron, label: a.label });
+      else if (a.kind === 'threads' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ prompts: a.prompts || [] });
+      else if (typeof acts.openNewThreads === 'function') acts.openNewThreads({ prompts: [a.text || a.prompt || ''] });
+      else if (typeof d.copyText === 'function') { void d.copyText(a.text || a.prompt || ''); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }
+    };
+    return h('div', { 'data-testid': 'coach-recap', style: S.section },
+      h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
+        h('div', { style: { fontWeight: 650, fontSize: 15 } }, 'Your week with AI'),
+        h('span', { style: S.src }, `${st.threads ?? 0} threads · ${st.days ?? 0} days · up to ${st.parallel ?? 1} at a time`)),
+      h('ul', { style: { margin: '8px 0 0', paddingLeft: 18, fontSize: 13 } }, ...recap.patterns.map((p, i) => h('li', { key: i, style: { margin: '4px 0' } }, p))),
+      stretch && !hidden && h('div', { style: { ...S.card, margin: '10px 0 0' } },
+        h('div', { style: S.kicker }, "THIS WEEK'S STRETCH"),
+        h('div', { style: S.head }, stretch.headline),
+        h('div', { style: S.why }, [stretch.why, stretch.check].filter(Boolean).join(' ')),
+        h('div', { style: S.row },
+          h('button', { type: 'button', style: S.primary, onClick: start }, (stretch.action && stretch.action.label) || 'Start'),
+          h('button', { type: 'button', style: S.btn, onClick: () => setHidden(true) }, 'Not this week'))),
+      recap.learned && h('div', { style: { ...S.note, fontSize: 12.5 } }, recap.learned));
+  }
+
   function CoachView() {
     return h('div', { style: { padding: '22px 26px 40px', maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 } },
       h('div', null,
         h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
         h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
-      h(Knows));
-  }
-
-  function CoachTab() {
-    return h('div', { style: { padding: 12, fontSize: 13, color: 'var(--color-text-secondary)' } }, 'The Coach has nothing for this thread yet.');
+      h(Recap),
+      h(Measures),
+      h(History),
+      h(Knows),
+      h(Cost));
   }
 
   function Settings() {
