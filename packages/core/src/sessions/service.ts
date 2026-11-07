@@ -46,7 +46,7 @@ import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinator
 import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
-import { codexEffortsFor } from '../providers/codex-efforts.js';
+import { codexEffortsFor, codexDefaultEffortFor } from '../providers/codex-efforts.js';
 import { parseSlash, resolveEffortArg, resolveModelArg, validateThreadSettings } from '../providers/slash-commands.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, readSessionSettings, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
@@ -79,6 +79,9 @@ interface StatusContext {
 const KICKSTART_SETTLE_MS = 4000;
 
 /** Build an Error carrying an HTTP `status` so a route can map it to a response code. */
+/** The request number that last wrote each saved model/effort (see SessionService.settingsWriter). */
+type SettingsSeqs = { model?: number; effort?: number };
+
 function transportError(status: number, message: string): Error & { status: number } {
   const e = new Error(message) as Error & { status: number };
   e.status = status;
@@ -2063,19 +2066,32 @@ export class SessionService {
   }
 
   /**
-   * What each running process last took, per thread: the values a refused change goes back to. Taken from
-   * the saved config the first time a live thread is changed, updated on every change the process accepts,
-   * and dropped when the process ends (the next start is built from the config, which then agrees).
+   * What each running process last took, per thread: the values a refused change goes back to. One object per
+   * process incarnation: taken from the saved config the first time a live thread is changed, updated on every
+   * change the process accepts, and dropped when the process ends (the next start is built from the config,
+   * which then agrees). An apply compares the object itself, not its values, to know the process is the same.
    */
   private readonly liveSettings = new Map<string, { model?: string; effort?: string }>();
   private readonly liveSettingsOff = new Map<string, () => void>();
   /** Picks made in the middle of a Claude turn, applied when it ends (latest wins). */
-  private readonly deferredSettings = new Map<string, { change: import('../structured/manager.js').ThreadSettingsChange; off: () => void }>();
-  /** The applies of one thread run one at a time, so a late refusal never undoes a newer change. */
-  private readonly settingsApply = new Map<string, Promise<unknown>>();
+  private readonly deferredSettings = new Map<string, { change: import('../structured/manager.js').ThreadSettingsChange; seqs: SettingsSeqs; off: () => void }>();
+  /** One thread's validate, save and apply run one at a time, so no change sees a half-done one. */
+  private readonly settingsLock = new Map<string, Promise<unknown>>();
+  /** Which request last wrote each saved setting: a refusal puts a value back only if its own request still holds it. */
+  private readonly settingsWriter = new Map<string, SettingsSeqs>();
+  private settingsSeq = 0;
   private onTerminalChanged?: (sessionId: string) => void;
   /** Runs when the daemon changes a thread's saved settings on its own (a refused pick rolled back); the server tells the web. */
   setTerminalChangedListener(listener: (sessionId: string) => void): void { this.onTerminalChanged = listener; }
+
+  private withSettingsLock<T>(terminalId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.settingsLock.get(terminalId) ?? Promise.resolve();
+    const next = prior.then(fn);
+    const tail = next.then(() => undefined, () => undefined);
+    this.settingsLock.set(terminalId, tail);
+    void tail.then(() => { if (this.settingsLock.get(terminalId) === tail) this.settingsLock.delete(terminalId); });
+    return next;
+  }
 
   /** The efforts each Codex model takes according to the running app-server, or null when none is running. */
   async codexModelEfforts(): Promise<Record<string, string[]> | null> {
@@ -2091,6 +2107,10 @@ export class SessionService {
     const e = config.effort;
     return typeof e === 'string' && this.codexEffortsFor(model ?? config.model).includes(e) ? e : undefined;
   }
+  /** The model Dispatch policy gives an overseer, agent or role thread when it has no model of its own. */
+  private tierModelOf(config: Record<string, any>): string | undefined {
+    return config.role || config.agentType ? modelFor({ role: config.role, agentType: config.agentType } as never) : undefined;
+  }
 
   /**
    * Change a Pretty thread's model and/or effort (slash menu picker, a typed /model). The choice is
@@ -2101,42 +2121,58 @@ export class SessionService {
    * pick simply applies at the next start); Codex takes it with its next turn. If the agent refuses, the
    * saved values go back to what the process runs, the thread shows a notice, and the web reloads.
    * Overseers may change too: an explicit `config.model` wins over the coordinator tier (modelFor).
+   * Everything for one thread runs under one lock, so concurrent changes are judged one after the other
+   * against the settings the earlier ones left.
    */
-  async setThreadSettings(
+  setThreadSettings(
     terminalId: string,
     change: import('../structured/manager.js').ThreadSettingsChange,
-  ): Promise<{ terminal: terminalsDb.Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string }> {
+  ): Promise<{ terminal: terminalsDb.Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string; effortNow?: string }> {
+    return this.withSettingsLock(terminalId, () => this.setThreadSettingsLocked(terminalId, change));
+  }
+
+  private async setThreadSettingsLocked(
+    terminalId: string,
+    change: import('../structured/manager.js').ThreadSettingsChange,
+  ): Promise<{ terminal: terminalsDb.Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string; effortNow?: string }> {
     const row = terminalsDb.getById(this.db, terminalId);
     if (!row) throw transportError(404, 'Thread not found');
-    let cur: Record<string, any> = {};
-    try { cur = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
     const manager = this.structuredManagerFor(row.type);
+    // Codex efforts depend on the model: ask the app-server first, then read the settings (the lock keeps them current).
+    if (row.type === 'codex') await manager?.loadModelEfforts?.().catch(() => null);
+    const fresh = terminalsDb.getById(this.db, terminalId) ?? row;
+    let cur: Record<string, any> = {};
+    try { cur = JSON.parse(fresh.config || '{}'); } catch { /* default {} */ }
 
-    // Codex efforts depend on the model: check against the model the thread will have after this change.
+    // Check against the model the thread will have after this change: a Codex thread with no saved model
+    // runs the one the app-server bound.
     let codexEfforts: readonly string[] | undefined;
     let codexModel: string | undefined;
     if (row.type === 'codex') {
-      await manager?.loadModelEfforts?.().catch(() => null);
-      codexModel = typeof change.model === 'string' ? change.model : typeof cur.model === 'string' ? cur.model : undefined;
+      codexModel = typeof change.model === 'string' ? change.model : typeof cur.model === 'string' ? cur.model : manager?.currentModel?.(terminalId);
       codexEfforts = this.codexEffortsFor(codexModel);
     }
     const bad = validateThreadSettings(row.type, change as { model?: string | null; effort?: string }, { codexEfforts, codexModel });
     if (bad) throw transportError(row.type === 'claude-code' || row.type === 'codex' ? 400 : 409, bad);
-    if (!this.isStructuredTerminal(row)) {
+    if (!this.isStructuredTerminal(fresh)) {
       throw transportError(409, 'Only a Pretty thread can change its model here. In the CLI, type /model in the terminal.');
     }
 
     // "Default" on an overseer, an agent or a role thread is its tier model, not the CLI's own default:
     // the spawn would put the tier back on the next start, so the live change must agree with it.
-    if (change.model === null && (cur.role || cur.agentType)) {
-      const tier = modelFor({ role: cur.role, agentType: cur.agentType } as never);
+    if (change.model === null) {
+      const tier = this.tierModelOf(cur);
       if (tier) change = { ...change, model: tier };
     }
-    // A Codex model switch drops a saved effort the new model does not take (it would break later turns).
+    // A Codex model switch that leaves the saved effort unsupported sends the new model's own default effort
+    // instead: a thread keeps the effort of its last turn when the model changes (live-checked on codex-cli 0.166),
+    // so leaving the field out would run the new model at the old, unsupported level.
     let clearedEffort: string | undefined;
+    let effortNow: string | undefined;
     if (row.type === 'codex' && change.model && change.effort === undefined && typeof cur.effort === 'string' && !codexEfforts!.includes(cur.effort)) {
       clearedEffort = cur.effort;
-      change = { ...change, effort: null };
+      effortNow = codexDefaultEffortFor(codexModel, manager?.modelDefaultEfforts?.() ?? null);
+      change = { ...change, effort: effortNow };
     }
 
     const alive = !!manager?.isAlive(terminalId) && !!manager.applySettings;
@@ -2146,9 +2182,11 @@ export class SessionService {
       manager!.on('exit', onExit);
       this.liveSettingsOff.set(terminalId, () => manager!.off('exit', onExit));
     }
-    this.saveSettings(terminalId, change);
-    const done = (applied: 'now' | 'after-turn' | 'next-start') =>
-      ({ terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!), applied, ...(clearedEffort ? { clearedEffort } : {}) });
+    const seqs = this.saveSettings(terminalId, change);
+    const done = (applied: 'now' | 'after-turn' | 'next-start') => ({
+      terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!), applied,
+      ...(clearedEffort ? { clearedEffort, effortNow } : {}),
+    });
 
     if (!alive) return done('next-start');
 
@@ -2157,8 +2195,9 @@ export class SessionService {
       const waiting = this.deferredSettings.get(terminalId);
       if (waiting) {
         waiting.change = { ...waiting.change, ...change };
+        waiting.seqs = { ...waiting.seqs, ...seqs };
       } else {
-        const entry = { change: { ...change }, off: () => {} };
+        const entry = { change: { ...change }, seqs: { ...seqs }, off: () => {} };
         const edges = ['idle', 'needs-help', 'scheduled', 'failed', 'exit'];
         const on = (edge: string) => (id: string) => {
           if (id !== terminalId) return;
@@ -2167,7 +2206,7 @@ export class SessionService {
           // The thread ended before the turn did (a restart, a CLI switch, a crash): the pick is saved and the
           // next start uses it. Nothing to apply, nothing to take back.
           if (edge === 'exit') return;
-          void this.applyAndReconcile(terminalId, manager!, entry.change);
+          void this.withSettingsLock(terminalId, () => this.applySaved(terminalId, manager!, entry.change, entry.seqs));
         };
         const offs = edges.map((e) => { const fn = on(e); manager!.on(e, fn); return () => manager!.off(e, fn); });
         entry.off = () => { for (const off of offs) off(); };
@@ -2176,97 +2215,114 @@ export class SessionService {
       return done('after-turn');
     }
 
-    const result = await this.applyAndReconcile(terminalId, manager!, change);
+    const result = await this.applySaved(terminalId, manager!, change, seqs);
     if (!result.ok) throw transportError(400, result.error);
-    return done('now');
+    return done(result.stopped ? 'next-start' : 'now');
   }
 
-  /** Write a model/effort change into a thread's config and pin it. A null effort drops the saved one. */
-  private saveSettings(terminalId: string, change: import('../structured/manager.js').ThreadSettingsChange): void {
+  /** Write a model/effort change into a thread's config and pin it. Returns the request number that now holds each key. */
+  private saveSettings(terminalId: string, change: import('../structured/manager.js').ThreadSettingsChange): SettingsSeqs {
     const fresh = terminalsDb.getById(this.db, terminalId);
     let merged: Record<string, any> = {};
     try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
     const pins: Record<string, boolean> = { ...(merged.settingsPinned ?? {}) };
+    const seq = ++this.settingsSeq;
+    const seqs: SettingsSeqs = {};
     if (change.model !== undefined) {
       if (change.model === null) delete merged.model; else merged.model = change.model;
       pins.model = true;
+      seqs.model = seq;
     }
     if (change.effort !== undefined) {
-      if (change.effort === null) delete merged.effort; else merged.effort = change.effort;
+      merged.effort = change.effort;
       pins.effort = true;
+      seqs.effort = seq;
     }
     merged.settingsPinned = pins;
     terminalsDb.updateConfig(this.db, terminalId, merged);
+    this.settingsWriter.set(terminalId, { ...this.settingsWriter.get(terminalId), ...seqs });
+    return seqs;
   }
 
   /**
-   * Apply a saved change to the live process, one at a time per thread. On success the process's known
-   * values move on. On a refusal the saved values go back to what the process runs (never to a value an
-   * earlier refusal rejected), the thread gets a notice, and the web reloads.
+   * Apply a saved change to the live process (the caller holds the thread's lock). On success the process's known
+   * values move on. A thread that ended before it answered is not a refusal: the pick stays saved and applies at the
+   * next start (`stopped`). On a refusal the saved values go back to what the process ran when the apply STARTED,
+   * the thread gets a notice, and the web reloads.
    */
-  private applyAndReconcile(
+  private async applySaved(
     terminalId: string,
     manager: import('../structured/manager.js').IStructuredManager,
     change: import('../structured/manager.js').ThreadSettingsChange,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const run = async (): Promise<{ ok: true } | { ok: false; error: string }> => {
-      if (!manager.isAlive(terminalId)) return { ok: true }; // gone meanwhile: the saved pick applies at the next start
-      const known = () => this.liveSettings.get(terminalId) ?? {};
-      const r: import('../structured/manager.js').ApplyResult = await manager.applySettings!(terminalId, change).catch((e): import('../structured/manager.js').ApplyResult => ({ ok: false, error: String(e?.message ?? e) }));
-      if (r.ok) {
-        const live = this.liveSettings.get(terminalId);
-        if (live) {
-          if (change.model !== undefined) live.model = change.model ?? undefined;
-          if (change.effort !== undefined) live.effort = change.effort ?? undefined;
-        }
-        return r;
+    seqs: SettingsSeqs,
+  ): Promise<{ ok: true; stopped?: true } | { ok: false; error: string }> {
+    type Res = import('../structured/manager.js').ApplyResult;
+    const inc = this.liveSettings.get(terminalId);
+    if (!inc || !manager.isAlive(terminalId)) return { ok: true, stopped: true };
+    const before = { ...inc }; // what the process runs now, copied before anything is asked of it
+    // The same process still? A restart in the middle (exit, then a new spawn) makes this a different incarnation.
+    const samePlace = () => this.liveSettings.get(terminalId) === inc && manager.isAlive(terminalId);
+    const r: Res = await manager.applySettings!(terminalId, change).catch((e): Res => ({ ok: false, error: String(e?.message ?? e) }));
+    if (r.ok) {
+      if (this.liveSettings.get(terminalId) === inc) {
+        if (change.model !== undefined) inc.model = change.model ?? undefined;
+        if (change.effort !== undefined) inc.effort = change.effort;
       }
-      console.warn(`[settings] ${terminalId}: ${r.error}`);
-      let error = r.error;
-      const keep: { model?: boolean } = {};
-      if (r.partial?.model && change.model !== undefined) {
-        // The model change went through before the effort was refused: put the old model back on the process.
-        const back = await manager.applySettings!(terminalId, { model: known().model ?? null }).catch((): { ok: false; error: string } => ({ ok: false, error: 'failed' }));
-        if (!back.ok) {
-          // It cannot go back: the process runs the new model, so the saved model follows it and the error says so.
-          keep.model = true;
-          const live = this.liveSettings.get(terminalId);
-          if (live) live.model = change.model ?? undefined;
-          error = `${r.error} The model did change to ${change.model ?? 'the default'}, but the effort did not.`;
-        }
+      return r;
+    }
+    // The thread stopped while it was being asked: nothing was refused, so nothing is taken back.
+    if (r.stopped || !samePlace()) return { ok: true, stopped: true };
+
+    console.warn(`[settings] ${terminalId}: ${r.error}`);
+    let error = r.error;
+    const keep: { model?: boolean } = {};
+    if (r.partial?.model && change.model !== undefined) {
+      // The model change went through before the effort was refused: put the old model back on the process
+      // (an overseer or tier thread goes back to its tier model, not to the CLI's default).
+      const tier = this.tierModelOf(this.configOf(terminalId));
+      const back: Res = await manager.applySettings!(terminalId, { model: before.model ?? tier ?? null }).catch((): Res => ({ ok: false, error: 'failed' }));
+      if (!back.ok) {
+        if (back.stopped || !samePlace()) return { ok: true, stopped: true };
+        // It cannot go back: the process runs the new model, so the saved model follows it and the error says so.
+        keep.model = true;
+        inc.model = change.model ?? undefined;
+        error = `${r.error} The model did change to ${change.model ?? 'the default'}, but the effort did not.`;
       }
-      this.restoreSettings(terminalId, change, keep);
-      const what = [change.model !== undefined && !keep.model ? 'model' : '', change.effort !== undefined ? 'effort' : ''].filter(Boolean).join(' and ');
-      try { manager.postNotice?.(terminalId, `Could not change the ${what || 'settings'}: ${error}`); } catch { /* a notice is best effort */ }
-      const sid = terminalsDb.getById(this.db, terminalId)?.session_id;
-      if (sid) this.onTerminalChanged?.(sid);
-      return { ok: false, error };
-    };
-    const prior = this.settingsApply.get(terminalId) ?? Promise.resolve();
-    const next = prior.then(run);
-    const tail = next.catch(() => undefined);
-    this.settingsApply.set(terminalId, tail);
-    void tail.then(() => { if (this.settingsApply.get(terminalId) === tail) this.settingsApply.delete(terminalId); });
-    return next;
+    }
+    this.restoreSettings(terminalId, change, seqs, before, keep);
+    const what = [change.model !== undefined && !keep.model ? 'model' : '', change.effort !== undefined ? 'effort' : ''].filter(Boolean).join(' and ');
+    try { manager.postNotice?.(terminalId, `Could not change the ${what || 'settings'}: ${error}`); } catch { /* a notice is best effort */ }
+    const sid = terminalsDb.getById(this.db, terminalId)?.session_id;
+    if (sid) this.onTerminalChanged?.(sid);
+    return { ok: false, error };
+  }
+
+  private configOf(terminalId: string): Record<string, any> {
+    try { return JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}'); } catch { return {}; }
   }
 
   /**
-   * A refused change: put the saved values back to what the process runs, but only where the config still
-   * holds the refused value. A newer pick has replaced it otherwise, and that one is judged on its own.
+   * A refused change: put the saved values back to what the process ran when the apply started, but only for a
+   * setting this very request still holds. A newer request has written it otherwise (it is judged on its own);
+   * comparing values would let an identical later pick be undone by an earlier refusal.
    */
-  private restoreSettings(terminalId: string, change: import('../structured/manager.js').ThreadSettingsChange, keep: { model?: boolean }): void {
+  private restoreSettings(
+    terminalId: string,
+    change: import('../structured/manager.js').ThreadSettingsChange,
+    seqs: SettingsSeqs,
+    before: { model?: string; effort?: string },
+    keep: { model?: boolean },
+  ): void {
     const fresh = terminalsDb.getById(this.db, terminalId);
     if (!fresh) return;
-    let cfg: Record<string, any> = {};
-    try { cfg = JSON.parse(fresh.config || '{}'); } catch { /* default {} */ }
-    const live = this.liveSettings.get(terminalId) ?? {};
-    const put = (key: 'model' | 'effort', ours: unknown) => {
-      const holds = ours === null || ours === undefined ? cfg[key] === undefined : cfg[key] === ours;
-      if (!holds) return;
-      if (live[key] === undefined) delete cfg[key]; else cfg[key] = live[key];
+    const cfg = this.configOf(terminalId);
+    const writer = this.settingsWriter.get(terminalId) ?? {};
+    const put = (key: 'model' | 'effort') => {
+      if (writer[key] !== seqs[key]) return;
+      if (before[key] === undefined) delete cfg[key]; else cfg[key] = before[key];
     };
-    if (change.model !== undefined && !keep.model) put('model', change.model);
-    if (change.effort !== undefined) put('effort', change.effort);
+    if (change.model !== undefined && !keep.model) put('model');
+    if (change.effort !== undefined) put('effort');
     try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
   }
 

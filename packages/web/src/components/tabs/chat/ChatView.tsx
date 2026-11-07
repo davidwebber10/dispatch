@@ -264,7 +264,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       if (name === 'stop') { await api.interrupt(terminalId); return; }
       if (name === 'cli') {
         if (!transport.canSwitch) throw new Error(transport.tip ?? 'This thread cannot switch to the CLI right now.');
-        transport.request('cli');
+        const why = await transport.request('cli');
+        if (why) { transport.clearError(); throw new Error(why); } // shown as the menu's own notice, and the text stays
         return;
       }
       if (name === 'restart') { await api.relaunchTerminal(terminalId); return; }
@@ -464,6 +465,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </div>
       </div>
       {transport.confirmUi}
+      {transport.error && (
+        <div role="alert" style={{ flexShrink: 0, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>Could not switch: {transport.error}</div>
+      )}
       <DocViewer owner={terminalId} />
     </div>
     </ThreadDocsContext.Provider>

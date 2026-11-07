@@ -150,14 +150,14 @@ rl.on('line', (l) => {
 
   it('fails when the session is gone, and while the CLI exits mid-request', async () => {
     const mgr = new ClaudeStructuredSessionManager();
-    expect(await mgr.applySettings('nope', { model: 'opus' })).toEqual({ ok: false, error: 'This thread is not running.' });
+    expect(await mgr.applySettings('nope', { model: 'opus' })).toEqual({ ok: false, error: 'This thread is not running.', stopped: true });
     const t = await boot();
     try {
       const p = t.mgr.applySettings('t1', { model: 'silent' }, 5000);
       await new Promise((r) => setTimeout(r, 100));
       t.mgr.kill('t1');
       const r = await p;
-      expect(r.ok).toBe(false);
+      expect(r).toEqual({ ok: false, error: 'The thread stopped before it answered.', stopped: true });
     } finally { t.done(); }
   });
 

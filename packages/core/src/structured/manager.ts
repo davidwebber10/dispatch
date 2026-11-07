@@ -95,7 +95,7 @@ interface Session {
   /** A usage limit this turn's frames reported (see limits/detect.ts), read at its `result`. */
   limit?: UsageLimit;
   /** Control requests of our own that wait for their reply, by request id (see applySettings). */
-  controlWaiters?: Map<string, (reply: { ok: true } | { ok: false; error: string }) => void>;
+  controlWaiters?: Map<string, (reply: ApplyResult) => void>;
 }
 
 /** How long applySettings waits for the CLI's reply to a control request. */
@@ -161,11 +161,18 @@ export interface StructuredSpawnOpts {
 /** A model and/or effort change for a live thread (see IStructuredManager.applySettings). */
 export interface ThreadSettingsChange {
   model?: string | null;
-  /** A level, or null to drop the picked one (Codex: the new model does not take it). Never sent by a client. */
-  effort?: string | null;
+  effort?: string;
 }
 /** `partial.model`: the model change went through before the effort was refused (the caller puts it back). */
-export type ApplyResult = { ok: true } | { ok: false; error: string; partial?: { model?: boolean } };
+export type ApplyResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      partial?: { model?: boolean };
+      /** The thread ended before it answered: nothing was refused, so nothing is rolled back (the pick applies at the next start). */
+      stopped?: true;
+    };
 
 /** A permission decision written back to a blocked structured session. */
 export type PermissionDecision =
@@ -246,6 +253,10 @@ export interface IStructuredManager extends EventEmitter {
   postNotice?(terminalId: string, message: string): void;
   /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
   modelEfforts?(): Record<string, string[]> | null;
+  /** Codex: the effort each model runs at by default (same source), or null if never asked. */
+  modelDefaultEfforts?(): Record<string, string> | null;
+  /** Codex: the model a live thread runs. */
+  currentModel?(terminalId: string): string | undefined;
   /** Codex: ask the app-server for them now (cached for a while). null when no app-server is running. */
   loadModelEfforts?(): Promise<Record<string, string[]> | null>;
   noteDeclaredStatus(terminalId: string, decl: StatusDeclaration): void;
@@ -735,13 +746,13 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     const waiters = s.controlWaiters;
     if (!waiters?.size) return;
     s.controlWaiters = undefined;
-    for (const w of waiters.values()) w({ ok: false, error: 'The thread stopped before it answered.' });
+    for (const w of waiters.values()) w({ ok: false, error: 'The thread stopped before it answered.', stopped: true });
   }
 
   /** Send one control request and wait for its reply (or the timeout). */
   private control(terminalId: string, request: Record<string, unknown>, timeoutMs: number): Promise<ApplyResult> {
     const s = this.sessions.get(terminalId);
-    if (!s || s.exitCode !== undefined || !s.child.stdin.writable) return Promise.resolve({ ok: false, error: 'This thread is not running.' });
+    if (!s || s.exitCode !== undefined || !s.child.stdin.writable) return Promise.resolve({ ok: false, error: 'This thread is not running.', stopped: true });
     const requestId = `ctl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     return new Promise<ApplyResult>((resolve) => {
       const timer = setTimeout(() => {

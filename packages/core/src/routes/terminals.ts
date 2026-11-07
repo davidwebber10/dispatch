@@ -400,9 +400,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       change.effort = effort;
     }
     try {
-      const { terminal, applied, clearedEffort } = await sessionService.setThreadSettings(req.params.terminalId, change);
+      const { terminal, applied, clearedEffort, effortNow } = await sessionService.setThreadSettings(req.params.terminalId, change);
       broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: terminal.sessionId });
-      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort } : {}) });
+      res.json({ terminal, applied, ...(clearedEffort ? { clearedEffort, effortNow } : {}) });
     } catch (e: any) {
       res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }

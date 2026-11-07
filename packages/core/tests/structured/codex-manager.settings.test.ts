@@ -62,19 +62,7 @@ it('applySettings keeps the values; the next turn/start carries them; an unset o
 });
 
 it('applySettings on a thread that is not running says so', async () => {
-  expect(await m.applySettings('nope', { model: 'gpt-6-luna' })).toEqual({ ok: false, error: 'This thread is not running.' });
-});
-
-it('an effort of null drops the picked effort: the next turn sends none', async () => {
-  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), effort: 'ultra', env: { CODEX_FAKE_LOG: logPath } });
-  await until(() => m.getEvents('t1').some((e: any) => e.type === 'system' && e.subtype === 'init'), 'init');
-  await m.applySettings('t1', { model: 'gpt-6-luna', effort: null });
-  const done = idle('t1');
-  m.sendMessage('t1', 'hello');
-  await done;
-  const turn = logged('turn/start')[0].params;
-  expect(turn.model).toBe('gpt-6-luna');
-  expect(turn).not.toHaveProperty('effort');
+  expect(await m.applySettings('nope', { model: 'gpt-6-luna' })).toEqual({ ok: false, error: 'This thread is not running.', stopped: true });
 });
 
 it('a start effort (the saved pick after a CLI switch or a restart) rides on the first turn', async () => {
@@ -86,13 +74,15 @@ it('a start effort (the saved pick after a CLI switch or a restart) rides on the
   expect(logged('turn/start')[0].params.effort).toBe('max');
 });
 
-it('loadModelEfforts reads each model\'s efforts from the app-server, and caches them', async () => {
+it('loadModelEfforts reads each model\'s efforts and default effort from the app-server, and caches them', async () => {
   m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { CODEX_FAKE_LOG: logPath } });
   await until(() => m.getEvents('t1').some((e: any) => e.type === 'system' && e.subtype === 'init'), 'init');
   expect(m.modelEfforts()).toBeNull();
   const map = await m.loadModelEfforts();
   expect(map?.['gpt-6-luna']).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
   expect(map?.['gpt-6-astra']).toContain('ultra');
+  expect(m.modelDefaultEfforts()).toEqual({ 'gpt-6-astra': 'medium', 'gpt-6-luna': 'low' });
+  expect(m.currentModel('t1')).toBeTruthy();
   await m.loadModelEfforts();
   expect(logged('model/list')).toHaveLength(1);
   expect(m.modelEfforts()).toEqual(map);

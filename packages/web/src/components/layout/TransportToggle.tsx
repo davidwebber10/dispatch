@@ -31,6 +31,8 @@ export function useTransportSwitch(terminalId: string | null | undefined, given?
   const threadStatus = useThreadStatus((s) => (terminalId ? s.byTerminal[terminalId]?.threadStatus : undefined));
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState<'cli' | 'pretty' | null>(null);
+  // Why the last switch did not go through (the daemon's own words), until the next try. Never swallowed.
+  const [error, setError] = useState<string | null>(null);
   const applies = !!terminalId && !!tab && (tab.type === 'claude-code' || tab.type === 'codex');
   const current: 'cli' | 'pretty' = (tab?.config as { transport?: string } | undefined)?.transport === 'structured' ? 'pretty' : 'cli';
   // A turn is in flight when the CLI is starting or actively working (this also covers a native
@@ -38,24 +40,30 @@ export function useTransportSwitch(terminalId: string | null | undefined, given?
   const midTurn = threadStatus === 'working' || threadStatus === 'starting';
   const canSwitch = applies && !!tab?.externalId && !busy;
   const tip = !tab?.externalId ? 'Send a message first to enable switching' : undefined;
-  async function switchTo(target: 'cli' | 'pretty', force = false) {
-    if (busy || !tab || target === current || !canSwitch) return;
+  /** Resolves with the reason when the switch did not go through, else null. */
+  async function switchTo(target: 'cli' | 'pretty', force = false): Promise<string | null> {
+    if (busy || !tab || target === current || !canSwitch) return null;
     setBusy(true);
+    setError(null);
     try {
       const transport = target === 'pretty' ? 'structured' : 'pty';
       await (force ? api.switchTransport(terminalId!, transport, { force: true }) : api.switchTransport(terminalId!, transport));
       await useTabs.getState().loadTabs(tab.sessionId);
-    } catch {
-      /* a 409 (no session) leaves the thread as-is; the control just re-enables */
+      return null;
+    } catch (e) {
+      // A 409 (no session, busy) leaves the thread as it was; the control re-enables and the reason is kept for the caller.
+      const why = e instanceof Error && e.message ? e.message : 'The thread could not be switched.';
+      setError(why);
+      return why;
     } finally {
       setBusy(false);
     }
   }
-  /** Switch, asking first when the thread is mid-turn. */
-  function request(target: 'cli' | 'pretty') {
-    if (!canSwitch || target === current) return;
-    if (midTurn) setAsking(target);
-    else void switchTo(target);
+  /** Switch, asking first when the thread is mid-turn. Resolves with the reason if an immediate switch failed. */
+  function request(target: 'cli' | 'pretty'): Promise<string | null> {
+    if (!canSwitch || target === current) return Promise.resolve(null);
+    if (midTurn) { setAsking(target); return Promise.resolve(null); }
+    return switchTo(target);
   }
   const name = (m: 'cli' | 'pretty') => (m === 'pretty' ? 'Pretty' : 'CLI');
   const confirmUi = (
@@ -69,7 +77,7 @@ export function useTransportSwitch(terminalId: string | null | undefined, given?
       onCancel={() => setAsking(null)}
     />
   );
-  return { applies, tab, current, canSwitch, busy, tip, midTurn, switchTo, request, confirmUi };
+  return { applies, tab, current, canSwitch, busy, tip, midTurn, switchTo, request, confirmUi, error, clearError: () => setError(null) };
 }
 
 export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {

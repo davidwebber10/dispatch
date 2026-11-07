@@ -19,8 +19,8 @@ export function useThreadSettings(terminalId: string): { harness: SlashHarness |
 
 /** Make the change and say when it takes hold. Throws the daemon's plain reason when it refuses. */
 export async function applyThreadSettings(terminalId: string, change: { model?: string | null; effort?: string }): Promise<string> {
-  const { applied, clearedEffort } = await api.setThreadSettings(terminalId, change);
-  const dropped = clearedEffort ? ` Effort ${clearedEffort} is not available on this model, so it was cleared.` : '';
+  const { applied, clearedEffort, effortNow } = await api.setThreadSettings(terminalId, change);
+  const dropped = clearedEffort ? ` Effort ${clearedEffort} is not available on this model, so it now runs at ${effortNow ?? 'the model\'s default'}.` : '';
   if (applied === 'after-turn') return `Saved. It applies when the current turn ends.${dropped}`;
   if (applied === 'next-start') return `Saved. It applies when the thread next starts.${dropped}`;
   return `Changed. Applies from the next turn.${dropped}`;

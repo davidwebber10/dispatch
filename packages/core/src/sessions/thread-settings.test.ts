@@ -90,3 +90,18 @@ describe('adoptTranscriptSettings — a saved pick wins over the transcript', ()
     expect(cfg).toMatchObject({ model: 'fable', effort: 'low' });
   });
 });
+
+// Live check (2026-11-06, Claude Code 2.1.316): after set_model('opus') or ('sonnet') the transcript's requestedModel is
+// the plain 'claude-opus-5-5' / 'claude-sonnet-5-5', with no [1m] suffix, so the family pattern matches and the pin lets go.
+describe('adoptTranscriptSettings — what Claude writes after set_model (round 2, item 8)', () => {
+  it.each([['opus', 'claude-opus-5-5'], ['sonnet', 'claude-sonnet-5-5'], ['fable', 'claude-fable-5-1'], ['haiku', 'claude-haiku-5-5']])('releases the pin on a picked %s', (alias, seen) => {
+    const cfg: Record<string, any> = { model: alias, settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: seen })).toBe(true);
+    expect(cfg).toEqual({ model: alias });
+  });
+  it('a pick of a full 1M id matches itself exactly, so that pin lets go too', () => {
+    const cfg: Record<string, any> = { model: 'claude-opus-5-5[1m]', settingsPinned: { model: true } };
+    expect(adoptTranscriptSettings(cfg, { model: 'claude-opus-5-5[1m]' })).toBe(true);
+    expect(cfg.settingsPinned).toBeUndefined();
+  });
+});

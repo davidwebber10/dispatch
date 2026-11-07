@@ -18,3 +18,18 @@ export function codexEffortsFor(model: string | null | undefined, live?: Record<
   if (l?.length) return l;
   return WITH_ULTRA.has(model) ? CODEX_ALL_EFFORTS : CODEX_COMMON_EFFORTS;
 }
+
+// What a model runs at when no effort is sent (its `defaultReasoningEffort` in `model/list`, live-checked
+// 2026-11-06). Needed because a thread keeps the effort of its last turn when the model changes (checked on
+// codex-cli 0.166: astra at ultra, then Luna with no effort, ran at ultra), so a switch that drops the old
+// effort must send the new model's own.
+const DEFAULTS: Record<string, string> = {
+  'gpt-6.1-sol': 'low', 'gpt-6-astra': 'medium', 'gpt-6.1-terra': 'low', 'gpt-6-sol': 'medium',
+  'gpt-6-luna': 'medium', 'gpt-5.6-sol': 'low', 'gpt-5.6-terra': 'medium', 'gpt-5.6-luna': 'medium',
+};
+
+/** The effort `model` runs at by default: the app-server's own answer, else the table, else medium (every model takes it). */
+export function codexDefaultEffortFor(model: string | null | undefined, live?: Record<string, string> | null): string {
+  if (model && live?.[model]) return live[model];
+  return (model && DEFAULTS[model]) || 'medium';
+}

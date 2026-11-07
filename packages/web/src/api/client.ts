@@ -213,7 +213,7 @@ export const api = {
   // live agent. `applied`: 'now', 'after-turn' (Claude waits for a turn in flight) or 'next-start'.
   // model: null resets a Claude thread to its default. 400 bad value, 409 Grok/OpenCode or a CLI thread.
   setThreadSettings: (terminalId: string, change: { model?: string | null; effort?: string }) =>
-    req<{ terminal: Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string }>(`/api/terminals/${terminalId}/settings`, { method: 'PATCH', body: body(change) }),
+    req<{ terminal: Terminal; applied: 'now' | 'after-turn' | 'next-start'; clearedEffort?: string; effortNow?: string }>(`/api/terminals/${terminalId}/settings`, { method: 'PATCH', body: body(change) }),
   // The efforts each Codex model takes, as the running app-server reports them; live is null when none runs.
   codexModelEfforts: () => req<{ live: Record<string, string[]> | null }>('/api/codex/model-efforts'),
   // Trigger native Claude Code compaction on the thread's current context.

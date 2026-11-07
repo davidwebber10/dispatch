@@ -166,6 +166,34 @@ describe('/cli asks first when the thread is working (item 8)', () => {
   });
 });
 
+describe('a failed /cli says why (round 2, item 7)', () => {
+  it('an immediate switch the daemon refuses shows its reason and keeps /cli in the box', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: 'e1' }] } } as never);
+    vi.spyOn(api, 'switchTransport').mockRejectedValue(new Error('This thread is busy. Wait for the current turn to finish, then switch.'));
+    await typeAndEnter('/cli');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('This thread is busy'));
+    expect((await box()).value).toBe('/cli');
+  });
+
+  it('a switch refused after the confirmation shows its reason in the thread', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: 'e1' }] } } as never);
+    useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'working' } } });
+    vi.spyOn(api, 'switchTransport').mockRejectedValue(new Error('No session to resume yet'));
+    await typeAndEnter('/cli');
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and switch' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not switch: No session to resume yet'));
+  });
+
+  it('a switch that works shows nothing', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code'), externalId: 'e1' }] } } as never);
+    vi.spyOn(api, 'switchTransport').mockResolvedValue(thread('claude-code'));
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+    await typeAndEnter('/cli');
+    await waitFor(() => expect(api.switchTransport).toHaveBeenCalled());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
 describe('a bad value keeps the typed text (item 7)', () => {
   it('/model banana is refused with a reason and stays in the box', async () => {
     await typeAndEnter('/model banana');
@@ -234,11 +262,11 @@ describe('Codex efforts follow the model (item 9)', () => {
 
   it('a model switch that dropped the effort says so', async () => {
     useTabs.setState({ byProject: { s1: [thread('codex', { model: 'gpt-6-astra', effort: 'ultra' })] } } as never);
-    settings.mockResolvedValue({ terminal: thread('codex'), applied: 'now', clearedEffort: 'ultra' });
+    settings.mockResolvedValue({ terminal: thread('codex'), applied: 'now', clearedEffort: 'ultra', effortNow: 'medium' });
     render(<ChatView terminalId="t1" />);
     fireEvent.click(await screen.findByRole('button', { name: /Astra/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Luna/ }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Effort ultra is not available on this model, so it was cleared.'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Effort ultra is not available on this model, so it now runs at medium.'));
   });
 
   it('an older daemon with no list falls back to the built-in table', async () => {

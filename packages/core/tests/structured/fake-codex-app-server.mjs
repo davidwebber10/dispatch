@@ -269,8 +269,8 @@ rl.on('line', (line) => {
     logRequest('model/list', msg.params);
     const eff = (list) => list.map((reasoningEffort) => ({ reasoningEffort, description: '' }));
     respond(msg.id, { data: [
-      { model: 'gpt-6-astra', id: 'gpt-6-astra', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) },
-      { model: 'gpt-6-luna', id: 'gpt-6-luna', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max']) },
+      { model: 'gpt-6-astra', id: 'gpt-6-astra', defaultReasoningEffort: 'medium', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) },
+      { model: 'gpt-6-luna', id: 'gpt-6-luna', defaultReasoningEffort: 'low', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max']) },
     ], nextCursor: null });
     return;
   }
