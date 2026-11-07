@@ -148,6 +148,18 @@ For a plugin's processes (or `d.fetch`):
 The owner (the browser) reaches everything. A plugin key reaches its own plugin only. A thread
 key reaches a plugin's documents only with the grants above.
 
+### Export and import
+
+In Settings → Plugins, a plugin row's ⋯ menu has **Export data** and **Import data…**. The
+Remove dialog has a **Download data and settings** button too. An export is one JSON file,
+`<id>-data-<YYYY-MM-DD>.json`, with the plugin's documents, settings and file references. A file
+reference holds the path in its project, not the bytes. An import asks for a mode: **Merge**
+(the default) overwrites the same keys and keeps the others; **Replace** deletes the plugin's
+data and settings first. An import that would go over the storage limits (2,000 documents,
+256 KB each) writes nothing. The routes are owner only: `GET /api/plugins/<id>/export` and
+`POST /api/plugins/<id>/import?mode=merge|replace` (add `&force=1` to import a file exported from
+another plugin id). Both work after a Remove that kept the data.
+
 ## Instructions and tools for the model
 
 The `model` block of the manifest reaches every thread (all harnesses, or the ones in
