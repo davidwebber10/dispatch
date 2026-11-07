@@ -105,6 +105,18 @@ describe('plugin composer actions (2026-11-07)', () => {
     expect(onChange).toHaveBeenCalledWith('fresh text');
   });
 
+  it('a composer.before slot renders above the actions row with the composer context', () => {
+    usePluginRegistry.getState().register('tpl', {
+      slots: [{ id: 'form', slot: 'composer.before', Component: ({ surface, value }: Record<string, unknown>) => <div data-testid="tpl">template for {String(surface)}: {String(value)}</div> }],
+      composerActions: [{ id: 'a', label: 'Go', onClick: () => {} }],
+    });
+    render(<PillComposer {...base} value="draft" dictation={dictation()} pluginContext={{ surface: 'chat' }} />);
+    const slot = screen.getByTestId('tpl');
+    expect(slot).toHaveTextContent('template for chat: draft');
+    expect(slot.compareDocumentPosition(screen.getByTestId('composer-plugin-actions')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    usePluginRegistry.getState().unregister('tpl');
+  });
+
   it('insert into an empty composer adds no leading space; `when` hides an action; the row is absent with no actions', () => {
     const onChange = vi.fn();
     usePluginRegistry.getState().register('fav', { composerActions: [

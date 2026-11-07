@@ -3,6 +3,7 @@ import { usePluginRegistry } from './registry';
 import { loadPlugins, reloadPlugin, applyPluginEvent, isSafeMode } from './host';
 import { installSdk, type DispatchSdk } from './sdk';
 import type { PluginRow } from '../api/types';
+import { useUI } from '../stores/ui';
 
 const row = (id: string, extra: Partial<PluginRow> = {}): PluginRow => ({ id, name: id, version: '1.0.0', web: 'web.js', enabled: true, stamp: 100, install: null, ...extra });
 
@@ -119,6 +120,35 @@ describe('plugin host (2026-11-07)', () => {
     expect(usePluginRegistry.getState().views).toHaveLength(2);
     await reloadPlugin(row('a', { stamp: 101 }), importer);
     expect(usePluginRegistry.getState().views.map((v) => v.id)).toEqual(['v1']);
+  });
+
+  it("a bundle that registers under another plugin's id is refused: nothing registers and the status names both ids", async () => {
+    vi.stubGlobal('fetch', fakeFetch([row('my-rundown')]));
+    const importer = async () => ({ default: (d: DispatchSdk) => d.register('daily-rundown', { views: [{ id: 'v', label: 'V', Component: () => null }] }) });
+    await loadPlugins(importer);
+    const s = usePluginRegistry.getState();
+    expect(s.views).toEqual([]);
+    expect(s.status['my-rundown']).toMatchObject({ state: 'error' });
+    expect(s.status['my-rundown'].error).toMatch(/registered as "daily-rundown".*plugin\.json says "my-rundown"/);
+  });
+
+  it("a bundle's unregister reaches only its own plugin", async () => {
+    vi.stubGlobal('fetch', fakeFetch([row('a'), row('b')]));
+    const importer = async (url: string) => (url.includes('/a/')
+      ? { default: (d: DispatchSdk) => d.register('a', { views: [{ id: 'v', label: 'A', Component: () => null }] }) }
+      : { default: (d: DispatchSdk) => { d.register('b', { views: [{ id: 'v', label: 'B', Component: () => null }] }); d.unregister('a'); } });
+    await loadPlugins(importer);
+    expect(usePluginRegistry.getState().views.map((v) => v.plugin).sort()).toEqual(['a', 'b']);
+  });
+
+  it('a saved view for a plugin that is not loaded falls back to the workspace once loading is done', async () => {
+    useUI.setState({ view: 'plugin:gone:v' });
+    vi.stubGlobal('fetch', fakeFetch([row('a')]));
+    await loadPlugins(async () => ({ default: (d: DispatchSdk) => d.register('a', { views: [{ id: 'v', label: 'A', Component: () => null }] }) }));
+    expect(useUI.getState().view).toBe('workspace');
+    useUI.setState({ view: 'plugin:a:v' });
+    await loadPlugins(async () => ({ default: (d: DispatchSdk) => d.register('a', { views: [{ id: 'v', label: 'A', Component: () => null }] }) }));
+    expect(useUI.getState().view).toBe('plugin:a:v');
   });
 
   it('installSdk puts one object on window.dispatch and keeps it across calls', () => {

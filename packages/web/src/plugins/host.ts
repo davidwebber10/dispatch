@@ -1,7 +1,8 @@
 import { apiPath } from '../lib/basePath';
 import type { ServerEvent } from '../api/events-socket';
 import type { PluginRow } from '../api/types';
-import { usePluginRegistry } from './registry';
+import { usePluginRegistry, isPluginView, pluginView } from './registry';
+import { useUI } from '../stores/ui';
 import { installSdk, type DispatchSdk } from './sdk';
 
 /**
@@ -38,6 +39,11 @@ export async function loadPlugins(importer: Importer = defaultImporter): Promise
   } catch { return; }
   usePluginRegistry.getState().setManifests(rows);
   await Promise.all(rows.map((m) => reloadPlugin(m, importer)));
+  // A view saved for a plugin that did not load (disabled, broken, removed) would show a bare
+  // line on every launch: the workspace is the safe landing. Only once the loads are done, so a
+  // slow plugin keeps its saved view.
+  const view = useUI.getState().view;
+  if (isPluginView(view) && !pluginView(view)) useUI.getState().setView('workspace');
 }
 
 /** Load (or load again) one plugin from its row. Never throws: a failure becomes the plugin's status. */
@@ -49,7 +55,17 @@ export async function reloadPlugin(m: PluginRow, importer: Importer = defaultImp
   if (!m.enabled) { reg.setStatus(m.id, { state: 'error', error: 'disabled', version: m.version, at }); return; }
   if (!m.web) { reg.setStatus(m.id, { state: 'ready', version: m.version, at }); return; }
   reg.setStatus(m.id, { state: 'loading', version: m.version, at });
-  const sdk = installSdk();
+  // The bundle's `register` is bound to its own id: a copied plugin that still says the old id
+  // cannot register under another plugin (spec section 14), nor unregister one.
+  const base = installSdk();
+  const sdk: DispatchSdk = {
+    ...base,
+    register: (id, c) => {
+      if (id !== m.id) throw new Error(`The bundle registered as "${id}" but plugin.json says "${m.id}". A plugin registers under its own id.`);
+      base.register(id, c);
+    },
+    unregister: (id) => { if (id === m.id) base.unregister(id); else console.warn(`[plugin ${m.id}] tried to unregister "${id}"; ignored`); },
+  };
   const url = `${apiPath(`/plugins/${encodeURIComponent(m.id)}/${m.web}`)}?v=${m.stamp}`;
   try {
     const mod = (await importer(url)) as { default?: (sdk: DispatchSdk) => unknown } | null;

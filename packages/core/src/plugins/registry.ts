@@ -27,12 +27,33 @@ export interface PluginRow extends Partial<PluginManifest> {
 }
 
 const DEBOUNCE_MS = 150;
+const STAMP_MAX_DEPTH = 4;
+const SKIP_DIRS = new Set(['node_modules', '.git']);
+
+/** The newest mtime of any file in the folder (a few levels deep): a change to any file the bundle imports changes the stamp. */
+function newestMtime(folder: string, depth = 0): number {
+  let max = 0;
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(folder, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+    const full = path.join(folder, e.name);
+    try {
+      const st = fs.statSync(full);
+      if (st.isDirectory()) { if (depth < STAMP_MAX_DEPTH) max = Math.max(max, newestMtime(full, depth + 1)); }
+      else max = Math.max(max, st.mtimeMs);
+    } catch { /* a vanished entry: skip */ }
+  }
+  return max;
+}
 const INSTALL_FILE = '.dispatch-install.json';
 
 interface StateFile { disabled: string[] }
 
 export class PluginRegistry {
   private watcher: fs.FSWatcher | null = null;
+  /** One more watcher per symlinked plugin folder: the top-level watcher does not follow links. */
+  private linkWatchers = new Map<string, fs.FSWatcher>();
   private timers = new Map<string, NodeJS.Timeout>();
 
   constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string) {}
@@ -81,7 +102,7 @@ export class PluginRegistry {
     const mtime = (p: string): number => { try { return fs.statSync(p).mtimeMs; } catch { return 0; } };
     if (!parsed.ok) return this.broken(id, Math.max(folderStat.mtimeMs, mtime(manifestFile)), parsed.error);
     const m = parsed.manifest;
-    const stamp = Math.round(Math.max(folderStat.mtimeMs, mtime(manifestFile), m.web ? mtime(path.join(folder, m.web)) : 0));
+    const stamp = Math.round(Math.max(folderStat.mtimeMs, mtime(manifestFile), m.web ? mtime(path.join(folder, m.web)) : 0, newestMtime(folder)));
     if (!satisfiesDispatch(m.dispatch, this.runningVersion)) {
       return this.broken(id, stamp, `needs Dispatch ${m.dispatch}; this is ${this.runningVersion}`);
     }
@@ -164,18 +185,58 @@ export class PluginRegistry {
       this.watcher = fs.watch(this.dir, { recursive: true }, (_event, filename) => {
         const id = typeof filename === 'string' ? filename.split(path.sep)[0] : null;
         if (!id || !PLUGIN_ID_RE.test(id)) return;
-        const pending = this.timers.get(id);
-        if (pending) clearTimeout(pending);
-        this.timers.set(id, setTimeout(() => { this.timers.delete(id); this.announce(id); }, DEBOUNCE_MS));
+        // An entry added or removed at the top level may be a link: keep the link watchers current.
+        if (typeof filename === 'string' && !filename.includes(path.sep)) this.watchLinks();
+        this.schedule(id);
       });
       (this.watcher as unknown as NodeJS.EventEmitter).on('error', (e: Error) => console.warn(`[plugins] watcher error: ${e.message}`));
+      for (const row of this.list()) this.known.add(row.id);
+      this.watchLinks();
     } catch (e) {
       console.warn(`[plugins] could not watch ${this.dir}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
+  /** Ids seen as folders, so a removal still announces while the folder's own-name event (FSEvents reports the watched dir as "plugins") does not. */
+  private known = new Set<string>();
+
+  private schedule(id: string): void {
+    let exists = false;
+    try { exists = fs.statSync(path.join(this.dir, id)).isDirectory(); } catch { /* gone or never there */ }
+    if (exists) this.known.add(id);
+    else if (this.known.has(id)) this.known.delete(id);
+    else return;
+    const pending = this.timers.get(id);
+    if (pending) clearTimeout(pending);
+    this.timers.set(id, setTimeout(() => { this.timers.delete(id); this.announce(id); }, DEBOUNCE_MS));
+  }
+
+  /** A watcher on the real folder of every symlinked plugin, so an edit to the target announces it too. */
+  private watchLinks(): void {
+    let names: string[] = [];
+    try { names = fs.readdirSync(this.dir).filter((n) => PLUGIN_ID_RE.test(n)); } catch { return; }
+    const linked = new Map<string, string>();
+    for (const id of names) {
+      try {
+        const full = path.join(this.dir, id);
+        if (fs.lstatSync(full).isSymbolicLink()) linked.set(id, fs.realpathSync(full));
+      } catch { /* a broken link: nothing to watch */ }
+    }
+    for (const [id, w] of this.linkWatchers) if (!linked.has(id)) { w.close(); this.linkWatchers.delete(id); }
+    for (const [id, real] of linked) {
+      if (this.linkWatchers.has(id)) continue;
+      try {
+        const w = fs.watch(real, { recursive: true }, () => this.schedule(id));
+        (w as unknown as NodeJS.EventEmitter).on('error', () => { w.close(); this.linkWatchers.delete(id); });
+        this.linkWatchers.set(id, w);
+      } catch { /* the target vanished: the next top-level change retries */ }
+    }
+  }
+
   stop(): void {
     this.watcher?.close(); this.watcher = null;
+    for (const w of this.linkWatchers.values()) w.close();
+    this.linkWatchers.clear();
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
   }

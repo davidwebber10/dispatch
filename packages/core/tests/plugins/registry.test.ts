@@ -125,6 +125,36 @@ describe('PluginRegistry', () => {
     expect(() => r.remove('nope')).toThrow('unknown plugin');
   });
 
+  it('the stamp follows every file in the folder, not only plugin.json and the bundle', async () => {
+    plugin('p', {});
+    fs.mkdirSync(path.join(dir, 'p', 'lib'));
+    fs.writeFileSync(path.join(dir, 'p', 'lib', 'util.js'), 'export const a = 1;');
+    const before = reg().get('p')!.stamp;
+    await sleep(20);
+    const later = new Date(Date.now() + 5000);
+    fs.utimesSync(path.join(dir, 'p', 'lib', 'util.js'), later, later);
+    expect(reg().get('p')!.stamp).toBeGreaterThan(before);
+  });
+
+  it('start() watches a symlinked plugin folder too: an edit to its target announces the plugin', async () => {
+    const real = path.join(tmp, 'elsewhere', 'linked');
+    fs.mkdirSync(real, { recursive: true });
+    fs.writeFileSync(path.join(real, 'plugin.json'), JSON.stringify({ id: 'linked', name: 'L', version: '1', web: 'web.js' }));
+    fs.writeFileSync(path.join(real, 'web.js'), 'export default () => 1');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.symlinkSync(real, path.join(dir, 'linked'));
+    const r = reg();
+    r.start();
+    try {
+      await sleep(50);
+      fs.writeFileSync(path.join(real, 'web.js'), 'export default () => 2');
+      await sleep(400);
+      const changes = events.filter((e) => e.type === 'plugin:changed');
+      expect(changes.length).toBeGreaterThanOrEqual(1);
+      expect(changes[0]).toMatchObject({ id: 'linked', plugin: expect.objectContaining({ id: 'linked' }) });
+    } finally { r.stop(); }
+  });
+
   it('announce broadcasts plugin:changed with the row', () => {
     plugin('p', {});
     reg().announce('p');

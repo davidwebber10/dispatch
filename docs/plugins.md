@@ -65,7 +65,7 @@ export default function activate(d) {
     settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back it looks', icon: 'sun', Component: Settings }],
     threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick: ({ tab }) => { storage.set('daily-rundown', 'pinned', tab.id); hint('Pinned'); } }],
     composerActions: [{ id: 'sum', label: 'Summarise', onClick: (ctx) => ctx.insert('Summarise where you are.') }],
-    slots: [{ id: 'badge', slot: 'thread.header.actions', Component: Badge }],
+    slots: [{ id: 'form', slot: 'composer.before', Component: TemplatePicker }],
   });
 }
 ```
@@ -78,8 +78,8 @@ What `register` takes:
 | `settings` | Settings, under PLUGINS, on desktop and phone | `{ id, label, blurb?, icon?, Component }` |
 | `threadMenu` | the thread ⋯ menu, after Copy thread ID | `{ id, label, when?({ tab }), onPick({ tab }) }` |
 | `projectMenu` | the phone's project ⋯ menu, after Previews | `{ id, label, when?({ session }), onPick({ session }) }` |
-| `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text), send?(text) }` |
-| `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }` |
+| `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text) }` |
+| `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; in this slice the one mounted slot is `composer.before` (above the composer, with the composer context as props); the others in the design arrive with later slices |
 
 `surface` is `'thread'` (a Pretty thread), `'terminal'` (a CLI thread's phone composer),
 `'chat'` (the Control Plane chat) or `'unknown'`.
@@ -113,6 +113,9 @@ A selector that returns a new array on every call loops React. Use `useContribut
 
 - Save any file in the folder: the daemon tells the app, which re-imports the bundle and
   re-registers the plugin. Other plugins and the rest of the app keep their state.
+- Hot reload watches the plugin folder, and the real folder behind a symlinked one. On Linux it
+  needs Node 20 or newer (recursive watching); without it the Reload button on the Plugins page
+  does the same by hand.
 - A plugin that throws shows a red card with its name where its content would be; the rest of
   the screen stays. Settings → Plugins shows the error, and can disable the plugin.
 - `?safe` on the app's address, or Settings → Plugins → Safe mode, loads no plugin.

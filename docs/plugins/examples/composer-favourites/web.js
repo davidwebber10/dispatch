@@ -1,5 +1,5 @@
 // Composer favourites — a spike plugin: a row of your own buttons under every composer, edited
-// in Settings. Shows a plugin changing an existing screen (the composer) through a slot.
+// in Settings. Shows a plugin changing an existing screen (the composer) through its actions row.
 export default function activate(d) {
   const { h, hooks: { useState }, ui, storage } = d;
   const PLUGIN = 'composer-favourites';

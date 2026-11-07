@@ -47,7 +47,7 @@ What you can register from \`web.js\`:
 - \`settings\`: sections under Settings → PLUGINS.
 - \`threadMenu\` and \`projectMenu\`: items in those menus.
 - \`composerActions\`: buttons under the composer.
-- \`slots\`: content in a named place of an existing screen.
+- \`slots\`: content in a named place of an existing screen (\`composer.before\` for now).
 
 Edit and save: the app reloads the plugin at once. Settings → Plugins shows its state and
 any error. Add \`?safe\` to the app URL to load no plugins.

@@ -27,8 +27,6 @@ export interface ComposerCtx {
   insert: (text: string) => void;
   /** Replace what is typed. */
   set: (text: string) => void;
-  /** Send text through the composer's own path, when the composer offers it. */
-  send?: (text: string) => void;
 }
 export interface PluginComposerAction { plugin: string; id: string; label: string; icon?: string; when?: (ctx: ComposerCtx) => boolean; onClick: (ctx: ComposerCtx) => void }
 export interface PluginSlotContent { plugin: string; id: string; slot: string; priority?: number; Component: ComponentType<Record<string, unknown>> }

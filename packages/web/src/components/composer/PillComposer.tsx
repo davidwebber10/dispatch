@@ -1,4 +1,5 @@
 import { useContributions, type ComposerCtx } from '../../plugins/registry';
+import { Slot } from '../../plugins/PluginView';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
 import { ArrowUp, Microphone, Stop } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
@@ -33,8 +34,6 @@ export interface PillComposerProps {
   menuExtra?: (close: () => void) => ReactNode;
   /** Which composer this is, for plugin composer actions (docs/superpowers/specs/2026-11-07-plugins-design.md). */
   pluginContext?: { surface: ComposerCtx['surface']; terminalId?: string; sessionId?: string };
-  /** Send text through the composer's own path; plugin actions get `send` only when this is given. */
-  onSendText?: (text: string) => void;
   dictation: Dictation;
   /** False shows the mic greyed out, pointing at Settings → Dictation. */
   sttConfigured: boolean;
@@ -52,7 +51,7 @@ export interface PillComposerProps {
 const MAX_FRACTION = 0.5;
 
 export function PillComposer({
-  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, pluginContext, onSendText,
+  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
@@ -129,12 +128,13 @@ export function PillComposer({
     surface: pluginContext?.surface ?? 'unknown', terminalId: pluginContext?.terminalId, sessionId: pluginContext?.sessionId, value,
     insert: (t) => onChange(value ? `${value}${/\s$/.test(value) ? '' : ' '}${t}` : t),
     set: (t) => onChange(t),
-    send: onSendText,
   };
   const shownActions = pluginActions.filter((a) => !a.when || a.when(composerCtx));
 
   return (
     <>
+    {/* The one slot this slice mounts: a form or a note above the composer (a template picker). */}
+    <Slot name="composer.before" {...composerCtx} />
     {shownActions.length > 0 && (
       <div data-testid="composer-plugin-actions" style={{ display: 'flex', gap: 6, padding: '0 2px 6px', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {shownActions.map((a) => (
