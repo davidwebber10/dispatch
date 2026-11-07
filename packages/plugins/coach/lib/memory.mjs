@@ -4,7 +4,9 @@
 //
 // Shape: { facts: { id, text, source, at, confirmedAt }[], known: type[], levelAdjust: { measure: n },
 //          muted: { type, until, reason, at, reviewedAt? }[], weights: { type: n }, bad: { type, situation, at }[],
-//          dates: { 'known:<type>' | 'level:<measure>': at } }
+//          dates: { 'known:<type>' | 'level:<measure>' | 'goals:asked': at },
+//          goals: { id, text, measures, detectors, source: 'user' | 'suggested', addedAt, status: 'active' | 'done' }[] }
+// (goals: lib/goals.mjs, coach spec section 4.6)
 // Facts never hold prompt content: only what the person typed as a reason, after they confirm it.
 
 export const REASONS = Object.freeze({
@@ -30,7 +32,7 @@ const iso = (now) => (now instanceof Date ? now : new Date(now)).toISOString();
 const toMs = (now) => (now instanceof Date ? now.getTime() : typeof now === 'string' ? Date.parse(now) : Number(now));
 
 export function emptyMemory() {
-  return { facts: [], known: [], levelAdjust: {}, muted: [], weights: {}, bad: [], dates: {} };
+  return { facts: [], known: [], levelAdjust: {}, muted: [], weights: {}, bad: [], dates: {}, goals: [] };
 }
 
 /** The saved document with every list present (an older or partial document stays usable). */
@@ -43,6 +45,7 @@ export function normalizeMemory(m) {
     muted: Array.isArray(m.muted) ? m.muted : e.muted, weights: m.weights && typeof m.weights === 'object' ? m.weights : e.weights,
     bad: Array.isArray(m.bad) ? m.bad : e.bad,
     dates: m.dates && typeof m.dates === 'object' ? m.dates : e.dates,
+    goals: Array.isArray(m.goals) ? m.goals : e.goals,
   };
 }
 
@@ -113,6 +116,7 @@ export function editFact(memory, id, text, now = new Date()) {
 export function removeItem(memory, kind, key) {
   const m = normalizeMemory(memory);
   if (kind === 'fact') return { ...m, facts: m.facts.filter((f) => f.id !== key) };
+  if (kind === 'goal') return { ...m, goals: m.goals.filter((g) => g.id !== key) };
   const dates = { ...m.dates }; delete dates[`${kind}:${key}`];
   if (kind === 'known') return { ...m, known: m.known.filter((k) => k !== key), dates };
   if (kind === 'level') { const levelAdjust = { ...m.levelAdjust }; delete levelAdjust[key]; return { ...m, levelAdjust, dates }; }
@@ -171,6 +175,7 @@ export function memoryItems(memory) {
   for (const f of m.facts) out.push({ kind: 'fact', key: f.id, label: f.text, source: f.source || 'Your feedback', at: f.confirmedAt || f.at });
   for (const k of m.known) out.push({ kind: 'known', key: k, label: `You already do this: ${typeLabel(k)}`, source: 'You said "I already do this"', at: m.dates[`known:${k}`] || '' });
   for (const [measure, n] of Object.entries(m.levelAdjust)) if (n) out.push({ kind: 'level', key: measure, label: `Tips on ${MEASURE_WORD[measure] || measure}: ${n > 0 ? 'aim higher' : 'start simpler'} (${n > 0 ? '+' : ''}${n})`, source: n > 0 ? 'You said "Too basic"' : 'You said "Too advanced"', at: m.dates[`level:${measure}`] || '' });
+  for (const g of m.goals) out.push({ kind: 'goal', key: g.id, label: `Goal: ${g.text}${g.status === 'done' ? ' (done)' : ''}`, source: g.source === 'suggested' ? 'Suggested by the Coach' : 'You set this goal', at: g.addedAt });
   for (const x of m.muted) out.push({ kind: 'muted', key: x.type, label: `Off: ${typeLabel(x.type)}`, source: x.reason === 'not-relevant' ? 'You said "Not relevant to my work"' : 'You turned this type off', at: x.at });
   return out;
 }

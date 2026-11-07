@@ -11,6 +11,7 @@
 import { withDefaults } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
 import { planCall } from './lib/plan.mjs';
+import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
 import { morePrompt, parseAnswer } from './lib/prompts.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
@@ -216,8 +217,11 @@ export function createCoach(d, deps = {}) {
     const t = now();
     if (mayShow(st.cadence, st.settings, t, 'card', { welcome: true, phone })) return { card: WELCOME, fresh: false };
     const live = st.settings.howOften !== 'off' && st.settings.howOften !== 'quiet' && !inQuietHours(st.settings.quietHours, t) && !(phone && !st.settings.phone);
-    for (let i = st.cards.length - 1; i >= 0; i--) {
-      const c = st.cards[i];
+    // Newest first; a card that serves an active goal comes before the rest (spec section 4.6).
+    const goals = new Set(activeGoals(st.memory).map((g) => g.id));
+    const order = [...st.cards].reverse();
+    order.sort((a, b) => Number(!!(b.goal && goals.has(b.goal))) - Number(!!(a.goal && goals.has(a.goal))));
+    for (const c of order) {
       if (c.terminalId && c.terminalId !== terminalId) continue;
       const cs = st.cardState[c.id];
       if (cs && CLOSED.has(cs.state)) continue;
@@ -378,10 +382,10 @@ export function createCoach(d, deps = {}) {
         ? h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach knows nothing about you yet.')
         : h('div', { 'data-testid': 'coach-knows', style: { marginTop: 6 } }, ...items.map((i) => {
           const key = `${i.kind}:${i.key}`;
-          if (editing && editing.id === i.key && i.kind === 'fact') {
+          if (editing && editing.id === i.key && (i.kind === 'fact' || i.kind === 'goal')) {
             return h('div', { key, style: S.fact },
               h('input', { type: 'text', 'aria-label': 'Fact', value: editing.text, style: { ...S.input, marginTop: 0, flex: 1 }, onChange: (e) => setEditing({ id: i.key, text: e.target.value }) }),
-              btn('Save', () => { void saveMemory(editFact(store.getState().memory, i.key, editing.text, now())); setEditing(null); }, null, true),
+              btn('Save', () => { if (i.kind === 'goal') void changeGoal(i.key, editing.text); else void saveMemory(editFact(store.getState().memory, i.key, editing.text, now())); setEditing(null); }, null, true),
               btn('Cancel', () => setEditing(null)));
           }
           return h('div', { key, style: S.fact },
@@ -391,7 +395,7 @@ export function createCoach(d, deps = {}) {
               stale.has(i.key) && i.kind === 'fact' && h('div', { style: { ...S.row, marginTop: 4 } },
                 h('span', { style: S.note }, 'Still true?'),
                 btn('Yes', () => { const f = store.getState().memory.facts.find((x) => x.id === i.key); if (f) void saveMemory(confirmFact(store.getState().memory, f, now())); }, 'Yes, still true'))),
-            i.kind === 'fact' && btn('Edit', () => setEditing({ id: i.key, text: i.label }), `Edit ${i.label}`),
+            (i.kind === 'fact' || i.kind === 'goal') && btn('Edit', () => setEditing({ id: i.key, text: i.kind === 'goal' ? (store.getState().memory.goals.find((g) => g.id === i.key) || {}).text || '' : i.label }), `Edit ${i.label}`),
             btn('Delete', () => { void saveMemory(removeItem(store.getState().memory, i.kind, i.key)); }, `Delete ${i.label}`));
         })));
   }
@@ -437,7 +441,10 @@ export function createCoach(d, deps = {}) {
       const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (typeof d.copyText === 'function') void d.copyText(text); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }, insert: () => {} };
       body = card ? h(CardView, { key: card.id, card, ctx, fresh: false }) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
     }
-    return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 12 } }, body, h(Measures));
+    const working = activeGoals(st.memory);
+    return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 12 } },
+      working.length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' } }, icon('target', null, 14), h('span', null, `Working on: ${working.map((g) => g.text).join(' · ')}`)),
+      body, h(Measures));
   }
 
   // ── cost this week (spec section 4.5; mockup part 5, right) ────────────────────────────────
@@ -527,7 +534,86 @@ export function createCoach(d, deps = {}) {
         h('div', { style: S.row },
           h('button', { type: 'button', style: S.primary, onClick: start }, (stretch.action && stretch.action.label) || 'Start'),
           h('button', { type: 'button', style: S.btn, onClick: () => setHidden(true) }, 'Not this week'))),
+      Array.isArray(recap.goals) && recap.goals.length > 0 && h(RecapGoals, { recap }),
       recap.learned && h('div', { style: { ...S.note, fontSize: 12.5 } }, recap.learned));
+  }
+
+  // Each goal's progress, and once a month: Keep, Done or Change (spec section 4.6).
+  function RecapGoals({ recap }) {
+    const memory = store((s) => s.memory);
+    const [changing, setChanging] = useState(null); // { id, text }
+    const asked = memory.dates['goals:asked'];
+    const ask = recap.askGoals && !(asked && Date.parse(asked) >= Date.parse(recap.at));
+    const answered = async (fn) => { const m = fn(store.getState().memory); await saveMemory({ ...m, dates: { ...m.dates, 'goals:asked': now().toISOString() } }); };
+    return h('div', { style: { marginTop: 10 } },
+      h('div', { style: S.label }, 'YOUR GOALS'),
+      ...recap.goals.map((g) => {
+        const live = memory.goals.find((x) => x.id === g.id);
+        if (!live) return null;
+        return h('div', { key: g.id, style: S.fact },
+          h('div', { style: { flex: 1, minWidth: 0 } },
+            h('div', { style: { color: 'var(--color-text-primary)' } }, live.text),
+            h('div', { style: S.src }, `${g.progress} Next: ${g.next}`),
+            changing && changing.id === g.id && h('div', { style: { ...S.row, marginTop: 6 } },
+              h('input', { type: 'text', 'aria-label': 'Change the goal', value: changing.text, style: { ...S.input, marginTop: 0, flex: 1 }, onChange: (e) => setChanging({ id: g.id, text: e.target.value }) }),
+              h('button', { type: 'button', style: S.primary, onClick: () => { const text = changing.text; setChanging(null); void changeGoal(g.id, text).then(() => answered((m) => m)); } }, 'Save'))),
+          ask && live.status === 'active' && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+            h('span', { style: S.src }, 'Is this goal still right?'),
+            h('button', { type: 'button', 'aria-label': `Keep: ${live.text}`, style: S.btn, onClick: () => { void answered((m) => m); } }, 'Keep'),
+            h('button', { type: 'button', 'aria-label': `Done: ${live.text}`, style: S.btn, onClick: () => { void answered((m) => setGoalStatus(m, g.id, 'done', now())); } }, 'Done'),
+            h('button', { type: 'button', 'aria-label': `Change: ${live.text}`, style: S.btn, onClick: () => setChanging({ id: g.id, text: live.text }) }, 'Change')));
+      }));
+  }
+
+  // ── your goals (spec section 4.6): up to 3, in your own words or from a suggestion ─────────
+  const mapText = (text) => {
+    const st = store.getState();
+    const assist = typeof d.assist === 'function' ? (req) => d.assist(PLUGIN, req) : null;
+    return mapGoal(text, { assist, settings: st.settings, budget: st.status.budget }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
+  };
+  async function newGoal(text, mapped, source) {
+    const r = addGoal(store.getState().memory, { text, measures: mapped.measures, detectors: mapped.detectors, source }, now());
+    if (r.ok) await saveMemory(r.memory);
+    return r.ok;
+  }
+  async function changeGoal(id, text) {
+    const mapped = await mapText(text);
+    await saveMemory(editGoal(store.getState().memory, id, text, mapped));
+  }
+  function Goals() {
+    const memory = store((s) => s.memory);
+    const doc = store((s) => s.measures);
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const active = activeGoals(memory);
+    const full = active.length >= MAX_ACTIVE;
+    const taken = new Set(memory.goals.filter((g) => g.status === 'active').map((g) => g.text.toLowerCase()));
+    const suggestions = (doc && Array.isArray(doc.suggestions) ? doc.suggestions : []).filter((g) => !taken.has(g.text.toLowerCase()));
+    const add = async () => {
+      const t = text.trim();
+      if (!t || full || busy) return;
+      setBusy(true);
+      try { const mapped = await mapText(t); if (await newGoal(t, mapped, 'user')) setText(''); } finally { setBusy(false); }
+    };
+    return h('div', { 'data-testid': 'coach-goals', style: S.section },
+      h('div', { style: S.label }, 'YOUR GOALS'),
+      active.length === 0
+        ? h('div', { style: { ...S.note, fontSize: 13 } }, 'Say how you want to improve. Cards that serve a goal come first.')
+        : h('div', { style: { marginTop: 6 } }, ...active.map((g) => h('div', { key: g.id, style: S.fact },
+          icon('target', null, 14),
+          h('span', { style: { flex: 1, minWidth: 0, color: 'var(--color-text-primary)' } }, g.text),
+          h('button', { type: 'button', 'aria-label': `Done: ${g.text}`, style: S.btn, onClick: () => { void saveMemory(setGoalStatus(store.getState().memory, g.id, 'done', now())); } }, 'Done'),
+          h('button', { type: 'button', 'aria-label': `Delete goal: ${g.text}`, title: 'Delete', style: S.icon, onClick: () => { void saveMemory(removeItem(store.getState().memory, 'goal', g.id)); } }, icon('trash', 'Delete', 14))))),
+      h('div', { style: { ...S.row, marginTop: 10 } },
+        h('input', { type: 'text', 'aria-label': 'A goal, in your own words', placeholder: 'For example: hand off whole reports', value: text, disabled: full, style: { ...S.input, marginTop: 0, flex: 1, minWidth: 200 }, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') void add(); } }),
+        h('button', { type: 'button', 'aria-label': 'Add goal', disabled: full || busy || !text.trim(), style: { ...S.primary, opacity: full || !text.trim() ? 0.5 : 1 }, onClick: () => { void add(); } }, busy ? 'Adding…' : 'Add')),
+      full && h('div', { style: S.note }, `You have ${MAX_ACTIVE} goals. Mark one done to add another.`),
+      !full && suggestions.length > 0 && h('div', { style: { marginTop: 10 } },
+        h('div', { style: S.src }, 'SUGGESTED FROM YOUR WORK'),
+        ...suggestions.map((g) => h('div', { key: g.text, style: S.fact },
+          h('span', { style: { flex: 1, minWidth: 0 } }, g.text),
+          h('button', { type: 'button', 'aria-label': `Edit: ${g.text}`, style: S.btn, onClick: () => setText(g.text) }, 'Edit'),
+          h('button', { type: 'button', 'aria-label': `Add: ${g.text}`, style: S.btn, onClick: () => { void newGoal(g.text, g, 'suggested'); } }, icon('plus', null, 13), 'Add')))));
   }
 
   function CoachView() {
@@ -536,6 +622,7 @@ export function createCoach(d, deps = {}) {
         h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
         h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
       h(Recap),
+      h(Goals),
       h(Measures),
       h(History),
       h(Knows),

@@ -4,6 +4,7 @@
 // the worker may let the large model reword it. Pure functions.
 import { normalizeMemory, memoryItems } from './memory.mjs';
 import { weakest } from './measures.mjs';
+import { goalProgress } from './goals.mjs';
 
 export const MIN_ACTIVE_DAYS = 5;
 const DAY = 86400_000;
@@ -90,7 +91,13 @@ export function buildRecap(state, { memory, measures, now }) {
   const facts = mem.facts.filter((f) => f.confirmedAt).sort((a, b) => ms(b.confirmedAt) - ms(a.confirmedAt));
   let learned = null;
   if (facts.length) learned = `The Coach learned: "${facts[0].text.replace(/[.\s]+$/, '')}."`;
-  else { const items = memoryItems(mem).filter((i) => i.at).sort((a, b) => ms(b.at) - ms(a.at)); if (items.length) learned = `The Coach learned: ${items[0].label}.`; }
+  else { const items = memoryItems(mem).filter((i) => i.at && i.kind !== 'goal').sort((a, b) => ms(b.at) - ms(a.at)); if (items.length) learned = `The Coach learned: ${items[0].label}.`; }
 
-  return { week: dayOf(t), stats, patterns: patterns.slice(0, 3), stretch, learned };
+  // Goals (spec section 4.6): progress on each active goal; once a month, ask Keep, Done or Change.
+  const active = mem.goals.filter((g) => g.status === 'active');
+  const goals = active.map((g) => goalProgress(g, measures));
+  const asked = mem.dates['goals:asked'] ? Date.parse(mem.dates['goals:asked']) : null;
+  const askGoals = active.length > 0 && (asked === null || t - asked >= 28 * DAY);
+
+  return { week: dayOf(t), stats, patterns: patterns.slice(0, 3), stretch, learned, goals, askGoals };
 }

@@ -17,6 +17,7 @@ import { effectiveLevel, planCall } from './plan.mjs';
 import { measures, weakest, snapshot, scoresBefore, scoresOnly } from './measures.mjs';
 import { buildRecap } from './recap.mjs';
 import { recapPrompt, parseAnswer } from './prompts.mjs';
+import { rankCandidates, suggestGoals } from './goals.mjs';
 import { judgeCandidate, joinCards, unjudged } from './judge.mjs';
 
 const SAVE_DELAY_MS = 5_000;
@@ -80,7 +81,8 @@ export function createEngine(io) {
     const results = [];
     let budget = status.budget;
     let harness = status.harness;
-    for (const c of fresh.slice(-JUDGE_PER_RUN).reverse()) {
+    // Newest first, then the ones that serve a goal before the rest (spec section 4.6).
+    for (const c of rankCandidates([...fresh].reverse(), memory).slice(0, JUDGE_PER_RUN)) {
       const r = await judgeCandidate(c, { settings, memory, budget, assist: io.assist, now: t, harness });
       budget = r.budget; harness = r.harness;
       results.push(r);
@@ -101,7 +103,9 @@ export function createEngine(io) {
   async function updateMeasures(t) {
     const m = measures(state, t, scoresBefore(measuresDoc, t));
     const w = weakest(m, memory.levelAdjust);
-    measuresDoc = { ...snapshot(measuresDoc, scoresOnly(m), t), at: t.toISOString(), scores: m, weakest: w };
+    // Suggested goals (spec section 4.6) ride along: the web part has no signals to compute them from.
+    const suggestions = suggestGoals(state, m, memory, candidates);
+    measuresDoc = { ...snapshot(measuresDoc, scoresOnly(m), t), at: t.toISOString(), scores: m, weakest: w, suggestions };
     await io.putDoc('measures', measuresDoc);
     return w;
   }
@@ -109,7 +113,7 @@ export function createEngine(io) {
   async function runDetectors() {
     const t = now();
     const w = await updateMeasures(t);
-    const found = detect(state, settings, t, { weakest: w }).filter((c) => allows(memory, c, t));
+    const found = rankCandidates(detect(state, settings, t, { weakest: w }).filter((c) => allows(memory, c, t)), memory);
     if (found.length) {
       const next = proposeNew(candidates, found, t);
       if (next.added.length) {
