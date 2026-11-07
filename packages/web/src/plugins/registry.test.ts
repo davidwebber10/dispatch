@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { usePluginRegistry, useContributions, usePromotedViews, viewKey, settingsKey, isPluginView } from './registry';
+import { usePluginRegistry, useContributions, usePromotedViews, viewKey, settingsKey, isPluginView, sortInspectorTabs } from './registry';
 
 const View = () => null;
 
 beforeEach(() => {
   localStorage.clear();
-  usePluginRegistry.setState({ manifests: [], status: {}, views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], promoted: [] });
+  usePluginRegistry.setState({ manifests: [], status: {}, views: [], settings: [], threadMenu: [], projectMenu: [], composerActions: [], slots: [], inspectorTabs: [], promoted: [] });
 });
 
 describe('plugin contributions store (2026-11-07)', () => {
@@ -107,5 +107,27 @@ describe('view badges (plugins slice 4)', () => {
     expect(usePluginRegistry.getState().commands).toEqual([{ plugin: 'p', id: 'sync', label: 'Sync now', run }]);
     usePluginRegistry.getState().unregister('p');
     expect(usePluginRegistry.getState().commands).toEqual([]);
+  });
+});
+
+describe('inspector tabs (right-column tabs)', () => {
+  it('register stores inspectorTabs under the plugin with a plugin:<id>:<tab> key; unregister clears them', () => {
+    const T = () => null;
+    usePluginRegistry.getState().register('p', { inspectorTabs: [{ id: 'notes', label: 'Notes', icon: 'note', priority: 2, Component: T }] });
+    usePluginRegistry.getState().register('q', { inspectorTabs: [{ id: 'log', label: 'Log', Component: T }] });
+    expect(usePluginRegistry.getState().inspectorTabs).toEqual([
+      expect.objectContaining({ plugin: 'p', id: 'notes', key: 'plugin:p:notes', label: 'Notes', icon: 'note', priority: 2 }),
+      expect.objectContaining({ plugin: 'q', id: 'log', key: 'plugin:q:log' }),
+    ]);
+    usePluginRegistry.getState().unregister('p');
+    expect(usePluginRegistry.getState().inspectorTabs.map((t) => t.key)).toEqual(['plugin:q:log']);
+  });
+
+  it('sortInspectorTabs orders by priority (higher first), then plugin id', () => {
+    const T = () => null;
+    usePluginRegistry.getState().register('zed', { inspectorTabs: [{ id: 'a', label: 'Z', Component: T }] });
+    usePluginRegistry.getState().register('alpha', { inspectorTabs: [{ id: 'a', label: 'A', Component: T }] });
+    usePluginRegistry.getState().register('mid', { inspectorTabs: [{ id: 'a', label: 'M', priority: 5, Component: T }] });
+    expect(sortInspectorTabs(usePluginRegistry.getState().inspectorTabs).map((t) => t.label)).toEqual(['M', 'A', 'Z']);
   });
 });

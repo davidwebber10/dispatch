@@ -7,7 +7,7 @@ import type { PluginRow, Session, Terminal } from '../api/types';
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3): what loaded plugins
  * contribute to the app. The existing screens read these lists beside their own static ones:
  * the rail and the phone's tabs read `views`, Settings reads `settings`, the thread and project
- * menus read their items, the composer reads `composerActions`, and a named `Slot` renders
+ * menus read their items, the composer reads `composerActions`, the right column reads `inspectorTabs`, and a named `Slot` renders
  * `slots`. A plugin registers everything under its id, so a reload drops and re-adds it whole.
  */
 export type { PluginRow };
@@ -32,6 +32,10 @@ export interface PluginComposerAction { plugin: string; id: string; label: strin
 /** A command for the ⌘K palette (and the phone's Plugins tab). */
 export interface PluginCommand { plugin: string; id: string; label: string; run: () => void }
 export interface PluginSlotContent { plugin: string; id: string; slot: string; priority?: number; Component: ComponentType<Record<string, unknown>> }
+/** The open thread's ids, as a right-column tab gets them: null when no thread (or project) is open. */
+export interface InspectorTabProps { terminalId: string | null; sessionId: string | null }
+/** A tab in the desktop right column after Details and Files (a row in the phone thread's ⋯ menu). */
+export interface PluginInspectorTab { plugin: string; id: string; key: string; label: string; icon?: string; priority?: number; Component: ComponentType<InspectorTabProps> }
 export type PluginStatus = { state: 'loading' | 'ready' | 'error'; error?: string; version?: string; at: number };
 
 /** What a plugin hands to `register`: the same lists, without the fields the store derives. */
@@ -43,12 +47,14 @@ export interface Contributions {
   composerActions?: Omit<PluginComposerAction, 'plugin'>[];
   slots?: Omit<PluginSlotContent, 'plugin'>[];
   commands?: Omit<PluginCommand, 'plugin'>[];
+  inspectorTabs?: Omit<PluginInspectorTab, 'plugin' | 'key'>[];
 }
 
-export type ContributionKind = 'views' | 'settings' | 'threadMenu' | 'projectMenu' | 'composerActions' | 'slots' | 'commands';
+export type ContributionKind = 'views' | 'settings' | 'threadMenu' | 'projectMenu' | 'composerActions' | 'slots' | 'commands' | 'inspectorTabs';
 type Lists = {
   views: PluginView[]; settings: PluginSettingsSection[]; threadMenu: PluginMenuItem<ThreadMenuCtx>[];
   projectMenu: PluginMenuItem<ProjectMenuCtx>[]; composerActions: PluginComposerAction[]; slots: PluginSlotContent[]; commands: PluginCommand[];
+  inspectorTabs: PluginInspectorTab[];
 };
 
 interface PluginRegistryState extends Lists {
@@ -70,6 +76,7 @@ interface PluginRegistryState extends Lists {
 
 export const viewKey = (plugin: string, id: string): string => `plugin:${plugin}:${id}`;
 export const settingsKey = (plugin: string, id: string): string => `plugin:${plugin}:${id}`;
+export const inspectorTabKey = (plugin: string, id: string): string => `plugin:${plugin}:${id}`;
 export const isPluginView = (key: string): boolean => key.startsWith('plugin:');
 
 export const PROMOTED_MAX = 2;
@@ -93,6 +100,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
   composerActions: [],
   slots: [],
   commands: [],
+  inspectorTabs: [],
   promoted: loadPromoted(),
   badges: {},
   setManifests: (manifests) => set({ manifests }),
@@ -107,6 +115,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
       composerActions: [...drop(s.composerActions, plugin), ...(c.composerActions ?? []).map((v) => ({ ...v, plugin }))],
       slots: [...drop(s.slots, plugin), ...(c.slots ?? []).map((v) => ({ ...v, plugin }))],
       commands: [...drop(s.commands, plugin), ...(c.commands ?? []).map((v) => ({ ...v, plugin }))],
+      inspectorTabs: [...drop(s.inspectorTabs, plugin), ...(c.inspectorTabs ?? []).map((v) => ({ ...v, plugin, key: inspectorTabKey(plugin, v.id) }))],
     });
   },
   unregister: (plugin) => {
@@ -118,6 +127,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
       badges,
       views: drop(s.views, plugin), settings: drop(s.settings, plugin), threadMenu: drop(s.threadMenu, plugin),
       projectMenu: drop(s.projectMenu, plugin), composerActions: drop(s.composerActions, plugin), slots: drop(s.slots, plugin), commands: drop(s.commands, plugin),
+      inspectorTabs: drop(s.inspectorTabs, plugin),
     });
   },
   setPromoted: (keys) => {
@@ -165,3 +175,13 @@ export function usePromotedViews(): PluginView[] {
 
 /** The plugin view for a view key, or undefined. */
 export const pluginView = (key: string): PluginView | undefined => usePluginRegistry.getState().views.find((v) => v.key === key);
+
+/** Right-column tabs in their shown order: higher `priority` first, then plugin id, then registration order. */
+export const sortInspectorTabs = (tabs: PluginInspectorTab[]): PluginInspectorTab[] =>
+  [...tabs].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.plugin.localeCompare(b.plugin));
+
+/** The plugins' right-column tabs, sorted and memoised. */
+export function useInspectorTabs(): PluginInspectorTab[] {
+  const tabs = usePluginRegistry((s) => s.inspectorTabs);
+  return useMemo(() => sortInspectorTabs(tabs), [tabs]);
+}
