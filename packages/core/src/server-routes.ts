@@ -148,7 +148,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
   app.use('/api', createLedgerRouter(d.ledgerService));
   app.use('/api', createPreviewsRouter(d.db, d.broadcaster));
-  app.use('/api', createPluginsRouter(d.plugins));
+  app.use('/api', createPluginsRouter(d.plugins, d.db));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));
   app.use('/api/roles', createRolesRouter(d.rolesService));

@@ -221,6 +221,9 @@ export class PluginRegistry {
     if (state.disabled.includes(id)) this.writeState({ disabled: state.disabled.filter((x) => x !== id) });
   }
 
+  /** Send any plugin event to every client (the routes use it for storage changes). */
+  broadcast(event: Record<string, unknown>): void { this.broadcaster.broadcast(event); }
+
   /** Tell every client the plugin changed (or went away): `plugin:changed { id, plugin }`. */
   announce(id: string): void {
     this.broadcaster.broadcast({ type: 'plugin:changed', id, plugin: this.get(id) ?? null });

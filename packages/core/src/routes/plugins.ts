@@ -1,6 +1,9 @@
 import path from 'node:path';
-import type { Router, RequestHandler } from 'express';
-import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute } from '../auth/route-policy.js';
+import type Database from 'better-sqlite3';
+import type { Router, RequestHandler, Request } from 'express';
+import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute, type Rule } from '../auth/route-policy.js';
+import { principalOf, scopeOf } from '../auth/request-principal.js';
+import * as pluginData from '../db/plugin-data.js';
 import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders } from '../http/active-content.js';
 import { HTML_SANDBOX_CSP } from './previews.js';
@@ -16,7 +19,42 @@ function fail(res: import('express').Response, e: unknown): void {
   res.status(status).json({ error: msg });
 }
 
-export function createPluginsRouter(plugins: PluginRegistry): Router {
+const OK = { ok: true } as const;
+
+/** A plugin key reaches the storage and settings of its own plugin only. */
+const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
+  ? OK
+  : { ok: false, status: 403, error: 'out_of_scope', message: 'A plugin reaches its own storage only.' });
+
+/** A thread reaches a plugin's documents only when the plugin granted threads that access (spec section 5). */
+function grantRule(plugins: PluginRegistry, kind: 'read' | 'write'): Rule {
+  return (req) => {
+    const facts = plugins.facts(req.params.id);
+    if (!facts) return OK; // the handler answers 404
+    return facts.permissions.includes(`threads:${kind}-storage`)
+      ? OK
+      : { ok: false, status: 403, error: 'out_of_scope', message: `The plugin "${req.params.id}" does not let threads ${kind} its storage.` };
+  };
+}
+
+/** The writer stamped on a document a thread key writes: from the key, never from the body. */
+function writerOf(req: Request): pluginData.Writer | null {
+  let p;
+  try { p = principalOf(req); } catch { return null; }
+  if (p.kind !== 'thread') return null;
+  const c = scopeOf(req).caller(p.terminalId);
+  return { terminalId: p.terminalId, sessionId: c?.sessionId ?? '', label: c?.label ?? null };
+}
+
+function storageError(res: import('express').Response, e: unknown): void {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg === 'too large') return void res.status(413).json({ error: 'too_large', message: `A document is at most ${pluginData.DOC_MAX_BYTES} bytes.` });
+  if (msg === 'too many') return void res.status(409).json({ error: 'too_many', message: `A plugin holds at most ${pluginData.DOCS_MAX} documents.` });
+  if (msg === 'bad key') return void res.status(400).json({ error: 'bad_key', message: 'A key is letters, digits, dots, dashes, underscores and colons, up to 128.' });
+  res.status(500).json({ error: msg });
+}
+
+export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database): Router {
   const router = policyRouter();
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -47,7 +85,67 @@ export function createPluginsRouter(plugins: PluginRegistry): Router {
   });
 
   router.delete('/plugins/:id', ownerOnlyStrict, (req, res) => {
-    try { plugins.remove(req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
+    try { plugins.remove(req.params.id); pluginData.clearPlugin(db, req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
+  });
+
+  // ── storage and settings (spec section 5) ──────────────────────────────────────────────
+  const known = (req: Request, res: import('express').Response): boolean => {
+    if (plugins.get(req.params.id)) return true;
+    res.status(404).json({ error: 'unknown plugin' });
+    return false;
+  };
+  const dataRead = keyRoute({ plugin: ownPluginRule, thread: grantRule(plugins, 'read'), roleRun: grantRule(plugins, 'read') });
+  const dataWrite = keyRoute({ plugin: ownPluginRule, thread: grantRule(plugins, 'write'), roleRun: grantRule(plugins, 'write') });
+  const settingsRule = keyRoute({ plugin: ownPluginRule });
+
+  router.get('/plugins/:id/data', dataRead, (req, res) => {
+    if (!known(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ docs: pluginData.listDocs(db, req.params.id) });
+  });
+
+  router.get('/plugins/:id/data/:key', dataRead, (req, res) => {
+    if (!known(req, res)) return;
+    const doc = pluginData.getDoc(db, req.params.id, req.params.key);
+    if (!doc) return void res.status(404).json({ error: 'document not found' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(doc);
+  });
+
+  // The body is `{ value }`: any JSON value, including a string or a number.
+  router.put('/plugins/:id/data/:key', dataWrite, (req, res) => {
+    if (!known(req, res)) return;
+    const body = req.body as { value?: unknown } | undefined;
+    if (!body || typeof body !== 'object' || !('value' in body)) return void res.status(400).json({ error: 'bad_body', message: 'Send { "value": ... }.' });
+    try {
+      const doc = pluginData.setDoc(db, req.params.id, req.params.key, body.value, writerOf(req));
+      plugins.broadcast({ type: 'plugin:data', id: req.params.id, key: req.params.key });
+      res.json(doc);
+    } catch (e) { storageError(res, e); }
+  });
+
+  router.delete('/plugins/:id/data/:key', dataWrite, (req, res) => {
+    if (!known(req, res)) return;
+    if (!pluginData.deleteDoc(db, req.params.id, req.params.key)) return void res.status(404).json({ error: 'document not found' });
+    plugins.broadcast({ type: 'plugin:data', id: req.params.id, key: req.params.key, deleted: true });
+    res.status(204).end();
+  });
+
+  router.get('/plugins/:id/settings', settingsRule, (req, res) => {
+    if (!known(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(pluginData.getSettings(db, req.params.id) ?? { value: null, updatedAt: null });
+  });
+
+  router.put('/plugins/:id/settings', settingsRule, (req, res) => {
+    if (!known(req, res)) return;
+    const body = req.body as { value?: unknown } | undefined;
+    if (!body || typeof body !== 'object' || !('value' in body)) return void res.status(400).json({ error: 'bad_body', message: 'Send { "value": ... }.' });
+    try {
+      const out = pluginData.setSettings(db, req.params.id, body.value);
+      plugins.broadcast({ type: 'plugin:settings', id: req.params.id });
+      res.json(out);
+    } catch (e) { storageError(res, e); }
   });
 
   return router;
