@@ -71,9 +71,10 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
  * The header usage chip (#127, rings since 2026-11-06). Hidden until a provider reports. One ring
  * per tool with its mark in the middle: `rail` stacks them in the desktop icon rail and opens a
  * popover; `phone` lays them in a row in the mobile header and opens a bottom sheet. The whole
- * chip is one button.
+ * chip is one button. `only` (an open thread, 2026-11-07) keeps the ring of that thread's account
+ * alone; a thread whose tool reports no limits shows no chip.
  */
-export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
+export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string } | null }) {
   const summary = useUsageLimits((s) => s.summary);
   const now = useNow();
   const [open, setOpen] = useState(false);
@@ -86,7 +87,8 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open, variant]);
-  const rings = chipRings(summary, now);
+  const all = chipRings(summary, now);
+  const rings = only ? all.filter((r) => r.provider === only.provider && (r.accountId ?? 'cli') === only.accountId) : all;
   if (!summary || rings.length === 0) return null;
   const tone = chipTone(rings, summary.warnPercent);
   const color = TONE_COLOR[tone];
@@ -100,7 +102,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
           {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={24} />)}
         </button>
         <Modal open={open} sheet title="Usage" onClose={() => setOpen(false)}>
-          <UsageRings summary={summary} now={now} />
+          <UsageRings summary={summary} now={now} current={only} />
         </Modal>
       </>
     );
@@ -115,7 +117,7 @@ export function UsageChip({ variant }: { variant: 'rail' | 'phone' }) {
       {open && (
         <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Usage</div>
-          <UsageRings summary={summary} now={now} />
+          <UsageRings summary={summary} now={now} current={only} />
         </div>
       )}
     </div>

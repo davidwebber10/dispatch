@@ -70,14 +70,15 @@ function LimitRow({ toolName, row, warn, first }: { toolName: string; row: RingR
   );
 }
 
-function ToolCard({ m, warn }: { m: RingModel; warn: number }) {
+function ToolCard({ m, warn, current }: { m: RingModel; warn: number; current?: boolean }) {
   // A steady order (5-hour, then weekly, …), not closest-to-the-limit first, so rows never swap.
   const order = (t: string) => { const i = (COUNTED as readonly string[]).indexOf(t); return i < 0 ? 99 : i; };
   const rows = [...m.rows].sort((a, b) => order(a.type) - order(b.type));
   return (
-    <section aria-label={m.name} style={{ background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '4px 14px', minWidth: 0, opacity: m.stale ? 0.75 : 1 }}>
+    <section aria-label={m.name} data-current={current ? 'true' : undefined} style={{ background: 'var(--color-elevated)', border: `1px solid ${current ? 'var(--color-accent)' : 'var(--color-border)'}`, borderRadius: 'var(--radius-lg)', padding: '4px 14px', minWidth: 0, opacity: m.stale ? 0.75 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, margin: '10px 0 2px' }}>
         <span style={{ fontSize: 17, fontWeight: 600 }}>{m.name}</span>
+        {current && <span style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-accent)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-pill)', padding: '1px 7px', whiteSpace: 'nowrap' }}>This account</span>}
         {m.plan && <span style={{ font: '400 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', padding: '1px 7px' }}>{m.plan}</span>}
         <span title={m.stale ? 'These figures are old: no thread has reported in a while' : undefined}
           style={{ marginLeft: 'auto', font: '400 11px var(--font-mono)', color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>{m.asOf}</span>
@@ -118,15 +119,17 @@ function ToolCard({ m, warn }: { m: RingModel; warn: number }) {
   );
 }
 
-export function UsageRings({ summary, now }: { summary: UsageSummary | null; now: number }) {
-  const rings = ringModels(summary, now);
+/** `current` (opened from a thread, 2026-11-07): that thread's account is marked "This account" and listed first. */
+export function UsageRings({ summary, now, current }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null }) {
+  const isCurrent = (m: RingModel) => !!current && m.provider === current.provider && m.accountId === current.accountId;
+  const rings = [...ringModels(summary, now)].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
   if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
-        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} />
+        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} />
       ))}
       {summary.paused.map((g) => (
         <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>

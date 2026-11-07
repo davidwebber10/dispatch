@@ -92,4 +92,36 @@ describe('UsageChip', () => {
     expect(chip.style.border).not.toMatch(/var\(--color-(warning|danger|amber|red)/);
     expect(chip.style.borderColor === '' || chip.style.borderColor === 'transparent').toBe(true);
   });
+
+  it('in a thread: only the ring of the account that thread uses (2026-11-07)', () => {
+    const W = { seven_day: { usedPercent: 30, resetsAt: Date.now() + 72 * H } };
+    useUsageLimits.setState({ summary: summary(10, { providers: [
+      { provider: 'claude-code', accountId: 'cli', label: 'Ultra 1', asOf: Date.now(), windows: W },
+      { provider: 'claude-code', accountId: 'w1', label: 'Team', asOf: Date.now(), windows: W },
+      { provider: 'codex', accountId: 'cli', label: 'Pro', asOf: Date.now(), windows: W },
+    ] as any }) });
+    const { rerender } = render(<UsageChip variant="phone" only={{ provider: 'claude-code', accountId: 'w1' }} />);
+    expect(screen.getAllByTestId('usage-ring')).toHaveLength(1);
+    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('Team');
+    rerender(<UsageChip variant="phone" only={{ provider: 'grok', accountId: 'cli' }} />);
+    expect(screen.queryByTestId('usage-chip')).toBeNull();
+    rerender(<UsageChip variant="phone" />);
+    expect(screen.getAllByTestId('usage-ring')).toHaveLength(3);
+  });
+
+  it('the details from a thread mark that thread\'s account "This account" and list it first; the rest stay (2026-11-07)', () => {
+    const W = { seven_day: { usedPercent: 30, resetsAt: Date.now() + 72 * H } };
+    useUsageLimits.setState({ summary: summary(10, { providers: [
+      { provider: 'claude-code', accountId: 'cli', label: 'Ultra 1', asOf: Date.now(), windows: W },
+      { provider: 'claude-code', accountId: 'w1', label: 'Team', asOf: Date.now(), windows: W },
+    ] as any }) });
+    render(<UsageChip variant="phone" only={{ provider: 'claude-code', accountId: 'w1' }} />);
+    fireEvent.click(screen.getByTestId('usage-chip'));
+    const cards = screen.getAllByRole('region');
+    expect(cards).toHaveLength(2);
+    expect(cards[0].getAttribute('data-current')).toBe('true');
+    expect(cards[0].textContent).toContain('This account');
+    expect(cards[0].textContent).toContain('Team');
+    expect(cards[1].textContent).not.toContain('This account');
+  });
 });
