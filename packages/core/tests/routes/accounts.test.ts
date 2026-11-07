@@ -10,6 +10,7 @@ import * as terminalsDb from '../../src/db/terminals.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import { AccountsStore } from '../../src/auth/accounts.js';
 import { createAccountsRouter, type PinnedThread } from '../../src/routes/accounts.js';
+import type { CodexLoginSession } from '../../src/auth/codex-login.js';
 
 /** The accounts routes (multi-account): names, identities and the delete notice's thread list. */
 describe('accounts routes', () => {
@@ -64,6 +65,59 @@ describe('accounts routes', () => {
     expect(del.body).toEqual({ unpinned: 2 });
     expect(unpinned).toEqual([`claude:${w.id}`]);
     expect(store.has('claude', w.id)).toBe(false);
+  });
+});
+
+/** Sign a Codex account in (again) with the device-code flow (2026-11-07). */
+describe('codex account sign-in routes', () => {
+  let dir: string;
+  let store: AccountsStore;
+  let app: express.Express;
+  let starts: { id: string; home: string }[];
+  let cancels: string[];
+  let sessions: Record<string, CodexLoginSession>;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-codex-login-'));
+    store = new AccountsStore(dir);
+    starts = []; cancels = []; sessions = {};
+    const codexLogin = {
+      start: async (id: string, home: string) => {
+        starts.push({ id, home });
+        sessions[id] = { accountId: id, status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'now' };
+        return sessions[id];
+      },
+      status: (id: string) => sessions[id] ?? null,
+      cancel: (id: string) => { cancels.push(id); delete sessions[id]; },
+    };
+    app = express();
+    app.use(express.json());
+    app.use('/api/accounts', createAccountsRouter(store, {} as any, { codexLogin: codexLogin as any }));
+  });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('starts the device-code login in the account folder and returns the link and code', async () => {
+    const a = store.addCodex('Work');
+    const r = await request(app).post(`/api/accounts/codex/${a.id}/login`).expect(200);
+    expect(r.body).toMatchObject({ status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345' });
+    expect(starts).toEqual([{ id: a.id, home: a.dir }]);
+  });
+
+  it('reports the attempt, and with none: complete once auth.json exists, else idle', async () => {
+    const a = store.addCodex('Work');
+    expect((await request(app).get(`/api/accounts/codex/${a.id}/login`).expect(200)).body.status).toBe('idle');
+    await request(app).post(`/api/accounts/codex/${a.id}/login`).expect(200);
+    expect((await request(app).get(`/api/accounts/codex/${a.id}/login`).expect(200)).body.code).toBe('ABCD-12345');
+    await request(app).delete(`/api/accounts/codex/${a.id}/login`).expect(204);
+    expect(cancels).toEqual([a.id]);
+    fs.writeFileSync(path.join(a.dir, 'auth.json'), '{}');
+    expect((await request(app).get(`/api/accounts/codex/${a.id}/login`).expect(200)).body.status).toBe('complete');
+  });
+
+  it('refuses the CLI login and unknown accounts', async () => {
+    await request(app).post('/api/accounts/codex/cli/login').expect(400);
+    await request(app).post('/api/accounts/codex/nope/login').expect(404);
+    expect(starts).toEqual([]);
   });
 });
 

@@ -31,6 +31,16 @@ describe('forwardLoopbackCallback', () => {
     expect(service.get(req.id)?.status).toBe('pending');
   });
 
+  test('a 200 error page (Codex answers a failed token exchange with 200 + "Sign-in Error") surfaces as an error', async () => {
+    // Measured on codex-cli 0.167.0: a bad or used code gets HTTP 200, an HTML page titled
+    // "Codex Sign-in Error", and the CLI exits 1. Reading that as success closed the banner silently.
+    const page = '<!doctype html><html><head><title>Codex Sign-in Error</title></head><body><h1>Sign-in could not be completed</h1><p>Token exchange failed: token endpoint returned status 401 Unauthorized</p></body></html>';
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(page, { status: 200, headers: { 'content-type': 'text/html' } }));
+    const { service, req } = make(fetchImpl as any);
+    await expect(service.forwardLoopbackCallback(req.id, 'http://127.0.0.1:1455/auth/callback?code=x&state=s')).rejects.toThrow(/sign-in failed.*token exchange failed/i);
+    expect(service.get(req.id)?.status).toBe('pending');
+  });
+
   test('still refuses non-loopback hosts', async () => {
     const { service, req } = make(vi.fn() as any);
     await expect(service.forwardLoopbackCallback(req.id, 'evil.example.com/cb?code=x')).rejects.toThrow(/loopback/);

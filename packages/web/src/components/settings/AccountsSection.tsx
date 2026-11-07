@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Star, Trash, Plus, PencilSimple } from '@phosphor-icons/react';
+import { Star, Trash, Plus, PencilSimple, SignIn } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { Account, AccountProvider, AccountsView, AccountThread } from '../../api/types';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
-import { useProjects } from '../../stores/projects';
-import { useTabs } from '../../stores/tabs';
-import { useUI } from '../../stores/ui';
+import { CodexLogin } from './CodexLogin';
 import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider, miniChip } from './ui';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
  * which one new threads use by default, add one, remove one. `cli` is the CLI's own login on the
  * daemon's computer and is always there. A Claude account is added with the headless login (open
- * the page, paste the code). A Codex account gets its own folder and is signed in by a
- * "Sign in — Codex" thread that runs `codex login` under that folder.
+ * the page, paste the code). A Codex account gets its own folder and is signed in right here with
+ * the device code (`codex login --device-auth` in that folder, CodexLogin), which works from a
+ * phone. A Codex account with no login (an add that failed or was left) offers "Sign in again".
  */
 const PROVIDER_TITLE: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' };
 
@@ -29,8 +28,8 @@ export function AccountsSection() {
   const [draft, setDraft] = useState('');
   // Remove: the confirm names the threads pinned to the account (they revert to the default).
   const [removing, setRemoving] = useState<{ provider: AccountProvider; account: Account; threads: AccountThread[] } | null>(null);
-  const projects = useProjects((s) => s.sessions);
-  const activeId = useProjects((s) => s.activeId);
+  // The Codex account whose device-code sign-in shows now (a new one, or "Sign in again").
+  const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
 
   const load = async () => {
     try { setView(await api.getAccounts()); setError(null); } catch { setError('Could not load the accounts. Is the daemon up to date?'); }
@@ -65,21 +64,17 @@ export function AccountsSection() {
     return `${r.threads.length === 1 ? '1 thread runs' : `${r.threads.length} threads run`} on "${r.account.label}": ${names}. ${r.threads.length === 1 ? 'It' : 'They'} will use ${fallback} the next time ${r.threads.length === 1 ? 'it starts' : 'they start'}.`;
   };
 
-  /** A new Codex account: make its folder, then open a sign-in thread under it in the active (or first) project. */
+  /** A new Codex account: make its folder, then sign it in here. A failed or left sign-in leaves it listed with "Sign in again". */
   const addCodex = async () => {
-    const project = projects.find((p) => p.id === activeId) ?? projects[0];
-    if (!project) { setError('Open a project first: the Codex sign-in runs in a thread there.'); return; }
     setBusy(true);
     try {
       const a = await api.accountsAddCodex(label);
-      const t = await api.createTerminal(project.id, { type: 'shell', label: `Sign in — Codex (${a.label})`, config: { signIn: 'codex', accountId: a.id } });
-      await useTabs.getState().loadTabs(project.id);
-      useUI.getState().requestOpenThread({ sessionId: project.id, terminalId: t.id });
-      setAdding(null); setLabel('');
+      setCodexSignIn(a.id);
       await load();
-    } catch { setError('Could not start the Codex sign-in.'); }
+    } catch { setError('Could not add the Codex account.'); }
     finally { setBusy(false); }
   };
+  const codexSignInEnded = () => { setCodexSignIn(null); setAdding(null); setLabel(''); void load(); };
 
   const list = (provider: AccountProvider) => {
     const accounts = view?.[provider] ?? [];
@@ -106,6 +101,9 @@ export function AccountsSection() {
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              {provider === 'codex' && !a.isCli && a.signedIn === false && codexSignIn !== a.id && (
+                <button type="button" title="Sign in again" aria-label={`Sign in again to ${a.label}`} onClick={() => { setAdding(null); setCodexSignIn(a.id); }} style={{ ...ghostBtn, height: 28, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5 }}><SignIn size={13} />Sign in</button>
+              )}
               <button type="button" title="Rename" aria-label={`Rename ${a.label}`} onClick={() => { setRenaming({ provider, id: a.id }); setDraft(a.isCli ? '' : a.label); }} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><PencilSimple size={14} /></button>
               {def === a.id
                 ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>default</span>
@@ -115,22 +113,31 @@ export function AccountsSection() {
               )}
             </div>
           </div>
-        ))}
+        )).flatMap((row, i) => {
+          const a = accounts[i];
+          return provider === 'codex' && codexSignIn === a.id && adding !== 'codex'
+            ? [row, <div key={`${a.id}-signin`} style={{ padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}><CodexLogin accountId={a.id} onDone={codexSignInEnded} onCancel={codexSignInEnded} /></div>]
+            : [row];
+        })}
         {adding === provider ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}>
             <input aria-label="Account name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={provider === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'} style={fieldInput} />
             {provider === 'claude' ? (
               <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(label)} onDone={() => { setAdding(null); setLabel(''); void load(); }} />
+            ) : codexSignIn ? (
+              <CodexLogin accountId={codexSignIn} onDone={codexSignInEnded} onCancel={codexSignInEnded} />
             ) : (
-              <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>A "Sign in — Codex" thread opens in the project. Finish the login there; the account is ready when it says so.</div>
+              <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</div>
             )}
-            <div style={{ display: 'flex', gap: 8 }}>
-              {provider === 'codex' && <button type="button" disabled={busy} onClick={() => void addCodex()} style={solidBtn(!busy)}>Open the sign-in thread</button>}
-              <button type="button" onClick={() => { setAdding(null); setLabel(''); }} style={ghostBtn}>Cancel</button>
-            </div>
+            {!(provider === 'codex' && codexSignIn) && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {provider === 'codex' && <button type="button" disabled={busy} onClick={() => void addCodex()} style={solidBtn(!busy)}>Add and sign in</button>}
+                <button type="button" onClick={() => { setAdding(null); setLabel(''); }} style={ghostBtn}>Cancel</button>
+              </div>
+            )}
           </div>
         ) : (
-          <div><button type="button" onClick={() => { setAdding(provider); setLabel(''); }} style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Plus size={13} weight="bold" />Add {PROVIDER_TITLE[provider]} account</button></div>
+          <div><button type="button" onClick={() => { setAdding(provider); setLabel(''); setCodexSignIn(null); }} style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Plus size={13} weight="bold" />Add {PROVIDER_TITLE[provider]} account</button></div>
         )}
       </div>
     );

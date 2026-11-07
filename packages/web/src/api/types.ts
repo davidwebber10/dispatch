@@ -484,6 +484,8 @@ export interface UpdateProgress {
   log: string[];
 }
 /** GET/POST /api/claude-auth — the daemon's headless Claude login (`claude setup-token`). */
+/** The device-code sign-in of an added Codex account (core auth/codex-login.ts); `idle` when none runs. */
+export interface CodexLoginSession { accountId: string; status: 'idle' | 'starting' | 'awaiting_user' | 'complete' | 'error'; url: string | null; code: string | null; error: string | null; createdAt: string | null }
 export interface ClaudeLoginSession { id: string; status: 'starting' | 'awaiting_code' | 'exchanging' | 'complete' | 'error'; url: string | null; error: string | null; createdAt: string }
 /** One usage-limit window; `usedPercent` is null when the provider gave a reset time but no figure. */
 /** The daemon's run-out estimate for a window (core limits/forecast.ts): the recent pace projected to 100%. */

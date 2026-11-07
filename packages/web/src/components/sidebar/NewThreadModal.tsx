@@ -5,6 +5,7 @@ import { Spinner } from '../common/Spinner';
 import { SearchSelect } from '../common/SearchSelect';
 import { HarnessStrip } from '../common/HarnessStrip';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
+import { CodexLogin } from '../settings/CodexLogin';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { timeAgo } from '../../lib/time';
@@ -115,6 +116,8 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   const [accountLabel, setAccountLabel] = useState('');
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
+  // The Codex account whose device-code sign-in shows now (a new one, or "Sign in again").
+  const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [keySaving, setKeySaving] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -140,9 +143,9 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   }
 
   /**
-   * A new Codex account: make its folder, then open the "Sign in — Codex" thread that runs
-   * `codex login` under it (the same thread Settings → Accounts opens). The modal closes onto that
-   * thread; once the login says it is done, a new thread can pick the account.
+   * A new Codex account: make its folder, then sign it in right here with the device code
+   * (CodexLogin). Once signed in, the account is picked for this thread. A failed or left sign-in
+   * keeps the account, which then offers "Sign in again".
    */
   async function addCodexAccount() {
     if (accountBusy) return;
@@ -150,15 +153,18 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
     setAccountError(null);
     try {
       const a = await api.accountsAddCodex(accountLabel.trim());
-      const t = await api.createTerminal(sessionId, { type: 'shell', label: `Sign in — Codex (${a.label})`, config: { signIn: 'codex', accountId: a.id } });
-      await useTabs.getState().loadTabs(sessionId);
-      useTabs.getState().markLoading(t.id);
-      onCreated(t.id);
-      onClose();
+      setCodexSignIn(a.id);
     } catch (err) {
-      setAccountError(err instanceof Error ? err.message : 'Could not start the Codex sign-in.');
+      setAccountError(err instanceof Error ? err.message : 'Could not add the Codex account.');
+    } finally {
       setAccountBusy(false);
     }
+  }
+  /** A Codex sign-in ended (done or cancelled): reload the list and keep that account picked. */
+  async function codexSignInEnded(id: string) {
+    setCodexSignIn(null);
+    setAddingAccount(false);
+    try { setAccounts(await api.getAccounts()); setAccountId(id); } catch { /* the list stays; Settings → Accounts has it */ }
   }
   const statusFor = useCallback(
     (p: ProviderName | null) => (p === null ? null : providers?.find((s) => s.name === p) ?? null),
@@ -545,6 +551,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               <div style={{ width: controlWidth }}>
                 <SearchSelect ariaLabel="Account" size={m ? 'lg' : 'md'} value={addingAccount ? ADD_ACCOUNT : effectiveAccountId ?? ''}
                   onChange={(v) => {
+                    setCodexSignIn(null);
                     if (v === ADD_ACCOUNT) { setAddingAccount(true); setAccountLabel(''); setAccountError(null); return; }
                     setAddingAccount(false);
                     setAccountId(v || null);
@@ -556,6 +563,25 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               </div>
             </Row>
           )}
+          {accountProvider === 'codex' && accounts && !addingAccount && (() => {
+            const picked = accountList.find((a) => a.id === effectiveAccountId);
+            if (!picked || picked.isCli || picked.signedIn !== false) return null;
+            return (
+              <div data-testid="account-signin" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: m ? '8px 0 12px' : '10px 2px', borderBottom: `1px solid ${DIVIDER}` }}>
+                {codexSignIn === picked.id ? (
+                  <CodexLogin accountId={picked.id} onDone={() => void codexSignInEnded(picked.id)} onCancel={() => void codexSignInEnded(picked.id)} />
+                ) : (
+                  <>
+                    <span style={rowHint}>"{picked.label}" is not signed in.</span>
+                    <button type="button" aria-label={`Sign in again to ${picked.label}`} onClick={() => setCodexSignIn(picked.id)}
+                      style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', display: 'inline-flex', alignItems: 'center', gap: 6, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, cursor: 'pointer' }}>
+                      <SignIn size={14} />Sign in again
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
           {accountProvider && accounts && addingAccount && (
             <div data-testid="add-account" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: m ? '8px 0 12px' : '10px 2px', borderBottom: `1px solid ${DIVIDER}` }}>
               <input aria-label="Account name" value={accountLabel} onChange={(e) => setAccountLabel(e.target.value)}
@@ -563,17 +589,19 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                 style={{ ...control, height: m ? 40 : 32, padding: '0 10px', font: `400 ${m ? 15 : 13}px var(--font-sans)`, width: '100%' }} />
               {accountProvider === 'claude' ? (
                 <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(accountLabel.trim())} onDone={() => void accountAdded()} />
+              ) : codexSignIn ? (
+                <CodexLogin accountId={codexSignIn} onDone={() => void codexSignInEnded(codexSignIn)} onCancel={() => void codexSignInEnded(codexSignIn)} />
               ) : (
                 <>
-                  <span style={rowHint}>A "Sign in — Codex" thread opens here. Finish the login in it, then start a thread on the new account.</span>
+                  <span style={rowHint}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</span>
                   <button type="button" disabled={accountBusy} onClick={() => void addCodexAccount()}
                     style={{ ...control, alignSelf: 'flex-start', height: m ? 36 : 30, padding: '0 12px', font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, cursor: accountBusy ? 'default' : 'pointer', opacity: accountBusy ? 0.7 : 1 }}>
-                    {accountBusy ? 'Opening…' : 'Open the sign-in thread'}
+                    {accountBusy ? 'Adding…' : 'Add and sign in'}
                   </button>
                 </>
               )}
               {accountError && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{accountError}</span>}
-              <button type="button" onClick={() => { setAddingAccount(false); setAccountError(null); }}
+              <button type="button" onClick={() => { if (codexSignIn) void api.accountsCodexLoginCancel(codexSignIn).catch(() => {}); setCodexSignIn(null); setAddingAccount(false); setAccountError(null); }}
                 style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Cancel</button>
             </div>
           )}
