@@ -132,6 +132,20 @@ as an optional summary on the Coach screen. The five measures compare a person o
 - Goals live in the Coach screen and the right-column tab (a short "Working on" line), and are part of "What the
   Coach knows" (edit, delete).
 
+### 4.7 Suggest a plugin (owner, 2026-11-07)
+- Reuse has a top step beyond templates and schedules: **a plugin**. When a repeated workflow would be better as
+  part of Dispatch itself — a recurring report you open as a screen, a button you would press in every thread, a
+  check that should run on every turn, a worker that watches something — the Coach suggests building a plugin.
+- Detector `plugin-fit` (v1 signals): the same multi-step workflow 3+ times in 30 days (same prompts or same tool
+  sequence) that a schedule alone does not cover; a request the person makes in many projects; a repeated
+  "show me X" that would be a view. The small model confirms the fit and names the plugin parts (a view, a
+  button, a worker, a hook).
+- The card says what the plugin would do in one line and why it beats a schedule or a template. **Try it** opens
+  a new thread (pre-filled with `d.actions.openNewThreads`, confirmed by the person) whose first prompt asks an
+  agent to build that plugin with `dispatch plugin` / `docs/plugins.md`, starting disabled for review. Nothing
+  is created without the person's confirmation.
+- The same applies when the Coach sees a better way to do something that only a plugin can give.
+
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
   (5-hour and weekly) on the account it used, and the budget with a meter.
