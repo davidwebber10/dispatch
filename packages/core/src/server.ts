@@ -434,6 +434,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
   sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
+  sessionService.setPluginInjection((harness) => plugins.modelInjection(harness));
   sessionService.setUserPromptListener((id, text) => threadEvents.onPrompt(id, text, 'user'));
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
@@ -645,6 +646,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
   sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
+  sessionService.setPluginInjection((harness) => plugins.modelInjection(harness));
   // Hook scripts run on thread events (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
   const pluginHooks = new PluginHooks(plugins, threadEvents, { api: () => daemonApi });
   plugins.setHookStatsProvider((id) => pluginHooks.stats(id));
