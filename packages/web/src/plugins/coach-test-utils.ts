@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { create } from 'zustand';
 import { vi } from 'vitest';
+import * as Icons from '@phosphor-icons/react';
 
 /**
  * A fake plugin SDK for the Coach tests: documents and settings live in maps, events are
@@ -35,6 +36,8 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     Fragment: React.Fragment,
     hooks: { useState, useEffect, useMemo, useCallback, useRef, useIsMobile: () => false },
     zustand: { create },
+    // The names the SDK's icon map gives (sdk.tsx ICONS).
+    icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle },
     stores: { useProjects: create(() => ({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] })) },
     ui: {
       styles: { sectionLabel: {}, row: {}, item: {}, ghostBtn: {}, solidBtn: () => ({}), chip: {}, fieldInput: {} },

@@ -161,6 +161,26 @@ describe('Coach card (coach plan Task 10)', () => {
     expect((d.docs.get('cadence') as { welcomeDone: boolean }).welcomeDone).toBe(true);
   });
 
+  it('the card and the muted banner show icons, never emoji; the feedback buttons are named Helpful and Not helpful', async () => {
+    const EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+    await mount();
+    const card = await screen.findByTestId('coach-card');
+    expect(card.textContent).not.toMatch(EMOJI);
+    expect(card.textContent).not.toContain('✕');
+    for (const name of ['Helpful', 'Not helpful', 'More options', 'Dismiss (not now)']) expect(screen.getByRole('button', { name }).querySelector('svg')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mute for 1 hour' }));
+    const banner = await screen.findByTestId('coach-muted');
+    expect(banner.textContent).not.toMatch(EMOJI);
+    expect(banner.querySelector('svg')).not.toBeNull();
+  });
+
+  it('the SDK icon map has the icons the Coach uses', async () => {
+    const { buildSdk } = await import('./sdk');
+    const icons = buildSdk().icons;
+    for (const name of ['thumbs-up', 'thumbs-down', 'dots', 'bell-slash', 'x']) expect(icons[name]).toBeTruthy();
+  });
+
   it('the mute commands mute and unmute', async () => {
     const { d } = await mount();
     const cmds = d.registered.coach.commands as { id: string; run: () => void }[];

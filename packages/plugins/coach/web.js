@@ -59,6 +59,8 @@ export function createCoach(d, deps = {}) {
   // The id the host gave this copy: a copy to local runs under its own id.
   const PLUGIN = d.id || 'coach';
   const now = deps.now || (() => new Date());
+  // Icons come from the app's icon map (d.icons, Phosphor); never emoji. A missing icon falls back to a short word.
+  const icon = (name, fallback, size = 15) => { const I = d.icons && d.icons[name]; return I ? h(I, { size, 'aria-hidden': true }) : fallback; };
 
   // "More": the detail behind a card, one large-model call on click (the judge replaces this, plan Task 9).
   async function defaultRequestMore(card) {
@@ -175,6 +177,7 @@ export function createCoach(d, deps = {}) {
     const until = new Date(cadence.mutedUntil);
     const label = mutedForever(cadence) ? 'Coach muted until you turn it on' : `Coach muted until ${until.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
     return h('div', { 'data-testid': 'coach-muted', role: 'status', style: S.banner },
+      icon('bell-slash', null, 14),
       h('span', null, label), h('span', { style: { flex: 1 } }),
       h('button', { type: 'button', style: S.link, onClick: () => { void doUnmute(); } }, 'Unmute'));
   }
@@ -189,7 +192,7 @@ export function createCoach(d, deps = {}) {
     const better = open && more && more.status === 'ok' ? more.data.better : null;
     const menuItem = (label, run) => h('button', { key: label, type: 'button', role: 'menuitem', style: S.menuItem, onClick: () => { setMenu(false); run(); } }, label);
     return h('div', { role: 'note', 'aria-label': 'Coach tip', 'data-testid': 'coach-card', style: S.card },
-      h('button', { type: 'button', 'aria-label': 'Dismiss (not now)', title: 'Dismiss (not now)', style: S.x, onClick: () => { void onDismiss(card); } }, '✕'),
+      h('button', { type: 'button', 'aria-label': 'Dismiss (not now)', title: 'Dismiss (not now)', style: S.x, onClick: () => { void onDismiss(card); } }, icon('x', 'Close', 14)),
       h('div', { style: S.kicker }, 'COACH', card.measure && MEASURES[card.measure] ? h('span', { style: S.axis }, ` · ${MEASURES[card.measure]}`) : null),
       h('div', { style: S.head }, card.headline),
       h('div', { style: S.why }, card.why),
@@ -206,9 +209,9 @@ export function createCoach(d, deps = {}) {
         h('button', { type: 'button', style: S.primary, onClick: () => tryIt(card, ctx, better) }, better ? 'Use this prompt' : (card.action && card.action.label) || 'Try it'),
         !welcome && h('button', { type: 'button', style: S.btn, onClick: () => { if (open) setOpen(false); else { setOpen(true); void loadMore(card); } } }, open ? 'Less' : 'More'),
         h('span', { style: { flex: 1 } }),
-        !welcome && h('button', { type: 'button', 'aria-label': 'Helpful', title: 'Helpful', style: S.icon }, '👍'),
-        !welcome && h('button', { type: 'button', 'aria-label': 'Not helpful', title: 'Not helpful', style: S.icon }, '👎'),
-        !welcome && h('button', { type: 'button', 'aria-label': 'More options', 'aria-haspopup': 'menu', 'aria-expanded': menu, style: S.icon, onClick: () => setMenu(!menu) }, '⋯')),
+        !welcome && h('button', { type: 'button', 'aria-label': 'Helpful', title: 'Helpful', style: S.icon }, icon('thumbs-up', 'Yes')),
+        !welcome && h('button', { type: 'button', 'aria-label': 'Not helpful', title: 'Not helpful', style: S.icon }, icon('thumbs-down', 'No')),
+        !welcome && h('button', { type: 'button', 'aria-label': 'More options', 'aria-haspopup': 'menu', 'aria-expanded': menu, style: S.icon, onClick: () => setMenu(!menu) }, icon('dots', '...', 16))),
       menu && h('div', { role: 'menu', style: S.menu },
         menuItem('Mute for 1 hour', () => { void muteAs('hour'); }),
         menuItem('Mute for today', () => { void muteAs('today'); }),
