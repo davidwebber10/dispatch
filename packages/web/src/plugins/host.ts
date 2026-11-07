@@ -58,8 +58,14 @@ export async function reloadPlugin(m: PluginRow, importer: Importer = defaultImp
   // The bundle's `register` is bound to its own id: a copied plugin that still says the old id
   // cannot register under another plugin (spec section 14), nor unregister one.
   const base = installSdk();
+  // Event listeners the bundle adds are dropped with its contributions, so a reload (or a file save
+  // on a local plugin) never leaves a second copy of `activate`'s listeners behind.
   const sdk: DispatchSdk = {
     ...base,
+    id: m.id,
+    events: {
+      on: (type, handler) => { const off = base.events.on(type, handler); usePluginRegistry.getState().addCleanup(m.id, off); return off; },
+    },
     register: (id, c) => {
       if (id !== m.id) throw new Error(`The bundle registered as "${id}" but plugin.json says "${m.id}". A plugin registers under its own id.`);
       base.register(id, c);

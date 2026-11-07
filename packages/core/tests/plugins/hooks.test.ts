@@ -45,6 +45,13 @@ describe('PluginHooks (2026-11-07)', () => {
     return hooks;
   };
 
+  it("a hook script does not see the daemon's own key or box token", async () => {
+    plugin('env', ['read:prompts'], { prompt: { run: 'hooks/on-prompt.js' } }, `fs.appendFileSync(${JSON.stringify(outFile('env'))}, JSON.stringify({ auth: process.env.DISPATCH_AUTH ?? null, box: process.env.DISPATCH_BOX_TOKEN ?? null }) + '\\n');`);
+    process.env.DISPATCH_AUTH = 'dtk_secret'; process.env.DISPATCH_BOX_TOKEN = 'box';
+    try { const h = start(); te.onPrompt('t1', 'hello world', 'user'); await h.idle(); } finally { delete process.env.DISPATCH_AUTH; delete process.env.DISPATCH_BOX_TOKEN; }
+    expect(lines('env')[1]).toEqual({ auth: null, box: null });
+  });
+
   it('a prompt event runs the prompt hook with the full text when the plugin has read:prompts, with the plugin identity in the env', async () => {
     plugin('logger', ['read:prompts'], { prompt: { run: 'hooks/on-prompt.js' } });
     const h = start();

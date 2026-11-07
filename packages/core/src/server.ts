@@ -435,7 +435,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
   sessionService.setStatusDeclaredListener((id, decl) => threadEvents.onStatus(id, decl));
   sessionService.setPluginInjection((harness) => plugins.modelInjection(harness));
-  sessionService.setUserPromptListener((id, text) => threadEvents.onPrompt(id, text, 'user'));
+  sessionService.setUserPromptListener((id, text, source) => threadEvents.onPrompt(id, text, source));
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
@@ -614,7 +614,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // Determine actual server URL after port is known
   const sessionService = new SessionService(db, ptyManager, path.join(dataDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dataDir, 'keys') });
-  sessionService.setUserPromptListener((id, text) => { threadAutoNamer.notifyPrompt(id, text); threadEvents.onPrompt(id, text, 'user'); });
+  sessionService.setUserPromptListener((id, text, source) => { if (source === 'user') threadAutoNamer.notifyPrompt(id, text); threadEvents.onPrompt(id, text, source); });
   sessionService.setDaemonPort(preferredPort); // corrected below if the daemon falls back to another port
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope
   // spec 2026-10-07, Unit 1). Only the real daemon sets it; createApp (tests) leaves it unset.

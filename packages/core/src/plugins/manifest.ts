@@ -37,6 +37,8 @@ export interface PluginManifest {
   sdk?: number;
   /** The browser bundle, relative to the plugin folder. */
   web?: string;
+  /** A bundled plugin starts enabled only when it says so (a new model call per prompt is opt-in); local plugins always start enabled. */
+  enabledByDefault?: boolean;
   contributes?: PluginContributes;
   permissions?: string[];
   model?: PluginModel;
@@ -70,6 +72,7 @@ export function parseManifest(raw: string, folderId: string): ParsedManifest {
   if (typeof data.dispatch === 'string') m.dispatch = data.dispatch;
   if (typeof data.sdk === 'number') m.sdk = data.sdk;
   if (typeof data.web === 'string') m.web = data.web;
+  if (data.enabledByDefault === true) m.enabledByDefault = true;
   if (isRecord(data.contributes)) m.contributes = data.contributes as PluginContributes;
   if (Array.isArray(data.permissions)) m.permissions = data.permissions.filter((p): p is string => typeof p === 'string');
   if (data.model !== undefined) {

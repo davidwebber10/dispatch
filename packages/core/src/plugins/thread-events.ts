@@ -14,7 +14,7 @@ import type { HarnessEvent } from '../runtime/events.js';
 interface Base { terminalId: string; sessionId: string; harness: string; at: string }
 export type ThreadEvent =
   | (Base & { type: 'thread:spawned'; toolsAvailable: string[] })
-  | (Base & { type: 'thread:prompt'; source: 'user' | 'coordinator' | 'thread' | 'hook'; text?: string; textLength: number })
+  | (Base & { type: 'thread:prompt'; source: PromptSource; text?: string; textLength: number })
   | (Base & { type: 'thread:tool'; tool: string; input?: unknown; inputLength: number })
   | (Base & { type: 'thread:turn'; ms: number | null; inputTokens: number | null; outputTokens: number | null; costUsd: number | null; outcome: string; declared?: boolean; summary?: string; partial?: boolean })
   | (Base & { type: 'thread:status'; state: 'done' | 'needs_you' | 'blocked'; summary: string; ask?: string; blocker?: string });
@@ -22,15 +22,26 @@ export type ThreadEvent =
 export type ThreadInfo = { sessionId: string; harness: string } | null;
 type Subscriber = (e: ThreadEvent) => void;
 /** An event body without the identity the emitter adds (distributes over the union). */
+/** Who sent a prompt: the owner, the Control Plane, a peer thread, or the daemon itself (an auto-resume). */
+export type PromptSource = 'user' | 'coordinator' | 'thread' | 'daemon';
+
 type Body = ThreadEvent extends infer E ? (E extends Base ? Omit<E, keyof Base> : never) : never;
+
+const REPORTED_TTL_MS = 10 * 60 * 1000;
+const normalise = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
 interface OpenTurn { startedAt: number; input: number; output: number; cost: number | null; sawUsage: boolean }
 
 export class ThreadEvents {
   private subscribers = new Set<Subscriber>();
   private turns = new Map<string, OpenTurn>();
-  /** The last prompt text per thread within a short window: the hook and the route both report a Pretty prompt. */
-  private lastPrompt = new Map<string, { text: string; at: number }>();
+  /**
+   * Prompts the session service reported, per thread, that a hook may report again: a CLI
+   * thread's hook fires for every prompt the owner typed or a peer sent, so the hook path keeps
+   * only prompts nobody reported first. Matched on the words (whitespace collapsed: the PTY
+   * parser and the hook disagree on line ends), consumed once, and dropped after ten minutes.
+   */
+  private reported = new Map<string, { norm: string; at: number }[]>();
 
   constructor(private readonly broadcaster: EventBroadcaster, private readonly lookup: (terminalId: string) => ThreadInfo, private readonly now: () => number = Date.now) {}
 
@@ -44,14 +55,43 @@ export class ThreadEvents {
     for (const fn of this.subscribers) { try { fn(e); } catch (err) { console.warn('[plugins] a thread-event subscriber failed:', err instanceof Error ? err.message : err); } }
   }
 
-  /** The user (or a peer) sent a prompt: from the session service, or from a hook's UserPromptSubmit. */
-  onPrompt(terminalId: string, text: string, source: 'user' | 'coordinator' | 'thread' | 'hook'): void {
-    const t = this.now();
-    const last = this.lastPrompt.get(terminalId);
-    if (last && last.text === text && t - last.at < 5000) return; // the same prompt, seen twice (route + hook)
-    this.lastPrompt.set(terminalId, { text, at: t });
-    if (!this.turns.has(terminalId)) this.turns.set(terminalId, { startedAt: t, input: 0, output: 0, cost: null, sawUsage: false });
+  /** The session service saw a prompt go to a thread (the owner typed it, a peer or the Control Plane sent it). */
+  onPrompt(terminalId: string, text: string, source: PromptSource): void {
+    this.remember(terminalId, text);
+    this.promptSeen(terminalId, text, source);
+  }
+
+  /** A hook's UserPromptSubmit: a prompt the service already reported is consumed; any other is the owner's. */
+  private onHookPrompt(terminalId: string, text: string): void {
+    if (this.consume(terminalId, text)) return;
+    this.promptSeen(terminalId, text, 'user');
+  }
+
+  private promptSeen(terminalId: string, text: string, source: PromptSource): void {
+    if (!this.turns.has(terminalId)) this.turns.set(terminalId, { startedAt: this.now(), input: 0, output: 0, cost: null, sawUsage: false });
     this.emit(terminalId, { type: 'thread:prompt', source, text, textLength: text.length });
+  }
+
+  private remember(terminalId: string, text: string): void {
+    const list = this.recent(terminalId);
+    list.push({ norm: normalise(text), at: this.now() });
+    if (list.length > 20) list.splice(0, list.length - 20);
+    this.reported.set(terminalId, list);
+  }
+
+  private consume(terminalId: string, text: string): boolean {
+    const list = this.recent(terminalId);
+    const norm = normalise(text);
+    const i = list.findIndex((r) => r.norm === norm);
+    if (i < 0) return false;
+    list.splice(i, 1);
+    this.reported.set(terminalId, list);
+    return true;
+  }
+
+  private recent(terminalId: string): { norm: string; at: number }[] {
+    const t = this.now();
+    return (this.reported.get(terminalId) ?? []).filter((r) => t - r.at < REPORTED_TTL_MS);
   }
 
   onTool(terminalId: string, tool: string, input: unknown): void {
@@ -72,7 +112,7 @@ export class ThreadEvents {
   onHookPayload(_provider: string, terminalId: string, payload: unknown): void {
     const p = (payload ?? {}) as Record<string, unknown>;
     const event = typeof p.hook_event_name === 'string' ? p.hook_event_name : '';
-    if (event === 'UserPromptSubmit' && typeof p.prompt === 'string') this.onPrompt(terminalId, p.prompt, 'user');
+    if (event === 'UserPromptSubmit' && typeof p.prompt === 'string') this.onHookPrompt(terminalId, p.prompt);
     else if (event === 'PreToolUse' && typeof p.tool_name === 'string') this.onTool(terminalId, p.tool_name, p.tool_input);
     else if (event === 'Stop' || event === 'StopFailure') this.closeTurn(terminalId, event === 'Stop' ? 'idle' : 'failed', {});
   }

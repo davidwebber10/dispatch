@@ -4,8 +4,10 @@
 // The Coach screen shows your habits over the week. It never changes a prompt by itself and never
 // posts to a thread.
 export default function activate(d) {
-  const { h, hooks: { useState, useEffect, useMemo, useDoc }, ui, storage, settings, events, assist, hint } = d;
-  const PLUGIN = 'prompt-coach';
+  const { h, hooks: { useState, useEffect, useMemo }, ui, storage, settings, events, assist, hint } = d;
+  // The id the host gave this copy: a copy to local (Settings → Plugins → Copy to local) runs under its own id.
+  const PLUGIN = d.id || 'prompt-coach';
+  const KEEP = 500; // judged prompts kept; older ones are pruned (a plugin holds at most 2000 documents)
   const HABITS = {
     'dictates-steps': 'Dictates the steps', 'thin-context': 'Thin context', 'tiny-scope': 'Tiny scope',
     'no-plan': 'No plan first', 'no-verify': 'No verification asked', 'low-leverage': 'Low leverage', good: 'Good prompt',
@@ -26,7 +28,7 @@ export default function activate(d) {
   let rubricText = null;
   async function rubric() {
     if (rubricText) return rubricText;
-    const res = await d.fetch(PLUGIN, '/plugins/prompt-coach/rubric.md');
+    const res = await d.fetch(PLUGIN, `/plugins/${encodeURIComponent(PLUGIN)}/rubric.md`);
     rubricText = res.ok ? await res.text() : 'Judge the prompt for outcome, context, scope, plan, verification and leverage. Answer with JSON: {"scores":{},"habit":"good","note":"","better":""}.';
     return rubricText;
   }
@@ -44,23 +46,42 @@ export default function activate(d) {
   const styleLine = (style) => style === 'quiet' ? 'Be brief and gentle; skip the note when the prompt is fine.'
     : style === 'direct' ? 'Be direct and concrete; name the weakness plainly.' : 'Be clear, kind and specific.';
 
-  // ── the judge: one assist call per prompt ────────────────────────────────────────────────
-  const lastJudged = new Map(); // terminalId → at of the last prompt judged
+  // ── the judge: one assist call per prompt, across every open browser ─────────────────────
+  // Each tab hears every prompt. The first to claim the observation's document (a placeholder
+  // with its own claim id) judges; the others see the claim and stand down.
+  const claimId = Math.random().toString(36).slice(2);
+  const lastJudged = new Map(); // terminalId → at of the last prompt this tab handled
+  async function claim(key, e) {
+    if (await storage.get(PLUGIN, key, null)) return false;
+    await storage.set(PLUGIN, key, { pending: claimId, terminalId: e.terminalId, sessionId: e.sessionId, at: e.at, habit: 'pending' });
+    await new Promise((r) => setTimeout(r, 150 + Math.random() * 150));
+    const now = await storage.get(PLUGIN, key, null);
+    return !!now && now.pending === claimId;
+  }
+  async function prune() {
+    const keys = (await storage.list(PLUGIN)).filter((k) => k.startsWith('obs:'));
+    if (keys.length <= KEEP) return;
+    const at = (k) => k.slice(k.lastIndexOf(':') + 1);
+    for (const k of keys.sort((a, b) => (at(a) < at(b) ? -1 : 1)).slice(0, keys.length - KEEP)) await storage.remove(PLUGIN, k);
+  }
   async function judge(e) {
     const s = await settings.get(PLUGIN, DEFAULT_SETTINGS);
     if (!s.readPrompts || !e.text || e.text.trim().length < 8) return;
     if (s.optOut && s.optOut[e.sessionId]) return;
     if (lastJudged.get(e.terminalId) === e.at) return;
     lastJudged.set(e.terminalId, e.at);
+    const key = `obs:${e.terminalId}:${e.at}`;
+    if (!(await claim(key, e))) return;
     useCoach.getState().setBusy(e.terminalId, true);
     try {
       const system = `${await rubric()}\n\n${styleLine(s.style)}`;
       const r = await assist(PLUGIN, { system, messages: [{ role: 'user', content: `The prompt to judge:\n\n<prompt>\n${e.text.slice(0, 4000)}\n</prompt>` }], maxTokens: 400 });
       const j = parseJudgement(r.text);
-      if (!j) return;
+      if (!j) { await storage.remove(PLUGIN, key); return; }
       const obs = { terminalId: e.terminalId, sessionId: e.sessionId, at: e.at, prompt: e.text.slice(0, 200), ...j };
-      await storage.set(PLUGIN, `obs:${e.terminalId}:${e.at}`, obs);
       useCoach.getState().setLatest(e.terminalId, obs);
+      await storage.set(PLUGIN, key, obs);
+      void prune().catch(() => {});
     } catch (err) {
       console.warn('[prompt-coach] judging failed:', err && err.message ? err.message : err);
     } finally {
@@ -100,7 +121,7 @@ export default function activate(d) {
       (async () => {
         const keys = (await storage.list(PLUGIN)).filter((k) => k.startsWith('obs:'));
         const items = [];
-        for (const k of keys.slice(-400)) { const v = await storage.get(PLUGIN, k, null); if (v) items.push(v); }
+        for (const k of keys.slice(-400)) { const v = await storage.get(PLUGIN, k, null); if (v && !v.pending) items.push(v); }
         items.sort((a, b) => (a.at < b.at ? 1 : -1));
         if (on) setObs(items);
       })();

@@ -5,6 +5,7 @@ import type { PluginRegistry, PluginRow } from './registry.js';
 import type { ThreadEvents, ThreadEvent } from './thread-events.js';
 import type { HookEvent } from './manifest.js';
 import { redactThreadEvent } from './thread-events.js';
+import { inheritedEnv } from '../platform/inherited-env.js';
 
 /**
  * Hook scripts (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3): for every
@@ -19,6 +20,8 @@ const EVENT_HOOK: Record<ThreadEvent['type'], HookEvent> = {
   'thread:prompt': 'prompt', 'thread:tool': 'toolCall', 'thread:turn': 'turnEnd', 'thread:spawned': 'spawn', 'thread:status': 'status',
 };
 
+const ROWS_CACHE_MS = 2000;
+
 interface Queue { pending: ThreadEvent[]; running: boolean }
 
 export class PluginHooks {
@@ -30,6 +33,8 @@ export class PluginHooks {
   private readonly api: string | (() => string);
   private waiters: (() => void)[] = [];
   private stopped = false;
+  /** The rows, read at most every two seconds: a tool event per thread must not stat every plugin folder. */
+  private rowsCache: { at: number; rows: PluginRow[] } | null = null;
 
   constructor(private readonly registry: PluginRegistry, events: ThreadEvents, opts: { timeoutMs?: number; backlog?: number; api: string | (() => string) }) {
     this.timeoutMs = opts.timeoutMs ?? 10000;
@@ -50,7 +55,7 @@ export class PluginHooks {
 
   private onEvent(e: ThreadEvent): void {
     if (this.stopped) return;
-    for (const row of this.registry.list()) {
+    for (const row of this.rows()) {
       const hook = row.model?.hooks?.[EVENT_HOOK[e.type]];
       if (!hook || !row.enabled || row.error) continue;
       if (e.type === 'thread:tool' && hook.tools && hook.tools.length > 0 && !hook.tools.some((g) => matchGlob(g, e.tool))) continue;
@@ -63,6 +68,12 @@ export class PluginHooks {
       }
       void this.drain(row.id);
     }
+  }
+
+  private rows(): PluginRow[] {
+    const t = Date.now();
+    if (!this.rowsCache || t - this.rowsCache.at > ROWS_CACHE_MS) this.rowsCache = { at: t, rows: this.registry.list() };
+    return this.rowsCache.rows;
   }
 
   private bump(id: string, field: keyof HookStats): void {
@@ -101,7 +112,7 @@ export class PluginHooks {
       const payload = JSON.stringify(canReadPrompts ? e : redactThreadEvent(e));
       const keyFile = path.join(path.dirname(this.registry.dir), 'keys', `plugin-${row.id}`);
       const env: NodeJS.ProcessEnv = {
-        ...process.env, DISPATCH_PLUGIN: row.id, DISPATCH_PLUGIN_AUTH_FILE: keyFile, DISPATCH_API: typeof this.api === 'function' ? this.api() : this.api,
+        ...inheritedEnv(), DISPATCH_PLUGIN: row.id, DISPATCH_PLUGIN_AUTH_FILE: keyFile, DISPATCH_API: typeof this.api === 'function' ? this.api() : this.api,
         DISPATCH_TERMINAL: e.terminalId, DISPATCH_SESSION: e.sessionId, DISPATCH_EVENT: e.type,
       };
       this.bump(row.id, 'runs');

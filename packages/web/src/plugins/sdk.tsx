@@ -129,6 +129,8 @@ function pluginFetch(plugin: string, path: string, init: RequestInit = {}): Prom
 
 export interface DispatchSdk {
   version: string;
+  /** The plugin's own id (plugin.json), as the host hands it to `activate`; use it for register, storage, settings and fetch. Empty on the shared window.dispatch. */
+  id: string;
   React: typeof React;
   h: typeof React.createElement;
   Fragment: typeof React.Fragment;
@@ -160,6 +162,7 @@ export interface DispatchSdk {
 export function buildSdk(): DispatchSdk {
   return {
     version: SDK_VERSION,
+    id: '',
     React,
     h: React.createElement,
     Fragment: React.Fragment,

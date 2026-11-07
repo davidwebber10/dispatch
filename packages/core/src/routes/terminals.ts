@@ -172,7 +172,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
           name: sessionService.get(from.sessionId)?.name ?? from.sessionId, terminalId: from.terminalId, thread: from.thread, overseer: from.overseer,
         })
         : sessionService.sendThreadMessage(req.params.terminalId, body, source, logAs);
-      if (source === 'user') sessionService.noteUserPrompt(req.params.terminalId, payload);
+      // Plugins hear every prompt with who sent it; the thread namer and the coordinator hear the owner's only.
+      sessionService.noteUserPrompt(req.params.terminalId, payload, from || fromThread ? 'thread' : source === 'user' ? 'user' : 'coordinator');
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
       // A structured send flips to working off its own stream events; a PTY write has no such
       // signal, so mark it here exactly like the /input route does for a submitted line.

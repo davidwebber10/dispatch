@@ -42,9 +42,11 @@ the files yourself. A thread can write them too.
 
 ## The browser part
 
-`web.js` exports `activate(d)`. `d` is `window.dispatch`, the SDK: the app's React and
-hooks, its stores, its API client, its UI primitives and style tokens, per-plugin storage,
-and `register`. A plugin ships no React of its own; it builds elements with `d.h`
+`web.js` exports `activate(d)`. `d` is the SDK (the shared `window.dispatch`, with `d.id` set
+to this plugin's own id): the app's React and hooks, its stores, its API client, its UI
+primitives and style tokens, per-plugin storage, and `register`. Use `d.id` wherever the
+plugin names itself (`register`, `storage`, `settings`, `fetch`): a copy to local then runs
+under its new id without an edit. A plugin ships no React of its own; it builds elements with `d.h`
 (`React.createElement`), or with JSX through a build that maps `react` to
 `window.dispatch.React`.
 
@@ -174,19 +176,23 @@ The daemon raises one stream of events for every thread, whichever harness:
 | Event | When | Carries |
 | --- | --- | --- |
 | `thread:spawned` | a thread starts | `toolsAvailable` |
-| `thread:prompt` | the user sent a prompt | `text` (with `read:prompts`), `textLength`, `source` |
+| `thread:prompt` | a prompt went to the thread | `text` (with `read:prompts`), `textLength`, `source`: `user`, `coordinator`, `thread` (a peer) or `daemon` (an auto-resume) |
 | `thread:tool` | the model called a tool | `tool`, `input` (with `read:prompts`), `inputLength` |
 | `thread:turn` | a turn ended | `ms`, `inputTokens`, `outputTokens`, `costUsd`, `outcome`, `summary`; `partial: true` when a CLI thread gave no usage |
 | `thread:status` | `report_status` | `state`, `summary`, `ask`, `blocker` |
 
 In the browser, `d.events.on('thread:prompt', handler)` (one type, a list, or `'*'`) receives
-them; the browser runs with your power, so it sees the text.
+them; the browser runs with your power, so it sees the text. Listeners a plugin adds are
+dropped when it reloads, so `activate` can add them without a guard. A prompt the owner typed
+into a CLI thread, or one a peer sent, is reported once: the daemon matches the hook's copy
+against what it sent.
 
 `model.hooks` runs a script in the plugin folder per event (`prompt`, `toolCall` with an
 optional `tools` glob list, `turnEnd`, `spawn`, `status`) with the event as JSON on stdin and
 `DISPATCH_PLUGIN`, `DISPATCH_PLUGIN_AUTH_FILE`, `DISPATCH_API`, `DISPATCH_TERMINAL` and
-`DISPATCH_SESSION` in the environment. Without `read:prompts` the script gets lengths, not
-text. One script runs at a time per plugin, with a 10 s timeout and a backlog of 100; the
+`DISPATCH_SESSION` in the environment (the daemon's own environment, minus its keys and box
+token). The script runs under the daemon's Node. Without `read:prompts` the script gets
+lengths, not text. One script runs at a time per plugin, with a 10 s timeout and a backlog of 100; the
 Plugins page shows runs, failures and drops. Hooks observe; a blocking hook (deny a tool
 call) is not in this slice.
 
@@ -195,14 +201,19 @@ call) is not in this slice.
 `d.assist(plugin, { system, messages, maxTokens })` runs one turn on the daemon's assist model
 (the signed-in Claude Code CLI, else the OpenRouter key) with no tools, and returns
 `{ text, usage, ms, model }`. It needs `model:assist`; every call is metered on the Plugins
-page. A plugin's processes call `POST /api/plugins/<id>/assist` with the same body.
+page, and at most three run at once per plugin (a fourth gets 429). A plugin's processes call
+`POST /api/plugins/<id>/assist` with the same body. A plugin that judges in the browser
+should claim its result document before it calls (the Prompt coach does), or every open tab
+pays for the same call.
 
 ## Bundled plugins
 
 `packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: the Prompt coach is one.
-A bundled plugin updates with Dispatch, can be disabled, cannot be removed, and is not edited in
-place; "Copy to local…" on the Plugins page duplicates it under a new id. A local plugin with
-the same id hides the bundled one.
+A bundled plugin updates with Dispatch, cannot be removed, and is not edited in place; "Copy
+to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
+hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
+`"enabledByDefault": true`: the coach makes a model call per prompt, so turning it on is the
+owner's choice on the Plugins page. A local plugin starts enabled.
 
 ## Reloading, errors and safe mode
 

@@ -283,8 +283,27 @@ describe('bundled plugins (2026-11-07, spec section 10)', () => {
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-bundled-')); dir = path.join(tmp, 'plugins'); bundled = path.join(tmp, 'bundled'); keys = new KeyRegistry(); fs.mkdirSync(dir, { recursive: true }); });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-  it('a bundled plugin lists with bundled: true, serves its files, gets a key, cannot be removed, and copies to local under a new id', () => {
+  it('a bundled plugin starts disabled unless its manifest says enabledByDefault; the owner turns it on, and that survives a restart', () => {
     write(bundled, 'prompt-coach');
+    write(bundled, 'previews', { enabledByDefault: true });
+    let r = reg(); r.issueKeys();
+    expect(r.get('prompt-coach')).toMatchObject({ enabled: false, keyed: false, bundled: true });
+    expect(r.get('previews')).toMatchObject({ enabled: true, keyed: true, bundled: true });
+    r.setEnabled('prompt-coach', true);
+    expect(r.get('prompt-coach')).toMatchObject({ enabled: true, keyed: true });
+    r = reg(); r.issueKeys();
+    expect(r.get('prompt-coach')!.enabled).toBe(true);
+    r.setEnabled('prompt-coach', false);
+    expect(reg().get('prompt-coach')!.enabled).toBe(false);
+    r.setEnabled('previews', false);
+    expect(reg().get('previews')!.enabled).toBe(false);
+    // A local plugin is enabled by default, as before.
+    write(dir, 'local-one');
+    expect(reg().get('local-one')!.enabled).toBe(true);
+  });
+
+  it('a bundled plugin lists with bundled: true, serves its files, gets a key, cannot be removed, and copies to local under a new id', () => {
+    write(bundled, 'prompt-coach', { enabledByDefault: true });
     const r = reg(); r.issueKeys();
     const row = r.get('prompt-coach')!;
     expect(row).toMatchObject({ id: 'prompt-coach', name: 'B prompt-coach', bundled: true, enabled: true, keyed: true, install: null });

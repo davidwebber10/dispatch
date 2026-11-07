@@ -1,5 +1,7 @@
 # Prompt coach
 
+The coach starts disabled: turn it on in Settings → Plugins. Each judged prompt is one model call.
+
 The coach's goal is to level you up in how you engage with AI: not as a parrot, not as a
 file editor, but with leverage. After each prompt you send to a thread, it judges the prompt
 against `rubric.md` (outcome, context, scope, plan, verification, leverage), names one

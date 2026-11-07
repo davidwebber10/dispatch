@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
+import * as sessionsDb from '../../src/db/sessions.js';
+import * as terminalsDb from '../../src/db/terminals.js';
 import { createApp } from '../../src/server.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import type { AssistRunner, AssistRequest } from '../../src/assist/run.js';
@@ -36,8 +38,29 @@ describe('plugin assist route (2026-11-07)', () => {
     plugin('coach', ['model:assist']);
     plugin('mute', []);
     app = build(fakeRunner);
+    sessionsDb.create(db, { id: 'A', provider: 'claude-code', name: 'Alpha', workingDir: tmp });
+    terminalsDb.create(db, { id: 'tX', sessionId: 'A', type: 'claude-code', label: 'Worker', config: { transport: 'structured', role: 'agent' } });
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('a thread key cannot drive assist (403), and a fourth call in flight for one plugin gets 429', async () => {
+    const body = { messages: [{ role: 'user', content: 'x' }] };
+    const thread = { Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'tX' }).key}` };
+    expect((await request(app).post('/api/plugins/coach/assist').set(thread).send(body)).status).toBe(403);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const slow: AssistRunner = { available: async () => true, run: async () => { await gate; return { text: 'late', usage: { inputTokens: 1, outputTokens: 1 }, ms: 1, model: 'm' }; } };
+    app = build(slow);
+    // supertest sends lazily: `.then` starts each request now, so three are in flight before the fourth.
+    const inflight = [1, 2, 3].map(() => request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send(body).then((r) => r));
+    await new Promise((r) => setTimeout(r, 80));
+    const fourth = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send(body);
+    expect(fourth.status).toBe(429);
+    expect(fourth.body.error).toBe('busy');
+    release();
+    expect((await Promise.all(inflight)).map((r) => r.status)).toEqual([200, 200, 200]);
+    expect((await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send(body)).status).toBe(200);
+  });
 
   it('a plugin with model:assist gets text and usage, and the call is metered on its row', async () => {
     const r = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ system: 'You judge prompts.', messages: [{ role: 'user', content: 'Fix the bug' }], maxTokens: 300 });

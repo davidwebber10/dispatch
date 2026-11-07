@@ -30,6 +30,24 @@ describe('ThreadEvents (2026-11-07)', () => {
     expect(out[0]).toMatchObject({ text: 'Hello there', textLength: 11, source: 'user' });
   });
 
+  it('the service path and the hook path report one prompt once, even when whitespace differs (a PTY paste)', () => {
+    te.onPrompt('t1', 'Fix the\r\nlogin bug ', 'user');
+    te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'Fix the\nlogin bug' });
+    expect(out.filter((e) => e.type === 'thread:prompt')).toHaveLength(1);
+    // The same words sent again later are a new prompt.
+    te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'Fix the\nlogin bug' });
+    expect(out.filter((e) => e.type === 'thread:prompt')).toHaveLength(2);
+  });
+
+  it('a coordinator or peer send keeps its source when the hook reports it afterwards', () => {
+    te.onPrompt('t1', 'Please run the tests', 'coordinator');
+    te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'Please run the tests' });
+    te.onPrompt('t1', 'From a peer', 'thread');
+    te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'From a peer' });
+    const prompts = out.filter((e) => e.type === 'thread:prompt');
+    expect(prompts.map((e) => (e as { source: string }).source)).toEqual(['coordinator', 'thread']);
+  });
+
   it('a PreToolUse hook becomes thread:tool with the name, the input and its size', () => {
     te.onHookPayload('claude', 't1', { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } });
     expect(out[0]).toMatchObject({ type: 'thread:tool', terminalId: 't1', tool: 'Bash', input: { command: 'rm -rf build' }, inputLength: JSON.stringify({ command: 'rm -rf build' }).length });

@@ -68,6 +68,20 @@ describe('plugin host (2026-11-07)', () => {
     expect(usePluginRegistry.getState().status.p).toMatchObject({ state: 'error', error: 'late' });
   });
 
+  it('the sdk handed to a bundle carries its id, and the event listeners it added are dropped on reload', async () => {
+    const seen: string[] = []; const ids: string[] = [];
+    const importer = async () => ({ default: (d: DispatchSdk) => { ids.push(d.id); d.events.on('thread:prompt', () => seen.push('x')); } });
+    const m = row('p');
+    await reloadPlugin(m, importer);
+    await reloadPlugin(m, importer);
+    expect(ids).toEqual(['p', 'p']);
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't', sessionId: 's', harness: 'claude-code', at: '', source: 'user', text: 'a', textLength: 1 } as never);
+    expect(seen).toHaveLength(1);
+    usePluginRegistry.getState().unregister('p');
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't', sessionId: 's', harness: 'claude-code', at: '', source: 'user', text: 'a', textLength: 1 } as never);
+    expect(seen).toHaveLength(1);
+  });
+
   it('safe mode loads nothing', async () => {
     localStorage.setItem('dispatch:plugins:safe', '1');
     expect(isSafeMode()).toBe(true);

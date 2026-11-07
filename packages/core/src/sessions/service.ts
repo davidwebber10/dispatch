@@ -1,4 +1,5 @@
 import type { UsageLimitService } from '../limits/service.js';
+import type { PromptSource } from '../plugins/thread-events.js';
 import { PromptInput } from './prompt-input.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
@@ -155,6 +156,7 @@ export class SessionService {
     this.resuming = terminalId;
     try {
       const sent = this.sendThreadMessage(terminalId, text, undefined, 'daemon');
+      this.noteUserPrompt(terminalId, text, 'daemon');
       // A structured send flips to working off its own stream events; a PTY write has no such signal,
       // so mark the thread working here, as the HTTP message route does. Without the working edge the
       // turn end is not a settle, and the woken pause row would never clear.
@@ -171,12 +173,13 @@ export class SessionService {
     // coordinator sends leave the pause alone.
     if (this.resuming !== terminalId && source === 'user') this.usageLimits?.onUserMessage(terminalId);
   }
-  private onUserPrompt?: (terminalId: string, text: string) => void;
+  private onUserPrompt?: (terminalId: string, text: string, source: PromptSource) => void;
   private promptInputs = new Map<string, PromptInput>();
-  setUserPromptListener(listener: (terminalId: string, text: string) => void): void { this.onUserPrompt = listener; }
-  noteUserPrompt(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[]): void {
+  setUserPromptListener(listener: (terminalId: string, text: string, source: PromptSource) => void): void { this.onUserPrompt = listener; }
+  /** A prompt went to a thread: the owner's, or one a peer, the Control Plane or the daemon sent (plugins hear the source). */
+  noteUserPrompt(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source: PromptSource = 'user'): void {
     const text = typeof content === 'string' ? content : content.filter(b => b.type === 'text').map(b => (b as { text: string }).text).join('\n');
-    try { this.onUserPrompt?.(terminalId, text); } catch { /* naming must never prevent sending */ }
+    try { this.onUserPrompt?.(terminalId, text, source); } catch { /* naming must never prevent sending */ }
   }
   noteUserInput(terminalId: string, data: string): void {
     // Typing counts; a bare focus-in/out report from the terminal does not.

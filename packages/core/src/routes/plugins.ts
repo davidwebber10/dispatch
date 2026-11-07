@@ -24,6 +24,7 @@ function fail(res: import('express').Response, e: unknown): void {
 }
 
 const OK = { ok: true } as const;
+export const ASSIST_INFLIGHT_MAX = 3;
 
 /** A plugin key reaches the storage and settings of its own plugin only. */
 const ownPluginRule: Rule = (req, ctx) => (ctx.plugin?.id === req.params.id
@@ -213,6 +214,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──
   const assistRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('model:assist')(req, ctx) : own; };
+  // A bound per plugin: each call is a model process on the owner's account.
+  const inflight = new Map<string, number>();
   router.post('/plugins/:id/assist', keyRoute({ plugin: assistRule }), async (req, res) => {
     if (!known(req, res)) return;
     const body = (req.body ?? {}) as { system?: unknown; messages?: unknown; maxTokens?: unknown };
@@ -222,7 +225,12 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!assist || !(await assist.available().catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
-    const result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens }).catch(() => null);
+    const busy = inflight.get(req.params.id) ?? 0;
+    if (busy >= ASSIST_INFLIGHT_MAX) return void res.status(429).json({ error: 'busy', message: `At most ${ASSIST_INFLIGHT_MAX} assist calls run at once for a plugin.` });
+    inflight.set(req.params.id, busy + 1);
+    let result;
+    try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens }).catch(() => null); }
+    finally { inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1); }
     if (!result) return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
     pluginData.recordAssist(db, req.params.id, result.usage, result.ms);
     res.json(result);

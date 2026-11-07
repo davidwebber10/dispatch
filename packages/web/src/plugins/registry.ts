@@ -61,6 +61,8 @@ interface PluginRegistryState extends Lists {
   unregister: (plugin: string) => void;
   setPromoted: (keys: string[]) => void;
   setBadge: (viewKey: string, n: number) => void;
+  /** Something to undo when the plugin is unregistered or reloaded (an event listener the SDK added). */
+  addCleanup: (plugin: string, fn: () => void) => void;
 }
 
 export const viewKey = (plugin: string, id: string): string => `plugin:${plugin}:${id}`;
@@ -72,6 +74,9 @@ const PROMOTED_KEY = 'dispatch:plugins:promoted';
 const loadPromoted = (): string[] => {
   try { const v = JSON.parse(localStorage.getItem(PROMOTED_KEY) ?? '[]'); return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, PROMOTED_MAX) : []; } catch { return []; }
 };
+
+/** Per-plugin cleanups, outside the store state: functions, not data. */
+const cleanups = new Map<string, (() => void)[]>();
 
 const drop = <T extends { plugin: string }>(xs: T[], plugin: string): T[] => xs.filter((x) => x.plugin !== plugin);
 
@@ -100,6 +105,8 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
     });
   },
   unregister: (plugin) => {
+    for (const fn of cleanups.get(plugin) ?? []) { try { fn(); } catch { /* a listener already gone */ } }
+    cleanups.delete(plugin);
     const s = get();
     set({
       views: drop(s.views, plugin), settings: drop(s.settings, plugin), threadMenu: drop(s.threadMenu, plugin),
@@ -111,6 +118,7 @@ export const usePluginRegistry = create<PluginRegistryState>((set, get) => ({
     try { localStorage.setItem(PROMOTED_KEY, JSON.stringify(promoted)); } catch { /* ignore */ }
     set({ promoted });
   },
+  addCleanup: (plugin, fn) => { const list = cleanups.get(plugin) ?? []; list.push(fn); cleanups.set(plugin, list); },
   setBadge: (viewKey, n) => {
     const badges = { ...get().badges };
     if (n > 0) badges[viewKey] = Math.floor(n); else delete badges[viewKey];

@@ -61,7 +61,8 @@ function newestMtime(folder: string, depth = 0): number {
 }
 const INSTALL_FILE = '.dispatch-install.json';
 
-interface StateFile { disabled: string[] }
+/** `disabled`: plugins the owner turned off. `enabled`: bundled plugins the owner turned on (bundled ones start off unless their manifest says enabledByDefault). */
+interface StateFile { disabled: string[]; enabled: string[] }
 
 export class PluginRegistry {
   private watcher: fs.FSWatcher | null = null;
@@ -185,8 +186,9 @@ export class PluginRegistry {
   private readState(): StateFile {
     try {
       const raw = JSON.parse(fs.readFileSync(this.stateFile, 'utf8')) as Partial<StateFile>;
-      return { disabled: Array.isArray(raw.disabled) ? raw.disabled.filter((x): x is string => typeof x === 'string') : [] };
-    } catch { return { disabled: [] }; }
+      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+      return { disabled: strings(raw.disabled), enabled: strings(raw.enabled) };
+    } catch { return { disabled: [], enabled: [] }; }
   }
 
   private writeState(state: StateFile): void {
@@ -201,10 +203,10 @@ export class PluginRegistry {
       if (!root) continue;
       try { for (const n of fs.readdirSync(root)) if (PLUGIN_ID_RE.test(n)) names.add(n); } catch { /* no such folder */ }
     }
-    const disabled = new Set(this.readState().disabled);
+    const state = this.readState();
     const out: PluginRow[] = [];
     for (const id of [...names].sort()) {
-      const row = this.read(id, disabled);
+      const row = this.read(id, state);
       if (row) out.push(row);
     }
     return out;
@@ -212,10 +214,10 @@ export class PluginRegistry {
 
   get(id: string): PluginRow | undefined {
     if (!PLUGIN_ID_RE.test(id)) return undefined;
-    return this.read(id, new Set(this.readState().disabled));
+    return this.read(id, this.readState());
   }
 
-  private read(id: string, disabled: Set<string>): PluginRow | undefined {
+  private read(id: string, state: StateFile): PluginRow | undefined {
     const where = this.folderOf(id);
     if (!where) return undefined;
     const folder = where.folder;
@@ -237,7 +239,8 @@ export class PluginRegistry {
     if (m.model?.instructions && !this.resolveInside(folder, m.model.instructions)) return this.broken(id, stamp, `plugin.json "model.instructions" names a file that does not exist: ${m.model.instructions}`);
     for (const [event, hook] of Object.entries(m.model?.hooks ?? {})) if (hook && !this.resolveInside(folder, hook.run)) return this.broken(id, stamp, `plugin.json "model.hooks.${event}.run" names a file that does not exist: ${hook.run}`);
     const assist = this.assistTotals?.(id);
-    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...place };
+    const enabled = state.disabled.includes(id) ? false : where.bundled ? (m.enabledByDefault === true || state.enabled.includes(id)) : true;
+    return { ...m, enabled, stamp, install: this.readInstall(folder), keyed: this.keyed(id), ...(this.hookStats && m.model?.hooks ? { hooks: this.hookStats(id) } : {}), ...(assist && assist.calls > 0 ? { assist } : {}), ...place };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
@@ -257,9 +260,9 @@ export class PluginRegistry {
     const row = this.get(id);
     if (!row) throw new Error('unknown plugin');
     const state = this.readState();
-    const set = new Set(state.disabled);
-    if (enabled) set.delete(id); else set.add(id);
-    this.writeState({ disabled: [...set].sort() });
+    const disabled = new Set(state.disabled); const on = new Set(state.enabled);
+    if (enabled) { disabled.delete(id); on.add(id); } else { disabled.add(id); on.delete(id); }
+    this.writeState({ disabled: [...disabled].sort(), enabled: [...on].sort() });
     if (enabled && !row.error) this.issueKey(id); else this.revokeKey(id);
     return this.get(id)!;
   }
@@ -309,7 +312,7 @@ export class PluginRegistry {
     if (fs.lstatSync(folder).isSymbolicLink()) fs.unlinkSync(folder);
     else fs.rmSync(folder, { recursive: true, force: true });
     const state = this.readState();
-    if (state.disabled.includes(id)) this.writeState({ disabled: state.disabled.filter((x) => x !== id) });
+    if (state.disabled.includes(id) || state.enabled.includes(id)) this.writeState({ disabled: state.disabled.filter((x) => x !== id), enabled: state.enabled.filter((x) => x !== id) });
   }
 
   /** Copy a plugin (bundled or local) to a new local folder under a new id (spec section 10). Throws 'unknown plugin' | 'bad id' | 'exists'. */
