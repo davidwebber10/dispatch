@@ -317,7 +317,8 @@ export class SessionService {
    * the thread was launched with on its row (`config.toolsAvailable`, spec section 3.3).
    */
   private applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
-    const inj = this.pluginInjection?.(harness) ?? { specs: [], prompts: [], toolNames: [] };
+    if (!this.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
+    const inj = this.pluginInjection(harness);
     specs.push(...inj.specs);
     prompts.push(...inj.prompts);
     const toolsAvailable = specs.map((s) => s.name);
