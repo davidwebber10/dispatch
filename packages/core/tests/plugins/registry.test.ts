@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { KeyRegistry } from '../../src/auth/principals.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -10,7 +11,9 @@ describe('PluginRegistry', () => {
   let tmp: string;
   let dir: string;
   let events: Record<string, unknown>[];
-  const reg = (running = '3.28.0') => new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, running);
+  let keys: KeyRegistry;
+  const keyDir = () => path.join(tmp, 'keys');
+  const reg = (running = '3.28.0') => new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, running, { keys, keyDir: keyDir() });
   const plugin = (id: string, manifest: Record<string, unknown> | string, web = 'export default () => {}') => {
     fs.mkdirSync(path.join(dir, id), { recursive: true });
     fs.writeFileSync(path.join(dir, id, 'plugin.json'), typeof manifest === 'string' ? manifest : JSON.stringify({ id, name: id, version: '1.0.0', web: 'web.js', ...manifest }));
@@ -21,6 +24,7 @@ describe('PluginRegistry', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-'));
     dir = path.join(tmp, 'plugins');
     events = [];
+    keys = new KeyRegistry();
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
@@ -181,5 +185,65 @@ describe('PluginRegistry', () => {
       await sleep(400);
       expect(events.filter((e) => e.type === 'plugin:changed')).toEqual([{ type: 'plugin:changed', id: 'p', plugin: null }]);
     } finally { r.stop(); }
+  });
+});
+
+describe('PluginRegistry keys (2026-11-07)', () => {
+  let tmp: string; let dir: string; let keys: KeyRegistry; let events: Record<string, unknown>[];
+  const reg = () => new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, '3.28.0', { keys, keyDir: path.join(tmp, 'keys') });
+  const plugin = (id: string, extra: Record<string, unknown> = {}) => {
+    fs.mkdirSync(path.join(dir, id), { recursive: true });
+    fs.writeFileSync(path.join(dir, id, 'plugin.json'), JSON.stringify({ id, name: id, version: '1.0.0', web: 'web.js', permissions: ['read:threads'], ...extra }));
+    fs.writeFileSync(path.join(dir, id, 'web.js'), '');
+  };
+  const keyFile = (id: string) => path.join(tmp, 'keys', `plugin-${id}`);
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-keys-')); dir = path.join(tmp, 'plugins'); keys = new KeyRegistry(); events = []; });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('issueKeys writes a 0600 key file per enabled plugin and none for a disabled or broken one', () => {
+    plugin('on'); plugin('off'); plugin('broken', { id: 'other' });
+    const r = reg();
+    r.setEnabled('off', false);
+    r.issueKeys();
+    const literal = fs.readFileSync(keyFile('on'), 'utf8');
+    expect(literal).toMatch(/^dpk_[A-Za-z0-9_-]{43}\n$/);
+    expect(fs.statSync(keyFile('on')).mode & 0o777).toBe(0o600);
+    expect(keys.resolve(literal.trim())).toMatchObject({ kind: 'plugin', pluginId: 'on' });
+    expect(fs.existsSync(keyFile('off'))).toBe(false);
+    expect(fs.existsSync(keyFile('broken'))).toBe(false);
+    expect(r.get('on')!.keyed).toBe(true);
+    expect(r.get('off')!.keyed).toBe(false);
+  });
+
+  it('disable revokes the key at once and deletes the file; enable mints a new one', () => {
+    plugin('p');
+    const r = reg(); r.issueKeys();
+    const first = fs.readFileSync(keyFile('p'), 'utf8').trim();
+    r.setEnabled('p', false);
+    expect(keys.resolve(first)).toBeNull();
+    expect(fs.existsSync(keyFile('p'))).toBe(false);
+    r.setEnabled('p', true);
+    const second = fs.readFileSync(keyFile('p'), 'utf8').trim();
+    expect(second).not.toBe(first);
+    expect(keys.resolve(second)).toMatchObject({ kind: 'plugin', pluginId: 'p' });
+  });
+
+  it('remove revokes the key and deletes the file', () => {
+    plugin('p');
+    const r = reg(); r.issueKeys();
+    const k = fs.readFileSync(keyFile('p'), 'utf8').trim();
+    r.remove('p');
+    expect(keys.resolve(k)).toBeNull();
+    expect(fs.existsSync(keyFile('p'))).toBe(false);
+  });
+
+  it('facts(id) returns the manifest permissions; null for unknown, disabled or broken', () => {
+    plugin('p'); plugin('broken', { id: 'x' });
+    const r = reg();
+    expect(r.facts('p')).toEqual({ id: 'p', permissions: ['read:threads'] });
+    expect(r.facts('nope')).toBeNull();
+    expect(r.facts('broken')).toBeNull();
+    r.setEnabled('p', false);
+    expect(r.facts('p')).toBeNull();
   });
 });

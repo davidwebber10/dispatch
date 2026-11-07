@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { Router, RequestHandler } from 'express';
 import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute } from '../auth/route-policy.js';
-import { projectListRule } from '../auth/key-rules.js';
+import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders } from '../http/active-content.js';
 import { HTML_SANDBOX_CSP } from './previews.js';
 import type { PluginRegistry } from '../plugins/registry.js';
@@ -20,7 +20,7 @@ export function createPluginsRouter(plugins: PluginRegistry): Router {
   const router = policyRouter();
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
-  router.get('/plugins', keyRoute({ thread: projectListRule, roleRun: projectListRule }), (_req, res) => {
+  router.get('/plugins', keyRoute({ thread: projectListRule, roleRun: projectListRule, plugin: allowRule }), (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ plugins: plugins.list() });
   });

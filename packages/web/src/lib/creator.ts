@@ -1,7 +1,8 @@
 /** Who created an integration or a schedule (core auth/creator.ts). null = a row from before the record existed. */
 export type Creator =
   | { kind: 'owner' | 'local' | 'tailscale' | 'chat' }
-  | { kind: 'thread' | 'shell'; terminalId: string; name: string | null };
+  | { kind: 'thread' | 'shell'; terminalId: string; name: string | null }
+  | { kind: 'plugin'; pluginId: string; name: string | null };
 
 /** A short plain label for the Settings and Agents screens. */
 export function describeCreator(c: Creator | null | undefined): string {
@@ -11,6 +12,7 @@ export function describeCreator(c: Creator | null | undefined): string {
     case 'local': return 'Local, no sign-in';
     case 'tailscale': return 'Tailscale, no sign-in';
     case 'chat': return 'Chat';
+    case 'plugin': return `Plugin: ${c.name || c.pluginId}`;
     case 'thread':
     case 'shell': {
       const who = c.name || `thread ${c.terminalId.slice(0, 8)}`;

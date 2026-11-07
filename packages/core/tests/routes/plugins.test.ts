@@ -21,6 +21,7 @@ describe('plugin routes', () => {
   let tmp: string;
   let dir: string;
   const asThread = () => ({ Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key}` });
+  const asPlugin = (id: string) => ({ Authorization: `Bearer ${fs.readFileSync(path.join(tmp, 'keys', `plugin-${id}`), 'utf8').trim()}` });
   const plugin = (id: string, files: Record<string, string> = {}) => {
     fs.mkdirSync(path.join(dir, id), { recursive: true });
     fs.writeFileSync(path.join(dir, id, 'plugin.json'), JSON.stringify({ id, name: id, version: '1.0.0', web: 'web.js' }));
@@ -36,7 +37,7 @@ describe('plugin routes', () => {
     db = new Database(':memory:');
     initSchema(db);
     const mgr = new KeysManager();
-    app = createApp({ db, skipPty: true, pluginsDir: dir, managers: new Map([['claude-code', mgr.asManager()]]) });
+    app = createApp({ db, skipPty: true, pluginsDir: dir, secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]) });
     sessionsDb.create(db, { id: 'A', provider: 'claude-code', name: 'Alpha', workingDir: tmp });
     terminalsDb.create(db, { id: 'tA', sessionId: 'A', type: 'claude-code', label: 'Worker A', config: { transport: 'structured', role: 'agent' } });
   });
@@ -118,11 +119,24 @@ describe('plugin routes', () => {
     expect(r.body.error).toMatch(/not local/);
   });
 
+  it("a plugin key lists plugins and calls whoami; a disabled plugin's key is 401 (2026-11-07)", async () => {
+    plugin('p');
+    await request(app).post('/api/plugins/p/enable').expect(200); // issues the key for a folder added after boot
+    const list = await request(app).get('/api/plugins').set(asPlugin('p'));
+    expect(list.status).toBe(200);
+    expect(list.body.plugins[0].keyed).toBe(true);
+    const who = await request(app).get('/api/whoami').set(asPlugin('p'));
+    expect(who.body).toEqual({ kind: 'plugin', pluginId: 'p', permissions: [] });
+    const auth = asPlugin('p');
+    await request(app).post('/api/plugins/p/disable').expect(200);
+    expect((await request(app).get('/api/plugins').set(auth)).status).toBe(401);
+  });
+
   describe('events (the router alone, with a recording broadcaster)', () => {
     it('POST /api/plugins/:id/reload broadcasts plugin:changed', async () => {
       plugin('p');
       const events: Record<string, unknown>[] = [];
-      const registry = new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, '3.28.0');
+      const registry = new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, '3.28.0', { keys: app.locals.keys, keyDir: path.join(tmp, 'keys') });
       const bare = express();
       bare.use(express.json());
       bare.use('/api', createPluginsRouter(registry));

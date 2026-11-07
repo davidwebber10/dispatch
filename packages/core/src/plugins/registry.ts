@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { EventBroadcaster } from '../ws/events.js';
+import type { KeyRegistry } from '../auth/principals.js';
+import type { PluginFacts } from '../auth/plugin-facts.js';
 import { PLUGIN_ID_RE, parseManifest, satisfiesDispatch, type PluginManifest } from './manifest.js';
 import { pluginTemplate } from './template.js';
 
@@ -24,6 +26,8 @@ export interface PluginRow extends Partial<PluginManifest> {
   error?: string;
   /** The install record a marketplace install wrote; null for a local plugin. */
   install: PluginInstall | null;
+  /** True while the plugin holds a live key (enabled and not broken). */
+  keyed: boolean;
 }
 
 const DEBOUNCE_MS = 150;
@@ -56,7 +60,49 @@ export class PluginRegistry {
   private linkWatchers = new Map<string, fs.FSWatcher>();
   private timers = new Map<string, NodeJS.Timeout>();
 
-  constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string) {}
+  private readonly keys: KeyRegistry | null;
+  private readonly keyDir: string | null;
+
+  constructor(readonly dir: string, private readonly broadcaster: EventBroadcaster, private readonly runningVersion: string, opts: { keys?: KeyRegistry; keyDir?: string } = {}) {
+    this.keys = opts.keys ?? null;
+    this.keyDir = opts.keyDir ?? null;
+  }
+
+  // ── keys (spec section 6): one live key per enabled plugin, in ~/.dispatch/keys/plugin-<id> ──
+  private keyFile(id: string): string | null { return this.keyDir ? path.join(this.keyDir, `plugin-${id}`) : null; }
+
+  private issueKey(id: string): void {
+    if (!this.keys) return;
+    const { key } = this.keys.mint({ kind: 'plugin', pluginId: id });
+    const file = this.keyFile(id);
+    if (!file) return;
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, key + '\n', { mode: 0o600 });
+    try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+  }
+
+  private revokeKey(id: string): void {
+    if (this.keys) { const h = this.keys.liveHandleForPlugin(id); if (h) this.keys.revoke(h); }
+    const file = this.keyFile(id);
+    if (file) { try { fs.unlinkSync(file); } catch { /* already gone */ } }
+  }
+
+  private keyed(id: string): boolean { return this.keys?.liveHandleForPlugin(id) !== undefined; }
+
+  /** Mint a key for every enabled, loadable plugin (boot), and drop keys of plugins that no longer qualify. */
+  issueKeys(): void {
+    for (const row of this.list()) {
+      if (row.enabled && !row.error) { if (!this.keyed(row.id)) this.issueKey(row.id); }
+      else this.revokeKey(row.id);
+    }
+  }
+
+  /** What a rule knows about a plugin key's plugin: null when unknown, disabled or broken (its key is then refused). */
+  facts(id: string): PluginFacts | null {
+    const row = this.get(id);
+    if (!row || !row.enabled || row.error) return null;
+    return { id, permissions: row.permissions ?? [] };
+  }
 
   private get stateFile(): string { return path.join(path.dirname(this.dir), 'plugins.json'); }
 
@@ -107,11 +153,11 @@ export class PluginRegistry {
       return this.broken(id, stamp, `needs Dispatch ${m.dispatch}; this is ${this.runningVersion}`);
     }
     if (m.web && !this.resolveInside(folder, m.web)) return this.broken(id, stamp, `plugin.json "web" names a file that does not exist: ${m.web}`);
-    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder) };
+    return { ...m, enabled: !disabled.has(id), stamp, install: this.readInstall(folder), keyed: this.keyed(id) };
   }
 
   private broken(id: string, stamp: number, error: string): PluginRow {
-    return { id, name: id, version: '0.0.0', enabled: false, stamp: Math.round(stamp), error, install: this.readInstall(path.join(this.dir, id)) };
+    return { id, name: id, version: '0.0.0', enabled: false, stamp: Math.round(stamp), error, install: this.readInstall(path.join(this.dir, id)), keyed: false };
   }
 
   private readInstall(folder: string): PluginInstall | null {
@@ -129,6 +175,7 @@ export class PluginRegistry {
     const set = new Set(state.disabled);
     if (enabled) set.delete(id); else set.add(id);
     this.writeState({ disabled: [...set].sort() });
+    if (enabled && !row.error) this.issueKey(id); else this.revokeKey(id);
     return this.get(id)!;
   }
 
@@ -166,6 +213,7 @@ export class PluginRegistry {
     const row = this.get(id);
     if (!row) throw new Error('unknown plugin');
     if (row.install) throw new Error('not local');
+    this.revokeKey(id);
     const folder = path.join(this.dir, id);
     if (fs.lstatSync(folder).isSymbolicLink()) fs.unlinkSync(folder);
     else fs.rmSync(folder, { recursive: true, force: true });

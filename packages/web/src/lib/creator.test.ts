@@ -18,3 +18,8 @@ describe('describeCreator', () => {
     expect(describeCreator({ kind: 'shell', terminalId: 'abcdef123456', name: 'Fix login' })).toBe('Shell in Fix login');
   });
 });
+
+it('names a plugin creator by its name, else by its id (2026-11-07)', () => {
+  expect(describeCreator({ kind: 'plugin', pluginId: 'daily-rundown', name: 'Daily rundown' })).toBe('Plugin: Daily rundown');
+  expect(describeCreator({ kind: 'plugin', pluginId: 'daily-rundown', name: null })).toBe('Plugin: daily-rundown');
+});

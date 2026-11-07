@@ -103,6 +103,7 @@ import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
+import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
 import { LedgerService } from './overseer/ledger-service.js';
@@ -390,7 +391,9 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const dispatchDir = options.secretsDir ?? platform.dataDir();
   const toolsBase = options.toolsDir ?? path.join(dispatchDir, 'tools');
   // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): no watcher here; startServer runs one.
-  const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion());
+  const plugins = new PluginRegistry(options.pluginsDir ?? path.join(dispatchDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dispatchDir, 'keys') });
+  configurePluginFacts((id) => plugins.facts(id));
+  plugins.issueKeys();
   app.locals.plugins = plugins;
   const sessionService = new SessionService(db, ptyManager, path.join(dispatchDir, 'mcp.json'));
   sessionService.setKeyRegistry(keys, { keyDir: path.join(dispatchDir, 'keys') });
@@ -564,7 +567,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create broadcaster
   const broadcaster = createEventsBroadcaster(eventsWss);
-  const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion());
+  const plugins = new PluginRegistry(path.join(dataDir, 'plugins'), broadcaster, getRunningVersion(), { keys, keyDir: path.join(dataDir, 'keys') });
+  configurePluginFacts((id) => plugins.facts(id));
+  plugins.issueKeys();
   plugins.start();
   const authRequestService = new AuthRequestService(broadcaster);
 
