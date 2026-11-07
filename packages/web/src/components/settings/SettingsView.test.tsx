@@ -36,7 +36,7 @@ test('the nav is grouped YOU / AGENTS / THIS MAC, each holding its sections', ()
 
 test('opens on Appearance, and a deep link opens its section (old keys still work)', () => {
   render(<SettingsView />);
-  expect(screen.getByText('Accent, text sizes, density, layout')).toBeInTheDocument();
+  expect(screen.getByText('Theme, accent, text sizes, density, layout')).toBeInTheDocument();
   act(() => { useUI.getState().requestSettings('dictation'); });
   expect(screen.getByText('Speech-to-text provider and key')).toBeInTheDocument();
   act(() => { useUI.getState().requestSettings('transcription'); });

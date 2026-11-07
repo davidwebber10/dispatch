@@ -49,7 +49,7 @@ export type SettingsSection = {
 };
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Accent, text sizes, density, layout', icon: PaintBrush, Component: AppearanceSection },
+  { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Theme, accent, text sizes, density, layout', icon: PaintBrush, Component: AppearanceSection },
   { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push on this device, which alerts, devices', icon: Bell, Component: NotificationsSection },
   { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider and key', icon: Microphone, Component: DictationSection },
   { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults per harness, Control Plane, working words', icon: Robot, Component: AgentsSection },
