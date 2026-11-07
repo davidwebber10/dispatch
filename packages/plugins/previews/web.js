@@ -3,6 +3,38 @@
 // thread headers (phone) and on the rail item (desktop), a sheet per project, a history across
 // projects, and the viewer for the files. The documents live in this plugin's storage
 // (`preview:<id>`); the files are references the daemon checks and serves.
+/**
+ * The history's filters (2026-11-07): a project, a source thread, and a search over the title, the
+ * note, the text, the file names, the thread and the project. Exported for the tests.
+ */
+export function filterPreviews(items, { project = null, thread = null, query = '' }, nameOf = () => undefined) {
+  const q = query.trim().toLowerCase();
+  return items.filter((p) => {
+    if (project && p.sessionId !== project) return false;
+    if (thread && p.terminalId !== thread) return false;
+    if (!q) return true;
+    const hay = [p.title, p.note, p.text, p.terminalLabel, nameOf(p.sessionId) ?? p.sessionName, ...(p.files || []).map((f) => f.name)].filter(Boolean).join('\n').toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+/** The projects that have previews, with counts, by name. */
+export function projectsWithPreviews(items, nameOf = () => undefined) {
+  const m = new Map();
+  for (const p of items) { const r = m.get(p.sessionId) || { id: p.sessionId, name: nameOf(p.sessionId) ?? p.sessionName ?? p.sessionId, count: 0 }; r.count++; m.set(p.sessionId, r); }
+  return [...m.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The threads that posted previews (in one project when one is chosen), with counts, by name. */
+export function threadsWithPreviews(items, project) {
+  const m = new Map();
+  for (const p of items) {
+    if (!p.terminalId || (project && p.sessionId !== project)) continue;
+    const r = m.get(p.terminalId) || { id: p.terminalId, label: p.terminalLabel || 'A thread', count: 0 }; r.count++; m.set(p.terminalId, r);
+  }
+  return [...m.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
 export default function activate(d) {
   const { h, hooks: { useState, useEffect, useMemo }, ui, storage, events, icons, actions, apiPath } = d;
   const ID = d.id || 'previews';
@@ -148,9 +180,21 @@ export default function activate(d) {
 
   // ── the history across projects (the rail view), grouped by day ──────────────────────────
   function History() {
-    const items = usePv((s) => s.items);
+    const all = usePv((s) => s.items);
     const loaded = usePv((s) => s.loaded);
+    const sessions = d.stores.useProjects((s) => s.sessions);
+    const [project, setProject] = useState('');
+    const [thread, setThread] = useState('');
+    const [query, setQuery] = useState('');
     useEffect(() => { void usePv.getState().load(); return () => { void usePv.getState().markAllSeen(); }; }, []);
+    const nameOf = (id) => (sessions.find((x) => x.id === id) || {}).name;
+    const projects = useMemo(() => projectsWithPreviews(all, nameOf), [all, sessions]);
+    const threads = useMemo(() => threadsWithPreviews(all, project || null), [all, project]);
+    // A thread from another project stops applying when the project changes.
+    useEffect(() => { if (thread && !threads.some((t) => t.id === thread)) setThread(''); }, [threads, thread]);
+    const items = useMemo(() => filterPreviews(all, { project: project || null, thread: thread || null, query }, nameOf), [all, project, thread, query, sessions]);
+    const filtering = !!(project || thread || query.trim());
+    const field = { height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 13 };
     const groups = useMemo(() => {
       const out = [];
       for (const p of items) {
@@ -166,7 +210,17 @@ export default function activate(d) {
         h('div', null,
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Previews'),
           h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Files and text that threads handed you to look at or copy, newest first.')),
-        items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '20px 0' } }, loaded ? 'Nothing yet. Ask a thread to show you a screenshot, a page, or a string with its preview tool.' : 'Loading…'),
+        all.length > 0 && h('div', { role: 'search', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
+          h('input', { type: 'search', 'aria-label': 'Search previews', placeholder: 'Search previews', value: query, onChange: (e) => setQuery(e.target.value), style: { ...field, flex: '1 1 220px', minWidth: 0 } }),
+          h('select', { 'aria-label': 'Project', value: project, onChange: (e) => setProject(e.target.value), style: { ...field, flex: '0 1 200px' } },
+            h('option', { value: '' }, 'All projects'),
+            ...projects.map((p) => h('option', { key: p.id, value: p.id }, `${p.name} (${p.count})`))),
+          h('select', { 'aria-label': 'Thread', value: thread, onChange: (e) => setThread(e.target.value), style: { ...field, flex: '0 1 200px' } },
+            h('option', { value: '' }, 'All threads'),
+            ...threads.map((t) => h('option', { key: t.id, value: t.id }, `${t.label} (${t.count})`))),
+          filtering && h('button', { type: 'button', onClick: () => { setProject(''); setThread(''); setQuery(''); }, style: { background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12.5 } }, 'Clear')),
+        all.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '20px 0' } }, loaded ? 'Nothing yet. Ask a thread to show you a screenshot, a page, or a string with its preview tool.' : 'Loading…'),
+        all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, 'No preview matches.'),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           h('h2', { style: { margin: 0, font: '500 10.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
           ...g.items.map((p) => h(Item, { key: p.id, preview: p, onDelete: (id) => void usePv.getState().remove(id) }))))));
