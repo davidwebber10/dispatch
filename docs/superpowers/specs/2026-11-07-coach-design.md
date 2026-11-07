@@ -66,6 +66,8 @@ works on Judgment first.
 
 A level name (1–6: Asker, Briefer, Delegator, Parallel operator, Systems builder, Agent manager) may appear only
 as an optional summary on the Coach screen. The five measures compare a person only with their own past.
+The five measure bars (0–100, a trend arrow, a "focus" label on the weakest) **show on the Coach screen by
+default** (owner, 2026-11-07); a setting hides them, and the Coach uses the measures either way.
 
 ## 4. What the person sees
 
@@ -83,8 +85,12 @@ as an optional summary on the Coach screen. The five measures compare a person o
 
 ### 4.2 Where cards appear
 - **Under the message box, after a turn finishes** (never while typing). Desktop and phone (phone can be off).
-- **The Coach tab in the right column** (the new core `inspectorTabs` contribution, built 2026-11-07): one card
-  for the open thread, and the five measures. On the phone it opens from the thread's ⋯ menu.
+- **The Coach tab in the right column** (the new core `inspectorTabs` contribution, built 2026-11-07) is **about
+  the open thread** (owner, 2026-11-07): this thread's card(s); what the Coach sees in this thread (for example
+  your turns vs its hands-off time, whether a plan was asked for, repeats of other threads); the goal lines that
+  this thread touches; **Review this thread**; and the chat, scoped to this thread by default ("About this
+  thread" · "About me"). With no thread open, it says so and links to the Coach screen. The five measure bars
+  live on the Coach screen, not in the tab. On the phone it opens from the thread's ⋯ menu.
 - **The Coach screen** (its plugin view): card history, the five measures, "What the Coach knows", cost, settings.
 - **The weekly recap** (mockup part 5): in the app, Monday, only after 5 active days of data. Three observed
   patterns linked to outcomes, one "stretch" for the week with a one-click start, one line on what the Coach
@@ -159,6 +165,39 @@ as an optional summary on the Coach screen. The five measures compare a person o
 - Core: `POST /api/skills { id, name, description, body, projects?: string[] }` (owner only; the id must be new,
   lower-case slug; the body ≤ 64 KB) writes `~/.dispatch/skills/<id>/SKILL.md` + `skill.json` and enables it;
   SDK `d.actions.createSkill(draft)` opens the review sheet and resolves with the created skill or null.
+
+### 4.9 Talk with the Coach (owner, 2026-11-07)
+- The Coach tab (the right-column tab and the Coach screen) has a **chat**: the person asks about their own use
+  and improvement — "Why do you think I under-delegate?", "What would a bigger version of today's work be?",
+  "Help me set a goal", "What should I automate first?" — and drills into any card ("Tell me more about this").
+- The Coach answers from what it has actually observed: the measures, the signals and their evidence, the cards
+  and the feedback, the goals and the memory. It cites the evidence ("in 4 of your last 6 threads…").
+- **Honest when it does not know:** with too little data (for example before 5 active days, or no detector has
+  fired), it says so plainly — what it has seen so far, what it needs to see, and roughly when it will have
+  something — and never invents a pattern. It may still answer general questions about using AI, labeled as
+  general advice, not an observation.
+- Answers may end with an action (add this goal, create this skill, set up this schedule, build this plugin),
+  each through the same confirm-first actions as the cards.
+- Uses the large model of the Coach's harness setting; each turn counts against the budget; at the cap the chat
+  says so. The chat history is kept in the plugin's storage (part of export, cleared by Reset, a "Clear chat"
+  action), and nothing said in the chat becomes a memory fact without the person confirming it.
+
+### 4.10 Reviews: "look at how I worked" (owner, 2026-11-07)
+- The person can ask for a **review** — from the chat ("Review how I worked in this thread"), from a thread's ⋯
+  menu or the right-column tab ("Review this thread"), or from the Coach screen ("Review my last week",
+  "Review this project"). The Coach goes off, reads the actual conversation(s), and comes back with findings.
+- A review reads the transcript through the conversation route (`read:threads`), in chunks, with the large model:
+  what went well, where the person could have handed off more, planned first, checked, reused, or parallelized,
+  each tied to a quoted moment in the thread, plus 1–3 next steps (each with a confirm-first action).
+- It runs as a background job in the worker with visible progress ("Reading 3 of 8 threads…") and a cost
+  estimate before it starts ("about 2% of your weekly limit — Start · Cancel"); the result is a report in the
+  Coach screen and a message in the chat; the person can drill into it in the chat.
+- **Looking back at history:** when the Coach is first turned on (and any time from the Coach screen), it offers
+  to read past threads (the last 30 days, or a range) to build its first picture, so it is useful on day one
+  instead of after a week. It shows the cost estimate first and runs only on the person's Start. Its findings go
+  through the same honesty rule: it reports what it saw, not more.
+- Reviews count against the budget; a review that would pass the cap says so before it starts and offers a
+  smaller scope.
 
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
@@ -246,8 +285,9 @@ to detect them (a small-model label on the person's next prompt is one option) o
 
 - Name: **Coach** (my call; "Prompt Coach" is too narrow, "Leverage" sounds like a developer tool). Plugin id
   `coach`.
-- Bundled with Dispatch, **off by default** (as the Prompt coach is today). Turned on in Settings → Plugins; the
-  welcome card explains it.
+- Bundled with Dispatch, **on by default** (owner, 2026-11-07: improving is the baseline). A new install first
+  shows only the welcome card, which explains what the Coach looks at and remembers and has **Turn off**; then
+  the quiet first week. An owner who had turned Prompt coach off keeps Coach off.
 - It replaces `prompt-coach`. Old observations are not worth migrating (the builder may drop them).
 
 ## 9a. Decisions after the builder review (my calls, for the owner to check)
