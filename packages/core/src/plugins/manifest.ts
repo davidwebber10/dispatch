@@ -1,3 +1,4 @@
+import { parseCron } from './cron.js';
 import path from 'node:path';
 
 /**
@@ -42,7 +43,12 @@ export interface PluginManifest {
   contributes?: PluginContributes;
   permissions?: string[];
   model?: PluginModel;
+  /** A process the daemon runs while the plugin is enabled (spec section 4). */
+  worker?: PluginWorker;
 }
+
+/** The worker (spec section 4): the command, started in the plugin folder, and its cron jobs. */
+export interface PluginWorker { command: string; args: string[]; env: Record<string, string>; jobs: { id: string; cron: string }[] }
 
 export type ParsedManifest = { ok: true; manifest: PluginManifest } | { ok: false; error: string };
 
@@ -80,6 +86,11 @@ export function parseManifest(raw: string, folderId: string): ParsedManifest {
     if (!model.ok) return model;
     m.model = model.model;
   }
+  if (data.worker !== undefined) {
+    const w = parseWorker(data.worker);
+    if (!w.ok) return w;
+    m.worker = w.worker;
+  }
   return { ok: true, manifest: m };
 }
 
@@ -99,6 +110,27 @@ export function satisfiesDispatch(range: string | undefined, running: string): b
 }
 
 const HOOK_EVENTS: HookEvent[] = ['prompt', 'turnEnd', 'toolCall', 'spawn', 'status'];
+
+function parseWorker(raw: unknown): { ok: true; worker: PluginWorker } | { ok: false; error: string } {
+  if (!isRecord(raw)) return { ok: false, error: 'plugin.json "worker" must be an object' };
+  if (!nonEmpty(raw.command)) return { ok: false, error: 'plugin.json "worker" needs a command' };
+  const args = Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === 'string') : [];
+  const env: Record<string, string> = {};
+  if (isRecord(raw.env)) for (const [k, v] of Object.entries(raw.env)) if (typeof v === 'string') env[k] = v;
+  const jobs: { id: string; cron: string }[] = [];
+  if (raw.jobs !== undefined) {
+    if (!Array.isArray(raw.jobs)) return { ok: false, error: 'plugin.json "worker.jobs" must be a list' };
+    const seen = new Set<string>();
+    for (const [i, j] of raw.jobs.entries()) {
+      if (!isRecord(j) || !nonEmpty(j.id) || !nonEmpty(j.cron)) return { ok: false, error: `plugin.json "worker.jobs[${i}]" needs an id and a cron` };
+      if (!parseCron(j.cron)) return { ok: false, error: `plugin.json "worker.jobs[${i}].cron" is not a cron expression (min hour dom mon dow)` };
+      if (seen.has(j.id)) return { ok: false, error: `plugin.json "worker.jobs" has the id "${j.id}" twice` };
+      seen.add(j.id);
+      jobs.push({ id: j.id, cron: j.cron.trim() });
+    }
+  }
+  return { ok: true, worker: { command: raw.command.trim(), args, env, jobs } };
+}
 
 function parseModel(raw: unknown): { ok: true; model: PluginModel } | { ok: false; error: string } {
   if (!isRecord(raw)) return { ok: false, error: 'plugin.json "model" must be an object' };

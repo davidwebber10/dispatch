@@ -50,4 +50,17 @@ describe('satisfiesDispatch', () => {
     expect(satisfiesDispatch(undefined, '1.0.0')).toBe(true);
     expect(satisfiesDispatch('nonsense', '1.0.0')).toBe(false);
   });
+
+  it('worker: command, args, env and jobs parse; a job without id or cron, a bad cron, or a command that is not a string is an error', () => {
+    const ok = parseManifest(JSON.stringify({ id: 'p', name: 'P', version: '1.0.0', worker: { command: 'node', args: ['worker/index.js'], env: { A: '1', B: 2 }, jobs: [{ id: 'morning', cron: '0 7 * * 1-5' }] } }), 'p');
+    expect(ok).toMatchObject({ ok: true, manifest: { worker: { command: 'node', args: ['worker/index.js'], env: { A: '1' }, jobs: [{ id: 'morning', cron: '0 7 * * 1-5' }] } } });
+    const bare = parseManifest(JSON.stringify({ id: 'p', name: 'P', version: '1.0.0', worker: { command: 'node' } }), 'p');
+    expect(bare).toMatchObject({ ok: true, manifest: { worker: { command: 'node', args: [], env: {}, jobs: [] } } });
+    const err = (m: Record<string, unknown>) => { const r = parseManifest(JSON.stringify({ id: 'p', name: 'P', version: '1.0.0', ...m }), 'p'); return r.ok ? null : r.error; };
+    expect(err({ worker: 'node' })).toMatch(/"worker" must be an object/);
+    expect(err({ worker: { command: 3 } })).toMatch(/"worker" needs a command/);
+    expect(err({ worker: { command: 'node', jobs: [{ cron: '* * * * *' }] } })).toMatch(/"worker.jobs\[0\]" needs an id and a cron/);
+    expect(err({ worker: { command: 'node', jobs: [{ id: 'x', cron: 'every day' }] } })).toMatch(/"worker.jobs\[0\].cron" is not a cron expression/);
+    expect(err({ worker: { command: 'node', jobs: [{ id: 'x', cron: '* * * * *' }, { id: 'x', cron: '0 * * * *' }] } })).toMatch(/"worker.jobs" has the id "x" twice/);
+  });
 });
