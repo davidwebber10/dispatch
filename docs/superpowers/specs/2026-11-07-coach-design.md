@@ -160,6 +160,22 @@ as an optional summary on the Coach screen. The five measures compare a person o
   lower-case slug; the body ≤ 64 KB) writes `~/.dispatch/skills/<id>/SKILL.md` + `skill.json` and enables it;
   SDK `d.actions.createSkill(draft)` opens the review sheet and resolves with the created skill or null.
 
+### 4.9 Talk with the Coach (owner, 2026-11-07)
+- The Coach tab (the right-column tab and the Coach screen) has a **chat**: the person asks about their own use
+  and improvement — "Why do you think I under-delegate?", "What would a bigger version of today's work be?",
+  "Help me set a goal", "What should I automate first?" — and drills into any card ("Tell me more about this").
+- The Coach answers from what it has actually observed: the measures, the signals and their evidence, the cards
+  and the feedback, the goals and the memory. It cites the evidence ("in 4 of your last 6 threads…").
+- **Honest when it does not know:** with too little data (for example before 5 active days, or no detector has
+  fired), it says so plainly — what it has seen so far, what it needs to see, and roughly when it will have
+  something — and never invents a pattern. It may still answer general questions about using AI, labeled as
+  general advice, not an observation.
+- Answers may end with an action (add this goal, create this skill, set up this schedule, build this plugin),
+  each through the same confirm-first actions as the cards.
+- Uses the large model of the Coach's harness setting; each turn counts against the budget; at the cap the chat
+  says so. The chat history is kept in the plugin's storage (part of export, cleared by Reset, a "Clear chat"
+  action), and nothing said in the chat becomes a memory fact without the person confirming it.
+
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
   (5-hour and weekly) on the account it used, and the budget with a meter.
