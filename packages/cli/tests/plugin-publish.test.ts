@@ -83,8 +83,9 @@ describe('publishPlugin', () => {
     fs.writeFileSync(path.join(root, 'marketplaces.json'), JSON.stringify({ marketplaces: [{ url: bare, slug: 'market-abc123', trusted: false }] }));
     expect((await publishPlugin(opts({ marketplace: 'market-abc123', dataDir: root, dryRun: true }))).branch).toBe('plugin/hello-1.0.0');
     expect(g(bare, 'branch', '--list').replace('*', '').trim()).toBe('main'); // dry run: nothing pushed
-    fs.chmodSync(bare, 0o500);
-    try { await expect(publishPlugin(opts())).rejects.toThrow(/push failed:/); } finally { fs.chmodSync(bare, 0o755); }
+    // A push creates refs/heads/plugin/…: a read-only refs/heads refuses it.
+    fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o500);
+    try { await expect(publishPlugin(opts())).rejects.toThrow(/push failed:/); } finally { fs.chmodSync(path.join(bare, 'refs', 'heads'), 0o755); }
     expect(fs.readdirSync(path.join(root, 'tmp'))).toEqual([]);
   });
 });
