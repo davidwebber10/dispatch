@@ -12,6 +12,8 @@ import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import type { AssistRunner, AssistRequest, AssistResult } from '../../src/assist/run.js';
 import * as pluginData from '../../src/db/plugin-data.js';
 import { KeysManager } from './keys-manager.js';
+import { LimitSnapshots } from '../../src/limits/snapshot.js';
+import type { UsageSummary } from '../../src/limits/gauge.js';
 
 /** Model assist for plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.4). */
 describe('plugin assist route (2026-11-07)', () => {
@@ -26,9 +28,11 @@ describe('plugin assist route (2026-11-07)', () => {
     available: async () => true,
     run: async (req) => { calls.push(req); return { text: `judged: ${req.messages[0]?.content ?? ''}`, usage: { inputTokens: 120, outputTokens: 30 }, ms: 250, model: 'fake-model' }; },
   };
+  let summary: UsageSummary | null = null;
   const build = (runner: AssistRunner | null) => {
     const mgr = new KeysManager();
-    return createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]), assistRunner: runner });
+    return createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]), assistRunner: runner,
+      usageLimits: { snapshots: new LimitSnapshots(db), accountFor: () => 'acct', summary: () => summary as UsageSummary } });
   };
 
   beforeEach(() => {
@@ -36,6 +40,7 @@ describe('plugin assist route (2026-11-07)', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-assist-'));
     db = new Database(':memory:'); initSchema(db);
     calls = [];
+    summary = null;
     plugin('coach', ['model:assist']);
     plugin('mute', []);
     app = build(fakeRunner);
@@ -169,6 +174,23 @@ describe('plugin assist route (2026-11-07)', () => {
       const row = (await request(app).get('/api/plugins')).body.plugins.find((p: any) => p.id === 'coach');
       expect(row.assist).toEqual({ calls: 1, failed: 0, inputTokens: 100, outputTokens: 20, costUsd: 0.25, days: 7 });
     });
+  });
+
+  it('the share route gives the 5-hour and weekly estimate for an account (coach plan, Task 3)', async () => {
+    const now = Date.now();
+    summary = { type: 'usage-limits', at: now, epoch: 'e', rev: 1, warnPercent: 80, pushOnWarn: false, paused: [],
+      providers: [{ provider: 'claude-code', accountId: 'cli', label: 'cli', asOf: now, windows: { five_hour: { usedPercent: 40, resetsAt: now + 3_600_000 }, seven_day: { usedPercent: 12, resetsAt: now + 86_400_000 } } }] };
+    pluginData.recordAssist(db, 'coach', { at: new Date(now - 60_000).toISOString(), model: 'claude-opus-5', harness: 'claude', accountId: 'cli', inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: 1, ok: true });
+    app = build(fakeRunner);
+    const r = await request(app).get('/api/plugins/coach/assist/share?accountId=cli').set(asPlugin('coach'));
+    expect(r.status).toBe(200);
+    // The plugin is the only Dispatch use of the account in the window: the whole used percent.
+    expect(r.body.fiveHour).toMatchObject({ usedPercent: 40, pluginPercent: 40, pluginTokens: 110 });
+    expect(r.body.sevenDay).toMatchObject({ usedPercent: 12, pluginPercent: 12 });
+    // An account the summary does not know: nulls, not zeros.
+    expect((await request(app).get('/api/plugins/coach/assist/share?accountId=work').set(asPlugin('coach'))).body).toEqual({ fiveHour: null, sevenDay: null });
+    expect((await request(app).get('/api/plugins/coach/assist/share?harness=nope').set(asPlugin('coach'))).status).toBe(400);
+    expect((await request(app).get('/api/plugins/coach/assist/share').set(asPlugin('mute'))).status).toBe(403);
   });
 
   it('assist with no runner answers 503 with a plain message', async () => {

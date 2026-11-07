@@ -14,6 +14,8 @@ import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugin
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
 import { notionalValueUsd } from '../analytics/pricing.js';
+import { estimateShare } from '../plugins/assist-share.js';
+import type { UsageSummary } from '../limits/gauge.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
 import type { PluginInstaller } from '../plugins/installer.js';
@@ -114,7 +116,15 @@ function storageError(res: import('express').Response, e: unknown): void {
   res.status(500).json({ error: msg });
 }
 
-export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null): Router {
+/** What the assist routes read beyond the runner: the usage summary and each harness's default account. */
+export interface AssistLimitsDeps {
+  /** The usage gauge's summary (`/usage-limits/summary`); absent = no limit figures. */
+  summary?: () => UsageSummary | null;
+  /** A harness's default account (accounts.json); `cli` when absent. */
+  defaultAccount?: (harness: 'claude' | 'codex') => string;
+}
+
+export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -542,6 +552,18 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     }
     pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started));
     res.json(result);
+  });
+
+  // A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3).
+  router.get('/plugins/:id/assist/share', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+    if (!known(req, res)) return;
+    const h = req.query.harness ?? 'claude';
+    if (h !== 'claude' && h !== 'codex') return void res.status(400).json({ error: 'bad_harness', message: 'harness is claude or codex (OpenRouter has no limit windows).' });
+    const accountId = typeof req.query.accountId === 'string' && ASSIST_ID_RE.test(req.query.accountId) ? req.query.accountId : (limits.defaultAccount?.(h) ?? 'cli');
+    const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
+    const opts = { pluginId: req.params.id, accountId, harness: h as AssistHarness, defaultAccountId: limits.defaultAccount?.(h) ?? 'cli' };
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay: estimateShare(db, summary, { ...opts, window: 'seven_day' }) });
   });
 
   // The meter by time (coach spec section 7.2): the owner, or the plugin's own key. No `from` = 7 days ago.

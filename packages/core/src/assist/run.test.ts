@@ -107,6 +107,20 @@ describe('assist chooses harness and model (coach plan, Task 1)', () => {
     expect(await r2.available('openrouter')).toBe(true);
   });
 
+  it('auto runs on the picked harness and account; nothing to pick is no answer and not available (coach plan, Task 3)', async () => {
+    const calls: { bin: string; env: Record<string, string> }[] = [];
+    const run = async (bin: string, _args: string[], o: { env: Record<string, string> }) => { calls.push({ bin, env: o.env }); return { code: 0, stdout: claudeOut }; };
+    let pick: { harness: 'claude' | 'codex' | 'openrouter'; accountId: string; reason: string } | null = { harness: 'claude', accountId: 'work', reason: 'most weekly room' };
+    const r = createAssistRunner({ cli: cli(), run, pickAuto: async () => pick, accountEnv: (_h, id): Record<string, string> => ({ ACCOUNT: id }) });
+    expect(await r.available('auto')).toBe(true);
+    expect(await r.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 10, harness: 'auto' })).toMatchObject({ harness: 'claude', accountId: 'work' });
+    expect(calls[0].env.ACCOUNT).toBe('work');
+    pick = null;
+    expect(await r.available('auto')).toBe(false);
+    expect(await r.run({ messages: [{ role: 'user', content: 'x' }], maxTokens: 10, harness: 'auto' })).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
   it('no harness keeps the old order', async () => {
     const order: string[] = [];
     const run = async (bin: string) => { order.push(bin); return { code: 1, stdout: '' }; };

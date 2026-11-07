@@ -96,7 +96,8 @@ import { AccountsStore, type AccountProvider } from './auth/accounts.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
 import { inheritedEnv } from './platform/inherited-env.js';
-import { claudeTitleGenerator, codexTitleGenerator, firstTitle } from './sessions/cli-namer.js';
+import { claudeTitleGenerator, codexTitleGenerator, firstTitle, usable } from './sessions/cli-namer.js';
+import { pickHarness } from './plugins/assist-share.js';
 import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
@@ -110,7 +111,7 @@ import { PluginWorkers } from './plugins/workers.js';
 import { MarketplaceService } from './plugins/marketplaces.js';
 import { PluginInstaller } from './plugins/installer.js';
 import { SkillsService } from './plugins/skills.js';
-import { createAssistRunner, commandAssistRunner, type AssistRunner } from './assist/run.js';
+import { createAssistRunner, commandAssistRunner, type AssistRunner, type AssistHarness } from './assist/run.js';
 import * as pluginData from './db/plugin-data.js';
 import { configurePluginFacts } from './auth/plugin-facts.js';
 import { pluginAssetHandler } from './routes/plugins.js';
@@ -631,7 +632,26 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       // `accounts` is built below; these run per call, after boot.
       accountEnv: (h, id) => accounts.spawnEnv(h === 'claude' ? 'claude-code' : 'codex', { accountId: id }),
       defaultAccount: (h) => accounts.defaultId(h),
+      // `auto` (coach spec section 5): the signed-in account with the most weekly room, from the usage gauge.
+      pickAuto: async () => pickHarness(usageGauge.summary(), await assistSignedIn()),
     });
+  /** Every account assist may sign in as, the default of each harness first; OpenRouter last, when a key is set. */
+  const assistSignedIn = async (): Promise<{ harness: AssistHarness; accountId: string }[]> => {
+    const out: { harness: AssistHarness; accountId: string }[] = [];
+    for (const h of ['claude', 'codex'] as const) {
+      const ids = accounts.list(h).map((a) => a.id);
+      const def = accounts.defaultId(h);
+      // The CLI's own login (`cli`) needs the CLI signed in; an added account needs the CLI installed and its own login.
+      const cliOk = (await usable(h, titleCliDeps).catch(() => null)) !== null;
+      const installed = (await usable(h, { ...titleCliDeps, signedIn: async () => true }).catch(() => null)) !== null;
+      for (const id of [def, ...ids.filter((x) => x !== def)]) {
+        const ok = id === 'cli' ? cliOk : installed && (h === 'claude' ? !!accounts.claudeToken(id) : accounts.codexSignedIn(id));
+        if (ok) out.push({ harness: h, accountId: id });
+      }
+    }
+    if (await resolveOpenRouterKey?.().catch(() => null)) out.push({ harness: 'openrouter', accountId: 'openrouter' });
+    return out;
+  };
   plugins.setAssistTotalsProvider((id) => pluginData.assistTotals(db, id));
   const threadAutoNamer = new ThreadAutoNamer(db, broadcaster, {
     getApiKey: () => resolveOpenRouterKey?.() ?? Promise.resolve(null),
