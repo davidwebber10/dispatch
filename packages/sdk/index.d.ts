@@ -38,6 +38,18 @@ export interface Contributions {
   /** `composer.before`, `project.header.actions`, `thread.header.actions`, `app.overlay`; the slot's props are the component's props. */
   slots?: { id: string; slot: string; priority?: number; Component: React.ComponentType<any> }[];
   commands?: { id: string; label: string; run(): void }[];
+  /**
+   * Tabs in the desktop right column, after Details and Files (higher `priority` first, then plugin
+   * id); on a phone, rows in the thread's ⋯ menu that open a full-height sheet. The selected tab's
+   * key is `plugin:<pluginId>:<id>`. `icon` is a name from `icons` or an icon component.
+   */
+  inspectorTabs?: {
+    id: string;
+    label: string;
+    icon?: string | React.ComponentType<{ size?: number | string }>;
+    priority?: number;
+    Component: React.ComponentType<{ terminalId: string | null; sessionId: string | null }>;
+  }[];
 }
 
 // ── the daemon's events ─────────────────────────────────────────────────────────────────────

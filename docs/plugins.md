@@ -82,6 +82,7 @@ What `register` takes:
 | `projectMenu` | the phone's project ⋯ menu, with the project's own rows | `{ id, label, when?({ session }), onPick({ session }) }` |
 | `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text) }` |
 | `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; mounted slots: `composer.before` (above the composer, the composer context as props), `project.header.actions` (the phone's project header, `{ session }`), `thread.header.actions` (the thread header on the phone and the desktop's floating controls, `{ terminal, floating? }`), `app.overlay` (the app root, for sheets and modals) |
+| `inspectorTabs` | the desktop right column, after Details and Files; on a phone, the thread ⋯ menu (a full-height sheet) | `{ id, label, icon?, priority?, Component }`, see [Right-column tabs](#right-column-tabs) |
 
 `surface` is `'thread'` (a Pretty thread), `'terminal'` (a CLI thread's phone composer),
 `'chat'` (the Control Plane chat) or `'unknown'`.
@@ -90,6 +91,30 @@ Icons are names from the SDK's map (`puzzle`, `sun`, `star`, `sparkle`, `lightni
 `calendar`, `clock`, `note`, `rocket`, `flag`, `heart`, `folder`, `terminal`, `git`, `cloud`,
 `database`, `bell`, `chart`, `list`, `play`, `gear`, `eye`, `chat`, `book`, `bug`, `shield`,
 `globe`, `wrench`); an unknown name shows the puzzle piece.
+
+### Right-column tabs
+
+`inspectorTabs` adds tabs to the desktop right column, after Details and Files. Tabs sort by
+`priority` (higher first), then by plugin id. The selected tab's key is
+`plugin:<pluginId>:<id>`; when that tab goes away (the plugin is disabled or removed), the
+column goes back to Details. A tab keeps its place while its plugin reloads. The component gets
+the open thread's `terminalId` and its project's `sessionId`, each `null` when nothing is open.
+On a phone there is no right column: the thread's ⋯ menu lists each tab, and a tap opens the
+component in a full-height sheet with the same props. A tab that throws shows the plugin's
+error card; the other tabs keep working. `icon` is a name from the map above or an icon
+component.
+
+```js
+export default function activate(d) {
+  const { h, hooks: { useDoc } } = d;
+  function Notes({ terminalId, sessionId }) {
+    const [text] = useDoc(d.id, `notes:${terminalId ?? sessionId ?? 'none'}`, '');
+    if (!terminalId) return h('div', { style: { padding: 16 } }, 'Open a thread to see its notes.');
+    return h('pre', { style: { padding: 16, whiteSpace: 'pre-wrap' } }, text || 'No notes yet.');
+  }
+  d.register(d.id, { inspectorTabs: [{ id: 'notes', label: 'Notes', icon: 'note', priority: 10, Component: Notes }] });
+}
+```
 
 The SDK object, in full:
 
