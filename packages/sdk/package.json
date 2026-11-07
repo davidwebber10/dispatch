@@ -1,0 +1,10 @@
+{
+  "name": "@dispatchd/sdk",
+  "version": "1.0.0",
+  "description": "Type declarations for the Dispatch plugin SDK: what a plugin's web.js receives in activate(d).",
+  "license": "MIT",
+  "types": "index.d.ts",
+  "files": ["index.d.ts", "README.md"],
+  "peerDependencies": { "@types/react": ">=18" },
+  "peerDependenciesMeta": { "@types/react": { "optional": true } }
+}
