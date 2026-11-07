@@ -367,7 +367,8 @@ export function buildPeerPrompt(ctx: {
     '- report_status({ state, summary, ask?, blocker? }) — a STATUS signal for how your turn is ' +
     'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
     'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
-    'proceed without the human, `blocked` when you are waiting on another agent or a timer. Your ' +
+    'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
+    'returns, your turn is over: write nothing more and call no other tool; the human speaks next. Your ' +
     'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
     'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
     'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +

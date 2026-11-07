@@ -564,6 +564,11 @@ describe('agency-mcp', () => {
       expect(url).toContain('/api/terminals/self-1/report-status');
       expect(init.method).toBe('POST');
       expect(JSON.parse(init.body)).toEqual({ state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
+      // The result tells the model its turn is over (2026-11-06): a model that continues after any
+      // tool result otherwise invents the next user question and answers it.
+      expect(JSON.parse(out.content[0].text)).toEqual({ ok: true, note: 'Your turn is over. Write nothing more and call no other tool; the human speaks next.' });
+      const tool = TOOLS.find((t) => t.name === 'report_status') as any;
+      expect(tool.description).toContain('After it returns, stop: write nothing more and call no other tool.');
     });
 
     it('report_status refuses to report on another thread', async () => {

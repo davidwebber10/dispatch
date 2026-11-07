@@ -453,7 +453,8 @@ export const TOOLS = [
     description:
       'Declare how YOUR OWN turn is ending. Call this as the last thing you do, every turn. ' +
       'It is how the human sees whether you finished, need them, or are blocked — without it ' +
-      'a turn that ends by asking a question looks identical to one that finished the work.',
+      'a turn that ends by asking a question looks identical to one that finished the work. ' +
+      'After it returns, stop: write nothing more and call no other tool. The human speaks next.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1043,7 +1044,15 @@ async function listWatches(): Promise<{ watching: any[]; watchedBy: any[] }> {
  * a thread can only ever report on itself, and a missing DISPATCH_TERMINAL fails loudly rather
  * than silently no-op-ing.
  */
-async function reportStatus(args: { state: string; summary: string; ask?: string; blocker?: string }): Promise<{ ok: true }> {
+/**
+ * The tool result says the turn is over. A model that treats any tool result as a cue to keep
+ * going (seen 2026-11-06 with Qwen over OpenCode: after `{ok:true}` it invented the user's next
+ * question and answered it, turn after turn) gets an explicit stop; a model that already stops
+ * loses nothing.
+ */
+export const REPORT_STATUS_NOTE = 'Your turn is over. Write nothing more and call no other tool; the human speaks next.';
+
+async function reportStatus(args: { state: string; summary: string; ask?: string; blocker?: string }): Promise<{ ok: true; note: string }> {
   if (!args?.state) throw new Error('state is required');
   if (!args?.summary) throw new Error('summary is required');
   const self = requireSelf('report status');
@@ -1051,7 +1060,7 @@ async function reportStatus(args: { state: string; summary: string; ask?: string
   if (args.ask) body.ask = args.ask;
   if (args.blocker) body.blocker = args.blocker;
   await httpJson('POST', `${apiBase()}/api/terminals/${self}/report-status`, body);
-  return { ok: true };
+  return { ok: true, note: REPORT_STATUS_NOTE };
 }
 
 // --- decision ledger (structured-recap spec, Unit 3) -------------------------
