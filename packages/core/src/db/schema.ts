@@ -465,4 +465,21 @@ function initializeSchema(db: Database.Database): void {
     const cols = db.prepare('PRAGMA table_info(usage_limit_parks)').all() as { name: string }[];
     if (!cols.some((c) => c.name === 'cleared_at')) db.exec('ALTER TABLE usage_limit_parks ADD COLUMN cleared_at INTEGER');
   });
+
+  // Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 5): per-plugin documents and settings.
+  migrate(db, '018-plugin-data', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS plugin_data (
+      plugin_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      writer TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (plugin_id, key)
+    );
+    CREATE TABLE IF NOT EXISTS plugin_settings (
+      plugin_id TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `));
 }
