@@ -8,6 +8,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/** `toolsAvailable` is recorded at spawn (plugins slice 3); these tests are about the keys they set. */
+const withoutTools = (c: Record<string, unknown>) => { const { toolsAvailable: _t, ...rest } = c ?? {}; return rest; };
+
 describe('terminal routes', () => {
   let app: any;
   let db: Database.Database;
@@ -438,7 +441,7 @@ describe('terminal routes', () => {
         .send({ enabled: true, ms: 60_000 })
         .expect(200);
 
-      expect(res.body.config).toEqual({
+      expect(withoutTools(res.body.config)).toEqual({
         transport: 'structured',
         role: 'agent',
         spawnDepth: 0,
@@ -472,7 +475,7 @@ describe('terminal routes', () => {
         .send({ enabled: false })
         .expect(200);
 
-      expect(res.body.config).toEqual({ transport: 'structured', spawnDepth: 0 });
+      expect(withoutTools(res.body.config)).toEqual({ transport: 'structured', spawnDepth: 0 });
     });
 
     it('404s for an unknown terminal', async () => {
@@ -494,7 +497,7 @@ describe('terminal routes', () => {
         .send({ type: 'claude-code', label: 'q', config: { transport: 'structured', model: 'opus' } })
         .expect(201);
       const res = await request(app).patch(`/api/terminals/${created.body.id}/account`).send({ accountId: 'work' }).expect(200);
-      expect(res.body.config).toEqual({ transport: 'structured', model: 'opus', spawnDepth: 0, accountId: 'work' });
+      expect(withoutTools(res.body.config)).toEqual({ transport: 'structured', model: 'opus', spawnDepth: 0, accountId: 'work' });
     });
 
     it('refuses an unknown account, a thread with no account, and a Codex Pretty thread off cli', async () => {
