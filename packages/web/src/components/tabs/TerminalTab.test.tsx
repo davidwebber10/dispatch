@@ -141,10 +141,9 @@ const meta = (startOffset: number, over: Partial<FakeMeta> = {}): FakeMeta =>
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-/** The phone composer's + menu, then its Keys sheet (2026-11-05: the key row moved there). */
+/** The keyboard button right of the composer's + (2026-11-07: out of the + menu), then its key pager. */
 async function openKeys() {
-  fireEvent.click(await screen.findByRole('button', { name: 'More input options' }));
-  fireEvent.click(screen.getByRole('button', { name: /Keys/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Keys' }));
   return screen.getByRole('dialog', { name: 'Keys' });
 }
 
@@ -1511,4 +1510,25 @@ test('an OSC 8 link in the terminal routes like a link in a message', async () =
   act(() => handler.activate(click, 'file:///etc/passwd'));
   expect(open).toHaveBeenCalledTimes(1);
   expect(useDocViewer.getState().open).toBeNull();
+});
+
+
+test('keys have their own keyboard button right of the +, not a + menu row; the panel is short and pages left and right (2026-11-07)', async () => {
+  isMobileMock.mockReturnValue(true);
+  const { factory } = makeSocketFactory();
+  render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+  await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+  fireEvent.click(await screen.findByRole('button', { name: 'More input options' }));
+  expect(screen.queryByRole('button', { name: /^Keys$/ , hidden: false })?.closest('[role="menu"]') ?? null).toBeNull();
+  expect(screen.queryByRole('menuitem', { name: /Keys/ })).toBeNull();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  const panel = await openKeys();
+  expect(panel.getAttribute('data-variant')).toBe('pager');
+  const pages = within(panel).getAllByRole('group');
+  expect(pages.length).toBeGreaterThanOrEqual(2); // Keys, then the harness's own keys
+  for (const pg of pages) expect(within(pg).getAllByRole('button').length).toBeLessThanOrEqual(8); // two rows of four at most
+  expect(within(panel).getByTestId('keys-pager').style.scrollSnapType).toContain('x');
+  // Tapping the keyboard button again closes it.
+  fireEvent.click(screen.getByRole('button', { name: 'Keys' }));
+  expect(screen.queryByRole('dialog', { name: 'Keys' })).toBeNull();
 });

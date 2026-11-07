@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, Keyboard, type Icon } from '@phosphor-icons/react';
+import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, Keyboard, X, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
 import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
@@ -182,6 +182,61 @@ function sheetKeysFor(type?: string): { title: string; keys: SoftKey[] }[] {
       { label: '⌃C', seq: '\x03', title: 'Ctrl-C (interrupt; twice quits)' },
     ] },
   ];
+}
+
+/** Pages of at most two rows of four (2026-11-07): a group with more keys runs onto a second page. */
+function keyPages(groups: { title: string; keys: SoftKey[] }[]): { title: string; keys: SoftKey[] }[] {
+  return groups.flatMap((g) => {
+    const out: { title: string; keys: SoftKey[] }[] = [];
+    for (let i = 0; i < g.keys.length; i += 8) out.push({ title: g.keys.length > 8 ? `${g.title} ${i / 8 + 1}` : g.title, keys: g.keys.slice(i, i + 8) });
+    return out;
+  });
+}
+
+/**
+ * The CLI keys (2026-11-07): a short panel that sits on the composer, as wide as the screen, one
+ * page per group that slides left and right. It leaves the terminal in view, so arrows through a
+ * menu show their effect; it stays open between taps. The keyboard button or Close shuts it.
+ */
+function KeysPager({ pages, onKey, onClose }: { pages: { title: string; keys: SoftKey[] }[]; onKey: (seq: string) => void; onClose: () => void }) {
+  const [page, setPage] = useState(0);
+  const pager = useRef<HTMLDivElement>(null);
+  const go = (i: number) => { const el = pager.current; if (el) el.scrollTo?.({ left: i * el.clientWidth, behavior: 'smooth' }); setPage(i); };
+  return (
+    <div role="dialog" aria-label="Keys" data-variant="pager"
+      style={{ position: 'absolute', left: 8, right: 8, bottom: '100%', marginBottom: 6, zIndex: 10, background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 -10px 28px -14px var(--color-shadow)', padding: '6px 0 8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 6px 4px 12px', height: 26 }}>
+        <span style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pages[page]?.title}</span>
+        <span style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
+          {pages.length > 1 && pages.map((p, i) => (
+            <button key={p.title} type="button" aria-label={`Page ${i + 1}: ${p.title}`} aria-current={i === page ? 'true' : undefined} onMouseDown={(e) => e.preventDefault()} onClick={() => go(i)}
+              style={{ width: 7, height: 7, padding: 0, border: 'none', borderRadius: '50%', cursor: 'pointer', background: i === page ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', opacity: i === page ? 1 : 0.5 }} />
+          ))}
+        </span>
+        <button type="button" aria-label="Close" onMouseDown={(e) => e.preventDefault()} onClick={onClose}
+          style={{ width: 26, height: 26, padding: 0, border: 'none', background: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <X size={15} />
+        </button>
+      </div>
+      <div ref={pager} data-testid="keys-pager"
+        onScroll={(e) => { const el = e.currentTarget; if (el.clientWidth) setPage(Math.round(el.scrollLeft / el.clientWidth)); }}
+        style={{ display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory', scrollbarWidth: 'none', overscrollBehaviorX: 'contain' }}>
+        {pages.map((p) => (
+          <div key={p.title} role="group" aria-label={p.title}
+            style={{ flex: '0 0 100%', scrollSnapAlign: 'start', boxSizing: 'border-box', padding: '0 10px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gridAutoRows: 42, gap: 6, alignContent: 'start' }}>
+            {p.keys.map((k) => (
+              <button key={k.label} type="button" title={k.title} aria-label={k.title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onKey(k.seq)}
+                style={{ ...SOFT_KEY, minWidth: 0, height: 42, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 12.5px var(--font-sans)' : '500 15px var(--font-mono)' }}>
+                {k.Icon ? <k.Icon size={19} weight="bold" /> : k.label}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function keysFor(type?: string): { actions: SoftKey[]; slash: SlashCmd[] } {
@@ -1049,6 +1104,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
            (owner, 2026-11-07). A handle on a tall box shrinks it to two lines and back. */
         <div data-testid="term-composer-dock" style={{ position: 'relative', flexShrink: 0, height: dockH ?? 'calc(72px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}>
         <div ref={composerOverlayRef} data-testid="term-composer-overlay" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 9, padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', boxShadow: tall && !minimized ? '0 -10px 24px -14px var(--color-shadow)' : undefined, borderTop: tall ? '1px solid var(--color-border)' : undefined }}>
+          {keysOpen && <KeysPager pages={keyPages(sheetKeysFor(meta?.type))} onKey={(seq) => sockRef.current?.send(seq)} onClose={() => setKeysOpen(false)} />}
           {tall && (
             <button type="button" aria-label={minimized ? 'Expand the message box' : 'Minimize the message box'}
               // Keep the pointer while the finger drags off the handle, so the release lands here.
@@ -1073,11 +1129,17 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             canSend={!!mobileInput}
             placeholder="Message or /command"
             onAddFile={() => termFileInputRef.current?.click()}
+            afterPlus={(
+              <button type="button" aria-label="Keys" title="Keys" aria-pressed={keysOpen} aria-expanded={keysOpen}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setKeysOpen((o) => !o)}
+                style={{ flex: 'none', width: 40, height: 40, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                  background: keysOpen ? 'var(--color-hover)' : 'transparent', color: keysOpen ? 'var(--color-accent)' : 'var(--color-text-primary)' }}>
+                <Keyboard size={22} />
+              </button>
+            )}
             menuExtra={(close) => (
               <div style={{ borderBottom: '1px solid var(--color-border)', marginBottom: 4, paddingBottom: 4 }}>
-                <button type="button" style={inputMenuRow()} onClick={() => { close(); setKeysOpen(true); }}>
-                  <Keyboard size={18} /> Keys
-                </button>
                 {slashCmds.length > 0 && (
                   <button type="button" style={inputMenuRow()} onClick={() => { close(); setSlashQuery(''); setSlashOpen(true); }}>
                     <span style={{ width: 18, textAlign: 'center', font: '600 16px var(--font-mono)', color: 'var(--color-accent)' }}>/</span> Slash commands
@@ -1104,24 +1166,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         </div>
         </div>
       )}
-      {/* Keys sheet: tap as many as needed (arrows through a menu, say); Done or the backdrop closes it. */}
-      {/* Keys: the shared slide-up sheet. Tap as many as needed (arrows through a menu, say). */}
-      <Modal open={isMobile && keysOpen} sheet title="Keys" onClose={() => setKeysOpen(false)}>
-        {sheetKeysFor(meta?.type).map((g) => (
-          <div key={g.title} style={{ marginBottom: 12 }}>
-            <div style={{ font: '600 10.5px var(--font-mono)', letterSpacing: '.08em', color: 'var(--color-text-tertiary)', margin: '0 2px 6px' }}>{g.title.toUpperCase()}</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(76px, 1fr))', gap: 8 }}>
-              {g.keys.map((k) => (
-                <button key={k.label} type="button" title={k.title} aria-label={k.title}
-                  onClick={() => sockRef.current?.send(k.seq)}
-                  style={{ ...SOFT_KEY, minWidth: 0, height: 48, color: 'var(--color-text-primary)', font: k.label.length > 3 && !k.Icon ? '500 13px var(--font-sans)' : '500 15px var(--font-mono)' }}>
-                  {k.Icon ? <k.Icon size={20} weight="bold" /> : k.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </Modal>
       {/* Slash-command sheet. Portaled to <body> so position:fixed isn't trapped
           by the mobile slide-rail's transform (which would shift it off-screen). */}
       {/* Slash commands: the shared slide-up sheet. */}

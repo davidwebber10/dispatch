@@ -33,6 +33,8 @@ export interface PillComposerProps {
   onAddFile: () => void;
   /** Extra rows at the top of the + menu (Chat's project choice). */
   menuExtra?: (close: () => void) => ReactNode;
+  /** A control right of the + (the CLI composer's keyboard button, 2026-11-07). */
+  afterPlus?: ReactNode;
   /** Which composer this is, for plugin composer actions (docs/superpowers/specs/2026-11-07-plugins-design.md). */
   pluginContext?: { surface: ComposerCtx['surface']; terminalId?: string; sessionId?: string };
   dictation: Dictation;
@@ -56,7 +58,7 @@ export interface PillComposerProps {
 const MAX_FRACTION = 0.5;
 
 export function PillComposer({
-  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, pluginContext,
+  value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
   maxLines, onTallChange,
 }: PillComposerProps) {
@@ -181,12 +183,13 @@ export function PillComposer({
       background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)',
       border: `1px solid ${dragActive ? 'var(--color-accent)' : 'var(--color-border)'}`, transition: 'border-color .12s, background .12s',
     }}>
-      <div style={{ gridArea: 'plus' }}>
+      <div style={{ gridArea: 'plus', display: 'flex', alignItems: 'center', gap: 2 }}>
         <InputActionsMenu
           onAddFile={onAddFile}
           extra={menuExtra}
           triggerStyle={{ ...circle, background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
         />
+        {afterPlus}
       </div>
       {recording ? (
         <div style={{ gridArea: 'text', minWidth: 0, display: 'flex', alignItems: 'center', minHeight: key, padding: '0 4px' }}><DictationControl dictation={dictation} /></div>
