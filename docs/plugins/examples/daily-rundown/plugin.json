@@ -5,9 +5,40 @@
   "description": "What happened in the last day, per project.",
   "web": "web.js",
   "contributes": {
-    "views": [{ "id": "rundown", "label": "Rundown", "icon": "sun", "mobileTab": true }],
-    "settings": [{ "id": "rundown", "label": "Daily rundown" }],
-    "menus": { "thread": [{ "id": "pin", "label": "Pin to rundown" }] }
+    "views": [
+      {
+        "id": "rundown",
+        "label": "Rundown",
+        "icon": "sun"
+      }
+    ],
+    "settings": [
+      {
+        "id": "rundown",
+        "label": "Daily rundown"
+      }
+    ],
+    "threadMenu": [
+      {
+        "id": "pin",
+        "label": "Pin to rundown"
+      }
+    ]
   },
-  "permissions": ["read:threads"]
+  "permissions": [
+    "read:threads",
+    "threads:call-worker"
+  ],
+  "worker": {
+    "command": "node",
+    "args": [
+      "worker/index.mjs"
+    ],
+    "jobs": [
+      {
+        "id": "morning",
+        "cron": "0 7 * * 1-5"
+      }
+    ]
+  }
 }

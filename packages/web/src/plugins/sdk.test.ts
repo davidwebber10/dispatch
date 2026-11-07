@@ -92,6 +92,15 @@ describe('plugin SDK storage on the daemon (2026-11-07)', () => {
     expect(result.current[0]).toBe(9);
   });
 
+  it("worker.fetch targets the plugin's worker proxy with the plugin header", async () => {
+    const d = buildSdk();
+    await d.worker.fetch('p', 'jobs/run?x=1', { method: 'POST' });
+    const [url, init] = daemon.fetch.mock.calls.at(-1)! as [string, RequestInit];
+    expect(url).toMatch(/\/api\/plugins\/p\/worker\/jobs\/run\?x=1$/);
+    expect(init.method).toBe('POST');
+    expect(new Headers(init.headers).get('X-Dispatch-Plugin')).toBe('p');
+  });
+
   it('fetch adds the X-Dispatch-Plugin header', async () => {
     const d = buildSdk();
     await d.fetch('p', '/api/plugins/p/data');

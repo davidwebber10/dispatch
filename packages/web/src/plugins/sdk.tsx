@@ -157,6 +157,8 @@ export interface DispatchSdk {
   assist: typeof assist;
   /** fetch with the plugin named in a header. */
   fetch: typeof pluginFetch;
+  /** The plugin's worker, through the daemon's proxy: `worker.fetch(plugin, 'jobs/run', { method: 'POST' })` → `/api/plugins/<id>/worker/jobs/run`. */
+  worker: { fetch: (plugin: string, path: string, init?: RequestInit) => Promise<Response> };
   /** An app-root-relative path (`/api/...`, `/plugins/...`) as the browser must request it. */
   apiPath: typeof apiPath;
   hint: (msg: string) => void;
@@ -192,6 +194,7 @@ export function buildSdk(): DispatchSdk {
     events,
     assist,
     fetch: pluginFetch,
+    worker: { fetch: (plugin, p, init) => pluginFetch(plugin, `/api/plugins/${encodeURIComponent(plugin)}/worker/${p.replace(/^\/+/, '')}`, init) },
     apiPath,
     hint: (msg) => useHint.getState().show(msg),
     copyText,

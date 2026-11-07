@@ -22,6 +22,8 @@ beforeEach(() => {
   vi.spyOn(api, 'reloadPlugin').mockImplementation(async (id) => rows.find((x) => x.id === id)!);
   vi.spyOn(api, 'copyPlugin').mockImplementation(async (id, newId) => { const src = rows.find((x) => x.id === id)!; const r = row(newId, { name: src.name }); rows.push(r); return r; });
   vi.spyOn(host, 'reloadPlugin').mockResolvedValue(undefined);
+  vi.spyOn(api, 'pluginLogs').mockImplementation(async () => 'line one\nline two\n');
+  vi.spyOn(api, 'restartPluginWorker').mockImplementation(async (id) => rows.find((x) => x.id === id)!.workerStats!);
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -131,5 +133,26 @@ describe('bundled plugins on the Plugins page (2026-11-07)', () => {
     fireEvent.click(within(item).getByRole('button', { name: 'Copy' }));
     await waitFor(() => expect(api.copyPlugin).toHaveBeenCalledWith('prompt-coach', 'my-coach'));
     expect(await screen.findByTestId('plugin-row-my-coach')).toBeInTheDocument();
+  });
+
+  it('a plugin with a worker shows its state; Logs opens the tail; Restart calls the API; a crashed worker says so', async () => {
+    const spec = { command: 'node', args: ['worker/index.js'], env: {}, jobs: [] };
+    rows = [
+      row('runner', { worker: spec, workerStats: { state: 'running', pid: 4242, restarts: 2, startedAt: '2026-11-07T10:00:00Z', lastExit: null, socket: '/tmp/s', queued: 0 } }),
+      row('fallen', { worker: spec, workerStats: { state: 'crashed', pid: null, restarts: 10, startedAt: null, lastExit: { code: 1, signal: null, at: '2026-11-07T10:05:00Z' }, socket: null, queued: 0 } }),
+    ];
+    render(<PluginsSection />);
+    const runner = await screen.findByTestId('plugin-row-runner');
+    expect(within(runner).getByText(/Worker running · pid 4242 · 2 restarts/)).toBeInTheDocument();
+    fireEvent.click(within(runner).getByRole('button', { name: 'Logs' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText(/line two/)).toBeInTheDocument();
+    expect(api.pluginLogs).toHaveBeenCalledWith('runner', 200);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(within(runner).getByRole('button', { name: 'Restart' }));
+    await waitFor(() => expect(api.restartPluginWorker).toHaveBeenCalledWith('runner'));
+    const fallen = screen.getByTestId('plugin-row-fallen');
+    expect(within(fallen).getByText(/Worker crashed · exit 1 · 10 restarts/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('plugin-row-runner')).queryByText(/crashed/)).toBeNull();
   });
 });

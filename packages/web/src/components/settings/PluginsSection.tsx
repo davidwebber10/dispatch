@@ -4,6 +4,7 @@ import type { PluginRow } from '../../api/types';
 import { usePluginRegistry, PROMOTED_MAX, type PluginStatus } from '../../plugins/registry';
 import { isSafeMode, setSafeMode, reloadPlugin } from '../../plugins/host';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { Modal } from '../common/Modal';
 import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { sectionLabel, row, item, ghostBtn, solidBtn, fieldInput, miniChip, Toggle } from './ui';
@@ -25,6 +26,7 @@ const PERMISSION_MEANING: Record<string, string> = {
   'storage': 'Keeps its own documents and settings',
   'threads:read-storage': 'Lets threads read its documents',
   'threads:write-storage': 'Lets threads write its documents',
+  'threads:call-worker': 'Lets threads call its worker',
   'model:assist': 'Makes model calls of its own',
   'network': 'Its worker makes calls out to the internet',
 };
@@ -44,6 +46,17 @@ function stateOf(r: PluginRow, s: PluginStatus | undefined): { label: string; to
  * plugins first, then the installed ones, then safe mode. Browse and install come with the
  * marketplace slice.
  */
+/** "Worker running · pid 4242 · 2 restarts", "Worker crashed · exit 1 · 10 restarts", "Worker backing off", "Worker stopped". */
+function workerLabel(w: PluginRow['workerStats']): string {
+  if (!w) return 'Worker stopped';
+  const restarts = w.restarts > 0 ? ` · ${w.restarts} restart${w.restarts === 1 ? '' : 's'}` : '';
+  if (w.state === 'running') return `Worker running${w.pid ? ` · pid ${w.pid}` : ''}${restarts}`;
+  if (w.state === 'crashed') return `Worker crashed${w.lastExit ? ` · ${w.lastExit.signal ? `signal ${w.lastExit.signal}` : `exit ${w.lastExit.code ?? '?'}`}` : ''}${restarts}`;
+  if (w.state === 'backoff') return `Worker backing off${restarts}`;
+  return 'Worker stopped';
+}
+const workerTone = (w: PluginRow['workerStats']): string => (w?.state === 'running' ? 'var(--color-accent)' : w?.state === 'crashed' ? 'var(--color-status-red)' : w?.state === 'backoff' ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)');
+
 export function PluginsSection() {
   const manifests = usePluginRegistry((s) => s.manifests);
   const status = usePluginRegistry((s) => s.status);
@@ -54,6 +67,17 @@ export function PluginsSection() {
   const [newId, setNewId] = useState('');
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  // The worker's log tail, open for one plugin; refreshed every two seconds while open.
+  const [logsOf, setLogsOf] = useState<string | null>(null);
+  const [logText, setLogText] = useState('');
+  useEffect(() => {
+    if (!logsOf) return;
+    let on = true;
+    const pull = () => api.pluginLogs(logsOf, 200).then((t) => { if (on) setLogText(t); }).catch(() => { if (on) setLogText('(no log yet)'); });
+    pull();
+    const timer = setInterval(pull, 2000);
+    return () => { on = false; clearInterval(timer); };
+  }, [logsOf]);
   const [err, setErr] = useState('');
   const [removing, setRemoving] = useState<PluginRow | null>(null);
   const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
@@ -121,6 +145,13 @@ export function PluginsSection() {
           ) : <span style={note}>No permissions</span>}
           {r.keyed && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }} title="The plugin's processes can use ~/.dispatch/keys/plugin-{r.id}">Key issued</span>}
         </div>
+        {r.worker && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ ...miniChip, textTransform: 'none', letterSpacing: 0, color: workerTone(r.workerStats), borderColor: workerTone(r.workerStats) }}>{workerLabel(r.workerStats)}</span>
+            <button type="button" style={ghostBtn} onClick={() => { setLogText(''); setLogsOf(r.id); }}>Logs</button>
+            <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => { setBusy(r.id); void api.restartPluginWorker(r.id).then(() => refresh()).catch(() => {}).finally(() => setBusy(null)); }}>Restart</button>
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)}>{r.enabled ? 'Disable' : 'Enable'}</button>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => void reload(r)}>Reload</button>
@@ -210,6 +241,10 @@ export function PluginsSection() {
         <div style={note}>{safeTouched ? 'Reload the app to apply. ' : ''}Adding ?safe to the app's address does the same for one visit.</div>
       </section>
 
+      <Modal open={logsOf !== null} onClose={() => setLogsOf(null)} title={logsOf ? `Worker log · ${logsOf}` : 'Worker log'} maxWidth={760}>
+        <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
+        <div style={{ ...note, marginTop: 8 }}>The last 200 lines of ~/Library/Logs/dispatch/plugins/{logsOf}.log, refreshed every two seconds.</div>
+      </Modal>
       <ConfirmModal open={removing !== null} title="Remove this plugin?" danger confirmLabel="Remove plugin"
         message={removing ? `The folder ~/.dispatch/plugins/${removing.id} and everything in it will be deleted.` : ''}
         onConfirm={() => removing && remove(removing)} onCancel={() => setRemoving(null)} />

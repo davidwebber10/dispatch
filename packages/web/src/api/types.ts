@@ -560,6 +560,16 @@ export interface AccountsView { claude: Account[]; codex: Account[]; defaults: R
 
 /** Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): one row of GET /api/plugins. */
 export interface PluginInstall { marketplace: string; version: string; sha256: string; installedAt: string }
+export interface WorkerStats {
+  state: 'running' | 'backoff' | 'stopped' | 'crashed';
+  pid: number | null;
+  restarts: number;
+  startedAt: string | null;
+  lastExit: { code: number | null; signal: string | null; at: string } | null;
+  socket: string | null;
+  queued: number;
+}
+
 export interface PluginRow {
   id: string;
   name: string;
@@ -586,6 +596,9 @@ export interface PluginRow {
   shadowsBundled?: boolean;
   hooks?: { runs: number; failures: number; dropped: number };
   assist?: { calls: number; inputTokens: number; outputTokens: number };
+  /** The worker the manifest declares, and its live state while a supervisor runs (plugins slice 5). */
+  worker?: { command: string; args: string[]; env: Record<string, string>; jobs: { id: string; cron: string }[] };
+  workerStats?: WorkerStats;
 }
 
 /** A plugin's stored document (spec section 5); `writer` is set when a thread key wrote it. */

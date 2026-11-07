@@ -1,6 +1,6 @@
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath } from '../lib/basePath';
-import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta } from './types';
+import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, PluginRow, PluginDoc, PluginDocMeta, WorkerStats } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet } from './types';
@@ -410,6 +410,12 @@ export const api = {
   reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
   removePlugin: (id: string) => req<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   pluginAssist: (id: string, body: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) => req<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
+  pluginLogs: async (id: string, lines = 200): Promise<string> => {
+    const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/logs?lines=${lines}`), { cache: 'no-store' });
+    if (!res.ok) throw new ApiError(`GET plugin logs failed: ${res.status}`, res.status);
+    return res.text();
+  },
+  restartPluginWorker: (id: string) => req<WorkerStats>(`/api/plugins/${encodeURIComponent(id)}/worker/restart`, { method: 'POST' }),
   copyPlugin: (id: string, newId: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/copy`, { method: 'POST', body: JSON.stringify({ id: newId }) }),
   // Plugin storage and settings (spec section 5). A missing document is null, not an error.
   listPluginDocs: (id: string) => req<{ docs: PluginDocMeta[] }>(`/api/plugins/${encodeURIComponent(id)}/data`),
