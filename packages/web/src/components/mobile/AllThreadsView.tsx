@@ -9,6 +9,7 @@ import { HARNESSES } from '../../lib/harnesses';
 import { Modal } from '../common/Modal';
 import { Spinner } from '../common/Spinner';
 import { SwipeRow } from '../common/SwipeRow';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadRow } from '../sidebar/ProjectCard';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 import { ArchivedThreadsList } from './ArchivedThreadsList';
@@ -72,6 +73,8 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
   const accountsView = useAccounts((s) => s.view);
+  // The swipe to archive is the phone's; on the desktop (the left panel's Threads view) a row is a plain row.
+  const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'active' | 'archived'>('active');
   const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
@@ -291,7 +294,7 @@ export function AllThreadsView({ onOpenThread, query = '' }: { onOpenThread: (pr
         {threads.map((t) => (
           // Same row, ⋯ menu and swipe as a project's thread list. The swipe archives
           // straight away: it is undoable from the project's Archived section.
-          <SwipeRow key={t.id} actionLabel="Archive" actionColor="var(--color-status-red)" onAction={() => void archive(t)}>
+          <SwipeRow key={t.id} disabled={!isMobile} actionLabel="Archive" actionColor="var(--color-status-red)" onAction={() => void archive(t)}>
             <ThreadRow tab={t} active={false} subtitle={[active.project ? '' : nameOf.get(t.sessionId) ?? '', startedText(t)].filter(Boolean).join(' · ') || undefined}
               onClick={() => onOpenThread(t.sessionId, t.id)}
               onMiddle={() => onOpenThread(t.sessionId, t.id)}
