@@ -35,13 +35,16 @@ async function boot(over: { docs?: Record<string, unknown>; api?: Record<string,
 afterEach(() => { cleanup(); });
 
 describe('Coach right-column tab (coach plan Task 12)', () => {
-  it('shows the open thread\'s card and the five measures; the weakest is the focus; trends have names, not arrows as text', async () => {
-    const { Tab } = await boot();
-    render(<Tab terminalId="t1" sessionId="s1" />);
+  it('shows the open thread\'s card; the five measures are on the Coach screen: the weakest is the focus, trends have names', async () => {
+    const { Tab, View } = await boot({ api: {} });
+    const v = render(<Tab terminalId="t1" sessionId="s1" />);
     const card = await screen.findByTestId('coach-card');
     expect(card).toHaveTextContent('Ask for a plan first');
     expect(card).not.toHaveTextContent('Start a second thread');
-    const m = screen.getByTestId('coach-measures');
+    expect(screen.queryByTestId('coach-measures')).toBeNull();
+    v.unmount();
+    render(<View />);
+    const m = await screen.findByTestId('coach-measures');
     expect(m).toHaveTextContent('YOUR FIVE MEASURES · 30 DAYS');
     for (const label of ['Ambition', 'Delegation', 'Reuse', 'Judgment', 'Breadth']) expect(m).toHaveTextContent(label);
     expect(within(m).getByTestId('measure-reuse')).toHaveTextContent('focus');
@@ -61,7 +64,7 @@ describe('Coach right-column tab (coach plan Task 12)', () => {
   it('with no thread open it says so; a thread with no card says so', async () => {
     const { Tab } = await boot();
     const v = render(<Tab terminalId={null} sessionId={null} />);
-    expect(await screen.findByText('Open a thread to see its tip.')).toBeInTheDocument();
+    expect(await screen.findByText('Open a thread to see what the Coach sees in it.')).toBeInTheDocument();
     v.unmount();
     render(<Tab terminalId="t5" sessionId="s1" />);
     expect(await screen.findByText('The Coach has nothing for this thread yet.')).toBeInTheDocument();

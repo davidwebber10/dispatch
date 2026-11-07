@@ -87,7 +87,7 @@ describe('Coach card (coach plan Task 10)', () => {
   it('the ⋯ menu offers every choice; Why am I seeing this? shows the reason; What the Coach knows opens the screen', async () => {
     const { d } = await mount();
     fireEvent.click(await screen.findByRole('button', { name: 'More options' }));
-    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Mute for 1 hour', 'Mute for today', 'Mute until I turn it on', 'Fewer tips like this', 'Turn off this type', 'Why am I seeing this?', 'What the Coach knows']);
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Mute for 1 hour', 'Mute for today', 'Mute until I turn it on', 'Fewer tips like this', 'Turn off this type', 'Tell me more about this', 'Why am I seeing this?', 'What the Coach knows']);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Why am I seeing this?' }));
     expect(screen.getByText(CARD.reason)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'More options' }));

@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   budgetPercentWeekly: 3,
   budgetUsdWeekly: 5,
   recap: { inApp: true, push: false },
+  showMeasures: true,          // the five measure bars on the Coach screen (the Coach uses the measures either way)
   advanced: { thresholds: DEFAULT_THRESHOLDS, minConfidence: 0.7 },
 });
 

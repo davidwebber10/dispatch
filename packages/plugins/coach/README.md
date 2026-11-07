@@ -7,10 +7,16 @@ It replaces the Prompt coach. It is on by default: a new install first shows onl
 at and remembers, with Turn off; then a quiet first week. An owner who had turned the Prompt coach
 off keeps the Coach off.
 
-- **Where it shows:** a card under the message box after a turn ends, a Coach tab in the right
-  column (the open thread's tip, your goals and the five measures), the Coach screen (the weekly
-  recap, your goals, the measures, the card history, what the Coach knows, and what it costs),
-  and Settings → Coach.
+- **Where it shows:** a card under the message box after a turn ends; a Coach tab in the right
+  column about the open thread (its cards, what the Coach sees in it, the goals it touches,
+  Review this thread, and a chat about the thread or about you); the Coach screen (the weekly
+  recap, your goals, the five measures, a chat, the card history, what the Coach knows, and what
+  it costs); and Settings → Coach.
+- **Talk with it:** ask about your own use. It answers only from what it has observed and cites
+  it; with too little data it says what it has seen, what it needs, and roughly when. General
+  advice is labeled general. An answer can offer actions (a goal, a skill, a schedule, a plugin,
+  new threads), each confirmed by you. Each answer is one large-model call under the budget; the
+  history keeps the newest 200 turns, and Clear chat or Reset empties it.
 - **What it watches:** the thread events Dispatch already records (prompts you send, tool calls,
   turn ends). The worker runs the rules, so coaching does not need an open tab. Prompts from other
   agents, and every project on your leave-alone list, are ignored.
@@ -52,7 +58,7 @@ off keeps the Coach off.
 
 `signals` (the rolling state), `candidates` (what the rules proposed), `cards` (the judged cards,
 and a record of each judged candidate), `cardState`, `cadence` (caps, mute, rests), `memory`
-(facts, known skills, level adjustments, muted types, goals), `status` (the budget the worker
+(facts, known skills, level adjustments, muted types, goals), `chat`, `status` (the budget the worker
 last heard), `measures` (scores, a daily history, suggested goals), `recap`.
 
 Design: `docs/superpowers/specs/2026-11-07-coach-design.md`.

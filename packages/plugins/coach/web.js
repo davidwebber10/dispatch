@@ -12,7 +12,8 @@ import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
 import { planCall, LARGE_DEFAULT } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
-import { morePrompt, parseAnswer, partWords } from './lib/prompts.mjs';
+import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
+import { chatContext, chatPrompt, parseChat, threadObservations, appendTurns } from './lib/chat.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
 /** The detector each threshold group tunes (Settings → Coach → Advanced). */
@@ -107,10 +108,14 @@ export function createCoach(d, deps = {}) {
     toast: null,    // { terminalId, effect, undo, fact, saved, cardId, closed }: what the last feedback changed
     measures: null, // the worker's `measures` document: { scores, weakest, at }
     recap: null,    // the worker's weekly recap
+    chat: { turns: [] }, // the chat history (spec section 4.9)
+    chatDraft: null, // text for the chat box ("Tell me more about this")
+    signals: null,  // the worker's signals, loaded when the tab or the chat needs them
+    signalsLoaded: false,
   }));
 
   async function load() {
-    const [s, cadence, cards, cardState, memory, status, measuresDoc, recap] = await Promise.all([
+    const [s, cadence, cards, cardState, memory, status, measuresDoc, recap, chat] = await Promise.all([
       settings.get(PLUGIN, null).catch(() => null),
       storage.get(PLUGIN, 'cadence', null).catch(() => null),
       storage.get(PLUGIN, 'cards', null).catch(() => null),
@@ -119,10 +124,12 @@ export function createCoach(d, deps = {}) {
       storage.get(PLUGIN, 'status', null).catch(() => null),
       storage.get(PLUGIN, 'measures', null).catch(() => null),
       storage.get(PLUGIN, 'recap', null).catch(() => null),
+      storage.get(PLUGIN, 'chat', null).catch(() => null),
     ]);
     const firstRun = !cadence || !cadence.firstSeenAt;
     const cad = firstRun ? { ...emptyCadence(now()), ...(cadence || {}), firstSeenAt: now().toISOString() } : cadence;
-    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) }, measures: measuresDoc, recap });
+    store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) }, measures: measuresDoc, recap, chat: chat && Array.isArray(chat.turns) ? chat : { turns: [] } });
+    if (store.getState().signalsLoaded) void ensureSignals(true);
     if (firstRun) await storage.set(PLUGIN, 'cadence', cad).catch(() => {});
     // A new recap the worker may announce (not written in a mute or quiet hours) dots the Coach view until seen.
     const unseen = !!(recap && recap.announce && recap.at && cad.recapSeen !== recap.at);
@@ -359,6 +366,7 @@ export function createCoach(d, deps = {}) {
         menuItem('Fewer tips like this', () => { void giveFeedback(card, 'fewer', '', ctx.terminalId); }),
         menuItem('Turn off this type', () => { void giveFeedback(card, 'off', '', ctx.terminalId); }),
         h('div', { key: 's2', style: S.sep }),
+        menuItem('Tell me more about this', () => { store.setState({ chatDraft: `Tell me more about this tip: "${card.headline}"` }); if (ctx.surface !== 'inspector' && d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); }),
         menuItem('Why am I seeing this?', () => setWhy(true)),
         menuItem('What the Coach knows', () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(`plugin:${PLUGIN}:coach`); })));
   }
@@ -384,7 +392,8 @@ export function createCoach(d, deps = {}) {
       if (doc) await storage.set(PLUGIN, key, stripExcerpts(doc));
     }
     await storage.remove(PLUGIN, 'signals').catch(() => {});
-    store.setState({ cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
+    await saveChat({ turns: [] });
+    store.setState({ signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
   }
 
   function Knows() {
@@ -463,24 +472,119 @@ export function createCoach(d, deps = {}) {
   }
 
   // ── the right-column tab: the open thread's card, and the measures (spec section 4.2) ─────
+  // "Review this thread" and the other review entry points (spec section 4.10): the review panel
+  // on the Coach screen shows the estimate first; nothing runs until its Start.
+  function ReviewButton({ scope, label }) {
+    return h('button', { type: 'button', style: S.btn, onClick: () => { store.setState({ reviewAsk: scope }); } }, label);
+  }
+
+  // ── the right-column tab: about the open thread (owner, 2026-11-07; spec section 4.2) ──────
+  // This thread's cards, what the Coach sees in it, the goals it touches, Review this thread, and
+  // the chat about this thread. The five measure bars live on the Coach screen, not here.
   function CoachTab({ terminalId, sessionId }) {
     const st = store((s) => s);
+    useEffect(() => { void ensureSignals(); }, []);
     if (!st.loaded) return null;
-    let body;
-    if (!terminalId) body = h('div', { style: { ...S.note, fontSize: 13 } }, 'Open a thread to see its tip.');
-    else if (st.toast && st.toast.terminalId === terminalId) body = h(Toast, { toast: st.toast });
-    else {
-      const t = now();
-      const card = [...st.cards].reverse().find((c) => c.terminalId === terminalId && !(st.cardState[c.id] && CLOSED.has(st.cardState[c.id].state)) && allows(st.memory, c, t));
-      // The tab has no message box: a prompt is copied for the person to paste. The tab works during a
-      // mute and never counts toward the daily cap (mockup part 7).
-      const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (typeof d.copyText === 'function') void d.copyText(text); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }, insert: () => {} };
-      body = card ? h(CardView, { key: card.id, card, ctx, fresh: false }) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
+    if (!terminalId) {
+      return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+        h('div', { style: { ...S.note, fontSize: 13 } }, 'Open a thread to see what the Coach sees in it.'),
+        h('div', null, h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open the Coach screen')));
     }
-    const working = activeGoals(st.memory);
+    const t = now();
+    const mine = [...st.cards].reverse().filter((c) => c.terminalId === terminalId && !(st.cardState[c.id] && CLOSED.has(st.cardState[c.id].state)) && allows(st.memory, c, t)).slice(0, 3);
+    // The tab has no message box: a prompt is copied for the person to paste. The tab works during a
+    // mute and never counts toward the daily cap (mockup part 7).
+    const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (typeof d.copyText === 'function') void d.copyText(text); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }, insert: () => {} };
+    let cardsBlock;
+    if (st.toast && st.toast.terminalId === terminalId) cardsBlock = h(Toast, { toast: st.toast });
+    else cardsBlock = mine.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 0 } }, ...mine.map((c) => h(CardView, { key: c.id, card: c, ctx, fresh: false }))) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
+    const sees = threadObservations(st.signals, terminalId);
+    const touched = activeGoals(st.memory).filter((g) => mine.some((c) => c.goal === g.id || g.detectors.includes(c.type) || g.measures.includes(c.measure)));
     return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 12 } },
-      working.length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' } }, icon('target', null, 14), h('span', null, `Working on: ${working.map((g) => g.text).join(' · ')}`)),
-      body, h(Measures));
+      touched.length > 0 && h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--color-text-secondary)' } }, icon('target', null, 14), h('span', null, `Working on: ${touched.map((g) => g.text).join(' · ')}`)),
+      cardsBlock,
+      h('div', { 'data-testid': 'coach-thread-sees', style: S.section },
+        h('div', { style: S.label }, 'WHAT THE COACH SEES IN THIS THREAD'),
+        sees.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 } }, ...sees.map((x, k) => h('li', { key: k, style: { margin: '3px 0' } }, x))) : h('div', { style: { ...S.note, fontSize: 12.5 } }, 'Nothing yet: the Coach sees a thread after your first prompt in it.')),
+      h(ReviewButton, { scope: { kind: 'thread', ids: [terminalId] }, label: 'Review this thread' }),
+      h(Chat, { terminalId, sessionId }));
+  }
+
+  // ── talk with the Coach (spec section 4.9) ─────────────────────────────────────────────────
+  async function ensureSignals(force = false) {
+    if (store.getState().signalsLoaded && !force) return;
+    const sig = await storage.get(PLUGIN, 'signals', null).catch(() => null);
+    store.setState({ signals: sig, signalsLoaded: true });
+  }
+  async function saveChat(next) { store.setState({ chat: next }); await storage.set(PLUGIN, 'chat', next); }
+  const CHAT_CAP = 'The Coach has used its budget for this week. The chat comes back when the week resets.';
+  function actionLabel(a) {
+    const p = a.payload || {};
+    if (a.kind === 'add-goal') return `Add goal: ${p.text}`;
+    if (a.kind === 'schedule') return `Set up: ${p.label || p.prompt}`;
+    if (a.kind === 'create-skill') return `Create skill: ${p.name}`;
+    if (a.kind === 'build-plugin') return 'Build the plugin';
+    if (a.kind === 'new-threads') return `Open ${(p.prompts || []).length} new threads`;
+    return a.kind;
+  }
+  /** A chat action: the same confirm-first paths as the cards; the click is the person's choice. */
+  async function runAction(a, projectId) {
+    const p = a.payload || {};
+    const acts = d.actions || {};
+    const at = projectId ? { projectId } : {};
+    if (a.kind === 'add-goal' && typeof p.text === 'string') { const mapped = await mapText(p.text); await newGoal(p.text, mapped, 'user'); return; }
+    if (a.kind === 'schedule' && typeof acts.openSchedule === 'function') { acts.openSchedule({ ...at, prompt: p.prompt, cron: p.cron, label: p.label }); return; }
+    if (a.kind === 'create-skill' && typeof acts.createSkill === 'function') { void acts.createSkill({ name: p.name, description: p.description, body: p.body, ...at }); return; }
+    if (a.kind === 'build-plugin' && typeof acts.openNewThreads === 'function') { acts.openNewThreads({ ...at, prompts: [buildPluginPrompt({ plugin: p.plugin, parts: cleanParts(p.parts) })] }); return; }
+    if (a.kind === 'new-threads' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ ...at, prompts: (p.prompts || []).filter((x) => typeof x === 'string') });
+  }
+  function Chat({ terminalId = null, sessionId = null }) {
+    const chat = store((s) => s.chat);
+    const draft = store((s) => s.chatDraft);
+    const [scope, setScope] = useState(terminalId ? 'thread' : 'me');
+    const [text, setText] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [note, setNote] = useState(null);
+    useEffect(() => { void ensureSignals(); }, []);
+    useEffect(() => { if (draft) { setText(draft); store.setState({ chatDraft: null }); } }, [draft]);
+    const tid = scope === 'thread' ? terminalId : null;
+    const turns = (chat && Array.isArray(chat.turns) ? chat.turns : []).filter((x) => (tid ? x.terminalId === tid : !x.terminalId));
+    const send = async () => {
+      const q = text.trim();
+      if (!q || busy) return;
+      const st = store.getState();
+      const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+      if (plan.tier === 'none') { setNote(CHAT_CAP); return; }
+      setBusy(true); setNote(null);
+      try {
+        await ensureSignals(true);
+        const s2 = store.getState();
+        const cards = tid ? s2.cards.filter((c) => c.terminalId === tid) : s2.cards;
+        const ctx = chatContext(s2.signals, s2.measures && s2.measures.scores, s2.memory, cards, { now: now(), terminalId: tid });
+        const r = await d.assist(PLUGIN, { ...chatPrompt(ctx, turns, q), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
+        const ans = parseChat(r && r.text);
+        if (!ans) { setNote('The Coach could not answer just now.'); return; }
+        const at = now().toISOString();
+        const tag = tid ? { terminalId: tid } : {};
+        await saveChat(appendTurns(store.getState().chat, [{ role: 'user', text: q, at, ...tag }, { role: 'coach', text: ans.text, actions: ans.actions, at, ...tag }]));
+        setText('');
+      } finally { setBusy(false); }
+    };
+    return h('div', { 'data-testid': 'coach-chat', style: S.section },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+        h('span', { style: S.label }, 'ASK THE COACH'), h('span', { style: { flex: 1 } }),
+        terminalId && h('div', { role: 'radiogroup', 'aria-label': 'Chat about', style: { display: 'flex', gap: 4 } },
+          ...[['thread', 'About this thread'], ['me', 'About me']].map(([v, l]) => h('button', { key: v, type: 'button', role: 'radio', 'aria-checked': scope === v, style: scope === v ? S.chipOn : S.chip, onClick: () => setScope(v) }, l))),
+        h('button', { type: 'button', style: S.link, onClick: () => { const all = (store.getState().chat && store.getState().chat.turns) || []; void saveChat({ turns: all.filter((x) => (tid ? x.terminalId !== tid : !!x.terminalId)) }); } }, 'Clear chat')),
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, maxHeight: 360, overflowY: 'auto' } },
+        turns.length === 0 && h('div', { style: { ...S.note, fontSize: 12.5 } }, tid ? 'Ask about this thread: "How could I have handed off more here?"' : 'Ask about your own use: "What should I automate first?"'),
+        ...turns.map((x, k) => h('div', { key: k, style: { alignSelf: x.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '88%', padding: '7px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: x.role === 'user' ? 'var(--color-pane)' : 'var(--color-elevated)', fontSize: 12.5, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' } },
+          x.text,
+          Array.isArray(x.actions) && x.actions.length > 0 && h('div', { style: { ...S.row, marginTop: 6 } }, ...x.actions.map((a, n) => h('button', { key: n, type: 'button', style: S.btn, onClick: () => { void runAction(a, tid ? sessionId : undefined); } }, actionLabel(a))))))),
+      note && h('div', { role: 'status', style: { ...S.note, fontSize: 12.5 } }, note),
+      h('div', { style: { ...S.row, marginTop: 8 } },
+        h('input', { type: 'text', 'aria-label': 'Ask the Coach', placeholder: 'Ask about how you use AI', value: text, style: { ...S.input, marginTop: 0, flex: 1, minWidth: 160 }, onChange: (e) => setText(e.target.value), onKeyDown: (e) => { if (e.key === 'Enter') void send(); } }),
+        h('button', { type: 'button', style: S.primary, disabled: busy, onClick: () => { void send(); } }, busy ? 'Thinking…' : 'Send')));
   }
 
   // ── cost this week (spec section 4.5; mockup part 5, right) ────────────────────────────────
@@ -653,13 +757,15 @@ export function createCoach(d, deps = {}) {
   }
 
   function CoachView() {
+    const st = store((x) => x);
     return h('div', { style: { padding: '22px 26px 40px', maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 } },
       h('div', null,
         h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Coach'),
         h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'One small next step at a time, from how you actually work. Your Coach data stays on this machine and is private to you.')),
       h(Recap),
       h(Goals),
-      h(Measures),
+      st.settings.showMeasures !== false && h(Measures),
+      h(Chat, {}),
       h(History),
       h(Knows),
       h(Cost));
@@ -768,6 +874,7 @@ export function createCoach(d, deps = {}) {
       Group('WHAT KIND',
         h(Line, { label: 'Prompt tips', hint: 'Better prompts: a plan first, the whole task at once.' }, h(Toggle, { label: 'Prompt tips', on: s.tipTypes.prompt !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, prompt: s.tipTypes.prompt === false } }) })),
         h(Line, { label: '"Think bigger" tips', hint: 'Schedules, parallel threads, new kinds of work.' }, h(Toggle, { label: '"Think bigger" tips', on: s.tipTypes.thinkBigger !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, thinkBigger: s.tipTypes.thinkBigger === false } }) })),
+        h(Line, { label: 'Show the five measures', hint: 'The bars on the Coach screen. The Coach uses the measures either way.' }, h(Toggle, { label: 'Show the five measures', on: s.showMeasures !== false, onClick: () => put({ showMeasures: s.showMeasures === false }) })),
         h(Line, { label: 'Weekly recap in the app', hint: 'Monday, after 5 active days.' }, h(Toggle, { label: 'Weekly recap in the app', on: s.recap.inApp !== false, onClick: () => put({ recap: { ...s.recap, inApp: s.recap.inApp === false } }) })),
         h(Line, { label: 'Weekly recap push notification', hint: 'The recap only. Tips never arrive as push notifications.' }, h(Toggle, { label: 'Weekly recap push notification', on: !!s.recap.push, onClick: () => put({ recap: { ...s.recap, push: !s.recap.push } }) })),
         h(Line, { label: 'Projects to leave alone', hint: 'The Coach does not look at these projects.' },

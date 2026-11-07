@@ -84,9 +84,10 @@ describe('Coach goals on the Coach screen (coach plan Task 12b)', () => {
 });
 
 describe('Coach goals in the tab and on the card (coach plan Task 12b)', () => {
-  it('the tab shows a "Working on" line', async () => {
+  it('the tab shows a "Working on" line for a goal this thread touches', async () => {
     const memory = addGoal(emptyMemory(), { text: 'Run more things at once', measures: ['delegation'], detectors: [], source: 'user' }, NOW).memory;
-    const { Tab } = await boot({ docs: { memory } });
+    const card = { id: 'idle-wait:1', type: 'idle-wait', measure: 'delegation', terminalId: 't1', projectId: 's1', headline: 'Start a second thread while this runs', why: 'w', action: { kind: 'compose', label: 'Try it', text: 'x' }, excerpt: '', reason: 'r', at: NOW.toISOString() };
+    const { Tab } = await boot({ docs: { memory, cards: { items: [card] } } });
     render(<Tab terminalId="t1" sessionId="s1" />);
     expect(await screen.findByText('Working on: Run more things at once')).toBeInTheDocument();
   });

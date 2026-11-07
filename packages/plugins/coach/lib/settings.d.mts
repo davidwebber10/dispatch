@@ -24,6 +24,7 @@ export interface CoachSettings {
   budgetPercentWeekly: number;
   budgetUsdWeekly: number;
   recap: { inApp: boolean; push: boolean };
+  showMeasures: boolean;
   advanced: { thresholds: Thresholds; minConfidence: number };
 }
 export const DEFAULT_THRESHOLDS: Thresholds;
