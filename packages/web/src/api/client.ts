@@ -416,6 +416,7 @@ export const api = {
   disablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
   removePlugin: (id: string) => req<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  pluginAssist: (id: string, body: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) => req<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
   copyPlugin: (id: string, newId: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/copy`, { method: 'POST', body: JSON.stringify({ id: newId }) }),
   // Plugin storage and settings (spec section 5). A missing document is null, not an error.
   listPluginDocs: (id: string) => req<{ docs: PluginDocMeta[] }>(`/api/plugins/${encodeURIComponent(id)}/data`),

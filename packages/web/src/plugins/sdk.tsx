@@ -3,6 +3,7 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import * as Icons from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { api, ApiError } from '../api/client';
+import type { ServerEvent } from '../api/events-socket';
 import { apiPath } from '../lib/basePath';
 import { useUI } from '../stores/ui';
 import { useProjects } from '../stores/projects';
@@ -70,6 +71,29 @@ const settings = {
   async set(plugin: string, value: unknown): Promise<void> { await api.setPluginSettings(plugin, value); },
 };
 
+/**
+ * The daemon's event stream for plugins (spec section 2.2): `thread:*` events (prompts, tools,
+ * turns, status, spawns), `plugin:*` events, and every other server event. The host feeds it.
+ */
+type EventHandler = (e: ServerEvent) => void;
+const eventListeners = new Map<string, Set<EventHandler>>();
+export function dispatchServerEvent(e: ServerEvent): void {
+  for (const key of [e.type, '*']) for (const fn of eventListeners.get(key) ?? []) { try { fn(e); } catch (err) { console.error('[plugin event handler]', err); } }
+}
+const events = {
+  /** Subscribe to one type, several, or '*'; returns the unsubscribe. */
+  on(type: string | string[], handler: EventHandler): () => void {
+    const keys = Array.isArray(type) ? type : [type];
+    for (const k of keys) { const set = eventListeners.get(k) ?? new Set(); set.add(handler); eventListeners.set(k, set); }
+    return () => { for (const k of keys) { const set = eventListeners.get(k); set?.delete(handler); if (set && set.size === 0) eventListeners.delete(k); } };
+  },
+};
+
+/** One model call through the daemon (spec section 3.4); needs the plugin's `model:assist` permission. */
+function assist(plugin: string, req: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) {
+  return api.pluginAssist(plugin, req);
+}
+
 /** Listeners for `plugin:data` events, keyed `plugin/key`; the host feeds them (host.ts). */
 const docListeners = new Map<string, Set<() => void>>();
 export function notifyDocChanged(plugin: string, key: string): void {
@@ -123,6 +147,8 @@ export interface DispatchSdk {
   icons: Record<string, Icon>;
   storage: typeof storage;
   settings: typeof settings;
+  events: typeof events;
+  assist: typeof assist;
   /** fetch with the plugin named in a header. */
   fetch: typeof pluginFetch;
   hint: (msg: string) => void;
@@ -153,6 +179,8 @@ export function buildSdk(): DispatchSdk {
     icons: ICONS,
     storage,
     settings,
+    events,
+    assist,
     fetch: pluginFetch,
     hint: (msg) => useHint.getState().show(msg),
     copyText,

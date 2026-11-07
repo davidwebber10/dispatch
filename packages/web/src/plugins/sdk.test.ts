@@ -21,6 +21,8 @@ function fakeDaemon() {
     }
     m = /\/api\/plugins\/([^/]+)\/data$/.exec(url);
     if (m) return json(200, { docs: [...docs.keys()].filter((k) => k.startsWith(`${m![1]}/`)).map((k) => ({ key: k.split('/')[1], writer: null, updatedAt: 't', bytes: 1 })) });
+    m = /\/api\/plugins\/([^/]+)\/assist$/.exec(url);
+    if (m && method === 'POST') { const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] }; return json(200, { text: `judged: ${body.messages[0].content}`, usage: { inputTokens: 10, outputTokens: 5 }, ms: 100, model: 'fake' }); }
     m = /\/api\/plugins\/([^/]+)\/settings$/.exec(url);
     if (m) {
       if (method === 'GET') return json(200, settings.has(m[1]) ? { value: settings.get(m[1]), updatedAt: 't' } : { value: null, updatedAt: null });
@@ -86,5 +88,33 @@ describe('plugin SDK storage on the daemon (2026-11-07)', () => {
     await d.fetch('p', '/api/plugins/p/data');
     const init = daemon.fetch.mock.calls.at(-1)![1] as RequestInit;
     expect(new Headers(init.headers).get('X-Dispatch-Plugin')).toBe('p');
+  });
+});
+
+describe('plugin SDK events and assist (2026-11-07)', () => {
+  it('events.on receives thread events (and any event type asked for) and unsubscribes', () => {
+    const d = buildSdk();
+    const got: unknown[] = [];
+    const off = d.events.on(['thread:prompt', 'thread:turn'], (e) => got.push(e));
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't1', text: 'hi', textLength: 2 });
+    applyPluginEvent({ type: 'thread:tool', terminalId: 't1', tool: 'Bash' });
+    applyPluginEvent({ type: 'thread:turn', terminalId: 't1', ms: 5 });
+    expect(got.map((e) => (e as { type: string }).type)).toEqual(['thread:prompt', 'thread:turn']);
+    off();
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't1', text: 'again', textLength: 5 });
+    expect(got).toHaveLength(2);
+    const all: unknown[] = [];
+    const offAll = d.events.on('*', (e) => all.push(e));
+    applyPluginEvent({ type: 'terminal:status', terminalId: 't1' });
+    expect(all).toHaveLength(1);
+    offAll();
+  });
+
+  it('assist posts the request and returns the text and usage', async () => {
+    const d = buildSdk();
+    const r = await d.assist('coach', { system: 'Judge.', messages: [{ role: 'user', content: 'Fix it' }], maxTokens: 200 });
+    expect(r).toEqual({ text: 'judged: Fix it', usage: { inputTokens: 10, outputTokens: 5 }, ms: 100, model: 'fake' });
+    const call = daemon.calls.find((c) => c.includes('/assist'));
+    expect(call).toMatch(/^POST .*\/api\/plugins\/coach\/assist$/);
   });
 });
