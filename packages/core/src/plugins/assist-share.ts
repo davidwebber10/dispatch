@@ -23,6 +23,14 @@ export interface ShareEstimate {
   pluginTokens: number;
   accountTokens: number;
   resetsAt: string | null;
+  /** The price-weighted sums behind `pluginPercent` (micro-dollars at list price), for a reservation in the same units. */
+  pluginWeight: number;
+  accountWeight: number;
+}
+
+/** Tokens weighted by the model's list price (micro-dollars); a model with no known price weighs as Sonnet. */
+export function tokenWeight(model: string | null | undefined, t: { input: number; output: number; cacheRead?: number; cacheCreate?: number }): number {
+  return weightOf({ model: model ?? null, i: t.input, o: t.output, cr: t.cacheRead ?? 0, cc: t.cacheCreate ?? 0 });
 }
 
 const WINDOW_MS: Record<ShareWindow, number> = { five_hour: 5 * 3_600_000, seven_day: 7 * 86_400_000 };
@@ -89,7 +97,7 @@ export function estimateShare(db: Database.Database, summary: UsageSummary | nul
   }
   for (const t of turns) { accountW += weightOf(t); accountTokens += tokensOf(t); }
   const pluginPercent = accountW > 0 ? (pluginW / accountW) * w.usedPercent : 0;
-  return { usedPercent: w.usedPercent, pluginPercent, pluginTokens, accountTokens, resetsAt: resetsAt === null ? null : new Date(resetsAt).toISOString() };
+  return { usedPercent: w.usedPercent, pluginPercent, pluginTokens, accountTokens, resetsAt: resetsAt === null ? null : new Date(resetsAt).toISOString(), pluginWeight: pluginW, accountWeight: accountW };
 }
 
 /** A window's used percent now: null when unknown; 0 when its reset has passed (the figure is from the last window). */

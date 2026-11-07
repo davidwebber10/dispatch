@@ -12,9 +12,9 @@ import { insideRealRoot } from '../files/confine.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import { ASSIST_HARNESSES, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
+import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
 import { notionalValueUsd } from '../analytics/pricing.js';
-import { estimateShare } from '../plugins/assist-share.js';
+import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT } from '../plugins/assist-share.js';
 import type { UsageSummary } from '../limits/gauge.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
@@ -85,6 +85,70 @@ function meterOf(result: AssistResult, asked: string, started: number): pluginDa
 }
 
 const DAY_MS = 86_400_000;
+
+/** The default model a harness runs when the caller names none, to price a reservation. */
+const DEFAULT_MODEL: Record<AssistHarness, string> = { claude: ASSIST_CLAUDE_MODEL, codex: 'gpt-5.6-terra', openrouter: ASSIST_OPENROUTER_MODEL };
+interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number }
+interface BudgetCheck { refuse: Record<string, unknown> | null; headers: Record<string, string>; release: () => void }
+const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
+
+/**
+ * The budget guard (coach spec sections 4.5, 7.4, 9a.2-3). A plugin with a budget is refused
+ * (429 `budget`) when its estimated weekly share of the account the call runs on, plus the calls
+ * it has in flight, reaches its cap; or when that account's 5-hour window is at 90% or more.
+ * OpenRouter has no limit windows: its cap is dollars over the last 7 days. A call in flight is
+ * reserved at its prompt (about 4 characters a token) and its maxTokens of output, at the model's
+ * price, until it ends; then the metered row takes its place. No budget = no cap.
+ */
+function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
+  const reserved = new Map<string, Set<Reservation>>();
+  return {
+    check(pluginId: string, call: { harness: AssistHarness | 'auto' | undefined; accountId: string | undefined; model: string | undefined; maxTokens: number; promptChars: number }): BudgetCheck {
+      const harness: AssistHarness = call.harness === 'codex' || call.harness === 'openrouter' ? call.harness : 'claude';
+      const sub: 'claude' | 'codex' = harness === 'codex' ? 'codex' : 'claude';
+      const accountId = harness === 'openrouter' ? 'openrouter' : call.accountId ?? limits.defaultAccount?.(sub) ?? 'cli';
+      const budget = pluginData.getBudget(db, pluginId);
+      const mine = reserved.get(pluginId) ?? new Set<Reservation>();
+      const same = [...mine].filter((r) => r.harness === harness && r.accountId === accountId);
+      const weight = tokenWeight(call.model ?? DEFAULT_MODEL[harness], { input: Math.ceil(call.promptChars / 4), output: call.maxTokens });
+      const headers: Record<string, string> = {};
+      let refuse: Record<string, unknown> | null = null;
+
+      if (harness === 'openrouter') {
+        const spent = pluginData.assistCostSince(db, pluginId, 'openrouter', new Date(Date.now() - 7 * DAY_MS).toISOString()) + same.reduce((n, r) => n + r.usd, 0);
+        headers['X-Budget-Used-Usd'] = pct(spent);
+        if (budget.usdWeekly !== null) {
+          headers['X-Budget-Cap-Usd'] = String(budget.usdWeekly);
+          if (spent >= budget.usdWeekly) refuse = { error: 'budget', usedUsd: spent, capUsd: budget.usdWeekly, message: `The plugin has spent its $${budget.usdWeekly} a week on OpenRouter.` };
+        }
+      } else {
+        const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
+        const opts = { pluginId, accountId, harness, defaultAccountId: limits.defaultAccount?.(sub) ?? 'cli' };
+        const week = estimateShare(db, summary, { ...opts, window: 'seven_day' });
+        if (week) {
+          const reservedW = same.reduce((n, r) => n + r.weight, 0);
+          const used = week.pluginPercent + (week.accountWeight > 0 ? (reservedW / week.accountWeight) * week.usedPercent : 0);
+          headers['X-Budget-Used-Percent'] = pct(used);
+          if (budget.percentWeekly !== null && used >= budget.percentWeekly) {
+            refuse = { error: 'budget', window: 'seven_day', usedPercent: used, capPercent: budget.percentWeekly, message: `The plugin has used its ${budget.percentWeekly}% of the weekly limit.` };
+          }
+        }
+        if (budget.percentWeekly !== null) {
+          headers['X-Budget-Cap-Percent'] = String(budget.percentWeekly);
+          // Never take the last 10% of a 5-hour window (section 9a.2).
+          const five = estimateShare(db, summary, { ...opts, window: 'five_hour' });
+          if (!refuse && five && five.usedPercent >= FIVE_HOUR_FLOOR_PERCENT) {
+            refuse = { error: 'budget', window: 'five_hour', usedPercent: five.usedPercent, capPercent: FIVE_HOUR_FLOOR_PERCENT, message: 'The account is at 90% of its 5-hour limit; assist waits for the reset.' };
+          }
+        }
+      }
+      if (refuse) return { refuse, headers, release: () => {} };
+      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6 };
+      mine.add(r); reserved.set(pluginId, mine);
+      return { refuse: null, headers, release: () => { mine.delete(r); if (mine.size === 0) reserved.delete(pluginId); } };
+    },
+  };
+}
 /** A `from`/`to` query as ISO times: `from` defaults to 7 days ago, `to` to now (+1 minute). Null when one does not parse. */
 export function rangeOf(from: unknown, to: unknown, now = Date.now()): { from: string; to: string } | null {
   const parse = (v: unknown, fallback: number): number | null => {
@@ -511,6 +575,32 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     else req.pipe(up);
   });
 
+  // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
+  const budgets = createBudgetGuard(db, limits);
+  router.get('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(pluginData.getBudget(db, req.params.id));
+  });
+  router.put('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+    if (!known(req, res)) return;
+    const body = (req.body ?? {}) as { percentWeekly?: unknown; usdWeekly?: unknown };
+    const next = pluginData.getBudget(db, req.params.id);
+    if (body.percentWeekly !== undefined) {
+      if (body.percentWeekly !== null && !(typeof body.percentWeekly === 'number' && body.percentWeekly >= 0.1 && body.percentWeekly <= 100)) {
+        return void res.status(400).json({ error: 'bad_budget', message: 'percentWeekly is 0.1 to 100, or null for no cap.' });
+      }
+      next.percentWeekly = body.percentWeekly as number | null;
+    }
+    if (body.usdWeekly !== undefined) {
+      if (body.usdWeekly !== null && !(typeof body.usdWeekly === 'number' && Number.isFinite(body.usdWeekly) && body.usdWeekly >= 0 && body.usdWeekly <= 10_000)) {
+        return void res.status(400).json({ error: 'bad_budget', message: 'usdWeekly is 0 to 10000 dollars, or null for no cap.' });
+      }
+      next.usdWeekly = body.usdWeekly as number | null;
+    }
+    res.json(pluginData.setBudget(db, req.params.id, next));
+  });
+
   // ── model assist (spec section 3.4): the plugin's own key with model:assist, or the owner ──
   const assistRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('model:assist')(req, ctx) : own; };
   // A bound per plugin: each call is a model process on the owner's account.
@@ -531,19 +621,35 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (body.accountId !== undefined && !(typeof body.accountId === 'string' && ASSIST_ID_RE.test(body.accountId))) {
       return void res.status(400).json({ error: 'bad_account', message: 'accountId is an account id: 1 to 120 characters, no spaces.' });
     }
-    const harness = body.harness as AssistHarness | 'auto' | undefined;
+    let harness = body.harness as AssistHarness | 'auto' | undefined;
     const model = body.model as string | undefined;
-    const accountId = body.accountId as string | undefined;
+    let accountId = body.accountId as string | undefined;
     if (!assist || !(await assist.available(harness).catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
+    // `auto` is resolved here when the runner can say what it would pick, so that account's budget is the one checked.
+    if (harness === 'auto' && assist.pick) {
+      const pick = await assist.pick();
+      if (!pick) return void res.status(503).json({ error: 'no_model', message: 'No signed-in account has room for assist right now.' });
+      harness = pick.harness;
+      accountId = pick.harness === 'openrouter' ? undefined : pick.accountId;
+    }
+    // From here to the reservation nothing awaits: the check and the reservation are one step, so
+    // concurrent calls each see the ones before them (coach plan, Review Focus 1).
     const busy = inflight.get(req.params.id) ?? 0;
     if (busy >= ASSIST_INFLIGHT_MAX) return void res.status(429).json({ error: 'busy', message: `At most ${ASSIST_INFLIGHT_MAX} assist calls run at once for a plugin.` });
+    const promptChars = (typeof body.system === 'string' ? body.system.length : 0) + messages.reduce((n, m) => n + m.content.length, 0);
+    const check = budgets.check(req.params.id, { harness, accountId, model, maxTokens, promptChars });
+    for (const [k, v] of Object.entries(check.headers)) res.setHeader(k, v);
+    if (check.refuse) return void res.status(429).json(check.refuse);
     inflight.set(req.params.id, busy + 1);
     let result;
     const started = Date.now();
     try { result = await assist.run({ system: typeof body.system === 'string' ? body.system : undefined, messages, maxTokens, ...(harness ? { harness } : {}), ...(model ? { model } : {}), ...(accountId ? { accountId } : {}) }).catch(() => null); }
-    finally { inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1); }
+    finally {
+      inflight.set(req.params.id, (inflight.get(req.params.id) ?? 1) - 1);
+      check.release();
+    }
     const asked = harness && harness !== 'auto' ? harness : '';
     if (!result) {
       // A failed call is metered too (ok = 0), so the Plugins page and a budget see it.

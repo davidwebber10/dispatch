@@ -519,4 +519,13 @@ function initializeSchema(db: Database.Database): void {
     ALTER TABLE plugin_assist ADD COLUMN ok INTEGER DEFAULT 1;
     CREATE INDEX IF NOT EXISTS idx_plugin_assist_plugin_at ON plugin_assist(plugin_id, at);
   `));
+  // A plugin's model budget (coach spec sections 4.5, 7.4): a share of the weekly limit, and dollars a week on OpenRouter.
+  migrate(db, '022-plugin-budget', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS plugin_budget (
+      plugin_id TEXT PRIMARY KEY,
+      percent_weekly REAL,
+      usd_weekly REAL,
+      updated_at TEXT NOT NULL
+    );
+  `));
 }

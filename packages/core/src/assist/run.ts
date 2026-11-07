@@ -48,6 +48,8 @@ export interface AssistRunner {
   available(harness?: AssistHarness | 'auto'): Promise<boolean>;
   /** The answer, or null when the model gave none. */
   run(req: AssistRequest): Promise<AssistResult | null>;
+  /** What `auto` would run on now, so the route can check that account's budget first. Absent: `auto` is resolved inside `run`. */
+  pick?(): Promise<AssistPick | null>;
 }
 
 export const ASSIST_CLAUDE_MODEL = 'claude-haiku-5-5';
@@ -204,6 +206,7 @@ export function createAssistRunner(deps: AssistRunnerDeps): AssistRunner {
   const one = (h: AssistHarness, req: AssistRequest) => (h === 'claude' ? viaClaude(req) : h === 'codex' ? viaCodex(req) : viaOpenRouter(req));
 
   return {
+    ...(deps.pickAuto ? { pick: () => deps.pickAuto!().catch(() => null) } : {}),
     available: async (harness) => {
       if (harness === 'claude' || harness === 'codex') return (await usable(harness, deps.cli)) !== null;
       if (harness === 'openrouter') return hasKey();

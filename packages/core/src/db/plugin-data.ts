@@ -68,6 +68,7 @@ export function clearPlugin(db: Database.Database, pluginId: string): void {
   db.prepare('DELETE FROM plugin_data WHERE plugin_id = ?').run(pluginId);
   db.prepare('DELETE FROM plugin_settings WHERE plugin_id = ?').run(pluginId);
   db.prepare('DELETE FROM plugin_files WHERE plugin_id = ?').run(pluginId);
+  db.prepare('DELETE FROM plugin_budget WHERE plugin_id = ?').run(pluginId);
 }
 
 export function getSettings(db: Database.Database, pluginId: string): { value: unknown; updatedAt: string } | null {
@@ -128,6 +129,33 @@ export function assistUsage(db: Database.Database, pluginId: string, from: strin
     FROM plugin_assist WHERE plugin_id = ? AND at >= ? AND at < ?
     GROUP BY COALESCE(model, ''), COALESCE(harness, '') ORDER BY inputTokens DESC, model`).all(pluginId, from, to) as AssistUsageByModel[];
   return { calls: t.calls, failed: t.failed, inputTokens: t.i, outputTokens: t.o, costUsd: t.c, byModel };
+}
+
+/** The known cost of a plugin's calls on one harness since `from` (the OpenRouter dollar budget). */
+export function assistCostSince(db: Database.Database, pluginId: string, harness: string, from: string): number {
+  const r = db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS c FROM plugin_assist WHERE plugin_id = ? AND harness = ? AND at >= ?').get(pluginId, harness, from) as { c: number };
+  return r.c;
+}
+
+/**
+ * A plugin's model budget (coach spec sections 4.5, 7.4): at most `percentWeekly` % of the weekly
+ * limit of the account a call runs on, and at most `usdWeekly` dollars a week on OpenRouter.
+ * Null = no cap of that kind.
+ */
+export interface PluginBudget { percentWeekly: number | null; usdWeekly: number | null }
+export function getBudget(db: Database.Database, pluginId: string): PluginBudget {
+  const r = db.prepare('SELECT percent_weekly AS p, usd_weekly AS u FROM plugin_budget WHERE plugin_id = ?').get(pluginId) as { p: number | null; u: number | null } | undefined;
+  return { percentWeekly: r?.p ?? null, usdWeekly: r?.u ?? null };
+}
+export function setBudget(db: Database.Database, pluginId: string, budget: PluginBudget): PluginBudget {
+  if (budget.percentWeekly === null && budget.usdWeekly === null) {
+    db.prepare('DELETE FROM plugin_budget WHERE plugin_id = ?').run(pluginId);
+  } else {
+    db.prepare(`INSERT INTO plugin_budget (plugin_id, percent_weekly, usd_weekly, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(plugin_id) DO UPDATE SET percent_weekly = excluded.percent_weekly, usd_weekly = excluded.usd_weekly, updated_at = excluded.updated_at`)
+      .run(pluginId, budget.percentWeekly, budget.usdWeekly, new Date().toISOString());
+  }
+  return getBudget(db, pluginId);
 }
 
 /** The Plugins page row: the last `days` days (coach spec section 4.5). */

@@ -93,6 +93,7 @@ export interface PluginAssistRequest {
   /** The account a CLI harness signs in as (Settings → Accounts). */
   accountId?: string;
 }
+export interface PluginAssistShare { usedPercent: number; pluginPercent: number; pluginTokens: number; accountTokens: number; resetsAt: string | null }
 export interface PluginAssistUsage {
   calls: number;
   failed: number;
@@ -479,6 +480,16 @@ export const api = {
       throw new ApiError(message || `Import failed: ${res.status}`, res.status);
     }
     return (await res.json()) as PluginImportResult;
+  },
+  /** A plugin's model budget (coach spec section 7.4): owner-only; null = no cap of that kind. */
+  pluginBudget: (id: string) => req<{ percentWeekly: number | null; usdWeekly: number | null }>(`/api/plugins/${encodeURIComponent(id)}/budget`),
+  setPluginBudget: (id: string, budget: { percentWeekly?: number | null; usdWeekly?: number | null }) => req<{ percentWeekly: number | null; usdWeekly: number | null }>(`/api/plugins/${encodeURIComponent(id)}/budget`, { method: 'PUT', body: JSON.stringify(budget) }),
+  /** A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3); null = not known. */
+  pluginAssistShare: (id: string, q: { accountId?: string; harness?: 'claude' | 'codex' } = {}) => {
+    const p = new URLSearchParams();
+    if (q.accountId) p.set('accountId', q.accountId);
+    if (q.harness) p.set('harness', q.harness);
+    return req<{ fiveHour: PluginAssistShare | null; sevenDay: PluginAssistShare | null }>(`/api/plugins/${encodeURIComponent(id)}/assist/share${p.toString() ? `?${p.toString()}` : ''}`);
   },
   /** The assist meter by time (coach spec section 7.2): no `from` = the last 7 days. */
   pluginAssistUsage: (id: string, range: { from?: string; to?: string } = {}) => {
