@@ -48,6 +48,17 @@ describe('ThreadEvents (2026-11-07)', () => {
     expect(prompts.map((e) => (e as { source: string }).source)).toEqual(['coordinator', 'thread']);
   });
 
+  it('a prompt in a thread a schedule or a role started is tagged source "schedule", never "user" (coach review finding 4)', () => {
+    const auto = new ThreadEvents({ broadcast: (e) => { out.push(e); } }, (id) => (id === 'r1' ? { sessionId: 's1', harness: 'claude-code', automated: true } : null), () => now);
+    // The runner's launch prompt reaches the hook: nobody reported it first.
+    auto.onHookPayload('claude', 'r1', { hook_event_name: 'UserPromptSubmit', prompt: 'Run the weekly report' });
+    auto.onPrompt('r1', 'and the follow-up', 'user');
+    expect(out.filter((e) => e.type === 'thread:prompt').map((e) => e.source)).toEqual(['schedule', 'schedule']);
+    // A coordinator's send keeps its own source.
+    auto.onPrompt('r1', 'from the Control Plane', 'coordinator');
+    expect(out.at(-1)).toMatchObject({ source: 'coordinator' });
+  });
+
   it('a PreToolUse hook becomes thread:tool with the name, the input and its size', () => {
     te.onHookPayload('claude', 't1', { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'rm -rf build' } });
     expect(out[0]).toMatchObject({ type: 'thread:tool', terminalId: 't1', tool: 'Bash', input: { command: 'rm -rf build' }, inputLength: JSON.stringify({ command: 'rm -rf build' }).length });

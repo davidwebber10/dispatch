@@ -7,8 +7,10 @@ const T0 = Date.parse('2026-11-20T10:00:00Z');
 const BIG = 'Pull last week returns by reason from the warehouse table. Chart them by week and by store. Compare them with the prior month and list the three biggest changes. Then email the summary to Sam with the chart attached. Keep it short and plain for the ops team, who read it on their phones between meetings. '.repeat(2);
 const GOOD = { fit: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'Your prompt had 4 parts and no plan step.', action: { kind: 'compose', label: 'Try it: ask for a plan', text: 'Before you start, write a short plan and wait for my OK.' } };
 
+/** Past the first week, with the welcome card seen: the worker may call a model. */
+const SEASONED = { ...emptyCadence(new Date(T0 - 10 * 86400_000)), welcomeSeenAt: new Date(T0 - 10 * 86400_000).toISOString() };
 function fakeIo(over: { docs?: Record<string, unknown>; settings?: unknown; answers?: unknown[]; budget?: unknown } = {}) {
-  const docs = new Map<string, unknown>(Object.entries(over.docs ?? {}));
+  const docs = new Map<string, unknown>(Object.entries({ cadence: SEASONED, ...(over.docs ?? {}) }));
   let t = T0;
   const answers = [...(over.answers ?? [GOOD, GOOD])];
   const assist = vi.fn(async () => {
@@ -91,5 +93,165 @@ describe('Coach worker engine (coach plan Task 9)', () => {
     await e.idle();
     expect(f.assist).not.toHaveBeenCalled();
     expect(f.docs.has('cards')).toBe(false);
+  });
+});
+
+describe('Coach worker: the budget comes from the daemon, not only from answers (review finding 1)', () => {
+  const capped = { usedPercent: 3, capPercent: 3, resetsAt: new Date(T0 + 86400_000).toISOString() };
+  const turn = async (e: ReturnType<typeof createEngine>) => {
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+  };
+
+  it('after the window resets, the Coach makes calls again', async () => {
+    // The cached figure is from the last window: its reset has passed.
+    const f = fakeIo({ docs: { status: { budget: { ...capped, resetsAt: new Date(T0 - 60_000).toISOString() }, budgetAt: new Date(T0 - 60_000).toISOString() } } });
+    const e = createEngine(f.io);
+    await e.load();
+    await turn(e);
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('raising the budget in settings lets calls resume', async () => {
+    let daemonBudget: unknown = capped;
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0).toISOString() } } });
+    const readBudget = vi.fn(async () => daemonBudget);
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    await turn(e);
+    expect(f.assist).not.toHaveBeenCalled();
+    // The person raises the budget: the web part saves it, and the settings event follows.
+    daemonBudget = { usedPercent: 3, capPercent: 10, resetsAt: capped.resetsAt };
+    await e.handle({ type: 'plugin:settings', id: 'coach' });
+    await e.idle();
+    expect(f.docs.get('status')).toMatchObject({ budget: { capPercent: 10 } });
+    f.advance(1);
+    await e.handle(ev('thread:prompt', 1, { source: 'user', text: BIG + ' again' }));
+    await e.handle(ev('thread:turn', 1, { ms: 30_000 }));
+    await e.idle();
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('a restart re-reads the budget', async () => {
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0).toISOString() } } });
+    const readBudget = vi.fn(async () => ({ usedPercent: 0.5, capPercent: 3, resetsAt: capped.resetsAt }));
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    expect(readBudget).toHaveBeenCalledTimes(1);
+    await turn(e);
+    expect(f.assist).toHaveBeenCalled();
+  });
+
+  it('the cached budget is read again after 15 minutes, and before the Coach settles on no call', async () => {
+    const f = fakeIo({ docs: { status: { budget: capped, budgetAt: new Date(T0 - 16 * 60_000).toISOString() } } });
+    const readBudget = vi.fn(async () => capped);
+    const e = createEngine({ ...f.io, readBudget });
+    await e.load();
+    expect(readBudget).toHaveBeenCalledTimes(1);
+    f.advance(2);
+    await turn(e);
+    // At the cap the Coach asks the daemon once more before it decides on no call.
+    expect(readBudget).toHaveBeenCalledTimes(2);
+    expect(f.assist).not.toHaveBeenCalled();
+  });
+});
+
+describe('Coach worker: no model call before the person has met the Coach, or while it should be quiet (review finding 5)', () => {
+  const turn = async (e: ReturnType<typeof createEngine>) => {
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+  };
+  it('no assist call in the first week or before the welcome card is seen; the rules still collect, at no cost', async () => {
+    const firstWeekSeen = { ...emptyCadence(new Date(T0 - 2 * 86400_000)), welcomeSeenAt: new Date(T0 - 86400_000).toISOString() };
+    const oldNotSeen = emptyCadence(new Date(T0 - 30 * 86400_000));
+    for (const cadence of [firstWeekSeen, oldNotSeen, undefined]) {
+      const f = fakeIo({ docs: cadence ? { cadence } : {} });
+      if (!cadence) f.docs.delete('cadence');
+      const e = createEngine(f.io);
+      await e.load();
+      await turn(e);
+      expect(f.assist).not.toHaveBeenCalled();
+      expect((f.docs.get('candidates') as { items: { type: string }[] }).items.map((c) => c.type)).toContain('no-plan-big-task');
+    }
+  });
+  it('no assist call in quiet hours', async () => {
+    const h = new Date(T0).getHours();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const f = fakeIo({ settings: { quietHours: { from: `${pad(h)}:00`, to: `${pad((h + 2) % 24)}:00` } } });
+    const e = createEngine(f.io);
+    await e.load();
+    await turn(e);
+    expect(f.assist).not.toHaveBeenCalled();
+  });
+});
+
+describe('Coach worker: a passing failure keeps the candidate; a restart never strands a review (review finding 8)', () => {
+  const BUSY = { result: null, budget: null, refused: null, transient: true };
+  const ok = (a: unknown) => ({ result: { text: JSON.stringify(a), harness: 'claude' }, budget: { usedPercent: 0.4, capPercent: 3 }, refused: null });
+  const later = async (e: ReturnType<typeof createEngine>, f: ReturnType<typeof fakeIo>, min: number) => {
+    f.advance(min);
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: 'ok', at: new Date(T0 + min * 60_000).toISOString() }));
+    await e.handle(ev('thread:turn', 0, { ms: 1000, at: new Date(T0 + min * 60_000).toISOString() }));
+    await e.idle();
+  };
+
+  it('a 429, then a success, gives a card', async () => {
+    const f = fakeIo();
+    f.assist.mockReset();
+    f.assist.mockResolvedValueOnce(BUSY as never).mockResolvedValue(ok(GOOD));
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    expect((f.docs.get('cards') ?? { items: [] }) as { items: unknown[] }).toMatchObject({ items: [] });
+    // Retried after the backoff, on the next run.
+    await later(e, f, 5);
+    const cards = f.docs.get('cards') as { items: { headline: string }[]; judged: { outcome: string }[] };
+    expect(cards.items.map((c) => c.headline)).toEqual(['Ask for a plan first']);
+    expect(cards.judged.map((j) => j.outcome)).toEqual(['card']);
+  });
+
+  it('a candidate is dropped after 3 passing failures, not before', async () => {
+    const f = fakeIo();
+    f.assist.mockReset();
+    f.assist.mockResolvedValue(BUSY as never);
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    await later(e, f, 5);
+    expect((f.docs.get('cards') as { judged?: unknown[] } | undefined)?.judged ?? []).toEqual([]);
+    await later(e, f, 30);
+    expect(f.assist).toHaveBeenCalledTimes(3);
+    expect((f.docs.get('cards') as { judged: { outcome: string }[] }).judged.map((j) => j.outcome)).toEqual(['failed']);
+  });
+
+  it('a malformed answer still drops the candidate', async () => {
+    const f = fakeIo({ answers: ['{"fit": tr'] });
+    const e = createEngine(f.io);
+    await e.load();
+    await e.handle(ev('thread:prompt', 0, { source: 'user', text: BIG }));
+    await e.handle(ev('thread:turn', 0, { ms: 30_000 }));
+    await e.idle();
+    expect((f.docs.get('cards') as { judged: { outcome: string }[] }).judged.map((j) => j.outcome)).toEqual(['dropped']);
+    await later(e, f, 10);
+    expect(f.assist).toHaveBeenCalledTimes(1);
+  });
+
+  it('a review that was reading before a restart shows failed, with Run again', async () => {
+    const f = fakeIo({ docs: {
+      'reviews:r1': { id: 'r1', scope: { kind: 'thread', ids: ['t1'] }, state: 'reading', progress: { done: 1, total: 3 } },
+      'reviews:r2': { id: 'r2', scope: { kind: 'thread', ids: ['t1'] }, state: 'queued' },
+      'reviews:r3': { id: 'r3', scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [], nextSteps: [] } },
+    } });
+    const listDocs = vi.fn(async () => [...f.docs.keys()]);
+    const e = createEngine({ ...f.io, listDocs });
+    await e.load();
+    for (const k of ['reviews:r1', 'reviews:r2']) expect(f.docs.get(k)).toMatchObject({ state: 'failed', error: 'Stopped when the Coach restarted — Run again', restartable: true });
+    expect(f.docs.get('reviews:r3')).toMatchObject({ state: 'done' });
   });
 });

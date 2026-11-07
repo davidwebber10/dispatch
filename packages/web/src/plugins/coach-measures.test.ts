@@ -125,7 +125,7 @@ function engineIo(over: { docs?: Record<string, unknown>; settings?: unknown; no
   };
   return { io, docs };
 }
-const SEASONED = emptyCadence(new Date(NOW.getTime() - 30 * DAY));
+const SEASONED = { ...emptyCadence(new Date(NOW.getTime() - 30 * DAY)), welcomeSeenAt: new Date(NOW.getTime() - 30 * DAY).toISOString() };
 
 describe('Coach weekly recap in the worker (coach plan Task 12)', () => {
   it('the Monday job writes the recap document; no recap before 5 active days', async () => {
@@ -165,6 +165,8 @@ describe('Coach weekly recap in the worker (coach plan Task 12)', () => {
     await e.idle();
     expect(muted.io.notify).not.toHaveBeenCalled();
     expect(muted.docs.get('recap')).toMatchObject({ announce: false });
+    // A mute means no model call either: the recap is the rules' own (review finding 5).
+    expect(muted.io.assist).not.toHaveBeenCalled();
     const quiet = engineIo({ docs: { signals: fold(routine(7)), cadence: SEASONED }, settings: withDefaults({ recap: { inApp: true, push: true }, quietHours: { from: '18:00', to: '09:00' } }) });
     e = createEngine(quiet.io);
     await e.load();

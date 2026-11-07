@@ -15,7 +15,12 @@ const KEEP_JUDGED = 300;
 export function budgetFromHeaders(headers) {
   const get = (k) => { const v = headers && typeof headers.get === 'function' ? headers.get(k) : null; const n = v === null || v === undefined || v === '' ? NaN : Number(v); return Number.isFinite(n) ? n : null; };
   const usedPercent = get('X-Budget-Used-Percent'); const capPercent = get('X-Budget-Cap-Percent');
-  if (usedPercent !== null || capPercent !== null) return { usedPercent, capPercent };
+  const reset = headers && typeof headers.get === 'function' ? headers.get('X-Budget-Resets-At') : null;
+  if (usedPercent !== null) return { usedPercent, capPercent, ...(reset ? { resetsAt: reset } : {}) };
+  // No weekly figure for the account: the daemon's fail-safe token cap counts instead.
+  const usedTokens = get('X-Budget-Used-Tokens'); const capTokens = get('X-Budget-Cap-Tokens');
+  if (usedTokens !== null || capTokens !== null) return { usedTokens, capTokens, ...(capPercent !== null ? { capPercent } : {}) };
+  if (capPercent !== null) return { usedPercent, capPercent };
   const usedUsd = get('X-Budget-Used-Usd'); const capUsd = get('X-Budget-Cap-Usd');
   if (usedUsd !== null || capUsd !== null) return { usedUsd, capUsd };
   return null;
@@ -66,8 +71,8 @@ function cardBase(c, ans, at) {
 
 /**
  * Judge one candidate. Returns { card, outcome, calls, budget, harness }: outcome is 'card',
- * 'dropped' (no fit, unsure, malformed, empty: recorded, not tried again) or 'budget' (no call
- * could run: the candidate waits).
+ * 'dropped' (no fit, unsure, malformed, empty: recorded, not tried again), 'budget' (no call
+ * could run: the candidate waits) or 'retry' (a passing failure: the engine tries again later).
  */
 export async function judgeCandidate(c, { settings, memory, budget, assist, now = new Date(), harness = null }) {
   const calls = [];
@@ -76,9 +81,10 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   const at = (now instanceof Date ? now : new Date(now)).toISOString();
   const min = settings && settings.advanced ? settings.advanced.minConfidence : 0.7;
   const step = async (name, req, plan) => {
-    const r = await assist({ ...req, harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => ({ result: null, budget: null, refused: null }));
+    const r = await assist({ ...req, harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => ({ result: null, budget: null, refused: null, transient: true }));
     if (r && r.budget) b = r.budget;
     if (r && r.refused) return { refused: true };
+    if (r && r.transient) return { transient: true };
     if (r && r.result && r.result.harness) ran = r.result.harness;
     const ans = parseAnswer(r && r.result ? r.result.text : '');
     return { ans };
@@ -88,6 +94,8 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   if (p1.tier === 'none') return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
   const r1 = await step('confirm', confirmPrompt(c, memory), p1);
   if (r1.refused) return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
+  // Not now (busy, no model, no answer, the network): the candidate waits for a retry.
+  if (r1.transient) return { id: c.id, card: null, outcome: 'retry', calls, budget: b, harness: ran };
   r1.ans = pluginAnswer(c, r1.ans);
   const why1 = checkCard(r1.ans, min);
   calls.push({ step: 'confirm', tier: p1.tier, ok: !!r1.ans && why1 !== 'malformed' });
@@ -100,6 +108,7 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
     if (pd.tier === 'none') return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
     const rd = await step('draft', skillDraftPrompt(c), pd);
     if (rd.refused) return { id: c.id, card: null, outcome: 'budget', calls, budget: b, harness: ran };
+    if (rd.transient) return { id: c.id, card: null, outcome: 'retry', calls, budget: b, harness: ran };
     const skill = cleanSkill(rd.ans);
     calls.push({ step: 'draft', tier: pd.tier, ok: !!skill });
     if (!skill) return { id: c.id, card: null, outcome: 'dropped', reason: 'malformed', calls, budget: b, harness: ran };
@@ -109,7 +118,8 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   const p2 = planCall('write', settings, b, { harness: ran });
   if (p2.tier !== 'none') {
     const r2 = await step('write', writePrompt(c, memory, r1.ans), p2);
-    if (!r2.refused) {
+    // Refused or not now: the small model's card stands.
+    if (!r2.refused && !r2.transient) {
       // The large model's card replaces the small one only when it is whole and keeps to the copy rules.
       const merged = r2.ans ? pluginAnswer(c, { ...r1.ans, ...r2.ans }) : null;
       const ok = !!merged && checkCard({ ...merged, fit: true, confidence: 1 }, 0) === null;
@@ -130,7 +140,7 @@ export function joinCards(doc, results, at) {
   const judged = Array.isArray(doc && doc.judged) ? doc.judged : [];
   const have = new Set(items.map((c) => c.id));
   const newCards = results.filter((r) => r.outcome === 'card' && r.card && !have.has(r.card.id)).map((r) => r.card);
-  const done = results.filter((r) => r.outcome !== 'budget').map((r) => ({ id: r.id || (r.card && r.card.id), at, outcome: r.outcome, calls: r.calls.length }));
+  const done = results.filter((r) => r.outcome !== 'budget' && r.outcome !== 'retry').map((r) => ({ id: r.id || (r.card && r.card.id), at, outcome: r.outcome, calls: r.calls.length }));
   return { ...(doc || {}), items: [...items, ...newCards].slice(-KEEP_CARDS), judged: [...judged, ...done].slice(-KEEP_JUDGED) };
 }
 

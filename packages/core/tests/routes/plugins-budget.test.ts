@@ -8,7 +8,9 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as pluginData from '../../src/db/plugin-data.js';
+import { WEEKLY_TOKENS_PER_PERCENT } from '../../src/plugins/assist-share.js';
 import { createApp } from '../../src/server.js';
+import { parseManifest } from '../../src/plugins/manifest.js';
 import { configureRefusalLog } from '../../src/auth/route-policy.js';
 import { LimitSnapshots } from '../../src/limits/snapshot.js';
 import type { UsageSummary } from '../../src/limits/gauge.js';
@@ -150,5 +152,100 @@ describe('plugin budget (coach plan, Task 4)', () => {
     const r = await ask({ harness: 'auto' });
     expect(r.status).toBe(429);
     expect(calls).toHaveLength(0);
+  });
+  it('an accountId the daemon does not know is 400, and no model runs (it cannot skip the budget)', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    usage(7000, 3000); // at the cap on `cli`
+    const r = await ask({ accountId: 'ghost' });
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ error: 'unknown_account' });
+    expect(calls).toHaveLength(0);
+    // The known default account is still accepted (and refused at its cap).
+    expect((await ask({ accountId: 'cli' })).status).toBe(429);
+  });
+
+  it('the meter row records the account that actually ran, even when the answer does not name it', async () => {
+    app = build({ available: async () => true, run: async (req) => { calls.push(req); return { ...answer(req), accountId: null }; } });
+    const r = await ask();
+    expect(r.status).toBe(200);
+    // The runner ran on the default account: the request carried it, and the meter row names it.
+    expect(calls[0].accountId).toBe('cli');
+    const row = db.prepare('SELECT account_id AS a FROM plugin_assist WHERE plugin_id = ?').get('coach') as { a: string | null };
+    expect(row.a).toBe('cli');
+  });
+  it('the share route needs read:usage for a plugin key; the owner may always read it', async () => {
+    const r = await request(app).get('/api/plugins/coach/assist/share').set(asPlugin('coach'));
+    expect(r.status).toBe(403);
+    expect((await request(app).get('/api/plugins/coach/assist/share')).status).toBe(200);
+    plugin('reader', ['model:assist', 'read:usage']);
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/reader/assist/share').set(asPlugin('reader'))).status).toBe(200);
+  });
+  it('with no usage window for the account, calls stop at the weekly token fallback (fail safe)', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    summary = null; // no usage data at all: the share is unknown
+    const cap = 3 * WEEKLY_TOKENS_PER_PERCENT;
+    pluginData.recordAssist(db, 'coach', { at: new Date(now - 86_400_000).toISOString(), model: 'claude-haiku-4-5', harness: 'claude', accountId: 'cli', inputTokens: cap - 300, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: 1, ok: true });
+    const under = await request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send({ messages: [{ role: 'user', content: 'x' }], harness: 'claude', maxTokens: 100 });
+    expect(under.status).toBe(200);
+    expect(under.headers['x-budget-cap-tokens']).toBe(String(cap));
+    // The answer's 400 output tokens pass the cap: the next call is refused, and no model runs.
+    const n = calls.length;
+    const r = await ask();
+    expect(r.status).toBe(429);
+    expect(r.body).toMatchObject({ error: 'budget', window: 'unknown', capTokens: cap });
+    expect(calls).toHaveLength(n);
+  });
+  it('an OpenRouter answer with no cost and an unknown model is metered at a conservative estimate, so the dollar cap still fills', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ usdWeekly: 0.05 });
+    app = build({ available: async () => true, run: async (req) => { calls.push(req); return { ...answer(req), model: 'mystery/model-x', costUsd: null, usage: { inputTokens: 1000, outputTokens: 1000, cacheReadTokens: 0, cacheCreateTokens: 0 } }; } });
+    expect((await ask({ harness: 'openrouter', model: 'mystery/model-x' })).status).toBe(200);
+    const row = db.prepare('SELECT cost_usd AS c, cost_estimated AS e FROM plugin_assist WHERE plugin_id = ?').get('coach') as { c: number | null; e: number };
+    // 1000 in at $15/M and 1000 out at $75/M.
+    expect(row.c).toBeCloseTo(0.09, 6);
+    expect(row.e).toBe(1);
+    const r = await ask({ harness: 'openrouter', model: 'mystery/model-x' });
+    expect(r.status).toBe(429);
+    expect(r.body).toMatchObject({ error: 'budget', capUsd: 0.05 });
+  });
+  it('the worker reads its own budget and share from the daemon: the cap, the reset time, and the fail-safe tokens', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: 3 });
+    plugin('coach', ['model:assist', 'read:usage']);
+    plugin('other', ['model:assist', 'read:usage']);
+    app = build(runner);
+    // Its own budget: readable with its key (never writable); another plugin's: not.
+    expect((await request(app).get('/api/plugins/coach/budget').set(asPlugin('coach'))).body).toEqual({ percentWeekly: 3, usdWeekly: null });
+    expect((await request(app).get('/api/plugins/coach/budget').set(asPlugin('other'))).status).toBe(403);
+    // A known window: the answer and the share name its reset time.
+    usage(9000, 1000);
+    const a = await ask();
+    expect(a.headers['x-budget-resets-at']).toBe(new Date(now + 3 * 86_400_000).toISOString());
+    // No figures: the share carries the fail-safe token cap the guard uses.
+    summary = null;
+    const share = await request(app).get('/api/plugins/coach/assist/share').set(asPlugin('coach'));
+    expect(share.body.sevenDay).toBeNull();
+    expect(share.body.fallback).toMatchObject({ capTokens: 3 * WEEKLY_TOKENS_PER_PERCENT });
+    expect(share.body.fallback.usedTokens).toBeGreaterThan(0);
+  });
+  it('the plugin\'s default budget (its manifest) holds when none was set, before any web part loads; an owner\'s "no cap" stays', async () => {
+    const dir = path.join(tmp, 'plugins', 'coach');
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({ id: 'coach', name: 'coach', version: '1.0.0', permissions: ['model:assist'], budget: { percentWeekly: 3, usdWeekly: 5 } }));
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: 3, usdWeekly: 5 });
+    usage(7000, 3000); // 3% of the week: at the default cap
+    expect((await ask()).status).toBe(429);
+    expect(calls).toHaveLength(0);
+    // The owner's choice wins, "no cap" included, and it survives a restart.
+    expect((await request(app).put('/api/plugins/coach/budget').send({ percentWeekly: null })).body).toEqual({ percentWeekly: null, usdWeekly: 5 });
+    app = build(runner);
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: null, usdWeekly: 5 });
+    expect((await request(app).put('/api/plugins/coach/budget').send({ usdWeekly: null })).body).toEqual({ percentWeekly: null, usdWeekly: null });
+    expect((await request(app).get('/api/plugins/coach/budget')).body).toEqual({ percentWeekly: null, usdWeekly: null });
+  });
+
+  it('the bundled Coach declares its default budget: 3% of the weekly limit, $5 a week on OpenRouter', () => {
+    const raw = fs.readFileSync(path.join(__dirname, '../../../plugins/coach/plugin.json'), 'utf8');
+    const m = parseManifest(raw, 'coach');
+    expect(m.ok && m.manifest.budget).toEqual({ percentWeekly: 3, usdWeekly: 5 });
   });
 });

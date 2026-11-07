@@ -9,8 +9,8 @@
 // (lib/memory.mjs), `status` (the worker: the budget it last heard, and the harness it ran on). Reset also
 // strips excerpts from `cards` and `candidates` and drops `signals`.
 import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
-import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours } from './lib/cadence.mjs';
-import { planCall, LARGE_DEFAULT } from './lib/plan.mjs';
+import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours, isStale, CARD_MAX_AGE_HOURS } from './lib/cadence.mjs';
+import { planCall, LARGE_DEFAULT, liveBudget } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
 import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
 import { chatContext, chatPrompt, parseChat, threadObservations, appendTurns } from './lib/chat.mjs';
@@ -20,6 +20,8 @@ import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, edit
 const DETECTOR_OF_THRESHOLD = { skillFit: 'skill-fit', pluginFit: 'plugin-fit', repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
 const CLOSED = new Set(['dismissed', 'used', 'down']);
+/** The Coach keeps at most this many review documents (review finding 7). */
+const MAX_REVIEWS = 20;
 const WELCOME = Object.freeze({
   id: 'welcome', type: 'welcome', measure: null, terminalId: null,
   headline: 'Get one small tip at a time',
@@ -84,7 +86,7 @@ export function createCoach(d, deps = {}) {
   async function defaultRequestMore(card) {
     if (typeof d.assist !== 'function') return null;
     const st = store.getState();
-    const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+    const plan = planCall('more', st.settings, liveBudget(st.status.budget, now()), { harness: st.status.harness });
     if (plan.tier === 'none') return { budget: true };
     const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
     const j = parseAnswer(r && r.text);
@@ -144,17 +146,10 @@ export function createCoach(d, deps = {}) {
     await saveCadence({ ...store.getState().cadence, recapSeen: r.at });
     if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, 0);
   }
-  // The budget is the daemon's (a hard stop it enforces, spec section 7.4). A daemon with none gets
-  // the settings' budget once, so the default 3% holds before anyone opens the settings.
-  async function syncBudget() {
-    const api = d.api || {};
-    if (typeof api.pluginBudget !== 'function' || typeof api.setPluginBudget !== 'function') return;
-    const b = await api.pluginBudget(PLUGIN).catch(() => undefined);
-    if (!b || b.percentWeekly !== null || b.usdWeekly !== null) return;
-    const s = store.getState().settings;
-    await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch(() => {});
-  }
-  const ready = load().then(() => { void syncBudget(); });
+  // The budget is the daemon's (a hard stop it enforces, spec section 7.4). Its default comes from
+  // plugin.json, so it holds before this part loads; the web part writes it only when the person
+  // changes it (an owner's "no cap" is never undone here).
+  const ready = load();
   events.on(['plugin:data', 'plugin:settings'], (e) => { if (e.id === PLUGIN) void load(); });
   events.on('thread:prompt', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: true } }); });
   events.on('thread:turn', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: false } }); });
@@ -170,7 +165,8 @@ export function createCoach(d, deps = {}) {
   const doUnmute = () => saveCadence(unmute(store.getState().cadence));
 
   async function markShown(card) {
-    if (card.id === WELCOME.id) return;
+    // The worker makes no model call until the person has seen the welcome card (review finding 5).
+    if (card.id === WELCOME.id) { if (!store.getState().cadence.welcomeSeenAt) await saveCadence({ ...store.getState().cadence, welcomeSeenAt: now().toISOString() }); return; }
     await saveCadence(noteShown(store.getState().cadence, now()));
     await setCardState(card.id, 'shown');
   }
@@ -257,7 +253,7 @@ export function createCoach(d, deps = {}) {
   /** The card for this thread now, and whether it is new (not shown before). */
   function pick(st, terminalId, phone) {
     const t = now();
-    if (mayShow(st.cadence, st.settings, t, 'card', { welcome: true, phone })) return { card: WELCOME, fresh: false };
+    if (mayShow(st.cadence, st.settings, t, 'card', { welcome: true, phone })) return { card: WELCOME, fresh: !st.cadence.welcomeSeenAt };
     const live = st.settings.howOften !== 'off' && st.settings.howOften !== 'quiet' && !inQuietHours(st.settings.quietHours, t) && !(phone && !st.settings.phone);
     // Newest first; a card that serves an active goal comes before the rest (spec section 4.6).
     const goals = new Set(activeGoals(st.memory).map((g) => g.id));
@@ -265,6 +261,8 @@ export function createCoach(d, deps = {}) {
     order.sort((a, b) => Number(!!(b.goal && goals.has(b.goal))) - Number(!!(a.goal && goals.has(a.goal))));
     for (const c of order) {
       if (c.terminalId && c.terminalId !== terminalId) continue;
+      // A card about something long past is not "what you just did" (default 48 hours; Advanced).
+      if (isStale(c, st.settings, t)) continue;
       const cs = st.cardState[c.id];
       if (cs && CLOSED.has(cs.state)) continue;
       if (!allows(st.memory, c, t)) continue;
@@ -395,8 +393,10 @@ export function createCoach(d, deps = {}) {
       if (doc) await storage.set(PLUGIN, key, stripExcerpts(doc));
     }
     await storage.remove(PLUGIN, 'signals').catch(() => {});
-    await saveChat({ turns: [] });
-    store.setState({ signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
+    // The chat and every review (their quotes are the person's words) go too.
+    await storage.remove(PLUGIN, 'chat').catch(() => {});
+    for (const key of await reviewKeys()) await storage.remove(PLUGIN, key).catch(() => {});
+    store.setState({ chat: { turns: [] }, reviews: {}, reviewOpen: null, signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
   }
 
   function Knows() {
@@ -480,9 +480,12 @@ export function createCoach(d, deps = {}) {
   function ReviewButton({ scope, label }) {
     return h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(scope); } }, label);
   }
-  async function loadReviews() {
+  async function reviewKeys() {
     const list = await storage.list(PLUGIN).catch(() => []);
-    const keys = (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+    return (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+  }
+  async function loadReviews() {
+    const keys = await reviewKeys();
     const docs = await Promise.all(keys.map((k) => storage.get(PLUGIN, k, null).catch(() => null)));
     const reviews = {};
     keys.forEach((k, i) => { if (docs[i]) reviews[k] = docs[i]; });
@@ -495,7 +498,20 @@ export function createCoach(d, deps = {}) {
     const doc = { id, scope, state: 'planning', at: now().toISOString(), ...(opts.backfill ? { backfill: true } : {}) };
     store.setState({ reviews: { ...store.getState().reviews, [key]: doc }, reviewOpen: key });
     await storage.set(PLUGIN, key, doc);
+    await pruneReviews(key);
     return key;
+  }
+  /** At most MAX_REVIEWS review documents: the oldest go first; one still running is kept. */
+  async function pruneReviews(keep) {
+    const keys = await reviewKeys();
+    if (keys.length <= MAX_REVIEWS) return;
+    const docs = await Promise.all(keys.map(async (k) => ({ k, doc: store.getState().reviews[k] || (await storage.get(PLUGIN, k, null).catch(() => null)) })));
+    const busy = new Set(['planning', 'queued', 'reading', 'writing']);
+    const old = docs.filter((x) => x.k !== keep && !(x.doc && busy.has(x.doc.state)))
+      .sort((a, b) => String((a.doc && a.doc.at) || '').localeCompare(String((b.doc && b.doc.at) || '')));
+    const drop = old.slice(0, keys.length - MAX_REVIEWS).map((x) => x.k);
+    for (const k of drop) await storage.remove(PLUGIN, k).catch(() => {});
+    if (drop.length) { const next = { ...store.getState().reviews }; for (const k of drop) delete next[k]; store.setState({ reviews: next }); }
   }
   async function patchReview(key, patch) {
     const cur = store.getState().reviews[key] || (await storage.get(PLUGIN, key, null)) || {};
@@ -523,15 +539,19 @@ export function createCoach(d, deps = {}) {
     const plan = r.plan || {};
     const n = (plan.threads || []).length;
     let body;
+    // Start waits while the estimate passes the budget, or while the cost is unknown and a smaller scope exists.
+    const blocked = plan.fits === false || n === 0 || !!(plan.costUnknown && plan.smallerScope);
     if (r.state === 'planning') body = h('div', { style: S.note }, 'Working out what this review costs…');
     else if (r.state === 'estimate') {
       body = h('div', null,
         n === 0 ? h('div', null, 'There is nothing the Coach can read in this scope.')
-          : h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}): about ${plan.estPercent}% of your weekly limit, an estimate.`),
+          : plan.costUnknown ? h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}). Cost unknown: the Coach has no usage figures for this account yet.`)
+            : h('div', null, `This review reads ${plural(n, 'thread', 'threads')} (${plural(plan.chunks || 0, 'part', 'parts')}): about ${plan.estPercent}% of your weekly limit, an estimate.`),
         plan.fits === false && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, 'That is more than the budget has left this week.'),
+        plan.costUnknown && plan.smallerScope && h('div', { style: { ...S.note, color: 'var(--color-text-secondary)' } }, 'Start with a smaller scope while the cost is unknown.'),
         h('div', { style: S.row },
-          h('button', { type: 'button', style: { ...S.primary, opacity: plan.fits === false || n === 0 ? 0.5 : 1 }, disabled: plan.fits === false || n === 0, onClick: () => { void patchReview(key, { state: 'queued', startedAt: now().toISOString() }); } }, 'Start'),
-          plan.fits === false && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
+          h('button', { type: 'button', style: { ...S.primary, opacity: blocked ? 0.5 : 1 }, disabled: blocked, onClick: () => { void patchReview(key, { state: 'queued', startedAt: now().toISOString() }); } }, 'Start'),
+          (plan.fits === false || plan.costUnknown) && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
           h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel')));
     } else if (r.state === 'queued' || r.state === 'reading') {
       const p = r.progress || { done: 0, total: n };
@@ -539,7 +559,11 @@ export function createCoach(d, deps = {}) {
         h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel review')));
     } else if (r.state === 'writing') body = h('div', null, 'Writing the report…');
     else if (r.state === 'cancelled') body = h('div', { style: S.note }, 'The review was cancelled. Nothing more was read.');
-    else if (r.state === 'failed') body = h('div', { style: S.note }, r.error || 'The review stopped.');
+    else if (r.state === 'failed') {
+      body = h('div', null, h('div', { style: S.note }, r.error || 'The review stopped.'),
+        // A review the restart stopped: a new estimate first, then Start, as before.
+        r.restartable && h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'planning', error: null, restartable: false, progress: null, cancel: false }); } }, 'Run again')));
+    }
     else if (r.state === 'done' && r.report) {
       const rep = r.report;
       body = h('div', null,
@@ -653,7 +677,7 @@ export function createCoach(d, deps = {}) {
         setText('');
         return;
       }
-      const plan = planCall('more', st.settings, st.status.budget, { harness: st.status.harness });
+      const plan = planCall('more', st.settings, liveBudget(st.status.budget, now()), { harness: st.status.harness });
       if (plan.tier === 'none') { setNote(CHAT_CAP); return; }
       setBusy(true); setNote(null);
       try {
@@ -809,7 +833,7 @@ export function createCoach(d, deps = {}) {
   const mapText = (text) => {
     const st = store.getState();
     const assist = typeof d.assist === 'function' ? (req) => d.assist(PLUGIN, req) : null;
-    return mapGoal(text, { assist, settings: st.settings, budget: st.status.budget }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
+    return mapGoal(text, { assist, settings: st.settings, budget: liveBudget(st.status.budget, now()) }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
   };
   async function newGoal(text, mapped, source) {
     const r = addGoal(store.getState().memory, { text, measures: mapped.measures, detectors: mapped.detectors, source }, now());
@@ -886,9 +910,11 @@ export function createCoach(d, deps = {}) {
     return s;
   }
   async function saveBudget(patch) {
-    const s = await saveSettings({ ...store.getState().settings, ...patch });
+    // The daemon's budget first: the settings event that follows makes the worker read it at once.
+    const s = withDefaults({ ...store.getState().settings, ...patch });
     const api = d.api || {};
     if (typeof api.setPluginBudget === 'function') await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch((err) => { if (typeof d.hint === 'function') d.hint(`The budget was not saved: ${err && err.message ? err.message : err}`); });
+    await saveSettings(s);
   }
 
   /** A number field that writes on blur or Enter, clamped to [min, max]. */
@@ -948,6 +974,9 @@ export function createCoach(d, deps = {}) {
       h(Line, { label: 'Show a card at this confidence or more', hint: 'The small model says how sure it is, from 0 to 1.' },
         h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, minConfidence: v } }) }),
         h('span', { style: S.src }, 'default 0.7')),
+      h(Line, { label: 'Hide a card after this many hours', hint: 'A card about something long past does not show.' },
+        h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, maxCardAgeHours: v } }) }),
+        h('span', { style: S.src }, `default ${CARD_MAX_AGE_HOURS}`)),
       ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Line, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
         ...Object.entries(fields).map(([field, def]) => h('span', { key: field, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
           h('span', { style: S.src }, field),

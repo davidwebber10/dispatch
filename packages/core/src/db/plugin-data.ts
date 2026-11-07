@@ -100,13 +100,15 @@ export interface AssistRecord {
   cacheReadTokens: number;
   cacheCreateTokens: number;
   costUsd: number | null;
+  /** True when the daemon estimated `costUsd` (no reported cost, no known price). */
+  costEstimated?: boolean;
   ms: number;
   ok: boolean;
 }
 export function recordAssist(db: Database.Database, pluginId: string, r: AssistRecord): void {
-  db.prepare(`INSERT INTO plugin_assist (plugin_id, at, model, harness, account_id, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd, ms, ok)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(pluginId, r.at ?? new Date().toISOString(), r.model, r.harness, r.accountId, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreateTokens, r.costUsd, r.ms, r.ok ? 1 : 0);
+  db.prepare(`INSERT INTO plugin_assist (plugin_id, at, model, harness, account_id, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd, cost_estimated, ms, ok)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(pluginId, r.at ?? new Date().toISOString(), r.model, r.harness, r.accountId, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreateTokens, r.costUsd, r.costEstimated ? 1 : 0, r.ms, r.ok ? 1 : 0);
 }
 
 export interface AssistUsageByModel { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }
@@ -138,23 +140,34 @@ export function assistCostSince(db: Database.Database, pluginId: string, harness
 }
 
 /**
+ * A plugin's subscription tokens since `from` (every harness but OpenRouter), for the fail-safe
+ * token cap: input, output and cache writes, and a tenth of the cache reads (their price share).
+ */
+export function assistTokensSince(db: Database.Database, pluginId: string, from: string): number {
+  const r = db.prepare(`SELECT COALESCE(SUM(input_tokens + output_tokens + COALESCE(cache_create_tokens, 0) + COALESCE(cache_read_tokens, 0) / 10.0), 0) AS n
+    FROM plugin_assist WHERE plugin_id = ? AND COALESCE(harness, '') <> 'openrouter' AND at >= ?`).get(pluginId, from) as { n: number };
+  return Math.round(r.n);
+}
+
+/**
  * A plugin's model budget (coach spec sections 4.5, 7.4): at most `percentWeekly` % of the weekly
  * limit of the account a call runs on, and at most `usdWeekly` dollars a week on OpenRouter.
  * Null = no cap of that kind.
  */
 export interface PluginBudget { percentWeekly: number | null; usdWeekly: number | null }
-export function getBudget(db: Database.Database, pluginId: string): PluginBudget {
+/** The owner's budget row, or null when the owner never set one (then the plugin's manifest default applies). */
+export function getBudgetRow(db: Database.Database, pluginId: string): PluginBudget | null {
   const r = db.prepare('SELECT percent_weekly AS p, usd_weekly AS u FROM plugin_budget WHERE plugin_id = ?').get(pluginId) as { p: number | null; u: number | null } | undefined;
-  return { percentWeekly: r?.p ?? null, usdWeekly: r?.u ?? null };
+  return r ? { percentWeekly: r.p ?? null, usdWeekly: r.u ?? null } : null;
 }
+export function getBudget(db: Database.Database, pluginId: string): PluginBudget {
+  return getBudgetRow(db, pluginId) ?? { percentWeekly: null, usdWeekly: null };
+}
+/** The owner's budget. A row is kept even with both caps null: "no cap" is a choice the manifest default must not undo. */
 export function setBudget(db: Database.Database, pluginId: string, budget: PluginBudget): PluginBudget {
-  if (budget.percentWeekly === null && budget.usdWeekly === null) {
-    db.prepare('DELETE FROM plugin_budget WHERE plugin_id = ?').run(pluginId);
-  } else {
-    db.prepare(`INSERT INTO plugin_budget (plugin_id, percent_weekly, usd_weekly, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(plugin_id) DO UPDATE SET percent_weekly = excluded.percent_weekly, usd_weekly = excluded.usd_weekly, updated_at = excluded.updated_at`)
-      .run(pluginId, budget.percentWeekly, budget.usdWeekly, new Date().toISOString());
-  }
+  db.prepare(`INSERT INTO plugin_budget (plugin_id, percent_weekly, usd_weekly, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(plugin_id) DO UPDATE SET percent_weekly = excluded.percent_weekly, usd_weekly = excluded.usd_weekly, updated_at = excluded.updated_at`)
+    .run(pluginId, budget.percentWeekly, budget.usdWeekly, new Date().toISOString());
   return getBudget(db, pluginId);
 }
 

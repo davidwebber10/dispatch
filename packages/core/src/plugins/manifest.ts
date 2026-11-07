@@ -45,6 +45,8 @@ export interface PluginManifest {
   model?: PluginModel;
   /** A process the daemon runs while the plugin is enabled (spec section 4). */
   worker?: PluginWorker;
+  /** The model budget that holds until the owner sets one (coach review finding 5). */
+  budget?: { percentWeekly: number | null; usdWeekly: number | null };
 }
 
 /** The worker (spec section 4): the command, started in the plugin folder, and its cron jobs. */
@@ -85,6 +87,13 @@ export function parseManifest(raw: string, folderId: string): ParsedManifest {
     const model = parseModel(data.model);
     if (!model.ok) return model;
     m.model = model.model;
+  }
+  if (isRecord(data.budget)) {
+    // Only values the owner's PUT would take; anything else is no default of that kind.
+    const p = data.budget.percentWeekly; const u = data.budget.usdWeekly;
+    const percentWeekly = typeof p === 'number' && p >= 0.1 && p <= 100 ? p : null;
+    const usdWeekly = typeof u === 'number' && Number.isFinite(u) && u >= 0 && u <= 10_000 ? u : null;
+    if (percentWeekly !== null || usdWeekly !== null) m.budget = { percentWeekly, usdWeekly };
   }
   if (data.worker !== undefined) {
     const w = parseWorker(data.worker);

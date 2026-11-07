@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { planCall, LARGE_DEFAULT } from '../../../plugins/coach/lib/plan.mjs';
+import { planCall, LARGE_DEFAULT, budgetFraction, budgetState, liveBudget } from '../../../plugins/coach/lib/plan.mjs';
 import { confirmPrompt, writePrompt, morePrompt, recapPrompt, parseAnswer, checkCard } from '../../../plugins/coach/lib/prompts.mjs';
 import { judgeCandidate, budgetFromHeaders, joinCards } from '../../../plugins/coach/lib/judge.mjs';
 import { makeAssist } from '../../../plugins/coach/lib/client.mjs';
@@ -160,7 +160,27 @@ describe('Coach judge: the budget headers and the cards document (coach plan Tas
     expect(budgetFromHeaders(new Headers({ 'X-Budget-Used-Percent': '1.25', 'X-Budget-Cap-Percent': '3' }))).toEqual({ usedPercent: 1.25, capPercent: 3 });
     expect(budgetFromHeaders(new Headers({ 'X-Budget-Used-Usd': '0.4', 'X-Budget-Cap-Usd': '5' }))).toEqual({ usedUsd: 0.4, capUsd: 5 });
     expect(budgetFromHeaders(new Headers())).toBeNull();
+    // The daemon's fail-safe token cap (no usage figures): the tokens count, and the plan steps down on them.
+    const tok = budgetFromHeaders(new Headers({ 'X-Budget-Cap-Percent': '3', 'X-Budget-Used-Tokens': '149000', 'X-Budget-Cap-Tokens': '150000' }));
+    expect(tok).toMatchObject({ usedTokens: 149000, capTokens: 150000 });
+    expect(budgetFraction(tok)).toBeCloseTo(149000 / 150000);
   });
+  it('makeAssist marks a passing failure (429 busy, 503, 502, a network error or a timeout) as transient; a refusal or an answer is not', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'busy' }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'no_model' }), { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'no_answer' }), { status: 502 }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'budget', usedPercent: 3, capPercent: 3 }), { status: 429 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ text: 'not json' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'bad_body' }), { status: 400 }));
+    const assist = makeAssist({ fetch, api: 'http://x', plugin: 'coach', key: () => 'k1' });
+    const out = [];
+    for (let i = 0; i < 8; i++) out.push(!!(await assist({ messages: [{ role: 'user', content: 'hi' }] })).transient);
+    expect(out).toEqual([true, true, true, true, true, false, false, false]);
+  });
+
   it('makeAssist posts to the plugin route with the key, and reads the budget headers; a 429 budget is a refusal', async () => {
     const fetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ text: '{}', harness: 'codex' }), { status: 200, headers: { 'X-Budget-Used-Percent': '0.5', 'X-Budget-Cap-Percent': '3' } }))
@@ -186,5 +206,21 @@ describe('Coach judge: the budget headers and the cards document (coach plan Tas
     // A candidate the budget stopped is not recorded: it is judged later.
     const next = joinCards(doc, [{ id: 'c', outcome: 'budget', card: null, calls: [] }], '2026-11-20T11:00:00Z');
     expect(next.judged.map((j: { id: string }) => j.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('Coach budget from the daemon routes (review finding 1)', () => {
+  it('budgetState reads the cap and the share; the fail-safe tokens; no cap; OpenRouter dollars', () => {
+    const share = { fiveHour: null, sevenDay: { usedPercent: 40, pluginPercent: 1.2, resetsAt: '2026-11-30T00:00:00.000Z' } };
+    expect(budgetState({ percentWeekly: 3, usdWeekly: null }, share)).toEqual({ usedPercent: 1.2, capPercent: 3, resetsAt: '2026-11-30T00:00:00.000Z' });
+    expect(budgetState({ percentWeekly: 3, usdWeekly: null }, { fiveHour: null, sevenDay: null, fallback: { usedTokens: 10, capTokens: 150000 } })).toEqual({ usedTokens: 10, capTokens: 150000, capPercent: 3 });
+    expect(budgetState({ percentWeekly: null, usdWeekly: null }, share)).toBeNull();
+    expect(budgetState({ percentWeekly: 3, usdWeekly: 5 }, null, 'openrouter', { costUsd: 1.5 })).toEqual({ usedUsd: 1.5, capUsd: 5 });
+  });
+  it('liveBudget drops a figure whose window has reset', () => {
+    const b = { usedPercent: 3, capPercent: 3, resetsAt: '2026-11-20T10:00:00.000Z' };
+    expect(liveBudget(b, new Date('2026-11-20T09:59:00Z'))).toBe(b);
+    expect(liveBudget(b, new Date('2026-11-20T10:00:00Z'))).toBeNull();
+    expect(liveBudget({ usedPercent: 1, capPercent: 3 }, new Date())).toEqual({ usedPercent: 1, capPercent: 3 });
   });
 });

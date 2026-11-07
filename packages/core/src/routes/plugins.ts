@@ -14,7 +14,7 @@ import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugin
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
 import { notionalValueUsd } from '../analytics/pricing.js';
-import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT } from '../plugins/assist-share.js';
+import { estimateShare, tokenWeight, FIVE_HOUR_FLOOR_PERCENT, WEEKLY_TOKENS_PER_PERCENT } from '../plugins/assist-share.js';
 import type { UsageSummary } from '../limits/gauge.js';
 import type { PluginWorkers } from '../plugins/workers.js';
 import type { MarketplaceService } from '../plugins/marketplaces.js';
@@ -72,17 +72,30 @@ function principalHeaders(req: Request): Record<string, string> {
 /** Headers that never cross to the worker: the caller's credentials and the hop-by-hop set. */
 const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
 
+/**
+ * The price an OpenRouter call with no reported cost and an unknown model is metered at, in dollars
+ * per million tokens: high on purpose (Opus list price), so the dollar budget fills early, never late.
+ */
+export const ESTIMATE_PRICE = Object.freeze({ input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 });
+
 /** One assist answer as a meter row: the harness's cost, else priced from the tokens when the model is known. */
-function meterOf(result: AssistResult, asked: string, started: number): pluginData.AssistRecord {
+function meterOf(result: AssistResult, asked: string, started: number, account?: string): pluginData.AssistRecord {
   const u = result.usage;
   const cacheReadTokens = u.cacheReadTokens ?? 0;
   const cacheCreateTokens = u.cacheCreateTokens ?? 0;
-  const costUsd = typeof result.costUsd === 'number' ? result.costUsd
+  let costUsd = typeof result.costUsd === 'number' ? result.costUsd
     : notionalValueUsd({ model: result.model, input: u.inputTokens, output: u.outputTokens, cacheRead: cacheReadTokens, cacheCreate: cacheCreateTokens });
+  // OpenRouter's cap is dollars: a call with no cost must still count, at a conservative estimate.
+  let costEstimated = false;
+  if (costUsd === null && (result.harness ?? asked) === 'openrouter') {
+    costUsd = (u.inputTokens * ESTIMATE_PRICE.input + u.outputTokens * ESTIMATE_PRICE.output + cacheReadTokens * ESTIMATE_PRICE.cacheRead + cacheCreateTokens * ESTIMATE_PRICE.cacheCreate) / 1e6;
+    costEstimated = true;
+  }
   return {
-    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? null,
+    // The account that ran: the answer's, else the one the route resolved (never for OpenRouter, which has none).
+    model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? (result.harness === 'openrouter' ? null : account ?? null),
     inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens, cacheCreateTokens,
-    costUsd, ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
+    costUsd, ...(costEstimated ? { costEstimated } : {}), ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
   };
 }
 
@@ -90,7 +103,7 @@ const DAY_MS = 86_400_000;
 
 /** The default model a harness runs when the caller names none, to price a reservation. */
 const DEFAULT_MODEL: Record<AssistHarness, string> = { claude: ASSIST_CLAUDE_MODEL, codex: 'gpt-5.6-terra', openrouter: ASSIST_OPENROUTER_MODEL };
-interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number }
+interface Reservation { harness: AssistHarness; accountId: string; weight: number; usd: number; tokens: number }
 interface BudgetCheck { refuse: Record<string, unknown> | null; headers: Record<string, string>; release: () => void }
 const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
 
@@ -101,18 +114,30 @@ const pct = (n: number): string => String(Math.round(n * 10_000) / 10_000);
  * OpenRouter has no limit windows: its cap is dollars over the last 7 days. A call in flight is
  * reserved at its prompt (about 4 characters a token) and its maxTokens of output, at the model's
  * price, until it ends; then the metered row takes its place. No budget = no cap.
+ *
+ * Fail safe: with a percent budget but no weekly figure for the account (no usage data yet, a poll
+ * gap), the cap becomes tokens: `percentWeekly` x `WEEKLY_TOKENS_PER_PERCENT` (or `tokensPerPercent`)
+ * over the plugin's subscription calls of the last 7 days (429 `budget`, window `unknown`).
  */
-function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
+function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps, budgetOf: (pluginId: string) => pluginData.PluginBudget) {
   const reserved = new Map<string, Set<Reservation>>();
+  /** The fail-safe token cap for a percent budget with no weekly figure: the plugin's 7-day tokens and the calls in flight. */
+  const tokenFallback = (pluginId: string, percentWeekly: number): { usedTokens: number; capTokens: number } => {
+    const capTokens = Math.round(percentWeekly * (limits.tokensPerPercent ?? WEEKLY_TOKENS_PER_PERCENT));
+    const inFlight = [...(reserved.get(pluginId) ?? [])].filter((r) => r.harness !== 'openrouter').reduce((n, r) => n + r.tokens, 0);
+    return { usedTokens: pluginData.assistTokensSince(db, pluginId, new Date(Date.now() - 7 * DAY_MS).toISOString()) + inFlight, capTokens };
+  };
   return {
+    tokenFallback,
     check(pluginId: string, call: { harness: AssistHarness | 'auto' | undefined; accountId: string | undefined; model: string | undefined; maxTokens: number; promptChars: number }): BudgetCheck {
       const harness: AssistHarness = call.harness === 'codex' || call.harness === 'openrouter' ? call.harness : 'claude';
       const sub: 'claude' | 'codex' = harness === 'codex' ? 'codex' : 'claude';
       const accountId = harness === 'openrouter' ? 'openrouter' : call.accountId ?? limits.defaultAccount?.(sub) ?? 'cli';
-      const budget = pluginData.getBudget(db, pluginId);
+      const budget = budgetOf(pluginId);
       const mine = reserved.get(pluginId) ?? new Set<Reservation>();
       const same = [...mine].filter((r) => r.harness === harness && r.accountId === accountId);
       const weight = tokenWeight(call.model ?? DEFAULT_MODEL[harness], { input: Math.ceil(call.promptChars / 4), output: call.maxTokens });
+      const tokens = Math.ceil(call.promptChars / 4) + call.maxTokens;
       const headers: Record<string, string> = {};
       let refuse: Record<string, unknown> | null = null;
 
@@ -131,9 +156,16 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
           const reservedW = same.reduce((n, r) => n + r.weight, 0);
           const used = week.pluginPercent + (week.accountWeight > 0 ? (reservedW / week.accountWeight) * week.usedPercent : 0);
           headers['X-Budget-Used-Percent'] = pct(used);
+          if (week.resetsAt) headers['X-Budget-Resets-At'] = week.resetsAt;
           if (budget.percentWeekly !== null && used >= budget.percentWeekly) {
             refuse = { error: 'budget', window: 'seven_day', usedPercent: used, capPercent: budget.percentWeekly, message: `The plugin has used its ${budget.percentWeekly}% of the weekly limit.` };
           }
+        } else if (budget.percentWeekly !== null) {
+          // No weekly figure: never unlimited. The plugin's tokens over 7 days, with the calls in flight.
+          const { usedTokens: usedT, capTokens: cap } = tokenFallback(pluginId, budget.percentWeekly);
+          headers['X-Budget-Used-Tokens'] = String(usedT);
+          headers['X-Budget-Cap-Tokens'] = String(cap);
+          if (usedT >= cap) refuse = { error: 'budget', window: 'unknown', usedTokens: usedT, capTokens: cap, message: `The usage figures for this account are unknown, so the plugin is held to ${cap} tokens a week; it has used them.` };
         }
         if (budget.percentWeekly !== null) {
           headers['X-Budget-Cap-Percent'] = String(budget.percentWeekly);
@@ -145,7 +177,7 @@ function createBudgetGuard(db: Database.Database, limits: AssistLimitsDeps) {
         }
       }
       if (refuse) return { refuse, headers, release: () => {} };
-      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6 };
+      const r: Reservation = { harness, accountId, weight, usd: weight / 1e6, tokens };
       mine.add(r); reserved.set(pluginId, mine);
       return { refuse: null, headers, release: () => { mine.delete(r); if (mine.size === 0) reserved.delete(pluginId); } };
     },
@@ -188,12 +220,17 @@ export interface AssistLimitsDeps {
   summary?: () => UsageSummary | null;
   /** A harness's default account (accounts.json); `cli` when absent. */
   defaultAccount?: (harness: 'claude' | 'codex') => string;
+  /** The fail-safe token cap per budget percent when a weekly figure is unknown. Default WEEKLY_TOKENS_PER_PERCENT. */
+  tokensPerPercent?: number;
+  /** Whether an account id exists for a harness (accounts.json). Absent: only the default account is known. */
+  hasAccount?: (harness: 'claude' | 'codex', id: string) => boolean;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
   push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
 
 export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
+  const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
   router.get('/plugins', keyRoute({ thread: projectListRule, roleRun: projectListRule, plugin: allowRule }), (_req, res) => {
@@ -620,16 +657,20 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   // ── the model budget (coach spec sections 4.5, 7.4): owner-only, enforced before each assist call ──
-  const budgets = createBudgetGuard(db, limits);
-  router.get('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
+  // The owner's budget, else the plugin's manifest default (set by the plugin, so it holds from the
+  // first call, before any web part loads), else no cap.
+  const budgetOf = (id: string): pluginData.PluginBudget => pluginData.getBudgetRow(db, id) ?? (plugins.get(id)?.budget ? { ...plugins.get(id)!.budget! } : { percentWeekly: null, usdWeekly: null });
+  const budgets = createBudgetGuard(db, limits, budgetOf);
+  // The owner, or the plugin's own key: its worker reads the cap it plans by (never writes it).
+  router.get('/plugins/:id/budget', keyRoute({ plugin: ownPluginRule }), (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json(pluginData.getBudget(db, req.params.id));
+    res.json(budgetOf(req.params.id));
   });
   router.put('/plugins/:id/budget', ownerOnlyStrict, (req, res) => {
     if (!known(req, res)) return;
     const body = (req.body ?? {}) as { percentWeekly?: unknown; usdWeekly?: unknown };
-    const next = pluginData.getBudget(db, req.params.id);
+    const next = budgetOf(req.params.id);
     if (body.percentWeekly !== undefined) {
       if (body.percentWeekly !== null && !(typeof body.percentWeekly === 'number' && body.percentWeekly >= 0.1 && body.percentWeekly <= 100)) {
         return void res.status(400).json({ error: 'bad_budget', message: 'percentWeekly is 0.1 to 100, or null for no cap.' });
@@ -668,6 +709,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     let harness = body.harness as AssistHarness | 'auto' | undefined;
     const model = body.model as string | undefined;
     let accountId = body.accountId as string | undefined;
+    // An account the daemon does not know is refused: the runner would fall back to the default
+    // account while the budget guard checked the unknown one (no figures = no cap).
+    if (accountId !== undefined && harness !== 'openrouter' && harness !== 'auto' && !knownAccount(harness === 'codex' ? 'codex' : 'claude', accountId)) {
+      return void res.status(400).json({ error: 'unknown_account', message: `No ${harness === 'codex' ? 'Codex' : 'Claude'} account has the id "${accountId}".` });
+    }
     if (!assist || !(await assist.available(harness).catch(() => false))) {
       return void res.status(503).json({ error: 'no_model', message: 'No model is signed in for assist. Sign in to Claude Code or set an OpenRouter key.' });
     }
@@ -678,6 +724,9 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       harness = pick.harness;
       accountId = pick.harness === 'openrouter' ? undefined : pick.accountId;
     }
+    // The effective account, resolved once: the budget guard checks it, the runner runs on it, the meter names it.
+    if (harness === 'openrouter') accountId = undefined;
+    else accountId = accountId ?? limits.defaultAccount?.(harness === 'codex' ? 'codex' : 'claude') ?? 'cli';
     // From here to the reservation nothing awaits: the check and the reservation are one step, so
     // concurrent calls each see the ones before them (coach plan, Review Focus 1).
     const busy = inflight.get(req.params.id) ?? 0;
@@ -700,12 +749,14 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       pluginData.recordAssist(db, req.params.id, { model: model ?? '', harness: asked, accountId: accountId ?? null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: Date.now() - started, ok: false });
       return void res.status(502).json({ error: 'no_answer', message: 'The model gave no answer.' });
     }
-    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started));
+    pluginData.recordAssist(db, req.params.id, meterOf(result, asked, started, accountId));
     res.json(result);
   });
 
   // A plugin's estimated share of an account's 5-hour and weekly windows (coach spec section 7.3).
-  router.get('/plugins/:id/assist/share', keyRoute({ plugin: ownPluginRule }), (req, res) => {
+  // Usage figures: a plugin key needs read:usage (the owner may always read them).
+  const shareRule: Rule = (req, ctx) => { const own = ownPluginRule(req, ctx); return own.ok ? needs('read:usage')(req, ctx) : own; };
+  router.get('/plugins/:id/assist/share', keyRoute({ plugin: shareRule }), (req, res) => {
     if (!known(req, res)) return;
     const h = req.query.harness ?? 'claude';
     if (h !== 'claude' && h !== 'codex') return void res.status(400).json({ error: 'bad_harness', message: 'harness is claude or codex (OpenRouter has no limit windows).' });
@@ -713,7 +764,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const summary = (() => { try { return limits.summary?.() ?? null; } catch { return null; } })();
     const opts = { pluginId: req.params.id, accountId, harness: h as AssistHarness, defaultAccountId: limits.defaultAccount?.(h) ?? 'cli' };
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay: estimateShare(db, summary, { ...opts, window: 'seven_day' }) });
+    const sevenDay = estimateShare(db, summary, { ...opts, window: 'seven_day' });
+    // With no weekly figure and a percent budget, the guard holds the plugin to a token cap: say so.
+    const budget = budgetOf(req.params.id);
+    const fallback = !sevenDay && budget.percentWeekly !== null ? budgets.tokenFallback(req.params.id, budget.percentWeekly) : null;
+    res.json({ fiveHour: estimateShare(db, summary, { ...opts, window: 'five_hour' }), sevenDay, ...(fallback ? { fallback } : {}) });
   });
 
   // The meter by time (coach spec section 7.2): the owner, or the plugin's own key. No `from` = 7 days ago.

@@ -19,11 +19,14 @@ export type ThreadEvent =
   | (Base & { type: 'thread:turn'; ms: number | null; inputTokens: number | null; outputTokens: number | null; costUsd: number | null; outcome: string; declared?: boolean; summary?: string; partial?: boolean })
   | (Base & { type: 'thread:status'; state: 'done' | 'needs_you' | 'blocked'; summary: string; ask?: string; blocker?: string });
 
-export type ThreadInfo = { sessionId: string; harness: string } | null;
+/** `automated`: a schedule or a role started the thread (`config.runner`, `config.roleRun`): its prompts are not the owner's. */
+export type ThreadInfo = { sessionId: string; harness: string; automated?: boolean } | null;
+/** True for a thread a schedule or a role started, from its config. */
+export const isAutomatedThread = (config: Record<string, unknown> | null | undefined): boolean => !!(config && (config.runner || config.roleRun));
 type Subscriber = (e: ThreadEvent) => void;
 /** An event body without the identity the emitter adds (distributes over the union). */
-/** Who sent a prompt: the owner, the Control Plane, a peer thread, or the daemon itself (an auto-resume). */
-export type PromptSource = 'user' | 'coordinator' | 'thread' | 'daemon';
+/** Who sent a prompt: the owner, the Control Plane, a peer thread, the daemon itself (an auto-resume), or a schedule or role (a thread it started). */
+export type PromptSource = 'user' | 'coordinator' | 'thread' | 'daemon' | 'schedule';
 
 type Body = ThreadEvent extends infer E ? (E extends Base ? Omit<E, keyof Base> : never) : never;
 
@@ -69,7 +72,9 @@ export class ThreadEvents {
 
   private promptSeen(terminalId: string, text: string, source: PromptSource): void {
     if (!this.turns.has(terminalId)) this.turns.set(terminalId, { startedAt: this.now(), input: 0, output: 0, cost: null, sawUsage: false });
-    this.emit(terminalId, { type: 'thread:prompt', source, text, textLength: text.length });
+    // In a thread a schedule or a role started, "the owner's" prompt is the schedule's (a runner's launch prompt reaches the hook).
+    const from: PromptSource = source === 'user' && this.lookup(terminalId)?.automated ? 'schedule' : source;
+    this.emit(terminalId, { type: 'thread:prompt', source: from, text, textLength: text.length });
   }
 
   private remember(terminalId: string, text: string): void {

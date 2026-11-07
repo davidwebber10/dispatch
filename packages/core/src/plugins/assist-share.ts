@@ -34,6 +34,12 @@ export function tokenWeight(model: string | null | undefined, t: { input: number
 }
 
 const WINDOW_MS: Record<ShareWindow, number> = { five_hour: 5 * 3_600_000, seven_day: 7 * 86_400_000 };
+/**
+ * The fail-safe cap when an account's weekly window is unknown (no usage figures yet, a poll gap
+ * after a restart): a percent budget becomes at most this many tokens a week for each percent.
+ * 3% = 150,000 tokens. Tokens are input, output and cache writes; a cache read counts one tenth.
+ */
+export const WEEKLY_TOKENS_PER_PERCENT = 50_000;
 /** Never take the last 10% of a 5-hour window (section 9a.2). */
 export const FIVE_HOUR_FLOOR_PERCENT = 90;
 /** A model with no known price weighs as Sonnet does: a middle price, the same for the plugin and the threads. */

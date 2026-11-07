@@ -14,8 +14,8 @@ const CARD = {
 };
 
 type Slot = (p: Record<string, unknown>) => JSX.Element | null;
-async function mount(opts: { cards?: unknown[]; cadence?: unknown; actions?: Record<string, unknown>; value?: string; terminalId?: string; settings?: unknown } = {}) {
-  const d: FakeD = fakeD({ docs: { cadence: opts.cadence ?? SEASONED, cards: { items: opts.cards ?? [CARD] } }, actions: opts.actions, settings: opts.settings });
+async function mount(opts: { cards?: unknown[]; cadence?: unknown; actions?: Record<string, unknown>; value?: string; terminalId?: string; settings?: unknown; mobile?: boolean } = {}) {
+  const d: FakeD = fakeD({ docs: { cadence: opts.cadence ?? SEASONED, cards: { items: opts.cards ?? [CARD] } }, actions: opts.actions, settings: opts.settings, mobile: opts.mobile });
   const requestMore = vi.fn(async () => ({ wrote: CARD.excerpt, better: 'Run the suite in a new thread, and in this one draft the release note.', bullets: ['Two things move at once.', 'Check: read the test summary before you merge.'] }));
   const coach = createCoach(d, { requestMore, now: () => NOW });
   await coach.ready;
@@ -159,6 +159,31 @@ describe('Coach card (coach plan Task 10)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss (not now)' }));
     await waitFor(() => expect(screen.queryByTestId('coach-card')).toBeNull());
     expect((d.docs.get('cadence') as { welcomeDone: boolean }).welcomeDone).toBe(true);
+  });
+
+  it('the welcome card shows on a phone with phone: false (and the worker hears it was seen); other cards do not', async () => {
+    const { d } = await mount({ cadence: emptyCadence(new Date(2026, 10, 18)), mobile: true, settings: { phone: false } });
+    const card = await screen.findByTestId('coach-card');
+    expect(card).toHaveTextContent('Get one small tip at a time');
+    await waitFor(() => expect((d.docs.get('cadence') as { welcomeSeenAt?: string }).welcomeSeenAt).toBe(NOW.toISOString()));
+    cleanup();
+    await mount({ mobile: true, settings: { phone: false } });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByTestId('coach-card')).toBeNull();
+  });
+
+  it('stale cards do not show: older than 48 hours, or the limit set in Advanced', async () => {
+    const old = { ...CARD, id: 'idle-wait:t1:old', at: new Date(NOW.getTime() - 49 * 3600_000).toISOString() };
+    await mount({ cards: [old] });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByTestId('coach-card')).toBeNull();
+    cleanup();
+    await mount({ cards: [{ ...old, at: new Date(NOW.getTime() - 47 * 3600_000).toISOString() }] });
+    expect(await screen.findByTestId('coach-card')).toBeInTheDocument();
+    cleanup();
+    await mount({ cards: [{ ...old, at: new Date(NOW.getTime() - 5 * 3600_000).toISOString() }], settings: { advanced: { maxCardAgeHours: 4 } } });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(screen.queryByTestId('coach-card')).toBeNull();
   });
 
   it('the welcome card comes first, says what the Coach looks at, and has Turn off, which disables the plugin', async () => {

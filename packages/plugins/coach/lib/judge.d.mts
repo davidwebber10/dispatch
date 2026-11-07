@@ -2,7 +2,7 @@
 import type { Budget } from './plan.mjs';
 import type { CoachSettings } from './settings.mjs';
 
-export interface AssistAnswer { result: { text: string; harness?: string; [k: string]: unknown } | null; budget: Budget | null; refused: Record<string, unknown> | null }
+export interface AssistAnswer { result: { text: string; harness?: string; [k: string]: unknown } | null; budget: Budget | null; refused: Record<string, unknown> | null; transient?: boolean }
 export type AssistFn = (req: Record<string, unknown>) => Promise<AssistAnswer>;
 export interface Call { step: string; tier: string; ok: boolean }
 export interface Card { id: string; type: string; measure: string; headline: string; why: string; action: unknown; excerpt: string; reason: string; terminalId: string | null; projectId: string | null; at: string; [k: string]: unknown }

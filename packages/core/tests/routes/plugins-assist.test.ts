@@ -32,7 +32,9 @@ describe('plugin assist route (2026-11-07)', () => {
   const build = (runner: AssistRunner | null) => {
     const mgr = new KeysManager();
     return createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), secretsDir: tmp, managers: new Map([['claude-code', mgr.asManager()]]), assistRunner: runner,
-      usageLimits: { snapshots: new LimitSnapshots(db), accountFor: () => 'acct', summary: () => summary as UsageSummary } });
+      usageLimits: { snapshots: new LimitSnapshots(db), accountFor: () => 'acct', summary: () => summary as UsageSummary },
+      // `work` is an added account on both harnesses; `cli` is the default.
+      assistAccounts: { has: (_p, id) => id === 'cli' || id === 'work', defaultId: () => 'cli' } });
   };
 
   beforeEach(() => {
@@ -181,6 +183,7 @@ describe('plugin assist route (2026-11-07)', () => {
     summary = { type: 'usage-limits', at: now, epoch: 'e', rev: 1, warnPercent: 80, pushOnWarn: false, paused: [],
       providers: [{ provider: 'claude-code', accountId: 'cli', label: 'cli', asOf: now, windows: { five_hour: { usedPercent: 40, resetsAt: now + 3_600_000 }, seven_day: { usedPercent: 12, resetsAt: now + 86_400_000 } } }] };
     pluginData.recordAssist(db, 'coach', { at: new Date(now - 60_000).toISOString(), model: 'claude-opus-5', harness: 'claude', accountId: 'cli', inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: null, ms: 1, ok: true });
+    plugin('coach', ['model:assist', 'read:usage']); // usage figures need read:usage
     app = build(fakeRunner);
     const r = await request(app).get('/api/plugins/coach/assist/share?accountId=cli').set(asPlugin('coach'));
     expect(r.status).toBe(200);

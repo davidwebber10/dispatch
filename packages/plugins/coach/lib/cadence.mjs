@@ -2,7 +2,7 @@
 // functions over the `cadence` document; the web part saves what they return.
 //
 // The document: { day, shownToday, shownThisSession, lastShownAt, mutedUntil, restUntilByType,
-// dismissCount, firstSeenAt, welcomeDone }.
+// dismissCount, firstSeenAt, welcomeSeenAt, welcomeDone }.
 
 /** Cards a day per level (Settings → Coach → How often). */
 export const LEVEL_CAP = Object.freeze({ off: 0, quiet: 0, normal: 3, chatty: 8 });
@@ -53,9 +53,10 @@ export function mayShow(state, settings, now, kind, opts = {}) {
   if (kind !== 'card') return false;
   const levelCap = LEVEL_CAP[settings.howOften] ?? LEVEL_CAP.normal;
   if (levelCap === 0) return false;
-  if (opts.phone && !settings.phone) return false;
   const firstWeek = st.firstSeenAt ? t - Date.parse(st.firstSeenAt) < FIRST_WEEK_MS : true;
+  // The welcome card ignores the phone setting: a person who uses only a phone must meet the Coach too.
   if (opts.welcome) return firstWeek && !st.welcomeDone;
+  if (opts.phone && !settings.phone) return false;
   if (firstWeek) return false;
   if (opts.type && st.restUntilByType && st.restUntilByType[opts.type] && Date.parse(st.restUntilByType[opts.type]) > t) return false;
   const cap = Math.min(levelCap, typeof settings.maxPerDay === 'number' ? settings.maxPerDay : levelCap);
@@ -64,6 +65,30 @@ export function mayShow(state, settings, now, kind, opts = {}) {
   const sameSession = st.lastShownAt && t - Date.parse(st.lastShownAt) < SESSION_GAP_MS;
   const session = sameSession ? st.shownThisSession || 0 : 0;
   return session < (typeof settings.maxPerSession === 'number' ? settings.maxPerSession : 1);
+}
+
+/**
+ * May the worker spend usage on a model call now (review finding 5)? Not before the person has
+ * seen the welcome card and the first week has passed (rules still collect, at no cost), not
+ * during a mute or quiet hours, and not with the Coach off.
+ */
+export function mayCallModel(state, settings, now) {
+  const st = state || {};
+  const t = toMs(now);
+  if (settings && settings.howOften === 'off') return false;
+  if (!st.firstSeenAt || t - Date.parse(st.firstSeenAt) < FIRST_WEEK_MS) return false;
+  if (!st.welcomeSeenAt && !st.welcomeDone) return false;
+  if (isMuted(st, t) || inQuietHours(settings && settings.quietHours, t)) return false;
+  return true;
+}
+
+/** A card older than this many hours is no longer "what you just did": it does not show. */
+export const CARD_MAX_AGE_HOURS = 48;
+/** True when a card is too old to show (`settings.advanced.maxCardAgeHours`, default 48). */
+export function isStale(card, settings, now) {
+  const hours = settings && settings.advanced && typeof settings.advanced.maxCardAgeHours === 'number' ? settings.advanced.maxCardAgeHours : CARD_MAX_AGE_HOURS;
+  const at = card && card.at ? Date.parse(card.at) : NaN;
+  return Number.isFinite(at) && toMs(now) - at > hours * 3600_000;
 }
 
 /** Count a card that just showed. */

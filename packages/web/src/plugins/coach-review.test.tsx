@@ -36,6 +36,19 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
     expect(tight.smallerScope).toEqual({ kind: 'thread', ids: ['a', 'b'] });
     expect(planReview({ kind: 'thread', ids: ['a'] }, [{ id: 'a', chunks: 100 }], { usedPercent: 2.9, capPercent: 3 }).smallerScope).toBeUndefined();
   });
+  it('planReview with an unknown budget says the cost is unknown, never claims it fits, and offers a smaller scope', () => {
+    const threads = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, chunks: 4 }));
+    for (const budget of [null, { usedPercent: null, capPercent: 3 }, { usedTokens: 1000, capTokens: 150000 }]) {
+      const p = planReview({ kind: 'range', from: '', to: '' }, threads, budget);
+      expect(p.fits).not.toBe(true);
+      expect(p.costUnknown).toBe(true);
+      expect(p.smallerScope).toEqual({ kind: 'thread', ids: ['t0', 't1'] });
+    }
+    // A small scope with an unknown cost: still not "fits", and no smaller scope to offer.
+    const one = planReview({ kind: 'thread', ids: ['t0'] }, [{ id: 't0', chunks: 2 }], null);
+    expect(one).toMatchObject({ costUnknown: true, fits: null });
+    expect(one.smallerScope).toBeUndefined();
+  });
   it('reviewPrompt carries the goals; parseReview keeps only findings that quote the transcript', () => {
     const memory = addGoal(emptyMemory(), { text: 'Hand off whole tasks', measures: ['ambition'], detectors: [], source: 'user' }, NOW).memory;
     const chunk = chunkTranscript(TRANSCRIPT)[0];
@@ -60,7 +73,7 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
 });
 
 // ── the worker job, against a fake daemon ─────────────────────────────────────────────────
-function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string }>; answers?: unknown[]; status?: unknown } = {}) {
+function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string; config?: Record<string, unknown> }>; answers?: unknown[]; status?: unknown; settings?: unknown } = {}) {
   const docs = new Map<string, unknown>([['cadence', emptyCadence(new Date('2026-10-01T00:00:00Z'))]]);
   if (over.status) docs.set('status', over.status);
   const threads = over.threads ?? { t1: { sessionId: 's1', items: TRANSCRIPT, lastActivityAt: at(5) } };
@@ -69,15 +82,15 @@ function daemon(over: { threads?: Record<string, { sessionId: string; items: unk
   const io = {
     getDoc: vi.fn(async (k: string, f: unknown) => (docs.has(k) ? JSON.parse(JSON.stringify(docs.get(k))) : f)),
     putDoc: vi.fn(async (k: string, v: unknown) => { docs.set(k, JSON.parse(JSON.stringify(v))); writes.push({ key: k, value: JSON.parse(JSON.stringify(v)) }); }),
-    getSettings: vi.fn(async () => null),
+    getSettings: vi.fn(async () => over.settings ?? null),
     getJson: vi.fn(async (route: string) => {
-      if (route === '/api/sessions') return [{ id: 's1', name: 'Alpha' }];
+      if (route === '/api/sessions') return [...new Set(Object.values(threads).map((t) => t.sessionId))].map((id) => ({ id, name: id }));
       let m = /^\/api\/sessions\/([^/]+)\/terminals$/.exec(route);
-      if (m) return Object.entries(threads).filter(([, t]) => t.sessionId === m![1]).map(([id, t]) => ({ id, sessionId: t.sessionId, label: id, lastActivityAt: t.lastActivityAt ?? at(5), createdAt: at(0) }));
+      if (m) return Object.entries(threads).filter(([, t]) => t.sessionId === m![1]).map(([id, t]) => ({ id, sessionId: t.sessionId, label: id, lastActivityAt: t.lastActivityAt ?? at(5), createdAt: at(0), config: t.config ?? {} }));
       m = /^\/api\/terminals\/([^/?]+)\/conversation/.exec(route);
       if (m) return { items: threads[m[1]]?.items ?? [] };
       m = /^\/api\/terminals\/([^/?]+)$/.exec(route);
-      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, lastActivityAt: threads[m[1]].lastActivityAt ?? at(5) } : null;
+      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, lastActivityAt: threads[m[1]].lastActivityAt ?? at(5), config: threads[m[1]].config ?? {} } : null;
       return null;
     }),
     assist: vi.fn(async (_req: unknown) => ({ result: answers.length ? { text: String(answers.shift()), harness: 'claude' } : null, budget: { usedPercent: 0.5, capPercent: 3 }, refused: null })),
@@ -92,7 +105,7 @@ async function step(e: ReturnType<typeof createEngine>, key: string) { await e.h
 
 describe('Coach reviews in the worker (coach plan Task 12f)', () => {
   it('planning writes the estimate and makes no model call; nothing runs until Start', async () => {
-    const f = daemon({ answers: [GOOD] });
+    const f = daemon({ answers: [GOOD], status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
     f.docs.set('reviews:r1', { id: 'r1', scope: { kind: 'thread', ids: ['t1'] }, state: 'planning' });
     const e = createEngine(f.io); await e.load();
     await step(e, 'reviews:r1');
@@ -153,6 +166,46 @@ describe('Coach reviews in the worker (coach plan Task 12f)', () => {
   });
 });
 
+describe('Coach reviews skip what the person left alone, and what a schedule started (review finding 4)', () => {
+  const conversations = (f: ReturnType<typeof daemon>) => f.io.getJson.mock.calls.map((c) => String(c[0])).filter((r) => r.includes('/conversation'));
+
+  it("a leave-alone project's transcript is never fetched, in a range, a project or a thread review", async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT }, t2: { sessionId: 's2', items: TRANSCRIPT } };
+    const f = daemon({ threads, settings: { leaveAlone: ['s2'] }, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    const range = { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() };
+    f.docs.set('reviews:a', { id: 'a', scope: range, state: 'planning' });
+    f.docs.set('reviews:b', { id: 'b', scope: { kind: 'project', ids: ['s2'] }, state: 'planning' });
+    f.docs.set('reviews:c', { id: 'c', scope: { kind: 'thread', ids: ['t2'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    for (const k of ['reviews:a', 'reviews:b', 'reviews:c']) await step(e, k);
+    expect(conversations(f).some((r) => r.includes('/t2/'))).toBe(false);
+    expect((f.docs.get('reviews:a') as { plan: { threads: string[] } }).plan.threads).toEqual(['t1']);
+    expect((f.docs.get('reviews:b') as { plan: { threads: string[] } }).plan.threads).toEqual([]);
+    expect((f.docs.get('reviews:c') as { plan: { threads: string[] } }).plan.threads).toEqual([]);
+  });
+
+  it('a schedule-started thread yields no candidate: the look back does not read it as the person', async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT, config: { runner: true, runnerPrompt: 'x' } }, t2: { sessionId: 's1', items: TRANSCRIPT, config: { roleRun: 'triage' } } };
+    const f = daemon({ threads, answers: [GOOD, GOOD] });
+    f.docs.set('reviews:lb', { id: 'lb', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, backfill: true, state: 'queued', plan: { threads: ['t1', 't2'], chunks: 2, estPercent: 0.1, fits: true } });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:lb');
+    const signals = f.docs.get('signals') as { prompts: unknown[] } | undefined;
+    expect(signals ? signals.prompts : []).toEqual([]);
+    expect(f.io.assist).not.toHaveBeenCalled();
+  });
+
+  it('a live prompt a schedule sent (source "schedule") yields no candidate', async () => {
+    const f = daemon({ answers: [JSON.stringify({ fit: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'x', action: { kind: 'compose', label: 'Try', text: 'y' } })] });
+    const e = createEngine(f.io); await e.load();
+    const BIGP = 'Pull last week returns by reason from the warehouse table. Chart them by week and by store. Compare them with the prior month and list the three biggest changes. Then email the summary to Sam with the chart attached. '.repeat(3);
+    await e.handle({ type: 'thread:prompt', terminalId: 't9', sessionId: 's1', at: NOW.toISOString(), source: 'schedule', text: BIGP });
+    await e.handle({ type: 'thread:turn', terminalId: 't9', sessionId: 's1', at: NOW.toISOString(), ms: 30_000 });
+    await e.idle();
+    expect(f.docs.has('candidates')).toBe(false);
+  });
+});
+
 // ── the web part ──────────────────────────────────────────────────────────────────────────
 afterEach(() => { cleanup(); });
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
@@ -208,6 +261,17 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     expect(report).toHaveTextContent('Ask for all parsers at once.');
   });
 
+  it('an estimate with an unknown cost shows "Cost unknown" and asks for the smaller scope first', async () => {
+    const plan = { threads: ['a', 'b', 'c'], chunks: 30, estPercent: 1.5, fits: null, costUnknown: true, smallerScope: { kind: 'thread', ids: ['a'] } };
+    const { View } = await boot({ 'reviews:r6': { id: 'r6', at: NOW.toISOString(), scope: { kind: 'project', ids: ['s1'] }, state: 'estimate', plan } });
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    expect(panel).toHaveTextContent('Cost unknown');
+    expect(panel).not.toHaveTextContent('about 1.5% of your weekly limit');
+    expect(within(panel).getByRole('button', { name: 'Start' })).toBeDisabled();
+    expect(within(panel).getByRole('button', { name: 'Review the newest 1 thread instead' })).toBeInTheDocument();
+  });
+
   it('the look back is offered once on the Coach screen; Start-first: it asks for an estimate', async () => {
     const { d, View } = await boot();
     render(<View />);
@@ -218,6 +282,38 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     expect(screen.queryByTestId('coach-lookback')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Look back at the last 30 days' }));
     await waitFor(() => expect([...d.docs.values()].some((v) => (v as { backfill?: boolean; state?: string }).backfill === true && (v as { state: string }).state === 'planning')).toBe(true));
+  });
+
+  it('Reset removes every review document (their quotes) and the chat document', async () => {
+    const done = { id: 'r1', at: NOW.toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [{ kind: 'handoff', quote: 'my private words', note: 'n' }], nextSteps: [] } };
+    const { d, View } = await boot({ 'reviews:r1': done, 'reviews:r2': { ...done, id: 'r2' }, chat: { turns: [{ role: 'user', text: 'secret', at: 'x' }] } });
+    render(<View />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, reset' }));
+    await waitFor(() => expect([...d.docs.keys()].filter((k) => k.startsWith('reviews:'))).toEqual([]));
+    await waitFor(() => expect(d.docs.has('chat')).toBe(false));
+    expect(JSON.stringify([...d.docs.values()])).not.toContain('my private words');
+  });
+
+  it('the 21st review prunes the oldest: at most 20 are kept', async () => {
+    const docs: Record<string, unknown> = {};
+    for (let i = 0; i < 20; i++) docs[`reviews:old${String(i).padStart(2, '0')}`] = { id: `old${i}`, at: new Date(NOW.getTime() - (40 - i) * 3600_000).toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [], nextSteps: [] } };
+    const { d, Tab } = await boot(docs);
+    render(<Tab terminalId="t1" sessionId="s1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review this thread' }));
+    await waitFor(() => expect([...d.docs.keys()].filter((k) => k.startsWith('reviews:'))).toHaveLength(20));
+    expect(d.docs.has('reviews:old00')).toBe(false);
+    expect(d.docs.has('reviews:old19')).toBe(true);
+    expect([...d.docs.values()].some((v) => (v as { state?: string }).state === 'planning')).toBe(true);
+  });
+
+  it('a review stopped by a restart offers Run again, which asks for a new estimate', async () => {
+    const { d, View } = await boot({ 'reviews:r5': { id: 'r5', at: NOW.toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'failed', error: 'Stopped when the Coach restarted — Run again', restartable: true, plan: { threads: ['t1'], chunks: 1, estPercent: 0.05, fits: true } } });
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    expect(panel).toHaveTextContent('Stopped when the Coach restarted');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Run again' }));
+    await waitFor(() => expect(d.docs.get('reviews:r5')).toMatchObject({ state: 'planning' }));
   });
 
   it('the thread menu has Review this thread', async () => {

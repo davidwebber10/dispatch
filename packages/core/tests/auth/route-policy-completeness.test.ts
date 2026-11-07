@@ -20,6 +20,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   // Coach plan (2026-11-07): the assist meter and share for a plugin's own key; push; usage and analytics reads.
   'GET /api/plugins/:id/assist/usage',
   'GET /api/plugins/:id/assist/share',
+  // Coach review fix (finding 1): the worker reads its own budget (writing it stays owner-only).
+  'GET /api/plugins/:id/budget',
   'POST /api/plugins/:id/notify',
   'GET /api/usage-limits/summary',
   'GET /api/analytics/summary',

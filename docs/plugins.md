@@ -254,7 +254,7 @@ The daemon raises one stream of events for every thread, whichever harness:
 | Event | When | Carries |
 | --- | --- | --- |
 | `thread:spawned` | a thread starts | `toolsAvailable` |
-| `thread:prompt` | a prompt went to the thread | `text` (with `read:prompts`), `textLength`, `source`: `user`, `coordinator`, `thread` (a peer) or `daemon` (an auto-resume) |
+| `thread:prompt` | a prompt went to the thread | `text` (with `read:prompts`), `textLength`, `source`: `user`, `coordinator`, `thread` (a peer), `daemon` (an auto-resume) or `schedule` (any prompt in a thread a schedule or a role started) |
 | `thread:tool` | the model called a tool | `tool`, `input` (with `read:prompts`), `inputLength` |
 | `thread:turn` | a turn ended | `ms`, `inputTokens`, `outputTokens`, `costUsd`, `outcome`, `summary`; `partial: true` when a CLI thread gave no usage |
 | `thread:status` | `report_status` | `state`, `summary`, `ask`, `blocker` |
@@ -295,22 +295,30 @@ judges in the browser should claim its result document before it calls, or every
 for the same call.
 
 **Metering.** Every call is a row, failed calls included: model, harness, account, tokens,
-cost (the harness's own figure, else priced from the tokens). The Plugins page shows the last
+cost (the harness's own figure, else priced from the tokens; an OpenRouter call with neither is
+priced at a conservative $15 / $75 per million input / output tokens and marked as an estimate, so
+the dollar budget still fills). The Plugins page shows the last
 7 days on the plugin's row. `GET /api/plugins/<id>/assist/usage?from&to` (the owner, or the
 plugin's own key) gives `{ calls, failed, inputTokens, outputTokens, costUsd, byModel }`; no
-`from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` gives the
-plugin's estimated share of that account's 5-hour and weekly windows: its price-weighted tokens
+`from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` (the owner, or
+the plugin's own key with `read:usage`) gives the plugin's estimated share of that account's 5-hour and weekly windows: its price-weighted tokens
 over every Dispatch token on the account in the window, times the window's used percent. Usage
 outside Dispatch is not seen, so the estimate reads high.
 
 **Budget.** `PUT /api/plugins/<id>/budget { percentWeekly?, usdWeekly? }` (owner only; `null`
-clears one) caps the plugin's model calls: at most `percentWeekly` % (0.1 to 100) of the weekly
+clears one; `GET` also answers the plugin's own key, so its worker can plan by it) caps the plugin's model calls: at most `percentWeekly` % (0.1 to 100) of the weekly
 limit of the account a call runs on, and at most `usdWeekly` dollars over 7 days on OpenRouter.
 At the cap, or with the account at 90% of its 5-hour window, assist answers 429
 `{ error: 'budget', usedPercent, capPercent, window }` (`usedUsd`, `capUsd` on OpenRouter).
 Calls in flight count as reserved at their `maxTokens`. Each answer carries
-`X-Budget-Used-Percent` and `X-Budget-Cap-Percent` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
+`X-Budget-Used-Percent`, `X-Budget-Cap-Percent` and `X-Budget-Resets-At` (`X-Budget-Used-Usd`, `X-Budget-Cap-Usd`), so
 a caller can step down before it is refused. No budget: no cap.
+**Fail safe:** with a percent budget but no weekly figure for the account (no usage data yet, a
+poll gap after a restart), the cap becomes tokens, never unlimited: `percentWeekly` x 50,000
+tokens over the plugin's subscription calls of the last 7 days (3% = 150,000; input, output and
+cache writes count in full, a cache read counts one tenth). The answer then carries
+`X-Budget-Used-Tokens` and `X-Budget-Cap-Tokens`, the share route adds `fallback: { usedTokens,
+capTokens }`, and at the cap assist answers 429 `{ error: 'budget', window: 'unknown', usedTokens, capTokens }`.
 
 ## The worker
 
@@ -345,15 +353,20 @@ A bundled plugin updates with Dispatch, cannot be removed, and is not edited in 
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
 `"enabledByDefault": true`, as the Coach's does (owner, 2026-11-07: improving is the baseline;
-its welcome card comes first and has Turn off, and its model calls stay under its budget). A local plugin made with New plugin… or Copy to local… starts
+its welcome card comes first and has Turn off, and its model calls stay under its budget). A
+manifest may also say `"budget": { "percentWeekly": 3, "usdWeekly": 5 }`: that budget holds from
+the plugin's first call until the owner sets one (`PUT /budget`; an owner's `null` stays). A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).
 
 The Coach (`packages/plugins/coach`) is also a worked example of the plugin features: its worker
 (`worker/index.mjs`, logic in `lib/engine.mjs`) reads the thread events, runs rules over them and
 asks `assist` with a harness and a model per tier, reading the `X-Budget-*` headers to step down
-before the budget refuses; its web part fills the `composer.before` slot, a right-column tab, a
+before the budget refuses (it also reads `GET /budget` and the share at start, every 15 minutes,
+on a settings change, and before it settles on no call, so a reset or a raised budget resumes it); its web part fills the `composer.before` slot, a right-column tab, a
 view, a settings section and two commands, and opens the schedule and new-thread dialogs through
-`d.actions`. It sets its own budget (`PUT /budget`) from its settings, and its weekly job pushes
+`d.actions`. Its default budget is in `plugin.json`; the settings write a change (`PUT /budget`).
+Its worker makes no model call before the person has seen the welcome card and the first week has
+passed (the rules still collect, at no cost), nor during a mute or quiet hours; and its weekly job pushes
 the recap through `notify:push` only when the person turns that on. Its documents: `signals`,
 `candidates`, `cards`, `cardState`, `cadence`, `memory`, `status`, `measures`, `recap`, `chat`,
 and `reviews:<id>` (one per review job: the web part writes the request and Start, the worker
