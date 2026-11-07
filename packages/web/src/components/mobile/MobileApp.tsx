@@ -1,6 +1,7 @@
 import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { Gear, CaretLeft, CaretRight, Plus, Folders, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
+import { Gear, CaretLeft, CaretRight, Plus, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
+import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { AlertBell } from '../layout/AlertBell';
@@ -506,7 +507,7 @@ export function MobileApp() {
         <div data-testid="bottom-tabs" style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
               whichever list it opens to. */}
-          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? TerminalWindow : Folders], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [typeof bottomTab, string, Icon])[]).map(([key, label, Icon]) => {
+          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [typeof bottomTab, string, Icon])[]).map(([key, label, Icon]) => {
             const on = bottomTab === key || (key === 'plugins' && bottomTab.startsWith('plugin:') && !promotedViews.some((v) => v.key === bottomTab));
             return (
               <button key={key} onClick={() => onTab(key)}

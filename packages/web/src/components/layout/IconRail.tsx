@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ChartBar, ChatCircleDots, Eye, Gear, Rows, Folders } from '@phosphor-icons/react';
+import { ChartBar, ChatCircleDots, Eye, Gear } from '@phosphor-icons/react';
+import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
 import { useProjectsView } from '../../stores/projectsView';
 import type { Icon } from '@phosphor-icons/react';
 import { BrandSwitcher } from './BrandSwitcher';
@@ -54,7 +55,7 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
 }
 
 const NAV: { view: View; label: string; icon: Icon }[] = [
-  { view: 'workspace', label: 'Threads', icon: Rows },
+  { view: 'workspace', label: 'Threads', icon: THREADS_ICON },
   { view: 'chat', label: 'Chat', icon: ChatCircleDots },
   { view: 'analytics', label: 'Analytics', icon: ChartBar },
 ];
@@ -95,7 +96,7 @@ export function IconRail() {
       padding: '10px 0 8px', gap: 4, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)',
     }}>
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
-      {NAV.map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? Rows : Folders } : n).map((n) => (
+      {NAV.map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}
