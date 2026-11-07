@@ -528,4 +528,8 @@ function initializeSchema(db: Database.Database): void {
       updated_at TEXT NOT NULL
     );
   `));
+  // An assist cost the daemon estimated (an OpenRouter model with no reported cost and no known price).
+  migrate(db, '023-plugin-assist-estimate', () => db.exec(`
+    ALTER TABLE plugin_assist ADD COLUMN cost_estimated INTEGER DEFAULT 0;
+  `));
 }

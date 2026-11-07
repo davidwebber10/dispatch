@@ -195,4 +195,16 @@ describe('plugin budget (coach plan, Task 4)', () => {
     expect(r.body).toMatchObject({ error: 'budget', window: 'unknown', capTokens: cap });
     expect(calls).toHaveLength(n);
   });
+  it('an OpenRouter answer with no cost and an unknown model is metered at a conservative estimate, so the dollar cap still fills', async () => {
+    await request(app).put('/api/plugins/coach/budget').send({ usdWeekly: 0.05 });
+    app = build({ available: async () => true, run: async (req) => { calls.push(req); return { ...answer(req), model: 'mystery/model-x', costUsd: null, usage: { inputTokens: 1000, outputTokens: 1000, cacheReadTokens: 0, cacheCreateTokens: 0 } }; } });
+    expect((await ask({ harness: 'openrouter', model: 'mystery/model-x' })).status).toBe(200);
+    const row = db.prepare('SELECT cost_usd AS c, cost_estimated AS e FROM plugin_assist WHERE plugin_id = ?').get('coach') as { c: number | null; e: number };
+    // 1000 in at $15/M and 1000 out at $75/M.
+    expect(row.c).toBeCloseTo(0.09, 6);
+    expect(row.e).toBe(1);
+    const r = await ask({ harness: 'openrouter', model: 'mystery/model-x' });
+    expect(r.status).toBe(429);
+    expect(r.body).toMatchObject({ error: 'budget', capUsd: 0.05 });
+  });
 });

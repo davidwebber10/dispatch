@@ -295,7 +295,9 @@ judges in the browser should claim its result document before it calls, or every
 for the same call.
 
 **Metering.** Every call is a row, failed calls included: model, harness, account, tokens,
-cost (the harness's own figure, else priced from the tokens). The Plugins page shows the last
+cost (the harness's own figure, else priced from the tokens; an OpenRouter call with neither is
+priced at a conservative $15 / $75 per million input / output tokens and marked as an estimate, so
+the dollar budget still fills). The Plugins page shows the last
 7 days on the plugin's row. `GET /api/plugins/<id>/assist/usage?from&to` (the owner, or the
 plugin's own key) gives `{ calls, failed, inputTokens, outputTokens, costUsd, byModel }`; no
 `from` is the last 7 days. `GET /api/plugins/<id>/assist/share?accountId&harness` (the owner, or

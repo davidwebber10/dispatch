@@ -100,13 +100,15 @@ export interface AssistRecord {
   cacheReadTokens: number;
   cacheCreateTokens: number;
   costUsd: number | null;
+  /** True when the daemon estimated `costUsd` (no reported cost, no known price). */
+  costEstimated?: boolean;
   ms: number;
   ok: boolean;
 }
 export function recordAssist(db: Database.Database, pluginId: string, r: AssistRecord): void {
-  db.prepare(`INSERT INTO plugin_assist (plugin_id, at, model, harness, account_id, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd, ms, ok)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(pluginId, r.at ?? new Date().toISOString(), r.model, r.harness, r.accountId, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreateTokens, r.costUsd, r.ms, r.ok ? 1 : 0);
+  db.prepare(`INSERT INTO plugin_assist (plugin_id, at, model, harness, account_id, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd, cost_estimated, ms, ok)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(pluginId, r.at ?? new Date().toISOString(), r.model, r.harness, r.accountId, r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreateTokens, r.costUsd, r.costEstimated ? 1 : 0, r.ms, r.ok ? 1 : 0);
 }
 
 export interface AssistUsageByModel { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }

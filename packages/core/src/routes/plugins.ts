@@ -72,18 +72,30 @@ function principalHeaders(req: Request): Record<string, string> {
 /** Headers that never cross to the worker: the caller's credentials and the hop-by-hop set. */
 const DROPPED_HEADERS = new Set(['authorization', 'cookie', 'host', 'connection', 'keep-alive', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'content-length', 'x-dispatch-principal', 'x-dispatch-session']);
 
+/**
+ * The price an OpenRouter call with no reported cost and an unknown model is metered at, in dollars
+ * per million tokens: high on purpose (Opus list price), so the dollar budget fills early, never late.
+ */
+export const ESTIMATE_PRICE = Object.freeze({ input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 });
+
 /** One assist answer as a meter row: the harness's cost, else priced from the tokens when the model is known. */
 function meterOf(result: AssistResult, asked: string, started: number, account?: string): pluginData.AssistRecord {
   const u = result.usage;
   const cacheReadTokens = u.cacheReadTokens ?? 0;
   const cacheCreateTokens = u.cacheCreateTokens ?? 0;
-  const costUsd = typeof result.costUsd === 'number' ? result.costUsd
+  let costUsd = typeof result.costUsd === 'number' ? result.costUsd
     : notionalValueUsd({ model: result.model, input: u.inputTokens, output: u.outputTokens, cacheRead: cacheReadTokens, cacheCreate: cacheCreateTokens });
+  // OpenRouter's cap is dollars: a call with no cost must still count, at a conservative estimate.
+  let costEstimated = false;
+  if (costUsd === null && (result.harness ?? asked) === 'openrouter') {
+    costUsd = (u.inputTokens * ESTIMATE_PRICE.input + u.outputTokens * ESTIMATE_PRICE.output + cacheReadTokens * ESTIMATE_PRICE.cacheRead + cacheCreateTokens * ESTIMATE_PRICE.cacheCreate) / 1e6;
+    costEstimated = true;
+  }
   return {
     // The account that ran: the answer's, else the one the route resolved (never for OpenRouter, which has none).
     model: result.model, harness: result.harness ?? asked, accountId: result.accountId ?? (result.harness === 'openrouter' ? null : account ?? null),
     inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens, cacheCreateTokens,
-    costUsd, ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
+    costUsd, ...(costEstimated ? { costEstimated } : {}), ms: typeof result.ms === 'number' ? result.ms : Date.now() - started, ok: true,
   };
 }
 
