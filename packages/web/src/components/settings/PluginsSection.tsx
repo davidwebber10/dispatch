@@ -80,6 +80,8 @@ export function PluginsSection() {
   }, [logsOf]);
   const [err, setErr] = useState('');
   const [removing, setRemoving] = useState<PluginRow | null>(null);
+  // Off by default: kept data can be deleted later, deleted data cannot come back (2026-11-07).
+  const [deleteData, setDeleteData] = useState(false);
   const [copying, setCopying] = useState<{ id: string; newId: string } | null>(null);
   const [safe, setSafe] = useState(isSafeMode());
   const [safeTouched, setSafeTouched] = useState(false);
@@ -125,7 +127,7 @@ export function PluginsSection() {
     if (!name) { setErr('Give the plugin a name.'); return; }
     void run(id, async () => { await api.scaffoldPlugin(id, name); setCreating(false); setNewId(''); setNewName(''); });
   };
-  const remove = (r: PluginRow) => { setRemoving(null); void run(r.id, async () => { await api.removePlugin(r.id); usePluginRegistry.getState().unregister(r.id); }); };
+  const remove = (r: PluginRow) => { setRemoving(null); void run(r.id, async () => { await api.removePlugin(r.id, { keepData: !deleteData }); usePluginRegistry.getState().unregister(r.id); }); };
   const promote = (key: string, on: boolean) => {
     const next = on ? [...promoted.filter((k) => k !== key), key] : promoted.filter((k) => k !== key);
     usePluginRegistry.getState().setPromoted(next);
@@ -204,7 +206,7 @@ export function PluginsSection() {
           <button type="button" style={ghostBtn} disabled={busy === r.id || !!r.error} onClick={() => void toggle(r)}>{r.enabled ? 'Disable' : 'Enable'}</button>
           <button type="button" style={ghostBtn} disabled={busy === r.id || !r.enabled} onClick={() => void reload(r)}>Reload</button>
           <button type="button" style={ghostBtn} onClick={() => void copyText(`~/.dispatch/plugins/${r.id}`).then(() => useHint.getState().show('Path copied')).catch(() => {})}>Copy path</button>
-          {!r.install && !r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => setRemoving(r)}>Remove</button>}
+          {!r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={busy === r.id} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</button>}
           {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
         </div>
         {copying?.id === r.id && (
@@ -351,8 +353,13 @@ export function PluginsSection() {
         <div style={{ ...note, marginTop: 8 }}>The last 200 lines of plugins/{logsOf}.log in the daemon's log folder, refreshed every two seconds.</div>
       </Modal>
       <ConfirmModal open={removing !== null} title="Remove this plugin?" danger confirmLabel="Remove plugin"
-        message={removing ? `The folder ~/.dispatch/plugins/${removing.id} and everything in it will be deleted.` : ''}
-        onConfirm={() => removing && remove(removing)} onCancel={() => setRemoving(null)} />
+        message={removing ? `The folder ~/.dispatch/plugins/${removing.id} will be deleted. Its saved data and settings are kept, and come back if you install it again.` : ''}
+        onConfirm={() => removing && remove(removing)} onCancel={() => setRemoving(null)}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, color: 'var(--color-text-primary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)} />
+          Also delete its data and settings
+        </label>
+      </ConfirmModal>
     </div>
   );
 }

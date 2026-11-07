@@ -44,6 +44,20 @@ describe('plugin storage routes (2026-11-07)', () => {
   });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
+  it('removing a plugin with ?keepData=1 keeps its documents and settings for a reinstall; without it they are deleted (2026-11-07)', async () => {
+    await put({}, 'open', 'pins', { ids: ['a'] }).expect(200);
+    await request(app).put('/api/plugins/open/settings').set('Content-Type', 'application/json').send(JSON.stringify({ value: { style: 'quiet' } })).expect(200);
+    await request(app).delete('/api/plugins/open?keepData=1').expect(204);
+    plugin('open', ['threads:read-storage', 'threads:write-storage']);
+    await request(app).post('/api/plugins/open/enable').expect(200);
+    expect((await request(app).get('/api/plugins/open/data/pins')).body.value).toEqual({ ids: ['a'] });
+    expect((await request(app).get('/api/plugins/open/settings')).body.value).toEqual({ style: 'quiet' });
+    await request(app).delete('/api/plugins/open').expect(204);
+    plugin('open', ['threads:read-storage', 'threads:write-storage']);
+    await request(app).post('/api/plugins/open/enable').expect(200);
+    await request(app).get('/api/plugins/open/data/pins').expect(404);
+  });
+
   it('the owner lists, writes, reads and deletes a document; unknown ids and keys are 404', async () => {
     expect((await request(app).get('/api/plugins/open/data')).body).toEqual({ docs: [] });
     const w = await put({}, 'open', 'pins', { ids: ['a'] });

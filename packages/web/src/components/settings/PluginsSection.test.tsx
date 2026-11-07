@@ -80,8 +80,29 @@ describe('Settings → Plugins (2026-11-07)', () => {
     fireEvent.click(within(item).getByRole('button', { name: 'Remove' }));
     expect(api.removePlugin).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
-    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p'));
+    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: true }));
     await waitFor(() => expect(screen.queryByTestId('plugin-row-p')).toBeNull());
+  });
+
+  it('a plugin installed from a marketplace has Remove too; a bundled one does not (2026-11-07)', async () => {
+    rows = [row('shop', { install: { marketplace: 'https://github.com/example-org/plugins.git', version: '1.0.0', sha256: 'x', installedAt: 't' } }), row('coach', { bundled: true })];
+    render(<PluginsSection />);
+    expect(within(await screen.findByTestId('plugin-row-shop')).getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('plugin-row-coach')).queryByRole('button', { name: 'Remove' })).toBeNull();
+  });
+
+  it('Remove keeps the plugin data unless you tick "Also delete its data" (2026-11-07)', async () => {
+    rows = [row('p'), row('q')];
+    render(<PluginsSection />);
+    fireEvent.click(within(await screen.findByTestId('plugin-row-p')).getByRole('button', { name: 'Remove' }));
+    const box = screen.getByRole('checkbox', { name: /Also delete its data/ });
+    expect(box).not.toBeChecked();
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/kept.*install it again/i);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove plugin' }));
+    await waitFor(() => expect(api.removePlugin).toHaveBeenCalledWith('p', { keepData: false }));
+    fireEvent.click(within(await screen.findByTestId('plugin-row-q')).getByRole('button', { name: 'Remove' }));
+    expect(screen.getByRole('checkbox', { name: /Also delete its data/ })).not.toBeChecked();
   });
 
   it('a broken plugin shows its error, and a plugin whose bundle failed shows that', async () => {

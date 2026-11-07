@@ -120,7 +120,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   });
 
   router.delete('/plugins/:id', ownerOnlyStrict, (req, res) => {
-    try { plugins.remove(req.params.id); pluginData.clearPlugin(db, req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
+    // ?keepData=1 keeps the plugin's documents, settings and files, so a reinstall finds them (owner, 2026-11-07).
+    try { plugins.remove(req.params.id); if (req.query.keepData !== '1') pluginData.clearPlugin(db, req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
   });
 
   // ── storage and settings (spec section 5) ──────────────────────────────────────────────

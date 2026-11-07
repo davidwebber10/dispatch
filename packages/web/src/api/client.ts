@@ -408,7 +408,7 @@ export const api = {
   enablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/enable`, { method: 'POST' }),
   disablePlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/disable`, { method: 'POST' }),
   reloadPlugin: (id: string) => req<PluginRow>(`/api/plugins/${encodeURIComponent(id)}/reload`, { method: 'POST' }),
-  removePlugin: (id: string) => req<void>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  removePlugin: (id: string, opts: { keepData?: boolean } = {}) => req<void>(`/api/plugins/${encodeURIComponent(id)}${opts.keepData ? '?keepData=1' : ''}`, { method: 'DELETE' }),
   pluginAssist: (id: string, body: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) => req<{ text: string; usage: { inputTokens: number; outputTokens: number }; ms: number; model: string }>(`/api/plugins/${encodeURIComponent(id)}/assist`, { method: 'POST', body: JSON.stringify(body) }),
   pluginLogs: async (id: string, lines = 200): Promise<string> => {
     const res = await fetch(apiPath(`/api/plugins/${encodeURIComponent(id)}/logs?lines=${lines}`), { cache: 'no-store' });
