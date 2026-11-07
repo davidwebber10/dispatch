@@ -157,7 +157,8 @@ describe('Coach chat in the app (coach plan Task 12e)', () => {
     render(<second.View />);
     fireEvent.click(await screen.findByRole('button', { name: 'Reset' }));
     fireEvent.click(screen.getByRole('button', { name: 'Yes, reset' }));
-    await waitFor(() => expect((second.d.docs.get('chat') as { turns: unknown[] }).turns).toEqual([]));
+    // Reset removes the chat document itself (review finding 7).
+    await waitFor(() => expect(second.d.docs.has('chat')).toBe(false));
   });
 });
 

@@ -284,6 +284,29 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     await waitFor(() => expect([...d.docs.values()].some((v) => (v as { backfill?: boolean; state?: string }).backfill === true && (v as { state: string }).state === 'planning')).toBe(true));
   });
 
+  it('Reset removes every review document (their quotes) and the chat document', async () => {
+    const done = { id: 'r1', at: NOW.toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [{ kind: 'handoff', quote: 'my private words', note: 'n' }], nextSteps: [] } };
+    const { d, View } = await boot({ 'reviews:r1': done, 'reviews:r2': { ...done, id: 'r2' }, chat: { turns: [{ role: 'user', text: 'secret', at: 'x' }] } });
+    render(<View />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, reset' }));
+    await waitFor(() => expect([...d.docs.keys()].filter((k) => k.startsWith('reviews:'))).toEqual([]));
+    await waitFor(() => expect(d.docs.has('chat')).toBe(false));
+    expect(JSON.stringify([...d.docs.values()])).not.toContain('my private words');
+  });
+
+  it('the 21st review prunes the oldest: at most 20 are kept', async () => {
+    const docs: Record<string, unknown> = {};
+    for (let i = 0; i < 20; i++) docs[`reviews:old${String(i).padStart(2, '0')}`] = { id: `old${i}`, at: new Date(NOW.getTime() - (40 - i) * 3600_000).toISOString(), scope: { kind: 'thread', ids: ['t1'] }, state: 'done', report: { summary: 'x', findings: [], nextSteps: [] } };
+    const { d, Tab } = await boot(docs);
+    render(<Tab terminalId="t1" sessionId="s1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review this thread' }));
+    await waitFor(() => expect([...d.docs.keys()].filter((k) => k.startsWith('reviews:'))).toHaveLength(20));
+    expect(d.docs.has('reviews:old00')).toBe(false);
+    expect(d.docs.has('reviews:old19')).toBe(true);
+    expect([...d.docs.values()].some((v) => (v as { state?: string }).state === 'planning')).toBe(true);
+  });
+
   it('the thread menu has Review this thread', async () => {
     const { d } = await boot();
     const menu = (d.registered.coach as Record<string, { id: string; label: string; onPick: (x: unknown) => void }[]>).threadMenu;

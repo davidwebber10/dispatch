@@ -20,6 +20,8 @@ import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, edit
 const DETECTOR_OF_THRESHOLD = { skillFit: 'skill-fit', pluginFit: 'plugin-fit', repeatedPrompt: 'repeated-prompt', serialIndependent: 'serial-independent', idleWait: 'idle-wait', stepByStep: 'step-by-step', noPlanBigTask: 'no-plan-big-task', fastApprove: 'fast-approve', narrowBreadth: 'narrow-breadth' };
 const MEASURES = { ambition: 'AMBITION', delegation: 'DELEGATION', reuse: 'REUSE', judgment: 'JUDGMENT', breadth: 'BREADTH' };
 const CLOSED = new Set(['dismissed', 'used', 'down']);
+/** The Coach keeps at most this many review documents (review finding 7). */
+const MAX_REVIEWS = 20;
 const WELCOME = Object.freeze({
   id: 'welcome', type: 'welcome', measure: null, terminalId: null,
   headline: 'Get one small tip at a time',
@@ -391,8 +393,10 @@ export function createCoach(d, deps = {}) {
       if (doc) await storage.set(PLUGIN, key, stripExcerpts(doc));
     }
     await storage.remove(PLUGIN, 'signals').catch(() => {});
-    await saveChat({ turns: [] });
-    store.setState({ signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
+    // The chat and every review (their quotes are the person's words) go too.
+    await storage.remove(PLUGIN, 'chat').catch(() => {});
+    for (const key of await reviewKeys()) await storage.remove(PLUGIN, key).catch(() => {});
+    store.setState({ chat: { turns: [] }, reviews: {}, reviewOpen: null, signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
   }
 
   function Knows() {
@@ -476,9 +480,12 @@ export function createCoach(d, deps = {}) {
   function ReviewButton({ scope, label }) {
     return h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(scope); } }, label);
   }
-  async function loadReviews() {
+  async function reviewKeys() {
     const list = await storage.list(PLUGIN).catch(() => []);
-    const keys = (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+    return (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+  }
+  async function loadReviews() {
+    const keys = await reviewKeys();
     const docs = await Promise.all(keys.map((k) => storage.get(PLUGIN, k, null).catch(() => null)));
     const reviews = {};
     keys.forEach((k, i) => { if (docs[i]) reviews[k] = docs[i]; });
@@ -491,7 +498,20 @@ export function createCoach(d, deps = {}) {
     const doc = { id, scope, state: 'planning', at: now().toISOString(), ...(opts.backfill ? { backfill: true } : {}) };
     store.setState({ reviews: { ...store.getState().reviews, [key]: doc }, reviewOpen: key });
     await storage.set(PLUGIN, key, doc);
+    await pruneReviews(key);
     return key;
+  }
+  /** At most MAX_REVIEWS review documents: the oldest go first; one still running is kept. */
+  async function pruneReviews(keep) {
+    const keys = await reviewKeys();
+    if (keys.length <= MAX_REVIEWS) return;
+    const docs = await Promise.all(keys.map(async (k) => ({ k, doc: store.getState().reviews[k] || (await storage.get(PLUGIN, k, null).catch(() => null)) })));
+    const busy = new Set(['planning', 'queued', 'reading', 'writing']);
+    const old = docs.filter((x) => x.k !== keep && !(x.doc && busy.has(x.doc.state)))
+      .sort((a, b) => String((a.doc && a.doc.at) || '').localeCompare(String((b.doc && b.doc.at) || '')));
+    const drop = old.slice(0, keys.length - MAX_REVIEWS).map((x) => x.k);
+    for (const k of drop) await storage.remove(PLUGIN, k).catch(() => {});
+    if (drop.length) { const next = { ...store.getState().reviews }; for (const k of drop) delete next[k]; store.setState({ reviews: next }); }
   }
   async function patchReview(key, patch) {
     const cur = store.getState().reviews[key] || (await storage.get(PLUGIN, key, null)) || {};

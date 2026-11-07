@@ -238,7 +238,9 @@ export function createEngine(io) {
   }
   async function writeReview(key, patch) {
     // Read again first: the person may have pressed Cancel since.
-    const cur = (await io.getDoc(key, null)) || {};
+    const cur = await io.getDoc(key, null);
+    // Gone (Reset removed it): stop, and never write it back.
+    if (!cur) return { cancelled: true };
     if (cur.cancel && patch.state !== 'cancelled') return { ...cur, cancelled: true };
     const next = { ...cur, ...patch, updatedAt: now().toISOString() };
     await io.putDoc(key, next);
