@@ -1,60 +1,45 @@
 import { CaretRight } from '@phosphor-icons/react';
-import { usePluginRegistry, usePluginViews, useContributions } from '../../plugins/registry';
+import { usePluginRegistry, usePluginViews } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 
 /**
- * The phone's Plugins tab (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.5): every
- * plugin screen as a row; a tap opens it in place. Up to two screens the owner promoted in
- * Settings → Plugins have tabs of their own and do not repeat here.
+ * The phone's Plugins tab (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.5): a plain
+ * list of plugin screens. A tap opens the screen under a thread-style header (back arrow, its name).
+ * Up to two screens the owner promoted in Settings → Plugins have tabs of their own and do not
+ * repeat here. Plugin commands live in the command palette, not here.
  */
 export function PluginsTab({ onOpen }: { onOpen: (viewKey: string) => void }) {
   const views = usePluginViews();
   const manifests = usePluginRegistry((s) => s.manifests);
   const promoted = usePluginRegistry((s) => s.promoted);
   const rows = views.filter((v) => !promoted.includes(v.key));
-  const commands = useContributions('commands');
-  const nameOf = (plugin: string) => manifests.find((m) => m.id === plugin)?.name ?? plugin;
+  // A second line only when the plugin describes itself with something other than the row's name.
+  const subtitleOf = (plugin: string, label: string) => {
+    const d = manifests.find((m) => m.id === plugin)?.description?.trim();
+    return d && d.toLowerCase() !== label.trim().toLowerCase() ? d : null;
+  };
+  if (rows.length === 0) {
+    return <div style={{ padding: '20px 18px', fontSize: 14, color: 'var(--color-text-tertiary)' }}>No plugin has a screen yet.</div>;
+  }
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '4px 14px 16px' }}>
-      <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '18px 4px 8px' }}>PLUGIN SCREENS</div>
-      {rows.length === 0 ? (
-        <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-tertiary)', padding: '4px 4px 14px' }}>
-          No plugin screens yet. A plugin that adds one shows here. Settings → Plugins lists what is installed.
-        </div>
-      ) : (
-        <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-          {rows.map((v, i) => {
-            const Icon = pluginIcon(v.icon);
-            return (
-              <button key={v.key} type="button" onClick={() => onOpen(v.key)}
-                style={{ display: 'flex', alignItems: 'center', gap: 13, width: '100%', textAlign: 'left', padding: '12px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
-                <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' }}>
-                  <Icon size={17} />
-                </span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{v.label}</span>
-                  <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{nameOf(v.plugin)}</span>
-                </span>
-                <CaretRight size={18} color="var(--color-text-tertiary)" />
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {commands.length > 0 && (
-        <>
-          <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '18px 4px 8px' }}>COMMANDS</div>
-          <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            {commands.map((c, i) => (
-              <button key={`${c.plugin}:${c.id}`} type="button" onClick={() => { try { c.run(); } catch (e) { console.error('[command]', e); } }}
-                style={{ display: 'flex', alignItems: 'center', gap: 13, width: '100%', textAlign: 'left', padding: '12px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
-                <span style={{ flex: 1, minWidth: 0, fontSize: 15, color: 'var(--color-text-primary)' }}>{c.label}</span>
-                <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{nameOf(c.plugin)}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
+      {rows.map((v) => {
+        const Icon = pluginIcon(v.icon);
+        const sub = subtitleOf(v.plugin, v.label);
+        return (
+          <button key={v.key} type="button" onClick={() => onOpen(v.key)}
+            style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
+            <span aria-hidden style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' }}>
+              <Icon size={17} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.label}</span>
+              {sub && <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>}
+            </span>
+            <CaretRight size={18} color="var(--color-text-tertiary)" />
+          </button>
+        );
+      })}
     </div>
   );
 }
