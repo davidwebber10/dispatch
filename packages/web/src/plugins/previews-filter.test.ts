@@ -35,3 +35,13 @@ describe('Previews history: filter by project and search (2026-11-07)', () => {
     expect(threadsWithPreviews(items, 's2').map((t) => t.id)).toEqual(['t3', 't2']);
   });
 });
+
+describe('Previews leaves the thread header alone (2026-11-07)', () => {
+  it('registers no thread header button: a thread reaches its previews from the shelf and the thread menu', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../plugins/previews/web.js'), 'utf8');
+    expect(src).not.toContain("slot: 'thread.header.actions'");
+    expect(src).toContain("slot: 'project.header.actions'");
+  });
+});

@@ -239,7 +239,7 @@ export default function activate(d) {
       n > 0 && h('span', { 'aria-label': `${n} new previews`, style: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, padding: '0 5px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10.5px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, n > 99 ? '99+' : n));
   }
   const ProjectEye = ({ session }) => h(Eye, { sessionId: session ? session.id : null });
-  const ThreadEye = ({ terminal, floating }) => h(Eye, { sessionId: terminal ? terminal.sessionId : null, floating: !!floating });
+  // No thread header button (2026-11-07): a thread reaches its previews from the shelf and the thread menu.
 
   d.register(ID, {
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
@@ -247,7 +247,6 @@ export default function activate(d) {
     threadMenu: [{ id: 'open', label: 'Previews', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId) }],
     slots: [
       { id: 'project-eye', slot: 'project.header.actions', Component: ProjectEye },
-      { id: 'thread-eye', slot: 'thread.header.actions', Component: ThreadEye },
       { id: 'sheet', slot: 'app.overlay', Component: Sheet },
     ],
   });

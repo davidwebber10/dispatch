@@ -401,7 +401,7 @@ export function MobileApp() {
           </button>
           )
         )}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
           <UsageChip variant="phone" only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli' } : null} />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
