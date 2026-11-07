@@ -4,7 +4,7 @@ import { PillComposer } from './PillComposer';
 import { usePluginRegistry } from '../../plugins/registry';
 
 const dictation = (over: Record<string, unknown> = {}) => ({
-  state: 'idle', error: null, start: vi.fn(), stop: vi.fn(), cancel: vi.fn(), reset: vi.fn(), getAnalyser: () => null, ...over,
+  state: 'idle', error: null, progress: {}, recordingId: null, start: vi.fn(), retry: vi.fn(), insert: vi.fn(), stop: vi.fn(), cancel: vi.fn(), reset: vi.fn(), getAnalyser: () => null, ...over,
 }) as never;
 
 const base = { value: '', onChange: vi.fn(), onSend: vi.fn(), canSend: false, placeholder: 'Message…', onAddFile: vi.fn(), sttConfigured: true };
@@ -18,9 +18,20 @@ describe('PillComposer', () => {
     expect(screen.getByTestId('pill-composer')).not.toContainElement(alert);
     expect(screen.getByPlaceholderText('Message…')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect((d as { start: ReturnType<typeof vi.fn> }).start).toHaveBeenCalled();
+    expect((d as { retry: ReturnType<typeof vi.fn> }).retry).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Recordings' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect((d as { reset: ReturnType<typeof vi.fn> }).reset).toHaveBeenCalled();
+  });
+
+  it('a failed transcription with a kept recording: Retry sends the same recording, Recordings opens the sheet', async () => {
+    const d = dictation({ state: 'error', error: 'Network error: the upload did not reach Dispatch. The recording is kept.', recordingId: 'r1' });
+    render(<PillComposer {...base} dictation={d} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect((d as { retry: ReturnType<typeof vi.fn> }).retry).toHaveBeenCalled();
+    expect((d as { start: ReturnType<typeof vi.fn> }).start).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recordings' }));
+    expect(await screen.findByRole('dialog', { name: 'Recordings' })).toBeInTheDocument();
   });
 
   it('the send key is the theme accent once there is something to send', () => {

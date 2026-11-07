@@ -5,6 +5,7 @@ import { ArrowUp, Microphone, Stop } from '@phosphor-icons/react';
 import type { Dictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
+import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { useUI } from '../../stores/ui';
 
 /**
@@ -87,6 +88,7 @@ export function PillComposer({
   // the box (a long message squeezed in beside the keys wrapped into a column, 2026-11-05).
   const recording = dictation.state === 'recording' || dictation.state === 'uploading' || dictation.state === 'transcribing';
   const failed = dictation.state === 'error';
+  const [recordingsOpen, setRecordingsOpen] = useState(false);
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
   // Once there is text, it gets its own full-width line above the + / mic / send row (2026-11-05:
   // inline, a wrapped message sat between the keys with an odd uneven margin). One grid with
@@ -153,10 +155,13 @@ export function PillComposer({
     {failed && (
       <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0 6px 8px', fontSize: 13, lineHeight: 1.4 }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-status-red)' }}>{dictation.error}</span>
-        <button type="button" onClick={() => void dictation.start()} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+        {/* Retry sends the SAME saved recording when there is one (2026-11-07); it records anew only when there is none. */}
+        <button type="button" onClick={() => void dictation.retry()} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+        {dictation.recordingId && <button type="button" onClick={() => setRecordingsOpen(true)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Recordings</button>}
         <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
       </div>
     )}
+    <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
