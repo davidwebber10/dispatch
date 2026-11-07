@@ -10,6 +10,7 @@ import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
+import { Marquee } from '../common/Marquee';
 import type { Icon } from '@phosphor-icons/react';
 import { usePluginRegistry, usePromotedViews, anyBadge, useInspectorTabs } from '../../plugins/registry';
 import { pluginIcon, tabIcon } from '../../plugins/sdk';
@@ -378,7 +379,7 @@ export function MobileApp() {
                 <CaretLeft size={22} weight="bold" />
               </button>
               <div data-testid="thread-title" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-                <span style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{leafTab.label}</span>
+                <Marquee text={leafTab.label} style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)' }} />
                 <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: statusColor, marginRight: 5, verticalAlign: 1 }} />
                   {leafAccount ? shortAccountLabel(leafAccount.label) : ''}
