@@ -24,6 +24,7 @@ import { consumePageTicks, shouldPtyScroll } from '../../lib/ptyWheel';
 import { findTerminal, useTabs } from '../../stores/tabs';
 import { DocViewer } from '../endless/DocViewer';
 import { useThreadDocChips } from '../threadDocs';
+import { useActiveTheme } from '../../themes/apply';
 
 type SoftKey = { label: string; seq: string; title?: string; Icon?: Icon };
 // Slash commands live in a searchable sheet behind the "/" key. Run-commands end
@@ -234,7 +235,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   useEffect(() => {
     let disposed = false;
     const s0 = useSettings.getState();
-    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { background: '#1E1E1E' }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
+    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
       // xterm's own handler asks confirm() and ignores every non-http link; a doc opens in the doc viewer, a web link in a new tab, the rest nothing.
       linkHandler: { allowNonHttpProtocols: true, activate: (_e, uri) => {
         const chips = docChipsRef.current;
@@ -725,7 +726,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     // scrolling (xterm's accessibility-tree overlay is user-select:text), which
     // is why scrolling only felt right when the finger was over empty space.
     if (isMobile && host) host.classList.add('dispatch-noselect');
-    { const s = screenEl(); if (s) { s.style.background = '#1E1E1E'; s.style.willChange = 'transform'; } }
+    { const s = screenEl(); if (s) { s.style.background = 'var(--term-background)'; s.style.willChange = 'transform'; } }
 
     let rowHeight = Math.ceil((term.options.fontSize ?? 13) * 1.2);
     rowMeasureRef.current = () => { const r = host?.querySelector('.xterm-rows') as HTMLElement | null; if (r && r.children.length) rowHeight = r.getBoundingClientRect().height / r.children.length; };
@@ -907,6 +908,15 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
       termRef.current = null;
     };
   }, [terminalId, socketFactory]);
+
+  // The theme's terminal palette, live: a theme change (Settings → Appearance, or the device
+  // switching light/dark under 'system') repaints the running terminal.
+  const termPalette = useActiveTheme((s) => s.theme.terminal);
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    try { term.options.theme = { ...termPalette }; } catch { /* terminal not fully initialised (e.g. jsdom) */ }
+  }, [termPalette]);
 
   // Apply font-size / scrollback changes live to the running terminal.
   useEffect(() => {
