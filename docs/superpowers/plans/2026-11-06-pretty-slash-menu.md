@@ -82,3 +82,19 @@ lists for Codex (a fixed list is offered; Codex answers with an error text if a 
   and reloads the thread, so the picker shows the real value. Chat shows the refusal as a line above its box.
 - `/model` with a bad value keeps the typed text. `/cli` asks first when the thread is working.
 - Left for later: a queued message running on the old model, the 15 second control-request timeout split.
+
+## Review round 2
+
+- One lock per thread now wraps validate, save and apply. Concurrent Codex changes are judged one after the other
+  against the settings the earlier one left. Codex efforts are checked against the model the thread runs, which for a
+  thread with no saved model is the one the app-server bound.
+- A thread that stops while a change is being sent is not a refusal. The pick stays saved and applies at the next
+  start. The known values are copied when the apply starts, and the process is compared again after the reply.
+- A refusal puts a saved value back only if its own request still holds it (a request number, not a value compare).
+- When a model switch leaves the saved Codex effort unsupported, the new model's own default effort is sent and saved.
+  Live check on codex-cli 0.166: gpt-6-astra at ultra, then gpt-6-luna with no effort, ran at ultra (the thread keeps
+  the effort of its last turn). After thread/resume on Luna no effort is recorded and the turn ran at the model default.
+  An explicit effort (Luna's default, medium) is accepted.
+- An effort-only rollback of an overseer or tier thread restores its tier model, not the CLI default.
+- A failed `/cli` shows the daemon's reason, also after the confirmation.
+- Claude writes `requestedModel: claude-opus-5-5` (no `[1m]`) after `set_model('opus')`; the pin lets go as designed.
