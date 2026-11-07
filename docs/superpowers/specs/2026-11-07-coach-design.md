@@ -176,6 +176,23 @@ as an optional summary on the Coach screen. The five measures compare a person o
   says so. The chat history is kept in the plugin's storage (part of export, cleared by Reset, a "Clear chat"
   action), and nothing said in the chat becomes a memory fact without the person confirming it.
 
+### 4.10 Reviews: "look at how I worked" (owner, 2026-11-07)
+- The person can ask for a **review** — from the chat ("Review how I worked in this thread"), from a thread's ⋯
+  menu or the right-column tab ("Review this thread"), or from the Coach screen ("Review my last week",
+  "Review this project"). The Coach goes off, reads the actual conversation(s), and comes back with findings.
+- A review reads the transcript through the conversation route (`read:threads`), in chunks, with the large model:
+  what went well, where the person could have handed off more, planned first, checked, reused, or parallelized,
+  each tied to a quoted moment in the thread, plus 1–3 next steps (each with a confirm-first action).
+- It runs as a background job in the worker with visible progress ("Reading 3 of 8 threads…") and a cost
+  estimate before it starts ("about 2% of your weekly limit — Start · Cancel"); the result is a report in the
+  Coach screen and a message in the chat; the person can drill into it in the chat.
+- **Looking back at history:** when the Coach is first turned on (and any time from the Coach screen), it offers
+  to read past threads (the last 30 days, or a range) to build its first picture, so it is useful on day one
+  instead of after a week. It shows the cost estimate first and runs only on the person's Start. Its findings go
+  through the same honesty rule: it reports what it saw, not more.
+- Reviews count against the budget; a review that would pass the cap says so before it starts and offers a
+  smaller scope.
+
 ### 4.5 Cost (mockup part 5, right)
 - The Coach screen shows, for this week: calls by model, tokens in/out, an **estimated share of each usage limit**
   (5-hour and weekly) on the account it used, and the budget with a meter.
