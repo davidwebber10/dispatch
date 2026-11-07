@@ -21,6 +21,10 @@
     "./credential": {
       "types": "./dist/auth/credential.d.ts",
       "default": "./dist/auth/credential.js"
+    },
+    "./plugins": {
+      "types": "./dist/plugins/public.d.ts",
+      "default": "./dist/plugins/public.js"
     }
   },
   "scripts": {

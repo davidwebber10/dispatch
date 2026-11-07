@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
+import { publishPlugin } from './plugin-publish.js';
 
 const require = createRequire(import.meta.url);
 
@@ -111,9 +112,13 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       return cmdAccess(ctx, rest);
     case 'api':
       return cmdApi(ctx, rest);
+    case 'plugin':
+      return cmdPlugin(ctx, rest);
+    case 'skill':
+      return cmdSkill(ctx, rest);
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|api|release>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|api|release|plugin|skill>`,
       );
   }
 }
@@ -263,6 +268,37 @@ const API_USAGE = 'usage: dispatch api METHOD PATH [--body FILE | --body -]  (PA
  * `dispatch api METHOD PATH`: one call to this computer's daemon with the right credential, so an
  * agent never needs curl. Prints the JSON answer; a non-2xx status prints the answer and fails.
  */
+/** `dispatch plugin publish <folder> --to <marketplace> [--branch b] [--dry-run]`, `dispatch plugin list`. */
+export async function cmdPlugin(ctx: Ctx, args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
+  if (sub === 'publish') {
+    const folder = rest.find((a) => !a.startsWith('--'));
+    const to = rest[rest.indexOf('--to') + 1];
+    const branch = rest.includes('--branch') ? rest[rest.indexOf('--branch') + 1] : undefined;
+    if (!folder || !rest.includes('--to') || !to) throw new Error('usage: dispatch plugin publish <folder> --to <marketplace url or slug> [--branch name] [--dry-run]');
+    const r = await publishPlugin({ folder, marketplace: to, branch, dryRun: rest.includes('--dry-run'), dataDir: ctx.dataDir, log: (l) => console.log(l) });
+    console.log(`${r.id} ${r.version} → ${r.branch}${r.prUrl ? ` (${r.prUrl})` : ''}`);
+    return;
+  }
+  if (sub === 'list') {
+    const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, await daemonUrl(ctx, '/api/plugins'));
+    if (!res.ok) throw new Error(`GET /api/plugins -> ${res.status}`);
+    const { plugins } = (await res.json()) as { plugins: { id: string; name: string; version: string; enabled: boolean; bundled?: boolean; install?: unknown }[] };
+    for (const p of plugins) console.log(`${p.id}\t${p.version}\t${p.enabled ? 'enabled' : 'disabled'}\t${p.bundled ? 'bundled' : p.install ? 'installed' : 'local'}\t${p.name}`);
+    return;
+  }
+  throw new Error('usage: dispatch plugin <publish|list>');
+}
+
+/** `dispatch skill list`. */
+export async function cmdSkill(ctx: Ctx, args: string[]): Promise<void> {
+  if (args[0] !== 'list') throw new Error('usage: dispatch skill list');
+  const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, await daemonUrl(ctx, '/api/skills'));
+  if (!res.ok) throw new Error(`GET /api/skills -> ${res.status}`);
+  const { skills } = (await res.json()) as { skills: { id: string; name: string; version: string; enabled: boolean; install?: unknown }[] };
+  for (const s of skills) console.log(`${s.id}\t${s.version}\t${s.enabled ? 'enabled' : 'disabled'}\t${s.install ? 'installed' : 'local'}\t${s.name}`);
+}
+
 async function cmdApi(ctx: Ctx, args: string[]): Promise<void> {
   const [methodRaw, apiPath, ...flags] = args;
   const method = (methodRaw ?? '').toUpperCase();
