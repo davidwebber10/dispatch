@@ -351,7 +351,7 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     render(<Tab terminalId="t9" sessionId="s1" />);
     const strip = await screen.findByTestId('coach-review-compact');
     expect(within(strip).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4');
-    expect(strip).toHaveTextContent('Look back');
+    expect(strip).toHaveTextContent('LOOK BACK');
     expect(strip).toHaveTextContent('part 5 of 20');
     expect(strip).toHaveTextContent('about 23 minutes left');
     fireEvent.click(within(strip).getByRole('button', { name: 'Open' }));

@@ -521,6 +521,91 @@ export function createCoach(d, deps = {}) {
   }
   const lastDays = (n) => ({ kind: 'range', from: new Date(now().getTime() - n * 86400_000).toISOString(), to: now().toISOString() });
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  // ── a running review's progress, by part (owner, 2026-11-07: "stuck on reading the first chat") ──
+  // One part is one model call; a long thread has many. The bar counts parts; the time left is the
+  // average part so far times the parts left, shown only after 2 parts (one part says too little).
+  const BUSY = new Set(['queued', 'reading', 'writing']);
+  const clock = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const hh = Math.floor(s / 3600); const mm = Math.floor((s % 3600) / 60); const ss = String(s % 60).padStart(2, '0');
+    return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`;
+  };
+  const leftWords = (ms) => {
+    const min = Math.round(ms / 60_000);
+    if (ms < 60_000) return 'less than a minute left';
+    if (min < 90) return `about ${plural(min, 'minute', 'minutes')} left`;
+    const hrs = Math.floor(min / 60); const rest = Math.round((min % 60) / 5) * 5;
+    return `about ${plural(hrs, 'hour', 'hours')}${rest ? ` ${rest} minutes` : ''} left`;
+  };
+  /** The figures the progress block shows, from the worker's `progress` (or null for an old document without parts). */
+  function progressFigures(r, t) {
+    const p = r.progress;
+    if (!p || typeof p.chunksTotal !== 'number') return null;
+    const total = Math.max(p.chunksTotal, p.chunksDone || 0);
+    const done = Math.max(0, p.chunksDone || 0);
+    const started = Date.parse(p.startedAt || r.startedAt || '');
+    const elapsed = Number.isFinite(started) ? t - started : null;
+    let left = null;
+    const last = Date.parse(p.at || '');
+    if (done >= 2 && Number.isFinite(started) && Number.isFinite(last) && last > started) {
+      const per = (last - started) / done;
+      left = Math.max(0, per * (total - done) - Math.max(0, t - last));
+    }
+    return { done, total, pct: total > 0 ? Math.min(100, (done / total) * 100) : 0, thread: p.thread || null, threadNo: Math.min((p.done || 0) + 1, p.total || 1), threads: p.total || 0, elapsed, left };
+  }
+  /** Re-render once a second while a review runs (the elapsed time ticks). */
+  function useTick(on) {
+    const [, set] = useState(0);
+    useEffect(() => {
+      if (!on) return undefined;
+      const id = setInterval(() => set((n) => n + 1), 1000);
+      return () => clearInterval(id);
+    }, [on]);
+  }
+  function ProgressBar({ done, total, pct, height = 8 }) {
+    return h('div', { role: 'progressbar', 'aria-label': 'Parts read', 'aria-valuemin': 0, 'aria-valuemax': total, 'aria-valuenow': done, style: { ...S.bar, display: 'block', width: '100%', height, boxSizing: 'border-box' } },
+      h('div', { style: { ...S.barFill, width: `${pct}%`, minWidth: done > 0 ? 4 : 0, background: 'var(--color-accent)', transition: 'width 400ms ease' } }));
+  }
+  const threadLine = (f) => [f.thread && f.thread.chunk > 0 && f.thread.chunks ? `part ${f.thread.chunk} of ${f.thread.chunks}` : null, f.threads ? `thread ${f.threadNo} of ${f.threads}` : null].filter(Boolean).join(' · ');
+  /** The progress block on the Coach screen (and the thread's own review in the tab). */
+  function ReviewProgress({ r, onCancel }) {
+    useTick(true);
+    const f = progressFigures(r, now().getTime());
+    const cancel = h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: onCancel }, icon('x', null, 13), 'Cancel review'));
+    if (r.state === 'queued') return h('div', null, h('div', null, 'Starting the review…'), cancel);
+    if (!f) {
+      const p = r.progress || { done: 0, total: (r.plan && r.plan.threads || []).length };
+      return h('div', null, h('div', null, `Reading ${p.done} of ${plural(p.total, 'thread', 'threads')}…`), cancel);
+    }
+    const name = f.thread && f.thread.label;
+    const meta = [`${f.done} of ${f.total} parts`, f.elapsed !== null ? `${clock(f.elapsed)} elapsed` : null, f.left !== null ? leftWords(f.left) : null].filter(Boolean).join(' · ');
+    return h('div', { 'data-testid': 'coach-review-progress', style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 } },
+        h('div', { style: { fontWeight: 600, overflowWrap: 'anywhere' } }, name ? `Reading ${name}` : 'Opening the next thread…'),
+        h('div', { style: { fontSize: 12.5, color: 'var(--color-text-secondary)' } }, threadLine(f))),
+      h(ProgressBar, f),
+      h('div', { style: { fontSize: 12, color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' } }, meta),
+      cancel);
+  }
+  const reviewName = (r) => (r.backfill ? 'Look back' : r.scope && r.scope.kind === 'thread' ? 'Thread review' : r.scope && r.scope.kind === 'project' ? 'Project review' : 'Review');
+  /** A running review elsewhere, compact: in the Coach tab, where the thread's own review is not it. */
+  function ReviewCompact({ terminalId }) {
+    const reviews = store((s) => s.reviews);
+    const list = Object.entries(reviews).filter(([, r]) => r && BUSY.has(r.state) && !(terminalId && r.scope && r.scope.kind === 'thread' && (r.scope.ids || []).includes(terminalId)));
+    list.sort((a, b) => String(b[1].at || '').localeCompare(String(a[1].at || '')));
+    const r = list.length ? list[0][1] : null;
+    useTick(!!r);
+    if (!r) return null;
+    const f = progressFigures(r, now().getTime());
+    const line = r.state === 'queued' ? 'Starting…' : r.state === 'writing' ? 'Writing the report…'
+      : f ? [threadLine(f), f.left !== null ? leftWords(f.left) : null].filter(Boolean).join(' · ') : 'Reading…';
+    return h('div', { 'data-testid': 'coach-review-compact', style: { ...S.section, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+        h('span', { style: { ...S.label, flex: 1 } }, reviewName(r).toUpperCase()),
+        h('button', { type: 'button', style: S.link, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open')),
+      f && r.state === 'reading' && h(ProgressBar, { ...f, height: 6 }),
+      h('div', { style: { fontSize: 12, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums' } }, line));
+  }
   const FINDING_WORD = { 'went-well': 'Went well', handoff: 'Hand off more', plan: 'Plan first', check: 'Check the result', reuse: 'Reuse', parallel: 'Run in parallel' };
 
   /** The review the person asked for (or the newest one): the estimate with Start, the progress, the report. */
@@ -554,9 +639,7 @@ export function createCoach(d, deps = {}) {
           (plan.fits === false || plan.costUnknown) && plan.smallerScope && h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(plan.smallerScope, r.backfill ? { backfill: true } : {}); } }, `Review the newest ${plural(plan.smallerScope.ids.length, 'thread', 'threads')} instead`),
           h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel')));
     } else if (r.state === 'queued' || r.state === 'reading') {
-      const p = r.progress || { done: 0, total: n };
-      body = h('div', null, h('div', null, r.state === 'queued' ? 'Starting the review…' : `Reading ${p.done} of ${plural(p.total, 'thread', 'threads')}…`),
-        h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } }, 'Cancel review')));
+      body = h(ReviewProgress, { r, onCancel: () => { void patchReview(key, { state: 'cancelled', cancel: true }); } });
     } else if (r.state === 'writing') body = h('div', null, 'Writing the report…');
     else if (r.state === 'cancelled') body = h('div', { style: S.note }, 'The review was cancelled. Nothing more was read.');
     else if (r.state === 'failed') {
@@ -601,6 +684,7 @@ export function createCoach(d, deps = {}) {
     if (!st.loaded) return null;
     if (!terminalId) {
       return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+        h(ReviewCompact, { terminalId: null }),
         h('div', { style: { ...S.note, fontSize: 13 } }, 'Open a thread to see what the Coach sees in it.'),
         h('div', null, h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open the Coach screen')));
     }
@@ -622,6 +706,7 @@ export function createCoach(d, deps = {}) {
         sees.length ? h('ul', { style: { margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5 } }, ...sees.map((x, k) => h('li', { key: k, style: { margin: '3px 0' } }, x))) : h('div', { style: { ...S.note, fontSize: 12.5 } }, 'Nothing yet: the Coach sees a thread after your first prompt in it.')),
       h('div', null, h(ReviewButton, { scope: { kind: 'thread', ids: [terminalId] }, label: 'Review this thread' })),
       h(ReviewPanel, { terminalId }),
+      h(ReviewCompact, { terminalId }),
       h(Chat, { terminalId, sessionId }));
   }
 
