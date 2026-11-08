@@ -156,4 +156,39 @@ describe('plugin composer actions (2026-11-07)', () => {
     const { queryByTestId } = render(<PillComposer {...base} dictation={dictation()} />);
     expect(queryByTestId('composer-plugin-actions')).toBeNull();
   });
+
+  describe('the phone expands a long message to a full-screen editor (2026-11-07)', () => {
+    const grow = (h: number) => Object.defineProperty(HTMLTextAreaElement.prototype, 'scrollHeight', { configurable: true, get() { return h; } });
+    afterEach(() => { delete (HTMLTextAreaElement.prototype as { scrollHeight?: number }).scrollHeight; });
+    it('the expand button appears at three lines on a phone only', () => {
+      Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+      grow(42);
+      const { rerender } = render(<PillComposer {...base} dictation={dictation()} mobile value="one line" />);
+      expect(screen.queryByRole('button', { name: 'Expand the message' })).toBeNull();
+      grow(90); // three lines
+      rerender(<PillComposer {...base} dictation={dictation()} mobile value={'a\nb\nc'} />);
+      expect(screen.getByRole('button', { name: 'Expand the message' })).toBeInTheDocument();
+      rerender(<PillComposer {...base} dictation={dictation()} value={'a\nb\nc'} />);
+      expect(screen.queryByRole('button', { name: 'Expand the message' })).toBeNull(); // desktop: never
+    });
+    it('the editor shows the same text without raising the keyboard; typing, collapse and send work', () => {
+      Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+      grow(90);
+      const onChange = vi.fn(); const onSend = vi.fn();
+      render(<PillComposer {...base} dictation={dictation()} mobile value={'a\nb\nc'} canSend onChange={onChange} onSend={onSend} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Expand the message' }));
+      const editor = screen.getByRole('dialog', { name: 'Message' });
+      const area = editor.querySelector('textarea') as HTMLTextAreaElement;
+      expect(area.value).toBe('a\nb\nc');
+      expect(document.activeElement).not.toBe(area); // scroll first; a tap in the text types
+      fireEvent.change(area, { target: { value: 'a\nb\nc\nd' } });
+      expect(onChange).toHaveBeenLastCalledWith('a\nb\nc\nd');
+      fireEvent.click(screen.getByRole('button', { name: 'Collapse the message' }));
+      expect(screen.queryByRole('dialog', { name: 'Message' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Expand the message' }));
+      fireEvent.click(screen.getAllByRole('button', { name: 'Send' }).at(-1)!);
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('dialog', { name: 'Message' })).toBeNull();
+    });
+  });
 });

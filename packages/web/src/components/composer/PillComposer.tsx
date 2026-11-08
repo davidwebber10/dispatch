@@ -1,7 +1,8 @@
 import { useContributions, type ComposerCtx } from '../../plugins/registry';
 import { Slot } from '../../plugins/PluginView';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type TextareaHTMLAttributes } from 'react';
-import { ArrowUp, Microphone, Stop } from '@phosphor-icons/react';
+import { ArrowUp, ArrowsOutSimple, Microphone, Stop } from '@phosphor-icons/react';
+import { FullComposer } from './FullComposer';
 import type { Dictation } from '../../hooks/useDictation';
 import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
@@ -76,13 +77,17 @@ export function PillComposer({
     // Empty: one line, whatever the placeholder does (a long one wrapped and grew the box, 2026-11-06).
     // N lines: the first fills the key height, each further line adds a line height.
     const linesH = (n: number) => minH + (n - 1) * lineH;
-    if (!el.value) { el.style.height = `${minH}px`; tallRef.current(false); return; }
+    if (!el.value) { el.style.height = `${minH}px`; tallRef.current(false); setLong(false); return; }
     el.style.height = 'auto';
     const natural = el.scrollHeight;
     const cap = Math.min(Math.round(window.innerHeight * MAX_FRACTION), maxLines ? linesH(maxLines) : Infinity);
     el.style.height = `${Math.max(minH, Math.min(natural, cap))}px`;
     tallRef.current(natural > linesH(2));
+    setLong(natural > linesH(2));
   };
+  // Three lines or more on a phone: an expand button opens the full-screen editor (2026-11-07).
+  const [long, setLong] = useState(false);
+  const [full, setFull] = useState(false);
   const tallRef = useRef<(t: boolean) => void>(() => {});
   tallRef.current = (t) => onTallChange?.(t);
   useLayoutEffect(fit, [value, minH, maxLines]);
@@ -101,6 +106,7 @@ export function PillComposer({
   // Recording and transcribing take the text box's place. An error does not: it is a line above
   // the box (a long message squeezed in beside the keys wrapped into a column, 2026-11-05).
   const recording = dictation.state === 'recording' || dictation.state === 'uploading' || dictation.state === 'transcribing';
+  const expandable = mobile && long && !recording;
   const failed = dictation.state === 'error';
   const [recordingsOpen, setRecordingsOpen] = useState(false);
   const circle = { flex: 'none', width: key, height: key, padding: 0, borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' } as const;
@@ -177,6 +183,7 @@ export function PillComposer({
     )}
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
+      position: 'relative',
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
       padding: mobile ? 8 : 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
@@ -212,9 +219,21 @@ export function PillComposer({
             gridArea: 'text', width: '100%', minWidth: 0, minHeight: minH, height: minH, margin: 0, resize: 'none', overflowY: 'auto',
             border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)',
             font: `400 ${mobile ? 16 : 14.5}px var(--font-sans)`, lineHeight: `${lineH}px`,
-            padding: stacked ? `${(minH - lineH) / 2}px 8px 2px` : `${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
+            padding: stacked ? `${(minH - lineH) / 2}px ${expandable ? 34 : 8}px 2px 8px` : `${(minH - lineH) / 2}px ${expandable ? 34 : 4}px ${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
           }}
         />
+      )}
+      {expandable && (
+        <button type="button" aria-label="Expand the message" title="Expand"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { own.current?.blur(); setFull(true); }}
+          style={{ position: 'absolute', top: 6, right: 6, width: 32, height: 32, padding: 0, border: 'none', borderRadius: 'var(--radius-md)', background: 'transparent', color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 1 }}>
+          <ArrowsOutSimple size={18} />
+        </button>
+      )}
+      {full && mobile && (
+        <FullComposer value={value} onChange={onChange} onSend={onSend} canSend={canSend} onClose={() => setFull(false)}
+          placeholder={placeholder} sendLabel={sendLabel} textareaProps={{ autoCapitalize: textareaProps?.autoCapitalize, autoCorrect: textareaProps?.autoCorrect, spellCheck: textareaProps?.spellCheck }} />
       )}
       {!recording && (
         <button type="button" aria-label="Dictate"
