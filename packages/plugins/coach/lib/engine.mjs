@@ -352,7 +352,7 @@ export function createEngine(io) {
         if (r && r.result && r.result.harness) status = { ...status, harness: r.result.harness };
         if (r && r.refused) { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const p = parseReview(r && r.result ? r.result.text : '', chunk);
-        if (p) parts.push(p);
+        if (p) parts.push({ ...p, thread: ids[i] });
         chunksDone++;
       }
     }
