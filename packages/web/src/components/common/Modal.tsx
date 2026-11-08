@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 // A release past this share of the sheet's height closes it; so does a quick downward flick.
 const CLOSE_FRACTION = 0.25;
@@ -21,7 +22,7 @@ const FLICK_MAX_AGE_MS = 100;
  * flick down on the header (handle and title), and a dimmed strip above it that stays
  * tappable. The body never starts a drag, so a scrolling list scrolls instead of closing.
  */
-export function Modal({ open, onClose, title, sheet = false, closeButton = true, anchor = 'center', maxWidth = 500, children }: {
+export function Modal({ open, onClose, title, sheet: sheetProp = false, closeButton = true, anchor = 'center', maxWidth = 500, children }: {
   open: boolean;
   onClose: () => void;
   title?: string;
@@ -40,6 +41,11 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
   maxWidth?: number;
   children: ReactNode;
 }) {
+  // A sheet is a phone's: on the desktop the same call opens the centered card, with its title and
+  // a Close button (owner, 2026-11-07: a full-width sheet on a desktop looked wrong).
+  const isMobile = useIsMobile();
+  const sheet = sheetProp && isMobile;
+  const desktopCard = sheetProp && !isMobile;
   const panelRef = useRef<HTMLDivElement>(null);
   // dy is the live drag offset (always >= 0). `drag` holds the gesture's bookkeeping.
   const [dy, setDy] = useState(0);
@@ -126,11 +132,11 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
   }, [open, sheet]);
 
   useEffect(() => {
-    if (!open || !sheet) return;
+    if (!open || !sheetProp) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose(); } };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, sheet, onClose]);
+  }, [open, sheetProp, onClose]);
 
   // A closed Modal can stay mounted (Projects, Memory), so a drag-close must not leave
   // its offset behind for the next open.
@@ -230,6 +236,14 @@ export function Modal({ open, onClose, title, sheet = false, closeButton = true,
                 background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: 22, lineHeight: 1, cursor: 'pointer', borderRadius: 'var(--radius-2xl)',
               }}>×</button>}
             </div>}
+          </div>
+        ) : desktopCard ? (
+          (title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '-6px -8px 12px 0' }}>
+            {title ? <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+            {closeButton && <button type="button" aria-label="Close" onClick={onClose} style={{
+              width: 32, height: 32, padding: 0, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: 20, lineHeight: 1, cursor: 'pointer', borderRadius: 'var(--radius-md)',
+            }}>×</button>}
           </div>
         ) : title && <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 600 }}>{title}</h2>}
         {children}

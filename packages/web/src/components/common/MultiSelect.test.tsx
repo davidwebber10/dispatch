@@ -68,7 +68,8 @@ describe('MultiSelect (the shared multi-pick: a summary trigger and a checklist 
     unmount();
     render(<Harness initial={['alpha']} variant="sheet" />);
     fireEvent.click(screen.getByRole('button', { name: /^Projects:/ }));
-    expect(screen.getByTestId('sheet-panel')).toBeInTheDocument();
-    expect(within(screen.getByTestId('sheet-panel')).getAllByRole('checkbox')).toHaveLength(5);
+    // On a desktop width the shared sheet opens as the centered modal (2026-11-07); on a phone it is the sheet.
+    const dialog = screen.getAllByRole('dialog').at(-1)!;
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5);
   });
 });

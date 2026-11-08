@@ -3,6 +3,13 @@ import { vi } from 'vitest';
 import { test, expect, describe, it, beforeEach, afterEach } from 'vitest';
 import { Modal } from './Modal';
 
+/** The sheet is the phone's (2026-11-07): its tests run at a phone's width. */
+function phoneWidth(on: boolean) {
+  const w = on ? 390 : 1024;
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: w });
+  window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: w <= 768 && q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as any;
+}
+
 test('dialog is responsive (maxWidth, width 100%) so it fits a mobile viewport, not a fixed 500px that overflows', () => {
   render(<Modal open onClose={() => {}} title="New thing"><div>body</div></Modal>);
   const box = screen.getByText('New thing').parentElement as HTMLElement; // the dialog box wraps the title
@@ -61,6 +68,8 @@ describe('Modal — scroll and alignment', () => {
 });
 
 describe('Modal — title-less and sheet variants', () => {
+  beforeEach(() => phoneWidth(true));
+  afterEach(() => phoneWidth(false));
   it('renders no heading when no title is given', () => {
     render(<Modal open onClose={() => {}}><div>body</div></Modal>);
     expect(screen.queryByRole('heading')).toBeNull();
@@ -103,6 +112,8 @@ describe('Modal — anchor', () => {
 // Regression: on an iPhone the Projects sheet could not be closed. The handle was
 // decoration, the only exit was the backdrop strip, and a tall list left none.
 describe('Modal sheet: always closable', () => {
+  beforeEach(() => phoneWidth(true));
+  afterEach(() => phoneWidth(false));
   // jsdom has no PointerEvent, so fireEvent would drop clientY and pointerId.
   if (typeof window.PointerEvent === 'undefined') {
     class PointerEventShim extends MouseEvent {
@@ -306,5 +317,29 @@ describe('Modal sheet: always closable', () => {
     const body = screen.getByText('body');
     tStart(body, 300, 0); tMove(body, 200, 100);
     expect(panel.style.transform).toBe('translateY(0px)');
+  });
+});
+
+describe('a sheet is a phone thing: the desktop gets a centered modal (2026-11-07)', () => {
+  const setWidth = (w: number) => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: w }); window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: w <= 768 && q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} })) as any; };
+  afterEach(() => setWidth(1024));
+  it('on the desktop, `sheet` renders the centered card with its title, a Close button and Escape', () => {
+    setWidth(1440);
+    const onClose = vi.fn();
+    render(<Modal open sheet title="Choose a theme" onClose={onClose}><div>body</div></Modal>);
+    expect(screen.queryByTestId('sheet-panel')).toBeNull();
+    expect(screen.queryByTestId('sheet-handle')).toBeNull();
+    const dialog = screen.getByRole('dialog', { name: 'Choose a theme' });
+    expect(dialog.style.maxWidth).toBe('500px');
+    expect(dialog.style.width).toBe('100%');
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+  it('on a phone, `sheet` is still the bottom sheet', () => {
+    setWidth(390);
+    render(<Modal open sheet title="Choose a theme" onClose={() => {}}><div>body</div></Modal>);
+    expect(screen.getByTestId('sheet-panel')).toBeInTheDocument();
   });
 });
