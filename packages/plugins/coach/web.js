@@ -353,7 +353,7 @@ export function createCoach(d, deps = {}) {
       h('div', { style: S.row },
         h('button', { type: 'button', style: S.primary, onClick: () => tryIt(card, ctx, better) }, better ? 'Use this prompt' : (card.action && card.action.label) || 'Try it'),
         !welcome && h('button', { type: 'button', style: S.btn, onClick: () => { if (open) setOpen(false); else { setOpen(true); void loadMore(card); } } }, open ? 'Less' : 'More'),
-        // On by default (owner, 2026-11-07): the welcome card is where the person can say no.
+        // Off by default since 2026-11-08; an owner who turns it on still meets the welcome card first, with Turn off.
         welcome && h('button', { type: 'button', style: S.btn, onClick: () => { void turnOff(); } }, 'Turn off'),
         h('span', { style: { flex: 1 } }),
         !welcome && h('button', { type: 'button', 'aria-label': 'Helpful', title: 'Helpful', style: S.icon, onClick: () => { void giveFeedback(card, 'up', '', ctx.terminalId); } }, icon('thumbs-up', 'Yes')),

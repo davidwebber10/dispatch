@@ -3,9 +3,9 @@
 A bundled Dispatch plugin. It looks at how you work with AI and suggests one small next step at a
 natural break: one headline, one line of why, one action. More detail only when you ask.
 
-It replaces the Prompt coach. It is on by default: a new install first shows only a welcome card that says what the Coach looks
-at and remembers, with Turn off; then a quiet first week. An owner who had turned the Prompt coach
-off keeps the Coach off.
+It replaces the Prompt coach. It is off by default (owner, 2026-11-08): turn it on in Settings, Plugins. When it is on, it
+first shows only a welcome card that says what the Coach looks at and remembers, with Turn off; then a
+quiet first week. An owner who had turned the Coach (or the Prompt coach) on keeps it on.
 
 - **Where it shows:** a card under the message box after a turn ends; a Coach tab in the right
   column about the open thread (its cards, what the Coach sees in it, the goals it touches,

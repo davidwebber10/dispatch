@@ -86,7 +86,7 @@ function carryOver(state: StateFile, exists: (id: string) => boolean): StateFile
     if ((!enabled.includes(old) && !disabled.includes(old)) || exists(old)) continue;
     const chose = enabled.includes(next) || disabled.includes(next);
     if (enabled.includes(old) && !chose) enabled = [...enabled, next];
-    // An owner who turned the old one off keeps the new one off (the Coach is on by default, 2026-11-07).
+    // An owner who turned the old one off keeps the new one off (the Coach is off by default since 2026-11-08; this stays for a local default-on plugin).
     if (disabled.includes(old) && !chose) disabled = [...disabled, next];
     enabled = enabled.filter((x) => x !== old);
     disabled = disabled.filter((x) => x !== old);
