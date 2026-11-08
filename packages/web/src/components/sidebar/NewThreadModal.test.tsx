@@ -4,6 +4,7 @@ import { NewThreadModal } from './NewThreadModal';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { codexLoginTiming } from '../settings/CodexLogin';
+import { pickOption, selectedText } from '../../test/select';
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -155,7 +156,7 @@ describe('NewThreadModal', () => {
       expect(screen.getByRole('switch', { name: 'Auto-archive when idle' })).toHaveAttribute('aria-checked', 'true');
       expect(screen.getByText('Not while working, queued, or waiting on you')).toBeInTheDocument();
       expect((screen.getByLabelText('Duration') as HTMLInputElement).value).toBe('12');
-      expect((screen.getByLabelText('Unit') as HTMLSelectElement).value).toBe('hours');
+      expect(selectedText('Unit')).toBe('hrs');
       start();
       await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
       expect(lastInput().config).toEqual({ transport: 'structured', autoArchive: true, autoArchiveMs: 43_200_000 });
@@ -171,7 +172,7 @@ describe('NewThreadModal', () => {
       render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
       fireEvent.click(screen.getByRole('switch', { name: 'Auto-archive when idle' }));
       fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '3' } });
-      fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'days' } });
+      pickOption('Unit', 'days');
       start();
       await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
       expect(lastInput().config.autoArchiveMs).toBe(3 * 86_400_000);

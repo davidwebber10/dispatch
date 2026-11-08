@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { AutoArchiveField } from './AutoArchiveField';
 import { DEFAULT_AUTO_ARCHIVE_MS } from '../../lib/autoArchive';
+import { pickOption, selectedText } from '../../test/select';
 
 describe('AutoArchiveField', () => {
   it('hides the duration input when the toggle is off', () => {
@@ -18,7 +19,7 @@ describe('AutoArchiveField', () => {
 
     rerender(<AutoArchiveField enabled ms={DEFAULT_AUTO_ARCHIVE_MS} onChange={onChange} />);
     expect((screen.getByLabelText('Inactivity before archiving') as HTMLInputElement).value).toBe('12');
-    expect((screen.getByLabelText('Inactivity unit') as HTMLSelectElement).value).toBe('hours');
+    expect(selectedText('Inactivity unit')).toBe('hours');
   });
 
   it('emits the new duration in ms when the value changes', () => {
@@ -31,7 +32,7 @@ describe('AutoArchiveField', () => {
   it('emits the new duration in ms when the unit changes', () => {
     const onChange = vi.fn();
     render(<AutoArchiveField enabled ms={DEFAULT_AUTO_ARCHIVE_MS} onChange={onChange} />);
-    fireEvent.change(screen.getByLabelText('Inactivity unit'), { target: { value: 'minutes' } });
+    pickOption('Inactivity unit', 'minutes');
     expect(onChange).toHaveBeenCalledWith(true, 12 * 60_000);
   });
 });

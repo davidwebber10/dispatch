@@ -36,7 +36,7 @@ describe('d.actions.openSchedule', () => {
     expect(within(dialog).getByPlaceholderText('Instructions / trigger prompt')).toHaveValue('Write the weekly pipeline report');
     expect(within(dialog).getByPlaceholderText('Automation name')).toHaveValue('Weekly report');
     expect(within(dialog).getByPlaceholderText('0 9 * * 1-5')).toHaveValue('0 8 * * 1');
-    expect(within(dialog).getByRole('combobox')).toHaveValue('s1');
+    expect(within(dialog).getByRole('combobox', { name: 'Project' })).toHaveTextContent('Finance');
     expect(api.createSchedule).not.toHaveBeenCalled();
     // The person confirms: only then is it created.
     fireEvent.click(within(dialog).getByRole('button', { name: /save|create/i }));
@@ -50,7 +50,7 @@ describe('d.actions.openSchedule', () => {
     render(<PluginDialogs />);
     act(() => buildSdk().actions.openSchedule({ prompt: 'Summarize the inbox' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByRole('combobox')).toHaveValue('s2');
+    expect(within(dialog).getByRole('combobox', { name: 'Project' })).toHaveTextContent('Ops');
     act(() => usePluginDialogs.getState().close());
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(api.createSchedule).not.toHaveBeenCalled();
