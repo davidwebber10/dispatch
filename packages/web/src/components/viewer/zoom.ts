@@ -69,3 +69,19 @@ export function swipeOutcome(travel: Point, ms: number): 'prev' | 'next' | 'clos
   if (travel.y >= PULL_CLOSE_PX && travel.y > ax) return 'close';
   return 'none';
 }
+
+/**
+ * The size the pan limit uses (2026-11-07): the slide's box less its padding. The padding keeps the
+ * picture clear of the top bar and the strip of files, which lie over the stage; with the whole box,
+ * a zoomed picture's top edge could only come down to the screen's edge, under the bar, and was
+ * never seen. The picture sits centred in this area, so the limit stays symmetric.
+ */
+export function contentSize(el: HTMLElement | null | undefined): Size {
+  if (!el) return { w: 0, h: 0 };
+  const cs = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
+  const px = (v: string | undefined) => (v ? parseFloat(v) || 0 : 0);
+  return {
+    w: Math.max(0, el.clientWidth - px(cs?.paddingLeft) - px(cs?.paddingRight)),
+    h: Math.max(0, el.clientHeight - px(cs?.paddingTop) - px(cs?.paddingBottom)),
+  };
+}

@@ -48,3 +48,21 @@ describe('zoom math (2026-11-07)', () => {
     expect(swipeOutcome({ x: 10, y: -120 }, 300)).toBe('none');
   });
 });
+
+describe('the pan limit uses the area between the bars (2026-11-07)', () => {
+  it('contentSize takes the padding (the top bar and the strip) off the slide box', async () => {
+    const { contentSize } = await import('./zoom');
+    const el = document.createElement('div');
+    Object.defineProperty(el, 'clientWidth', { value: 390 });
+    Object.defineProperty(el, 'clientHeight', { value: 844 });
+    el.style.padding = '60px 0px 76px';
+    document.body.appendChild(el);
+    expect(contentSize(el)).toEqual({ w: 390, h: 708 });
+    expect(contentSize(null)).toEqual({ w: 0, h: 0 });
+  });
+  it('zoomed in, the top of a tall picture can come down to just below the top bar', async () => {
+    const { clampView } = await import('./zoom');
+    // A 708px-tall fit picture at 2x in a 708px area between the bars: it may move 354px each way.
+    expect(clampView({ scale: 2, x: 0, y: 9999 }, { w: 390, h: 708 }, { w: 390, h: 708 }).y).toBe(354);
+  });
+});

@@ -6,7 +6,7 @@ import { clipboardImageSupported, copyImageToClipboard, copyText, loadImageBlob 
 import { isSafeDownloadUrl } from '../../lib/safeUrl';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Markdown } from '../Markdown';
-import { FIT, atFit, distance, midpoint, panTo, swipeOutcome, toggleZoom, zoomAt, type Point, type Size, type View } from './zoom';
+import { FIT, atFit, contentSize, distance, midpoint, panTo, swipeOutcome, toggleZoom, zoomAt, type Point, type Size, type View } from './zoom';
 
 /**
  * The full-screen file viewer (2026-11-07): one or more files, swiped through on a phone and
@@ -148,7 +148,8 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
     const box = img?.parentElement;
     return {
       picture: { w: img?.clientWidth ?? 0, h: img?.clientHeight ?? 0 },
-      stage: { w: box?.clientWidth ?? 0, h: box?.clientHeight ?? 0 },
+      // The area between the top bar and the strip, so a zoomed picture's edges can come fully into view.
+      stage: contentSize(box),
     };
   };
   // A client point relative to the stage's centre.
