@@ -4,6 +4,7 @@ import { createCoach } from '../../../plugins/coach/web.js';
 import { DEFAULT_THRESHOLDS } from '../../../plugins/coach/lib/settings.mjs';
 import { emptyCadence } from '../../../plugins/coach/lib/cadence.mjs';
 import { fakeD, type FakeD } from './coach-test-utils';
+import { pickOption } from '../test/select';
 
 const NOW = new Date(2026, 10, 23, 11, 0);
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
@@ -68,7 +69,7 @@ describe('Coach settings (coach plan Task 13)', () => {
     await waitFor(() => expect(saved().thoroughness).toBe('budget'));
     fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Model' })).getByRole('radio', { name: 'Pick a harness and models' }));
     await waitFor(() => expect(saved().model).toEqual({ mode: 'pick', small: { harness: 'claude', model: 'claude-haiku-5-5' }, large: { harness: 'claude', model: 'opus' } }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Large model harness' }), { target: { value: 'codex' } });
+    pickOption('Large model harness', 'Codex');
     await waitFor(() => expect((saved().model as { large: unknown }).large).toEqual({ harness: 'codex', model: 'gpt-6.1-sol' }));
     const lm = screen.getByRole('textbox', { name: 'Large model' });
     fireEvent.change(lm, { target: { value: 'gpt-6.2-sol' } }); fireEvent.blur(lm);

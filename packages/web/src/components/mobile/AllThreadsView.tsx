@@ -1,13 +1,12 @@
-import { createPortal } from 'react-dom';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { CaretDown, CaretRight, Check, ChatsCircle, FunnelSimple, X } from '@phosphor-icons/react';
+import { useEffect, useMemo, useState } from 'react';
+import { CaretDown, CaretRight, ChatsCircle } from '@phosphor-icons/react';
 import type { AccountProvider, Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useAccounts, threadAccount, shortAccountLabel } from '../../stores/accounts';
 import { HARNESSES } from '../../lib/harnesses';
-import { Modal } from '../common/Modal';
+import { FilterBar, type FilterFacet } from '../common/FilterBar';
 import { Spinner } from '../common/Spinner';
 import { SwipeRow } from '../common/SwipeRow';
 import { SectionHeader } from '../sidebar/sectionParts';
@@ -72,12 +71,13 @@ interface Option { key: string; label: string; note?: string; count: number }
  * empty list. The sheet scrolls, so a few dozen projects are fine (a wrapped row of pills was not).
  */
 /**
- * `filterSlot` (the desktop's left panel, 2026-11-07): the Filters button renders there, right of the
- * search, and opens a panel under it instead of a bottom sheet; there are no ACTIVE / ARCHIVED tabs,
- * and the archived threads are a folded ARCHIVED section at the end, as inside a project.
+ * `onQueryChange` (the desktop's left panel, 2026-11-07): the view owns the search row, the shared
+ * FilterBar with Filters right of the search, which opens a popover instead of a bottom sheet; there
+ * are no ACTIVE / ARCHIVED tabs, and the archived threads are a folded ARCHIVED section at the end,
+ * as inside a project. On the phone the search is in the app header and the row holds the tabs.
  */
-export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string; filterSlot?: HTMLElement | null }) {
-  const desktop = filterSlot !== undefined;
+export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { onOpenThread: (projectId: string, tabId: string) => void; query?: string; onQueryChange?: (query: string) => void }) {
+  const desktop = onQueryChange !== undefined;
   const [archivedOpen, setArchivedOpen] = useState(false);
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject);
@@ -183,7 +183,6 @@ export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpe
     return [...tally].map(([key, count]) => ({ key, count, ...describe(key) }))
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
-  const pickLabel = (id: FacetId) => (active[id] ? optionsFor(id).find((o) => o.key === active[id])?.label ?? active[id] : null);
   // Which filters show: Account only once the accounts are known; on the Archived tab only Project.
   const shownFacets = tab === 'archived' ? (['project'] as FacetId[]) : FACET_IDS.filter((id) => id !== 'account' || !!accountsView);
 
@@ -198,111 +197,41 @@ export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpe
     color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: '700 12.5px var(--font-mono)', letterSpacing: '1px',
   });
 
-  // The sheet. While any filter is on, the button says how many and a row of pills says exactly
-  // what is applied. Sections start folded, except Started by and any section with a pick.
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({ starter: true });
-  const isOpen = (id: FacetId | 'starter') => unfolded[id] ?? (id !== 'starter' && !!active[id]);
-  const toggle = (id: FacetId | 'starter') => setUnfolded((u) => ({ ...u, [id]: !isOpen(id) }));
-  const starterOn = tab === 'active' && anyAgents && starter !== 'all';
+  // The filters are the shared FilterBar (2026-11-07): one section per filter, a pill per filter
+  // that is on while the panel is closed, Clear. Started by is a segmented switch; it shows only on
+  // the Active tab and once an agent started something.
+  const starterOn = tab === 'active' && anyAgents;
+  const filterFacets: FilterFacet[] = [
+    ...(starterOn ? [{
+      id: 'starter', title: 'Started by', display: 'segmented' as const, defaultOpen: true, allLabel: 'All', allCount: counts.all,
+      value: starter === 'all' ? null : starter,
+      options: STARTERS.filter((o) => o.id !== 'all').map((o) => ({ value: o.id, label: o.label, count: counts[o.id] })),
+      onChange: (v: string | null) => setStarter((v ?? 'all') as Starter),
+    }] : []),
+    ...shownFacets.map((id) => ({
+      id, title: FACET_TITLE[id], allLabel: FACET_ALL[id], value: active[id], defaultOpen: !!active[id],
+      options: optionsFor(id).map((o) => ({ value: o.key, label: o.label, note: o.note, count: tab === 'active' ? o.count : undefined })),
+      onChange: (v: string | null) => setFacet(id, v),
+    })),
+  ];
   const onFacets = shownFacets.filter((id) => active[id]);
-  const nFilters = (starterOn ? 1 : 0) + onFacets.length;
-  const starterLabel = STARTERS.find((o) => o.id === starter)?.label;
-  const clearAll = () => { setStarter('all'); setFacets({ ...NO_FACETS }); };
-  const pill: React.CSSProperties = {
-    display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 4px 0 10px', flexShrink: 0, maxWidth: 220,
-    borderRadius: 'var(--radius-pill)', fontSize: 13, color: 'var(--color-text-primary)',
-    background: 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))', border: '1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)',
-  };
-  const pillX = (label: string, onClick: () => void) => (
-    <button type="button" aria-label={label} onClick={onClick} style={{ display: 'inline-flex', width: 20, height: 20, alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
-      <X size={12} weight="bold" />
-    </button>
-  );
-  const optionRow = (id: FacetId, key: string | null, label: string, note?: string, count?: number) => {
-    const on = active[id] === key;
-    return (
-      <button key={key ?? '__all__'} type="button" aria-pressed={on} aria-label={label} onClick={() => setFacet(id, key)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, width: '100%', minHeight: 40, padding: '0 12px 0 14px', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 14,
-          background: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-        }}>
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-        {note && <span aria-hidden style={{ fontSize: 12, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{note}</span>}
-        {count !== undefined && <span aria-hidden style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums', minWidth: 22, textAlign: 'right' }}>{count}</span>}
-        <span aria-hidden style={{ width: 16, display: 'inline-flex', justifyContent: 'center', color: 'var(--color-accent)' }}>{on && <Check size={14} weight="bold" />}</span>
-      </button>
-    );
-  };
-  const filtersBody = (
-        <div data-testid="filters-panel" style={{ display: 'flex', flexDirection: 'column', margin: '0 -4px' }}>
-        {tab === 'active' && anyAgents && (
-          <Section title="Started by" summary={starter === 'all' ? 'All' : starterLabel} open={isOpen('starter')} onToggle={() => toggle('starter')}>
-            <div role="radiogroup" aria-label="Started by" style={{ display: 'flex', gap: 2, padding: 2, margin: '2px 12px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-base)' }}>
-              {STARTERS.map((o) => (
-                <button key={o.id} type="button" role="radio" aria-checked={starter === o.id} onClick={() => setStarter(o.id)}
-                  style={{ flex: 1, height: 30, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: 13.5, background: starter === o.id ? 'var(--color-hover)' : 'transparent', color: starter === o.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
-                  {o.label} <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{counts[o.id]}</span>
-                </button>
-              ))}
-            </div>
-          </Section>
-        )}
-        {shownFacets.map((id) => (
-          <Section key={id} title={FACET_TITLE[id]} summary={pickLabel(id) ?? FACET_ALL[id]} open={isOpen(id)} onToggle={() => toggle(id)}>
-            <div role="group" aria-label={`${FACET_TITLE[id]} filter`} style={{ display: 'flex', flexDirection: 'column', paddingBottom: 6 }}>
-              {optionRow(id, null, FACET_ALL[id])}
-              {optionsFor(id).map((o) => optionRow(id, o.key, o.label, o.note, tab === 'active' ? o.count : undefined))}
-            </div>
-          </Section>
-        ))}
-        <div style={{ position: 'sticky', bottom: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderTop: '1px solid var(--color-border)', background: 'var(--color-elevated)' }}>
-          <button type="button" onClick={clearAll} disabled={!nFilters} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13, color: 'var(--color-text-secondary)', cursor: 'pointer', opacity: nFilters ? 1 : 0.5 }}>Reset</button>
-          <button type="button" onClick={() => setFiltersOpen(false)} style={{ background: 'none', border: 'none', padding: 0, fontSize: 13.5, fontWeight: 500, color: 'var(--color-accent)', cursor: 'pointer' }}>
-            {tab === 'active' ? `Show ${threads.length} thread${threads.length === 1 ? '' : 's'}` : 'Done'}
-          </button>
+  const doneLabel = tab === 'active' ? `Show ${threads.length} thread${threads.length === 1 ? '' : 's'}` : 'Done';
+  const filterBar = desktop ? (
+    <FilterBar variant="popover" size="md" facets={filterFacets} doneLabel={doneLabel} query={query} onQueryChange={onQueryChange} placeholder="Search threads" rowTestId="sidebar-search-row"
+      style={{ padding: '8px 8px 10px', gap: 8, background: 'color-mix(in srgb, var(--color-pane) 62%, transparent)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderBottom: '1px solid color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)' }} />
+  ) : (
+    <FilterBar variant="sheet" size="md" facets={filterFacets} doneLabel={doneLabel} style={{ gap: 0 }}
+      rowStyle={{ padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)' }} pillsStyle={{ padding: '8px 12px 2px' }}
+      leading={(
+        <div role="tablist" aria-label="Thread list" style={{ flex: 1, display: 'flex', gap: 18, alignSelf: 'stretch', alignItems: 'flex-end' }}>
+          <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
+          <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
         </div>
-      </div>
-  );
-  const filtersButton = (
-        <button type="button" aria-expanded={filtersOpen} aria-label={nFilters ? `Filters, ${nFilters} on` : 'Filters'} onClick={() => setFiltersOpen((v) => !v)}
-          style={{
-            ...(desktop ? { height: 32, padding: '0 9px', borderRadius: 'var(--radius-sm)', background: nFilters || filtersOpen ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-elevated))' : 'var(--color-elevated)' } : { marginLeft: 'auto', alignSelf: 'center', marginBottom: 4, height: 30, padding: '0 10px', borderRadius: 'var(--radius-pill)' }),
-            display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13, border: `1px solid ${nFilters ? 'color-mix(in srgb, var(--color-accent) 55%, transparent)' : 'var(--color-border)'}`,
-            ...(desktop ? {} : { background: nFilters || filtersOpen ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent' }), color: nFilters ? 'var(--color-accent)' : 'var(--color-text-secondary)',
-          }}>
-          <FunnelSimple size={15} weight="bold" />Filters
-          {nFilters > 0 && <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '600 11px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{nFilters}</span>}
-        </button>
+      )} />
   );
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      {!desktop && (
-      <div role="tablist" aria-label="Thread list" style={{ display: 'flex', gap: 18, padding: '2px 14px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
-        <button type="button" role="tab" aria-selected={tab === 'active'} onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>ACTIVE</button>
-        <button type="button" role="tab" aria-selected={tab === 'archived'} onClick={() => setTab('archived')} style={tabBtn(tab === 'archived')}>ARCHIVED</button>
-        {filtersButton}
-      </div>
-      )}
-      {nFilters > 0 && !filtersOpen && (
-        <div data-testid="applied-filters" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px 2px', flexWrap: 'wrap', flexShrink: 0 }}>
-          {starterOn && <span style={pill}><span style={{ color: 'var(--color-text-secondary)' }}>Started by</span>{starterLabel}{pillX('Remove Started by filter', () => setStarter('all'))}</span>}
-          {onFacets.map((id) => (
-            <span key={id} style={pill}><span style={{ color: 'var(--color-text-secondary)' }}>{FACET_TITLE[id]}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pickLabel(id)}</span>{pillX(`Remove ${FACET_TITLE[id]} filter`, () => setFacet(id, null))}</span>
-          ))}
-          <button type="button" onClick={clearAll} style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', padding: '0 4px' }}>Clear</button>
-        </div>
-      )}
-      {!desktop && <Modal open={filtersOpen} sheet title="Filters" onClose={() => setFiltersOpen(false)}>{filtersBody}</Modal>}
-      {desktop && filterSlot && createPortal(<>
-        {filtersButton}
-        {filtersOpen && <>
-          <div onClick={() => setFiltersOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-          <div role="dialog" aria-label="Filters" data-variant="popover" style={{ position: 'absolute', top: 38, right: 0, zIndex: 91, width: 300, maxHeight: '65vh', overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-            {filtersBody}
-          </div>
-        </>}
-      </>, filterSlot)}
+      {filterBar}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '0 4px 12px' }}>
         {tab === 'archived' ? <ArchivedThreadsList project={active.project} query={query} onOpenThread={onOpenThread} /> : <>
         {loading && !threads.length && <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner size={24} /></div>}
@@ -342,20 +271,5 @@ export function AllThreadsView({ onOpenThread, query = '', filterSlot }: { onOpe
       </div>
       <ThreadMenu at={menu} onClose={() => setMenu(null)} onBranched={(b) => onOpenThread(b.sessionId, b.id)} />
     </div>
-  );
-}
-
-/** One collapsible filter in the sheet: a header that names the current pick, and the choices under it when open. */
-function Section({ title, summary, open, onToggle, children }: { title: string; summary?: string | null; open: boolean; onToggle: () => void; children: ReactNode }) {
-  return (
-    <section style={{ borderBottom: '1px solid var(--color-border)' }}>
-      <button type="button" aria-expanded={open} aria-label={`${title}${summary ? `: ${summary}` : ''}`} onClick={onToggle}
-        style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', minHeight: 46, padding: '0 12px 0 14px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
-        <span style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--color-text-primary)', flexShrink: 0 }}>{title}</span>
-        <span style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 13.5, color: summary && !/^All/.test(summary) ? 'var(--color-accent)' : 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
-        <CaretDown size={14} weight="bold" style={{ color: 'var(--color-text-tertiary)', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 120ms' }} />
-      </button>
-      {open && children}
-    </section>
   );
 }

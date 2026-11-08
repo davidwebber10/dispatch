@@ -954,8 +954,8 @@ export function createCoach(d, deps = {}) {
     const name = tier === 'small' ? 'Small model' : 'Large model';
     const set = (next) => saveSettings({ ...store.getState().settings, model: { ...store.getState().settings.model, mode: 'pick', [tier]: next } });
     return h(Line, { label: name, hint: tier === 'small' ? 'Checks each tip (cheap).' : 'Writes tips, More, and the weekly recap.' },
-      h('select', { 'aria-label': `${name} harness`, value: cur.harness, style: { ...S.input, marginTop: 0, width: 120 }, onChange: (e) => { const harness = e.target.value; void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); } },
-        ...Object.keys(HARNESS_NAME).map((k) => h('option', { key: k, value: k }, HARNESS_NAME[k]))),
+      h(d.ui.Select, { ariaLabel: `${name} harness`, value: cur.harness, style: { width: 120 }, onChange: (harness) => { void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); },
+        options: Object.keys(HARNESS_NAME).map((k) => ({ value: k, label: HARNESS_NAME[k] })) }),
       h(TextField, { label: name, value: cur.model, onSave: (model) => set({ harness: cur.harness, model }) }));
   }
 

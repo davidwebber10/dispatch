@@ -15,11 +15,6 @@ export const panel: React.CSSProperties = {
 export const labelStyle: React.CSSProperties = {
   font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)',
 };
-export const inputStyle: React.CSSProperties = {
-  height: 28, padding: '0 8px', background: 'var(--color-elevated)',
-  border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
-  color: 'var(--color-text-primary)', fontSize: 12,
-};
 export const muted: React.CSSProperties = { color: 'var(--color-text-tertiary)', fontSize: 12.5 };
 
 /* ------------------------------------------------------------- formatting */

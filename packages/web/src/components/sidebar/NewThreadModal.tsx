@@ -14,6 +14,7 @@ import { DEFAULT_AUTO_ARCHIVE_MS, fromDuration, toDuration, type DurationUnit } 
 import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, ProviderName, ProviderStatus } from '../../api/types';
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness as Harnesses } from '../../lib/harnesses';
 import type { AccountsView, AccountProvider } from '../../api/types';
+import { Select } from '../common/Select';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -397,11 +398,9 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
       <input type="number" min={1} step={1} inputMode="numeric" aria-label="Duration" value={duration.value}
         onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) setAutoArchiveMs(fromDuration(n, duration.unit)); }}
         style={{ ...control, height: m ? 40 : 30, width: m ? 64 : 52, padding: '0 8px', font: `500 ${m ? 14 : 12}px var(--font-mono)`, textAlign: 'center' }} />
-      <select aria-label="Unit" value={duration.unit}
-        onChange={(e) => setAutoArchiveMs(fromDuration(duration.value, e.target.value as DurationUnit))}
-        style={{ ...control, height: m ? 40 : 30, padding: m ? '0 12px' : '0 8px', color: 'var(--color-text-secondary)', font: `500 ${m ? 14 : 12}px var(--font-mono)`, cursor: 'pointer' }}>
-        {UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
-      </select>
+      <Select ariaLabel="Unit" value={duration.unit} options={UNITS}
+        onChange={(v) => setAutoArchiveMs(fromDuration(duration.value, v as DurationUnit))}
+        style={{ ...control, height: m ? 40 : 30, width: m ? 84 : 72, color: 'var(--color-text-secondary)', font: `500 ${m ? 14 : 12}px var(--font-mono)` }} />
     </>
   );
 

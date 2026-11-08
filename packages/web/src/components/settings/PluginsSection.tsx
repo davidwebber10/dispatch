@@ -12,6 +12,7 @@ import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMobileNav, openSettingsPluginPage, closeSettingsPluginPage } from '../../stores/mobileNav';
 import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle } from './ui';
+import { Select } from '../common/Select';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -361,10 +362,8 @@ export function PluginsSection() {
               <div style={{ ...groupRow(1), flexWrap: 'wrap' }}>
                 {pinning?.id === r.id ? (
                   <>
-                    <select aria-label="Pin to version" value={r.pinned ?? ''} onChange={(e) => { const v = e.target.value || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ ...fieldInput, width: 160 }}>
-                      <option value="">No pin</option>
-                      {pinning.versions.map((v) => <option key={v.version} value={v.version}>v{v.version}</option>)}
-                    </select>
+                    <Select ariaLabel="Pin to version" value={r.pinned ?? ''} onChange={(picked) => { const v = picked || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ width: 160 }}
+                      options={[{ value: '', label: 'No pin' }, ...pinning.versions.map((v) => ({ value: v.version, label: `v${v.version}` }))]} />
                     <button type="button" style={ghostBtn} onClick={() => setPinning(null)}>Cancel</button>
                     <span style={note}>A pin stops updates past that version.</span>
                   </>

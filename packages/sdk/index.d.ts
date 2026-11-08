@@ -70,6 +70,76 @@ export type PluginEvent =
 export type ServerEvent = ThreadEvent | PluginEvent | { type: string; [key: string]: unknown };
 
 // ── the SDK ─────────────────────────────────────────────────────────────────────────────────
+/** One choice in a FilterBar facet. */
+export interface FilterOption {
+  value: string;
+  label: string;
+  /** A quiet second word on the row. */
+  note?: string;
+  /** How many items this choice leaves. Omitted, no count shows. */
+  count?: number;
+}
+
+/** One filter in a FilterBar: a section in the panel and, while on, a pill. */
+export interface FilterFacet {
+  id: string;
+  /** The section heading and the pill prefix: "Project". */
+  title: string;
+  /** The current pick; null is no filter (the All row). */
+  value: string | null;
+  options: FilterOption[];
+  onChange(value: string | null): void;
+  /** The All row's label. Default "All". */
+  allLabel?: string;
+  allCount?: number;
+  /** `segmented`: a row of radio buttons, All last, for two or three choices. Default `list`. */
+  display?: 'list' | 'segmented';
+  /** A search box inside the section. Default: on past 8 options. */
+  searchable?: boolean;
+  /** Whether the section starts unfolded. Default: when it has a pick, or when there are 2 facets or fewer. */
+  defaultOpen?: boolean;
+}
+
+export interface FilterBarProps {
+  facets: FilterFacet[];
+  /** The search field; without `onQueryChange` there is none. */
+  query?: string;
+  onQueryChange?(query: string): void;
+  /** The search placeholder, also its accessible name. */
+  placeholder?: string;
+  /** Takes the search's place left of the button. */
+  leading?: React.ReactNode;
+  /** Called by Clear after every facet is reset. */
+  onClear?(): void;
+  /** The panel footer's close button. Default "Done". */
+  doneLabel?: string;
+  /** Default by screen width: `popover` on the desktop, `sheet` on the phone. */
+  variant?: 'popover' | 'sheet';
+  /** Default by screen width: `md` on the desktop, `lg` on the phone. */
+  size?: 'md' | 'lg';
+  style?: React.CSSProperties;
+  rowStyle?: React.CSSProperties;
+  pillsStyle?: React.CSSProperties;
+  rowTestId?: string;
+}
+
+export interface SelectProps {
+  value: string;
+  options: { value: string; label: string; hint?: string; disabled?: boolean }[];
+  onChange(value: string): void;
+  /** The accessible name; or give an `id` and a `<label htmlFor>`. */
+  ariaLabel?: string;
+  id?: string;
+  /** The search box over the list. Default: on past 8 options. */
+  searchable?: boolean;
+  /** The trigger text while no option matches `value`. */
+  placeholder?: string;
+  /** Default by screen width: `md` on the desktop, `lg` on the phone. */
+  size?: 'md' | 'lg';
+  style?: React.CSSProperties;
+  disabled?: boolean;
+}
+
 export interface DispatchSdk {
   version: string;
   /** This plugin's id, as plugin.json names it: use it for register, storage, settings and fetch. */
@@ -128,6 +198,15 @@ export interface DispatchSdk {
     Markdown: React.ComponentType<{ source: string }>;
     FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string> }[]; index?: number; onClose(): void; label?: string }>;
     Toggle: React.ComponentType<{ on: boolean; onClick(): void; label?: string }>;
+    /**
+     * The app's filter control: a search field with a Filters button to its right. The button
+     * opens a panel (a popover on the desktop, a bottom sheet on the phone) with one section per
+     * facet, each a single-select list (with counts when given, and a search box past 8 options).
+     * Active filters show as removable pills under the row; Clear resets them all.
+     */
+    FilterBar: React.ComponentType<FilterBarProps>;
+    /** The app's dropdown for form fields (a native `<select>` is not used anywhere). Search box past 8 options. */
+    Select: React.ComponentType<SelectProps>;
     styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn(on: boolean): React.CSSProperties; chip: React.CSSProperties; fieldInput: React.CSSProperties };
   };
   /** Icon components by name (`eye`, `star`, `sparkle`, `sun`, …); the same names `contributes.views[].icon` takes. */

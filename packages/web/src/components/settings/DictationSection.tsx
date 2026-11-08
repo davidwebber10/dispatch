@@ -4,11 +4,9 @@ import { PROVIDERS, getProvider } from '../../lib/transcription-providers';
 import { api } from '../../api/client';
 import { sectionLabel, summaryLine, ghostBtn } from './ui';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
+import { Select } from '../common/Select';
 
-const selectStyle = {
-  height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
-} as const;
+const selectStyle = { height: 34, fontSize: 13, width: 'auto', minWidth: 200, maxWidth: 280 } as const;
 const rowStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } as const;
 
 /**
@@ -49,32 +47,21 @@ export function DictationSection() {
 
         <div style={rowStyle}>
           <label htmlFor="stt-provider" style={{ fontSize: 13 }}>Provider</label>
-          <select id="stt-provider" style={selectStyle} value={sttProvider} onChange={(e) => onProvider(e.target.value)}>
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id} disabled={p.status === 'coming-soon'}>
-                {p.label}{p.status === 'coming-soon' ? ' (coming soon)' : ''}
-              </option>
-            ))}
-          </select>
+          <Select id="stt-provider" style={selectStyle} value={sttProvider} onChange={onProvider}
+            options={PROVIDERS.map((p) => ({ value: p.id, label: `${p.label}${p.status === 'coming-soon' ? ' (coming soon)' : ''}`, disabled: p.status === 'coming-soon' }))} />
         </div>
 
         <div style={rowStyle}>
           <label htmlFor="stt-model" style={{ fontSize: 13 }}>Model</label>
-          <select id="stt-model" style={selectStyle} value={sttModel} onChange={(e) => setSttModel(e.target.value)}>
-            {(provider?.models ?? []).map((m) => (
-              <option key={m.id} value={m.id}>{m.label}</option>
-            ))}
-          </select>
+          <Select id="stt-model" style={selectStyle} value={sttModel} onChange={setSttModel}
+            options={(provider?.models ?? []).map((m) => ({ value: m.id, label: m.label }))} />
         </div>
 
         <div style={rowStyle}>
           <label htmlFor="stt-secret" style={{ fontSize: 13 }}>API key (Doppler secret)</label>
-          <select id="stt-secret" style={selectStyle} value={sttSecretName} onChange={(e) => setSttSecretName(e.target.value)}>
-            <option value="">— select a secret —</option>
-            {/* The chosen name always renders, even when the secrets list failed to load. */}
-            {sttSecretName && !secrets.includes(sttSecretName) && <option value={sttSecretName}>{sttSecretName}</option>}
-            {secrets.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
+          {/* The chosen name always shows, even when the secrets list failed to load. */}
+          <Select id="stt-secret" style={selectStyle} value={sttSecretName} onChange={setSttSecretName} placeholder="Choose a secret"
+            options={[...(sttSecretName && !secrets.includes(sttSecretName) ? [sttSecretName] : []), ...secrets].map((n) => ({ value: n, label: n }))} />
         </div>
 
         {secretsErr && <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>{secretsErr}</div>}

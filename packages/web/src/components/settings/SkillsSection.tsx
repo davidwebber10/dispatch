@@ -3,6 +3,7 @@ import { api } from '../../api/client';
 import type { SkillRow } from '../../api/types';
 import { useProjects } from '../../stores/projects';
 import { sectionLabel, row, item, ghostBtn, fieldInput, Toggle } from './ui';
+import { Select } from '../common/Select';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 
@@ -30,13 +31,11 @@ export function SkillsSection() {
       <section aria-label="Skills" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span style={sectionLabel}>SKILLS</span>
         <div style={note}>A folder under ~/.dispatch/skills with a skill.json and a SKILL.md is a skill; the Plugins page installs them from marketplaces. Enabled skills reach every thread's prompt under their name, with the folder's path so the model can read the rest.</div>
-        <label style={{ ...row, gap: 10 }}>
+        <div style={{ ...row, gap: 10 }}>
           <span style={item}>Project</span>
-          <select aria-label="Project" value={project} onChange={(e) => setProject(e.target.value)} style={{ ...fieldInput, width: 220 }}>
-            <option value="">Everywhere</option>
-            {sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </label>
+          <Select ariaLabel="Project" value={project} onChange={setProject} style={{ width: 220 }}
+            options={[{ value: '', label: 'Everywhere' }, ...sessions.map((s) => ({ value: s.id, label: s.name }))]} />
+        </div>
         {err && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
         {skills && skills.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No skills yet. Add a marketplace on the Plugins page and install one, or write a folder under ~/.dispatch/skills.</div>}
         {(skills ?? []).map((s) => (

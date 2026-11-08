@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { SERIES } from './chartTheme';
 
 /*
@@ -95,9 +95,9 @@ describe('AnalyticsView colour stability', () => {
     expect(opusFill).toBe(SERIES[0]);
     expect(codexFill).toBe(SERIES[1]);
 
-    const select = await screen.findByLabelText(/provider/i);
-    await waitFor(() => expect(select.textContent).toMatch(/codex/));
-    fireEvent.change(select, { target: { value: 'codex' } });
+    // The Provider filter is in the shared FilterBar's panel (2026-11-07).
+    fireEvent.click(await screen.findByRole('button', { name: 'Filters' }));
+    fireEvent.click(await within(screen.getByRole('group', { name: 'Provider filter' })).findByRole('button', { name: 'codex' }));
 
     await waitFor(() => expect(barFills(container).length).toBe(1));
     // The survivor keeps SERIES[1]. A domain rebuilt on the filtered data would

@@ -4,6 +4,7 @@ import { api } from '../../api/client';
 import { useAgents } from '../../stores/agents';
 import { useProjects } from '../../stores/projects';
 import type { AgentSchedule, CreateScheduleInput } from '../../api/types';
+import { Select } from '../common/Select';
 
 type Mode = 'manual' | 'interval' | 'daily' | 'weekly' | 'cron';
 const MODES: Mode[] = ['manual', 'interval', 'daily', 'weekly', 'cron'];
@@ -98,9 +99,7 @@ export function EditAgentModal({ scheduleId, presetProjectId, prefill, onClose, 
   return (
     <Modal open onClose={onClose} title={existing ? 'Edit Automation' : 'New Automation'}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input}>
-          {sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <Select ariaLabel="Project" value={projectId} onChange={setProjectId} options={sessions.map((s) => ({ value: s.id, label: s.name }))} style={{ height: 34, fontSize: 13 }} />
         <input style={input} placeholder="Automation name" value={name} onChange={(e) => setName(e.target.value)} />
         <div style={{ display: 'inline-flex', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 3, width: 'fit-content' }}>
           {(['claude-code', 'codex'] as const).map((p) => (

@@ -84,13 +84,14 @@ describe('MemoryInspector editor setting', () => {
   it('Open docs in: None by default; a choice is saved', async () => {
     useSettings.setState({ editor: '' });
     render(<MemoryInspector open onClose={() => {}} />);
-    const select = screen.getByRole('combobox', { name: 'Open docs in' }) as HTMLSelectElement;
-    expect(select.value).toBe('');
-    expect([...select.options].map((o) => o.textContent)).toEqual(['None', 'VS Code', 'Cursor', 'Zed']);
-    fireEvent.change(select, { target: { value: 'zed' } });
+    const select = screen.getByRole('combobox', { name: 'Open docs in' });
+    expect(select).toHaveTextContent('None');
+    fireEvent.click(select);
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['None', 'VS Code', 'Cursor', 'Zed']);
+    fireEvent.click(screen.getByRole('option', { name: 'Zed' }));
     expect(useSettings.getState().editor).toBe('zed');
     expect(localStorage.getItem('dispatch:editor')).toBe('"zed"');
     useSettings.getState().setEditor('');
-    await waitFor(() => expect(select.value).toBe(''));
+    await waitFor(() => expect(select).toHaveTextContent('None'));
   });
 });

@@ -1,6 +1,7 @@
 import { Timer } from '@phosphor-icons/react';
 import { Toggle } from '../settings/ui';
 import { DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, type DurationUnit } from '../../lib/autoArchive';
+import { Select } from '../common/Select';
 
 interface AutoArchiveFieldProps {
   enabled: boolean;
@@ -49,14 +50,13 @@ export function AutoArchiveField({ enabled, ms, onChange, flush }: AutoArchiveFi
             }}
             style={input}
           />
-          <select
-            aria-label="Inactivity unit"
+          <Select
+            ariaLabel="Inactivity unit"
             value={unit}
-            onChange={(e) => onChange(true, fromDuration(value, e.target.value as DurationUnit))}
-            style={{ ...input, width: 'auto' }}
-          >
-            {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-          </select>
+            options={UNITS.map((u) => ({ value: u, label: u }))}
+            onChange={(v) => onChange(true, fromDuration(value, v as DurationUnit))}
+            style={{ ...input, width: 104 }}
+          />
           <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>of inactivity</span>
         </div>
       )}

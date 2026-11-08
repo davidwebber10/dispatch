@@ -5,6 +5,7 @@ import { api } from '../../api/client';
 import { usePluginRegistry } from '../../plugins/registry';
 import * as host from '../../plugins/host';
 import type { PluginRow } from '../../api/types';
+import { pickOption } from '../../test/select';
 
 const row = (id: string, extra: Partial<PluginRow> = {}): PluginRow => ({ id, name: id, version: '1.0.0', web: 'web.js', enabled: true, stamp: 1, install: null, ...extra });
 
@@ -406,8 +407,8 @@ describe('a plugin detail page (redesign 2026-11-07)', () => {
     fireEvent.click(within(page()).getByRole('switch', { name: 'Auto-update' }));
     await waitFor(() => expect(api.setPluginAutoUpdate).toHaveBeenCalledWith('hello', true));
     fireEvent.click(within(page()).getByRole('button', { name: 'Pin…' }));
-    const pick = await within(page()).findByLabelText('Pin to version');
-    fireEvent.change(pick, { target: { value: '1.0.0' } });
+    await within(page()).findByRole('combobox', { name: 'Pin to version' });
+    pickOption('Pin to version', 'v1.0.0', page());
     await waitFor(() => expect(api.pinPlugin).toHaveBeenCalledWith('hello', '1.0.0'));
     backToList();
     expect(await openDetail('orphan')).toHaveTextContent('Marketplace removed');

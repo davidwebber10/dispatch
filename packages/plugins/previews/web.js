@@ -193,8 +193,14 @@ export default function activate(d) {
     // A thread from another project stops applying when the project changes.
     useEffect(() => { if (thread && !threads.some((t) => t.id === thread)) setThread(''); }, [threads, thread]);
     const items = useMemo(() => filterPreviews(all, { project: project || null, thread: thread || null, query }, nameOf), [all, project, thread, query, sessions]);
-    const filtering = !!(project || thread || query.trim());
-    const field = { height: 32, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', fontSize: 13 };
+    // The filters are the app's FilterBar (2026-11-07): the search with a Filters button to its
+    // right, Project and Thread in its panel, the picks as pills under the row.
+    const facets = [
+      { id: 'project', title: 'Project', allLabel: 'All projects', value: project || null, onChange: (v) => setProject(v || ''),
+        options: projects.map((p) => ({ value: p.id, label: p.name, count: p.count })) },
+      { id: 'thread', title: 'Thread', allLabel: 'All threads', value: thread || null, onChange: (v) => setThread(v || ''),
+        options: threads.map((t) => ({ value: t.id, label: t.label, count: t.count })) },
+    ];
     const groups = useMemo(() => {
       const out = [];
       for (const p of items) {
@@ -210,15 +216,9 @@ export default function activate(d) {
         h('div', null,
           h('h1', { style: { margin: 0, fontSize: 18, fontWeight: 700 } }, 'Previews'),
           h('div', { style: { fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 } }, 'Files and text that threads handed you to look at or copy, newest first.')),
-        all.length > 0 && h('div', { role: 'search', style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' } },
-          h('input', { type: 'search', 'aria-label': 'Search previews', placeholder: 'Search previews', value: query, onChange: (e) => setQuery(e.target.value), style: { ...field, flex: '1 1 220px', minWidth: 0 } }),
-          h('select', { 'aria-label': 'Project', value: project, onChange: (e) => setProject(e.target.value), style: { ...field, flex: '0 1 200px' } },
-            h('option', { value: '' }, 'All projects'),
-            ...projects.map((p) => h('option', { key: p.id, value: p.id }, `${p.name} (${p.count})`))),
-          h('select', { 'aria-label': 'Thread', value: thread, onChange: (e) => setThread(e.target.value), style: { ...field, flex: '0 1 200px' } },
-            h('option', { value: '' }, 'All threads'),
-            ...threads.map((t) => h('option', { key: t.id, value: t.id }, `${t.label} (${t.count})`))),
-          filtering && h('button', { type: 'button', onClick: () => { setProject(''); setThread(''); setQuery(''); }, style: { background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12.5 } }, 'Clear')),
+        all.length > 0 && h('div', { role: 'search' },
+          h(ui.FilterBar, { query, onQueryChange: setQuery, placeholder: 'Search previews', facets,
+            doneLabel: `Show ${items.length} ${items.length === 1 ? 'preview' : 'previews'}` })),
         all.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '20px 0' } }, loaded ? 'Nothing yet. Ask a thread to show you a screenshot, a page, or a string with its preview tool.' : 'Loading…'),
         all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, 'No preview matches.'),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },

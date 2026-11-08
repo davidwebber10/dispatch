@@ -378,7 +378,7 @@ describe('the filter sheet (2026-11-06): folded sections for Project, Account, H
     expect(screen.getByRole('button', { name: /^Show 2 threads$/ })).toBeInTheDocument();
   });
 
-  it('Reset clears every filter at once', () => {
+  it('Clear clears every filter at once', () => {
     seed();
     rtlRender(<AllThreadsView onOpenThread={() => {}} />);
     openFilters();
@@ -387,7 +387,7 @@ describe('the filter sheet (2026-11-06): folded sections for Project, Account, H
     openSection('Project');
     fireEvent.click(screen.getByRole('button', { name: 'Beta' }));
     expect(labels()).toEqual(['Ship v2']);
-    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(labels()).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
   });
