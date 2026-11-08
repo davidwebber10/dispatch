@@ -15,6 +15,7 @@ import type { CcRecentSession, CodexRecentSession, HarnessSettingsResponse, Prov
 import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness as Harnesses } from '../../lib/harnesses';
 import type { AccountsView, AccountProvider } from '../../api/types';
 import { Select } from '../common/Select';
+import { startCliSignIn } from '../../lib/cliSignIn';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -273,14 +274,8 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
     if (signingIn) return;
     setSigningIn(true);
     try {
-      const t = await api.createTerminal(sessionId, {
-        type: 'shell',
-        label: `Sign in — ${spec.label}`,
-        config: { signIn: name },
-      });
-      await useTabs.getState().loadTabs(sessionId);
-      useTabs.getState().markLoading(t.id);
-      onCreated(t.id);
+      const id = await startCliSignIn(sessionId, name, spec.label);
+      onCreated(id);
       onClose();
     } catch { setSigningIn(false); }
   }

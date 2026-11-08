@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
+import { SignedOutCard } from './SignedOutCard';
 import { ModelSwitcher, ModelNotice } from './ModelSwitcher';
 import { friendlyModelName } from '../../../lib/modelName';
 import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
@@ -53,9 +54,17 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
   // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
   // the common case).
-  const { items, busy, model, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+  const { items, busy, model, authRequired, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
-  const loginItem = useMemo(() => loginItemFor(tab?.type, items), [tab?.type, items]);
+  const loginItem = useMemo(() => loginItemFor(tab?.type, items, !!authRequired), [tab?.type, items, authRequired]);
+  // Retry after a sign-in: the last message the owner sent, again (SignedOutCard says why it is a button).
+  const retryLast = useCallback(() => {
+    for (let k = items.length - 1; k >= 0; k--) {
+      const it = items[k];
+      if (it.kind === 'user' && it.source !== 'coordinator' && it.text) { send(it.text); return; }
+    }
+  }, [items, send]);
+  const authExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -279,7 +288,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)
+                renderTimeline(items, openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -287,11 +296,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)}
+                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem)}
+                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -503,6 +512,8 @@ export interface TimelineExtensions {
   userRow?(item: ConvItem): ReactNode | undefined;
   /** Assistant prose, given the item it came from. Default: <AssistantText>. */
   prose?(text: string, item: ConvItem): ReactNode;
+  /** Drawn in place of the login-error result (`loginItem`): Pretty's signed-out card. */
+  authCard?: ReactNode;
   /** Plain (non-markdown) text inside user bubbles and report_status cards. Default: the text. */
   plainText?(text: string): ReactNode;
   /** Wraps each drawn unit, given the items it draws in order: one item, a tool call with its
@@ -545,12 +556,17 @@ export function relayNameFor(tab: { config?: Record<string, unknown> } | null | 
 }
 
 /** The thread's last result, when it is a Claude login failure in a Claude thread: it gets the login box. */
-export function loginItemFor(type: string | undefined, items: ConvItem[]): ConvItem | null {
-  if (type !== 'claude-code') return null;
+/**
+ * The failed turn a sign-in fixes: the LAST result, when it is an error and the daemon said the
+ * login is signed out (`authRequired`, any harness), or — for a Claude thread whose history has
+ * no such event (older turns, REST pages) — its text reads like a login error.
+ */
+export function loginItemFor(type: string | undefined, items: ConvItem[], authRequired = false): ConvItem | null {
+  if (type !== 'claude-code' && !authRequired) return null;
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
     if (it.kind !== 'result') continue;
-    return it.isError && isClaudeAuthError(it.text ?? '') ? it : null;
+    return it.isError && (authRequired || isClaudeAuthError(it.text ?? '')) ? it : null;
   }
   return null;
 }
@@ -795,7 +811,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       if (ext?.hideResult?.(it)) continue;               // ...or a surface hides it outright
       pushMach(id, frame([it], <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>));
       continue;
-    } else if (it.kind === 'result') node = <ResultFooter item={it} login={it === loginItem} />;
+    } else if (it.kind === 'result') node = it === loginItem && ext?.authCard ? ext.authCard : <ResultFooter item={it} login={it === loginItem} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
     // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
     // new speaker, it's an interruption inside the assistant's own turn — the assistant

@@ -36,6 +36,14 @@ export interface CompactResult {
   error?: string;
 }
 
+/** A signed-out login, as core's auth/auth-failure.ts reports it. */
+export interface AuthRequired {
+  provider: 'claude' | 'codex' | 'grok' | 'opencode';
+  accountId?: string;
+  reason: string;
+  detail?: string;
+}
+
 export interface StructuredChat {
   items: ConvItem[];
   busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
@@ -56,6 +64,9 @@ export interface StructuredChat {
    *  bare "Working…" spinner. Null when no retry is in flight; cleared the moment the turn
    *  progresses (stream/assistant) or ends (result). */
   apiRetry: ApiRetry | null;
+  /** The thread's login is signed out or expired (the daemon's system/auth_required event), or
+   *  null. Kept through later failures; cleared when a turn succeeds. */
+  authRequired: AuthRequired | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
   /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
@@ -302,6 +313,7 @@ export function useStructuredChat(
   const [items, setItems] = useState<ConvItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
+  const [authRequired, setAuthRequired] = useState<AuthRequired | null>(null);
   const [contextTokens, setContextTokens] = useState<number | undefined>();
   // The REAL context-window size when the wire reports one (ACP usage_update.size, carried
   // as `context_window` on the assistant frame). Undefined → the per-model table
@@ -393,7 +405,7 @@ export function useStructuredChat(
       inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       return;
     }
-    setItems([]); setBusy(false); setModel(undefined); setPending(null);
+    setItems([]); setBusy(false); setModel(undefined); setPending(null); setAuthRequired(null);
     useActiveModel.getState().clear(terminalId); // the connect's system/model frame brings the current one
     setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
     hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
@@ -476,6 +488,7 @@ export function useStructuredChat(
         pendingRef.current.clear();
         setItems([]); setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
+        setAuthRequired(null); // the replay re-sends a standing system/auth_required
         setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
         blockMapRef.current.clear(); recoveredRef.current.clear();
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
@@ -498,6 +511,10 @@ export function useStructuredChat(
         const reported = modelFromFrame(event);
         if (reported) { setModel(reported); useActiveModel.getState().set(terminalId, reported); }
         if (type === 'system' && event.subtype === 'init') return;
+        if (type === 'system' && event.subtype === 'auth_required') {
+          setAuthRequired({ provider: event.provider, ...(event.accountId ? { accountId: event.accountId } : {}), reason: event.reason, ...(event.detail ? { detail: event.detail } : {}) });
+          return;
+        }
         if (type === 'system' && event.subtype === 'model') {
           // A switch (the Pretty model switcher) leaves a line in the chat; the connect-time
           // model frame does not.
@@ -846,6 +863,8 @@ export function useStructuredChat(
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
           setBusy(false);
+          // A turn that worked proves the login works again: the signed-out card goes.
+          if (event.is_error !== true && event.subtype !== 'backfill') setAuthRequired(null);
           // A CLI blocked on a question cannot end a turn, so any card still up is stale. On
           // replay the server re-sends a live pending after the ring, so this never hides one.
           setPending(null);
@@ -1091,7 +1110,7 @@ export function useStructuredChat(
   }, [terminalId, anchorRetry]);
 
   return {
-    items, busy, model, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer,
+    items, busy, model, authRequired, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer,
     replyToQuestion, denyQuestion, replyFromCard, denyFromCard, compact, hasMore, loadingOlder, loadOlder,
   };
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 
 /** A turn error that a new Claude login fixes (expired OAuth, no login, a bad key). */
@@ -16,7 +16,7 @@ const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRad
  * The daemon keeps the token and gives it to Chat and to every Claude thread; `onDone`
  * then retries the failed turn.
  */
-export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude' }: { onDone: () => void; start?: () => Promise<{ url: string | null; error: string | null }>; buttonLabel?: string }) {
+export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false }: { onDone: () => void; start?: () => Promise<{ url: string | null; error: string | null }>; buttonLabel?: string; /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean }) {
   const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending'>('idle');
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -35,6 +35,14 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       setPhase('idle');
     }
   };
+
+  const started = useRef(false);
+  useEffect(() => {
+    if (!autoStart || started.current) return;
+    started.current = true;
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
 
   const submit = async () => {
     const c = code.trim();

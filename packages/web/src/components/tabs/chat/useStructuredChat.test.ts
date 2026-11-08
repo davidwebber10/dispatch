@@ -289,6 +289,19 @@ test('opening a thread forgets the model a previous view of it knew (no stale mo
   expect(useActiveModel.getState().byTerminal['t-stale']).toBeUndefined();
 });
 
+test('system/auth_required sets authRequired; it stays through another failure and clears when a turn succeeds', () => {
+  const { result } = renderHook(() => useStructuredChat('t-auth'));
+  expect(result.current.authRequired).toBeNull();
+  act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'Invalid API key · Please run /login' }));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'work', reason: 'The login is not valid', detail: 'Invalid API key · Please run /login' }));
+  expect(result.current.authRequired).toEqual({ provider: 'claude', accountId: 'work', reason: 'The login is not valid', detail: 'Invalid API key · Please run /login' });
+  expect(result.current.items.some((i) => i.kind === 'system')).toBe(false); // the card lives on the error, not as its own item
+  act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'Invalid API key · Please run /login' }));
+  expect(result.current.authRequired).not.toBeNull();
+  act(() => cbs.onEvent({ type: 'result', is_error: false, num_turns: 1 }));
+  expect(result.current.authRequired).toBeNull();
+});
+
 test('system/status toggles compacting and surfaces the result on the follow-up status', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   expect(result.current.compacting).toBe(false);
