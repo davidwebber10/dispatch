@@ -12,6 +12,8 @@ export function PluginsTab({ onOpen }: { onOpen: (viewKey: string) => void }) {
   const views = usePluginViews();
   const manifests = usePluginRegistry((s) => s.manifests);
   const promoted = usePluginRegistry((s) => s.promoted);
+  // What each plugin has new (2026-11-07): its count on its own row, so the tab's dot says where to look.
+  const badges = usePluginRegistry((s) => s.badges);
   const rows = views.filter((v) => !promoted.includes(v.key));
   // A second line only when the plugin describes itself with something other than the row's name.
   const subtitleOf = (plugin: string, label: string) => {
@@ -36,6 +38,11 @@ export function PluginsTab({ onOpen }: { onOpen: (viewKey: string) => void }) {
               <span style={{ display: 'block', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.label}</span>
               {sub && <span style={{ display: 'block', marginTop: 2, fontSize: 12.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</span>}
             </span>
+            {(badges[v.key] ?? 0) > 0 && (
+              <span aria-label={`${badges[v.key]} new`} style={{ minWidth: 20, height: 20, padding: '0 6px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 11.5px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {badges[v.key] > 99 ? '99+' : badges[v.key]}
+              </span>
+            )}
             <CaretRight size={18} color="var(--color-text-tertiary)" />
           </button>
         );
