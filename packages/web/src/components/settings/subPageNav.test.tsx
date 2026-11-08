@@ -15,6 +15,7 @@ function Probe({ section }: { section: string }) {
       <span data-testid={`back-${section}`}>{String(nav.backLink)}</span>
       <button type="button" onClick={() => nav.open('work', 'Work')}>open {section}</button>
       <button type="button" onClick={nav.close}>close {section}</button>
+      <button type="button" onClick={() => nav.retitle('Home')}>rename {section}</button>
     </div>
   );
 }
@@ -67,5 +68,15 @@ describe('useSubPage', () => {
     fireEvent.click(screen.getByText('close skills'));
     expect(back).toHaveBeenCalledTimes(1);
     back.mockRestore();
+  });
+
+  it('on the phone, retitle renames the open page in the store and its history entry', () => {
+    setWidth(390);
+    history.replaceState({ nav: 1, settingsSection: 'devices', depth: 1 }, '');
+    render(<Probe section="devices" />);
+    fireEvent.click(screen.getByText('open devices'));
+    fireEvent.click(screen.getByText('rename devices'));
+    expect(useMobileNav.getState().sub).toEqual({ section: 'devices', id: 'work', title: 'Home' });
+    expect(history.state).toMatchObject({ settingsSection: 'devices', subPage: 'work', subTitle: 'Home' });
   });
 });
