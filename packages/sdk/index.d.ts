@@ -32,7 +32,8 @@ export interface ComposerCtx {
 export interface Contributions {
   views?: { id: string; label: string; icon?: string; Component: React.ComponentType }[];
   settings?: { id: string; label: string; blurb?: string; icon?: string; Component: React.ComponentType<{ onDone?: () => void }> }[];
-  threadMenu?: { id: string; label: string; when?(ctx: { tab: Terminal }): boolean; onPick(ctx: { tab: Terminal }): void }[];
+  /** `badge`: a live count shown on the row; above 0 the phone's thread ⋯ button shows a dot. */
+  threadMenu?: { id: string; label: string; icon?: string; when?(ctx: { tab: Terminal }): boolean; onPick(ctx: { tab: Terminal }): void; badge?: { subscribe(onChange: () => void): () => void; get(ctx: { tab: Terminal }): number } }[];
   projectMenu?: { id: string; label: string; when?(ctx: { session: Session }): boolean; onPick(ctx: { session: Session }): void }[];
   composerActions?: { id: string; label: string; icon?: string; when?(ctx: ComposerCtx): boolean; onClick(ctx: ComposerCtx): void }[];
   /** `composer.before`, `project.header.actions`, `thread.header.actions`, `app.overlay`; the slot's props are the component's props. */

@@ -78,7 +78,7 @@ What `register` takes:
 | --- | --- | --- |
 | `views` | the desktop rail; the phone's Plugins tab (and a tab of its own once promoted in Settings → Plugins) | `{ id, label, icon?, Component }` |
 | `settings` | Settings, under PLUGINS, on desktop and phone | `{ id, label, blurb?, icon?, Component }` |
-| `threadMenu` | the thread ⋯ menu, after Copy thread ID (on a phone: the sheet's Plugins section) | `{ id, label, icon?, when?({ tab }), onPick({ tab }) }` (`icon`: a name from `icons`, such as `eye`) |
+| `threadMenu` | the thread ⋯ menu, after Copy thread ID (on a phone: the sheet's Plugins section) | `{ id, label, icon?, when?({ tab }), onPick({ tab }), badge? }` (`icon`: a name from `icons`, such as `eye`; `badge`: `{ subscribe(onChange), get({ tab }) }`, a live count on the row; above 0 the phone's thread ⋯ shows a dot) |
 | `projectMenu` | the phone's project ⋯ menu, with the project's own rows | `{ id, label, when?({ session }), onPick({ session }) }` |
 | `composerActions` | a row of buttons above every composer | `{ id, label, when?(ctx), onClick(ctx) }` with `ctx = { surface, terminalId?, sessionId?, value, insert(text), set(text) }` |
 | `slots` | a named place in an existing screen | `{ id, slot, priority?, Component }`; mounted slots: `composer.before` (above the composer, the composer context as props), `project.header.actions` (the phone's project header, `{ session }`), `thread.header.actions` (the thread header on the phone and the desktop's floating controls, `{ terminal, floating? }`), `app.overlay` (the app root, for sheets and modals) |

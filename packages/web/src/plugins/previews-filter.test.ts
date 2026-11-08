@@ -45,3 +45,13 @@ describe('Previews leaves the thread header alone (2026-11-07)', () => {
     expect(src).toContain("slot: 'project.header.actions'");
   });
 });
+
+describe('Previews images load inside the sheet (2026-11-07)', () => {
+  it('no lazy-loaded image: Safari never starts a lazy image inside the sliding sheet, so every square stayed blank', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../plugins/previews/web.js'), 'utf8');
+    expect(src).not.toContain("loading: 'lazy'");
+    expect(src).toContain("decoding: 'async'");
+  });
+});

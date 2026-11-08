@@ -46,6 +46,7 @@ import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
 import { useViewing } from '../../stores/viewing';
 import { useSettings } from '../../stores/settings';
+import { useThreadMenuBadge } from '../../plugins/menuBadge';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
@@ -401,6 +402,7 @@ export function MobileApp() {
   useEffect(() => { if (leafTab) void useAccounts.getState().load(); }, [leafTab]);
   const leafAccount = threadAccount(accountsView, leafTab);
   const phoneHeaderUsage = useSettings((s) => s.phoneHeaderUsage);
+  const menuBadge = useThreadMenuBadge(leafTab ?? null);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
@@ -493,10 +495,12 @@ export function MobileApp() {
           {leafTab && <Slot name="thread.header.actions" terminal={leafTab} />}
           {leafTab && <AlertBell terminalId={leafTab.id} />}
           {leafTab && (
-            <button type="button" aria-label="Thread menu" title="Pretty / CLI and thread options"
+            <button type="button" aria-label={menuBadge ? `Thread menu, ${menuBadge} new` : 'Thread menu'} title="Pretty / CLI and thread options"
               onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setThreadMenu({ tab: leafTab, x: r.right, y: r.bottom }); }}
               style={{ ...HEADER_BOX, position: 'relative', width: HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}>
               <DotsThree size={22} weight="bold" />
+              {/* A new preview (or another plugin item's count) waits in this menu (owner, 2026-11-07). */}
+              {menuBadge > 0 && <span data-testid="thread-menu-dot" aria-hidden style={{ position: 'absolute', top: 9, right: 8, width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', boxShadow: '0 0 0 2px var(--color-pane)' }} />}
             </button>
           )}
         </div>

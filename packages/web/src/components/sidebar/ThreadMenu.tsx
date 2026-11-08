@@ -1,3 +1,4 @@
+import { MenuBadgeCount } from '../../plugins/menuBadge';
 import { useContributions } from '../../plugins/registry';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -193,7 +194,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const z = SIZES[density];
 
   /** A menu row: icon, label, and an optional plain-words line under it. */
-  const row = (key: string, Glyph: Icon, label: string, onClick: () => void, hint?: string, extra: React.CSSProperties = {}) => {
+  const row = (key: string, Glyph: Icon, label: string, onClick: () => void, hint?: string, extra: React.CSSProperties = {}, trailing?: React.ReactNode) => {
     const hintId = hint ? `thread-menu-hint-${key}` : undefined;
     return (
       <button key={key} type="button" onClick={onClick} aria-label={hint ? label : undefined} aria-describedby={hintId} style={{ ...z.row, alignItems: hint ? 'flex-start' : 'center', ...extra }}>
@@ -204,6 +205,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
             <span id={hintId} style={{ fontSize: z.hint, color: 'var(--color-text-tertiary)' }}>{hint}</span>
           </span>
         ) : label}
+        {trailing}
       </button>
     );
   };
@@ -225,7 +227,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
     const plugins = [
       ...(pluginRows ?? []).map((p) => row(`tab-${p.key}`, p.icon, p.label, pick(p.onPick))),
       ...pluginItems.filter((p) => !p.when || p.when({ tab: t }))
-        .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })))),
+        .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })), undefined, {}, p.badge ? <MenuBadgeCount badge={p.badge} ctx={{ tab: t }} /> : undefined)),
     ];
     // Desktop shows Thread details in its right-hand panel; a phone has no panel.
     const details = isMobile && isThread(t);

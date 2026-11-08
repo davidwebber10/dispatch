@@ -147,7 +147,7 @@ export default function activate(d) {
         h('div', null, h(CopyButton, { text: preview.text, label: 'Copy text' }))),
       hasImage && h('div', { 'data-testid': 'preview-thumbs', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 } },
         ...preview.files.map((f, k) => (kindOf(f) !== 'image' ? null : h('button', { key: k, type: 'button', onClick: () => setViewing(k), 'aria-label': `Open ${f.name}`, title: `${f.name} · ${fmtSize(f.size)}`, style: { display: 'flex', flexDirection: 'column', gap: 4, padding: 0, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left', minWidth: 0 } },
-          h('img', { src: fileUrl(f), alt: '', loading: 'lazy', style: { width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' } }),
+          h('img', { src: fileUrl(f), alt: '', decoding: 'async', style: { width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' } }),
           h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name))))),
       hasOther && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
         ...preview.files.map((f, k) => { const kind = kindOf(f); if (kind === 'image') return null; const I = KIND_ICON[kind];
@@ -244,7 +244,9 @@ export default function activate(d) {
   d.register(ID, {
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
-    threadMenu: [{ id: 'open', label: 'Previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId) }],
+    // The count of new previews for the thread's project: the row shows it and the ⋯ button gets a dot.
+    threadMenu: [{ id: 'open', label: 'Previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId),
+      badge: { subscribe: (cb) => usePv.subscribe(cb), get: ({ tab }) => unseenOf(usePv.getState().items, tab.sessionId) } }],
     slots: [
       { id: 'project-eye', slot: 'project.header.actions', Component: ProjectEye },
       { id: 'sheet', slot: 'app.overlay', Component: Sheet },

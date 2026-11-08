@@ -31,4 +31,25 @@ describe('ThreadMenu plugin items (2026-11-07)', () => {
     render(<ThreadMenu at={{ tab: tab(), x: 0, y: 0 }} onClose={() => {}} onBranched={() => {}} />);
     expect(screen.getByRole('button', { name: 'Claude only' })).toBeInTheDocument();
   });
+
+  it('a plugin item with a badge shows its count on the row, live, and the hook gives the ⋯ dot for that thread (2026-11-07)', async () => {
+    const { act, renderHook } = await import('@testing-library/react');
+    const { useThreadMenuBadge } = await import('../../plugins/menuBadge');
+    let counts: Record<string, number> = { s1: 2, s2: 0 };
+    const subs = new Set<() => void>();
+    const badge = { subscribe: (cb: () => void) => { subs.add(cb); return () => subs.delete(cb); }, get: ({ tab: t }: { tab: Terminal }) => counts[t.sessionId] ?? 0 };
+    usePluginRegistry.getState().register('previews', { threadMenu: [{ id: 'open', label: 'Previews', badge, onPick: () => {} }] });
+    render(<ThreadMenu at={{ tab: tab(), x: 0, y: 0 }} onClose={() => {}} onBranched={() => {}} />);
+    expect(screen.getByRole('button', { name: /Previews/ }).textContent).toContain('2');
+    expect(screen.getByLabelText('2 new')).toBeInTheDocument();
+    const s1 = renderHook(() => useThreadMenuBadge(tab()));
+    const s2 = renderHook(() => useThreadMenuBadge(tab({ sessionId: 's2' })));
+    expect(s1.result.current).toBe(2);
+    expect(s2.result.current).toBe(0);
+    act(() => { counts = { s1: 0, s2: 1 }; subs.forEach((cb) => cb()); });
+    expect(s1.result.current).toBe(0);
+    expect(s2.result.current).toBe(1);
+    expect(screen.queryByLabelText('2 new')).toBeNull();
+    expect(renderHook(() => useThreadMenuBadge(null)).result.current).toBe(0);
+  });
 });

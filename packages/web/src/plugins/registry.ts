@@ -17,7 +17,9 @@ export interface PluginSettingsSection { plugin: string; id: string; key: string
 export interface ThreadMenuCtx { tab: Terminal }
 export interface ProjectMenuCtx { session: Session }
 /** `icon`: a name from the SDK's icon list (`eye`, `chat`, …); the phone's thread sheet shows it (a puzzle piece when absent). */
-export interface PluginMenuItem<C> { plugin: string; id: string; label: string; icon?: string; when?: (ctx: C) => boolean; onPick: (ctx: C) => void }
+/** A live count on a menu item (2026-11-07): `get` reads it, `subscribe` says when it may have changed. */
+export interface MenuBadge<C> { subscribe: (onChange: () => void) => () => void; get: (ctx: C) => number }
+export interface PluginMenuItem<C> { plugin: string; id: string; label: string; icon?: string; when?: (ctx: C) => boolean; onPick: (ctx: C) => void; badge?: MenuBadge<C> }
 export interface ComposerCtx {
   /** Which composer: a Pretty thread, a CLI thread's phone composer, the Control Plane chat, or unknown. */
   surface: 'thread' | 'terminal' | 'chat' | 'unknown';
