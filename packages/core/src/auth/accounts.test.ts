@@ -106,3 +106,32 @@ describe('AccountsStore names and identities (2026-11-06)', () => {
     expect(a.codexIdentity(c.id)).toEqual({ email: 'me@x.y', plan: 'Pro' });
   });
 });
+
+describe('adoptClaudeLoginToken — signing an existing Claude account in again (2026-11-07)', () => {
+  it('a fresh token for the SAME Claude account replaces the expired one; no duplicate account', async () => {
+    const { adoptClaudeLoginToken } = await import('./accounts.js');
+    const a = new AccountsStore(dir);
+    const first = a.addClaude({ token: 'old-tok', label: 'Work', accountUuid: 'uuid-1', email: 'w@x.y' });
+    const profile = async () => ({ email: 'w@x.y', accountUuid: 'uuid-1', plan: 'max' });
+    const got = await adoptClaudeLoginToken(a, 'new-tok', 'Work', profile);
+    expect(got.id).toBe(first.id);
+    expect(a.view().claude.map((x) => x.id)).toEqual(['cli', first.id]);
+    expect(a.claudeToken(first.id)).toBe('new-tok');
+  });
+
+  it('a token for a new Claude account adds it, named by the label or the email', async () => {
+    const { adoptClaudeLoginToken } = await import('./accounts.js');
+    const a = new AccountsStore(dir);
+    const got = await adoptClaudeLoginToken(a, 'tok-2', '', async () => ({ email: 'p@x.y', accountUuid: 'uuid-2' }));
+    expect(got.label).toBe('p@x.y');
+    expect(a.view().claude).toHaveLength(2);
+  });
+
+  it('no profile (offline): still adds the account under the label', async () => {
+    const { adoptClaudeLoginToken } = await import('./accounts.js');
+    const a = new AccountsStore(dir);
+    const got = await adoptClaudeLoginToken(a, 'tok-3', 'Home', async () => null);
+    expect(got.label).toBe('Home');
+    expect(a.claudeToken(got.id)).toBe('tok-3');
+  });
+});

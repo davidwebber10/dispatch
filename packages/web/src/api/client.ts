@@ -263,6 +263,10 @@ export const api = {
   // `force`: switch a working CLI thread anyway (the user confirmed stopping its turn).
   switchTransport: (terminalId: string, transport: 'structured' | 'pty', opts?: { force?: boolean }) =>
     req<Terminal>(`/api/terminals/${terminalId}/transport`, { method: 'POST', body: body({ transport, ...(opts?.force ? { force: true } : {}) }) }),
+  // The Pretty model switcher: run `model` from the thread's next turn, keeping the conversation.
+  // 409 while a turn runs (or a live CLI thread); 400 when the harness refuses the model.
+  setThreadModel: (terminalId: string, model: string) =>
+    req<{ model: string; terminal: Terminal }>(`/api/terminals/${terminalId}/model`, { method: 'POST', body: body({ model }) }),
   // Move a Claude Code / Codex thread to another signed-in account (multi-account): pins
   // config.accountId server-side and restarts a running thread. 404 unknown account, 409 when the
   // thread type has no accounts, is a Codex Pretty thread off cli, or is busy (then `force`).

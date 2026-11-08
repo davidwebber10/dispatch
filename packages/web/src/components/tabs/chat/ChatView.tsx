@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
+import { SignedOutCard } from './SignedOutCard';
+import { ModelSwitcher, ModelNotice } from './ModelSwitcher';
+import { friendlyModelName } from '../../../lib/modelName';
 import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
@@ -50,9 +53,19 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
   // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
   // the common case).
-  const { items, busy, model, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+  const { items, busy, model, authRequired, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
-  const loginItem = useMemo(() => loginItemFor(tab?.type, items), [tab?.type, items]);
+  const loginItem = useMemo(() => loginItemFor(tab?.type, items, !!authRequired), [tab?.type, items, authRequired]);
+  // Retry after a sign-in: the last message the owner sent, again (SignedOutCard says why it is a button).
+  const retryLast = useCallback(() => {
+    for (let k = items.length - 1; k >= 0; k--) {
+      const it = items[k];
+      if (it.kind === 'user' && it.source !== 'coordinator' && it.text) { send(it.text); return; }
+    }
+  }, [items, send]);
+  const authHidden = useMemo(() => (authRequired ? authProseToHide(items, loginItem) : new Set<ConvItem>()), [authRequired, items, loginItem]);
+  const shown = useCallback((list: ConvItem[]) => (authHidden.size ? list.filter((it) => !authHidden.has(it)) : list), [authHidden]);
+  const authExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.
@@ -276,7 +289,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)
+                renderTimeline(shown(items), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -284,11 +297,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter)}
+                  {renderTimeline(shown(items.slice(0, splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem)}
+                  {renderTimeline(shown(items.slice(splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -418,12 +431,14 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
+          {/* The active model, always shown once a thread has one, and the switcher behind it. */}
+          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={busy || compacting} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
-            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
+            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
           )}
           <span style={{ marginLeft: 'auto' }} />
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
         </div>
       </div>
       <DocViewer owner={terminalId} />
@@ -497,6 +512,8 @@ export interface TimelineExtensions {
   userRow?(item: ConvItem): ReactNode | undefined;
   /** Assistant prose, given the item it came from. Default: <AssistantText>. */
   prose?(text: string, item: ConvItem): ReactNode;
+  /** Drawn in place of the login-error result (`loginItem`): Pretty's signed-out card. */
+  authCard?: ReactNode;
   /** Plain (non-markdown) text inside user bubbles and report_status cards. Default: the text. */
   plainText?(text: string): ReactNode;
   /** Wraps each drawn unit, given the items it draws in order: one item, a tool call with its
@@ -539,14 +556,40 @@ export function relayNameFor(tab: { config?: Record<string, unknown> } | null | 
 }
 
 /** The thread's last result, when it is a Claude login failure in a Claude thread: it gets the login box. */
-export function loginItemFor(type: string | undefined, items: ConvItem[]): ConvItem | null {
-  if (type !== 'claude-code') return null;
+/**
+ * The failed turn a sign-in fixes: the LAST result, when it is an error and the daemon said the
+ * login is signed out (`authRequired`, any harness), or — for a Claude thread whose history has
+ * no such event (older turns, REST pages) — its text reads like a login error.
+ */
+export function loginItemFor(type: string | undefined, items: ConvItem[], authRequired = false): ConvItem | null {
+  if (type !== 'claude-code' && !authRequired) return null;
   for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
     if (it.kind !== 'result') continue;
-    return it.isError && isClaudeAuthError(it.text ?? '') ? it : null;
+    return it.isError && (authRequired || isClaudeAuthError(it.text ?? '')) ? it : null;
   }
   return null;
+}
+
+/**
+ * The CLI's own login-error prose in the failed turn (Claude Code writes "Not logged in · Please
+ * run /login" as a synthetic assistant message before the error result). With the signed-out card
+ * shown, it is the same raw error twice, so it is left out. Only since the last turn that worked;
+ * never the prose of a turn that succeeded.
+ */
+export function authProseToHide(items: ConvItem[], loginItem: ConvItem | null): Set<ConvItem> {
+  const out = new Set<ConvItem>();
+  if (!loginItem) return out;
+  // From the end, not from the result: a REST page and the ws replay can order the turn's
+  // synthetic prose after its result.
+  for (let k = items.length - 1; k >= 0; k--) {
+    const it = items[k];
+    // The run of failures since the last turn that WORKED (a REST page and the ws replay can put
+    // a second copy of the user's message between the prose and the result).
+    if (it.kind === 'result' && !it.isError) break;
+    if (it.kind === 'assistant' && isClaudeAuthError(it.text ?? '') && (it.text ?? '').length < 300) out.add(it);
+  }
+  return out;
 }
 
 export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter, ext?: TimelineExtensions) {
@@ -789,13 +832,14 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       if (ext?.hideResult?.(it)) continue;               // ...or a surface hides it outright
       pushMach(id, frame([it], <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>));
       continue;
-    } else if (it.kind === 'result') node = <ResultFooter item={it} login={it === loginItem} />;
+    } else if (it.kind === 'result') node = it === loginItem && ext?.authCard ? ext.authCard : <ResultFooter item={it} login={it === loginItem} />;
     // A system-injected event (background-task completion) that arrived as a `user`-role
     // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
     // new speaker, it's an interruption inside the assistant's own turn — the assistant
     // usually acts on it in the very next block, so breaking the column there would split
     // one continuous turn into two.
     else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
+    else if (it.kind === 'system' && it.systemKind === 'model' && it.text) node = <ModelNotice model={it.text} />;
     if (node == null) continue;
 
     // A non-machinery node closes any open machinery strip first, so the bordered block
@@ -959,7 +1003,7 @@ function EmptyState({ model }: { model?: string }) {
     <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13.5, textAlign: 'center', padding: '48px 0' }}>
       <Sparkle size={28} weight="duotone" color="var(--color-accent)" style={{ marginBottom: 10 }} />
       <div style={{ color: 'var(--color-text-secondary)' }}>Send a message to start the conversation.</div>
-      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{model}</div>}
+      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{friendlyModelName(model) ?? model}</div>}
     </div>
   );
 }

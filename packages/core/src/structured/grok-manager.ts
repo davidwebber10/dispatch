@@ -30,6 +30,7 @@
 // ALL ACP↔Claude payload mapping lives in grok-translate.ts. This file is JSON-RPC plumbing
 // + the escalate/auto-allow permission membrane (identical policy to the other managers).
 
+import { authRequiredFrame } from '../auth/auth-failure.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
 import { pauseLabel } from '../limits/detect.js';
@@ -170,6 +171,9 @@ interface GrokSession {
   pendingApproval: { requestId: RpcId; options: AcpPermissionOption[] } | null;
   sessionId?: string;
   model?: string;
+  /** How this agent reported its model, so a switch uses the matching request: Grok's
+   *  `models` block → `session/set_model`; OpenCode's `configOptions` → `session/set_config_option`. */
+  modelVia?: 'models' | 'config';
   /** True while session/load replays history — frames translate in replay mode. */
   loading: boolean;
   /** True from prompt-send until the translator (or the response fallback) settles the turn. */
@@ -282,6 +286,39 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
       : undefined;
     const model = fromModels ?? fromConfig;
     if (typeof model === 'string' && model) session.model = model;
+    if (typeof fromModels === 'string') session.modelVia = 'models';
+    else if (typeof fromConfig === 'string') session.modelVia = 'config';
+  }
+
+  getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
+
+  /**
+   * Switch the live ACP session's model, keeping the conversation. Live-verified: grok 1.0.4
+   * answers `session/set_model {sessionId, modelId}` with `{_meta:{model:{Ok:id}}}`; OpenCode
+   * 1.18.34 answers `session/set_config_option {sessionId, configId:'model', value}` with the
+   * updated configOptions (it also accepts set_model, but answers `{}`, so the config call is
+   * the one that confirms). An agent that reported neither gets set_model, the ACP default.
+   */
+  async setModel(terminalId: string, model: string): Promise<string> {
+    const session = this.sessions.get(terminalId);
+    if (!session) throw new Error('This thread is not running');
+    await session.ready;
+    if (!session.sessionId) throw new Error('This thread has no session yet');
+    let resolved = model;
+    if (session.modelVia === 'config') {
+      const res = await session.conn.request('session/set_config_option', { sessionId: session.sessionId, configId: 'model', value: model });
+      const now = Array.isArray(res?.configOptions) ? res.configOptions.find((o: any) => o?.id === 'model')?.currentValue : undefined;
+      if (typeof now === 'string' && now) resolved = now;
+    } else {
+      const res = await session.conn.request('session/set_model', { sessionId: session.sessionId, modelId: model });
+      const ok = res?._meta?.model?.Ok;
+      if (typeof ok === 'string' && ok) resolved = ok;
+    }
+    if (this.sessions.get(terminalId) !== session) return resolved;
+    session.model = resolved;
+    session.translator.setModel(resolved);
+    this.pushEvent(session, { type: 'system', subtype: 'model', model: resolved, switched: true });
+    return resolved;
   }
 
   // --- inbound -------------------------------------------------------------------------------
@@ -378,6 +415,14 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     session.events.push(event);
     if (session.events.length > MAX_EVENTS) session.events.shift();
     this.emit('event', session.terminalId, event);
+    // A signed-out login (ACP's auth error, OpenCode's missing provider key): a typed event after it.
+    const auth = authRequiredFrame(event, this.dialect, undefined);
+    if (auth) {
+      session.events.push(auth);
+      if (session.events.length > MAX_EVENTS) session.events.shift();
+      this.emit('event', session.terminalId, auth);
+      this.emit('auth-required', session.terminalId, auth);
+    }
   }
 
   // --- IStructuredManager surface ------------------------------------------------------------

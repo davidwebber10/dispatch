@@ -354,6 +354,22 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
   });
 
+  // POST /api/terminals/:terminalId/model { model } — the Pretty model switcher: run `model` from
+  // the thread's next turn, keeping the conversation (SessionService.setThreadModel). 409 while a
+  // turn runs or for a live CLI thread; 400 when the harness refuses the model. Answers
+  // { model: <the id the harness reports>, terminal }.
+  router.post('/terminals/:terminalId/model', async (req, res) => {
+    const { model } = req.body ?? {};
+    if (typeof model !== 'string' || !model.trim()) return res.status(400).json({ error: 'model is required' });
+    try {
+      const out = await sessionService.setThreadModel(req.params.terminalId, model.trim());
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: out.terminal.sessionId });
+      res.json(out);
+    } catch (e: any) {
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
+    }
+  });
+
   // PATCH /api/terminals/:terminalId/account { accountId, force? } — move the thread to another
   // signed-in account (multi-account, 2026-11-06): pins config.accountId server-side (a merge, the
   // generic PATCH clobbers config) and restarts a running thread so the login applies. Changing

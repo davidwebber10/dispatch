@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor, authProseToHide } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 
@@ -739,6 +739,20 @@ describe('ChatView — paint-settle gate (back-port of the Stream reveal latch)'
   });
 });
 
+describe('ChatView — the active model in Pretty', () => {
+  it('the status row shows the model chip for an agent thread, with the saved model before any frame', async () => {
+    const { useTabs } = await import('../../../stores/tabs');
+    useTabs.setState({ byProject: { s1: [{ id: 'tm', sessionId: 's1', type: 'claude-code', label: 'T', pid: 1, externalId: 'e', workingDir: null, status: 'waiting', createdAt: '', config: { transport: 'structured', model: 'sonnet' }, archivedAt: null, sortOrder: 0 }] } } as any);
+    render(<ChatView terminalId="tm" />);
+    expect(screen.getByRole('button', { name: 'Model: Sonnet' })).toBeInTheDocument();
+  });
+
+  it('a "Model switched" line renders in the timeline', () => {
+    renderTimelineItems([{ kind: 'user', text: 'hi' }, { kind: 'system', systemKind: 'model', text: 'claude-haiku-5-5' }]);
+    expect(screen.getByText('Model switched to Haiku 5.5')).toBeInTheDocument();
+  });
+});
+
 describe('Log in to Claude in a Pretty thread', () => {
   const failed: ConvItem = { kind: 'result', isError: true, text: 'Failed to authenticate: OAuth session expired and could not be refreshed' };
   const renderWith = (items: ConvItem[], loginItem: ConvItem | null) => render(
@@ -756,6 +770,53 @@ describe('Log in to Claude in a Pretty thread', () => {
     const older: ConvItem = { ...failed };
     renderWith([older, { kind: 'user', text: 'again' }, failed], failed);
     expect(screen.getAllByRole('button', { name: 'Log in to Claude' })).toHaveLength(1);
+  });
+
+  it('with a signed-out card, the card replaces the raw error line', () => {
+    render(
+      <MessageScroller.Provider><MessageScroller.Root><MessageScroller.Viewport><MessageScroller.Content>
+        {renderTimeline([{ kind: 'user', text: 'hi' }, failed], () => {}, new Set(), undefined, failed, undefined, { authCard: <div>CARD</div> })}
+      </MessageScroller.Content></MessageScroller.Viewport></MessageScroller.Root></MessageScroller.Provider>,
+    );
+    expect(screen.getByText('CARD')).toBeInTheDocument();
+    expect(screen.queryByText(/OAuth session expired/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Log in to Claude' })).toBeNull();
+  });
+
+  it('a daemon auth_required marks the last error of ANY harness; nothing once a turn succeeded', () => {
+    const codexErr: ConvItem = { kind: 'result', isError: true, text: 'unexpected status 401 Unauthorized' };
+    expect(loginItemFor('codex', [codexErr], true)).toBe(codexErr);
+    expect(loginItemFor('grok', [codexErr, { kind: 'result', isError: false }], true)).toBeNull();
+  });
+
+  it('ChatView draws the signed-out card from a live system/auth_required event', async () => {
+    let cbs: any;
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((o: any) => { cbs = o; return { close: () => {} } as any; });
+    const { useTabs } = await import('../../../stores/tabs');
+    const { useAccounts } = await import('../../../stores/accounts');
+    useAccounts.setState({ view: { claude: [{ id: 'cli', label: 'CLI login (this computer)', isCli: true, addedAt: null }], codex: [], defaults: { claude: 'cli', codex: 'cli' } } } as any);
+    useTabs.setState({ byProject: { s1: [{ id: 'ta', sessionId: 's1', type: 'claude-code', label: 'T', pid: 1, externalId: 'e', workingDir: null, status: 'waiting', createdAt: '', config: { transport: 'structured' }, archivedAt: null, sortOrder: 0 }] } } as any);
+    render(<ChatView terminalId="ta" />);
+    act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }));
+    act(() => cbs.onEvent({ type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', message: { id: 'm-syn', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } }));
+    act(() => cbs.onEvent({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }));
+    act(() => cbs.onEvent({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'cli', reason: 'The login is not valid' }));
+    expect(await screen.findByText('CLI login (this computer) is signed out')).toBeInTheDocument();
+    // hidden: the paint-settle gate keeps the scroller visibility:hidden for its first moments.
+    expect(screen.getByText('Sign in').closest('button')).not.toBeNull();
+    expect(screen.queryByText('Not logged in · Please run /login')).toBeNull();
+  });
+
+  it('authProseToHide: the login-error prose of the CLI in the failed turn goes with the card', () => {
+    const u: ConvItem = { kind: 'user', text: 'hi' };
+    const prose: ConvItem = { kind: 'assistant', text: 'Not logged in · Please run /login' };
+    const real: ConvItem = { kind: 'assistant', text: 'Here is the plan.' };
+    expect([...authProseToHide([u, real, prose, failed], failed)]).toEqual([prose]);
+    expect(authProseToHide([u, prose, failed], null).size).toBe(0);
+    // A turn that worked ends the search: its prose is never touched.
+    expect([...authProseToHide([prose, { kind: 'result', isError: false }, u, failed], failed)]).toEqual([]);
+    // A second copy of the user message between prose and result (REST page + ws replay) does not stop it.
+    expect([...authProseToHide([u, prose, u, failed], failed)]).toEqual([prose]);
   });
 
   it('loginItemFor picks the last result only for a Claude thread and only for a login error', () => {

@@ -350,3 +350,32 @@ describe('replay back-pressure', () => {
   });
 });
 
+// ---- The active model on (re)connect ----
+//
+// Claude Code emits system/init once per TURN, so a bounded tail (or a just-spawned process with
+// no turn yet, or a Codex thread whose ring is never replayed) left the Pretty header with no
+// model or the previous transport's one. The handler now ends the replay with the model the
+// daemon knows the thread runs NOW, so it wins over any older frame in the replay.
+describe('the active model frame', () => {
+  it('ends the replay with the current model, after the ring', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, () => 'claude-opus-5-5');
+    expect(sent).toEqual([REAL_TURN, { type: 'system', subtype: 'model', model: 'claude-opus-5-5' }]);
+  });
+
+  it('is sent for a REST-owned thread too (no ring replay)', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, () => true, undefined, undefined, () => 'gpt-5.6-luna');
+    expect(sent).toEqual([{ type: 'system', subtype: 'inactive' }, { type: 'system', subtype: 'model', model: 'gpt-5.6-luna' }]);
+  });
+
+  it('is left out when no model is known, and a throwing lookup never breaks the replay', () => {
+    const a = fakeWs();
+    handleStructuredConnection(a.ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, () => undefined);
+    expect(a.sent).toEqual([REAL_TURN]);
+    const b = fakeWs();
+    handleStructuredConnection(b.ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, () => { throw new Error('db gone'); });
+    expect(b.sent).toEqual([REAL_TURN]);
+  });
+});
+

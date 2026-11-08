@@ -326,7 +326,7 @@ const MODEL_ID_RE = /^claude-[a-z0-9][a-z0-9.\-]{0,60}(\[[a-z0-9]{1,8}\])?$/;
  * (`isSidechain`) and `<synthetic>` entries are skipped. A value that does not look like a model
  * id or a known effort level is dropped. Returns null when there is no readable lead turn.
  */
-export function readSessionSettings(workDir: string, sessionId: string): { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null {
+export function readSessionSettings(workDir: string, sessionId: string): { model?: string; effort?: ClaudeEffort; effortChanged?: boolean; at?: number } | null {
   try {
     const file = resolveTranscriptPath(workDir, sessionId);
     if (!file) return null;
@@ -338,7 +338,7 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
     try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
     const lines = buf.toString('utf-8').split('\n');
     if (start > 0) lines.shift();
-    let out: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null = null;
+    let out: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean; at?: number } | null = null;
     const efforts = new Set<string>();
     let explicitEffort = false;
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -357,6 +357,9 @@ export function readSessionSettings(workDir: string, sessionId: string): { model
         out = {};
         if (typeof o.requestedModel === 'string' && MODEL_ID_RE.test(o.requestedModel)) out.model = o.requestedModel;
         if (effort) out.effort = effort;
+        // When the turn ran: a model picked in Pretty AFTER it (config.modelSetAt) is newer.
+        const at = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN;
+        if (Number.isFinite(at)) out.at = at;
       }
     }
     // The effort moved within the window we can see, or an /effort command is in it (or /model, which

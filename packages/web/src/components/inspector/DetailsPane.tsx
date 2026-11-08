@@ -7,6 +7,8 @@ import type { Terminal } from '../../api/types';
 import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
 import { useAccounts, threadAccount } from '../../stores/accounts';
 import { AccountSwitchModal } from '../common/AccountSwitchModal';
+import { useActiveModel, activeModelOf } from '../../stores/activeModel';
+import { friendlyModelName } from '../../lib/modelName';
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
@@ -27,6 +29,7 @@ const btn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'v
 export function DetailsPane({ projectId, terminalId }: { projectId: string | null; terminalId: string | null }) {
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId)) ?? null;
   const activity = useActivity((s) => (terminalId ? s.byTerminal[terminalId] : undefined));
+  const activeModels = useActiveModel((s) => s.byTerminal);
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : null));
   const [term, setTerm] = useState<Terminal | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
@@ -53,6 +56,7 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   }, [projectId]);
 
   if (!project) return <div style={{ padding: 12, color: 'var(--color-text-tertiary)' }}>No project selected</div>;
+  const prettyModel = tab && tab.type !== 'shell' ? activeModelOf(activeModels, tab) : undefined;
 
   const hasActivity = !!(activity?.model || activity?.tokens || activity?.cost);
   const lim = limitsRows;
@@ -74,6 +78,8 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
         <>
           <div style={{ ...label, margin: showDetails ? '14px 0 8px' : '0 0 8px' }}>THREAD</div>
           {tab?.label && <Row label="Name" value={tab.label} />}
+          {/* Pretty has no CLI status line for activity.model: show the active model instead. */}
+          {!activity?.model && prettyModel && <Row label="Model" value={friendlyModelName(prettyModel) ?? prettyModel} />}
           <Row label="ID" value={terminalId} mono />
           {term?.workingDir && <Row label="Directory" value={homePath(term.workingDir)} mono />}
           {branch && <Row label="Branch" value={`⎇ ${branch}`} mono />}

@@ -22,11 +22,14 @@ const FAMILY_RE = /^claude-(opus|sonnet|haiku|fable)-[^[]*$/;
  */
 export function adoptTranscriptSettings(
   config: Record<string, any>,
-  seen: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean } | null,
+  seen: { model?: string; effort?: ClaudeEffort; effortChanged?: boolean; at?: number } | null,
 ): boolean {
   if (!seen || config.role || config.agentType) return false;
   let changed = false;
-  if (seen.model) {
+  // A model picked with the Pretty switcher (config.modelSetAt) AFTER the last turn the
+  // transcript shows is newer than that turn: a relaunch before the next turn must keep it.
+  const pickedLater = typeof config.modelSetAt === 'number' && typeof seen.at === 'number' && seen.at < config.modelSetAt;
+  if (seen.model && !pickedLater) {
     const saved = typeof config.model === 'string' ? config.model.trim() : '';
     const family = FAMILY_RE.exec(seen.model)?.[1];
     const target = family ?? seen.model;

@@ -197,6 +197,10 @@ export class CodexTranslator {
     return [{ kind: 'event', event: { type: 'system', subtype: 'init', model } }];
   }
 
+  /** A model switch (CodexStructuredSessionManager.setModel): later usage frames carry the new
+   *  id. Unlike init, the usage baseline is kept — the thread did not restart. */
+  setModel(model: string): void { this.model = model; }
+
   /** Translate one inbound Codex frame into Claude-shaped actions. Unknown/noise frames → []. */
   translate(frame: CodexFrame): TranslatedAction[] {
     if (frame.id !== undefined && APPROVAL_METHODS.has(frame.method)) {
