@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react';
+import { ArrowSquareOut, FileCode, Package, Terminal, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { ToolStatus, ToolsResponse } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
-import { sectionLabel, summaryLine, ghostBtn, miniChip, codeChip, GroupHeader, HoverRow, SearchInput, FilterSegments } from './ui';
-
-const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
-const colHead: React.CSSProperties = { font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-const grid = 'minmax(230px,1.2fr) 130px 160px minmax(120px,0.5fr)';
+import { ghostBtn, codeChip, fieldFor, SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, type Tone } from './ui';
 
 type Bucket = 'needs-auth' | 'unchecked' | 'ready' | 'missing';
 const bucketOf = (t: ToolStatus): Bucket => {
@@ -15,41 +12,53 @@ const bucketOf = (t: ToolStatus): Bucket => {
   const state = t.authState ?? (t.authed ? 'ok' : 'needed'); // older daemons send only `authed`
   return state === 'ok' ? 'ready' : state === 'unknown' ? 'unchecked' : 'needs-auth';
 };
+/** The list order: what needs a look first. */
+const ORDER: Bucket[] = ['needs-auth', 'unchecked', 'ready', 'missing'];
+const STATUS: Record<Bucket, { label: string; tone: Tone }> = {
+  'needs-auth': { label: 'Sign in needed', tone: 'yellow' },
+  unchecked: { label: "Couldn't check", tone: 'muted' },
+  ready: { label: 'Installed', tone: 'accent' },
+  missing: { label: 'Missing', tone: 'muted' },
+};
+/** The row's icon says how the tool is installed (it replaces the old BINARY / NPM / SCRIPT chip). */
+const KIND_ICON: Record<ToolStatus['kind'], PhosphorIcon> = { binary: Terminal, npm: Package, script: FileCode };
+/** A filter row shows only when the list is long enough to need one. */
+const FILTER_AT = 9;
 
 // When the daemon last ran each CLI's sign-in check (it caches the answer for a few minutes).
 function checkedLabel(iso: string | null): string {
-  if (!iso) return 'not checked yet';
+  if (!iso) return 'Not checked yet';
   const ago = timeAgo(iso);
-  return ago === 'now' ? 'checked just now' : `checked ${ago} ago`;
+  return ago === 'now' ? 'Checked just now' : `Checked ${ago} ago`;
 }
 
-function StatusCell({ bucket }: { bucket: Bucket }) {
-  const [dot, text, label] = bucket === 'ready'
-    ? ['var(--color-accent)', 'var(--color-text-secondary)', 'installed · authed']
-    : bucket === 'needs-auth'
-      ? ['var(--color-status-red)', 'var(--color-status-red)', 'needs auth']
-      : bucket === 'unchecked'
-        ? ['var(--color-text-tertiary)', 'var(--color-text-secondary)', "couldn't check"]
-        : ['var(--color-text-faint)', 'var(--color-text-tertiary)', 'not installed'];
+/** The docs link: a quiet icon on the row, so the list stays one line per tool. */
+function DocsLink({ name, href }: { name: string; href: string }) {
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: dot }} />
-      <span style={{ font: '400 11px var(--font-mono)', color: text, whiteSpace: 'nowrap' }}>{label}</span>
-    </span>
+    <a href={href} target="_blank" rel="noreferrer" aria-label={`${name} docs`} title="Open the docs"
+      style={{ width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)' }}>
+      <ArrowSquareOut size={15} />
+    </a>
   );
 }
 
+/**
+ * Settings → Tools (redesigned 2026-11-07, docs/design/settings-layout.md): one group, a row per
+ * CLI (kind icon, name, one-line description, a status mark, a quiet docs link). Tools that need a
+ * look sort first. "Check again" re-runs the daemon's sign-in checks.
+ */
 export function ToolsSection() {
   const isMobile = useIsMobile();
   const [tools, setTools] = useState<ToolStatus[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState('');
   const [query, setQuery] = useState('');
-  const [seg, setSeg] = useState<'all' | 'ready' | 'needs-auth'>('all');
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const apply = (r: ToolsResponse) => { setTools(r.tools); setCheckedAt(r.checkedAt); setErr(''); };
   useEffect(() => { (async () => {
     try { apply(await api.getTools()); } catch { setErr('Could not reach Dispatch.'); }
+    setLoaded(true);
   })(); }, []);
   const checkAgain = async () => {
     setChecking(true);
@@ -57,96 +66,53 @@ export function ToolsSection() {
     finally { setChecking(false); }
   };
 
-  const matched = query ? tools.filter((t) => t.name.toLowerCase().includes(query.toLowerCase()) || t.description.toLowerCase().includes(query.toLowerCase())) : tools;
-  const ready = matched.filter((t) => bucketOf(t) === 'ready');
-  const needsAuth = matched.filter((t) => bucketOf(t) === 'needs-auth');
-  const unchecked = matched.filter((t) => bucketOf(t) === 'unchecked');
-  const missing = matched.filter((t) => bucketOf(t) === 'missing');
-  const needsAuthTotal = tools.filter((t) => bucketOf(t) === 'needs-auth').length;
+  const q = query.trim().toLowerCase();
+  const matched = q ? tools.filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)) : tools;
+  const sorted = ORDER.flatMap((b) => matched.filter((t) => bucketOf(t) === b));
+  const needsAuth = tools.filter((t) => bucketOf(t) === 'needs-auth').length;
 
-  const renderRow = (t: ToolStatus) => (isMobile ? (
-    <HoverRow key={t.name} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '9px 2px' }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-        <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-        <span style={miniChip}>{t.kind}</span>
-        <span style={{ flex: 1 }} />
-        <StatusCell bucket={bucketOf(t)} />
-      </span>
-      <span style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-        <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description}</span>
-        {t.docs && <a href={t.docs} target="_blank" rel="noreferrer" style={{ fontSize: 11.5, color: 'var(--color-accent)', flexShrink: 0 }}>docs</a>}
-      </span>
-    </HoverRow>
-  ) : (
-    <HoverRow key={t.name} style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '8px 2px' }}>
-      <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-        <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
-        <span style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description}</span>
-      </span>
-      <span><span style={miniChip}>{t.kind}</span></span>
-      <StatusCell bucket={bucketOf(t)} />
-      <span style={{ textAlign: 'right' }}>
-        {t.docs && <a href={t.docs} target="_blank" rel="noreferrer" style={{ fontSize: 11.5, color: 'var(--color-accent)' }}>docs</a>}
-      </span>
-    </HoverRow>
-  ));
-
-  const groups: { key: Bucket; label: string; tone: 'accent' | 'red' | 'neutral'; hint: string; items: ToolStatus[] }[] = [
-    { key: 'needs-auth', label: 'NEEDS AUTH', tone: 'red', hint: 'Installed, but the agent cannot use them yet', items: needsAuth },
-    { key: 'unchecked', label: "COULDN'T CHECK", tone: 'neutral', hint: 'The sign-in check gave no answer — try Check again', items: unchecked },
-    { key: 'ready', label: 'READY', tone: 'accent', hint: 'Available in every thread', items: ready },
-    { key: 'missing', label: 'MISSING', tone: 'neutral', hint: 'Not found on PATH', items: missing },
-  ];
-  const visible = groups.filter((g) => g.items.length > 0 && (seg === 'all' || seg === g.key));
+  const checkBtn = (
+    <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>
+      {checking ? 'Checking…' : 'Check again'}
+    </button>
+  );
+  const footer = (
+    <>
+      {needsAuth > 0 && <div style={{ color: 'var(--color-text-secondary)' }}>{needsAuth} tool{needsAuth === 1 ? ' needs' : 's need'} a sign-in. Run its login command once in a terminal.</div>}
+      <span title={checkedAt ? new Date(checkedAt).toLocaleString() : undefined}>{checkedLabel(checkedAt)}</span> · Tools run with your shell environment.
+    </>
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span style={sectionLabel}>TOOLS (CLI)</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={summaryLine} title={checkedAt ? new Date(checkedAt).toLocaleString() : undefined}>{checkedLabel(checkedAt)}</span>
-          <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>
-            {checking ? 'Checking…' : 'Check again'}
-          </button>
-        </span>
-      </div>
-      <div style={desc}>
-        CLIs bundled with Dispatch and available to the agent in every thread. Add your own in <code style={codeChip}>~/.dispatch/tools.json</code>, then run <code style={codeChip}>dispatch tools install</code>.
-      </div>
-      {err && <div style={{ color: 'var(--color-status-red)', fontSize: 12 }}>{err}</div>}
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <SearchInput value={query} onChange={setQuery} placeholder="Filter tools" />
-        {!isMobile && (
-          <>
-            <FilterSegments active={seg} onSelect={(k) => setSeg(k as typeof seg)}
-              options={[
-                { key: 'all', label: 'All', count: tools.length },
-                { key: 'ready', label: 'Ready', count: tools.filter((t) => bucketOf(t) === 'ready').length },
-                { key: 'needs-auth', label: 'Needs auth', count: needsAuthTotal },
-              ]} />
-            <span style={{ ...summaryLine, flexShrink: 0 }}>{tools.length} tool{tools.length === 1 ? '' : 's'} · {needsAuthTotal} need auth</span>
-          </>
-        )}
-      </div>
-
-      {!isMobile && visible.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 8, alignItems: 'center', padding: '4px 2px', borderBottom: '1px solid var(--color-hover)' }}>
-          <span style={colHead}>TOOL</span>
-          <span style={colHead}>KIND</span>
-          <span style={colHead}>STATUS</span>
-          <span />
-        </div>
+    <SettingsPage intro={<>Command-line tools that every agent thread can run. Add your own in <code style={codeChip}>~/.dispatch/tools.json</code>, then run <code style={codeChip}>dispatch tools install</code>.</>}>
+      {!loaded ? null : tools.length === 0 ? (
+        <EmptyState action={checkBtn}>No tools found. Check again, or add your own in tools.json.</EmptyState>
+      ) : (
+        <SettingsGroup title="Tools" action={checkBtn} footer={footer}>
+          {tools.length >= FILTER_AT && (
+            <div key="filter" style={{ padding: '8px 12px' }}>
+              <input aria-label="Filter tools" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter tools"
+                style={{ ...fieldFor(isMobile), width: '100%' }} />
+            </div>
+          )}
+          {sorted.map((t) => {
+            const b = bucketOf(t);
+            return (
+              <div key={t.name} data-testid="tool-row" data-tool={t.name}>
+                <SettingsRow icon={KIND_ICON[t.kind] ?? Terminal} label={t.name} hint={t.description}
+                  control={<>
+                    <StatusMark tone={STATUS[b].tone}>{STATUS[b].label}</StatusMark>
+                    {t.docs && <DocsLink name={t.name} href={t.docs} />}
+                  </>} />
+              </div>
+            );
+          })}
+          {q && sorted.length === 0 && (
+            <div key="none" style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No tools match “{query}”.</div>
+          )}
+        </SettingsGroup>
       )}
-      {visible.map((g) => (
-        <div key={g.key} style={{ display: 'flex', flexDirection: 'column' }}>
-          <GroupHeader label={g.label} count={g.items.length} tone={g.tone} hint={isMobile ? undefined : g.hint} />
-          {g.items.map(renderRow)}
-        </div>
-      ))}
-      {tools.length > 0 && matched.length === 0 && <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', textAlign: 'center', padding: '14px 0' }}>No tools match “{query}”</div>}
-
-      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', borderTop: '1px solid var(--color-hover)', paddingTop: 8, marginTop: 2 }}>Tools run with your shell environment.</div>
-    </div>
+      {err && <div style={{ color: 'var(--color-status-red)', fontSize: 12, padding: '0 4px' }}>{err}</div>}
+    </SettingsPage>
   );
 }
