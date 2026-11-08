@@ -136,4 +136,14 @@ describe('UsageChip', () => {
     render(<UsageChip variant="phone" />);
     expect(screen.getByTestId('usage-ring').textContent).toBe('');
   });
+
+  it('phone: the all-accounts rings can be hidden (outside a thread); a thread still shows its own account (2026-11-07)', () => {
+    useUsageLimits.setState({ summary: summary(10) });
+    const { rerender } = render(<UsageChip variant="phone" hideAll />);
+    expect(screen.queryByTestId('usage-chip')).toBeNull();
+    rerender(<UsageChip variant="phone" hideAll only={{ provider: 'claude-code', accountId: 'cli' }} />);
+    expect(screen.getAllByTestId('usage-ring')).toHaveLength(1);
+    rerender(<UsageChip variant="phone" />);
+    expect(screen.getByTestId('usage-chip')).toBeInTheDocument();
+  });
 });

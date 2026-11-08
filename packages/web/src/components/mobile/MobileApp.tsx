@@ -400,6 +400,7 @@ export function MobileApp() {
   const accountsView = useAccounts((s) => s.view);
   useEffect(() => { if (leafTab) void useAccounts.getState().load(); }, [leafTab]);
   const leafAccount = threadAccount(accountsView, leafTab);
+  const phoneHeaderUsage = useSettings((s) => s.phoneHeaderUsage);
 
   const slot: React.CSSProperties = { flex: '0 0 100%', height: '100%', minWidth: 0 };
   const scrollSlot: React.CSSProperties = { ...slot, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y' };
@@ -478,7 +479,7 @@ export function MobileApp() {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: leafTab ? 0 : 8 }}>
           {/* Account usage (#127): always shown once a provider has reported, on every screen. */}
-          <UsageChip variant="phone" only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />
+          <UsageChip variant="phone" hideAll={!phoneHeaderUsage} only={leafTab ? { provider: leafTab.type, accountId: leafAccount?.id ?? 'cli', model: typeof leafTab.config?.model === 'string' ? leafTab.config.model : null } : null} />
           {/* Inside a project (its threads list): the same shape as a thread's header, usage then ⋯.
               Previews (spec 2026-10-28) and the project's own actions live in that menu. */}
           {level === 1 && !inSettings && !inPlugins && project && !leafTab && <Slot name="project.header.actions" session={project} />}

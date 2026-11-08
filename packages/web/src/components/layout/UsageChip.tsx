@@ -77,7 +77,7 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
  * chip is one button. `only` (an open thread, 2026-11-07) keeps the ring of that thread's account
  * alone; a thread whose tool reports no limits shows no chip.
  */
-export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string; model?: string | null } | null }) {
+export function UsageChip({ variant, only, hideAll }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string; model?: string | null } | null; hideAll?: boolean }) {
   const summary = useUsageLimits((s) => s.summary);
   const now = useNow();
   const [open, setOpen] = useState(false);
@@ -92,7 +92,8 @@ export function UsageChip({ variant, only }: { variant: 'rail' | 'phone'; only?:
   }, [open, variant]);
   const all = chipRings(summary, now, undefined, { model: only?.model });
   const rings = only ? all.filter((r) => r.provider === only.provider && (r.accountId ?? 'cli') === only.accountId) : all;
-  if (!summary || rings.length === 0) return null;
+  // The phone's all-accounts rings can be turned off (owner, 2026-11-07); a thread's own ring stays.
+  if (!summary || rings.length === 0 || (hideAll && !only)) return null;
   const tone = chipTone(rings, summary.warnPercent);
   const color = TONE_COLOR[tone];
   const title = `Usage. ${rings.map((r) => r.title).join('. ')}`;

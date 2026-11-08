@@ -88,6 +88,7 @@ export function UsageLimitsSection() {
   const { cfg, draft, setDraft, err, save, summary } = useUsageLimitSettings();
   const showBanner = useSettings((s) => s.showUsageBanner);
   const ringCenter = useSettings((s) => s.usageRingCenter);
+  const phoneHeader = useSettings((s) => s.phoneHeaderUsage);
   const now = useNow();
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };
@@ -126,6 +127,11 @@ export function UsageLimitsSection() {
           <Toggle on={showBanner} onClick={() => useSettings.getState().setShowUsageBanner(!showBanner)} label="Show the paused banner on this device" />
         </div>
         <div style={note}>The red banner shown while agents are paused on a usage limit.</div>
+        <div style={row}>
+          <span style={item}>All accounts in the phone header</span>
+          <Toggle on={phoneHeader} onClick={() => useSettings.getState().setPhoneHeaderUsage(!phoneHeader)} label="All accounts in the phone header" />
+        </div>
+        <div style={note}>Outside a thread. An open thread always shows the ring of its own account.</div>
         <div style={row}>
           <span style={item}>In the usage ring</span>
           <div role="radiogroup" aria-label="In the usage ring" style={{ display: 'inline-flex', padding: 2, gap: 2, borderRadius: 'var(--radius-md)', background: 'var(--color-hover)' }}>
