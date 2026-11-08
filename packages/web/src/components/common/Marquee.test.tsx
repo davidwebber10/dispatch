@@ -11,6 +11,9 @@ function reducedMotion(on: boolean) {
   window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: on && q.includes('reduce'), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {} })) as any;
 }
 
+/** The two fade widths, left and right: they animate, so the fades come and go smoothly. */
+const edges = (box: HTMLElement) => [box.style.getPropertyValue('--mq-l'), box.style.getPropertyValue('--mq-r')];
+
 describe('Marquee (2026-11-07)', () => {
   beforeEach(() => { vi.useFakeTimers(); reducedMotion(false); });
   afterEach(() => { vi.useRealTimers(); });
@@ -29,19 +32,21 @@ describe('Marquee (2026-11-07)', () => {
     const box = container.querySelector('[data-marquee="box"]') as HTMLElement;
     const text = screen.getByText('POLYWOOD.com Performance work for the storefront');
     expect(text.style.textOverflow).not.toBe('ellipsis');
-    expect(box.style.maskImage).toContain('to right'); // the right edge fades out
+    expect(edges(box)).toEqual(['0px', '22px']); // the right edge fades out
+    expect(box.style.transition).toContain('--mq-l'); // the fades fade in and out, not on and off
+    expect(box.style.transition).toContain('--mq-r');
     act(() => { vi.advanceTimersByTime(2_900); });
     expect(text.style.transform).toBe('');
     act(() => { vi.advanceTimersByTime(200); });
     expect(text.style.transform).toBe('translateX(-90px)');
     expect(text.style.transition).toBe('transform 3000ms linear'); // 30 px a second
-    expect(box.style.maskImage).toContain('transparent, currentColor 22px'); // moving: both edges fade
+    expect(edges(box)).toEqual(['22px', '22px']); // moving: both edges fade
     act(() => { fireEvent.transitionEnd(text); });
-    expect(box.style.maskImage).toContain('to left'); // at the end: the left edge fades, the end shows whole
+    expect(edges(box)).toEqual(['22px', '0px']); // at the end: the left edge fades, the end shows whole
     act(() => { vi.advanceTimersByTime(2_000); });
     expect(text.style.transform).toBe('translateX(0px)');
     act(() => { fireEvent.transitionEnd(text); });
-    expect(box.style.maskImage).toContain('to right'); // back at rest, then it waits and repeats
+    expect(edges(box)).toEqual(['0px', '22px']); // back at rest, then it waits and repeats
     act(() => { vi.advanceTimersByTime(3_100); });
     expect(text.style.transform).toBe('translateX(-90px)');
   });
@@ -53,6 +58,6 @@ describe('Marquee (2026-11-07)', () => {
     act(() => { vi.advanceTimersByTime(10_000); });
     const text = screen.getByText('A very long thread name that does not fit');
     expect(text.style.transform).toBe('');
-    expect((container.querySelector('[data-marquee="box"]') as HTMLElement).style.maskImage).toContain('to right');
+    expect(edges(container.querySelector('[data-marquee="box"]') as HTMLElement)).toEqual(['0px', '22px']);
   });
 });
