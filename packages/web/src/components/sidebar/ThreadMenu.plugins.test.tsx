@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ThreadMenu } from './ThreadMenu';
 import { usePluginRegistry } from '../../plugins/registry';
@@ -12,13 +12,12 @@ beforeEach(() => {
 });
 
 describe('ThreadMenu plugin items (2026-11-07)', () => {
-  it('a plugin item shows for a thread after Copy thread ID, and calls onPick with the tab then closes', () => {
+  it('a plugin item shows for a thread in the Plugins group, and calls onPick with the tab then closes', () => {
     const onPick = vi.fn();
     usePluginRegistry.getState().register('daily-rundown', { threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick }] });
     const onClose = vi.fn();
     render(<ThreadMenu at={{ tab: tab(), x: 10, y: 10 }} onClose={onClose} onBranched={() => {}} />);
-    const labels = screen.getAllByRole('button').map((b) => b.textContent);
-    expect(labels.indexOf('Pin to rundown')).toBe(labels.indexOf('Copy thread ID') + 1);
+    expect(within(screen.getByRole('group', { name: 'Plugins' })).getByRole('button', { name: 'Pin to rundown' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Pin to rundown' }));
     expect(onPick).toHaveBeenCalledWith({ tab: expect.objectContaining({ id: 't1' }) });
     expect(onClose).toHaveBeenCalled();

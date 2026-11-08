@@ -114,12 +114,12 @@ describe('the phone thread sheet', () => {
   });
 });
 
-describe('the desktop thread menu stays a flat list', () => {
-  it('shows the maintenance rows directly, with no grid and no More', () => {
+describe('the desktop thread menu uses the same groups (a fly-out, not a flat list)', () => {
+  it('shows the tiles and a closed More; every action is still reachable', () => {
     asPhone(false);
     open();
-    expect(screen.queryByRole('group', { name: 'Quick actions' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Quick actions' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
     for (const name of ['Rename thread', 'Branch thread', 'Copy thread ID', 'Reload thread', 'Reset status', 'Auto-archive…', 'Switch account…', 'Enable alerts', 'Archive thread']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
