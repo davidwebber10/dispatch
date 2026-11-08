@@ -1,5 +1,6 @@
 import type { EventBroadcaster } from '../ws/events.js';
 import type { HarnessEvent } from '../runtime/events.js';
+import { classifyUserText } from '../conversation/task-notification.js';
 
 /**
  * Thread events for plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3):
@@ -29,6 +30,25 @@ type Subscriber = (e: ThreadEvent) => void;
 export type PromptSource = 'user' | 'coordinator' | 'thread' | 'daemon' | 'schedule';
 
 type Body = ThreadEvent extends infer E ? (E extends Base ? Omit<E, keyof Base> : never) : never;
+
+/** Claude Code's prompt after a compaction: the summary of the earlier conversation, not a prompt. */
+const COMPACTION_RE = /^\s*This session is being continued from a previous conversation/;
+/** The line the daemon types into a CLI thread to attach a file (sessions/service.ts sendFileReference). */
+const FILE_CONTEXT_LINE_RE = /^Use this file as context: .*$/gm;
+
+/**
+ * The owner's words in a hook prompt, or null when the prompt is injected text: a task
+ * notification, a slash-command echo, the compaction summary, or only file-attach lines.
+ * File-attach lines are cut from a mixed prompt.
+ */
+export function ownerText(text: string): string | null {
+  if (classifyUserText(text).kind !== 'user') return null;
+  if (COMPACTION_RE.test(text)) return null;
+  if (!FILE_CONTEXT_LINE_RE.test(text)) return text;
+  FILE_CONTEXT_LINE_RE.lastIndex = 0;
+  const rest = text.replace(FILE_CONTEXT_LINE_RE, '').trim();
+  return rest ? rest : null;
+}
 
 const REPORTED_TTL_MS = 10 * 60 * 1000;
 const normalise = (text: string): string => text.replace(/\s+/g, ' ').trim();
@@ -67,7 +87,10 @@ export class ThreadEvents {
   /** A hook's UserPromptSubmit: a prompt the service already reported is consumed; any other is the owner's. */
   private onHookPrompt(terminalId: string, text: string): void {
     if (this.consume(terminalId, text)) return;
-    this.promptSeen(terminalId, text, 'user');
+    // Text the harness or the daemon injected is nobody's prompt (coach fix T1).
+    const own = ownerText(text);
+    if (own === null) return;
+    this.promptSeen(terminalId, own, 'user');
   }
 
   private promptSeen(terminalId: string, text: string, source: PromptSource): void {

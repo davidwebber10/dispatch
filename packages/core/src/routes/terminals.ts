@@ -173,7 +173,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
         })
         : sessionService.sendThreadMessage(req.params.terminalId, body, source, logAs);
       // Plugins hear every prompt with who sent it; the thread namer and the coordinator hear the owner's only.
-      sessionService.noteUserPrompt(req.params.terminalId, payload, from || fromThread ? 'thread' : source === 'user' ? 'user' : 'coordinator');
+      // They hear the text the receiver sees (the wrapped body, the sender line): a CLI thread's hook reports
+      // that text again, and only an exact match is consumed (coach fix T1).
+      sessionService.noteUserPrompt(req.params.terminalId, sent.delivered ?? payload, from || fromThread ? 'thread' : source === 'user' ? 'user' : 'coordinator');
       if (source === 'user') sessionService.noteUserMessageToAgent(req.params.terminalId, payload); // tell the coordinator
       // A structured send flips to working off its own stream events; a PTY write has no such
       // signal, so mark it here exactly like the /input route does for a submitted line.
