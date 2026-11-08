@@ -263,6 +263,40 @@ describe('Coach reviews skip what the person left alone, and what a schedule sta
   });
 });
 
+describe('Coach reviews skip agent threads (coach fix T4)', () => {
+  const conversations = (f: ReturnType<typeof daemon>) => f.io.getJson.mock.calls.map((c) => String(c[0])).filter((r) => r.includes('/conversation'));
+  const AGENTS = { role: { role: 'agent' }, depth: { spawnDepth: 1 }, by: { spawnedBy: 'tx' } };
+
+  it('a range review leaves out a thread another thread spawned (role agent, spawnDepth 1, spawnedBy)', async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT, config: { spawnDepth: 0 } }, a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.role }, a2: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.depth }, a3: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.by } };
+    const f = daemon({ threads, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    f.docs.set('reviews:r', { id: 'r', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:r');
+    expect((f.docs.get('reviews:r') as { plan: { threads: string[] } }).plan.threads).toEqual(['t1']);
+    expect(conversations(f).some((r) => /\/a\d\//.test(r))).toBe(false);
+  });
+
+  it('the look back does not seed an agent thread as the person', async () => {
+    const threads = { a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.depth } };
+    const f = daemon({ threads, answers: [GOOD] });
+    f.docs.set('reviews:lb', { id: 'lb', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, backfill: true, state: 'queued', plan: { threads: ['a1'], chunks: 1, estPercent: 0.05, fits: true } });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:lb');
+    const signals = f.docs.get('signals') as { prompts: unknown[] } | undefined;
+    expect(signals ? signals.prompts : []).toEqual([]);
+  });
+
+  it('a review of one agent thread the person asks for still reads it', async () => {
+    const threads = { a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.role } };
+    const f = daemon({ threads, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    f.docs.set('reviews:c', { id: 'c', scope: { kind: 'thread', ids: ['a1'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:c');
+    expect((f.docs.get('reviews:c') as { plan: { threads: string[] } }).plan.threads).toEqual(['a1']);
+  });
+});
+
 // ── the web part ──────────────────────────────────────────────────────────────────────────
 afterEach(() => { cleanup(); });
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;

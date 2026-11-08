@@ -247,7 +247,13 @@ export function createEngine(io) {
   // schedule or a role started (`config.runner`, `config.roleRun`) are not the person's work: a
   // project or range review skips them, and the look back never seeds them as the person's prompts.
   const leftAlone = (projectId) => !!projectId && Array.isArray(settings.leaveAlone) && settings.leaveAlone.includes(projectId);
-  const automated = (t) => !!(t && t.config && (t.config.runner || t.config.roleRun));
+  // A thread another thread spawned (an agent: role 'agent', spawnDepth 1 or more, spawnedBy) is not the
+  // person's work either (coach fix T4). A coordinator stays: its items go through isPersonText.
+  const automated = (t) => {
+    const c = t && t.config;
+    if (!c) return false;
+    return !!(c.runner || c.roleRun || c.role === 'agent' || (typeof c.spawnDepth === 'number' && c.spawnDepth >= 1) || c.spawnedBy);
+  };
   async function scopeThreads(scope) {
     let rows = [];
     if (scope.kind === 'thread') {
