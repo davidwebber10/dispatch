@@ -381,30 +381,33 @@ test('the phone composer grows over the terminal, not into it; a handle shrinks 
   expect(overlay.style.position).toBe('absolute');
   expect(overlay.style.bottom).toBe('0px');
   expect(dock).toContainElement(box);
-  expect(screen.queryByRole('button', { name: 'Minimize the message box' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Resize the message box' })).toBeNull();
 
   Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
   Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => 300 });
   act(() => { fireEvent.change(box, { target: { value: 'a long message\n'.repeat(12) } }); });
   expect(box.style.height).toBe('300px');
-  const handle = screen.getByRole('button', { name: 'Minimize the message box' });
+  const handle = screen.getByRole('button', { name: 'Resize the message box' });
   // One box, not a box in a box (owner, 2026-11-07): the handle sits inside the message box, and
   // the dock around it draws nothing of its own.
   expect(screen.getByTestId('pill-composer')).toContainElement(handle);
   expect(overlay.style.borderTop).toBe('');
   expect(overlay.style.boxShadow).toBe('');
   expect(overlay.style.background === '' || overlay.style.background === 'transparent').toBe(true);
-  // Drag down: two lines, the text kept and scrollable inside.
-  act(() => { fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 160, pointerId: 1 }); });
-  expect(box.style.height).toBe('64px');
+  // The handle drags (owner, 2026-11-07): the box follows the finger while it moves, and stays where it is let go.
+  act(() => { fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 160, pointerId: 1 }); });
+  expect(box.style.height).toBe('240px'); // 300 - 60, live, before the release
+  act(() => { fireEvent.pointerUp(handle, { clientY: 160, pointerId: 1 }); });
+  expect(box.style.height).toBe('240px');
   expect(box.value).toBe('a long message\n'.repeat(12));
-  // Tap (or drag up): full height again.
-  const expand = screen.getByRole('button', { name: 'Expand the message box' });
-  act(() => { fireEvent.pointerDown(expand, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(expand, { clientY: 160, pointerId: 1 }); });
-  expect(box.style.height).toBe('300px');
-  // A tap on the handle of a tall box also shrinks it.
-  act(() => { const h = screen.getByRole('button', { name: 'Minimize the message box' }); fireEvent.pointerDown(h, { clientY: 50, pointerId: 1 }); fireEvent.pointerUp(h, { clientY: 52, pointerId: 1 }); });
+  // A tap does nothing: it is a drag handle, not a switch.
+  act(() => { fireEvent.pointerDown(handle, { clientY: 50, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 52, pointerId: 1 }); });
+  expect(box.style.height).toBe('240px');
+  // Down as far as you like: two lines at least. Up: no taller than the text (or the cap).
+  act(() => { fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 900, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 900, pointerId: 1 }); });
   expect(box.style.height).toBe('64px');
+  act(() => { fireEvent.pointerDown(handle, { clientY: 500, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 0, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 0, pointerId: 1 }); });
+  expect(box.style.height).toBe('300px');
 });
 
 test('the keys live in a sheet behind the +: no always-on row, and Clear input empties the prompt', async () => {

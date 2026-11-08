@@ -141,6 +141,8 @@ const LEFT_RIGHT: SoftKey[] = [
   { label: 'Right', seq: '\x1b[C', title: 'Right', Icon: CaretRight },
 ];
 const TAB: SoftKey = { label: 'tab', seq: '\t', title: 'Tab' };
+/** Two lines of the phone composer's text box (a 42 px first line + one 22 px line): the drag handle's floor. */
+const TWO_LINES = 64;
 
 /** The Keys sheet behind the composer's +: the old row's keys, then more per harness. */
 function sheetKeysFor(type?: string): { title: string; keys: SoftKey[] }[] {
@@ -283,8 +285,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   const composerOverlayRef = useRef<HTMLDivElement | null>(null);
   const [dockH, setDockH] = useState<number | null>(null);
   const [tall, setTall] = useState(false);
-  const [minimized, setMinimized] = useState(false);
-  const handleDownY = useRef<number | null>(null);
+  // The box's height while dragged by its handle (owner, 2026-11-07: drag it up and down, no tap
+  // toggle). Null: as tall as the text, up to the composer's own cap.
+  const [boxH, setBoxH] = useState<number | null>(null);
+  const dragStart = useRef<{ y: number; h: number } | null>(null);
   // Measure the box while it is empty (one line): that height is the dock's. A box with text
   // keeps the last empty height, so the terminal above never moves while you type.
   const emptyInput = !mobileInput;
@@ -299,7 +303,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     return () => ro.disconnect();
   }, [emptyInput]);
   // A sent (cleared) box comes back full size next time.
-  useEffect(() => { if (emptyInput) setMinimized(false); }, [emptyInput]);
+  useEffect(() => { if (emptyInput) setBoxH(null); }, [emptyInput]);
   const termFileInputRef = useRef<HTMLInputElement>(null);
   const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
   const dictation = useDictation((text) => {
@@ -1119,17 +1123,28 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
             pluginContext={{ surface: 'terminal', terminalId: terminalId }}
             floating={tall}
             handle={tall ? (
-            <button type="button" aria-label={minimized ? 'Expand the message box' : 'Minimize the message box'}
-              // Keep the pointer while the finger drags off the handle, so the release lands here.
-              onPointerDown={(e) => { handleDownY.current = e.clientY; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom */ } }}
-              onPointerUp={(e) => {
-                const dy = e.clientY - (handleDownY.current ?? e.clientY);
-                handleDownY.current = null;
-                const tap = Math.abs(dy) < 10;
-                // Drag down or tap: two lines. Drag up or tap: full size again.
-                if (minimized) { if (tap || dy < -24) setMinimized(false); } else if (tap || dy > 24) setMinimized(true);
+            <button type="button" aria-label="Resize the message box" title="Drag to resize"
+              // Keep the pointer while the finger drags off the handle; the box follows it live.
+              onPointerDown={(e) => {
+                const ta = composerOverlayRef.current?.querySelector('textarea');
+                dragStart.current = { y: e.clientY, h: ta ? (parseFloat(ta.style.height) || ta.offsetHeight) : TWO_LINES };
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom */ }
               }}
-              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: 64, height: 16, margin: 0, padding: 0, background: 'none', border: 'none', cursor: 'grab', touchAction: 'none' }}>
+              onPointerMove={(e) => {
+                const d = dragStart.current;
+                if (!d) return;
+                setBoxH(Math.min(Math.round(window.innerHeight * 0.5), Math.max(TWO_LINES, d.h - (e.clientY - d.y))));
+              }}
+              onPointerUp={() => { dragStart.current = null; }}
+              onPointerCancel={() => { dragStart.current = null; }}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                e.preventDefault();
+                const ta = composerOverlayRef.current?.querySelector('textarea');
+                const h = boxH ?? (ta ? parseFloat(ta.style.height) || ta.offsetHeight : TWO_LINES);
+                setBoxH(Math.min(Math.round(window.innerHeight * 0.5), Math.max(TWO_LINES, h + (e.key === 'ArrowUp' ? 22 : -22))));
+              }}
+              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: 64, height: 16, margin: 0, padding: 0, background: 'none', border: 'none', cursor: 'ns-resize', touchAction: 'none' }}>
               <span aria-hidden style={{ width: 36, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--color-text-tertiary)', opacity: 0.6 }} />
             </button>
             ) : undefined}
@@ -1169,7 +1184,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
                off). autoCapitalize stays off so `git`, `rg` and paths are not capitalised, and
                autoComplete stays off so form autofill never offers a value. */
             textareaProps={{ autoCapitalize: 'off', autoComplete: 'off', autoCorrect: ptyAutocorrect ? 'on' : 'off', spellCheck: ptyAutocorrect }}
-            maxLines={minimized ? 2 : undefined}
+            maxHeight={boxH ?? undefined}
             onTallChange={setTall}
             mobile
           />

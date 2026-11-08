@@ -52,6 +52,8 @@ export interface PillComposerProps {
   sendLabel?: string;
   /** Cap the box at this many lines; the text scrolls inside (the CLI view's minimized box, 2026-11-07). */
   maxLines?: number;
+  /** Caps the text box at this many pixels (the CLI view's drag handle, 2026-11-07). */
+  maxHeight?: number;
   /** A control drawn inside the box at its top centre (the CLI view's drag handle, 2026-11-07). */
   handle?: ReactNode;
   /** The box floats over other content (the CLI view's terminal): it takes a soft shadow. */
@@ -65,7 +67,7 @@ const MAX_FRACTION = 0.5;
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
-  maxLines, onTallChange, handle, floating,
+  maxLines, maxHeight, onTallChange, handle, floating,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
@@ -84,7 +86,7 @@ export function PillComposer({
     if (!el.value) { el.style.height = `${minH}px`; tallRef.current(false); setLong(false); return; }
     el.style.height = 'auto';
     const natural = el.scrollHeight;
-    const cap = Math.min(Math.round(window.innerHeight * MAX_FRACTION), maxLines ? linesH(maxLines) : Infinity);
+    const cap = Math.min(Math.round(window.innerHeight * MAX_FRACTION), maxLines ? linesH(maxLines) : Infinity, maxHeight ?? Infinity);
     el.style.height = `${Math.max(minH, Math.min(natural, cap))}px`;
     tallRef.current(natural > linesH(2));
     setLong(natural > linesH(2));
@@ -94,7 +96,7 @@ export function PillComposer({
   const [full, setFull] = useState(false);
   const tallRef = useRef<(t: boolean) => void>(() => {});
   tallRef.current = (t) => onTallChange?.(t);
-  useLayoutEffect(fit, [value, minH, maxLines]);
+  useLayoutEffect(fit, [value, minH, maxLines, maxHeight]);
   // A resize (rotation, the keyboard, a window drag) re-wraps the text and moves the cap.
   useEffect(() => {
     window.addEventListener('resize', fit);
