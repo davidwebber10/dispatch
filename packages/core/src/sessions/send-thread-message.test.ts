@@ -84,7 +84,7 @@ describe('sendThreadMessage — transport dispatch', () => {
 
     const out = svc.sendThreadMessage('t1', 'ping from a peer', 'coordinator');
 
-    expect(out).toEqual({ transport: 'pty', droppedNonText: false });
+    expect(out).toMatchObject({ transport: 'pty', droppedNonText: false });
     expect(pty.writes).toEqual([{ id: 't1', data: '\x1b[200~ping from a peer\x1b[201~\r' }]);
     expect(structured.sent).toHaveLength(0); // never went near the structured channel
   });
@@ -107,7 +107,7 @@ describe('sendThreadMessage — transport dispatch', () => {
 
     const out = svc.sendThreadMessage('t1', 'hello', 'coordinator');
 
-    expect(out).toEqual({ transport: 'structured', droppedNonText: false });
+    expect(out).toMatchObject({ transport: 'structured', droppedNonText: false });
     expect(structured.sent).toEqual([{ id: 't1', content: 'hello', source: 'coordinator' }]);
     expect(pty.writes).toHaveLength(0); // never typed into a terminal
   });
@@ -137,7 +137,7 @@ describe('sendThreadMessage — transport dispatch', () => {
       { type: 'image', source: { data: 'x' } },
     ] as any);
 
-    expect(out).toEqual({ transport: 'pty', droppedNonText: true });
+    expect(out).toMatchObject({ transport: 'pty', droppedNonText: true });
     expect(pty.writes[0].data).toBe('\x1b[200~see this\x1b[201~\r');
   });
 
@@ -161,5 +161,25 @@ describe('sendThreadMessage — transport dispatch', () => {
 
     expect(() => svc.sendThreadMessage('t1', 'printf pwned > /repo/file', 'coordinator')).toThrow(/shell/i);
     expect(pty.writes).toHaveLength(0);
+  });
+});
+
+describe('what plugins hear (coach fix T1)', () => {
+  it('a queued task reaches plugins as source "thread" and goes out tagged coordinator', () => {
+    seed('tq', { config: { transport: 'structured', queued: true, queuedTask: 'Build the widget' } });
+    const heard: { id: string; text: string; source: string }[] = [];
+    svc.setUserPromptListener((id, text, source) => heard.push({ id, text, source }));
+    (svc as any).spawnTerminal = (id: string) => { structured.live.add(id); };
+    svc.startQueuedTerminal('tq');
+    expect(structured.sent.at(-1)).toMatchObject({ id: 'tq', content: 'Build the widget', source: 'coordinator' });
+    expect(heard).toEqual([{ id: 'tq', text: 'Build the widget', source: 'thread' }]);
+  });
+
+  it('sendThreadMessage returns the text the receiver sees, sender line included', () => {
+    seed('t1', { config: {} });
+    pty.alive.add('t1');
+    const sent = svc.sendThreadMessage('t1', 'Run the tests', 'coordinator', undefined, { name: 'web', terminalId: 't9' });
+    expect(typeof sent.delivered).toBe('string');
+    expect(sent.delivered).toMatch(/^\[From the overseer of project "web" \(thread t9\)\. This is not a message from the owner\.\]\n\nRun the tests$/);
   });
 });

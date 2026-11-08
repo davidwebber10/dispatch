@@ -6,9 +6,18 @@
 // `assist(req)` is injected: it resolves to { result: { text, harness } | null, budget, refused }
 // (lib/client.mjs in the worker). The worker joins the outcomes into the `cards` document.
 import { planCall } from './plan.mjs';
-import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt, skillDraftPrompt, cleanSkill } from './prompts.mjs';
+import { isPersonText } from './person.mjs';
+import { contentExcerpt, confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt, skillDraftPrompt, cleanSkill } from './prompts.mjs';
 
 const KEEP_CARDS = 60;
+/** The rules whose card is about the person's words: their excerpt must be the person's (coach fix T6). */
+const WORD_TYPES = new Set(['repeated-prompt', 'step-by-step', 'no-plan-big-task', 'plugin-fit', 'skill-fit']);
+/** True when a candidate about the person's words has none to show: it is never judged. */
+export function lacksPersonWords(c) {
+  if (!WORD_TYPES.has(c.type)) return false;
+  const ex = contentExcerpt(c.evidence && c.evidence.excerpt);
+  return !ex || !isPersonText(ex, 'user');
+}
 const KEEP_JUDGED = 300;
 
 /** The budget the daemon reported on an assist answer, or null when it sent none. */
@@ -64,7 +73,7 @@ function cardBase(c, ans, at) {
   return {
     id: c.id, type: c.type, measure: c.measure, tip: c.tip, terminalId: c.terminalId ?? null, projectId: c.projectId ?? null,
     headline: ans.headline.trim(), why: ans.why.trim(), action: cleanAction(ans.action),
-    excerpt: c.evidence && typeof c.evidence.excerpt === 'string' ? c.evidence.excerpt : '',
+    excerpt: contentExcerpt(c.evidence && c.evidence.excerpt),
     reason: reasonFor(c), ...(c.goal ? { goal: c.goal } : {}), at,
   };
 }
@@ -79,7 +88,9 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   let b = budget;
   let ran = harness;
   const at = (now instanceof Date ? now : new Date(now)).toISOString();
-  const min = settings && settings.advanced ? settings.advanced.minConfidence : 0.7;
+  const min = settings && settings.advanced ? settings.advanced.minConfidence : 0.85;
+  // No call for a candidate without the person's words (coach fix T6).
+  if (lacksPersonWords(c)) return { id: c.id, card: null, outcome: 'dropped', reason: 'no-words', calls, budget: b, harness: ran };
   const step = async (name, req, plan) => {
     const r = await assist({ ...req, harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => ({ result: null, budget: null, refused: null, transient: true }));
     if (r && r.budget) b = r.budget;
@@ -97,7 +108,9 @@ export async function judgeCandidate(c, { settings, memory, budget, assist, now 
   // Not now (busy, no model, no answer, the network): the candidate waits for a retry.
   if (r1.transient) return { id: c.id, card: null, outcome: 'retry', calls, budget: b, harness: ran };
   r1.ans = pluginAnswer(c, r1.ans);
-  const why1 = checkCard(r1.ans, min);
+  // Both gate answers must be yes: the person's own words, and a tip that changes their next prompt (coach fix T6).
+  const gate = r1.ans && r1.ans.ownWords === true && r1.ans.wouldChange === true;
+  const why1 = r1.ans && !gate && checkCard(r1.ans, min) !== 'malformed' ? 'no-fit' : checkCard(r1.ans, min);
   calls.push({ step: 'confirm', tier: p1.tier, ok: !!r1.ans && why1 !== 'malformed' });
   if (why1) return { id: c.id, card: null, outcome: 'dropped', reason: why1, calls, budget: b, harness: ran };
   let final = r1.ans;

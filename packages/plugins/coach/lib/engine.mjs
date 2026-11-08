@@ -13,7 +13,8 @@
 // `status` ({ budget, level, stepped, at }: what the daemon last said about the budget), `measures`
 // ({ at, scores, weakest, history }: lib/measures.mjs), `recap` (the weekly recap, lib/recap.mjs).
 import { withDefaults } from './settings.mjs';
-import { collect, emptyState } from './signals.mjs';
+import { collect, emptyState, isApproval, isShort } from './signals.mjs';
+import { personText, isPersonText } from './person.mjs';
 import { detect, proposeNew } from './detectors.mjs';
 import { allows, normalizeMemory, emptyMemory } from './memory.mjs';
 import { isMuted, mayShow, mayCallModel } from './cadence.mjs';
@@ -24,7 +25,7 @@ import { recapPrompt, parseAnswer } from './prompts.mjs';
 import { rankCandidates, suggestGoals } from './goals.mjs';
 import { planReview, chunkTranscript, reviewPrompt, parseReview, mergeReview, eventsFromTranscript, MAX_THREADS } from './review.mjs';
 import { appendTurns } from './chat.mjs';
-import { judgeCandidate, joinCards, unjudged } from './judge.mjs';
+import { judgeCandidate, joinCards, unjudged, lacksPersonWords } from './judge.mjs';
 
 const SAVE_DELAY_MS = 5_000;
 /** At most this many candidates are judged after one turn: each is a model call or two. */
@@ -35,10 +36,30 @@ export const FRESH_MS = 2 * 3600_000;
 export const RETRY_BACKOFF_MS = Object.freeze([2 * 60_000, 10 * 60_000]);
 export const MAX_TRIES = 3;
 export const RESTART_ERROR = 'Stopped when the Coach restarted — Run again';
+/** The chat line after the one-off clean (coach fix T7). */
+export const CLEAN_NOTE = 'I cleaned my notes: messages between agents and one-word go-aheads no longer count.';
 /** The budget is read from the daemon at least this often. */
 export const BUDGET_TTL_MS = 15 * 60_000;
 /** Before it settles on no call, the worker asks the daemon again, at most this often. */
 const BEFORE_NONE_GAP_MS = 60_000;
+
+/** A card of the same measure and type shown or dismissed within this many days blocks a new one (coach fix T6). */
+export const NOVELTY_DAYS = 14;
+/** A card's kind: its type (each rule has one measure, so measure and type match together). */
+const kindOf = (c) => c.type || String(c.id || '').split(':')[0];
+/** The kinds of cards the person saw or dismissed in the last NOVELTY_DAYS days. */
+function recentKinds(cardsDoc, cardState, t) {
+  const out = new Set();
+  if (!cardState || typeof cardState !== 'object') return out;
+  const items = Array.isArray(cardsDoc && cardsDoc.items) ? cardsDoc.items : [];
+  const from = t.getTime() - NOVELTY_DAYS * 86400_000;
+  for (const [id, st] of Object.entries(cardState)) {
+    if (!st || (st.state !== 'shown' && st.state !== 'dismissed') || !(Date.parse(st.at) >= from)) continue;
+    const card = items.find((x) => x && x.id === id);
+    out.add(kindOf(card || { id }));
+  }
+  return out;
+}
 
 export function createEngine(io) {
   let settings = withDefaults(null);
@@ -63,7 +84,7 @@ export function createEngine(io) {
     await loadSettings();
     try {
       const saved = await io.getDoc('signals', null);
-      if (saved && saved.v === 1) state = { ...emptyState(), ...saved };
+      if (saved && (saved.v === 1 || saved.v === 2)) state = { ...emptyState(), ...saved, v: saved.v };
       const c = await io.getDoc('candidates', null);
       if (c && Array.isArray(c.items)) candidates = c;
       const st = await io.getDoc('status', null);
@@ -74,6 +95,47 @@ export function createEngine(io) {
     // A restart reads the budget again: never trust the last answer's headers alone.
     await readBudget(now());
     await strandedReviews();
+    if (state.v === 1) await cleanOnce().catch((err) => log('clean failed:', err && err.message ? err.message : err));
+  }
+
+  /**
+   * The one-off clean of notes written before coach fix T7 (a v1 signals document), on load; never a
+   * periodic job. Prompts that were not the person's (notices, peer messages, threads a schedule or
+   * an agent started, where known) go; go-aheads and short replies are marked so they are never
+   * content; candidates without the person's words go (the seen list stays, so none comes back).
+   * A look back read with the old rules is marked stale (Run again), and offered again.
+   */
+  async function cleanOnce() {
+    const threads = state.threads || {};
+    const notPerson = new Set(Object.entries(threads).filter(([, th]) => th && th.auto).map(([id]) => id));
+    if (typeof io.getJson === 'function') {
+      for (const id of [...new Set(state.prompts.map((p) => p.t))].filter((x) => !notPerson.has(x)).slice(0, 200)) {
+        const t = await getJson(`/api/terminals/${encodeURIComponent(id)}`);
+        if (t && automated(t)) notPerson.add(id);
+      }
+    }
+    const prompts = state.prompts
+      .filter((p) => !notPerson.has(p.t) && (!p.ex || personText(p.ex, 'user') !== null))
+      .map((p) => (p.ex ? { ...p, ok: isApproval(p.ex), short: isShort(p.ex) } : { ...p, short: typeof p.short === 'boolean' ? p.short : (p.len || 0) <= 15 }));
+    const blocks = {};
+    for (const [h, b] of Object.entries(state.blocks || {})) if (b && isPersonText(b.text, 'user')) blocks[h] = { ...b, seen: (b.seen || []).filter((x) => !notPerson.has(x.t)) };
+    state = { ...state, v: 2, prompts, blocks };
+    await io.putDoc('signals', state);
+    const items = candidates.items.filter((c) => !lacksPersonWords(c));
+    if (items.length !== candidates.items.length) { candidates = { ...candidates, items }; await io.putDoc('candidates', candidates); }
+    let stale = 0;
+    if (typeof io.listDocs === 'function') {
+      const keys = ((await io.listDocs().catch(() => [])) || []).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
+      for (const key of keys) {
+        const doc = await io.getDoc(key, null).catch(() => null);
+        if (doc && doc.backfill && !doc.stale) { await io.putDoc(key, { ...doc, stale: true }); stale++; }
+      }
+    }
+    const cadence = await io.getDoc('cadence', null);
+    if (stale && cadence && cadence.lookbackAnswered) await io.putDoc('cadence', { ...cadence, lookbackAnswered: false });
+    const chat = await io.getDoc('chat', null);
+    await io.putDoc('chat', appendTurns(chat, [{ role: 'coach', text: CLEAN_NOTE, at: now().toISOString() }]));
+    log('cleaned the notes (signals v2)');
   }
 
   /** A review the last worker was running when it stopped: failed, with Run again (never left "Reading…"). */
@@ -125,13 +187,22 @@ export function createEngine(io) {
 
   async function judge() {
     const t = now();
-    const cardsDoc = await io.getDoc('cards', null);
+    let cardsDoc = await io.getDoc('cards', null);
     // `retry`: { [candidateId]: { n, next } } for candidates a passing failure stopped.
     const retry = (cardsDoc && cardsDoc.retry && typeof cardsDoc.retry === 'object') ? cardsDoc.retry : {};
-    const fresh = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t)
+    const candidatesNow = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t)
       && !(retry[c.id] && Date.parse(retry[c.id].next) > t.getTime()));
-    if (!fresh.length) return;
+    if (!candidatesNow.length) return;
     const at = t.toISOString();
+    // 14-day novelty (coach fix T6): no new card of a measure and type the person saw or dismissed lately.
+    const recent = recentKinds(cardsDoc, await io.getDoc('cardState', null), t);
+    const repeats = candidatesNow.filter((c) => recent.has(kindOf(c)));
+    const fresh = candidatesNow.filter((c) => !recent.has(kindOf(c)));
+    if (repeats.length) {
+      cardsDoc = joinCards(cardsDoc, repeats.map((c) => ({ id: c.id, outcome: 'repeat', card: null, calls: [] })), at);
+      await io.putDoc('cards', cardsDoc);
+    }
+    if (!fresh.length) return;
     // Nothing queues during a mute (coach spec section 4.3): the candidates are recorded as muted, never judged.
     const cadence = await io.getDoc('cadence', null);
     if (isMuted(cadence, t)) {
@@ -247,7 +318,13 @@ export function createEngine(io) {
   // schedule or a role started (`config.runner`, `config.roleRun`) are not the person's work: a
   // project or range review skips them, and the look back never seeds them as the person's prompts.
   const leftAlone = (projectId) => !!projectId && Array.isArray(settings.leaveAlone) && settings.leaveAlone.includes(projectId);
-  const automated = (t) => !!(t && t.config && (t.config.runner || t.config.roleRun));
+  // A thread another thread spawned (an agent: role 'agent', spawnDepth 1 or more, spawnedBy) is not the
+  // person's work either (coach fix T4). A coordinator stays: its items go through isPersonText.
+  const automated = (t) => {
+    const c = t && t.config;
+    if (!c) return false;
+    return !!(c.runner || c.roleRun || c.role === 'agent' || (typeof c.spawnDepth === 'number' && c.spawnDepth >= 1) || c.spawnedBy);
+  };
   async function scopeThreads(scope) {
     let rows = [];
     if (scope.kind === 'thread') {
@@ -346,7 +423,7 @@ export function createEngine(io) {
         if (r && r.result && r.result.harness) status = { ...status, harness: r.result.harness };
         if (r && r.refused) { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const p = parseReview(r && r.result ? r.result.text : '', chunk);
-        if (p) parts.push(p);
+        if (p) parts.push({ ...p, thread: ids[i] });
         chunksDone++;
       }
     }

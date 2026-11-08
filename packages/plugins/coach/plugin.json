@@ -7,7 +7,6 @@
   "dispatch": ">=3.27",
   "sdk": 1,
   "web": "web.js",
-  "enabledByDefault": true,
   "budget": { "percentWeekly": 3, "usdWeekly": 5 },
   "contributes": {
     "views": [{ "id": "coach", "label": "Coach", "icon": "sparkle" }],

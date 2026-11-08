@@ -399,12 +399,11 @@ capTokens }`, and at the cap assist answers 429 `{ error: 'budget', window: 'unk
 
 ## Bundled plugins
 
-`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Coach (it replaced the Prompt coach; it is on by default, and an owner who had turned the Prompt coach off keeps the Coach off) are the two.
+`packages/plugins/<id>` in the Dispatch checkout ships with Dispatch: Previews (the `preview` tool, the sheet, the history and the badges) and the Coach (it replaced the Prompt coach; it is off by default, and an owner who turned it on, or had turned the Prompt coach on, keeps it on) are the two.
 A bundled plugin updates with Dispatch, cannot be removed, and is not edited in place; "Copy
 to local…" on the Plugins page duplicates it under a new id. A local plugin with the same id
 hides the bundled one. A bundled plugin starts **disabled** unless its manifest says
-`"enabledByDefault": true`, as the Coach's does (owner, 2026-11-07: improving is the baseline;
-its welcome card comes first and has Turn off, and its model calls stay under its budget). A
+`"enabledByDefault": true`, as Previews' does (the Coach's no longer does: owner, 2026-11-08). A
 manifest may also say `"budget": { "percentWeekly": 3, "usdWeekly": 5 }`: that budget holds from
 the plugin's first call until the owner sets one (`PUT /budget`; an owner's `null` stays). A local plugin made with New plugin… or Copy to local… starts
 enabled; one that appears in the folder on its own starts disabled (see below).

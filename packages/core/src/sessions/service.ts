@@ -831,7 +831,11 @@ export class SessionService {
     this.setTerminalStatus(terminalId, 'waiting');
 
     this.spawnTerminal(terminalId);
-    if (task) this.sendStructuredMessage(terminalId, task);
+    if (task) {
+      // The parked task is not the owner's words: the thread that queued it wrote it (coach fix T1).
+      this.sendStructuredMessage(terminalId, task, 'coordinator');
+      this.noteUserPrompt(terminalId, task, 'thread');
+    }
 
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
@@ -1337,7 +1341,7 @@ export class SessionService {
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
     fromProject?: import('../auth/key-rules.js').SenderFacts,
-  ): { transport: 'structured' | 'pty'; droppedNonText: boolean } {
+  ): { transport: 'structured' | 'pty'; droppedNonText: boolean; delivered?: string | import('../structured/manager.js').ContentBlock[] } {
     // A cross-project message from a thread of another project (owner decisions PK-4 and PK-5): the daemon
     // puts one line before the text so the receiver, and the owner who reads the thread, see where it came from.
     if (fromProject) {
@@ -1355,7 +1359,7 @@ export class SessionService {
 
     if (this.isStructuredTerminal(terminal)) {
       this.sendStructuredMessage(terminalId, content, source, logAs);
-      return { transport: 'structured', droppedNonText: false };
+      return { transport: 'structured', droppedNonText: false, delivered: content };
     }
     this.noteThreadTouched(terminalId, source, logAs);
 
@@ -1372,7 +1376,7 @@ export class SessionService {
     // discard the live terminal the human may be reading. Fail loudly instead.
     if (!this.ptyManager.isAlive(terminalId)) throw new Error('thread process is not running');
     this.ptyManager.write(terminalId, ptyMessagePayload(text));
-    return { transport: 'pty', droppedNonText };
+    return { transport: 'pty', droppedNonText, delivered: text };
   }
 
   /**

@@ -372,12 +372,23 @@ describe('Coach replaces the Prompt coach (2026-11-07, coach spec section 9a.6)'
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-coach-')); dir = path.join(tmp, 'plugins'); keys = new KeyRegistry(); fs.mkdirSync(dir, { recursive: true }); });
   afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-  it('coach is bundled and on by default (owner, 2026-11-07: a new install, or an owner who never chose)', () => {
+  it('coach is bundled and off by default (owner, 2026-11-08: a new install, or an owner who never chose)', () => {
     const row = reg().get('coach');
-    expect(row).toMatchObject({ id: 'coach', name: 'Coach', bundled: true, enabled: true });
+    expect(row).toMatchObject({ id: 'coach', name: 'Coach', bundled: true, enabled: false, keyed: false });
     expect(row!.error).toBeUndefined();
     expect(row!.permissions).toEqual(expect.arrayContaining(['read:prompts', 'read:threads', 'read:projects', 'read:usage', 'read:analytics', 'model:assist', 'notify:push']));
     expect(row!.worker?.jobs).toEqual([{ id: 'weekly', cron: '0 8 * * 1' }]);
+  });
+
+  it('an existing install where the owner never turned the Coach on ends up off; one where the owner turned it on stays on (2026-11-08)', () => {
+    state({ enabled: ['previews'], disabled: [] });
+    let r = reg(); r.issueKeys();
+    expect(r.get('coach')).toMatchObject({ enabled: false, keyed: false });
+    state({ enabled: ['coach'] });
+    r = reg(); r.issueKeys();
+    expect(r.get('coach')).toMatchObject({ enabled: true, keyed: true });
+    r.setEnabled('coach', false);
+    expect(reg().get('coach')!.enabled).toBe(false);
   });
 
   it('prompt-coach is gone from the plugin list', () => {

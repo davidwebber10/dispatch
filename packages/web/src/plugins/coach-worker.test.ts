@@ -5,7 +5,7 @@ import { emptyCadence, mute } from '../../../plugins/coach/lib/cadence.mjs';
 // The worker's engine against a fake daemon: documents in a map, assist a spy.
 const T0 = Date.parse('2026-11-20T10:00:00Z');
 const BIG = 'Pull last week returns by reason from the warehouse table. Chart them by week and by store. Compare them with the prior month and list the three biggest changes. Then email the summary to Sam with the chart attached. Keep it short and plain for the ops team, who read it on their phones between meetings. '.repeat(2);
-const GOOD = { fit: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'Your prompt had 4 parts and no plan step.', action: { kind: 'compose', label: 'Try it: ask for a plan', text: 'Before you start, write a short plan and wait for my OK.' } };
+const GOOD = { fit: true, ownWords: true, wouldChange: true, confidence: 0.9, headline: 'Ask for a plan first', why: 'Your prompt had 4 parts and no plan step.', action: { kind: 'compose', label: 'Try it: ask for a plan', text: 'Before you start, write a short plan and wait for my OK.' } };
 
 /** Past the first week, with the welcome card seen: the worker may call a model. */
 const SEASONED = { ...emptyCadence(new Date(T0 - 10 * 86400_000)), welcomeSeenAt: new Date(T0 - 10 * 86400_000).toISOString() };

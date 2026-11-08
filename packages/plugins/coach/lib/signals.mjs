@@ -6,6 +6,8 @@
 // the Control Plane or the daemon (source !== 'user') and every event from a left-alone project are
 // dropped here.
 
+import { personText } from './person.mjs';
+
 export const EXCERPT_CHARS = 200;
 const KEEP_DAYS = 31;
 const KEEP_PROMPTS = 600;
@@ -18,7 +20,8 @@ const BLOCK_TEXT_MAX = 1500;
 const KEEP_BLOCKS = 30;
 
 export function emptyState() {
-  return { v: 1, prompts: [], turns: [], threads: {}, open: {}, last: {} };
+  // v2: written after the one-off clean of the notes (coach fix T7); a v1 document is cleaned once on load.
+  return { v: 2, prompts: [], turns: [], threads: {}, open: {}, last: {} };
 }
 
 /** Lowercase, words only, single spaces: two prompts that differ in case, spacing or punctuation match. */
@@ -49,7 +52,24 @@ export function classify(text) {
   return 'other';
 }
 
-const APPROVE_RE = /^(?!.*\b(but|except|change|fix|instead)\b)(lgtm|looks good|looks great|ship it|go ahead|perfect|great|yes|yep|ok|okay|approved?|do it|sounds good|merge it|good)\b[\s\p{P}\w]{0,30}$/iu;
+const APPROVE_RE = /^(?!.*\b(but|except|change|fix|instead)\b)(lgtm|looks good|looks great|ship it|go ahead|perfect|great|yes|yep|ok|okay|approved?|do it|sounds good|merge it|good|proceed|keep going|carry on)\b[\s\p{P}\w]{0,30}$/iu;
+/** A whole-message go-ahead or check-in (coach fix T3): these words start real tasks too, so only the whole message counts. */
+const GO_RE = /^(continue|go|go on|next|sure|thanks|thank you|ty|k|y|push|push it|release it|cut (a|the) release|yes (do it|proceed|push|please))( please| now)?[\s\p{P}]*$/iu;
+
+/** True for a go-ahead ("proceed", "ship it", "looks good"). */
+export function isApproval(text) {
+  const t = String(text || '').trim();
+  return t.length <= 40 && (APPROVE_RE.test(t) || GO_RE.test(t));
+}
+/** True for a short reply: at most 3 words or 15 characters. */
+export function isShort(text) {
+  const t = String(text || '').trim();
+  return t.length <= 15 || t.split(/\s+/).filter(Boolean).length <= 3;
+}
+/** A go-ahead or a short check-in: normal, and never content to coach on or to quote (coach fix T3). */
+export function isCheckIn(text) {
+  return isApproval(text) || isShort(text);
+}
 const PLAN_RE = /\b(plan|planning|outline|propose|approach first|before you start|step[- ]by[- ]step plan)\b/i;
 
 /** Parts of a prompt: sentences and list items of three words or more. */
@@ -77,7 +97,9 @@ export function collect(event, state, settings) {
       s.threads[t] = { ...(th || { p, first: e.at, end: null, kind: 'other', prompts: 0, tools: 0 }), auto: hashText(e.text) };
       return prune(s, e.at);
     }
-    const text = e.text;
+    // Text the harness injected, or a peer's message, is not the person's (coach fix T2).
+    const text = personText(e.text, e.source);
+    if (text === null) return state;
     const prev = s.last[t];
     const trimmed = text.trim();
     const rec = {
@@ -88,7 +110,8 @@ export function collect(event, state, settings) {
       lines: trimmed ? trimmed.split(/\n/).length : 0,
       parts: countParts(text),
       plan: PLAN_RE.test(text),
-      ok: trimmed.length <= 40 && APPROVE_RE.test(trimmed),
+      ok: isApproval(trimmed),
+      short: isShort(trimmed),
       gap: prev ? ms(e.at) - ms(prev.end) : null,
       prev: prev ? prev.ms : null,
     };

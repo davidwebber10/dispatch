@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
-import { planReview, chunkTranscript, reviewPrompt, parseReview, mergeReview, eventsFromTranscript, PERCENT_PER_CHUNK } from '../../../plugins/coach/lib/review.mjs';
+import { planReview, chunkTranscript, reviewPrompt, parseReview, mergeReview, eventsFromTranscript, PERCENT_PER_CHUNK, REVIEW_SYSTEM } from '../../../plugins/coach/lib/review.mjs';
 import { createEngine } from '../../../plugins/coach/lib/engine.mjs';
 import { emptyMemory } from '../../../plugins/coach/lib/memory.mjs';
 import { addGoal } from '../../../plugins/coach/lib/goals.mjs';
@@ -69,6 +69,38 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
     const ev = eventsFromTranscript('t1', 's1', TRANSCRIPT);
     expect(ev.map((e) => e.type)).toEqual(['thread:prompt', 'thread:tool', 'thread:turn', 'thread:prompt', 'thread:turn']);
     expect(ev[2]).toMatchObject({ at: at(2), ms: 2 * 60_000 });
+  });
+});
+
+describe('Coach reviews: findings spread and quote the person (coach fix T5)', () => {
+  const f = (quote: string) => ({ kind: 'handoff' as const, quote, note: 'n' });
+  it('mergeReview takes at most 2 findings per thread first, round-robin, then fills to 12', () => {
+    const a = Array.from({ length: 12 }, (_, i) => f(`thread a moment ${i}`));
+    const parts = [{ thread: 'a', findings: a.slice(0, 6) }, { thread: 'a', findings: a.slice(6) }, { thread: 'b', findings: [f('thread b moment 0'), f('thread b moment 1'), f('thread b moment 2')] }, { thread: 'c', findings: [f('thread c moment 0')] }];
+    const out = mergeReview(parts, { read: 3 }).findings.map((x) => x.quote);
+    expect(out).toHaveLength(12);
+    expect(out.slice(0, 5)).toEqual(['thread a moment 0', 'thread b moment 0', 'thread c moment 0', 'thread a moment 1', 'thread b moment 1']);
+    expect(out).toContain('thread b moment 2');
+  });
+  it('parseReview drops a quote from an Agent: line, and keeps a went-well that names what the person did', () => {
+    const chunk = chunkTranscript(TRANSCRIPT)[0];
+    const r = parseReview(JSON.stringify({ findings: [
+      { kind: 'check', quote: 'Fixed parseInvoice.', note: 'Check the result.' },
+      { kind: 'went-well', quote: 'Fixed parseOrder.', note: 'You named the exact function, so the agent fixed it in one go.' },
+      { kind: 'went-well', quote: 'Fixed parseOrder.', note: 'The agent was fast.' },
+      { kind: 'handoff', quote: 'now fix the same thing in parseInvoice', note: 'Give it every parser at once.' },
+    ] }), chunk)!;
+    expect(r.findings.map((x) => `${x.kind}:${x.quote}:${x.note.slice(0, 3)}`)).toEqual(['went-well:Fixed parseOrder.:You', 'handoff:now fix the same thing in parseInvoice:Giv']);
+  });
+  it('parseReview drops a quote that is a go-ahead or a check-in', () => {
+    const chunk = chunkTranscript([{ kind: 'user', text: 'proceed', ts: at(0) }, { kind: 'user', text: 'status?', ts: at(1) }, { kind: 'assistant', text: 'ok', ts: at(2) }])[0];
+    const r = parseReview(JSON.stringify({ findings: [{ kind: 'check', quote: 'proceed', note: 'Read it first.' }, { kind: 'plan', quote: 'status?', note: 'x' }] }), chunk)!;
+    expect(r.findings).toEqual([]);
+  });
+  it('REVIEW_SYSTEM says a go-ahead is never a finding, to quote the person, and at most 2 findings per part', () => {
+    expect(REVIEW_SYSTEM).toContain("A one-word go-ahead such as 'proceed' is normal and is never a finding.");
+    expect(REVIEW_SYSTEM).toContain("Quote the person's own line.");
+    expect(REVIEW_SYSTEM).toContain('At most 2 findings per part.');
   });
 });
 
@@ -260,6 +292,40 @@ describe('Coach reviews skip what the person left alone, and what a schedule sta
     await e.handle({ type: 'thread:turn', terminalId: 't9', sessionId: 's1', at: NOW.toISOString(), ms: 30_000 });
     await e.idle();
     expect(f.docs.has('candidates')).toBe(false);
+  });
+});
+
+describe('Coach reviews skip agent threads (coach fix T4)', () => {
+  const conversations = (f: ReturnType<typeof daemon>) => f.io.getJson.mock.calls.map((c) => String(c[0])).filter((r) => r.includes('/conversation'));
+  const AGENTS = { role: { role: 'agent' }, depth: { spawnDepth: 1 }, by: { spawnedBy: 'tx' } };
+
+  it('a range review leaves out a thread another thread spawned (role agent, spawnDepth 1, spawnedBy)', async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT, config: { spawnDepth: 0 } }, a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.role }, a2: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.depth }, a3: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.by } };
+    const f = daemon({ threads, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    f.docs.set('reviews:r', { id: 'r', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:r');
+    expect((f.docs.get('reviews:r') as { plan: { threads: string[] } }).plan.threads).toEqual(['t1']);
+    expect(conversations(f).some((r) => /\/a\d\//.test(r))).toBe(false);
+  });
+
+  it('the look back does not seed an agent thread as the person', async () => {
+    const threads = { a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.depth } };
+    const f = daemon({ threads, answers: [GOOD] });
+    f.docs.set('reviews:lb', { id: 'lb', scope: { kind: 'range', from: new Date(NOW.getTime() - 30 * 86400_000).toISOString(), to: NOW.toISOString() }, backfill: true, state: 'queued', plan: { threads: ['a1'], chunks: 1, estPercent: 0.05, fits: true } });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:lb');
+    const signals = f.docs.get('signals') as { prompts: unknown[] } | undefined;
+    expect(signals ? signals.prompts : []).toEqual([]);
+  });
+
+  it('a review of one agent thread the person asks for still reads it', async () => {
+    const threads = { a1: { sessionId: 's1', items: TRANSCRIPT, config: AGENTS.role } };
+    const f = daemon({ threads, status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    f.docs.set('reviews:c', { id: 'c', scope: { kind: 'thread', ids: ['a1'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:c');
+    expect((f.docs.get('reviews:c') as { plan: { threads: string[] } }).plan.threads).toEqual(['a1']);
   });
 });
 

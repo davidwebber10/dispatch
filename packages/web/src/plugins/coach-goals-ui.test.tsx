@@ -125,7 +125,7 @@ describe('Coach goals in the worker (coach plan Task 12b)', () => {
     const memory = addGoal(emptyMemory(), { text: 'Plan first', measures: ['judgment'], detectors: ['no-plan-big-task'], source: 'user' }, NOW).memory;
     const at = NOW.toISOString();
     const docs = new Map<string, unknown>([['cadence', { ...SEASONED, welcomeSeenAt: SEASONED.firstSeenAt }], ['memory', memory], ['candidates', { seen: [], items: [
-      { id: 'no-plan-big-task:1', type: 'no-plan-big-task', measure: 'judgment', tip: 'prompt', terminalId: 't1', projectId: 's1', evidence: { parts: 4, chars: 500 }, at },
+      { id: 'no-plan-big-task:1', type: 'no-plan-big-task', measure: 'judgment', tip: 'prompt', terminalId: 't1', projectId: 's1', evidence: { parts: 4, chars: 500, excerpt: 'Migrate the orders service to the new database client and keep the old API working' }, at },
       { id: 'idle-wait:1', type: 'idle-wait', measure: 'delegation', tip: 'thinkBigger', terminalId: 't1', projectId: 's1', evidence: { minutes: 5 }, at },
     ] }]]);
     const assist = vi.fn(async (_req: { messages: { content: string }[] }) => ({ result: null, budget: null, refused: null }));

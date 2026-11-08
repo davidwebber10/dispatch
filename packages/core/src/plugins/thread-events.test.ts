@@ -120,4 +120,33 @@ describe('ThreadEvents (2026-11-07)', () => {
     const turn = { type: 'thread:turn', terminalId: 't1', sessionId: 's1', harness: 'claude-code', at: 'now', ms: 1, inputTokens: 1, outputTokens: 1, costUsd: null, outcome: 'idle', summary: 'did it' } as ThreadEvent;
     expect(redactThreadEvent(turn)).toEqual(turn);
   });
+
+  describe('injected texts on the hook path are not the owner (coach fix T1)', () => {
+    const prompts = () => out.filter((e) => e.type === 'thread:prompt');
+    it('a task notification hook prompt emits no thread:prompt', () => {
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: '<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command finished</summary>\n</task-notification>' });
+      expect(prompts()).toHaveLength(0);
+    });
+    it('a slash-command echo hook prompt emits no thread:prompt', () => {
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: '<local-command-stdout>Compacted</local-command-stdout>' });
+      expect(prompts()).toHaveLength(0);
+    });
+    it('the compaction summary emits no thread:prompt', () => {
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion.' });
+      expect(prompts()).toHaveLength(0);
+    });
+    it('a prompt that is only "Use this file as context:" lines emits nothing; a mixed prompt keeps the rest', () => {
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'Use this file as context: /tmp/a.png' });
+      expect(prompts()).toHaveLength(0);
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: 'Use this file as context: /tmp/a.png\nWhat is wrong here?' });
+      expect(prompts()).toHaveLength(1);
+      expect(prompts()[0]).toMatchObject({ source: 'user', text: 'What is wrong here?' });
+    });
+    it('a sender-line message the service reported is consumed, not re-emitted as user', () => {
+      const delivered = '[From the overseer of project "web" (thread t9). This is not a message from the owner.]\n\nRun the tests';
+      te.onPrompt('t1', delivered, 'thread');
+      te.onHookPayload('claude', 't1', { hook_event_name: 'UserPromptSubmit', prompt: delivered });
+      expect(prompts().map((e) => (e as { source: string }).source)).toEqual(['thread']);
+    });
+  });
 });

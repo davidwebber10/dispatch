@@ -159,7 +159,7 @@ describe('Coach settings (coach plan Task 13; laid out again 2026-11-07)', () =>
     fireEvent.change(idle, { target: { value: '7' } }); fireEvent.blur(idle);
     await waitFor(() => expect(saved().advanced!.thresholds!.idleWait.minutes).toBe(7));
     const conf = within(adv).getByRole('spinbutton', { name: 'Show a card at this confidence or more' });
-    expect(conf).toHaveValue(0.7);
+    expect(conf).toHaveValue(0.85);
     fireEvent.change(conf, { target: { value: '0.8' } }); fireEvent.blur(conf);
     await waitFor(() => expect(saved().advanced!.minConfidence).toBe(0.8));
   });

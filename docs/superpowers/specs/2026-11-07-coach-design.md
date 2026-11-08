@@ -285,9 +285,10 @@ to detect them (a small-model label on the person's next prompt is one option) o
 
 - Name: **Coach** (my call; "Prompt Coach" is too narrow, "Leverage" sounds like a developer tool). Plugin id
   `coach`.
-- Bundled with Dispatch, **on by default** (owner, 2026-11-07: improving is the baseline). A new install first
-  shows only the welcome card, which explains what the Coach looks at and remembers and has **Turn off**; then
-  the quiet first week. An owner who had turned Prompt coach off keeps Coach off.
+- Bundled with Dispatch, **off by default** (owner, 2026-11-08; it was on by default from 2026-11-07). A new
+  install, and an install where the owner never turned the Coach on, has it off. An owner who turned it on (or
+  had turned Prompt coach on) keeps it on. When it is on, it first shows only the welcome card, which explains
+  what the Coach looks at and remembers and has **Turn off**; then the quiet first week.
 - It replaces `prompt-coach`. Old observations are not worth migrating (the builder may drop them).
 
 ## 9a. Decisions after the builder review (my calls, for the owner to check)

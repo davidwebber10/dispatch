@@ -12,7 +12,7 @@ import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours, isStale, CARD_MAX_AGE_HOURS } from './lib/cadence.mjs';
 import { planCall, LARGE_DEFAULT, liveBudget } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
-import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
+import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts, contentExcerpt } from './lib/prompts.mjs';
 import { chatContext, chatPrompt, parseChat, threadObservations, appendTurns } from './lib/chat.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
@@ -91,7 +91,7 @@ export function createCoach(d, deps = {}) {
     const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
     const j = parseAnswer(r && r.text);
     if (!j || typeof j.better !== 'string' || !j.better.trim()) return null;
-    return { wrote: card.excerpt || '', better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
+    return { wrote: contentExcerpt(card.excerpt), better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
   }
   const requestMore = deps.requestMore || defaultRequestMore;
 
@@ -344,7 +344,7 @@ export function createCoach(d, deps = {}) {
         more && more.status === 'none' && h('div', { style: S.note }, 'The Coach could not get more detail just now.'),
         more && more.status === 'budget' && h('div', { style: S.note }, 'The Coach has used its budget for this week. More detail comes back when the week resets.'),
         more && more.status === 'ok' && [
-          (more.data.wrote || card.excerpt) && h('div', { key: 'w', style: S.ex }, h('b', { style: S.exLabel }, 'YOU WROTE'), more.data.wrote || card.excerpt),
+          contentExcerpt(more.data.wrote || card.excerpt) && h('div', { key: 'w', style: S.ex }, h('b', { style: S.exLabel }, 'YOU WROTE'), contentExcerpt(more.data.wrote || card.excerpt)),
           h('div', { key: 't', style: S.ex }, h('b', { style: S.exLabel }, 'TRY'), more.data.better),
           (more.data.bullets || []).length > 0 && h('ul', { key: 'b', style: { margin: '4px 0 0', paddingLeft: 18 } }, ...more.data.bullets.map((b, i) => h('li', { key: i, style: { margin: '3px 0' } }, b))),
         ]),
@@ -353,7 +353,7 @@ export function createCoach(d, deps = {}) {
       h('div', { style: S.row },
         h('button', { type: 'button', style: S.primary, onClick: () => tryIt(card, ctx, better) }, better ? 'Use this prompt' : (card.action && card.action.label) || 'Try it'),
         !welcome && h('button', { type: 'button', style: S.btn, onClick: () => { if (open) setOpen(false); else { setOpen(true); void loadMore(card); } } }, open ? 'Less' : 'More'),
-        // On by default (owner, 2026-11-07): the welcome card is where the person can say no.
+        // Off by default since 2026-11-08; an owner who turns it on still meets the welcome card first, with Turn off.
         welcome && h('button', { type: 'button', style: S.btn, onClick: () => { void turnOff(); } }, 'Turn off'),
         h('span', { style: { flex: 1 } }),
         !welcome && h('button', { type: 'button', 'aria-label': 'Helpful', title: 'Helpful', style: S.icon, onClick: () => { void giveFeedback(card, 'up', '', ctx.terminalId); } }, icon('thumbs-up', 'Yes')),
@@ -650,6 +650,9 @@ export function createCoach(d, deps = {}) {
     else if (r.state === 'done' && r.report) {
       const rep = r.report;
       body = h('div', null,
+        // Read with the old rules (coach fix T7): its findings may quote agents or go-aheads.
+        r.stale && h('div', { style: { ...S.note, marginBottom: 6 } }, 'The Coach cleaned its notes after this look back. Its findings may quote agents or one-word go-aheads.',
+          h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'planning', stale: false, report: null, error: null, restartable: false, progress: null, cancel: false }); } }, 'Run again'))),
         h('div', { style: { color: 'var(--color-text-secondary)' } }, rep.summary),
         (rep.findings || []).length > 0 && h('ul', { style: { margin: '8px 0 0', paddingLeft: 18 } }, ...rep.findings.map((f, i) => h('li', { key: i, style: { margin: '6px 0' } },
           h('div', { style: S.src }, FINDING_WORD[f.kind] || f.kind),
@@ -1067,7 +1070,7 @@ export function createCoach(d, deps = {}) {
       h(Group, { title: 'Cards' },
         h(Row, { label: 'Most cards in a day', control: h(NumField, { label: 'Most cards in a day', value: s.maxPerDay, min: 0, max: 20, onSave: (v) => put({ maxPerDay: v }) }) }),
         h(Row, { label: 'Most cards in one session', control: h(NumField, { label: 'Most cards in one session', value: s.maxPerSession, min: 0, max: 20, onSave: (v) => put({ maxPerSession: v }) }) }),
-        h(Row, { label: 'Lowest confidence to show', hint: 'The small model says how sure it is, from 0 to 1. Default 0.7.',
+        h(Row, { label: 'Lowest confidence to show', hint: 'The small model says how sure it is, from 0 to 1. Default 0.85.',
           control: h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => putAdv({ minConfidence: v }) }) }),
         h(Row, { label: 'Hide a card after', hint: `A card about something long past does not show. Default ${CARD_MAX_AGE_HOURS} hours.`,
           control: h(d.Fragment, null, h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => putAdv({ maxCardAgeHours: v }) }), unit('h')) })),

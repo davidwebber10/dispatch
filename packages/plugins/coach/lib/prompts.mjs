@@ -4,6 +4,10 @@
 // level adjustments, types turned off, goals) goes into every call: the memory is how advice
 // improves without training. Answers are JSON.
 import { normalizeMemory, typeLabel } from './memory.mjs';
+import { isCheckIn } from './signals.mjs';
+
+/** An excerpt worth showing: the person's words, not a go-ahead or a check-in (coach fix T3). */
+export const contentExcerpt = (ex) => (typeof ex === 'string' && ex.trim() && !isCheckIn(ex) ? ex : '');
 
 const RULES = [
   'You are the Coach inside Dispatch, an app where people work with AI agents in threads.',
@@ -23,7 +27,7 @@ const RULES = [
 
 const ACTION_SHAPE = '"action": {"kind": "compose" | "schedule" | "threads", "label": "the button, at most 6 words, e.g. Try it: ask for a plan", "text": "for compose: the prompt to put in the message box", "prompt": "for schedule: the prompt to run", "cron": "for schedule: min hour dom mon dow", "prompts": ["for threads: one prompt per thread"]}';
 
-export const CONFIRM_SYSTEM = `${RULES}\n\nTask: a rule noticed something in the person's recent work. Decide whether a card fits, how sure you are, and write the card.\nAnswer only with JSON: {"fit": true | false, "confidence": 0 to 1, "headline": "...", "why": "...", ${ACTION_SHAPE}}`;
+export const CONFIRM_SYSTEM = `${RULES}\n\nTask: a rule noticed something in the person's recent work. Decide whether a card fits, how sure you are, and write the card.\nFirst answer two questions. Are these the person's own words, and would a specific tip change their next prompt? A card fits only when both answers are yes. A one-word go-ahead, a status check, or text an agent or the app wrote is not the person's own words. When in doubt, answer no: silence is better than a weak tip.\nAnswer only with JSON: {"ownWords": true | false, "wouldChange": true | false, "fit": true | false, "confidence": 0 to 1, "headline": "...", "why": "...", ${ACTION_SHAPE}}`;
 export const WRITE_SYSTEM = `${RULES}\n\nTask: a smaller model confirmed this card. Write it as well as you can for this person, with the same facts.\nAnswer only with JSON: {"fit": true, "confidence": 0 to 1, "headline": "...", "why": "...", ${ACTION_SHAPE}}`;
 export const MORE_SYSTEM = `${RULES}\n\nTask: the person clicked More on a card. Give a better version of what they wrote, and 2 to 4 short lines: why it helps, and what to check.\nAnswer only with JSON: {"better": "the better prompt", "bullets": ["..."]}`;
 export const RECAP_SYSTEM = `${RULES}\n\nTask: write the weekly recap from the facts given. Keep each line short. Do not invent numbers.\nAnswer only with JSON: {"patterns": ["three lines, each an observed pattern"], "stretch": {"headline": "...", "why": "..."}, "learned": "one line on what the Coach learned"}`;
@@ -44,7 +48,7 @@ export function memoryContext(memory) {
 
 function candidateText(c) {
   const ev = { ...(c.evidence || {}) };
-  const excerpt = typeof ev.excerpt === 'string' ? ev.excerpt : '';
+  const excerpt = contentExcerpt(ev.excerpt);
   delete ev.excerpt;
   return [
     `What the rule saw: ${typeLabel(c.type)} (measure: ${c.measure}, tip type: ${c.tip || 'prompt'}).`,
@@ -103,7 +107,7 @@ export function cleanSkill(ans) {
 
 export const confirmPrompt = (candidate, memory) => call(CONFIRM_SYSTEM, candidateText(candidate), memory, 500);
 export const writePrompt = (candidate, memory, draft) => call(WRITE_SYSTEM, `${candidateText(candidate)}\n\nThe confirmed card: ${JSON.stringify({ headline: draft && draft.headline, why: draft && draft.why, action: draft && draft.action })}`, memory, 700);
-export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${card.excerpt || '(not kept)'}`, memory, 600);
+export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${contentExcerpt(card.excerpt) || '(not kept)'}`, memory, 600);
 export const recapPrompt = (draft, memory) => call(RECAP_SYSTEM, `The facts of the week: ${JSON.stringify(draft)}`, memory, 800);
 
 /** The JSON object in a model's answer, or null (no object, a broken one, or an array). */

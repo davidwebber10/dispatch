@@ -2,7 +2,14 @@
 // state that PROPOSE candidate cards. A rule never shows a card alone: the judge (plan Task 9)
 // confirms and writes it. Every threshold is a setting under advanced.thresholds.
 import { DEFAULT_THRESHOLDS } from './settings.mjs';
-import { hashText } from './signals.mjs';
+import { hashText, normalize } from './signals.mjs';
+
+/** The least evidence a rule needs, whatever the settings say (coach fix T6: default to silence). */
+const MIN_REPEATS = 3;
+const MIN_REPEAT_THREADS = 2;
+const MIN_REPEAT_WORDS = 4;
+const MIN_STEPS = 5;
+const wordCount = (text) => normalize(text).split(' ').filter(Boolean).length;
 
 /** The v1 detectors: the measure each one works on, and its tip type (Settings → Coach → tip types). */
 export const DETECTORS = Object.freeze({
@@ -35,15 +42,19 @@ function repeatedPrompt(s, th, now) {
   const groups = new Map();
   for (const p of s.prompts) {
     const t = ms(p.at);
-    if (t < from || t > now) continue;
+    // A go-ahead or a check-in is normal, never a repeated prompt (coach fix T3).
+    if (t < from || t > now || p.ok || p.short) continue;
     const g = groups.get(p.h) || [];
     g.push(p); groups.set(p.h, g);
   }
   const out = [];
   for (const [h, g] of groups) {
-    if (g.length < th.count) continue;
+    if (g.length < Math.max(th.count, MIN_REPEATS)) continue;
+    if (new Set(g.map((x) => x.t)).size < MIN_REPEAT_THREADS) continue;
     const latest = g[g.length - 1];
-    out.push(candidate('repeated-prompt', { id: h, terminalId: latest.t, projectId: latest.p, evidence: { count: g.length, days: th.days, excerpt: latest.ex, threads: [...new Set(g.map((x) => x.t))] } }));
+    const quoted = [...g].reverse().find((x) => x.ex);
+    if (!quoted || wordCount(quoted.ex) < MIN_REPEAT_WORDS) continue; // nothing of the person's words to show
+    out.push(candidate('repeated-prompt', { id: h, terminalId: latest.t, projectId: latest.p, evidence: { count: g.length, days: th.days, excerpt: quoted.ex, threads: [...new Set(g.map((x) => x.t))] } }));
   }
   return out;
 }
@@ -92,6 +103,7 @@ function stepByStep(s, th, now) {
   const byThread = new Map();
   for (const p of s.prompts) {
     if (ms(p.at) > now || ms(p.at) < now - RECENT) continue;
+    if (p.ok || p.short) continue; // only content prompts count (coach fix T3)
     const list = byThread.get(p.t) || [];
     list.push(p); byThread.set(p.t, list);
   }
@@ -104,7 +116,7 @@ function stepByStep(s, th, now) {
       if (!oneLine) { run = []; continue; }
       run.push(p);
       while (run.length && ms(p.at) - ms(run[0].at) > th.minutes * MIN) run.shift();
-      if (run.length >= th.prompts) found = run.slice();
+      if (run.length >= Math.max(th.prompts, MIN_STEPS)) found = run.slice();
     }
     if (found) out.push(candidate('step-by-step', { id: `${t}:${found[0].at}`, terminalId: t, projectId: found[0].p, evidence: { prompts: found.length, minutes: Math.round((ms(found[found.length - 1].at) - ms(found[0].at)) / MIN), excerpt: found[found.length - 1].ex } }));
   }
@@ -115,7 +127,7 @@ function noPlanBigTask(s, th, now) {
   const out = [];
   for (const p of s.prompts) {
     if (ms(p.at) > now || ms(p.at) < now - RECENT) continue;
-    if (p.len > th.minChars && p.parts >= th.minParts && !p.plan) out.push(candidate('no-plan-big-task', { id: `${p.t}:${p.at}`, terminalId: p.t, projectId: p.p, evidence: { parts: p.parts, chars: p.len, excerpt: p.ex } }));
+    if (!p.ok && p.len > th.minChars && p.parts >= th.minParts && !p.plan) out.push(candidate('no-plan-big-task', { id: `${p.t}:${p.at}`, terminalId: p.t, projectId: p.p, evidence: { parts: p.parts, chars: p.len, excerpt: p.ex } }));
   }
   return out.slice(-1);
 }
@@ -125,7 +137,7 @@ function fastApprove(s, th, now) {
   for (const p of s.prompts) {
     if (ms(p.at) > now || ms(p.at) < now - RECENT) continue;
     if (p.ok && p.gap !== null && p.gap >= 0 && p.gap <= th.seconds * 1000 && p.prev >= th.longTurnMinutes * MIN) {
-      out.push(candidate('fast-approve', { id: `${p.t}:${p.at}`, terminalId: p.t, projectId: p.p, evidence: { seconds: Math.round(p.gap / 1000), turnMinutes: Math.round(p.prev / MIN), excerpt: p.ex } }));
+      out.push(candidate('fast-approve', { id: `${p.t}:${p.at}`, terminalId: p.t, projectId: p.p, evidence: { seconds: Math.round(p.gap / 1000), turnMinutes: Math.round(p.prev / MIN) } }));
     }
   }
   return out.slice(-1);
@@ -157,7 +169,7 @@ function pluginFit(s, th, now) {
   const byThread = new Map();
   for (const p of s.prompts) {
     const t = ms(p.at);
-    if (t < from || t > now || p.ok) continue;
+    if (t < from || t > now || p.ok || p.short) continue;
     const list = byThread.get(p.t) || [];
     list.push(p); byThread.set(p.t, list);
   }
