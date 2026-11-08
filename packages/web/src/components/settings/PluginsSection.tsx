@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CaretLeft, CaretRight, Copy as CopyIcon } from '@phosphor-icons/react';
+import { CaretRight, Copy as CopyIcon } from '@phosphor-icons/react';
 import { api, readFileText } from '../../api/client';
 import type { PluginRow, Marketplace, CatalogEntry, MarketVersion } from '../../api/types';
 import { usePluginRegistry, PROMOTED_MAX, type PluginStatus, type PluginView } from '../../plugins/registry';
@@ -11,7 +11,7 @@ import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMobileNav, openSettingsPluginPage, closeSettingsPluginPage } from '../../stores/mobileNav';
-import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle } from './ui';
+import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
 import { Select } from '../common/Select';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
@@ -26,9 +26,6 @@ const oneLine: React.CSSProperties = { display: 'block', marginTop: 2, fontSize:
 const body: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)' };
 const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' };
 const buttons: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
-const iconTile = (size: number): React.CSSProperties => ({ width: size, height: size, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' });
-const TONE_VAR = { red: 'var(--color-status-red)', yellow: 'var(--color-status-yellow)', accent: 'var(--color-accent)', muted: 'var(--color-text-tertiary)' } as const;
-type Tone = keyof typeof TONE_VAR;
 
 /** Plain words for each permission id (docs/plugins.md lists the same ids). An unknown id shows as it is. */
 export const PERMISSION_WORDS: Record<string, string> = {
@@ -89,9 +86,7 @@ export function attentionOf(r: PluginRow, s: PluginStatus | undefined): { label:
   return null;
 }
 
-function Dot({ tone }: { tone: Tone }) {
-  return <span aria-hidden style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: TONE_VAR[tone], flexShrink: 0 }} />;
-}
+const Dot = ToneDot;
 
 /** A small heading over a group card. */
 function GroupLabel({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
@@ -252,7 +247,7 @@ export function PluginsSection() {
       <div key={r.id} data-testid={`plugin-row-${r.id}`} onClick={() => open(r.id)} style={{ ...groupRow(i), cursor: 'pointer' }}>
         <button type="button" aria-label={`Open ${r.name}`} onClick={(e) => { e.stopPropagation(); open(r.id); }}
           style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12, padding: 0, background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
-          <span style={{ ...iconTile(32), opacity: r.enabled ? 1 : 0.55 }}><Icon size={17} /></span>
+          <IconTile icon={Icon} size={32} dim={!r.enabled} />
           <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ ...title, display: 'block', color: r.enabled ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{r.name}</span>
             {att ? (
@@ -299,21 +294,8 @@ export function PluginsSection() {
       ...(r.shadowsBundled ? [['Note', 'This local folder hides a bundled plugin with the same id.'] as [string, React.ReactNode]] : []),
     ];
     return (
-      <div data-testid={`plugin-detail-${r.id}`} style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 640, width: '100%' }}>
-        {!isMobile && (
-          <button type="button" aria-label="Back to plugins" onClick={close} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 2, padding: '2px 0', background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
-            <CaretLeft size={15} weight="bold" />Plugins
-          </button>
-        )}
-
-        <div data-testid="plugin-detail-header" style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <span style={iconTile(48)}><Icon size={26} /></span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{r.name}</div>
-            <div style={{ marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>v{r.version} · {sourceOf(r)}</div>
-            {r.description && <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{r.description}</div>}
-          </div>
-        </div>
+      <SettingsSubPage testId={`plugin-detail-${r.id}`} headerTestId="plugin-detail-header" icon={Icon} title={r.name} subtitle={`v${r.version} · ${sourceOf(r)}`} description={r.description}
+        backLabel="Plugins" onBack={isMobile ? undefined : close}>
 
         <div style={group}>
           <div style={groupRow(0)}>
@@ -461,7 +443,7 @@ export function PluginsSection() {
           <summary style={{ padding: '11px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>Developer</summary>
           {dev.map(([label, value, extra], i) => devRow(label, value, i + 1, extra))}
         </details>
-      </div>
+      </SettingsSubPage>
     );
   };
 

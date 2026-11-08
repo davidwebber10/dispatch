@@ -6,6 +6,7 @@
 
 import { Modal } from '../common/Modal';
 import { Children, useState } from 'react';
+import { CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
@@ -17,6 +18,12 @@ export const solidBtn = (on: boolean): React.CSSProperties => ({ flexShrink: 0, 
 export const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
 export const item: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)' };
 export const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '5px 10px' };
+/** A destructive button: the ghost button in red. It always opens a ConfirmModal first. */
+export const dangerBtn: React.CSSProperties = { ...ghostBtn, color: 'var(--color-status-red)' };
+/** The quiet note under a group or a field (one line, plain words). */
+export const noteText: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
+/** A text field's look: the phone gets 16px text (iOS does not zoom) and a 36px box. */
+export const fieldFor = (phone: boolean): React.CSSProperties => ({ ...fieldInput, height: phone ? 36 : 30, fontSize: phone ? 16 : 12.5 });
 export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
 /** This browser's link to the daemon, worded the same in the desktop nav and in Settings → Servers. */
@@ -65,18 +72,149 @@ export function SettingsGroup({ title, footer, action, children, style }: { titl
  * short select, a number) on the right. A wide control (a segmented choice, a list, fields)
  * goes in `children`: it takes its own full-width line under the label, so the text is never
  * squeezed. Plugins get it as `d.ui.SettingsRow`.
+ *
+ * Variants (2026-11-07, docs/design/settings-layout.md):
+ *   - `onClick`: the row opens something (a sub-page, a picker). The whole row is the target and
+ *     a chevron ends it; `value` names the current choice before the chevron. A click on `control`
+ *     (a switch on the row) does not open the row.
+ *   - `value` without `onClick`: a read-only value on the right (a version, a count).
+ *   - `danger`: the label is red (a destructive row, at the bottom of the page).
+ *   - `icon`: a Phosphor icon in a 32px tile before the label (list rows: plugins, devices).
  */
-export function SettingsRow({ label, hint, control, children, style }: { label: React.ReactNode; hint?: React.ReactNode; control?: React.ReactNode; children?: React.ReactNode; style?: React.CSSProperties }) {
+export function SettingsRow({ label, hint, control, children, style, value, onClick, danger, icon, ariaLabel }: {
+  label: React.ReactNode; hint?: React.ReactNode; control?: React.ReactNode; children?: React.ReactNode; style?: React.CSSProperties;
+  value?: React.ReactNode; onClick?: () => void; danger?: boolean; icon?: PhosphorIcon;
+  /** The row button's accessible name when the label is not plain text. */
+  ariaLabel?: string;
+}) {
+  const hasControl = control !== undefined && control !== null && control !== false;
+  const text = (
+    <>
+      {icon && <IconTile icon={icon} size={32} />}
+      <span style={{ flex: 1, minWidth: 0, display: 'block' }}>
+        <span style={{ display: 'block', fontSize: 13.5, color: danger ? 'var(--color-status-red)' : 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{label}</span>
+        {hint && <span style={{ display: 'block', marginTop: 2, fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+      </span>
+      {value !== undefined && value !== null && value !== false && (
+        <span style={{ flexShrink: 1, minWidth: 0, maxWidth: '50%', fontSize: 13, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+      )}
+    </>
+  );
   return (
-    <div data-testid="settings-row" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '11px 12px', minWidth: 0, ...style }}>
+    <div data-testid="settings-row" onClick={onClick} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '11px 12px', minWidth: 0, cursor: onClick ? 'pointer' : undefined, ...style }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)' }}>{label}</div>
-          {hint && <div style={{ marginTop: 2, fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</div>}
-        </div>
-        {control !== undefined && control !== null && control !== false && <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>{control}</div>}
+        {onClick ? (
+          <button type="button" aria-label={ariaLabel} onClick={(e) => { e.stopPropagation(); onClick(); }}
+            style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12, padding: 0, background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
+            {text}
+          </button>
+        ) : <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>{text}</div>}
+        {hasControl && <div onClick={onClick ? (e) => e.stopPropagation() : undefined} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>{control}</div>}
+        {onClick && <CaretRight data-testid="row-chevron" aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** The page shell every section renders: an optional one-line intro, then its groups 20px apart. */
+export function SettingsPage({ intro, children, style }: { intro?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div data-testid="settings-page" style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0, ...style }}>
+      {intro && <div data-testid="settings-intro" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{intro}</div>}
+      {children}
+    </div>
+  );
+}
+
+/** Status tones: the only colors a status may use. */
+export const TONE_VAR = { red: 'var(--color-status-red)', yellow: 'var(--color-status-yellow)', accent: 'var(--color-accent)', muted: 'var(--color-text-tertiary)' } as const;
+export type Tone = keyof typeof TONE_VAR;
+
+/** A 7px dot in a tone (Plugins' attention mark, a connection state). */
+export function ToneDot({ tone, size = 7 }: { tone: Tone; size?: number }) {
+  return <span data-testid="tone-dot" aria-hidden style={{ display: 'inline-block', width: size, height: size, borderRadius: '50%', background: TONE_VAR[tone], flexShrink: 0 }} />;
+}
+
+/** A status: the dot and one word or a short phrase, in the same tone ("Connected", "Worker crashed"). */
+export function StatusMark({ tone, children, style }: { tone: Tone; children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <span data-testid="status-mark" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, color: TONE_VAR[tone], ...style }}>
+      <ToneDot tone={tone} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{children}</span>
+    </span>
+  );
+}
+
+/** A Phosphor icon in a rounded square: 32 on a list row, 48 in a sub-page header. */
+export function IconTile({ icon: Icon, size = 32, dim }: { icon: PhosphorIcon; size?: number; dim?: boolean }) {
+  return (
+    <span data-testid="icon-tile" style={{ width: size, height: size, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)', opacity: dim ? 0.55 : 1 }}>
+      <Icon size={Math.round(size * 0.53)} />
+    </span>
+  );
+}
+
+/**
+ * A page pushed from a row (a plugin, an account, a device): a back link (desktop; on the phone
+ * the app header carries back, so leave `onBack` out there), a header (icon, title, subtitle,
+ * description), then the groups. At most 640px wide.
+ */
+export function SettingsSubPage({ title, subtitle, description, icon, backLabel, onBack, children, testId, headerTestId }: {
+  title: React.ReactNode; subtitle?: React.ReactNode; description?: React.ReactNode; icon?: PhosphorIcon;
+  /** The parent's name on the back link ("Plugins"); the button is named "Back to plugins". */
+  backLabel?: string; onBack?: () => void; children: React.ReactNode; testId?: string; headerTestId?: string;
+}) {
+  return (
+    <div data-testid={testId ?? 'settings-subpage'} style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 640, width: '100%' }}>
+      {onBack && (
+        <button type="button" aria-label={`Back to ${(backLabel ?? 'settings').toLowerCase()}`} onClick={onBack} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 2, padding: '2px 0', background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+          <CaretLeft size={15} weight="bold" />{backLabel ?? 'Settings'}
+        </button>
+      )}
+      <div data-testid={headerTestId ?? 'subpage-header'} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        {icon && <IconTile icon={icon} size={48} />}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{title}</div>
+          {subtitle && <div style={{ marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{subtitle}</div>}
+          {description && <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{description}</div>}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Rows folded behind one row (Developer, Advanced): a card whose first row says what is inside
+ * and turns a caret; the rows show under it when open.
+ */
+export function SettingsDisclosure({ label, hint, defaultOpen = false, children, testId }: { label: string; hint?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode; testId?: string }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const rows = Children.toArray(children).filter((c) => c !== '');
+  return (
+    <div data-testid={testId} style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
+        style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 12px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: 13.5, color: 'var(--color-text-primary)' }}>{label}</span>
+          {hint && <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+        </span>
+        <CaretDown aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 120ms' }} />
+      </button>
+      {open && rows.map((c, i) => <div key={(c as { key?: string }).key ?? i} style={{ borderTop: '1px solid var(--color-border)' }}>{c as React.ReactNode}</div>)}
+    </div>
+  );
+}
+
+/**
+ * What a list shows when it has nothing (the shape of Plugins' "No local plugins."): one or two
+ * plain sentences in place of the card, with the action that fills it. No card, no icon.
+ */
+export function EmptyState({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div data-testid="empty-state" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '0 4px' }}>
+      <span style={{ flex: 1, minWidth: 180, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{children}</span>
+      {action}
     </div>
   );
 }
