@@ -134,8 +134,30 @@ The SDK object, in full:
   null on Cancel.
 - `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
-- `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, and `styles` (`sectionLabel`, `row`,
-  `item`, `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
+- `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `FilterBar`, `Select`, and `styles`
+  (`sectionLabel`, `row`, `item`, `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
+  - `FilterBar` is the app's filter control, the same one the Threads list uses: a search field
+    with a Filters button to its right. The button opens a panel (a popover on the desktop, a
+    bottom sheet on the phone) with one section per facet. Each facet is a single-select list,
+    with a count per option when you give one and a search box past 8 options. The active
+    filters show as removable pills under the row, and Clear resets them all. Props:
+    `facets`, `query`, `onQueryChange` (no search without it), `placeholder`, `doneLabel`,
+    `onClear`. A facet is `{ id, title, value, options, onChange, allLabel?, allCount?,
+    display?: 'list' | 'segmented', searchable?, defaultOpen? }`; `value: null` means no filter,
+    and an option is `{ value, label, note?, count? }`.
+
+    ```js
+    h(ui.FilterBar, {
+      query, onQueryChange: setQuery, placeholder: 'Search previews',
+      facets: [{ id: 'project', title: 'Project', allLabel: 'All projects', value: project,
+        onChange: setProject, options: projects.map((p) => ({ value: p.id, label: p.name, count: p.count })) }],
+    })
+    ```
+  - `Select` is the app's dropdown for a form field: `{ value, options: [{ value, label, hint? }],
+    onChange(value), ariaLabel, id?, searchable?, placeholder?, size?, disabled? }`. It has a
+    search box past 8 options, and full keyboard support (arrows, Enter, Escape, a letter jumps).
+    Do not render a native `<select>`: the app has none, and a test fails on one in a bundled
+    plugin.
 - `icons`: the map above.
 - `storage`: `get(plugin, key, fallback)`, `set(plugin, key, value)`, `remove(plugin, key)`,
   `list(plugin)`, all async. Documents live on the daemon (`~/.dispatch/dispatch.db`), so they
