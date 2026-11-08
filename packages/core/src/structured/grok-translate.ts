@@ -147,6 +147,10 @@ export class GrokTranslator {
     return [{ kind: 'event', event: { type: 'system', subtype: 'init', model } }];
   }
 
+  /** A model switch (GrokStructuredSessionManager.setModel): later usage frames carry the new
+   *  id. Unlike init, the cost baseline is kept — the session did not restart. */
+  setModel(model: string): void { this.model = model; }
+
   /** Translate one inbound frame. Unknown/noise frames → []. */
   translate(frame: GrokFrame, opts: TranslateOpts = {}): GrokAction[] {
     if (frame.id !== undefined && frame.method === 'session/request_permission') {

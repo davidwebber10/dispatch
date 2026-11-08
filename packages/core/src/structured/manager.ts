@@ -94,7 +94,16 @@ interface Session {
   declared?: StatusDeclaration;
   /** A usage limit this turn's frames reported (see limits/detect.ts), read at its `result`. */
   limit?: UsageLimit;
+  /** The model the CLI last reported for the lead agent (init, a lead assistant frame, set_model). */
+  model?: string;
+  /** Our own control requests awaiting the CLI's control_response (set_model). */
+  controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
 }
+
+/** How long a set_model control request may wait for the CLI's answer. */
+const CONTROL_TIMEOUT_MS = 15_000;
+/** The model Claude Code stamps on frames it wrote itself (an error turn, an interrupt). */
+const SYNTHETIC = '<synthetic>';
 
 /** Options accepted by a structured manager's `spawn`. For the Claude manager
  *  `command`/`args` are the `claude` stream-json invocation; for a future Codex
@@ -233,6 +242,19 @@ export interface IStructuredManager extends EventEmitter {
    * has no live session for the terminal.
    */
   getTurnTexts(terminalId: string): string[] | null;
+  /**
+   * The model the live session REPORTED it runs (an init/bind response, a lead assistant frame,
+   * or the answer to a switch), or undefined before any such frame. Never the saved
+   * `config.model` alias: the service falls back to that itself (see SessionService.activeModel).
+   */
+  getModel?(terminalId: string): string | undefined;
+  /**
+   * Switch the live session to `model` for the next turn, keeping the conversation, by the
+   * harness's own mechanism (see each manager). Resolves with the model id the harness reports
+   * (or `model` when it reports none); rejects when the harness refuses it. On success it pushes
+   * a `{type:'system', subtype:'model', model, switched:true}` notice into the ring and emits it.
+   */
+  setModel?(terminalId: string, model: string): Promise<string>;
   isAlive(terminalId: string): boolean;
   kill(terminalId: string): void;
   killAll(): void;
@@ -351,6 +373,26 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (typeof sid === 'string' && sid && session.sessionId !== sid) {
         session.sessionId = sid;
         this.emit('session', terminalId, sid);
+      }
+      // The answer to one of OUR control requests (set_model): settle its promise. Not an
+      // event for the chat, so it is not delivered below.
+      if (event?.type === 'control_response') {
+        const rid = event.response?.request_id;
+        const waiter = typeof rid === 'string' ? session.controls?.get(rid) : undefined;
+        if (waiter) {
+          session.controls!.delete(rid);
+          clearTimeout(waiter.timer);
+          if (event.response?.subtype === 'error') waiter.reject(new Error(String(event.response?.error ?? 'The CLI refused the request')));
+          else waiter.resolve(event.response?.response ?? {});
+          return;
+        }
+      }
+      // The active model: init carries it on every turn; a lead assistant frame carries what
+      // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
+      if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
+      if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {
+        const m = event.message?.model;
+        if (typeof m === 'string' && m && m !== SYNTHETIC) session.model = m;
       }
       if (event?.type === 'control_request' && event?.request?.subtype === 'can_use_tool') {
         const r = event.request;
@@ -686,9 +728,41 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     return true;
   }
 
+  getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
+
+  /**
+   * Switch the running CLI's model with the stream-json `set_model` control request — the same
+   * one the Agent SDK's `setModel` sends. Live-verified on Claude Code 2.1.319: the CLI answers
+   * `{subtype:'success', response:{model:'claude-haiku-5-5'}}` (the alias resolved) and the next
+   * turn's init and assistant frames carry the new model; the conversation is kept.
+   */
+  setModel(terminalId: string, model: string): Promise<string> {
+    const s = this.sessions.get(terminalId);
+    if (!s || !s.child.stdin.writable) return Promise.reject(new Error('This thread is not running'));
+    const requestId = `set-model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    s.controls ??= new Map();
+    const answer = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => { s.controls?.delete(requestId); reject(new Error('The CLI did not answer the model switch')); }, CONTROL_TIMEOUT_MS);
+      s.controls!.set(requestId, { resolve, reject, timer });
+    });
+    this.write(terminalId, { type: 'control_request', request_id: requestId, request: { subtype: 'set_model', model } });
+    return answer.then((r) => {
+      const resolved = typeof r?.model === 'string' && r.model ? r.model : model;
+      if (this.sessions.get(terminalId) !== s) return resolved;
+      s.model = resolved;
+      const notice = { type: 'system', subtype: 'model', model: resolved, switched: true };
+      s.events.push(notice);
+      if (s.events.length > MAX_EVENTS) s.events.shift();
+      this.emit('event', terminalId, notice);
+      return resolved;
+    });
+  }
+
   kill(terminalId: string): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;
+    for (const c of s.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
+    s.controls?.clear();
     s.pending = null;
     // Remove the session first: closing readline below can finish a pending drain (see spawn()),
     // which must then find the session gone and stay silent — this is the one 'exit'.

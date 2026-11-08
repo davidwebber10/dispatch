@@ -107,6 +107,7 @@ rl.on('line', (line) => {
   }
 
   if (msg.method === 'turn/start') {
+    logRequest('turn/start', msg.params);
     // Echo back whichever threadId the client requested against (its OWN session.threadId,
     // e.g. the resumeId after a thread/resume) rather than always the hardcoded THREAD
     // constant — a resumed session's live-turn notifications must route back to it, exactly

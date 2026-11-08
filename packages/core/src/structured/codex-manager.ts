@@ -169,6 +169,8 @@ interface CodexSession {
   turnActive: boolean;
   sessionId?: string;
   model?: string;
+  /** A model picked with setModel, sent as `model` on the next turn/start (then cleared). */
+  nextTurnModel?: string;
   cwd: string;
   resumeId?: string;
   /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
@@ -675,8 +677,29 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (session.turnActive && session.currentTurnId) {
       await this.conn.request('turn/steer', { threadId: session.threadId, expectedTurnId: session.currentTurnId, input });
     } else {
-      await this.conn.request('turn/start', { threadId: session.threadId, input });
+      // A pending model switch rides this turn: Codex applies `model` to "this turn and
+      // subsequent turns" (TurnStartParams, codex-cli 0.167.0), so it is sent once.
+      const model = session.nextTurnModel;
+      await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}) });
+      if (session.nextTurnModel === model) session.nextTurnModel = undefined;
     }
+  }
+
+  getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
+
+  /**
+   * Switch the thread's model for its next turn. The app-server has no standalone "set model"
+   * request; `turn/start` takes `model` as an override for that turn and every later one, so the
+   * pick is held and sent with the next turn (see startTurn). The conversation is kept.
+   */
+  async setModel(terminalId: string, model: string): Promise<string> {
+    const session = this.sessions.get(terminalId);
+    if (!session) throw new Error('This thread is not running');
+    session.model = model;
+    session.nextTurnModel = model;
+    session.translator.setModel(model);
+    this.pushEvent(session, { type: 'system', subtype: 'model', model, switched: true });
+    return model;
   }
 
   answerPermission(terminalId: string, requestId: string, decision: PermissionDecision): boolean {
