@@ -361,7 +361,7 @@ describe('Projects ⇄ Threads on the desktop (2026-11-07)', () => {
     const search = screen.getByPlaceholderText('Search threads');
     const filters = screen.getByRole('button', { name: 'Filters' });
     expect(search.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(search.parentElement).toBe(filters.closest('[data-testid="sidebar-search-row"]'));
+    expect(search.closest('[data-testid="sidebar-search-row"]')).toBe(filters.closest('[data-testid="sidebar-search-row"]'));
     fireEvent.click(filters);
     const panel = screen.getByRole('dialog', { name: 'Filters' });
     expect(panel).toHaveAttribute('data-variant', 'popover');

@@ -49,6 +49,7 @@ export interface FilterBarProps {
   size?: 'md' | 'lg';
   style?: React.CSSProperties;
   rowStyle?: React.CSSProperties;
+  pillsStyle?: React.CSSProperties;
   rowTestId?: string;
 }
 
@@ -59,7 +60,7 @@ export interface FilterBarProps {
  * show as pills under the row, each with ×, and Clear. Derived from the Threads list's filters;
  * the Threads list (desktop and phone) and the Previews plugin (`d.ui.FilterBar`) use it.
  */
-export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, onClear, doneLabel = 'Done', variant, size, style, rowStyle, rowTestId }: FilterBarProps) {
+export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Search', leading, onClear, doneLabel = 'Done', variant, size, style, rowStyle, pillsStyle, rowTestId }: FilterBarProps) {
   const isMobile = useIsMobile();
   const sheet = (variant ?? (isMobile ? 'sheet' : 'popover')) === 'sheet';
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
@@ -129,7 +130,7 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
         </span>
       </div>
       {n > 0 && !open && (
-        <div data-testid="applied-filters" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <div data-testid="applied-filters" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', ...pillsStyle }}>
           {on.map((f) => (
             <span key={f.id} style={pill}>
               <span style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }}>{f.title}</span>
