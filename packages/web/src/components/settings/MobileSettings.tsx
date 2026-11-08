@@ -22,21 +22,21 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }
         const rows = sections.filter((s) => s.group === g);
         return (
           <section key={g} aria-label={g} style={{ marginTop: 10 }}>
-            <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 8px' }}>{g}</div>
+            <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 6px' }}>{g}</div>
             <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
               {rows.map((s, i) => {
                 const Icon = s.icon;
                 return (
                   <button key={s.key} onClick={() => onOpen(s.key)}
-                    style={{ display: 'flex', alignItems: 'center', gap: 13, width: '100%', textAlign: 'left', padding: '12px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '10px 12px', background: 'transparent', border: 'none', borderTop: i > 0 ? '1px solid var(--color-border)' : 'none', cursor: 'pointer' }}>
                     <span style={{ width: 30, height: 30, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', color: 'var(--color-text-secondary)' }}>
                       <Icon size={17} />
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{s.label}</span>
-                      <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{s.blurb}</span>
+                      <span style={{ display: 'block', fontSize: 15, fontWeight: 500, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
+                      {s.blurb && <span style={{ display: 'block', marginTop: 1, fontSize: 12.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.blurb}</span>}
                     </span>
-                    <CaretRight size={18} color="var(--color-text-tertiary)" />
+                    <CaretRight aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
                   </button>
                 );
               })}

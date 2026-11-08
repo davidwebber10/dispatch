@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
-import { CONNECTION_STATUS } from './ui';
-import { useConnection } from '../../stores/connection';
-import { useServers, currentLabel } from '../../stores/servers';
-import { useUpdate } from '../../stores/update';
 import { useUI } from '../../stores/ui';
 import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
  * Desktop settings as a full page (design: "Dispatch Settings") — a view beside
- * Threads/Board/Analytics, not a modal. Left: vertical section nav in three groups + daemon info.
- * Right: the section body. The section CONTENT components are unchanged and still
- * shared with MobileSettings, which keeps its drill-down presentation.
+ * Threads/Board/Analytics, not a modal. Left: the section nav in groups, each item with its icon.
+ * Right: the section's title, then its body. The section CONTENT components are shared with
+ * MobileSettings, which keeps its drill-down presentation.
+ *
+ * 2026-11-07 (docs/design/settings-layout.md): the content header is the title alone (no gray blurb
+ * beside it, no "⌘, to reopen"), and the nav has no DAEMON block: the connection lives in
+ * Settings → Servers and the version in About & updates, where each is said once.
  */
 export function SettingsView() {
   const [tab, setTab] = useState<string>('appearance');
@@ -25,11 +25,6 @@ export function SettingsView() {
     setTab(wanted.key);
     useUI.getState().clearSettingsRequest();
   }, [pendingSection]);
-  const status = useConnection((s) => s.status);
-  const servers = useServers((s) => s.servers);
-  const version = useUpdate((s) => s.currentVersion);
-  const conn = CONNECTION_STATUS[status];
-  const serverLabel = currentLabel(servers, window.location.origin);
 
   const active = settingsSection(tab) ?? SETTINGS_SECTIONS[0];
   const Body = active.Component;
@@ -37,9 +32,9 @@ export function SettingsView() {
   return (
     <div data-testid="settings-view" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', overflow: 'hidden', background: 'var(--color-base)' }}>
       {/* section nav */}
-      <div style={{ width: 214, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 12px', borderBottom: '1px solid var(--color-border)' }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
+      <nav aria-label="Settings sections" style={{ width: 214, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 14px', borderBottom: '1px solid var(--color-border)' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '10px 8px' }}>
           {groups.map((g, gi) => (
@@ -47,49 +42,37 @@ export function SettingsView() {
               <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: gi === 0 ? '2px 8px 6px' : '14px 8px 6px' }}>{g}</div>
               {sections.filter((s) => s.group === g).map((s) => {
                 const on = s.key === tab;
+                const Icon = s.icon;
                 return (
-                  <button key={s.key} onClick={() => setTab(s.key)} style={{
-                    display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 8px',
+                  <button key={s.key} onClick={() => setTab(s.key)} aria-current={on ? 'page' : undefined} style={{
+                    display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '6px 8px', marginBottom: 1,
                     borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', textAlign: 'left',
-                    background: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
+                    background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
                   }}>
-                    <span style={{ width: 3, height: 14, borderRadius: 'var(--radius-xs)', flexShrink: 0, background: on ? 'var(--color-accent)' : 'transparent' }} />
-                    <span style={{ flex: 1, fontSize: 12, color: on ? 'var(--color-text-primary)' : 'var(--color-text-muted)' }}>{s.label}</span>
+                    <Icon aria-hidden size={15} weight={on ? 'fill' : 'regular'} color={on ? 'var(--color-accent)' : 'var(--color-text-tertiary)'} style={{ flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: on ? 500 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
                   </button>
                 );
               })}
             </div>
           ))}
-
-          <div style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '0.1em', color: 'var(--color-text-tertiary)', padding: '16px 8px 6px' }}>DAEMON</div>
-          <div style={{ padding: '0 8px', font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', lineHeight: 1.7 }}>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: conn.color, display: 'inline-block' }} />
-              <span style={{ color: conn.color }}>{conn.label}</span>
-              <span>· {serverLabel}</span>
-            </div>
-            {version && <div>v{version}</div>}
-            <div>~/.dispatch</div>
-          </div>
         </div>
-        <div style={{ borderTop: '1px solid var(--color-border)', padding: '8px 12px', font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
+        <div style={{ borderTop: '1px solid var(--color-border)', padding: '8px 14px', font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
           Changes save as you edit
         </div>
-      </div>
+      </nav>
 
       {/* content */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 18px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)' }}>{active.label}</span>
-          <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{active.blurb}</span>
-          <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>⌘, to reopen</span>
+        <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 22px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-pane)' }}>
+          <h1 data-testid="settings-content-title" style={{ margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{active.label}</h1>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 18px 40px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '22px 22px 48px' }}>
           <div style={{ maxWidth: 860, display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* An update that waits sits above every section, not only About & updates (2026-11-07). */}
             <UpdateBanner />
             {/* onDone exists for the setup wizard: leave settings so the wizard isn't buried. */}
-            <Body onDone={() => useUI.getState().setView('workspace')} />
+            <Body key={active.key} onDone={() => useUI.getState().setView('workspace')} />
           </div>
         </div>
       </div>

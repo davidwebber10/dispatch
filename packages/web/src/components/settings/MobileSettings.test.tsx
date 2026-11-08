@@ -32,6 +32,14 @@ describe('MobileSettingsList', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.key)).toEqual(['appearance', 'notifications', 'dictation', 'agents', 'accounts', 'usage', 'integrations', 'secrets', 'tools', 'devices', 'servers', 'plugins', 'skills', 'about']);
   });
 
+  it('keeps every blurb to one short line (2026-11-07)', () => {
+    for (const s of SETTINGS_SECTIONS) expect(s.blurb.length, s.key).toBeLessThanOrEqual(32);
+    render(<MobileSettingsList onOpen={() => {}} />);
+    const blurb = screen.getByText(SETTINGS_SECTIONS[0].blurb);
+    expect(blurb.style.whiteSpace).toBe('nowrap');
+    expect(blurb.style.textOverflow).toBe('ellipsis');
+  });
+
   it('resolves the keys from before the reorganization', () => {
     expect(settingsSection('transcription')?.key).toBe('dictation');
     expect(settingsSection('harnesses')?.key).toBe('agents');

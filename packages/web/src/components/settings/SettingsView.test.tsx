@@ -15,14 +15,15 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test('renders the section nav, the daemon block, and the autosave footer', () => {
+test('renders the section nav and the autosave footer, without the daemon block or the shortcut hint (2026-11-07)', () => {
   render(<SettingsView />);
   for (const label of ['Appearance', 'Notifications', 'Dictation', 'Agents', 'Accounts', 'Usage limits', 'Integrations', 'Secrets', 'Tools', 'Devices & access', 'Servers', 'Plugins', 'Skills', 'About & updates']) {
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
   }
   expect(screen.queryByRole('button', { name: 'General' })).toBeNull();
-  expect(screen.getByText('DAEMON')).toBeInTheDocument();
-  expect(screen.getByText('v2.19.0')).toBeInTheDocument();
+  // The connection now shows in Settings → Servers, the version in About & updates.
+  expect(screen.queryByText('DAEMON')).toBeNull();
+  expect(screen.queryByText('⌘, to reopen')).toBeNull();
   expect(screen.getByText('Changes save as you edit')).toBeInTheDocument();
 });
 
@@ -34,22 +35,25 @@ test('the nav is grouped YOU / AGENTS / THIS MAC, each holding its sections', ()
   expect(names('THIS MAC')).toEqual(['Devices & access', 'Servers', 'Plugins', 'Skills', 'About & updates']);
 });
 
+const title = () => screen.getByTestId('settings-content-title');
+
 test('opens on Appearance, and a deep link opens its section (old keys still work)', () => {
   render(<SettingsView />);
-  expect(screen.getByText('Theme, accent, text sizes, density, layout')).toBeInTheDocument();
+  expect(title()).toHaveTextContent('Appearance');
   act(() => { useUI.getState().requestSettings('dictation'); });
-  expect(screen.getByText('Speech-to-text provider and key')).toBeInTheDocument();
+  expect(title()).toHaveTextContent('Dictation');
+  act(() => { useUI.getState().requestSettings('agents'); });
   act(() => { useUI.getState().requestSettings('transcription'); });
-  expect(screen.getByText('Speech-to-text provider and key')).toBeInTheDocument();
+  expect(title()).toHaveTextContent('Dictation');
   expect(useUI.getState().pendingSettingsSection).toBeNull();
 });
 
-test('selecting a section swaps the content header', () => {
+test('selecting a section swaps the content header: the title alone, no blurb beside it (2026-11-07)', () => {
   render(<SettingsView />);
   fireEvent.click(screen.getByRole('button', { name: 'Secrets' }));
-  // The label now shows twice: the nav item and the content header title.
-  expect(screen.getAllByText('Secrets').length).toBeGreaterThanOrEqual(2);
-  expect(screen.getByText('Doppler environment variables')).toBeInTheDocument();
+  expect(title()).toHaveTextContent(/^Secrets$/);
+  expect(screen.getByRole('button', { name: 'Secrets' })).toHaveAttribute('aria-current', 'page');
+  expect(screen.queryByText('Doppler environment variables')).toBeNull();
 });
 
 test('the rail Settings item and ⌘, both navigate to the settings view', () => {
@@ -84,7 +88,7 @@ test('a plugin settings section shows under PLUGINS on desktop and opens; the gr
   const group = screen.getByRole('group', { name: 'PLUGINS' });
   fireEvent.click(within(group).getByRole('button', { name: 'Daily rundown' }));
   expect(screen.getByText('rundown settings body')).toBeInTheDocument();
-  expect(screen.getByText('How far back')).toBeInTheDocument();
+  expect(title()).toHaveTextContent('Daily rundown');
   usePluginRegistry.getState().unregister('daily-rundown');
 });
 
@@ -94,7 +98,7 @@ test('a plugin section that throws shows the boundary card inside Settings (2026
   render(<SettingsView />);
   fireEvent.click(screen.getByRole('button', { name: 'Bad section' }));
   expect(screen.getByRole('alert')).toHaveTextContent('The plugin "bad" failed');
-  expect(screen.getByText('DAEMON')).toBeInTheDocument();
+  expect(screen.getByRole('group', { name: 'THIS MAC' })).toBeInTheDocument();
   usePluginRegistry.getState().unregister('bad');
   spy.mockRestore();
 });
