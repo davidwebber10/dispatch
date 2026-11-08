@@ -8,7 +8,6 @@ import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep }
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { ThreadAskBanner } from './ThreadAskBanner';
 import { TurnFooter } from './TurnFooter';
 import { useDraft } from '../../hooks/useDraft';
 import { copyText } from '../../lib/clipboard';
@@ -1103,7 +1102,6 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
         </div>
       )}
       <TurnFooter terminalId={terminalId}>
-        <ThreadAskBanner terminalId={terminalId} onAnswer={() => { try { termRef.current?.focus(); } catch { /* jsdom */ } }} />
         {footer}
       </TurnFooter>
       {isMobile && (

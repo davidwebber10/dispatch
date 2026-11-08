@@ -1339,14 +1339,14 @@ test('the size getter reports null when the host never had dimensions (no false 
 // ---- 2026-10-12: the ask strip and the footer sit BELOW the terminal ----
 // In a Pretty thread the outcome and the ask are at the bottom, by the composer; in a CLI thread
 // they sat above the terminal. Both now go under the terminal frame, in the turn footer.
-test('the ask strip and the footer render below the terminal frame, inside the turn footer', async () => {
+test('the footer renders below the terminal frame, inside the turn footer; no ask strip even while the thread waits on a question (2026-11-07)', async () => {
   useThreadStatus.setState({ byTerminal: { t1: { threadStatus: 'needs_input', activity: 'Which store first?' } } } as any);
   const { factory } = makeSocketFactory();
   const { getByTestId } = render(<TerminalTab terminalId="t1" socketFactory={factory as any} footer={<div data-testid="footer-x" />} />);
   await waitFor(() => expect(instances).toHaveLength(1));
   const frame = getByTestId('term-frame');
   const footer = getByTestId('turn-footer');
-  expect(footer).toContainElement(getByTestId('thread-ask-banner'));
+  expect(document.querySelector('[data-testid="thread-ask-banner"]')).toBeNull();
   expect(footer).toContainElement(getByTestId('footer-x'));
   expect(frame.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   useThreadStatus.setState({ byTerminal: {} } as any);

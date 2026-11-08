@@ -1,5 +1,5 @@
-// The footer under a thread's terminal (2026-10-12): the "This thread is asking you" strip and, on a
-// CLI AI thread, the latest declared outcome — at the bottom, where a Pretty thread shows them.
+// The footer under a thread's terminal (2026-10-12): on a CLI AI thread, the latest declared outcome (the ask strip is
+// gone, 2026-11-07) — at the bottom, where a Pretty thread shows them.
 //
 // Every change in the footer's height resizes the terminal, and Codex's inline TUI answers every
 // resize by clearing its scrollback and printing about 1000 lines of history again. The strip and

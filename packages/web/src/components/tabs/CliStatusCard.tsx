@@ -16,10 +16,10 @@ import { useIsMobile } from '../../hooks/useIsMobile';
  * line — so a turn's substance was invisible in this view unless the agent also said
  * it in prose. The card surfaces it.
  *
- * Deliberately narrow, mirroring ThreadAskBanner's philosophy next door:
+ * Deliberately narrow:
  * - Only DECLARED outcomes (needsHelp, or declaredState done/blocked). An inferred
  *   outcome's summary is just the reply's closing text, already on screen in the TUI.
- * - Never the `ask` — ThreadAskBanner owns the declared question; two banners asking
+ * - Never the `ask` — a declared question stays in the thread itself (no ask strip, 2026-11-07); two banners asking
  *   the same thing would read as a nag.
  * - Dimmed and marked "Last turn" while a turn is in flight: the outcome describes the
  *   PREVIOUS turn. It keeps its place so the terminal does not resize (it used to hide).
