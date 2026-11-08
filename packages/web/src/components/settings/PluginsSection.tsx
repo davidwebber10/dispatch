@@ -11,7 +11,7 @@ import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useMobileNav, openSettingsPluginPage, closeSettingsPluginPage } from '../../stores/mobileNav';
-import { sectionLabel, ghostBtn, solidBtn, fieldInput, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
+import { sectionLabel, ghostBtn, solidBtn, fieldInput, fieldFor, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
 import { Select } from '../common/Select';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
@@ -496,8 +496,8 @@ export function PluginsSection() {
 
       <section aria-label="Marketplaces" style={stack}>
         <GroupLabel>MARKETPLACES</GroupLabel>
-        {markets.length > 0 && (
-          <div style={group}>
+        {/* The add row is the card's last row, so the URL field sits in the card (2026-11-07). */}
+        <div style={group}>
             {markets.map((m, i) => (
               <div key={m.slug} data-testid={`marketplace-${m.slug}`} style={{ ...groupRow(i), flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
@@ -517,14 +517,22 @@ export function PluginsSection() {
                 </div>
               </div>
             ))}
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)} placeholder="https://github.com/your-org/plugins.git" style={{ ...fieldInput, flex: 1, minWidth: 200 }} />
-          <button type="button" style={solidBtn(marketUrl.trim().length > 0)} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
+            <div data-testid="marketplace-add-row" style={{ ...groupRow(markets.length), flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ ...title, display: 'block', fontSize: 13.5, fontWeight: 400 }}>Add a marketplace</span>
+                <span style={{ ...note, display: 'block', fontSize: 12, marginTop: 2 }}>A git repository: an https or ssh URL, or a path.</span>
+              </span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && marketUrl.trim() && marketBusy === null) void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); }); }}
+                  placeholder="https://github.com/your-org/plugins.git" spellCheck={false} autoCapitalize="off"
+                  style={{ ...fieldFor(isMobile), flex: 1, fontFamily: 'var(--font-mono)' }} />
+                <button type="button" style={{ ...solidBtn(marketUrl.trim().length > 0), height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
+              </div>
+              {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
+            </div>
         </div>
-        {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
-        <div style={{ ...note, padding: '0 4px' }}>A marketplace is a git repository. Add it by URL (https, ssh, or a path). The daemon clones it with your own git login, so a private repository is a private marketplace.</div>
+        <div style={{ ...note, padding: '0 4px' }}>The daemon clones it with your own git login, so a private repository is a private marketplace.</div>
       </section>
 
       {catalog.length > 0 && (
