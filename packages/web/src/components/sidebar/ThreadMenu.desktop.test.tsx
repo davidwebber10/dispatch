@@ -115,6 +115,15 @@ describe('the desktop thread fly-out', () => {
     expect(document.activeElement).toBe(items[items.length - 1]);
   });
 
+  it('a parent re-render (a fresh onClose) does not pull the focus back to the first item', () => {
+    const at = { tab: tab(), x: 40, y: 60 };
+    const { rerender } = render(<ThreadMenu at={at} onClose={() => {}} onBranched={() => {}} />);
+    fireEvent.keyDown(flyout(), { key: 'ArrowDown' });
+    const second = document.activeElement;
+    rerender(<ThreadMenu at={at} onClose={() => {}} onBranched={() => {}} />);
+    expect(document.activeElement).toBe(second);
+  });
+
   it('arrow keys reach the rows that More reveals', () => {
     open();
     const more = screen.getByRole('button', { name: 'More' });

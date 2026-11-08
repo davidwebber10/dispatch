@@ -1,5 +1,5 @@
 import { useContributions } from '../../plugins/registry';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
@@ -30,19 +30,89 @@ export type ThreadMenuAt = { tab: Terminal; x: number; y: number };
 /** A plugin row the caller adds (the phone's thread header: plugins' right-column tabs). */
 export type ThreadMenuPluginRow = { key: string; label: string; icon: Icon; onPick: (tab: Terminal) => void };
 
-const item: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 };
-/** A row in the phone's sheet: finger-sized. */
-const sheetItem: React.CSSProperties = { ...item, gap: 12, padding: '11px 12px', fontSize: 15, borderRadius: 'var(--radius-md)' };
-/** A quick-action tile at the top of the phone's sheet: icon above a short label. */
-const tile: React.CSSProperties = {
-  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0, height: 72, padding: '0 4px',
-  background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)',
-  color: 'var(--color-text-primary)', fontSize: 12, fontWeight: 500, cursor: 'pointer',
+/** One body, two shells (2026-11-07): the phone's slide-up sheet and the desktop's fly-out show the
+ *  same groups; only the sizes differ. `sheet` is finger-sized, `popover` is mouse-sized. */
+type Density = 'sheet' | 'popover';
+const baseRow: React.CSSProperties = { display: 'flex', alignItems: 'center', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--color-text-primary)', cursor: 'pointer' };
+const SIZES: Record<Density, { row: React.CSSProperties; icon: number; tileIcon: number; tile: React.CSSProperties; caption: React.CSSProperties; hint: number; gap: number; pad: string }> = {
+  sheet: {
+    row: { ...baseRow, gap: 12, padding: '11px 12px', fontSize: 15, borderRadius: 'var(--radius-md)' },
+    icon: 20, tileIcon: 22, hint: 12.5, gap: 8, pad: '2px 4px 6px',
+    tile: { height: 72, fontSize: 12, borderRadius: 'var(--radius-lg)' },
+    caption: { padding: '10px 12px 2px', fontSize: 11.5 },
+  },
+  popover: {
+    row: { ...baseRow, gap: 10, padding: '7px 10px', fontSize: 13, borderRadius: 'var(--radius-sm)' },
+    icon: 16, tileIcon: 18, hint: 11.5, gap: 6, pad: '2px 2px 4px',
+    tile: { height: 58, fontSize: 11.5, borderRadius: 'var(--radius-md)' },
+    caption: { padding: '8px 10px 2px', fontSize: 10.5 },
+  },
 };
-/** A group's small caption in the phone's sheet ("View", "Plugins"). */
-const caption: React.CSSProperties = { padding: '10px 12px 2px', fontSize: 11.5, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' };
+/** A quick-action tile at the top of the menu: icon above a short label. */
+const tileBase: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0, padding: '0 4px',
+  background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
+  color: 'var(--color-text-primary)', fontWeight: 500, cursor: 'pointer',
+};
+/** A group's small caption ("View", "Plugins"). */
+const captionBase: React.CSSProperties = { fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' };
 const rule = <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '6px 6px' }} />;
-const ICON = 20;
+/** The desktop fly-out's width and its distance from the viewport's edges. */
+const FLYOUT_W = 320;
+const EDGE = 8;
+
+/** Arrow keys walk the menu's buttons (tiles included) and wrap; Home and End jump. Enter is the
+ *  button's own. */
+function moveFocus(e: React.KeyboardEvent<HTMLElement>) {
+  const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+  if (!step && e.key !== 'Home' && e.key !== 'End') return;
+  const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled])'));
+  if (items.length === 0) return;
+  e.preventDefault();
+  const at = items.indexOf(document.activeElement as HTMLElement);
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+    : at < 0 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length;
+  items[next].focus();
+}
+
+/** The desktop shell: a fly-out at the click, kept inside the viewport (it opens up, or slides in,
+ *  when there is no room below or to the right), with its own scroll. Escape or a click outside
+ *  closes it. */
+function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const left = Math.max(EDGE, Math.min(x, window.innerWidth - EDGE - FLYOUT_W));
+  const [top, setTop] = useState(y);
+  useLayoutEffect(() => {
+    const h = ref.current?.getBoundingClientRect().height ?? 0;
+    const room = window.innerHeight - EDGE;
+    setTop(y + h <= room ? Math.max(EDGE, y) : y - h >= EDGE ? y - h : Math.max(EDGE, room - h));
+  }, [x, y]);
+  // Callers pass a fresh onClose each render; read it through a ref so a parent's re-render does
+  // not pull the focus back to the first item.
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close.current(); } };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  return createPortal(
+    <>
+      <div data-testid="thread-menu-backdrop" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
+      <div ref={ref} role="menu" aria-label="Thread options" onKeyDown={moveFocus}
+        style={{
+          position: 'fixed', top, left, zIndex: 301, width: FLYOUT_W, maxHeight: `calc(100vh - ${EDGE * 2}px)`, overflowY: 'auto',
+          display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
+          background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-lg)',
+          padding: 6, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)',
+        }}>
+        {children}
+      </div>
+    </>,
+    document.body,
+  );
+}
 
 /**
  * A thread row's options menu (the ⋯ button, right-click, long-press) and the dialogs it
@@ -50,11 +120,12 @@ const ICON = 20;
  * phone's cross-project Threads list, so both offer the same actions. Stays mounted while
  * `at` is null so a dialog opened from the menu outlives the menu itself.
  */
-/** `leadView`: rows shown first in the phone sheet's View group (the thread header's CLI ⇄ Pretty
+/** `leadView`: rows shown first in the View group (the thread header's CLI ⇄ Pretty
  *  switch); each closes the menu itself, through the `close` it is given. `pluginRows`: plugin rows
  *  the caller adds (its right-column tabs), listed with the registry's own thread-menu items.
- *  On a phone the rows are grouped (2026-11-07): a grid of the four most used actions, View,
- *  Plugins, a closed More for the maintenance actions, then Archive. Desktop stays a flat list. */
+ *  The rows are grouped (2026-11-07): a grid of the four most used actions, View, Plugins, a closed
+ *  More for the maintenance actions, then Archive. The phone shows them in a sheet, the desktop in a
+ *  fly-out at the click; the body is the same. */
 export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   at: ThreadMenuAt | null; onClose: () => void; onBranched: (thread: Terminal) => void;
   leadView?: (close: () => void, rowStyle: React.CSSProperties) => React.ReactNode;
@@ -65,7 +136,6 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Terminal | null>(null);
   const [accountTarget, setAccountTarget] = useState<Terminal | null>(null);
-  // Desktop shows the same details in its right-hand panel; a phone has no panel.
   const isMobile = useIsMobile();
   // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
   const pluginItems = useContributions('threadMenu');
@@ -116,69 +186,28 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const hasAccount = (t: Terminal) => t.type === 'claude-code' || t.type === 'codex';
   const alertsOn = (t: Terminal) => !!(t.config as { alertsEnabled?: boolean })?.alertsEnabled;
 
-  // The desktop menu's rows: one flat list at the click.
-  const menuItems = (at: ThreadMenuAt) => (
-    <>
-            {leadView?.(onClose, item)}
-            {pluginRows?.map((p) => (
-              <button key={p.key} onClick={pick(p.onPick)} style={item}><p.icon size={15} />{p.label}</button>
-            ))}
-            {(leadView || (pluginRows && pluginRows.length > 0)) && <div aria-hidden style={{ height: 1, background: 'var(--color-border)', margin: '4px 6px' }} />}
-            {isMobile && THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(setDetailsTarget)} style={isMobile ? sheetItem : item}>Thread details</button>
-            )}
-            <button onClick={pick(setRenameTarget)} style={isMobile ? sheetItem : item}>{at.tab.type === 'file' ? 'Rename file' : 'Rename thread'}</button>
-            {BRANCHABLE.includes(at.tab.type) && (
-              <button onClick={pick((t) => void branch(t))} style={isMobile ? sheetItem : item}>Branch thread</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick((t) => void copyId(t))} style={isMobile ? sheetItem : item}>Copy thread ID</button>
-            )}
-            {pluginItems.filter((p) => !p.when || p.when({ tab: at.tab })).map((p) => (
-              <button key={`${p.plugin}:${p.id}`} onClick={pick((t) => p.onPick({ tab: t }))} style={isMobile ? sheetItem : item}>{p.label}</button>
-            ))}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(reload)} style={isMobile ? sheetItem : item}>Reload thread</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick((t) => void resetStatus(t))} style={isMobile ? sheetItem : item}>Reset status</button>
-            )}
-            {THREAD_TYPES.includes(at.tab.type) && (
-              <button onClick={pick(setAutoArchiveTarget)} style={isMobile ? sheetItem : item}>Auto-archive…</button>
-            )}
-            {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && (
-              <button onClick={pick(setAccountTarget)} style={isMobile ? sheetItem : item}>Switch account…</button>
-            )}
-            {(at.tab.type === 'claude-code' || at.tab.type === 'codex') && canReceiveAlerts() && (
-              <button onClick={pick((t) => void toggleAlerts(t))} style={isMobile ? sheetItem : item}>{(at.tab.config as { alertsEnabled?: boolean })?.alertsEnabled ? 'Disable alerts' : 'Enable alerts'}</button>
-            )}
-            {at.tab.type === 'file' ? (
-              <button onClick={pick((t) => void archive(t))} style={isMobile ? sheetItem : item}>Unpin</button>
-            ) : (
-              <button onClick={pick(setArchiveTarget)} style={{ ...(isMobile ? sheetItem : item), color: 'var(--color-status-red)' }}>Archive thread</button>
-            )}
-    </>
-  );
+  const density: Density = isMobile ? 'sheet' : 'popover';
+  const z = SIZES[density];
 
-  /** A row in the phone's sheet: icon, label, and an optional plain-words line under it. */
+  /** A menu row: icon, label, and an optional plain-words line under it. */
   const row = (key: string, Glyph: Icon, label: string, onClick: () => void, hint?: string, extra: React.CSSProperties = {}) => {
     const hintId = hint ? `thread-menu-hint-${key}` : undefined;
     return (
-      <button key={key} type="button" onClick={onClick} aria-label={hint ? label : undefined} aria-describedby={hintId} style={{ ...sheetItem, alignItems: hint ? 'flex-start' : 'center', ...extra }}>
-        <Glyph size={ICON} style={{ flexShrink: 0, marginTop: hint ? 1 : 0 }} />
+      <button key={key} type="button" onClick={onClick} aria-label={hint ? label : undefined} aria-describedby={hintId} style={{ ...z.row, alignItems: hint ? 'flex-start' : 'center', ...extra }}>
+        <Glyph size={z.icon} style={{ flexShrink: 0, marginTop: hint ? 1 : 0 }} />
         {hint ? (
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <span>{label}</span>
-            <span id={hintId} style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>{hint}</span>
+            <span id={hintId} style={{ fontSize: z.hint, color: 'var(--color-text-tertiary)' }}>{hint}</span>
           </span>
         ) : label}
       </button>
     );
   };
 
-  /** The phone's sheet (2026-11-07): it was 15 equal-weight rows with no way to tell what mattered.
-   *  The handlers are the desktop menu's; only the arrangement differs. */
-  const sheetItems = (at: ThreadMenuAt) => {
+  /** The menu's groups (2026-11-07), the same in both shells: it was 15 equal-weight rows with no way
+   *  to tell what mattered. The phone sheet got these first; the desktop fly-out shows them too. */
+  const body = (at: ThreadMenuAt) => {
     const t = at.tab;
     // The four most used: Rename and Branch (what you do to a thread), Account (the answer to a usage
     // limit), Alerts (on/off at a glance, also from the Threads list, where no bell shows).
@@ -195,14 +224,17 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
       ...pluginItems.filter((p) => !p.when || p.when({ tab: t }))
         .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })))),
     ];
-    const hasView = !!leadView || isThread(t);
+    // Desktop shows Thread details in its right-hand panel; a phone has no panel.
+    const details = isMobile && isThread(t);
+    const hasView = !!leadView || details;
+    const caption = { ...captionBase, ...z.caption };
     return (
       <>
-        <div role="group" aria-label="Quick actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8, padding: '2px 4px 6px' }}>
+        <div role="group" aria-label="Quick actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: z.gap, padding: z.pad }}>
           {tiles.map((x) => (
             <button key={x.key} type="button" aria-label={x.name} aria-pressed={x.pressed} onClick={x.onClick}
-              style={{ ...tile, ...(x.pressed ? { color: 'var(--color-accent)', borderColor: 'var(--color-accent)' } : {}) }}>
-              <x.Glyph size={22} weight={x.pressed ? 'fill' : 'regular'} />
+              style={{ ...tileBase, ...z.tile, ...(x.pressed ? { color: 'var(--color-accent)', borderColor: 'var(--color-accent)' } : {}) }}>
+              <x.Glyph size={z.tileIcon} weight={x.pressed ? 'fill' : 'regular'} />
               <span style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.label}</span>
             </button>
           ))}
@@ -210,8 +242,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         {hasView && (
           <div role="group" aria-label="View" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>View</div>
-            {leadView?.(onClose, sheetItem)}
-            {isThread(t) && row('details', Info, 'Thread details', pick(setDetailsTarget))}
+            {leadView?.(onClose, z.row)}
+            {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
           </div>
         )}
         {plugins.length > 0 && (
@@ -224,8 +256,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
           <>
             {rule}
             <button type="button" aria-expanded={moreOpen} aria-controls="thread-menu-more" onClick={() => setMoreOpen((v) => !v)}
-              style={{ ...sheetItem, color: 'var(--color-text-secondary)' }}>
-              {moreOpen ? <CaretDown size={ICON} /> : <CaretRight size={ICON} />}More
+              style={{ ...z.row, color: 'var(--color-text-secondary)' }}>
+              {moreOpen ? <CaretDown size={z.icon} /> : <CaretRight size={z.icon} />}More
             </button>
             {moreOpen && (
               <div id="thread-menu-more" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -247,19 +279,13 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
 
   return (
     <>
-      {/* On a phone: the app's shared slide-up sheet, with bigger rows. On desktop: a small menu at the click. */}
+      {/* One body, two shells: on a phone the app's shared slide-up sheet, on desktop a fly-out at the click. */}
       {isMobile ? (
         <Modal open={!!at} sheet title={at?.tab.label} onClose={onClose}>
-          {at && <div role="menu" style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{sheetItems(at)}</div>}
+          {at && <div role="menu" aria-label="Thread options" onKeyDown={moveFocus} style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>{body(at)}</div>}
         </Modal>
-      ) : at && createPortal(
-        <>
-          <div onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
-          <div role="menu" style={{ position: 'fixed', top: at.y, left: Math.min(at.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-            {menuItems(at)}
-          </div>
-        </>,
-        document.body,
+      ) : at && (
+        <FlyOut key={`${at.tab.id}:${at.x}:${at.y}`} x={at.x} y={at.y} onClose={onClose}>{body(at)}</FlyOut>
       )}
 
       <ConfirmModal
