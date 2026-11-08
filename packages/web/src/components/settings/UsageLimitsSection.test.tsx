@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { UsageLimitsSection, UsageAlertSetting, clampWarn } from './UsageLimitsSection';
 import { api } from '../../api/client';
 import { useSettings } from '../../stores/settings';
@@ -31,9 +31,53 @@ describe('UsageLimitsSection + UsageAlertSetting', () => {
     renderBoth();
     await waitFor(() => expect(level().value).toBe('80'));
     expect(screen.getByRole('switch', { name: 'Push alert at the warning level' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByText('No figures reported yet')).toBeTruthy();
-    expect(screen.getByText('ALL DEVICES')).toBeTruthy();
-    expect(screen.getByText('THIS DEVICE')).toBeTruthy();
+    expect(screen.getByText(/No figures reported yet/)).toBeTruthy();
+    for (const name of ['Warning', 'This device', 'Current figures']) expect(screen.getByRole('group', { name })).toBeTruthy();
+  });
+
+  it('the ring choice is a segmented control, and the phone header switch is this device only', async () => {
+    useSettings.setState({ usageRingCenter: 'logo', phoneHeaderUsage: true });
+    renderBoth();
+    const device = within(screen.getByRole('group', { name: 'This device' }));
+    expect(device.getByRole('radio', { name: 'Logo' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(device.getByRole('radio', { name: 'Percent used' }));
+    expect(useSettings.getState().usageRingCenter).toBe('percent');
+    fireEvent.click(device.getByRole('switch', { name: 'All accounts in the phone header' }));
+    expect(useSettings.getState().phoneHeaderUsage).toBe(false);
+  });
+
+  it('shows each account as a card with a meter per window, its reset, and when the figures are from', async () => {
+    const now = Date.now();
+    useUsageLimits.setState({ summary: { warnPercent: 80, providers: [
+      { provider: 'claude-code', accountId: 'cli', label: 'CLI login', plan: 'Max', asOf: now - 60_000, windows: { five_hour: { usedPercent: 42, resetsAt: now + 3_600_000 }, seven_day: { usedPercent: 71, resetsAt: now + 3 * 86_400_000 } } },
+      { provider: 'claude-code', accountId: 'w1', label: 'Work', asOf: now - 60_000, windows: { five_hour: { usedPercent: 88, resetsAt: now + 3_600_000 } } },
+      { provider: 'codex', accountId: 'cli', plan: 'Pro', asOf: now - 2 * 3_600_000, windows: { five_hour: { usedPercent: null, resetsAt: null } } },
+    ], paused: [] } });
+    renderBoth();
+    const cards = screen.getAllByTestId('usage-account');
+    expect(cards).toHaveLength(3);
+    const cli = within(cards[0]);
+    expect(cards[0]).toHaveTextContent('Claude · CLI login');
+    expect(cards[0]).toHaveTextContent('Max');
+    expect(cli.getByRole('meter', { name: 'Session (5h)' })).toHaveAttribute('aria-valuenow', '42');
+    expect(cards[0]).toHaveTextContent('42%');
+    expect(cards[0]).toHaveTextContent(/Resets/);
+    expect(cli.getByRole('meter', { name: 'Weekly' })).toHaveAttribute('aria-valuenow', '71');
+    // At or past the warning level: the meter says so in its tone.
+    expect(within(cards[1]).getByRole('meter', { name: 'Session (5h)' })).toHaveAttribute('data-tone', 'red');
+    // An old figure says how old; a window with no figure says so.
+    expect(cards[2]).toHaveTextContent(/As of/);
+    expect(cards[2]).toHaveTextContent('No figure reported');
+    expect(screen.getByText(/CLI threads do not/)).toBeTruthy();
+  });
+
+  it('a pause shows above the cards', async () => {
+    const now = Date.now();
+    useUsageLimits.setState({ summary: { warnPercent: 80, providers: [], paused: [
+      { provider: 'claude-code', kind: 'session', earliestResetsAt: now + 3_600_000, threads: 2, capped: 0, chat: false, firstTerminalId: 't', firstSessionId: null, episodeStartedAt: now },
+    ] } });
+    renderBoth();
+    expect(screen.getByText(/Claude agents paused: session limit/)).toBeTruthy();
   });
 
   it('steps by 5 and clamps at the top', async () => {
