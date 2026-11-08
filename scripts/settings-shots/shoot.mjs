@@ -93,6 +93,27 @@ async function fit(page, width, height) {
 const settle = (page, ms = 1200) => page.waitForTimeout(ms);
 const exact = (label) => new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&')}$`);
 
+/**
+ * Sub-pages to shoot after a section: [file suffix, the row button's accessible name]. Each is
+ * saved as `<key>-<sub>-phone.png` / `<key>-<sub>-desktop.png`.
+ */
+const SUBS = {
+  agents: [['opencode', 'OpenCode'], ['claude', 'Claude Code']],
+  accounts: [['work', 'Claude: Work'], ['personal', 'Codex: Personal']],
+};
+async function shootSubs(page, key, kind, reopen, W, H) {
+  for (const [sub, name] of SUBS[key] ?? []) {
+    try {
+      await reopen();
+      await page.getByRole('button', { name: exact(name) }).first().click({ timeout: 5000 });
+      await settle(page, 900);
+      await fit(page, W, H);
+      await page.screenshot({ path: path.join(outDir, `${key}-${sub}-${kind}.png`) });
+      console.log('shot', `${key}-${sub}-${kind}`);
+    } catch (e) { console.log('MISS', `${key}-${sub}-${kind}`, e.message.split('\n')[0]); }
+  }
+}
+
 async function shootPhone(browser) {
   const W = 390, H = 844;
   const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: 'reduce',
@@ -115,6 +136,7 @@ async function shootPhone(browser) {
       await fit(page, W, H);
       await page.screenshot({ path: path.join(outDir, `${key}-phone.png`) });
       console.log('shot', `${key}-phone`);
+      await shootSubs(page, key, 'phone', async () => { await openList(); await page.locator('button', { has: page.locator('span', { hasText: exact(label) }) }).first().click({ timeout: 5000 }); await settle(page); }, W, H);
     } catch (e) { console.log('MISS', `${key}-phone`, e.message.split('\n')[0]); }
   }
   await ctx.close();
@@ -141,6 +163,7 @@ async function shootDesktop(browser) {
       await fit(page, W, H);
       await page.screenshot({ path: path.join(outDir, `${key}-desktop.png`) });
       console.log('shot', `${key}-desktop`);
+      await shootSubs(page, key, 'desktop', async () => { await open(); await nav().getByRole('button', { name: exact(label) }).click({ timeout: 5000 }); await settle(page); }, W, H);
     } catch (e) { console.log('MISS', `${key}-desktop`, e.message.split('\n')[0]); }
   }
   await ctx.close();
