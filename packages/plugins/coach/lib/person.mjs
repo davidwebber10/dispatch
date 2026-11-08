@@ -12,6 +12,12 @@ const INJECTED = [
   /^\[From the overseer of project/,
   /^\[From thread "/,
   /^A message from the thread \[threadId /,
+  // The daemon's notices to a coordinator about its agents, and a watch_thread wake.
+  /^(\u{1F514}|\u2705|\u23F8\uFE0F?) Your agent "/u,
+  /^Thread "[^"\n]*" \([\w-]{6,}\) /,
+  // A harness block (Codex's <environment_context>, a tag-only line); a paste of the person's own is kept.
+  /^<(?!pasted_content\b)[a-z][\w-]*(\s[^>]*)?\/?>/i,
+  /^\[Request interrupted by user/,
 ];
 const NOT_OWNER = 'This is not a message from the owner.]';
 const FILE_LINE_RE = /^Use this file as context: .*$/gm;

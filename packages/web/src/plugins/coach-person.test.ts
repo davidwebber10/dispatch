@@ -68,3 +68,17 @@ describe('Coach: the reviews read only the person as the person (coach fix T2)',
     expect(prompts.filter((e) => e.source === 'user').map((e) => e.text)).toEqual(['Build the quarterly report for the sales team']);
   });
 });
+
+describe('more injected texts are not the person (2026-11-08 live replay)', () => {
+  it.each([
+    ['an agent finished notice', '✅ Your agent "rundown-gate-investigation" (mission "Sales rundown gate") [agentId 680ed213] finished.'],
+    ['an agent paused notice', '🔔 Your agent "x" is PAUSED waiting on you to approve a tool.'],
+    ['an agent stopped notice', '⏸️ Your agent "x" (mission "m") stopped.'],
+    ['a watch wake', 'Thread "Fable: consensus" (e4ab935d-fa44-4b48-b3aa-97ebd6ec109a) just went idle. You asked to be told.'],
+    ['a Codex environment block', '<environment_context>\n  <cwd>/x</cwd>\n  <current_date>2026-11-06</current_date>\n</environment_context>'],
+    ['a harness tag block', '<artifact-content-authored-by-others/>'],
+    ['an interrupt marker', '[Request interrupted by user for tool use]'],
+  ])('%s', (_name, text) => expect(isPersonText(text, 'user')).toBe(false));
+
+  it('a paste of the owner\'s own is still the person', () => expect(isPersonText('<pasted_content id="1">notes</pasted_content> fix this', 'user')).toBe(true));
+});
