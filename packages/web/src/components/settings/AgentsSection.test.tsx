@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { AgentsSection } from './AgentsSection';
 import { api } from '../../api/client';
 
@@ -36,8 +36,77 @@ beforeEach(() => {
   });
 });
 
-/** The OpenCode card, found by its heading. */
-const opencodeCard = async () => (await screen.findByText('OPENCODE')).parentElement as HTMLElement;
+/** Opens a harness's own page from its row on the Agents list (2026-11-07 redesign). */
+const openHarness = async (label: string, id: string) => {
+  fireEvent.click(await screen.findByRole('button', { name: label }));
+  return screen.findByTestId(`agent-detail-${id}`);
+};
+const opencodeCard = () => openHarness('OpenCode', 'opencode');
+
+describe('AgentsSection — the list (2026-11-07 redesign)', () => {
+  it('shows one row per harness with its default model as the value, and no model list on the page', async () => {
+    (api.getHarnessSettings as any).mockResolvedValue(response({ settings: { 'claude-code': { defaultModel: 'opus', defaultMode: 'pretty' } } }));
+    render(<AgentsSection />);
+    for (const name of ['Claude Code', 'Codex', 'Grok', 'OpenCode']) expect(await screen.findByRole('button', { name })).toBeInTheDocument();
+    const claude = screen.getByRole('button', { name: 'Claude Code' });
+    expect(claude).toHaveTextContent('Opus');
+    expect(claude).toHaveTextContent('Pretty');
+    expect(screen.getByRole('button', { name: 'OpenCode' })).toHaveTextContent('Claude Opus');
+    expect(screen.queryByRole('list', { name: 'OpenCode models' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Skip agent status summaries' })).toBeNull();
+  });
+
+  it('a harness page opens from its row and its back link returns to the list', async () => {
+    render(<AgentsSection />);
+    const page = await openHarness('Codex', 'codex');
+    expect(within(page).getByTestId('subpage-header')).toHaveTextContent('Codex');
+    expect(screen.queryByRole('button', { name: 'Grok' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to agents' }));
+    expect(await screen.findByRole('button', { name: 'Grok' })).toBeInTheDocument();
+  });
+
+  it('on a phone the page is a history entry: back (popstate) closes it, and the page has no back link of its own', async () => {
+    const width = window.innerWidth;
+    const mm = window.matchMedia;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    window.matchMedia = ((q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} })) as any;
+    history.replaceState({ nav: 1, settingsSection: 'agents', depth: 1 }, '');
+    try {
+      render(<AgentsSection />);
+      await openHarness('Grok', 'grok');
+      expect(history.state).toMatchObject({ nav: 1, settingsSection: 'agents', depth: 2, settingsSub: 'agents:grok' });
+      expect(screen.queryByRole('button', { name: 'Back to agents' })).toBeNull();
+      history.replaceState({ nav: 1, settingsSection: 'agents', depth: 1 }, '');
+      act(() => { window.dispatchEvent(new PopStateEvent('popstate', { state: { nav: 1, settingsSection: 'agents', depth: 1 } })); });
+      expect(await screen.findByRole('button', { name: 'Grok' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      window.matchMedia = mm;
+    }
+  });
+
+  it('the default mode is a segmented choice that saves the mode, and No preference clears it', async () => {
+    render(<AgentsSection />);
+    const page = await openHarness('Claude Code', 'claude');
+    fireEvent.click(within(page).getByRole('radio', { name: 'Pretty' }));
+    await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({ 'claude-code': { defaultMode: 'pretty' } }));
+  });
+
+  it('a one-mode harness has no default mode choice', async () => {
+    render(<AgentsSection />);
+    const page = await openHarness('Grok', 'grok');
+    expect(within(page).queryByRole('radiogroup', { name: 'Default mode' })).toBeNull();
+  });
+
+  it('saves a replacement OpenRouter key to the chosen Doppler secret', async () => {
+    (api.setSecret as any).mockResolvedValue(undefined);
+    render(<AgentsSection />);
+    const page = await opencodeCard();
+    fireEvent.change(within(page).getByLabelText('New OpenRouter key'), { target: { value: ' sk-or-v1-abc ' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save key' }));
+    await waitFor(() => expect(api.setSecret).toHaveBeenCalledWith({ name: 'OPENROUTER_API_KEY', value: 'sk-or-v1-abc' }));
+  });
+});
 
 describe('AgentsSection — OpenCode model list', () => {
   it('lists the configured models, with their ids, and offers them as the default model', async () => {
@@ -96,8 +165,8 @@ describe('AgentsSection — OpenCode model list', () => {
     const card = await opencodeCard();
     fireEvent.change(within(card).getByRole('textbox', { name: 'Add a model' }), { target: { value: 'venice' } });
     const results = await within(card).findByRole('list', { name: 'Catalog results' });
-    expect((await within(results).findByText('Uncensored')).closest('li')).toHaveTextContent('CHAT ONLY');
-    expect(within(results).getByText('Grok Latest').closest('li')).not.toHaveTextContent('CHAT ONLY');
+    expect((await within(results).findByText('Uncensored')).closest('li')).toHaveTextContent('Chat only');
+    expect(within(results).getByText('Grok Latest').closest('li')).not.toHaveTextContent('Chat only');
     fireEvent.click(within(results).getByRole('button', { name: 'Add Uncensored' }));
     await waitFor(() => expect(api.putHarnessSettings).toHaveBeenCalledWith({
       opencode: { models: [...MODELS, { label: 'Uncensored', model: 'openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition' }] },
@@ -133,6 +202,7 @@ describe('AgentsSection — OpenCode model list', () => {
 describe('AgentsSection — Claude Code agent status summaries', () => {
   it('shows the skip switch on by default, and turning it off saves false', async () => {
     render(<AgentsSection />);
+    await openHarness('Claude Code', 'claude');
     const sw = await screen.findByRole('switch', { name: 'Skip agent status summaries' });
     expect(sw).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(sw);
@@ -142,6 +212,7 @@ describe('AgentsSection — Claude Code agent status summaries', () => {
   it('reflects a stored off', async () => {
     (api.getHarnessSettings as any).mockResolvedValue(response({ settings: { 'claude-code': { skipAgentSummaries: false } } }));
     render(<AgentsSection />);
+    await openHarness('Claude Code', 'claude');
     expect(await screen.findByRole('switch', { name: 'Skip agent status summaries' })).toHaveAttribute('aria-checked', 'false');
   });
 });
