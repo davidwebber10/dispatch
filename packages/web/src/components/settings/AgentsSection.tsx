@@ -159,11 +159,11 @@ function HarnessPage({ h, data, err, put, setData, setErr, onBack }: {
       {err && <div role="alert" style={errText}>{err}</div>}
 
       <SettingsGroup title="New threads">
-        <SettingsRow label="Default model" control={
+        <SettingsRow label="Default model">
           <Select
             id={`hm-${h.id}`}
             ariaLabel="Default model"
-            style={{ width: isMobile ? 170 : 210 }}
+            style={{ width: '100%', maxWidth: isMobile ? undefined : 320 }}
             value={s.defaultModel ?? ''}
             onChange={(v) => void put({ [h.type]: { defaultModel: v || null } })}
             options={[
@@ -171,7 +171,7 @@ function HarnessPage({ h, data, err, put, setData, setErr, onBack }: {
               ...models.filter((m) => m.model !== null).map((m) => ({ value: m.model!, label: m.label })),
             ]}
           />
-        } />
+        </SettingsRow>
         {h.modes.length > 1 && (
           <SettingsRow label="Default mode">
             <Segmented
@@ -281,13 +281,13 @@ function OpenRouterKey({ data, isMobile, put, setData, setErr }: {
   return (
     <SettingsGroup title="OpenRouter key"
       footer={secretsErr ? <span style={{ color: 'var(--color-status-yellow)' }}>{secretsErr}</span> : 'The key stays in Doppler. Dispatch keeps only the name of the secret.'}>
-      <SettingsRow label="Doppler secret" control={
-        // The current name always shows, even when the secrets list failed to load.
-        <Select id="oc-secret" ariaLabel="OpenRouter key secret" style={{ width: isMobile ? 170 : 210 }}
+      <SettingsRow label="Doppler secret">
+        {/* The current name always shows, even when the secrets list failed to load. */}
+        <Select id="oc-secret" ariaLabel="OpenRouter key secret" style={{ width: '100%', maxWidth: isMobile ? undefined : 320 }}
           value={data.opencodeKey.secret}
           onChange={(v) => void put({ opencode: { keySecret: v || null } })}
           options={[...(secretNames.includes(data.opencodeKey.secret) ? [] : [data.opencodeKey.secret]), ...secretNames].map((n) => ({ value: n, label: n }))} />
-      } />
+      </SettingsRow>
       <SettingsRow label="Key" hint={data.opencodeKey.present ? 'New threads get it when they start.' : 'Paste a key below to save it in this secret.'}
         control={data.opencodeKey.present ? <StatusMark tone="accent">Found</StatusMark> : <StatusMark tone="yellow">No value yet</StatusMark>} />
       <SettingsRow label={data.opencodeKey.present ? 'Replace the key' : 'Add the key'}>

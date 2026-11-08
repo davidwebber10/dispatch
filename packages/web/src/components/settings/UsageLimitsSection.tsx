@@ -224,8 +224,8 @@ function MeterRow({ row: r }: { row: FigureRow }) {
         </span>
       </div>
       <div role="meter" aria-label={r.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={r.used ?? undefined} data-tone={r.tone}
-        style={{ height: 6, borderRadius: 3, background: 'var(--color-hover)', overflow: 'hidden' }}>
-        {r.used !== null && r.used > 0 && <div style={{ width: `${Math.min(100, r.used)}%`, height: '100%', borderRadius: 3, background: color }} />}
+        style={{ height: 6, borderRadius: 'var(--radius-pill)', background: 'var(--color-hover)', overflow: 'hidden' }}>
+        {r.used !== null && r.used > 0 && <div style={{ width: `${Math.min(100, r.used)}%`, height: '100%', borderRadius: 'var(--radius-pill)', background: color }} />}
       </div>
       <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.note}</span>
     </div>

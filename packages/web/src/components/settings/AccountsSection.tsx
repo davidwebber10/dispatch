@@ -172,7 +172,7 @@ export function AccountsSection() {
           ? <SettingsRow label={error ? 'Not loaded' : 'Loading…'} />
           : accounts.map((a) => {
             const detail = [a.email, a.plan, a.threadCount ? threadsLabel(a.threadCount) : null].filter(Boolean).join(' · ')
-              || (a.isCli ? 'The CLI’s own login on the daemon’s computer' : '');
+              || (a.isCli ? 'The CLI’s own login' : '');
             return (
               <div key={a.id} data-testid={`account-${provider}-${a.id}`}>
                 <SettingsRow icon={MARK[provider]} label={a.label} ariaLabel={`${PROVIDER_TITLE[provider]}: ${a.label}`}
