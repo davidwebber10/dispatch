@@ -87,6 +87,19 @@ describe('the desktop thread fly-out', () => {
     expect(top + 420).toBeLessThanOrEqual(768 - 8);
   });
 
+  it('stays inside the viewport when More opens and the fly-out grows', () => {
+    asDesktop(1024, 768);
+    let h = 248;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ width: 320, height: h, top: 0, left: 0, right: 320, bottom: h, x: 0, y: 0, toJSON: () => ({}) } as DOMRect));
+    open(tab(), {}, 200, 500);
+    expect(parseFloat(flyout().style.top)).toBe(500);
+    h = 428;
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    const top = parseFloat(flyout().style.top);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(top + 428).toBeLessThanOrEqual(768 - 8);
+  });
+
   it('closes on Escape and on a click outside', () => {
     const onClose = vi.fn();
     render(<ThreadMenu at={{ tab: tab(), x: 40, y: 60 }} onClose={onClose} onBranched={() => {}} />);

@@ -75,18 +75,21 @@ function moveFocus(e: React.KeyboardEvent<HTMLElement>) {
   items[next].focus();
 }
 
-/** The desktop shell: a fly-out at the click, kept inside the viewport (it opens up, or slides in,
+/** The desktop shell: a fly-out at the click, kept inside the viewport (it slides up, or in,
  *  when there is no room below or to the right), with its own scroll. Escape or a click outside
  *  closes it. */
 function FlyOut({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const left = Math.max(EDGE, Math.min(x, window.innerWidth - EDGE - FLYOUT_W));
   const [top, setTop] = useState(y);
+  // Measured after every render, not only on open: More grows the fly-out, and it must not grow off
+  // the bottom. setTop with an unchanged value is a no-op, so this settles.
   useLayoutEffect(() => {
     const h = ref.current?.getBoundingClientRect().height ?? 0;
     const room = window.innerHeight - EDGE;
-    setTop(y + h <= room ? Math.max(EDGE, y) : y - h >= EDGE ? y - h : Math.max(EDGE, room - h));
-  }, [x, y]);
+    // Slide up only as far as needed, so the row under the pointer (More) moves as little as it can.
+    setTop(Math.max(EDGE, Math.min(y, room - h)));
+  });
   // Callers pass a fresh onClose each render; read it through a ref so a parent's re-render does
   // not pull the focus back to the first item.
   const close = useRef(onClose);
