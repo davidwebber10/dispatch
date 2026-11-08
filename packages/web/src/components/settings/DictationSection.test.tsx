@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { DictationSection } from './DictationSection';
 import { useSettings } from '../../stores/settings';
+import { pickOption } from '../../test/select';
 
 const { put } = vi.hoisted(() => ({ put: vi.fn().mockResolvedValue({ saved: true }) }));
 vi.mock('../../api/client', () => ({
@@ -12,22 +13,22 @@ beforeEach(() => { put.mockClear(); try { localStorage.clear(); } catch {} useSe
 
 it('lists Doppler secret names and updates the store on select', async () => {
   render(<DictationSection />);
-  await waitFor(() => expect(screen.getByText('GROQ_API_KEY')).toBeInTheDocument());
-  const secretSelect = screen.getByLabelText(/API key/i);
-  fireEvent.change(secretSelect, { target: { value: 'OPENAI_API_KEY' } });
+  fireEvent.click(screen.getByRole('combobox', { name: /API key/i }));
+  await waitFor(() => expect(screen.getByRole('option', { name: 'GROQ_API_KEY' })).toBeInTheDocument());
+  pickOption(/API key/i, 'OPENAI_API_KEY');
   expect(useSettings.getState().sttSecretName).toBe('OPENAI_API_KEY');
 });
 
 it('changing provider resets the model to that provider first model', () => {
   render(<DictationSection />);
-  fireEvent.change(screen.getByLabelText(/Provider/i), { target: { value: 'openai' } });
+  pickOption(/Provider/i, /^OpenAI/);
   expect(useSettings.getState().sttProvider).toBe('openai');
   expect(useSettings.getState().sttModel).toBe('gpt-4o-mini-transcribe');
 });
 
 it('saves each change to the daemon (the same on every device)', () => {
   render(<DictationSection />);
-  fireEvent.change(screen.getByLabelText(/Provider/i), { target: { value: 'openai' } });
+  pickOption(/Provider/i, /^OpenAI/);
   expect(put).toHaveBeenCalledWith({ provider: 'openai' });
   expect(put).toHaveBeenCalledWith({ model: 'gpt-4o-mini-transcribe' });
 });

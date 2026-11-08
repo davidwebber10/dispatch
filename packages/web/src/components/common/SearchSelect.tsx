@@ -6,6 +6,8 @@ export interface SearchSelectOption {
   label: string;
   /** Muted second line — a model id, a context size. Searched too. */
   hint?: string;
+  /** Shown, muted, and not pickable (a provider that is coming soon). */
+  disabled?: boolean;
 }
 
 /**
@@ -71,7 +73,10 @@ export function SearchSelect({ value, options, onChange, ariaLabel, id, searchab
     setOpen(true);
   }
   function hide() { setOpen(false); triggerRef.current?.focus({ preventScroll: true }); }
-  function pick(v: string) { onChange(v); setOpen(false); triggerRef.current?.focus({ preventScroll: true }); }
+  function pick(v: string) {
+    if (options.find((o) => o.value === v)?.disabled) return;
+    onChange(v); setOpen(false); triggerRef.current?.focus({ preventScroll: true });
+  }
 
   // The keyboard can resize/pan the visual viewport or scroll the modal when search
   // gets focus. Follow those changes instead of treating them as dismissals.
@@ -201,12 +206,12 @@ export function SearchSelect({ value, options, onChange, ariaLabel, id, searchab
               const selected = o.value === value;
               const hot = i === active;
               return (
-                <li key={o.value} id={`${listId}-${i}`} data-index={i} role="option" aria-selected={selected}
+                <li key={o.value} id={`${listId}-${i}`} data-index={i} role="option" aria-selected={selected} aria-disabled={o.disabled || undefined}
                   onMouseEnter={() => setActive(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(o.value)}
                   style={{
                     display: 'flex', flexDirection: 'column', gap: 1, justifyContent: 'center', minHeight: lg ? 44 : 32, padding: lg ? '6px 12px' : '5px 10px',
-                    borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                    background: hot ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))' : 'transparent',
+                    borderRadius: 'var(--radius-sm)', cursor: o.disabled ? 'default' : 'pointer', opacity: o.disabled ? 0.5 : 1,
+                    background: hot && !o.disabled ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-elevated))' : 'transparent',
                     color: selected ? 'var(--color-accent)' : 'var(--color-text-primary)',
                   }}>
                   <span style={{ fontSize: lg ? 14 : 12.5, fontWeight: selected ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>

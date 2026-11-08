@@ -4,6 +4,7 @@ import { useSecrets } from '../../stores/secrets';
 import { api } from '../../api/client';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { sectionLabel, summaryLine, ghostBtn, fieldInput, solidBtn, Toggle, SearchInput, HoverRow, IconGhost, Sheet } from './ui';
+import { Select } from '../common/Select';
 
 const desc: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-text-secondary)' };
 const mono: React.CSSProperties = { font: '400 11.5px var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -211,16 +212,12 @@ export function SecretsSection() {
           <input type="password" value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void connect(); }} placeholder="Doppler service token (dp.st.…)" autoComplete="off" style={fieldInput} />
           <div style={{ display: 'flex', gap: 8 }}>
             {projects.length > 0 && (
-              <select value={project} onChange={(e) => void pickProject(e.target.value)} style={{ ...select, flex: 1 }}>
-                <option value="">Select project…</option>
-                {projects.map((p) => <option key={p.id} value={p.slug}>{p.name}</option>)}
-              </select>
+              <Select ariaLabel="Doppler project" value={project} onChange={(v) => void pickProject(v)} placeholder="Select project…" style={{ flex: 1, width: 'auto', height: 34 }}
+                options={projects.map((p) => ({ value: p.slug, label: p.name }))} />
             )}
             {configs.length > 0 && (
-              <select value={config} onChange={(e) => void pickConfig(e.target.value)} style={{ ...select, flex: 1 }}>
-                <option value="">Select config…</option>
-                {configs.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-              </select>
+              <Select ariaLabel="Doppler config" value={config} onChange={(v) => void pickConfig(v)} placeholder="Select config…" style={{ flex: 1, width: 'auto', height: 34 }}
+                options={configs.map((c) => ({ value: c.name, label: c.name }))} />
             )}
             <button onClick={() => void connect()} disabled={!token.trim() || busy} style={solidBtn(!!token.trim() && !busy)}>Connect</button>
           </div>

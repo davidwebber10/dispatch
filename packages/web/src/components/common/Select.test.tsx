@@ -57,6 +57,18 @@ describe('Select', () => {
     expect(screen.getByRole('textbox', { name: 'Search project' })).toBeInTheDocument();
   });
 
+  it('a disabled option shows but cannot be picked', () => {
+    const onChange = vi.fn();
+    render(<Select ariaLabel="Provider" value="a" options={[{ value: 'a', label: 'Groq' }, { value: 'b', label: 'Local (coming soon)', disabled: true }]} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
+    const soon = screen.getByRole('option', { name: 'Local (coming soon)' });
+    expect(soon).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(soon);
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('takes an id, so a <label htmlFor> names it', () => {
     render(<><label htmlFor="pick-unit">Unit of time</label><Select id="pick-unit" value="days" options={UNITS} onChange={() => {}} /></>);
     expect(screen.getByRole('combobox', { name: 'Unit of time' })).toHaveTextContent('Days');

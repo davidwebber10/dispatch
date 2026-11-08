@@ -4,6 +4,7 @@ import { SkillsSection } from './SkillsSection';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import type { SkillRow } from '../../api/types';
+import { pickOption } from '../../test/select';
 
 let skills: SkillRow[];
 const skill = (id: string, extra: Partial<SkillRow> = {}): SkillRow => ({ id, name: `Skill ${id}`, version: '1.0.0', description: `${id} helps`, harnesses: null, folder: `/s/${id}`, install: null, enabled: true, enabledHere: true, text: `# ${id}\n\nDo ${id}.`, ...extra });
@@ -27,7 +28,7 @@ describe('Settings → Skills (plugins slice 6)', () => {
     expect(screen.getByTestId('skill-row-tidy')).toHaveTextContent('Installed');
     fireEvent.click(within(review).getByRole('switch', { name: 'Enabled everywhere' }));
     await waitFor(() => expect(api.disableSkill).toHaveBeenCalledWith('review'));
-    fireEvent.change(screen.getByLabelText('Project'), { target: { value: 's2' } });
+    pickOption('Project', 'Beta');
     await waitFor(() => expect(api.listSkills).toHaveBeenCalledWith('s2'));
     const reviewB = await screen.findByTestId('skill-row-review');
     const here = within(reviewB).getByRole('switch', { name: 'Enabled for Beta' });

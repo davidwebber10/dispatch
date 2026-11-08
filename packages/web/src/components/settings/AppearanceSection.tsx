@@ -3,10 +3,12 @@ import { THEMES, SYSTEM_DARK, SYSTEM_LIGHT, resolveTokens, type Theme } from '..
 import { useActiveTheme } from '../../themes/apply';
 import { MultiPaneSetting } from '../panes/MultiPaneSetting';
 import { sectionLabel, summaryLine, row, item, Divider, Toggle, Stepper } from './ui';
+import { Select } from '../common/Select';
 
 const note: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
 const group: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12 };
-const select: React.CSSProperties = { height: 30, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
+const select: React.CSSProperties = { height: 30, width: 140, font: '400 12px var(--font-sans)' };
+const DOC_EDITORS = [{ value: '', label: 'None' }, { value: 'vscode', label: 'VS Code' }, { value: 'cursor', label: 'Cursor' }, { value: 'zed', label: 'Zed' }];
 
 const tileGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: 8 };
 const subLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '0.6px', color: 'var(--color-text-tertiary)', margin: '2px 0 -2px' };
@@ -169,12 +171,7 @@ export function AppearanceSection() {
         <span style={sectionLabel}>EDITOR</span>
         <div style={row}>
           <label htmlFor="settings-doc-editor" style={item}>Open docs in</label>
-          <select id="settings-doc-editor" value={editor} onChange={(e) => set().setEditor(e.target.value as DocEditor)} style={select}>
-            <option value="">None</option>
-            <option value="vscode">VS Code</option>
-            <option value="cursor">Cursor</option>
-            <option value="zed">Zed</option>
-          </select>
+          <Select id="settings-doc-editor" value={editor} onChange={(v) => set().setEditor(v as DocEditor)} style={select} options={DOC_EDITORS} />
         </div>
         <div style={note}>The doc viewer's “Open in editor” button opens files in this editor. None hides the button.</div>
       </div>

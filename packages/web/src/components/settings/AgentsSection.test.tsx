@@ -48,8 +48,8 @@ describe('AgentsSection — OpenCode model list', () => {
       'Claude Opus~anthropic/claude-opus-latest',
       'Kimi~moonshotai/kimi-latest',
     ]);
-    const def = within(card).getByLabelText('Default model') as HTMLSelectElement;
-    expect(Array.from(def.options).map((o) => o.text)).toEqual(['List default (Claude Opus)', 'Claude Opus', 'Kimi']);
+    fireEvent.click(within(card).getByRole('combobox', { name: 'Default model' }));
+    expect(within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent)).toEqual(['List default (Claude Opus)', 'Claude Opus', 'Kimi']);
   });
 
   it('removing a model saves the list without it', async () => {

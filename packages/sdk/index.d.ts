@@ -125,7 +125,7 @@ export interface FilterBarProps {
 
 export interface SelectProps {
   value: string;
-  options: { value: string; label: string; hint?: string }[];
+  options: { value: string; label: string; hint?: string; disabled?: boolean }[];
   onChange(value: string): void;
   /** The accessible name; or give an `id` and a `<label htmlFor>`. */
   ariaLabel?: string;

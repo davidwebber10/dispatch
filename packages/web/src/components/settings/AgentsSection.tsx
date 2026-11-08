@@ -8,6 +8,7 @@ import { useSettings } from '../../stores/settings';
 import { AutoArchiveField } from '../sidebar/AutoArchiveField';
 import { SpinnerWordsField } from './SpinnerWordsField';
 import { useSpinnerWords } from '../../stores/spinnerWords';
+import { Select } from '../common/Select';
 
 /**
  * Settings → Agents (formerly Harnesses): the Control Plane's name, then per-harness defaults. All of it is
@@ -22,10 +23,7 @@ import { useSpinnerWords } from '../../stores/spinnerWords';
  * applies to the next thread it starts.
  */
 
-const selectStyle = {
-  height: 34, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, minWidth: 200,
-} as const;
+const selectStyle = { height: 34, fontSize: 13, width: 'auto', minWidth: 200, maxWidth: 280 } as const;
 const rowStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } as const;
 const cardStyle = {
   display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px',
@@ -138,33 +136,29 @@ function HarnessDefaults() {
 
             <div style={rowStyle}>
               <label htmlFor={`hm-${h.id}`} style={{ fontSize: 13 }}>Default model</label>
-              <select
+              {/* OpenCode always pins a real model, so its "unset" reads as the first of its list. */}
+              <Select
                 id={`hm-${h.id}`}
                 style={selectStyle}
                 value={s.defaultModel ?? ''}
-                onChange={(e) => void put({ [h.type]: { defaultModel: e.target.value || null } })}
-              >
-                {/* OpenCode always pins a real model, so its "unset" reads as the first of its list. */}
-                <option value="">{h.id === 'opencode' ? `List default (${models[0]?.label ?? '—'})` : 'Harness default'}</option>
-                {models.filter((m) => m.model !== null).map((m) => (
-                  <option key={m.model} value={m.model!}>{m.label}</option>
-                ))}
-              </select>
+                onChange={(v) => void put({ [h.type]: { defaultModel: v || null } })}
+                options={[
+                  { value: '', label: h.id === 'opencode' ? `List default (${models[0]?.label ?? '—'})` : 'Harness default' },
+                  ...models.filter((m) => m.model !== null).map((m) => ({ value: m.model!, label: m.label })),
+                ]}
+              />
             </div>
 
             {twoModes && (
               <div style={rowStyle}>
                 <label htmlFor={`hmode-${h.id}`} style={{ fontSize: 13 }}>Default mode</label>
-                <select
+                <Select
                   id={`hmode-${h.id}`}
                   style={selectStyle}
                   value={s.defaultMode ?? ''}
-                  onChange={(e) => void put({ [h.type]: { defaultMode: e.target.value || null } })}
-                >
-                  <option value="">No preference</option>
-                  <option value="cli">CLI</option>
-                  <option value="pretty">Pretty</option>
-                </select>
+                  onChange={(v) => void put({ [h.type]: { defaultMode: v || null } })}
+                  options={[{ value: '', label: 'No preference' }, { value: 'cli', label: 'CLI' }, { value: 'pretty', label: 'Pretty' }]}
+                />
               </div>
             )}
 
@@ -210,18 +204,14 @@ function HarnessDefaults() {
 
                 <div style={rowStyle}>
                   <label htmlFor="oc-secret" style={{ fontSize: 13 }}>OpenRouter key (Doppler secret)</label>
-                  <select
+                  {/* The current name always shows, even when the secrets list failed to load. */}
+                  <Select
                     id="oc-secret"
                     style={selectStyle}
                     value={data.opencodeKey.secret}
-                    onChange={(e) => void put({ opencode: { keySecret: e.target.value || null } })}
-                  >
-                    {/* The current name always renders, even when the secrets list failed to load. */}
-                    {!secretNames.includes(data.opencodeKey.secret) && (
-                      <option value={data.opencodeKey.secret}>{data.opencodeKey.secret}</option>
-                    )}
-                    {secretNames.map((n) => <option key={n} value={n}>{n}</option>)}
-                  </select>
+                    onChange={(v) => void put({ opencode: { keySecret: v || null } })}
+                    options={[...(secretNames.includes(data.opencodeKey.secret) ? [] : [data.opencodeKey.secret]), ...secretNames].map((n) => ({ value: n, label: n }))}
+                  />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                   {data.opencodeKey.present

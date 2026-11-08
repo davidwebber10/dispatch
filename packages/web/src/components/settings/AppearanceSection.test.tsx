@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { AppearanceSection } from './AppearanceSection';
 import { useSettings } from '../../stores/settings';
 import { THEMES, getTheme, resolveTokens } from '../../themes';
+import { pickOption } from '../../test/select';
 
 /** jsdom serializes inline colors as rgb(r, g, b). */
 const hexToRgb = (hex: string) => { const n = parseInt(hex.slice(1, 7), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; };
@@ -73,7 +74,7 @@ describe('AppearanceSection — what moved in, what left', () => {
   it('offers the docs editor (also in Chat → Memory)', () => {
     useSettings.setState({ editor: '' });
     render(<AppearanceSection />);
-    fireEvent.change(screen.getByLabelText('Open docs in'), { target: { value: 'cursor' } });
+    pickOption('Open docs in', 'Cursor');
     expect(useSettings.getState().editor).toBe('cursor');
   });
 
