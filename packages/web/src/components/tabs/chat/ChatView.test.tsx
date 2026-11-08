@@ -739,6 +739,20 @@ describe('ChatView — paint-settle gate (back-port of the Stream reveal latch)'
   });
 });
 
+describe('ChatView — the active model in Pretty', () => {
+  it('the status row shows the model chip for an agent thread, with the saved model before any frame', async () => {
+    const { useTabs } = await import('../../../stores/tabs');
+    useTabs.setState({ byProject: { s1: [{ id: 'tm', sessionId: 's1', type: 'claude-code', label: 'T', pid: 1, externalId: 'e', workingDir: null, status: 'waiting', createdAt: '', config: { transport: 'structured', model: 'sonnet' }, archivedAt: null, sortOrder: 0 }] } } as any);
+    render(<ChatView terminalId="tm" />);
+    expect(screen.getByRole('button', { name: 'Model: Sonnet' })).toBeInTheDocument();
+  });
+
+  it('a "Model switched" line renders in the timeline', () => {
+    renderTimelineItems([{ kind: 'user', text: 'hi' }, { kind: 'system', systemKind: 'model', text: 'claude-haiku-5-5' }]);
+    expect(screen.getByText('Model switched to Haiku 5.5')).toBeInTheDocument();
+  });
+});
+
 describe('Log in to Claude in a Pretty thread', () => {
   const failed: ConvItem = { kind: 'result', isError: true, text: 'Failed to authenticate: OAuth session expired and could not be refreshed' };
   const renderWith = (items: ConvItem[], loginItem: ConvItem | null) => render(

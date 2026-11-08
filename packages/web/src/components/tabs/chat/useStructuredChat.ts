@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { modelFromFrame } from '../../../lib/modelName';
+import { useActiveModel } from '../../../stores/activeModel';
 import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, ApiError, type ContentBlock } from '../../../api/client';
@@ -392,6 +394,7 @@ export function useStructuredChat(
       return;
     }
     setItems([]); setBusy(false); setModel(undefined); setPending(null);
+    useActiveModel.getState().clear(terminalId); // the connect's system/model frame brings the current one
     setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
     hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
     loadingOlderRef.current = false; setLoadingOlder(false);
@@ -491,9 +494,14 @@ export function useStructuredChat(
       onEvent: (event: any) => {
         const type = event?.type;
 
-        if (type === 'system' && event.subtype === 'init') {
-          const m = event.model || event.session?.model || event.modelId;
-          if (m) setModel(m);
+        // The active model: the newest frame that names one wins (lib/modelName's modelFromFrame).
+        const reported = modelFromFrame(event);
+        if (reported) { setModel(reported); useActiveModel.getState().set(terminalId, reported); }
+        if (type === 'system' && event.subtype === 'init') return;
+        if (type === 'system' && event.subtype === 'model') {
+          // A switch (the Pretty model switcher) leaves a line in the chat; the connect-time
+          // model frame does not.
+          if (event.switched === true && reported) appendItems([{ kind: 'system', systemKind: 'model', text: reported }]);
           return;
         }
 

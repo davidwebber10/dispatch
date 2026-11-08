@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
+import { ModelSwitcher, ModelNotice } from './ModelSwitcher';
+import { friendlyModelName } from '../../../lib/modelName';
 import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
 import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
 import { CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
@@ -420,12 +422,14 @@ export function ChatView({ terminalId }: { terminalId: string }) {
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
+          {/* The active model, always shown once a thread has one, and the switcher behind it. */}
+          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={busy || compacting} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
-            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{modLabel('↵')} send</span>
+            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
           )}
           <span style={{ marginLeft: 'auto' }} />
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
         </div>
       </div>
       <DocViewer owner={terminalId} />
@@ -798,6 +802,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     // usually acts on it in the very next block, so breaking the column there would split
     // one continuous turn into two.
     else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
+    else if (it.kind === 'system' && it.systemKind === 'model' && it.text) node = <ModelNotice model={it.text} />;
     if (node == null) continue;
 
     // A non-machinery node closes any open machinery strip first, so the bordered block
@@ -961,7 +966,7 @@ function EmptyState({ model }: { model?: string }) {
     <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13.5, textAlign: 'center', padding: '48px 0' }}>
       <Sparkle size={28} weight="duotone" color="var(--color-accent)" style={{ marginBottom: 10 }} />
       <div style={{ color: 'var(--color-text-secondary)' }}>Send a message to start the conversation.</div>
-      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{model}</div>}
+      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{friendlyModelName(model) ?? model}</div>}
     </div>
   );
 }

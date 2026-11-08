@@ -240,6 +240,9 @@ export interface ConvItem {
   // not reset what the reader opened (2026-11-06).
   blockKey?: string;
   isError?: boolean;
+  // kind 'system' only: which daemon line it is. 'model' — the Pretty model switcher changed the
+  // model; `text` holds the new model id (rendered with its friendly name).
+  systemKind?: 'model';
   ts?: string;
   uuid?: string;
   line?: number;      // source JSONL line index (enables jump-to from search)

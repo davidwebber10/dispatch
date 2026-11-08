@@ -260,6 +260,35 @@ test('system/init sets the model', () => {
   expect(result.current.model).toBe('claude-x');
 });
 
+test('the active model follows the newest frame: daemon model frame, init, a lead assistant frame — never a sub-agent', async () => {
+  const { useActiveModel } = await import('../../../stores/activeModel');
+  const { result } = renderHook(() => useStructuredChat('t-model'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'model', model: 'claude-opus-5-5' }));
+  expect(result.current.model).toBe('claude-opus-5-5');
+  expect(useActiveModel.getState().byTerminal['t-model']).toBe('claude-opus-5-5');
+  act(() => cbs.onEvent({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', content: [] } }));
+  expect(result.current.model).toBe('claude-opus-5-5');
+  act(() => cbs.onEvent({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-sonnet-5-5', content: [] } }));
+  expect(result.current.model).toBe('claude-sonnet-5-5');
+  expect(useActiveModel.getState().byTerminal['t-model']).toBe('claude-sonnet-5-5');
+  // A model frame is not a conversation item.
+  expect(result.current.items.some((i) => i.kind === 'system')).toBe(false);
+});
+
+test('a switch notice (system/model switched) adds a "Model switched" item to the timeline', () => {
+  const { result } = renderHook(() => useStructuredChat('t-switch'));
+  act(() => cbs.onEvent({ type: 'system', subtype: 'model', model: 'claude-haiku-5-5', switched: true }));
+  expect(result.current.model).toBe('claude-haiku-5-5');
+  expect(result.current.items).toEqual([{ kind: 'system', systemKind: 'model', text: 'claude-haiku-5-5' }]);
+});
+
+test('opening a thread forgets the model a previous view of it knew (no stale model after CLI -> Pretty)', async () => {
+  const { useActiveModel } = await import('../../../stores/activeModel');
+  useActiveModel.getState().set('t-stale', 'claude-opus-5-5');
+  renderHook(() => useStructuredChat('t-stale'));
+  expect(useActiveModel.getState().byTerminal['t-stale']).toBeUndefined();
+});
+
 test('system/status toggles compacting and surfaces the result on the follow-up status', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   expect(result.current.compacting).toBe(false);

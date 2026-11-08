@@ -30,6 +30,8 @@ export interface ContextIndicatorProps {
   /** The thread, so the popup can show its usage limits. */
   terminalId?: string;
   compact: () => void;
+  /** Lead with the model name. Off in Pretty, whose model chip (ModelSwitcher) already shows it. */
+  showModel?: boolean;
 }
 
 /**
@@ -38,7 +40,7 @@ export interface ContextIndicatorProps {
  * assistant turn (contextTokens undefined), so it renders nothing until then —
  * except a compaction's own compacting/result state, which can still flash.
  */
-export function ContextIndicator({ contextTokens, contextWindow, compacting, compactResult, model, terminalId, compact }: ContextIndicatorProps) {
+export function ContextIndicator({ contextTokens, contextWindow, compacting, compactResult, model, terminalId, compact, showModel = true }: ContextIndicatorProps) {
   const [open, setOpen] = useState(false);
   const [flash, setFlash] = useState(false);
 
@@ -84,7 +86,7 @@ export function ContextIndicator({ contextTokens, contextWindow, compacting, com
           )
         ) : (
           <>
-            {modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
+            {showModel && modelDisplayName(model) && <span>{modelDisplayName(model)} ·</span>}
             <span style={{ width: 28, height: 3, borderRadius: 'var(--radius-xs)', background: 'var(--color-border)', overflow: 'hidden', display: 'inline-block' }}>
               <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: barColor }} />
             </span>
