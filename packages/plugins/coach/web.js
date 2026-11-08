@@ -917,8 +917,16 @@ export function createCoach(d, deps = {}) {
     await saveSettings(s);
   }
 
+  // The page is the app's grouped settings cards (d.ui.SettingsGroup / SettingsRow, the shape of
+  // Settings → Plugins): label and one-line hint on the left, a small control on the right, and a
+  // wide control (a segmented choice, fields) on its own line under the text (2026-11-07).
+  const isMobile = () => (d.hooks && typeof d.hooks.useIsMobile === 'function' ? d.hooks.useIsMobile() : false);
+  /** An input's look: the phone gets 16px text (iOS does not zoom) and a taller box. */
+  const fieldStyle = (phone, width) => ({ ...S.input, marginTop: 0, width, height: phone ? 36 : 30, fontSize: phone ? 16 : 12.5 });
+
   /** A number field that writes on blur or Enter, clamped to [min, max]. */
   function NumField({ label, value, min, max, step = 1, onSave, width = 70 }) {
+    const phone = isMobile();
     const [text, setText] = useState(String(value));
     useEffect(() => { setText(String(value)); }, [value]);
     const commit = () => {
@@ -928,107 +936,132 @@ export function createCoach(d, deps = {}) {
       setText(String(v));
       if (v !== value) void onSave(v);
     };
-    return h('input', { type: 'number', 'aria-label': label, value: text, min, max, step, style: { ...S.input, marginTop: 0, width }, onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
+    return h('input', { type: 'number', inputMode: 'decimal', 'aria-label': label, value: text, min, max, step, style: fieldStyle(phone, width), onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
   }
-  function TextField({ label, value, onSave, width = 200 }) {
+  function TextField({ label, value, onSave, style }) {
+    const phone = isMobile();
     const [text, setText] = useState(value);
     useEffect(() => { setText(value); }, [value]);
     const commit = () => { const v = text.trim(); if (v && v !== value && /^\S{1,120}$/.test(v)) void onSave(v); else setText(value); };
-    return h('input', { type: 'text', 'aria-label': label, value: text, style: { ...S.input, marginTop: 0, width }, onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
+    return h('input', { type: 'text', 'aria-label': label, value: text, autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, style: { ...fieldStyle(phone, '100%'), minWidth: 0, ...style }, onChange: (e) => setText(e.target.value), onBlur: commit, onKeyDown: (e) => { if (e.key === 'Enter') commit(); } });
   }
-  function Radios({ label, value, options, onPick }) {
-    return h('div', { role: 'radiogroup', 'aria-label': label, style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, ...options.map(([v, text]) =>
-      h('button', { key: v, type: 'button', role: 'radio', 'aria-checked': value === v, style: value === v ? S.chipOn : S.chip, onClick: () => { if (value !== v) void onPick(v); } }, text)));
-  }
-  function Toggle({ label, on, onClick }) {
-    const T = d.ui && d.ui.Toggle;
-    return T ? h(T, { on, label, onClick }) : h('button', { type: 'button', role: 'switch', 'aria-checked': on, 'aria-label': label, style: on ? S.chipOn : S.chip, onClick }, on ? 'On' : 'Off');
-  }
-  const Line = ({ label, hint, children }) => h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--color-border)' } },
-    h('div', { style: { flex: 1, minWidth: 0 } }, h('div', { style: { fontSize: 13, color: 'var(--color-text-primary)' } }, label), hint ? h('div', { style: S.src }, hint) : null),
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } }, children));
-  const Group = (title, ...rows) => h('div', { style: { marginTop: 18 } }, h('div', { style: S.label }, title), ...rows);
+  const Toggle = ({ label, on, onClick }) => h(d.ui.Toggle, { on, label, onClick });
+  const Row = d.ui.SettingsRow;
+  const Group = d.ui.SettingsGroup;
+  const unit = (text) => h('span', { style: S.src }, text);
 
   function TierPicker({ tier, s }) {
     const cur = (s.model && s.model[tier]) || { harness: 'claude', model: tier === 'small' ? SMALL_DEFAULT.claude : LARGE_DEFAULT.claude };
     const name = tier === 'small' ? 'Small model' : 'Large model';
     const set = (next) => saveSettings({ ...store.getState().settings, model: { ...store.getState().settings.model, mode: 'pick', [tier]: next } });
-    return h(Line, { label: name, hint: tier === 'small' ? 'Checks each tip (cheap).' : 'Writes tips, More, and the weekly recap.' },
-      h(d.ui.Select, { ariaLabel: `${name} harness`, value: cur.harness, style: { width: 120 }, onChange: (harness) => { void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); },
-        options: Object.keys(HARNESS_NAME).map((k) => ({ value: k, label: HARNESS_NAME[k] })) }),
-      h(TextField, { label: name, value: cur.model, onSave: (model) => set({ harness: cur.harness, model }) }));
+    return h(Row, { label: name, hint: tier === 'small' ? 'Checks each tip. Pick a cheap one.' : 'Writes tips, More, and the weekly recap.' },
+      h('div', { style: { display: 'flex', gap: 8, minWidth: 0, maxWidth: 520 } },
+        h('div', { style: { width: 130, flexShrink: 0 } },
+          h(d.ui.Select, { ariaLabel: `${name} harness`, value: cur.harness, onChange: (harness) => { void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); },
+            options: Object.keys(HARNESS_NAME).map((k) => ({ value: k, label: HARNESS_NAME[k] })) })),
+        h('div', { style: { flex: 1, minWidth: 0 } }, h(TextField, { label: name, value: cur.model, onSave: (model) => set({ harness: cur.harness, model }) }))));
   }
 
   const THRESHOLD_HINT = {
-    repeatedPrompt: 'The same prompt this many times in this many days', serialIndependent: 'Short threads in one project run one after another',
-    idleWait: 'A thread busy this long while nothing else runs', stepByStep: 'One-line prompts in a row in one thread',
-    noPlanBigTask: 'A long prompt with this many parts and no plan', fastApprove: 'An approval this soon after a long answer',
-    narrowBreadth: 'This share of threads being one kind of work',
-    skillFit: 'The same instructions in this many threads in this many days (at least this many characters)',
-    pluginFit: 'The same multi-step workflow this many times in this many days, with no schedule',
+    repeatedPrompt: 'The same prompt this many times in this many days.', serialIndependent: 'Short threads in one project run one after another.',
+    idleWait: 'A thread busy this long while nothing else runs.', stepByStep: 'One-line prompts in a row in one thread.',
+    noPlanBigTask: 'A long prompt with this many parts and no plan.', fastApprove: 'An approval this soon after a long answer.',
+    narrowBreadth: 'This share of threads being one kind of work.',
+    skillFit: 'The same instructions in this many threads in this many days.',
+    pluginFit: 'The same multi-step workflow this many times in this many days, with no schedule.',
   };
+  /** "maxMinutes" → "max minutes": the field's word over its box. */
+  const words = (field) => field.replace(/([A-Z])/g, ' $1').toLowerCase();
   function Advanced({ s }) {
     const th = s.advanced.thresholds;
-    const setTh = (group, field, v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, thresholds: { ...store.getState().settings.advanced.thresholds, [group]: { ...store.getState().settings.advanced.thresholds[group], [field]: v } } } });
-    return h('div', { 'data-testid': 'coach-advanced', style: { marginTop: 6 } },
-      h(Line, { label: 'Show a card at this confidence or more', hint: 'The small model says how sure it is, from 0 to 1.' },
-        h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, minConfidence: v } }) }),
-        h('span', { style: S.src }, 'default 0.7')),
-      h(Line, { label: 'Hide a card after this many hours', hint: 'A card about something long past does not show.' },
-        h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, maxCardAgeHours: v } }) }),
-        h('span', { style: S.src }, `default ${CARD_MAX_AGE_HOURS}`)),
-      ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Line, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
-        ...Object.entries(fields).map(([field, def]) => h('span', { key: field, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-          h('span', { style: S.src }, field),
-          h(NumField, { label: `${group} ${field}`, value: (th[group] && th[group][field]) ?? def, min: 0, max: 100000, step: field === 'share' ? 0.05 : 1, width: 64, onSave: (v) => setTh(group, field, v) }),
-          h('span', { 'data-default': `${group}.${field}`, style: S.src }, `default ${def}`))))));
+    const put = (patch) => saveSettings({ ...store.getState().settings, ...patch });
+    const putAdv = (patch) => saveSettings({ ...store.getState().settings, advanced: { ...store.getState().settings.advanced, ...patch } });
+    const setTh = (group, field, v) => putAdv({ thresholds: { ...store.getState().settings.advanced.thresholds, [group]: { ...store.getState().settings.advanced.thresholds[group], [field]: v } } });
+    const picked = s.model && s.model.mode !== 'auto';
+    return h('div', { 'data-testid': 'coach-advanced', style: { display: 'flex', flexDirection: 'column', gap: 18 } },
+      h(Group, { title: 'Cards' },
+        h(Row, { label: 'Most cards in a day', control: h(NumField, { label: 'Most cards in a day', value: s.maxPerDay, min: 0, max: 20, onSave: (v) => put({ maxPerDay: v }) }) }),
+        h(Row, { label: 'Most cards in one session', control: h(NumField, { label: 'Most cards in one session', value: s.maxPerSession, min: 0, max: 20, onSave: (v) => put({ maxPerSession: v }) }) }),
+        h(Row, { label: 'Lowest confidence to show', hint: 'The small model says how sure it is, from 0 to 1. Default 0.7.',
+          control: h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => putAdv({ minConfidence: v }) }) }),
+        h(Row, { label: 'Hide a card after', hint: `A card about something long past does not show. Default ${CARD_MAX_AGE_HOURS} hours.`,
+          control: h(d.Fragment, null, h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => putAdv({ maxCardAgeHours: v }) }), unit('h')) })),
+      h(Group, { title: 'Models' },
+        h(Row, { label: 'Model' },
+          h(d.ui.Segmented, { ariaLabel: 'Model', value: picked ? 'pick' : 'auto', onChange: (v) => put({ model: v === 'auto' ? { mode: 'auto' } : { mode: 'pick', small: { harness: 'claude', model: SMALL_DEFAULT.claude }, large: { harness: 'claude', model: LARGE_DEFAULT.claude } } }),
+            options: [{ value: 'auto', label: 'Automatic', hint: 'The subscription with the most room, never the last of a limit.' }, { value: 'pick', label: 'Pick models', hint: 'A harness and a model for each tier.' }] })),
+        picked && h(TierPicker, { tier: 'small', s }),
+        picked && h(TierPicker, { tier: 'large', s }),
+        h(Row, { label: 'OpenRouter budget', hint: 'OpenRouter has no weekly limit, so its budget is dollars a week.',
+          control: h(d.Fragment, null, unit('$'), h(NumField, { label: 'OpenRouter budget, dollars a week', value: s.budgetUsdWeekly, min: 0, max: 10000, step: 1, onSave: (v) => saveBudget({ budgetUsdWeekly: v }) })) })),
+      h(Group, { title: 'When a tip fires', footer: 'Starting points. A lower number shows a tip sooner.' },
+        ...Object.entries(DEFAULT_THRESHOLDS).map(([group, fields]) => h(Row, { key: group, label: typeLabel(DETECTOR_OF_THRESHOLD[group]), hint: THRESHOLD_HINT[group] },
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(104px, 1fr))', gap: '8px 12px' } },
+            ...Object.entries(fields).map(([field, def]) => h('label', { key: field, style: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 } },
+              h('span', { style: { fontSize: 11.5, color: 'var(--color-text-secondary)' } }, words(field)),
+              h(NumField, { label: `${group} ${field}`, value: (th[group] && th[group][field]) ?? def, min: 0, max: 100000, step: field === 'share' ? 0.05 : 1, width: '100%', onSave: (v) => setTh(group, field, v) }),
+              h('span', { 'data-default': `${group}.${field}`, style: S.src }, `default ${def}`))))))));
   }
+
+  const HOW_OFTEN = [
+    { value: 'off', label: 'Off', hint: 'No cards and no recap.' },
+    { value: 'quiet', label: 'Quiet', hint: 'Only the weekly recap and the right-column tab.' },
+    { value: 'normal', label: 'Normal', hint: 'Up to 3 cards a day.' },
+    { value: 'chatty', label: 'Chatty', hint: 'Up to 8 cards a day.' },
+  ];
+  const THOROUGHNESS = [
+    { value: 'economy', label: 'Economy', hint: 'The fewest large-model calls.' },
+    { value: 'balanced', label: 'Balanced', hint: 'A large model writes tips and reviews threads.' },
+    { value: 'thorough', label: 'Thorough', hint: 'The large model for every step.' },
+    { value: 'budget', label: 'Fit budget', hint: 'The most thorough level that fits your budget.' },
+  ];
 
   function Settings() {
     const s = store((st) => st.settings);
     const loaded = store((st) => st.loaded);
     const projects = d.stores && d.stores.useProjects ? d.stores.useProjects((p) => p.sessions) : [];
+    const phone = isMobile();
     const [adv, setAdv] = useState(false);
     if (!loaded) return null;
     const put = (patch) => saveSettings({ ...store.getState().settings, ...patch });
+    const list = projects || [];
+    const ids = new Set(list.map((p) => p.id));
     const leave = new Set(s.leaveAlone || []);
-    const picked = s.model && s.model.mode !== 'auto';
-    return h('div', { 'data-testid': 'coach-settings', style: { fontSize: 13, color: 'var(--color-text-secondary)' } },
-      Group('HOW OFTEN',
-        h(Line, { label: 'How often', hint: 'Quiet: only the weekly recap and the right-column tab. Normal: up to 3 cards a day. Chatty: up to 8.' },
-          h(Radios, { label: 'How often', value: s.howOften, options: [['off', 'Off'], ['quiet', 'Quiet'], ['normal', 'Normal'], ['chatty', 'Chatty']], onPick: (v) => put({ howOften: v }) })),
-        h(Line, { label: 'Most cards in a day' }, h(NumField, { label: 'Most cards in a day', value: s.maxPerDay, min: 0, max: 20, onSave: (v) => put({ maxPerDay: v }) })),
-        h(Line, { label: 'Most cards in one session' }, h(NumField, { label: 'Most cards in one session', value: s.maxPerSession, min: 0, max: 20, onSave: (v) => put({ maxPerSession: v }) })),
-        h(Line, { label: 'Quiet hours', hint: 'No cards and no recap push in these hours.' },
-          s.quietHours && h('input', { type: 'time', 'aria-label': 'Quiet from', value: s.quietHours.from, style: { ...S.input, marginTop: 0, width: 110 }, onChange: (e) => put({ quietHours: { ...s.quietHours, from: e.target.value } }) }),
-          s.quietHours && h('input', { type: 'time', 'aria-label': 'Quiet to', value: s.quietHours.to, style: { ...S.input, marginTop: 0, width: 110 }, onChange: (e) => put({ quietHours: { ...s.quietHours, to: e.target.value } }) }),
-          h(Toggle, { label: 'Quiet hours', on: !!s.quietHours, onClick: () => put({ quietHours: s.quietHours ? null : { from: '18:00', to: '08:00' } }) })),
-        h(Line, { label: 'Cards on the phone' }, h(Toggle, { label: 'Cards on the phone', on: !!s.phone, onClick: () => put({ phone: !s.phone }) })),
-        h(Line, { label: 'Mute shortcut', hint: 'Press ⌘K, then type "Mute coach".' })),
-      Group('WHAT KIND',
-        h(Line, { label: 'Prompt tips', hint: 'Better prompts: a plan first, the whole task at once.' }, h(Toggle, { label: 'Prompt tips', on: s.tipTypes.prompt !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, prompt: s.tipTypes.prompt === false } }) })),
-        h(Line, { label: '"Think bigger" tips', hint: 'Schedules, parallel threads, new kinds of work.' }, h(Toggle, { label: '"Think bigger" tips', on: s.tipTypes.thinkBigger !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, thinkBigger: s.tipTypes.thinkBigger === false } }) })),
-        h(Line, { label: 'Show the five measures', hint: 'The bars on the Coach screen. The Coach uses the measures either way.' }, h(Toggle, { label: 'Show the five measures', on: s.showMeasures !== false, onClick: () => put({ showMeasures: s.showMeasures === false }) })),
-        h(Line, { label: 'Weekly recap in the app', hint: 'Monday, after 5 active days.' }, h(Toggle, { label: 'Weekly recap in the app', on: s.recap.inApp !== false, onClick: () => put({ recap: { ...s.recap, inApp: s.recap.inApp === false } }) })),
-        h(Line, { label: 'Weekly recap push notification', hint: 'The recap only. Tips never arrive as push notifications.' }, h(Toggle, { label: 'Weekly recap push notification', on: !!s.recap.push, onClick: () => put({ recap: { ...s.recap, push: !s.recap.push } }) })),
-        h(Line, { label: 'Projects to leave alone', hint: 'The Coach does not look at these projects.' },
-          (projects || []).length === 0 ? h('span', { style: S.src }, 'No projects') : null),
-        h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 10, padding: '6px 0' } }, ...(projects || []).map((p) => h('label', { key: p.id, style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5 } },
-          h('input', { type: 'checkbox', 'aria-label': `Leave alone: ${p.name}`, checked: leave.has(p.id), onChange: () => put({ leaveAlone: leave.has(p.id) ? [...leave].filter((x) => x !== p.id) : [...leave, p.id] }) }), p.name)))),
-      Group('COST AND MODELS',
-        h(Line, { label: 'Thoroughness', hint: 'Economy uses the fewest large-model calls. Use my budget picks the most thorough level that fits your budget.' },
-          h(Radios, { label: 'Thoroughness', value: s.thoroughness, options: [['economy', 'Economy'], ['balanced', 'Balanced'], ['thorough', 'Thorough'], ['budget', 'Use my budget']], onPick: (v) => put({ thoroughness: v }) })),
-        h(Line, { label: 'Budget', hint: 'At most this share of the weekly limit of the account the Coach uses. Dispatch stops the calls at the budget.' },
-          h(NumField, { label: 'Budget, percent of the weekly limit', value: s.budgetPercentWeekly, min: 0.1, max: 100, step: 0.5, onSave: (v) => saveBudget({ budgetPercentWeekly: v }) }), h('span', { style: S.src }, '%')),
-        h(Line, { label: 'OpenRouter budget', hint: 'OpenRouter has no limit: its budget is dollars a week.' },
-          h('span', { style: S.src }, '$'), h(NumField, { label: 'OpenRouter budget, dollars a week', value: s.budgetUsdWeekly, min: 0, max: 10000, step: 1, onSave: (v) => saveBudget({ budgetUsdWeekly: v }) })),
-        h(Line, { label: 'Model', hint: 'Automatic uses the subscription with the most room, and never the last of a limit.' },
-          h(Radios, { label: 'Model', value: picked ? 'pick' : 'auto', options: [['auto', 'Automatic'], ['pick', 'Pick a harness and models']], onPick: (v) => put({ model: v === 'auto' ? { mode: 'auto' } : { mode: 'pick', small: { harness: 'claude', model: SMALL_DEFAULT.claude }, large: { harness: 'claude', model: LARGE_DEFAULT.claude } } }) })),
-        picked && h(TierPicker, { tier: 'small', s }),
-        picked && h(TierPicker, { tier: 'large', s })),
-      h('div', { style: { marginTop: 18 } },
-        h('button', { type: 'button', 'aria-expanded': adv, style: S.btn, onClick: () => setAdv(!adv) }, 'Advanced'),
-        adv && h(Advanced, { s })));
+    const watched = list.filter((p) => !leave.has(p.id)).map((p) => p.id);
+    // An id with no project now (a deleted project) stays left alone.
+    const setWatched = (next) => { const on = new Set(next); put({ leaveAlone: [...(s.leaveAlone || []).filter((x) => !ids.has(x)), ...list.filter((p) => !on.has(p.id)).map((p) => p.id)] }); };
+    const time = (label, key) => h('input', { type: 'time', 'aria-label': label, value: s.quietHours[key], style: fieldStyle(phone, 120), onChange: (e) => put({ quietHours: { ...s.quietHours, [key]: e.target.value } }) });
+    return h('div', { 'data-testid': 'coach-settings', style: { display: 'flex', flexDirection: 'column', gap: 20, fontSize: 13, color: 'var(--color-text-secondary)' } },
+      h(Group, { title: 'Coach', footer: 'To mute it for a while: press ⌘K, then type "Mute coach".' },
+        h(Row, { label: 'How often' }, h(d.ui.Segmented, { ariaLabel: 'How often', value: s.howOften, options: HOW_OFTEN, onChange: (v) => put({ howOften: v }) })),
+        h(Row, { label: 'Cards on the phone', control: h(Toggle, { label: 'Cards on the phone', on: !!s.phone, onClick: () => put({ phone: !s.phone }) }) }),
+        h(Row, { label: 'Quiet hours', hint: 'No cards and no recap push in these hours.', control: h(Toggle, { label: 'Quiet hours', on: !!s.quietHours, onClick: () => put({ quietHours: s.quietHours ? null : { from: '18:00', to: '08:00' } }) }) },
+          s.quietHours && h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } }, unit('From'), time('Quiet from', 'from'), unit('to'), time('Quiet to', 'to')))),
+      h(Group, { title: 'What it suggests' },
+        h(Row, { label: 'Prompt tips', hint: 'Better prompts: a plan first, the whole task at once.', control: h(Toggle, { label: 'Prompt tips', on: s.tipTypes.prompt !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, prompt: s.tipTypes.prompt === false } }) }) }),
+        h(Row, { label: '"Think bigger" tips', hint: 'Schedules, parallel threads, new kinds of work.', control: h(Toggle, { label: '"Think bigger" tips', on: s.tipTypes.thinkBigger !== false, onClick: () => put({ tipTypes: { ...s.tipTypes, thinkBigger: s.tipTypes.thinkBigger === false } }) }) })),
+      h(Group, { title: 'What it looks at' },
+        h(Row, { label: 'Projects', hint: 'The Coach looks only at these projects.',
+          control: list.length === 0 ? unit('No projects') : h(d.ui.MultiSelect, { ariaLabel: 'Projects', title: 'Projects', allLabel: 'All projects', noneLabel: 'No projects', noun: ['project', 'projects'], value: watched, onChange: setWatched, options: list.map((p) => ({ value: p.id, label: p.name })) }) })),
+      h(Group, { title: 'Recap and measures' },
+        h(Row, { label: 'Weekly recap in the app', hint: 'Monday, after 5 active days.', control: h(Toggle, { label: 'Weekly recap in the app', on: s.recap.inApp !== false, onClick: () => put({ recap: { ...s.recap, inApp: s.recap.inApp === false } }) }) }),
+        h(Row, { label: 'Weekly recap push notification', hint: 'The recap only. Tips never arrive as a push.', control: h(Toggle, { label: 'Weekly recap push notification', on: !!s.recap.push, onClick: () => put({ recap: { ...s.recap, push: !s.recap.push } }) }) }),
+        h(Row, { label: 'Show the five measures', hint: 'The bars on the Coach screen.', control: h(Toggle, { label: 'Show the five measures', on: s.showMeasures !== false, onClick: () => put({ showMeasures: s.showMeasures === false }) }) })),
+      h(Group, { title: 'Cost and models' },
+        h(Row, { label: 'Thoroughness' }, h(d.ui.Segmented, { ariaLabel: 'Thoroughness', value: s.thoroughness, options: THOROUGHNESS, onChange: (v) => put({ thoroughness: v }) })),
+        h(Row, { label: 'Weekly budget', hint: 'A share of the weekly limit. Calls stop at it.',
+          control: h(d.Fragment, null, h(NumField, { label: 'Budget, percent of the weekly limit', value: s.budgetPercentWeekly, min: 0.1, max: 100, step: 0.5, onSave: (v) => saveBudget({ budgetPercentWeekly: v }) }), unit('%')) })),
+      h(Group, { title: 'Data' },
+        h(Row, { label: 'Memory, goals and reset', hint: 'See, edit, pause or reset it on the Coach screen.',
+          control: h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open the Coach') })),
+      h(Group, { title: 'Advanced' },
+        h('button', { type: 'button', 'aria-label': 'Advanced', 'aria-expanded': adv, onClick: () => setAdv(!adv),
+          style: { display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 12px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit' } },
+          h('span', { style: { flex: 1, minWidth: 0 } },
+            h('span', { style: { display: 'block', fontSize: 13.5, color: 'var(--color-text-primary)' } }, adv ? 'Hide advanced settings' : 'Show advanced settings'),
+            h('span', { style: { display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' } }, 'Card limits, models, the OpenRouter budget, tip triggers.')),
+          h('span', { style: { display: 'inline-flex', color: 'var(--color-text-tertiary)', transform: adv ? 'rotate(180deg)' : 'none', transition: 'transform 120ms' } }, icon('caret-down', null, 16)))),
+      adv && h(Advanced, { s }));
   }
 
   d.register(PLUGIN, {

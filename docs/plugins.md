@@ -90,7 +90,7 @@ What `register` takes:
 Icons are names from the SDK's map (`puzzle`, `sun`, `star`, `sparkle`, `lightning`,
 `calendar`, `clock`, `note`, `rocket`, `flag`, `heart`, `folder`, `terminal`, `git`, `cloud`,
 `database`, `bell`, `chart`, `list`, `play`, `gear`, `eye`, `chat`, `book`, `bug`, `shield`,
-`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`, `arrow-up`, `arrow-down`, `arrow-right`, `target`, `plus`); an unknown name shows the puzzle piece.
+`globe`, `wrench`, `copy`, `check`, `trash`, `image`, `file`, `pdf`, `html`, `csv`, `x`, `thumbs-up`, `thumbs-down`, `dots`, `bell-slash`, `arrow-up`, `arrow-down`, `arrow-right`, `target`, `plus`, `caret-down`, `caret-right`); an unknown name shows the puzzle piece.
 
 ### Right-column tabs
 
@@ -134,8 +134,37 @@ The SDK object, in full:
   null on Cancel.
 - `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
 - `api`: the app's API client, with the owner's credentials.
-- `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `FilterBar`, `Select`, and `styles`
-  (`sectionLabel`, `row`, `item`, `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
+- `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `FilterBar`, `Select`, `MultiSelect`,
+  `Segmented`, `SettingsGroup`, `SettingsRow`, and `styles` (`sectionLabel`, `row`, `item`,
+  `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
+  - `SettingsGroup` and `SettingsRow` build a settings page in the same grouped-card shape as
+    Settings → Plugins. A group is `{ title?, footer?, action?, children }`: a small heading over
+    a card, with a hairline between rows (falsy children are skipped). A row is
+    `{ label, hint?, control?, children? }`: the label and a one-line hint on the left, a small
+    `control` on the right (a `Toggle`, a short `Select`, a number field, a `MultiSelect`
+    trigger). A wide control goes in `children`, on its own full-width line under the label, so
+    the text is never squeezed.
+  - `Segmented` is a full-width segmented choice for 2 to 5 options: `{ value, options:
+    [{ value, label, hint? }], onChange(value), ariaLabel, size? }`. It is a `radiogroup`, and the
+    picked option's `hint` shows under it. Put it in a row's `children`, not in `control`. For
+    more options, or long labels, use `Select`.
+  - `MultiSelect` picks several values from a long list: `{ value: string[], options: [{ value,
+    label, note? }], onChange(values), ariaLabel, title?, summary?, allLabel?, noneLabel?, noun?,
+    searchable?, variant? }`. The trigger names the pick ("All projects", "All except 2",
+    "3 projects"); a tap opens a popover on the desktop and a bottom sheet on the phone, with a
+    search box (past 8 options), Select all / None (they act on the rows the search shows), and a
+    checklist. Each tap calls `onChange` at once with the whole new list.
+
+    ```js
+    h(ui.SettingsGroup, { title: 'What it looks at' },
+      h(ui.SettingsRow, { label: 'Projects', hint: 'Only these projects.',
+        control: h(ui.MultiSelect, { ariaLabel: 'Projects', allLabel: 'All projects',
+          noun: ['project', 'projects'], value: watched, onChange: setWatched,
+          options: projects.map((p) => ({ value: p.id, label: p.name })) }) }),
+      h(ui.SettingsRow, { label: 'How often' },
+        h(ui.Segmented, { ariaLabel: 'How often', value, onChange: setValue,
+          options: [{ value: 'quiet', label: 'Quiet', hint: 'Only the weekly recap.' }, { value: 'normal', label: 'Normal' }] })))
+    ```
   - `FilterBar` is the app's filter control, the same one the Threads list uses: a search field
     with a Filters button to its right. The button opens a panel (a popover on the desktop, a
     bottom sheet on the phone) with one section per facet. Each facet is a single-select list,

@@ -5,7 +5,7 @@
  */
 
 import { Modal } from '../common/Modal';
-import { useState } from 'react';
+import { Children, useState } from 'react';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
@@ -33,6 +33,51 @@ export function Toggle({ on, onClick, label, disabled }: { on: boolean; onClick:
     <button type="button" onClick={onClick} disabled={disabled} {...(label ? { role: 'switch', 'aria-checked': on, 'aria-label': label } : {})} style={{ width: 38, height: 21, borderRadius: 'var(--radius-lg)', border: 'none', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, background: on ? 'var(--color-accent)' : 'var(--color-border-hover)', position: 'relative', transition: 'background .15s ease', flexShrink: 0 }}>
       <span style={{ position: 'absolute', top: 2, left: on ? 19 : 2, width: 17, height: 17, borderRadius: '50%', background: on ? 'var(--color-on-accent)' : 'var(--color-text-primary)', transition: 'left .15s ease' }} />
     </button>
+  );
+}
+
+/**
+ * A grouped settings card (2026-11-07): a small heading over a card whose rows are split by a
+ * hairline, the shape Settings → Plugins and the phone's Settings list use. `footer` is a quiet
+ * note under the card. Falsy children are skipped, so a conditional row needs no wrapper.
+ * Plugins get it as `d.ui.SettingsGroup`.
+ */
+export function SettingsGroup({ title, footer, action, children, style }: { title?: string; footer?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
+  const rows = Children.toArray(children).filter((c) => c !== '');
+  return (
+    <section role="group" aria-label={title} style={{ display: 'flex', flexDirection: 'column', gap: 6, ...style }}>
+      {(title || action) && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 22, padding: '0 4px' }}>
+          {title && <span style={{ ...sectionLabel, textTransform: 'uppercase' }}>{title}</span>}
+          {action}
+        </div>
+      )}
+      <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
+        {rows.map((c, i) => <div key={(c as { key?: string }).key ?? i} style={{ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>{c as React.ReactNode}</div>)}
+      </div>
+      {footer && <div style={{ padding: '0 4px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{footer}</div>}
+    </section>
+  );
+}
+
+/**
+ * One settings row: the label and a one-line hint on the left, a small control (a switch, a
+ * short select, a number) on the right. A wide control (a segmented choice, a list, fields)
+ * goes in `children`: it takes its own full-width line under the label, so the text is never
+ * squeezed. Plugins get it as `d.ui.SettingsRow`.
+ */
+export function SettingsRow({ label, hint, control, children, style }: { label: React.ReactNode; hint?: React.ReactNode; control?: React.ReactNode; children?: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div data-testid="settings-row" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '11px 12px', minWidth: 0, ...style }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, color: 'var(--color-text-primary)' }}>{label}</div>
+          {hint && <div style={{ marginTop: 2, fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</div>}
+        </div>
+        {control !== undefined && control !== null && control !== false && <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>{control}</div>}
+      </div>
+      {children}
+    </div>
   );
 }
 

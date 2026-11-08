@@ -140,6 +140,62 @@ export interface SelectProps {
   disabled?: boolean;
 }
 
+export interface MultiSelectProps {
+  /** The picked values. Values that are not among the options are kept as they are. */
+  value: string[];
+  options: { value: string; label: string; note?: string }[];
+  /** Called on every tap with the whole new list. */
+  onChange(value: string[]): void;
+  /** The trigger's accessible name ("Projects"); the trigger reads "Projects: All except 2". */
+  ariaLabel: string;
+  /** The panel heading. Default `ariaLabel`. */
+  title?: string;
+  /** The trigger's words. Default: `allLabel`, `noneLabel`, "All except 2", or "3 <noun>" / "3 selected". */
+  summary?: string;
+  allLabel?: string;
+  noneLabel?: string;
+  noun?: [string, string];
+  /** The search box over the list. Default: on past 8 options. */
+  searchable?: boolean;
+  /** Default by screen width: `popover` on the desktop, `sheet` on the phone. */
+  variant?: 'popover' | 'sheet';
+  style?: React.CSSProperties;
+  disabled?: boolean;
+}
+
+export interface SegmentedProps {
+  value: string;
+  /** 2 to 5 options. The picked option's `hint` shows under the control. */
+  options: { value: string; label: string; hint?: string }[];
+  onChange(value: string): void;
+  ariaLabel: string;
+  /** Default by screen width: `md` on the desktop, `lg` on the phone. */
+  size?: 'md' | 'lg';
+  style?: React.CSSProperties;
+}
+
+export interface SettingsGroupProps {
+  /** The small heading over the card. */
+  title?: string;
+  /** A quiet note under the card. */
+  footer?: React.ReactNode;
+  /** Something small at the heading's right. */
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}
+
+export interface SettingsRowProps {
+  label: React.ReactNode;
+  /** One short line under the label. */
+  hint?: React.ReactNode;
+  /** A small control on the right: a Toggle, a short Select, a number field, a MultiSelect trigger. */
+  control?: React.ReactNode;
+  /** A wide control on its own full-width line under the label (a Segmented, fields, a list). */
+  children?: React.ReactNode;
+  style?: React.CSSProperties;
+}
+
 export interface DispatchSdk {
   version: string;
   /** This plugin's id, as plugin.json names it: use it for register, storage, settings and fetch. */
@@ -207,6 +263,18 @@ export interface DispatchSdk {
     FilterBar: React.ComponentType<FilterBarProps>;
     /** The app's dropdown for form fields (a native `<select>` is not used anywhere). Search box past 8 options. */
     Select: React.ComponentType<SelectProps>;
+    /**
+     * The app's multi-pick: a small trigger that names the pick ("All projects", "All except 2")
+     * and opens a panel (a popover on the desktop, a bottom sheet on the phone) with a search box,
+     * Select all / None, and a scrolling checklist.
+     */
+    MultiSelect: React.ComponentType<MultiSelectProps>;
+    /** A full-width segmented choice (a radiogroup) for 2 to 5 options, with the picked option's hint under it. */
+    Segmented: React.ComponentType<SegmentedProps>;
+    /** A grouped settings card: a small heading over rows split by a hairline. */
+    SettingsGroup: React.ComponentType<SettingsGroupProps>;
+    /** One settings row: label and hint on the left, a small control on the right, a wide control below. */
+    SettingsRow: React.ComponentType<SettingsRowProps>;
     styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn(on: boolean): React.CSSProperties; chip: React.CSSProperties; fieldInput: React.CSSProperties };
   };
   /** Icon components by name (`eye`, `star`, `sparkle`, `sun`, …); the same names `contributes.views[].icon` takes. */

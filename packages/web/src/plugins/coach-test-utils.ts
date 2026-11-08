@@ -3,6 +3,9 @@ import { create } from 'zustand';
 import { vi } from 'vitest';
 import * as Icons from '@phosphor-icons/react';
 import { Select } from '../components/common/Select';
+import { MultiSelect } from '../components/common/MultiSelect';
+import { Segmented } from '../components/common/Segmented';
+import { SettingsGroup, SettingsRow } from '../components/settings/ui';
 
 /**
  * A fake plugin SDK for the Coach tests: documents and settings live in maps, events are
@@ -40,13 +43,15 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     hooks: { useState, useEffect, useMemo, useCallback, useRef, useIsMobile: () => !!over.mobile },
     zustand: { create },
     // The names the SDK's icon map gives (sdk.tsx ICONS).
-    icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle, 'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, gear: Icons.Gear },
+    icons: { x: Icons.X, 'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash, sparkle: Icons.Sparkle, 'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, gear: Icons.Gear, 'caret-down': Icons.CaretDown, 'caret-right': Icons.CaretRight },
     stores: { useProjects: create(() => ({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] })) },
     ui: {
       styles: { sectionLabel: {}, row: {}, item: {}, ghostBtn: {}, solidBtn: () => ({}), chip: {}, fieldInput: {} },
       Toggle: (p: { on: boolean; label: string; onClick: () => void }) => h('button', { role: 'switch', 'aria-checked': p.on, 'aria-label': p.label, onClick: p.onClick }),
       // The real shared dropdown: the Coach has no native select (2026-11-07).
       Select,
+      // The real settings primitives (coach settings cleanup, 2026-11-07).
+      MultiSelect, Segmented, SettingsGroup, SettingsRow,
     },
     storage: {
       get: async (_p: string, k: string, f: unknown) => (docs.has(k) ? clone(docs.get(k)) : f),
