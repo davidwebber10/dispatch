@@ -4,6 +4,26 @@
 // projects, and the viewer for the files. The documents live in this plugin's storage
 // (`preview:<id>`); the files are references the daemon checks and serves.
 /**
+ * A text preview that is a document, not a string to copy (2026-11-08): a title that ends in .md, or
+ * two different markdown marks (a heading, bold, a list, a numbered list, a code fence, a table, a
+ * link). A URL, a command or a token stays a monospace box. Exported for the tests.
+ */
+export function looksLikeMarkdown(text, title = '') {
+  if (/\.(md|markdown)$/i.test(String(title || '').trim())) return true;
+  const s = String(text || '');
+  const marks = [
+    /^#{1,6}\s+\S/m,
+    /\*\*[^*\n]+\*\*/,
+    /(^\s*[-*+]\s+\S.*\n){2,}/m,
+    /(^\s*\d+[.)]\s+\S.*\n){2,}/m,
+    /^```/m,
+    /^\|.+\|\s*$/m,
+    /\[[^\]\n]+\]\([^)\s]+\)/,
+  ];
+  return marks.filter((re) => re.test(s.endsWith('\n') ? s : `${s}\n`)).length >= 2;
+}
+
+/**
  * The history's filters (2026-11-07): a project, a source thread, and a search over the title, the
  * note, the text, the file names, the thread and the project. Exported for the tests.
  */
@@ -124,6 +144,9 @@ export default function activate(d) {
   // the text with Copy, pictures as thumbnails, other files as chips; any file opens the viewer.
   function Item({ preview, onDelete, showProject }) {
     const [viewing, setViewing] = useState(null);
+    const [reading, setReading] = useState(false);
+    const isDoc = !!preview.text && looksLikeMarkdown(preview.text, preview.title);
+    const docName = /\.(md|markdown)$/i.test(preview.title) ? preview.title : `${preview.title}`;
     const unseen = !preview.seenAt;
     const projectName = d.stores.useProjects((s) => { const p = s.sessions.find((x) => x.id === preview.sessionId); return p ? p.name : preview.sessionName; });
     // The viewer fetches `src` itself for markdown and text (one app-root path; no second base prefix).
@@ -142,7 +165,16 @@ export default function activate(d) {
           context && h('div', { title: context, style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, context)),
         onDelete && h('button', { type: 'button', 'aria-label': 'Delete preview', title: 'Delete', onClick: () => onDelete(preview.id), style: { width: 28, height: 28, padding: 0, border: 'none', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--color-text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 } }, h(icons.trash, { size: 15 }))),
       preview.note && h('div', { style: { fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)', overflowWrap: 'anywhere' } }, preview.note),
-      preview.text && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+      preview.text && isDoc && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+        // The document rendered, cut at a height with a fade; tap it (or Read) for the whole thing.
+        h('div', { 'data-testid': 'preview-doc', role: 'button', tabIndex: 0, 'aria-label': `Open ${docName}`, onClick: () => setReading(true), onKeyDown: (e) => { if (e.key === 'Enter') setReading(true); },
+          style: { maxHeight: 260, overflow: 'hidden', cursor: 'pointer', padding: '2px 14px 4px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', fontSize: 14, lineHeight: 1.55, WebkitMaskImage: 'linear-gradient(to bottom, #000 70%, transparent)', maskImage: 'linear-gradient(to bottom, #000 70%, transparent)' } },
+          h(ui.Markdown, { source: preview.text })),
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+          h('button', { type: 'button', 'aria-label': `Read ${docName}`, onClick: () => setReading(true), style: { ...chip, height: 30, padding: '0 12px', background: 'var(--color-accent)', borderColor: 'var(--color-accent)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5 } },
+            h(icons.file, { size: 14 }), 'Read'),
+          h(CopyButton, { text: preview.text, label: 'Copy text' }))),
+      preview.text && !isDoc && h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
         h('pre', { 'data-testid': 'preview-text', style: { margin: 0, maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all', font: '13px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' } }, preview.text),
         h('div', null, h(CopyButton, { text: preview.text, label: 'Copy text' }))),
       hasImage && h('div', { 'data-testid': 'preview-thumbs', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 } },
@@ -155,7 +187,8 @@ export default function activate(d) {
             h(I, { size: 16, style: { flexShrink: 0 } }),
             h('span', { style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name),
             h('span', { style: { flexShrink: 0, font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, fmtSize(f.size))); })),
-      viewing !== null && h(ui.FileViewer, { files: viewerFiles, index: viewing, onClose: () => setViewing(null) }));
+      viewing !== null && h(ui.FileViewer, { files: viewerFiles, index: viewing, onClose: () => setViewing(null) }),
+      reading && h(ui.FileViewer, { files: [{ src: '', name: docName, mime: 'text/markdown', size: preview.text.length, loadText: async () => preview.text }], index: 0, onClose: () => setReading(false) }));
   }
 
   // ── the project's previews in a bottom sheet (phone and desktop) ─────────────────────────
