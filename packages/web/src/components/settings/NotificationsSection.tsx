@@ -1,15 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useSettings } from '../../stores/settings';
-import { UsageAlertSetting } from './UsageLimitsSection';
+import { useUsageLimitSettings } from './UsageLimitsSection';
 import { PushSubscriptionsList } from './PushSubscriptionsList';
-import { sectionLabel, row, item, Divider, Toggle } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, Toggle } from './ui';
 
-const note: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)' };
+/** The push sent when a usage window reaches the warning level (all devices; the daemon sends it). */
+function UsageAlertGroup() {
+  const { cfg, err, save } = useUsageLimitSettings();
+  return (
+    <SettingsGroup title="Usage alerts" footer={err ? <span role="alert" style={{ color: 'var(--color-status-red)' }}>{err}</span> : undefined}>
+      <SettingsRow label="Usage warning"
+        hint={cfg ? `One push when a usage window reaches ${cfg.warnPercent}%. Set the level in Usage limits.` : 'Loading…'}
+        control={cfg ? <Toggle on={cfg.pushOnWarn} onClick={() => save({ pushOnWarn: !cfg.pushOnWarn })} label="Push alert at the warning level" /> : null} />
+    </SettingsGroup>
+  );
+}
 
 /**
- * Settings → Notifications. THIS DEVICE: whether this browser or phone receives push. ALL DEVICES:
- * which alerts the daemon sends beyond the per-thread bell (the usage-limit warning), and the list of
- * devices that receive them.
+ * Settings → Notifications. This device: whether this browser or phone receives push. Usage alerts:
+ * the alert the daemon sends beyond the per-thread bell. Then the devices that receive them.
  */
 export function NotificationsSection() {
   const pushEnabled = useSettings((s) => s.pushEnabled);
@@ -28,22 +37,14 @@ export function NotificationsSection() {
   }
 
   return (
-    <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={sectionLabel}>THIS DEVICE</span>
-        <div style={row}><span style={item}>Push notifications on this device</span><Toggle on={pushEnabled} label="Push notifications on this device" onClick={() => void togglePush()} /></div>
-        <div style={note}>Alerts are armed per thread with the bell. This lets this device receive them.</div>
-        {pushMsg && <div style={note}>{pushMsg}</div>}
-      </div>
-      <Divider />
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={sectionLabel}>ALL DEVICES</span>
-        <UsageAlertSetting />
-      </div>
-      <Divider />
-
+    <SettingsPage intro="Arm alerts on a thread with its bell. Here you choose where they arrive.">
+      <SettingsGroup title="This device">
+        <SettingsRow label="Push notifications"
+          hint={pushMsg ? <span role="alert" style={{ color: 'var(--color-status-yellow)' }}>{pushMsg}</span> : 'Let this device receive thread alerts.'}
+          control={<Toggle on={pushEnabled} label="Push notifications on this device" onClick={() => void togglePush()} />} />
+      </SettingsGroup>
+      <UsageAlertGroup />
       <PushSubscriptionsList />
-    </>
+    </SettingsPage>
   );
 }

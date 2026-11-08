@@ -21,7 +21,7 @@ export function clampWarn(n: number): number { return Math.min(WARN_MAX, Math.ma
  * Notifications (the push alert); each keeps its own copy and follows the daemon's broadcasts.
  * A failed PUT rolls the row back to what the daemon last confirmed.
  */
-function useUsageLimitSettings() {
+export function useUsageLimitSettings() {
   const [cfg, setCfg] = useState<UsageLimitSettings | null>(null);
   const [draft, setDraft] = useState('');
   const [err, setErr] = useState<string | null>(null);

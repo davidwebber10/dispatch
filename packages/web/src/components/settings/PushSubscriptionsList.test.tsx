@@ -31,16 +31,19 @@ describe('<PushSubscriptionsList>', () => {
     expect(within(rows[0]).getByText('Mac · Chrome')).toBeTruthy();
     expect(within(rows[0]).getByText('This device')).toBeTruthy();
     expect(within(rows[0]).getByText(/fcm\.googleapis\.com/)).toBeTruthy();
-    expect(within(rows[0]).getByText(/No alert sent yet/)).toBeTruthy();
+    expect(within(rows[0]).getByText(/No alert yet/)).toBeTruthy();
     expect(within(rows[1]).getByText(/web\.push\.apple\.com/)).toBeTruthy();
     expect(within(rows[1]).getByText(/Last alert 30m ago/)).toBeTruthy();
     expect(within(rows[1]).queryByText('This device')).toBeNull();
+    // One line under the name: no three-line box, the added date moves to the row's tooltip.
+    expect(rows[1].getAttribute('title')).toMatch(/^Added /);
+    expect(screen.getByRole('group', { name: 'Devices that get alerts' })).toBeTruthy();
   });
 
   it('says so when no device receives notifications', async () => {
     vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [] });
     render(<PushSubscriptionsList now={() => NOW} />);
-    expect(await screen.findByText('No device receives notifications.')).toBeTruthy();
+    expect(await screen.findByText(/No device gets alerts yet/)).toBeTruthy();
   });
 
   it('asks to confirm, then revokes one device and reloads', async () => {
@@ -49,20 +52,22 @@ describe('<PushSubscriptionsList>', () => {
       .mockResolvedValueOnce({ subscriptions: [] });
     vi.mocked(api.revokePushSubscription).mockResolvedValue({ ok: true });
     render(<PushSubscriptionsList now={() => NOW} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke iPhone · Safari' }));
     expect(api.revokePushSubscription).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, revoke' }));
+    const dialog = screen.getByRole('alertdialog', { name: 'Stop alerts to iPhone · Safari?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }));
     await waitFor(() => expect(api.revokePushSubscription).toHaveBeenCalledWith('other'));
-    expect(await screen.findByText('No device receives notifications.')).toBeTruthy();
+    expect(await screen.findByText(/No device gets alerts yet/)).toBeTruthy();
   });
 
   it('cancel does not revoke', async () => {
     vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [sub()] });
     render(<PushSubscriptionsList now={() => NOW} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke iPhone · Safari' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(api.revokePushSubscription).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Revoke' })).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Revoke iPhone · Safari' })).toBeTruthy();
   });
 
   it('turns this browser\'s notification switch off when its own subscription is revoked', async () => {
@@ -72,8 +77,8 @@ describe('<PushSubscriptionsList>', () => {
     vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [sub({ deviceId: 'me' })] });
     vi.mocked(api.revokePushSubscription).mockResolvedValue({ ok: true });
     render(<PushSubscriptionsList now={() => NOW} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, revoke' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Revoke / }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Revoke' }));
     await waitFor(() => expect(setPushEnabled).toHaveBeenCalledWith(false));
   });
 
@@ -81,8 +86,8 @@ describe('<PushSubscriptionsList>', () => {
     vi.mocked(api.getPushSubscriptions).mockResolvedValue({ subscriptions: [sub()] });
     vi.mocked(api.revokePushSubscription).mockRejectedValue(new Error('boom'));
     render(<PushSubscriptionsList now={() => NOW} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, revoke' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Revoke / }));
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Revoke' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/Could not revoke iPhone · Safari/);
     expect(screen.getAllByTestId('push-row')).toHaveLength(1);
   });

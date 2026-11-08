@@ -122,4 +122,4 @@ Helper export:
 Added minimally, matching the file's `load`/`save` localStorage pattern:
 - State `multiPane: boolean` (default `true`, key `dispatch:multiPane`).
 - Action `setMultiPane(b: boolean): void`.
-- A toggle row ("Multi-pane tabs (Operator)", `panes/MultiPaneSetting.tsx`) sits in Settings → Appearance (`components/settings/AppearanceSection.tsx`).
+- A toggle row ("Multi-pane tabs (Operator)") sits in Settings → Appearance → Workspace (`components/settings/AppearanceSection.tsx`).

@@ -1,23 +1,36 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Desktop, DeviceMobile, DeviceTablet } from '@phosphor-icons/react';
 import { api, type PushSubscriptionInfo } from '../../api/client';
 import { deviceId, syncEnrollment } from '../../lib/push';
 import { timeAgo } from '../../lib/time';
 import { useSettings } from '../../stores/settings';
-import { sectionLabel, row, solidBtn, ghostBtn, miniChip } from './ui';
+import { ConfirmModal } from '../common/ConfirmModal';
+import { SettingsGroup, SettingsRow, EmptyState, ghostBtn, miniChip } from './ui';
 
 /**
  * Settings → Notifications: devices that receive push notifications (all devices).
  *
- * Each row is a browser or phone that turned notifications on. Revoke removes that one subscription, so
- * the daemon stops sending to it. The list shows the push service host (for example web.push.apple.com),
- * never the full push address. This is separate from signed-in devices: a device can hold either or both.
+ * Each row is a browser or phone that turned notifications on. Revoke (after a confirm) removes that one
+ * subscription, so the daemon stops sending to it. The row shows the push service host (for example
+ * web.push.apple.com), never the full push address. This is separate from signed-in devices: a device can
+ * hold either or both.
  */
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+
+/** A device icon from the label the browser gave itself ("iPhone · Safari", "Mac · Chrome"). */
+function deviceIcon(label: string) {
+  if (/ipad|tablet/i.test(label)) return DeviceTablet;
+  if (/iphone|android|phone|mobile/i.test(label)) return DeviceMobile;
+  return Desktop;
+}
+
+const TITLE = 'Devices that get alerts';
+const bare: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6 };
 
 export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }) {
   const [subs, setSubs] = useState<PushSubscriptionInfo[] | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [pending, setPending] = useState<string | null>(null);
+  const [pending, setPending] = useState<PushSubscriptionInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mine = deviceId();
@@ -35,10 +48,10 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
   useEffect(() => { void load(); }, [load]);
 
   async function revoke(s: PushSubscriptionInfo) {
+    setPending(null);
     setBusy(true); setError(null);
     try {
       await api.revokePushSubscription(s.deviceId);
-      setPending(null);
       // This browser lost its subscription: turn its notification switch off and drop the browser-side one too.
       if (s.deviceId === mine) { try { await useSettings.getState().setPushEnabled(false); } catch { /* the daemon side is already gone */ } }
       await load();
@@ -47,58 +60,42 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
     } finally { setBusy(false); }
   }
 
-  const small: React.CSSProperties = { fontSize: 11.5, color: 'var(--color-text-tertiary)', lineHeight: 1.5 };
   const t = now();
 
+  if (state === 'loading') return <SettingsGroup title={TITLE}><SettingsRow label="Loading…" /></SettingsGroup>;
+  if (state === 'error' || !subs) {
+    return (
+      <section role="group" aria-label={TITLE} style={bare}>
+        <EmptyState action={<button type="button" style={ghostBtn} onClick={() => void load()}>Try again</button>}>Could not load the devices that get alerts.</EmptyState>
+      </section>
+    );
+  }
+  if (subs.length === 0) {
+    return (
+      <section role="group" aria-label={TITLE} style={bare}>
+        <EmptyState>No device gets alerts yet. Turn on push notifications above on each phone or computer.</EmptyState>
+      </section>
+    );
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span style={sectionLabel}>NOTIFICATION DEVICES</span>
-      {state === 'loading' && <div style={small}>Loading…</div>}
-      {state === 'error' && (
-        <div style={{ ...small, fontSize: 12.5 }}>
-          Could not load the notification devices. <button type="button" style={ghostBtn} onClick={() => void load()}>Try again</button>
-        </div>
-      )}
-      {state === 'ready' && subs && (
-        <>
-          <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
-            Each phone or browser that turned on notifications gets thread alerts. Revoke stops alerts to that one device.
+    <>
+      <SettingsGroup title={TITLE}
+        footer={error ? <span role="alert" style={{ color: 'var(--color-status-red)' }}>{error}</span> : 'Revoke stops alerts to one device. It can turn them on again in its own Settings.'}>
+        {subs.map((s) => (
+          <div key={s.deviceId} data-testid="push-row" title={`Added ${day(s.createdAt)}`}>
+            <SettingsRow
+              icon={deviceIcon(s.label)}
+              label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{s.label}{s.deviceId === mine && <span style={{ ...miniChip, color: 'var(--color-accent)' }}>This device</span>}</span>}
+              hint={<>{s.lastSentAt ? `Last alert ${timeAgo(s.lastSentAt, t)} ago` : 'No alert yet'} · <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.host}</span></>}
+              control={<button type="button" disabled={busy} aria-label={`Revoke ${s.label}`} style={{ ...ghostBtn, height: 28 }} onClick={() => setPending(s)}>Revoke</button>}
+            />
           </div>
-          {subs.length === 0 && <div style={small}>No device receives notifications.</div>}
-          {subs.map((s) => (
-            <div
-              key={s.deviceId}
-              data-testid="push-row"
-              style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)' }}
-            >
-              <div style={{ ...row, flexWrap: 'wrap' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{s.label}</span>
-                  {s.deviceId === mine && <span style={{ ...miniChip, color: 'var(--color-accent)' }}>This device</span>}
-                </span>
-                <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {pending === s.deviceId ? (
-                    <>
-                      <button type="button" disabled={busy} style={{ ...solidBtn(!busy), background: 'var(--color-status-coral)', color: 'var(--color-on-danger)' }} onClick={() => void revoke(s)}>Yes, revoke</button>
-                      <button type="button" style={ghostBtn} onClick={() => setPending(null)}>Cancel</button>
-                    </>
-                  ) : (
-                    <button type="button" style={ghostBtn} onClick={() => setPending(s.deviceId)}>Revoke</button>
-                  )}
-                </span>
-              </div>
-              {pending === s.deviceId && (
-                <div style={{ ...small, color: 'var(--color-status-coral)' }}>That device stops getting alerts at once. It can turn them on again in its own Settings.</div>
-              )}
-              <div style={small}>Push service: {s.host}</div>
-              <div style={small}>
-                Added {day(s.createdAt)} · {s.lastSentAt ? `Last alert ${timeAgo(s.lastSentAt, t)} ago` : 'No alert sent yet'}
-              </div>
-            </div>
-          ))}
-          {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-coral)' }}>{error}</div>}
-        </>
-      )}
-    </div>
+        ))}
+      </SettingsGroup>
+      <ConfirmModal open={!!pending} danger title={`Stop alerts to ${pending?.label ?? ''}?`} confirmLabel="Revoke"
+        message="That device stops getting alerts at once. It can turn them on again in its own Settings."
+        onConfirm={() => { if (pending) void revoke(pending); }} onCancel={() => setPending(null)} />
+    </>
   );
 }
