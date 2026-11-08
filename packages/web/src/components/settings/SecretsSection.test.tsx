@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { vi, test, expect, afterEach, beforeEach } from 'vitest';
 import { SecretsSection } from './SecretsSection';
 import { useSecrets } from '../../stores/secrets';
@@ -48,7 +48,7 @@ test('read-only hides delete + add and shows the banner', async () => {
   render(<SecretsSection />);
   await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
   expect(screen.queryByTitle('Delete secret')).not.toBeInTheDocument();
-  expect(screen.queryByText('ADD VARIABLE')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Add variable' })).not.toBeInTheDocument();
   expect(screen.getByText(/Turn off read-only to add, edit, or delete variables/)).toBeInTheDocument();
 });
 
@@ -76,4 +76,93 @@ test('a value that arrives after the list was reloaded is discarded', async () =
   await new Promise((r) => setTimeout(r, 20));
   expect(screen.queryByText('stale-value')).not.toBeInTheDocument();
   expect(screen.getAllByText('••••••••••••')).toHaveLength(2);
+});
+
+test('connected: a Doppler group (connection, read-only) and a Variables group with a row per secret', async () => {
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  const doppler = screen.getByRole('group', { name: 'Doppler' });
+  expect(within(doppler).getByText('acme / dev')).toBeInTheDocument();
+  expect(within(doppler).getByText('Connected')).toBeInTheDocument();
+  expect(within(doppler).getByRole('switch', { name: 'Read-only' })).toHaveAttribute('aria-checked', 'false');
+  const vars = screen.getByRole('group', { name: 'Variables' });
+  expect(within(vars).getAllByTestId('secret-row')).toHaveLength(2);
+  expect(within(vars).getByRole('button', { name: 'Re-sync' })).toBeInTheDocument();
+  expect(screen.getByText('2 variables')).toBeInTheDocument();
+  // No old mono banner, no column heads.
+  expect(screen.queryByText('SECRETS (DOPPLER)')).not.toBeInTheDocument();
+  expect(screen.queryByText('NAME')).not.toBeInTheDocument();
+});
+
+test('the read-only switch keeps the stored token and flips only the flag', async () => {
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue({ connected: true, project: 'acme', config: 'dev', enabled: true, readOnly: true });
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('switch', { name: 'Read-only' }));
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ token: '', project: 'acme', config: 'dev', enabled: true, readOnly: true }));
+});
+
+test('delete asks first, then deletes in Doppler', async () => {
+  const del = vi.spyOn(api, 'deleteSecret').mockResolvedValue(undefined as never);
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getAllByTitle('Delete secret')[0]);
+  expect(del).not.toHaveBeenCalled();
+  const dialog = screen.getByRole('alertdialog');
+  expect(dialog).toHaveTextContent(/acme\/dev/);
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete secret' }));
+  await waitFor(() => expect(del).toHaveBeenCalledWith('API_KEY'));
+});
+
+test('Add variable opens a sheet that saves the secret', async () => {
+  const set = vi.spyOn(api, 'setSecret').mockResolvedValue(undefined as never);
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  expect(screen.queryByLabelText('Value')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Add variable' }));
+  const save = screen.getByRole('button', { name: 'Save variable' });
+  expect(save).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'NEW_KEY' } });
+  fireEvent.change(screen.getByLabelText('Value'), { target: { value: 'v1' } });
+  fireEvent.click(save);
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ name: 'NEW_KEY', value: 'v1' }));
+  await waitFor(() => expect(screen.queryByLabelText('Value')).not.toBeInTheDocument());
+});
+
+test('Disconnect sits at the bottom and asks first', async () => {
+  const dis = vi.spyOn(api, 'disconnectDoppler').mockResolvedValue({ connected: false, project: null, config: null, enabled: true, readOnly: false } as never);
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Disconnect Doppler' }));
+  expect(dis).not.toHaveBeenCalled();
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Disconnect' }));
+  await waitFor(() => expect(dis).toHaveBeenCalled());
+});
+
+test('not connected: a Doppler group with the token row; Connect verifies it, then the project picker shows', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue({ connected: false, project: null, config: null, enabled: true, readOnly: false });
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue({ connected: false, project: null, config: null, enabled: true, readOnly: false });
+  vi.spyOn(api, 'listDopplerProjects').mockResolvedValue([{ slug: 'acme', name: 'Acme' }] as never);
+  render(<SecretsSection />);
+  const group = await screen.findByRole('group', { name: 'Doppler' });
+  expect(screen.getByTestId('settings-intro')).toBeInTheDocument();
+  const connect = within(group).getByRole('button', { name: 'Connect' });
+  expect(connect).toBeDisabled();
+  fireEvent.change(within(group).getByLabelText('Doppler service token'), { target: { value: 'dp.st.abc' } });
+  expect(connect).toBeEnabled();
+  expect(screen.queryByRole('combobox', { name: 'Doppler project' })).not.toBeInTheDocument();
+  fireEvent.click(connect);
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ token: 'dp.st.abc', project: '', config: '', enabled: true, readOnly: false }));
+  expect(await screen.findByRole('combobox', { name: 'Doppler project' })).toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Variables' })).not.toBeInTheDocument();
+});
+
+test('a bad token says so', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue({ connected: false, project: null, config: null, enabled: true, readOnly: false });
+  vi.spyOn(api, 'setDopplerConnection').mockRejectedValue(new Error('Invalid Doppler token'));
+  render(<SecretsSection />);
+  const group = await screen.findByRole('group', { name: 'Doppler' });
+  fireEvent.change(within(group).getByLabelText('Doppler service token'), { target: { value: 'nope' } });
+  fireEvent.click(within(group).getByRole('button', { name: 'Connect' }));
+  expect(await screen.findByText(/Could not connect/)).toBeInTheDocument();
 });
