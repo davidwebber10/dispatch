@@ -576,16 +576,19 @@ export function loginItemFor(type: string | undefined, items: ConvItem[], authRe
 /**
  * The CLI's own login-error prose in the failed turn (Claude Code writes "Not logged in · Please
  * run /login" as a synthetic assistant message before the error result). With the signed-out card
- * shown, it is the same raw error twice, so it is left out. Only between the turn's user message
- * and the failed result; never another turn's prose.
+ * shown, it is the same raw error twice, so it is left out. Only since the last turn that worked;
+ * never the prose of a turn that succeeded.
  */
 export function authProseToHide(items: ConvItem[], loginItem: ConvItem | null): Set<ConvItem> {
   const out = new Set<ConvItem>();
   if (!loginItem) return out;
-  const end = items.indexOf(loginItem);
-  for (let k = end - 1; k >= 0; k--) {
+  // From the end, not from the result: a REST page and the ws replay can order the turn's
+  // synthetic prose after its result.
+  for (let k = items.length - 1; k >= 0; k--) {
     const it = items[k];
-    if (it.kind === 'user') break;
+    // The run of failures since the last turn that WORKED (a REST page and the ws replay can put
+    // a second copy of the user's message between the prose and the result).
+    if (it.kind === 'result' && !it.isError) break;
     if (it.kind === 'assistant' && isClaudeAuthError(it.text ?? '') && (it.text ?? '').length < 300) out.add(it);
   }
   return out;

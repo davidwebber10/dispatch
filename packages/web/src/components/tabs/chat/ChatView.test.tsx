@@ -798,12 +798,13 @@ describe('Log in to Claude in a Pretty thread', () => {
     useTabs.setState({ byProject: { s1: [{ id: 'ta', sessionId: 's1', type: 'claude-code', label: 'T', pid: 1, externalId: 'e', workingDir: null, status: 'waiting', createdAt: '', config: { transport: 'structured' }, archivedAt: null, sortOrder: 0 }] } } as any);
     render(<ChatView terminalId="ta" />);
     act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }));
-    act(() => cbs.onEvent({ type: 'result', is_error: true, result: 'Invalid API key · Please run /login' }));
+    act(() => cbs.onEvent({ type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', message: { id: 'm-syn', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'Not logged in · Please run /login' }] } }));
+    act(() => cbs.onEvent({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }));
     act(() => cbs.onEvent({ type: 'system', subtype: 'auth_required', provider: 'claude', accountId: 'cli', reason: 'The login is not valid' }));
     expect(await screen.findByText('CLI login (this computer) is signed out')).toBeInTheDocument();
     // hidden: the paint-settle gate keeps the scroller visibility:hidden for its first moments.
     expect(screen.getByText('Sign in').closest('button')).not.toBeNull();
-    expect(screen.queryByText('Invalid API key · Please run /login')).toBeNull();
+    expect(screen.queryByText('Not logged in · Please run /login')).toBeNull();
   });
 
   it('authProseToHide: the login-error prose of the CLI in the failed turn goes with the card', () => {
@@ -812,8 +813,10 @@ describe('Log in to Claude in a Pretty thread', () => {
     const real: ConvItem = { kind: 'assistant', text: 'Here is the plan.' };
     expect([...authProseToHide([u, real, prose, failed], failed)]).toEqual([prose]);
     expect(authProseToHide([u, prose, failed], null).size).toBe(0);
-    // An earlier turn's prose is never touched.
-    expect([...authProseToHide([prose, u, failed], failed)]).toEqual([]);
+    // A turn that worked ends the search: its prose is never touched.
+    expect([...authProseToHide([prose, { kind: 'result', isError: false }, u, failed], failed)]).toEqual([]);
+    // A second copy of the user message between prose and result (REST page + ws replay) does not stop it.
+    expect([...authProseToHide([u, prose, u, failed], failed)]).toEqual([prose]);
   });
 
   it('loginItemFor picks the last result only for a Claude thread and only for a login error', () => {
