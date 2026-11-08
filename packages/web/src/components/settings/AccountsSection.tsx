@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
-import { Star, Trash, Plus, PencilSimple, SignIn } from '@phosphor-icons/react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { Account, AccountProvider, AccountsView, AccountThread } from '../../api/types';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
+import { HARNESS_MARK } from '../common/HarnessStrip';
 import { CodexLogin } from './CodexLogin';
-import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider, miniChip } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, Sheet, fieldFor, solidBtn, ghostBtn, noteText } from './ui';
+import { useSubPage, scrollParentToTop } from './subPageNav';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -14,27 +17,40 @@ import { sectionLabel, row, item, fieldInput, solidBtn, ghostBtn, Divider, miniC
  * the page, paste the code). A Codex account gets its own folder and is signed in right here with
  * the device code (`codex login --device-auth` in that folder, CodexLogin), which works from a
  * phone. A Codex account with no login (an add that failed or was left) offers "Sign in again".
+ *
+ * Layout (2026-11-07, docs/design/settings-layout.md): one group per harness, one row per account
+ * (name, one line of detail, "Default" as the value). A row opens the account's own page: rename,
+ * default, sign in, remove. "Add account" sits on the group's label and opens a sheet.
  */
 const PROVIDER_TITLE: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' };
+const MARK: Record<AccountProvider, PhosphorIcon> = {
+  // The brand mark in the settings icon tile (IconTile draws any component that takes a `size`).
+  claude: HARNESS_MARK.claude as unknown as PhosphorIcon,
+  codex: HARNESS_MARK.codex as unknown as PhosphorIcon,
+};
+const errText: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-status-red)' };
+const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const threadsLabel = (n: number) => `${n} thread${n === 1 ? '' : 's'}`;
 
 export function AccountsSection() {
+  const nav = useSubPage('accounts');
+  const isMobile = useIsMobile();
   const [view, setView] = useState<AccountsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState<AccountProvider | null>(null);
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
-  // Rename in place (2026-11-06): which row is being renamed, and its draft.
-  const [renaming, setRenaming] = useState<{ provider: AccountProvider; id: string } | null>(null);
-  const [draft, setDraft] = useState('');
   // Remove: the confirm names the threads pinned to the account (they revert to the default).
   const [removing, setRemoving] = useState<{ provider: AccountProvider; account: Account; threads: AccountThread[] } | null>(null);
   // The Codex account whose device-code sign-in shows now (a new one, or "Sign in again").
   const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
+  const top = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     try { setView(await api.getAccounts()); setError(null); } catch { setError('Could not load the accounts. Is the daemon up to date?'); }
   };
   useEffect(() => { void load(); }, []);
+  useEffect(() => { scrollParentToTop(top.current); }, [nav.openId]);
 
   const setDefault = async (provider: AccountProvider, id: string) => {
     try { await api.accountsSetDefault(provider, id); await load(); } catch { setError('Could not change the default.'); }
@@ -48,12 +64,10 @@ export function AccountsSection() {
     const r = removing;
     setRemoving(null);
     if (!r) return;
-    try { await api.accountsRemove(r.provider, r.account.id); await load(); } catch { setError('Could not remove the account.'); }
+    try { await api.accountsRemove(r.provider, r.account.id); nav.close(); await load(); } catch { setError('Could not remove the account.'); }
   };
-  const rename = async () => {
-    const r = renaming;
-    if (!r) return;
-    try { await api.accountsRename(r.provider, r.id, draft); setRenaming(null); await load(); } catch { setError('Could not rename the account.'); }
+  const rename = async (provider: AccountProvider, id: string, name: string) => {
+    try { await api.accountsRename(provider, id, name); await load(); return true; } catch { setError('Could not rename the account.'); return false; }
   };
   /** The notice under "Remove …?": which threads run on it, and what they fall back to. */
   const removeMessage = (r: { provider: AccountProvider; account: Account; threads: AccountThread[] }) => {
@@ -75,93 +89,162 @@ export function AccountsSection() {
     finally { setBusy(false); }
   };
   const codexSignInEnded = () => { setCodexSignIn(null); setAdding(null); setLabel(''); void load(); };
+  const closeAdd = () => { if (adding === 'codex' && codexSignIn) { codexSignInEnded(); return; } setAdding(null); setLabel(''); };
+
+  const confirm = (
+    <ConfirmModal
+      open={!!removing}
+      title={removing ? `Remove "${removing.account.label}"?` : ''}
+      message={removing ? removeMessage(removing) : ''}
+      confirmLabel="Remove"
+      danger
+      onConfirm={() => void remove()}
+      onCancel={() => setRemoving(null)}
+    />
+  );
+
+  // The account's own page: `<provider>:<id>` in the sub-page state.
+  const [openProvider, openAccountId] = (nav.openId ?? '').split(':') as [AccountProvider | '', string | undefined];
+  const opened = openProvider && openAccountId ? view?.[openProvider]?.find((a) => a.id === openAccountId) : undefined;
+  if (opened && view && openProvider) {
+    const provider = openProvider;
+    const a = opened;
+    const isDefault = view.defaults[provider] === a.id;
+    return (
+      <div ref={top}>
+        <SettingsSubPage testId={`account-detail-${provider}-${a.id}`} icon={MARK[provider]} title={a.label}
+          subtitle={`${PROVIDER_TITLE[provider]}${isDefault ? ' · Default for new threads' : ''}`}
+          description={a.isCli ? "The login signed in on the daemon's computer. It always stays here; you can rename it." : undefined}
+          backLabel="Accounts" onBack={nav.isMobile ? undefined : nav.close}>
+          {error && <div role="alert" style={errText}>{error}</div>}
+
+          <SettingsGroup title="Account">
+            <AccountName key={`${provider}:${a.id}`} account={a} isMobile={isMobile} onSave={(name) => rename(provider, a.id, name)} />
+            {a.email && <SettingsRow label="Email" value={a.email} />}
+            {a.plan && <SettingsRow label="Plan" value={a.plan} />}
+            {provider === 'codex' && !a.isCli && a.signedIn !== undefined && (
+              <SettingsRow label="Sign-in" control={a.signedIn ? <StatusMark tone="accent">Signed in</StatusMark> : <StatusMark tone="yellow">Not signed in</StatusMark>} />
+            )}
+            <SettingsRow label="Threads on it" value={a.threadCount ? threadsLabel(a.threadCount) : 'None'} />
+          </SettingsGroup>
+
+          {provider === 'codex' && !a.isCli && a.signedIn === false && (
+            <SettingsGroup title="Sign in">
+              <SettingsRow label="Sign in to ChatGPT" hint="This account has no login yet. Dispatch shows a link and a code to use on any device."
+                control={codexSignIn !== a.id
+                  ? <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => { setAdding(null); setCodexSignIn(a.id); }} style={solidBtn(true)}>Sign in</button>
+                  : undefined}>
+                {codexSignIn === a.id && adding === null && <CodexLogin accountId={a.id} onDone={codexSignInEnded} onCancel={codexSignInEnded} />}
+              </SettingsRow>
+            </SettingsGroup>
+          )}
+
+          <SettingsGroup title="New threads">
+            <SettingsRow label="Default account" hint={`New ${PROVIDER_TITLE[provider]} threads use it unless you pick another.`}
+              control={isDefault
+                ? <StatusMark tone="accent">Default</StatusMark>
+                : <button type="button" aria-label={`Make ${a.label} the default`} onClick={() => void setDefault(provider, a.id)} style={ghostBtn}>Make default</button>} />
+          </SettingsGroup>
+
+          {!a.isCli && (
+            <SettingsGroup footer="Threads set to it switch to the default account the next time they start.">
+              <SettingsRow label="Remove account" ariaLabel="Remove account" danger onClick={() => void askRemove(provider, a)} />
+            </SettingsGroup>
+          )}
+        </SettingsSubPage>
+        {confirm}
+      </div>
+    );
+  }
 
   const list = (provider: AccountProvider) => {
     const accounts = view?.[provider] ?? [];
     const def = view?.defaults[provider];
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <span style={sectionLabel}>{PROVIDER_TITLE[provider].toUpperCase()}</span>
-        {accounts.map((a) => (
-          <div key={a.id} data-testid={`account-${provider}-${a.id}`} style={{ ...row, padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' }}>
-            <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {renaming?.provider === provider && renaming.id === a.id ? (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input aria-label="New name" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={a.isCli ? 'Name (empty restores the stock name)' : 'Name'}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void rename(); } if (e.key === 'Escape') setRenaming(null); }}
-                    style={{ ...fieldInput, flex: 1 }} />
-                  <button type="button" onClick={() => void rename()} style={solidBtn(true)}>Save</button>
-                  <button type="button" onClick={() => setRenaming(null)} style={ghostBtn}>Cancel</button>
-                </div>
-              ) : (
-                <span style={{ ...item, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-              )}
-              <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
-                {[a.email, a.plan, a.isCli ? 'the CLI’s own login' : null, a.signedIn === false ? 'not signed in yet' : null, a.threadCount ? `${a.threadCount} thread${a.threadCount === 1 ? '' : 's'}` : null].filter(Boolean).join(' · ') || ' '}
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              {provider === 'codex' && !a.isCli && a.signedIn === false && codexSignIn !== a.id && (
-                <button type="button" title="Sign in again" aria-label={`Sign in again to ${a.label}`} onClick={() => { setAdding(null); setCodexSignIn(a.id); }} style={{ ...ghostBtn, height: 28, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5 }}><SignIn size={13} />Sign in</button>
-              )}
-              <button type="button" title="Rename" aria-label={`Rename ${a.label}`} onClick={() => { setRenaming({ provider, id: a.id }); setDraft(a.isCli ? '' : a.label); }} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><PencilSimple size={14} /></button>
-              {def === a.id
-                ? <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>default</span>
-                : <button type="button" title="Use for new threads" aria-label={`Make ${a.label} the default`} onClick={() => void setDefault(provider, a.id)} style={{ ...ghostBtn, height: 28, padding: '0 9px', display: 'inline-flex', alignItems: 'center', gap: 5 }}><Star size={13} />Default</button>}
-              {!a.isCli && (
-                <button type="button" title="Remove" aria-label={`Remove ${a.label}`} onClick={() => void askRemove(provider, a)} style={{ ...ghostBtn, height: 28, width: 28, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)' }}><Trash size={14} /></button>
-              )}
-            </div>
-          </div>
-        )).flatMap((row, i) => {
-          const a = accounts[i];
-          return provider === 'codex' && codexSignIn === a.id && adding !== 'codex'
-            ? [row, <div key={`${a.id}-signin`} style={{ padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}><CodexLogin accountId={a.id} onDone={codexSignInEnded} onCancel={codexSignInEnded} /></div>]
-            : [row];
-        })}
-        {adding === provider ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', borderRadius: 'var(--radius-md)', border: '1px dashed var(--color-border)' }}>
-            <input aria-label="Account name" value={label} onChange={(e) => setLabel(e.target.value)} placeholder={provider === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'} style={fieldInput} />
-            {provider === 'claude' ? (
+      <SettingsGroup title={PROVIDER_TITLE[provider]}
+        action={
+          <button type="button" aria-label={`Add ${PROVIDER_TITLE[provider]} account`} onClick={() => { setAdding(provider); setLabel(''); setCodexSignIn(null); }}
+            style={{ ...ghostBtn, height: 26, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Plus size={12} weight="bold" />Add account
+          </button>
+        }>
+        {!view
+          ? <SettingsRow label={error ? 'Not loaded' : 'Loading…'} />
+          : accounts.map((a) => {
+            const detail = [a.email, a.plan, a.threadCount ? threadsLabel(a.threadCount) : null].filter(Boolean).join(' · ')
+              || (a.isCli ? 'The CLI’s own login on the daemon’s computer' : '');
+            return (
+              <div key={a.id} data-testid={`account-${provider}-${a.id}`}>
+                <SettingsRow icon={MARK[provider]} label={a.label} ariaLabel={`${PROVIDER_TITLE[provider]}: ${a.label}`}
+                  hint={a.signedIn === false ? <StatusMark tone="yellow">Not signed in</StatusMark> : detail ? <span style={oneLine}>{detail}</span> : undefined}
+                  value={def === a.id ? 'Default' : undefined}
+                  onClick={() => nav.open(`${provider}:${a.id}`)} />
+              </div>
+            );
+          })}
+      </SettingsGroup>
+    );
+  };
+
+  const addTitle = adding ? `Add a ${PROVIDER_TITLE[adding]} account` : undefined;
+  return (
+    <div ref={top}>
+      <SettingsPage intro="New threads use the default account unless you pick another. Usage limits show every account.">
+        {error && <div role="alert" style={errText}>{error}</div>}
+        {list('claude')}
+        {list('codex')}
+      </SettingsPage>
+      <Sheet open={adding !== null} onClose={closeAdd} title={addTitle}>
+        {adding && (
+          <>
+            {!(adding === 'codex' && codexSignIn) && (
+              <input aria-label="Account name" value={label} onChange={(e) => setLabel(e.target.value)}
+                placeholder={adding === 'claude' ? 'Name, like Work or Personal (optional)' : 'Name, like Work or Personal'}
+                style={{ ...fieldFor(isMobile), width: '100%', boxSizing: 'border-box' }} />
+            )}
+            {adding === 'claude' ? (
               <ClaudeLogin buttonLabel="Log in to the new Claude account" start={() => api.accountsClaudeLogin(label)} onDone={() => { setAdding(null); setLabel(''); void load(); }} />
             ) : codexSignIn ? (
               <CodexLogin accountId={codexSignIn} onDone={codexSignInEnded} onCancel={codexSignInEnded} />
             ) : (
-              <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</div>
+              <>
+                <div style={noteText}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" disabled={busy} onClick={() => void addCodex()} style={{ ...solidBtn(!busy), height: isMobile ? 36 : 30 }}>Add and sign in</button>
+                  <button type="button" onClick={closeAdd} style={{ ...ghostBtn, height: isMobile ? 36 : 30 }}>Cancel</button>
+                </div>
+              </>
             )}
-            {!(provider === 'codex' && codexSignIn) && (
-              <div style={{ display: 'flex', gap: 8 }}>
-                {provider === 'codex' && <button type="button" disabled={busy} onClick={() => void addCodex()} style={solidBtn(!busy)}>Add and sign in</button>}
-                <button type="button" onClick={() => { setAdding(null); setLabel(''); }} style={ghostBtn}>Cancel</button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div><button type="button" onClick={() => { setAdding(provider); setLabel(''); setCodexSignIn(null); }} style={{ ...ghostBtn, display: 'inline-flex', alignItems: 'center', gap: 6 }}><Plus size={13} weight="bold" />Add {PROVIDER_TITLE[provider]} account</button></div>
+          </>
         )}
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
-        Each new thread picks one of these accounts, or uses the default. Usage shows every account.
-        The CLI login is the one signed in on the daemon's computer; it cannot be removed here.
-      </div>
-      {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
-      {list('claude')}
-      <Divider />
-      {list('codex')}
-      <ConfirmModal
-        open={!!removing}
-        title={removing ? `Remove "${removing.account.label}"?` : ''}
-        message={removing ? removeMessage(removing) : ''}
-        confirmLabel="Remove"
-        danger
-        onConfirm={() => void remove()}
-        onCancel={() => setRemoving(null)}
-      />
+      </Sheet>
+      {confirm}
     </div>
+  );
+}
+
+/** The account's name: a field and Save. The CLI login starts empty; empty restores its stock name. */
+function AccountName({ account: a, isMobile, onSave }: { account: Account; isMobile: boolean; onSave: (name: string) => Promise<boolean> }) {
+  const initial = a.isCli ? '' : a.label;
+  const [draft, setDraft] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const changed = draft !== initial;
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    await onSave(draft);
+    setSaving(false);
+  };
+  return (
+    <SettingsRow label="Name" hint={a.isCli ? 'Leave it empty to use the stock name.' : 'How the account reads in the New Thread window and Usage limits.'}>
+        <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
+          <input aria-label="New name" value={draft} placeholder={a.isCli ? 'CLI login (this computer)' : 'Name'}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save(); } if (e.key === 'Escape') setDraft(initial); }}
+            style={{ ...fieldFor(isMobile), flex: 1, minWidth: 0, boxSizing: 'border-box' }} />
+          <button type="button" aria-label="Save name" disabled={!changed || saving} onClick={() => void save()}
+            style={{ ...solidBtn(changed && !saving), height: isMobile ? 36 : 30 }}>Save</button>
+        </div>
+      </SettingsRow>
   );
 }
