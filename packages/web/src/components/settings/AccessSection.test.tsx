@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AccessSection, pairLink, PAIR_ADDRESS_KEY, isLoopbackHost, phoneAddress } from './AccessSection';
 import { api, ApiError } from '../../api/client';
@@ -58,20 +58,41 @@ describe('<AccessSection>', () => {
   it('tells the user that a phone on the Tailscale address is not listed, and to use the Wi-Fi address to list it', () => {
     render(<AccessSection />);
     expect(screen.getByTestId('address-tailscale-note')).toHaveTextContent(
-      'A phone that opens the Tailscale address needs no sign-in and is not listed. To list a phone, use the Wi-Fi address.');
+      'A phone on the Tailscale address needs no sign-in and is not listed. Use the Wi-Fi address to list it.');
   });
 
-  it('never shows the token: the section only points at the CLI for it', () => {
+  it('never shows the token: the token details sit closed in a disclosure that points at the CLI', () => {
     render(<AccessSection />);
-    expect(screen.getByText(/never shown here/)).toBeInTheDocument();
+    const more = screen.getByRole('button', { name: /Access token/ });
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    expect(more).toHaveTextContent(/never shown here/);
+    fireEvent.click(more);
+    expect(screen.getByText('dispatch access')).toBeInTheDocument();
+    expect(screen.getByText('dispatch access rotate')).toBeInTheDocument();
+  });
+
+  it('puts the address and the code in one "Sign in a phone" group', () => {
+    render(<AccessSection />);
+    const g = screen.getByRole('group', { name: 'Sign in a phone' });
+    expect(within(g).getByLabelText('Address the phone will use')).toBeInTheDocument();
+    expect(within(g).getByRole('button', { name: 'Make a code' })).toBeInTheDocument();
+  });
+
+  it('clears a live code from the screen', async () => {
+    (api.makePairCode as any).mockResolvedValue({ code: 'ABCD-EFGH', expiresAt: Date.now() + 5 * 60_000 });
+    render(<AccessSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Make a code' }));
+    await screen.findByTestId('pair-code');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear code' }));
+    expect(screen.queryByTestId('pair-code')).toBeNull();
   });
 });
 
 describe('<AccessSection> devices', () => {
-  it('shows the signed-in devices list under the code', async () => {
+  it('shows the signed-in devices group under the code', async () => {
     render(<AccessSection />);
-    expect(await screen.findByText('SIGNED-IN DEVICES')).toBeInTheDocument();
     expect(await screen.findByText(/No device has signed in yet/)).toBeInTheDocument();
+    expect(screen.getByText('Signed-in devices')).toBeInTheDocument();
   });
 });
 

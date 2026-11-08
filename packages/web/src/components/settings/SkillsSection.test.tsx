@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SkillsSection } from './SkillsSection';
 import { api } from '../../api/client';
@@ -82,5 +82,27 @@ describe('Settings → Skills (plugins slice 6; list rows 2026-11-07)', () => {
     skills = [];
     render(<SkillsSection />);
     expect(await screen.findByTestId('empty-state')).toHaveTextContent(/No skills yet/);
+  });
+});
+
+describe('Settings → Skills on a phone (2026-11-07)', () => {
+  const wide = window.innerWidth;
+  afterEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: wide }); history.replaceState(null, ''); });
+
+  it("opens a skill's page as a history entry, with no back link; back (popstate) returns to the list", async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 390 });
+    history.replaceState({ nav: 1, settingsSection: 'skills', depth: 1 }, '');
+    render(<SkillsSection />);
+    await screen.findByTestId('skill-row-review');
+    openRow('review');
+    expect(screen.getByTestId('skill-page-review')).toBeInTheDocument();
+    expect(history.state).toMatchObject({ settingsSection: 'skills', subPage: 'review', depth: 2 });
+    expect(screen.queryByRole('button', { name: 'Back to skills' })).toBeNull();
+    act(() => {
+      history.replaceState({ nav: 1, settingsSection: 'skills', depth: 1 }, '');
+      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+    });
+    expect(screen.queryByTestId('skill-page-review')).toBeNull();
+    expect(screen.getByTestId('skill-row-review')).toBeInTheDocument();
   });
 });
