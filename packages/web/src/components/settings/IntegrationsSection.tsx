@@ -218,14 +218,15 @@ export function IntegrationsSection() {
   );
 
   return (
-    <SettingsPage intro="MCP integrations give every agent thread more tools (Claude Code, Codex, Grok, OpenCode). They are the same on every device.">
+    <SettingsPage intro="MCP integrations add tools to every agent thread (Claude Code, Codex, Grok, OpenCode), the same on every device.">
       {!loaded ? null : list.length === 0 ? (
         <EmptyState action={addButton('Add an integration…')}>No integrations yet. Add one to give every agent thread its tools.</EmptyState>
       ) : (
         <SettingsGroup title="Integrations" action={addButton('Add…')} footer={footer}>
           {ordered.map((i) => (
-            <div key={i.id} data-testid="integration-row" data-name={i.name} style={{ opacity: i.enabled ? 1 : 0.6 }}>
-              <SettingsRow icon={i.type === 'remote' ? Globe : Terminal} label={i.name} ariaLabel={`${i.name}, ${i.enabled ? 'on' : 'off'}`}
+            <div key={i.id} data-testid="integration-row" data-name={i.name}>
+              <SettingsRow icon={i.type === 'remote' ? Globe : Terminal}
+                label={<span style={{ color: i.enabled ? undefined : 'var(--color-text-tertiary)' }}>{i.name}</span>} ariaLabel={`${i.name}, ${i.enabled ? 'on' : 'off'}`}
                 hint={<span style={{ ...oneLine, ...mono }}>{target(i)}</span>}
                 control={<Toggle on={i.enabled} label={`${i.name} on`} onClick={() => void toggle(i)} />}
                 onClick={() => page.open(i.id)} />
