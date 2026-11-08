@@ -5,7 +5,7 @@ export interface ThreadRec { p: string | null; first: string; end: string | null
 /** An instruction block (a paragraph of a longer prompt) and the threads it appeared in. */
 export interface BlockRec { text: string; len: number; parts: number; p: string | null; last: string; seen: { t: string; at: string }[] }
 export interface SignalsState {
-  v: 1;
+  v: 1 | 2;
   /** normalized-hash → block (spec section 4.8: skill-fit). */
   blocks?: Record<string, BlockRec>;
   prompts: PromptRec[];

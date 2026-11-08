@@ -650,6 +650,9 @@ export function createCoach(d, deps = {}) {
     else if (r.state === 'done' && r.report) {
       const rep = r.report;
       body = h('div', null,
+        // Read with the old rules (coach fix T7): its findings may quote agents or go-aheads.
+        r.stale && h('div', { style: { ...S.note, marginBottom: 6 } }, 'The Coach cleaned its notes after this look back. Its findings may quote agents or one-word go-aheads.',
+          h('div', { style: S.row }, h('button', { type: 'button', style: S.btn, onClick: () => { void patchReview(key, { state: 'planning', stale: false, report: null, error: null, restartable: false, progress: null, cancel: false }); } }, 'Run again'))),
         h('div', { style: { color: 'var(--color-text-secondary)' } }, rep.summary),
         (rep.findings || []).length > 0 && h('ul', { style: { margin: '8px 0 0', paddingLeft: 18 } }, ...rep.findings.map((f, i) => h('li', { key: i, style: { margin: '6px 0' } },
           h('div', { style: S.src }, FINDING_WORD[f.kind] || f.kind),

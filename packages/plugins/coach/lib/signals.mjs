@@ -20,7 +20,8 @@ const BLOCK_TEXT_MAX = 1500;
 const KEEP_BLOCKS = 30;
 
 export function emptyState() {
-  return { v: 1, prompts: [], turns: [], threads: {}, open: {}, last: {} };
+  // v2: written after the one-off clean of the notes (coach fix T7); a v1 document is cleaned once on load.
+  return { v: 2, prompts: [], turns: [], threads: {}, open: {}, last: {} };
 }
 
 /** Lowercase, words only, single spaces: two prompts that differ in case, spacing or punctuation match. */
