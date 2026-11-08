@@ -110,7 +110,7 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, ...style }}>
-      <div data-filterbar-row="" data-testid={rowTestId} style={{ display: 'flex', alignItems: 'center', gap: 8, ...rowStyle }}>
+      <div data-filterbar-row="" data-testid={rowTestId} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, ...rowStyle }}>
         {onQueryChange && (
           <span style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
             <MagnifyingGlass aria-hidden size={lg ? 16 : 14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }} />
@@ -119,15 +119,15 @@ export function FilterBar({ facets, query = '', onQueryChange, placeholder = 'Se
           </span>
         )}
         {!onQueryChange && leading}
-        <span style={{ position: 'relative', display: 'flex', flexShrink: 0, marginLeft: onQueryChange || leading ? undefined : 'auto' }}>
-          {button}
-          {open && !sheet && <>
-            <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-            <div role="dialog" aria-label="Filters" data-variant="popover" style={{ position: 'absolute', top: h + 6, right: 0, zIndex: 91, width: 300, maxWidth: 'calc(100vw - 32px)', maxHeight: '65vh', overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-              {body}
-            </div>
-          </>}
-        </span>
+        <span style={{ display: 'flex', flexShrink: 0, marginLeft: onQueryChange || leading ? undefined : 'auto' }}>{button}</span>
+        {/* Anchored to the row, not the button, so a narrow row (the desktop's left panel) keeps the
+            whole panel inside it: right-aligned, never wider than the row. */}
+        {open && !sheet && <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
+          <div role="dialog" aria-label="Filters" data-variant="popover" style={{ position: 'absolute', top: h + 6, right: 0, zIndex: 91, width: 300, maxWidth: '100%', boxSizing: 'border-box', maxHeight: '65vh', overflowY: 'auto', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
+            {body}
+          </div>
+        </>}
       </div>
       {n > 0 && !open && (
         <div data-testid="applied-filters" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', ...pillsStyle }}>
