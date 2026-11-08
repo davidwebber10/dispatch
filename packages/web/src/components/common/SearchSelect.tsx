@@ -23,11 +23,17 @@ export interface SearchSelectOption {
  * phone sheet). It tracks viewport changes, including the mobile keyboard, and closes
  * only on outside interaction, selection, or keyboard dismissal.
  */
-export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md', style, disabled, emptyText = 'No matches', searchPlaceholder = 'Search…' }: {
+export function SearchSelect({ value, options, onChange, ariaLabel, id, searchable = true, placeholder = 'Choose…', size = 'md', style, disabled, emptyText = 'No matches', searchPlaceholder = 'Search…' }: {
   value: string;
   options: SearchSelectOption[];
   onChange: (value: string) => void;
-  ariaLabel: string;
+  /** The accessible name. Without it, give the trigger an `id` and name it with a `<label htmlFor>`. */
+  ariaLabel?: string;
+  id?: string;
+  /** The search box over the list. Off, the list itself takes focus (arrows, Enter, a letter jumps). */
+  searchable?: boolean;
+  /** The trigger's text while no option matches `value`. */
+  placeholder?: string;
   /** `lg` is the phone size: 40px trigger, 44px rows. */
   size?: 'md' | 'lg';
   style?: React.CSSProperties;
@@ -45,6 +51,7 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const focusSearchRef = useRef(true);
+  const typed = useRef({ text: '', at: 0 });
   const listId = useId();
 
   const current = options.find((o) => o.value === value);
@@ -96,14 +103,15 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
     window.addEventListener('scroll', place, true);
     viewport?.addEventListener('resize', place);
     viewport?.addEventListener('scroll', place);
-    if (focusSearchRef.current) inputRef.current?.focus({ preventScroll: true });
+    if (!searchable) listRef.current?.focus({ preventScroll: true });
+    else if (focusSearchRef.current) inputRef.current?.focus({ preventScroll: true });
     return () => {
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
       viewport?.removeEventListener('resize', place);
       viewport?.removeEventListener('scroll', place);
     };
-  }, [open, lg]);
+  }, [open, lg, searchable]);
 
   // Pointer events cover touch as well as mouse. Ignore interaction in either portal
   // or trigger, so tapping search and choosing an option keep their normal behavior.
@@ -138,8 +146,20 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, filtered.length - 1)); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); return; }
     if (e.key === 'Enter') { e.preventDefault(); const o = filtered[active]; if (o) pick(o.value); return; }
-    if (e.key === 'Tab') setOpen(false);
+    if (e.key === 'Tab') { setOpen(false); return; }
+    // Without a search box, typing jumps the way a native select does: to the next label that starts with the letters.
+    if (!searchable && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const now = Date.now();
+      const text = (now - typed.current.at < 700 ? typed.current.text : '') + e.key.toLowerCase();
+      typed.current = { text, at: now };
+      const from = text.length === 1 ? active + 1 : active;
+      for (let k = 0; k < filtered.length; k++) {
+        const i = (from + k) % filtered.length;
+        if (filtered[i].label.toLowerCase().startsWith(text)) { setActive(i); break; }
+      }
+    }
   }
+  const name = ariaLabel ?? '';
 
   const field: React.CSSProperties = {
     background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: lg ? 'var(--radius-md)' : 'var(--radius-sm)',
@@ -148,7 +168,7 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
 
   return (
     <>
-      <button ref={triggerRef} type="button" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} aria-label={ariaLabel}
+      <button ref={triggerRef} id={id} type="button" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} aria-label={ariaLabel}
         disabled={disabled} onClick={() => (open ? setOpen(false) : show(!lg && !window.matchMedia?.('(pointer: coarse)').matches))}
         onKeyDown={(e) => { if (!open && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); show(); } }}
         style={{
@@ -157,7 +177,7 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
           position: 'relative', display: 'flex', alignItems: 'center', opacity: disabled ? 0.5 : 1, ...style,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, color: current ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>
-          {current?.label ?? (options.length ? 'Choose…' : '—')}
+          {current?.label ?? (options.length ? placeholder : '—')}
         </span>
         <span aria-hidden="true" style={{ position: 'absolute', right: lg ? 13 : 10, top: lg ? 14 : 11, width: 7, height: 7, borderRight: '1.5px solid var(--color-text-secondary)', borderBottom: '1.5px solid var(--color-text-secondary)', transform: 'rotate(45deg)', pointerEvents: 'none' }} />
       </button>
@@ -168,11 +188,12 @@ export function SearchSelect({ value, options, onChange, ariaLabel, size = 'md',
           background: 'var(--color-modal)', border: '1px solid var(--color-border-hover)', borderRadius: 'var(--radius-md)', boxShadow: '0 20px 50px -12px var(--color-shadow-strong)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}>
-          <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} placeholder={searchPlaceholder}
-            aria-label={`Search ${ariaLabel.toLowerCase()}`} aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
+          {searchable && <input ref={inputRef} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} placeholder={searchPlaceholder}
+            aria-label={`Search ${name.toLowerCase()}`.trim()} aria-controls={listId} aria-activedescendant={filtered[active] ? `${listId}-${active}` : undefined}
             autoComplete="off" spellCheck={false}
-            style={{ ...field, border: 'none', borderBottom: '1px solid var(--color-hover)', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? 16 : 13, background: 'transparent', outline: 'none' }} />
-          <ul ref={listRef} id={listId} role="listbox" aria-label={ariaLabel} style={{ listStyle: 'none', margin: 0, padding: 4, maxHeight: lg ? 264 : 240, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            style={{ ...field, border: 'none', borderBottom: '1px solid var(--color-hover)', borderRadius: 'var(--radius-xs)', height: lg ? 44 : 36, flexShrink: 0, padding: '0 12px', fontSize: lg ? 16 : 13, background: 'transparent', outline: 'none' }} />}
+          <ul ref={listRef} id={listId} role="listbox" aria-label={ariaLabel} tabIndex={searchable ? undefined : -1}
+            aria-labelledby={!ariaLabel && id ? id : undefined} aria-activedescendant={!searchable && filtered[active] ? `${listId}-${active}` : undefined} style={{ outline: 'none', listStyle: 'none', margin: 0, padding: 4, maxHeight: lg ? 264 : 240, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {filtered.length === 0 && (
               <li aria-disabled="true" style={{ padding: '10px 12px', fontSize: lg ? 14 : 12.5, color: 'var(--color-text-tertiary)' }}>{emptyText}</li>
             )}
