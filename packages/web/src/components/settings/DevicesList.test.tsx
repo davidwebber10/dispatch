@@ -35,50 +35,76 @@ describe('addressLabel', () => {
   });
 });
 
+const openDevice = (row: HTMLElement) => fireEvent.click(within(row).getAllByRole('button')[0]);
+const dialog = () => screen.getByRole('alertdialog');
+
 describe('<DevicesList>', () => {
-  it('lists devices, marks this one, and says how each signed in', async () => {
+  it('lists devices as rows: the name, this device marked, and one line of when and where', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     render(<DevicesList now={() => NOW} reload={reload} />);
     const rows = await screen.findAllByTestId('device-row');
     expect(rows).toHaveLength(2);
+    expect(within(screen.getByRole('group', { name: 'Signed-in devices' })).getAllByTestId('device-row')).toHaveLength(2);
     expect(within(rows[0]).getByText('Mac (Chrome)')).toBeInTheDocument();
     expect(within(rows[0]).getByText('This device')).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/access token/i)).toBeInTheDocument();
     expect(within(rows[1]).queryByText('This device')).not.toBeInTheDocument();
-    expect(within(rows[1]).getByText(/sign-in code/i)).toBeInTheDocument();
     expect(within(rows[1]).getByText(/192\.168\.1\.9/)).toBeInTheDocument();
     expect(within(rows[1]).getByText(/last active 5m ago/i)).toBeInTheDocument();
+    // No per-row buttons: Rename and Revoke live on the device's page.
+    expect(within(rows[1]).queryByRole('button', { name: 'Revoke' })).toBeNull();
   });
 
-  it('explains why own-Tailscale devices are not listed, and how to list a phone', async () => {
+  it("a device's page says how it signed in, where from, and when", async () => {
+    vi.mocked(api.getDevices).mockResolvedValue(list());
+    render(<DevicesList now={() => NOW} reload={reload} />);
+    let rows = await screen.findAllByTestId('device-row');
+    openDevice(rows[1]);
+    const page = screen.getByTestId('device-page');
+    expect(within(page).getByText(/sign-in code/i)).toBeInTheDocument();
+    expect(within(page).getByText('192.168.1.9')).toBeInTheDocument();
+    expect(within(page).getByText('5m ago')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Back to/ }));
+    rows = await screen.findAllByTestId('device-row');
+    openDevice(rows[0]);
+    expect(within(screen.getByTestId('device-page')).getByText(/access token/i)).toBeInTheDocument();
+  });
+
+  it('says why own-Tailscale devices are not listed, under the list', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     render(<DevicesList now={() => NOW} reload={reload} />);
     const note = await screen.findByTestId('tailscale-note');
-    expect(note).toHaveTextContent('Devices on your own Tailscale need no sign-in, so they do not appear here.');
-    expect(note).toHaveTextContent('Manage or remove them in the Tailscale admin console.');
-    expect(note).toHaveTextContent('To list a phone here, use the Wi-Fi address.');
+    expect(note).toHaveTextContent('Devices on your Tailscale need no sign-in and are not listed.');
+    expect(note).toHaveTextContent('Manage them in the Tailscale admin console.');
   });
 
   it('labels a device from before the device list', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list({ devices: [dev({ signedInVia: 'earlier' })], currentDeviceId: null }));
     render(<DevicesList now={() => NOW} reload={reload} />);
-    expect(await screen.findByText(/before the device list/i)).toBeInTheDocument();
+    openDevice((await screen.findAllByTestId('device-row'))[0]);
+    expect(screen.getByText(/before the device list/i)).toBeInTheDocument();
   });
 
   it('when this browser is not a device (local), says so', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list({ currentDeviceId: null, devices: [dev({})] }));
     render(<DevicesList now={() => NOW} reload={reload} />);
-    expect(await screen.findByText(/signed in by being on this computer|needs no sign-in/i)).toBeInTheDocument();
+    expect(await screen.findByText(/needs no sign-in, so it is not listed/i)).toBeInTheDocument();
   });
 
-  it('revokes another device after a confirm, then reloads the list', async () => {
+  it('with no device yet, says so in place of the card', async () => {
+    vi.mocked(api.getDevices).mockResolvedValue(list({ currentDeviceId: null, devices: [] }));
+    render(<DevicesList now={() => NOW} reload={reload} />);
+    expect((await screen.findByText(/No device has signed in yet/)).closest('[data-testid="empty-state"]')).not.toBeNull();
+  });
+
+  it('revokes another device after a confirm, then shows the shorter list', async () => {
     vi.mocked(api.getDevices).mockResolvedValueOnce(list()).mockResolvedValueOnce(list({ devices: list().devices.slice(0, 1) }));
     vi.mocked(api.revokeDevice).mockResolvedValue(undefined);
     render(<DevicesList now={() => NOW} reload={reload} />);
-    const rows = await screen.findAllByTestId('device-row');
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Revoke' }));
+    openDevice((await screen.findAllByTestId('device-row'))[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke this device' }));
     expect(api.revokeDevice).not.toHaveBeenCalled(); // asks first
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Yes, revoke' }));
+    expect(dialog()).toHaveTextContent(/signed out at once/i);
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Revoke' }));
     await waitFor(() => expect(api.revokeDevice).toHaveBeenCalledWith('id1'));
     await waitFor(() => expect(screen.getAllByTestId('device-row')).toHaveLength(1));
     expect(reload).not.toHaveBeenCalled();
@@ -87,34 +113,36 @@ describe('<DevicesList>', () => {
   it('cancel keeps the device', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     render(<DevicesList now={() => NOW} reload={reload} />);
-    const rows = await screen.findAllByTestId('device-row');
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Revoke' }));
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Cancel' }));
+    openDevice((await screen.findAllByTestId('device-row'))[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke this device' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
     expect(api.revokeDevice).not.toHaveBeenCalled();
-    expect(within(rows[1]).getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.getByTestId('device-page')).toBeInTheDocument();
   });
 
-  it('revoking this device warns about it and reloads to the sign-in page', async () => {
+  it('signing out this device warns about it and reloads to the sign-in page', async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     vi.mocked(api.revokeDevice).mockResolvedValue(undefined);
     render(<DevicesList now={() => NOW} reload={reload} />);
-    const rows = await screen.findAllByTestId('device-row');
-    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Sign out this device' }));
-    expect(within(rows[0]).getByText(/sign you out here/i)).toBeInTheDocument();
-    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Yes, sign out' }));
+    openDevice((await screen.findAllByTestId('device-row'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out this device' }));
+    expect(dialog()).toHaveTextContent(/sign you out here/i);
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(api.revokeDevice).toHaveBeenCalledWith('me'));
     await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 
-  it('renames a device', async () => {
+  it("renames a device on its page", async () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     vi.mocked(api.renameDevice).mockResolvedValue(undefined);
     render(<DevicesList now={() => NOW} reload={reload} />);
-    const rows = await screen.findAllByTestId('device-row');
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Rename' }));
-    const input = within(rows[1]).getByLabelText('Device name');
+    openDevice((await screen.findAllByTestId('device-row'))[1]);
+    const input = screen.getByLabelText('Device name') as HTMLInputElement;
+    expect(input.value).toBe('iPhone (Safari)');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     fireEvent.change(input, { target: { value: 'Jason phone' } });
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.renameDevice).toHaveBeenCalledWith('id1', 'Jason phone'));
   });
 
@@ -125,7 +153,8 @@ describe('<DevicesList>', () => {
     await screen.findAllByTestId('device-row');
     fireEvent.click(screen.getByRole('button', { name: 'Sign out devices not in this list' }));
     expect(api.endLegacyDevices).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Yes, sign them out' }));
+    expect(dialog()).toHaveTextContent(/will need to sign in again/i);
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Sign them out' }));
     await waitFor(() => expect(api.endLegacyDevices).toHaveBeenCalled());
   });
 
@@ -146,9 +175,9 @@ describe('<DevicesList>', () => {
     vi.mocked(api.getDevices).mockResolvedValue(list());
     vi.mocked(api.revokeDevice).mockRejectedValue(new ApiError('x', 500));
     render(<DevicesList now={() => NOW} reload={reload} />);
-    const rows = await screen.findAllByTestId('device-row');
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Revoke' }));
-    fireEvent.click(within(rows[1]).getByRole('button', { name: 'Yes, revoke' }));
+    openDevice((await screen.findAllByTestId('device-row'))[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke this device' }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Revoke' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/could not revoke/i);
   });
 });

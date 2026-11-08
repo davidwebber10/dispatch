@@ -26,8 +26,8 @@ import { AboutSection } from './AboutSection';
  *
  * Adding a section here surfaces it in both places. Sections sit in three groups, in the
  * order people open them: YOU (how Dispatch looks and talks to you), AGENTS (what your
- * agents run with), THIS MAC (the machine and who can reach it). `blurb` is the subtitle
- * under the label on mobile and beside the title in the desktop content header.
+ * agents run with), THIS MAC (the machine and who can reach it). `blurb` is one short line
+ * (at most 32 characters, so it never wraps on a phone) under the label in the phone's list.
  */
 export type SettingsSectionKey =
   | 'appearance' | 'notifications' | 'dictation'
@@ -49,20 +49,20 @@ export type SettingsSection = {
 };
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Theme, accent, text sizes, density, layout', icon: PaintBrush, Component: AppearanceSection },
-  { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push on this device, which alerts, devices', icon: Bell, Component: NotificationsSection },
-  { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider and key', icon: Microphone, Component: DictationSection },
-  { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults per harness, Control Plane, working words', icon: Robot, Component: AgentsSection },
-  { key: 'accounts', group: 'AGENTS', label: 'Accounts', blurb: 'Signed-in accounts per harness, the default for new threads', icon: UserCircle, Component: AccountsSection },
-  { key: 'usage', group: 'AGENTS', label: 'Usage limits', blurb: 'Warning level, paused banner, current figures', icon: Gauge, Component: UsageLimitsSection },
-  { key: 'integrations', group: 'AGENTS', label: 'Integrations', blurb: 'MCP integrations your agents can use', icon: PlugsConnected, Component: IntegrationsSection },
+  { key: 'appearance', group: 'YOU', label: 'Appearance', blurb: 'Theme, accent, text, density', icon: PaintBrush, Component: AppearanceSection },
+  { key: 'notifications', group: 'YOU', label: 'Notifications', blurb: 'Push alerts and which ones', icon: Bell, Component: NotificationsSection },
+  { key: 'dictation', group: 'YOU', label: 'Dictation', blurb: 'Speech-to-text provider', icon: Microphone, Component: DictationSection },
+  { key: 'agents', group: 'AGENTS', label: 'Agents', blurb: 'Defaults for each harness', icon: Robot, Component: AgentsSection },
+  { key: 'accounts', group: 'AGENTS', label: 'Accounts', blurb: 'Signed-in accounts', icon: UserCircle, Component: AccountsSection },
+  { key: 'usage', group: 'AGENTS', label: 'Usage limits', blurb: 'Warnings and current use', icon: Gauge, Component: UsageLimitsSection },
+  { key: 'integrations', group: 'AGENTS', label: 'Integrations', blurb: 'MCP tools for your agents', icon: PlugsConnected, Component: IntegrationsSection },
   { key: 'secrets', group: 'AGENTS', label: 'Secrets', blurb: 'Doppler environment variables', icon: Key, Component: SecretsSection },
-  { key: 'tools', group: 'AGENTS', label: 'Tools', blurb: 'CLI tools installed and signed in', icon: Wrench, Component: ToolsSection },
-  { key: 'devices', group: 'THIS MAC', label: 'Devices & access', blurb: 'Sign in a phone, signed-in devices', icon: DeviceMobile, Component: AccessSection },
+  { key: 'tools', group: 'AGENTS', label: 'Tools', blurb: 'CLI tools and sign-ins', icon: Wrench, Component: ToolsSection },
+  { key: 'devices', group: 'THIS MAC', label: 'Devices & access', blurb: 'Sign in a phone, your devices', icon: DeviceMobile, Component: AccessSection },
   { key: 'servers', group: 'THIS MAC', label: 'Servers', blurb: 'Other Dispatch machines', icon: HardDrives, Component: ServersSection },
-  { key: 'plugins', group: 'THIS MAC', label: 'Plugins', blurb: 'Local, bundled and installed plugins; marketplaces', icon: PuzzlePiece, Component: PluginsSection },
-  { key: 'skills', group: 'THIS MAC', label: 'Skills', blurb: 'Skill texts every thread gets, per project', icon: GraduationCap, Component: SkillsSection },
-  { key: 'about', group: 'THIS MAC', label: 'About & updates', blurb: 'Version, updates, setup, usage stats', icon: Info, Component: AboutSection },
+  { key: 'plugins', group: 'THIS MAC', label: 'Plugins', blurb: 'Plugins and marketplaces', icon: PuzzlePiece, Component: PluginsSection },
+  { key: 'skills', group: 'THIS MAC', label: 'Skills', blurb: 'Texts every thread gets', icon: GraduationCap, Component: SkillsSection },
+  { key: 'about', group: 'THIS MAC', label: 'About & updates', blurb: 'Version, updates, setup', icon: Info, Component: AboutSection },
 ];
 
 /** Keys from before the reorganization, still found in old history entries and links. */

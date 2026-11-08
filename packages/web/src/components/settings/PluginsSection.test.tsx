@@ -435,6 +435,18 @@ describe('marketplaces and browse on the Plugins page (2026-11-07)', () => {
     await waitFor(() => expect(api.removeMarketplace).toHaveBeenCalledWith('m1'));
   });
 
+  it('the marketplace URL is an input row inside the card, the last row under the marketplaces', async () => {
+    markets = [{ url: 'u', slug: 'm1', name: 'Test market', description: null, trusted: false, addedAt: 't', lastPulledAt: 't', error: null }];
+    render(<PluginsSection />);
+    const addRow = await screen.findByTestId('marketplace-add-row');
+    expect(within(addRow).getByLabelText('Marketplace URL')).toBeInTheDocument();
+    expect(within(addRow).getByRole('button', { name: 'Add marketplace' })).toBeInTheDocument();
+    expect(within(addRow).getByText('Add a marketplace')).toBeInTheDocument();
+    const market = await screen.findByTestId('marketplace-m1');
+    expect(addRow.parentElement).toBe(market.parentElement);
+    expect(market.compareDocumentPosition(addRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('browse lists the catalog by marketplace with Install; an installed plugin shows its version instead', async () => {
     markets = [{ url: 'u', slug: 'm1', name: 'Test market', description: null, trusted: false, addedAt: 't', lastPulledAt: 't', error: null }];
     catalog = [
