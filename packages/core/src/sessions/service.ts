@@ -38,7 +38,7 @@ import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { parseCodexRollout } from '../conversation/codex-transcript.js';
-import { findCodexRolloutPath, codexRolloutTailStatus } from './codex-sessions.js';
+import { findCodexRolloutPath, codexRolloutTailStatus, readCodexSessionModel } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
 import { systemPromptFor, modelFor, buildPeerPrompt } from '../overseer/prompts.js';
@@ -2254,6 +2254,67 @@ export class SessionService {
   }
 
   /**
+   * The model a thread runs NOW, for the Pretty header: what the live harness last reported
+   * (IStructuredManager.getModel — init, a lead assistant frame, a switch), else the saved
+   * `config.model` (what the next spawn passes), else undefined (the CLI's own default).
+   */
+  activeModel(terminalId: string): string | undefined {
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row) return undefined;
+    const manager = this.structuredManagerFor(row.type);
+    const live = manager?.isAlive(terminalId) ? manager.getModel?.(terminalId) : undefined;
+    if (live) return live;
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
+    return typeof config.model === 'string' && config.model ? config.model : undefined;
+  }
+
+  /**
+   * The Pretty model switcher: run `model` from the thread's next turn, keeping the conversation.
+   *
+   * A live Pretty thread switches in place by its harness's own mechanism (IStructuredManager.setModel:
+   * Claude `set_model`, Codex `turn/start model`, ACP `session/set_model` / `set_config_option`); a
+   * stopped one only saves the pick, which its next start passes. Either way the pick is saved to
+   * `config.model` with `config.modelSetAt`, so a relaunch (daemon restart, Pretty -> CLI) keeps it
+   * even before a turn has run on it (see thread-settings.ts).
+   *
+   * Refused (409) while a turn runs — a switch mid-turn would change the model under a running
+   * tool loop, and Codex would only apply it to the NEXT turn anyway, so the switcher is disabled
+   * then — and for a live CLI thread, whose model belongs to the CLI (`/model`). A harness that
+   * refuses the model fails with 400 and its own message; the saved model is left alone.
+   */
+  async setThreadModel(terminalId: string, model: string): Promise<{ model: string; terminal: terminalsDb.Terminal }> {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw transportError(404, 'Terminal not found');
+    if (!['claude-code', 'codex', 'grok', 'opencode'].includes(terminal.type)) throw transportError(409, 'This thread has no model to switch');
+    if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]~-]{0,120}$/.test(model)) throw transportError(400, 'model is not a valid model id');
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.role || config.agentType) throw transportError(409, 'A coordinator or agent thread runs on its policy model');
+    if (terminal.status === 'working') throw transportError(409, 'This thread is busy — switch the model when the turn ends');
+    const structured = config.transport === 'structured' || terminal.type === 'grok' || terminal.type === 'opencode';
+    if (!structured && this.ptyManager.isAlive(terminalId)) throw transportError(409, 'This thread runs in the CLI — use /model there');
+
+    const manager = this.structuredManagerFor(terminal.type);
+    let resolved = model;
+    if (structured && manager?.isAlive(terminalId) && manager.setModel) {
+      try {
+        resolved = await manager.setModel(terminalId, model);
+      } catch (e) {
+        throw transportError(400, (e as Error)?.message || 'The harness refused the model');
+      }
+    }
+    // Read-merge-write: never clobber the other keys.
+    const fresh = terminalsDb.getById(this.db, terminalId);
+    let merged: Record<string, any> = {};
+    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
+    merged.model = model;
+    merged.modelSetAt = Date.now();
+    terminalsDb.updateConfig(this.db, terminalId, merged);
+    return { model: resolved, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!) };
+  }
+
+  /**
    * Interrupt a live structured turn and wait for the turn boundary ('idle', 'needs-help',
    * 'scheduled') or the process exit — bounded, so a wedged CLI can't hang the switch
    * forever. A turn that ends by asking a question or ending on a wake-scheduler tool
@@ -2763,9 +2824,14 @@ export class SessionService {
    * update) keeps it. Plain Claude user threads with a session to resume only.
    */
   private adoptTranscriptSettings(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
-    if (terminal.type !== 'claude-code' || !terminal.external_id) return;
+    if (!terminal.external_id) return;
     if (config.runner) return; // a headless run is never resumed
-    if (!adoptTranscriptSettingsInto(config, readSessionSettings(workDir, terminal.external_id))) return;
+    // Claude: the transcript's last lead turn. Codex: the rollout's last turn_context (a `/model`
+    // typed in the Codex CLI lands only there). Model only for Codex — its effort is not saved.
+    const seen = terminal.type === 'claude-code'
+      ? readSessionSettings(workDir, terminal.external_id)
+      : terminal.type === 'codex' ? readCodexSessionModel(terminal.external_id) : null;
+    if (!adoptTranscriptSettingsInto(config, seen)) return;
     try { terminalsDb.updateConfig(this.db, terminal.id, config); } catch { /* best effort */ }
   }
 

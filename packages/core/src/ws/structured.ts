@@ -91,6 +91,13 @@ export function handleStructuredConnection(
    * phantom "Working…". Absent ⇒ no settle is ever appended (no authority, no guess).
    */
   isThreadSettled?: (terminalId: string) => boolean,
+  /**
+   * The model the thread runs NOW (SessionService.activeModel). Sent as the last replay frame,
+   * `{type:'system', subtype:'model', model}`, so it wins over any older model in the replay:
+   * Claude emits system/init only once per turn, a bounded tail can cut it, and a Codex ring is
+   * not replayed at all, so without it the Pretty header had no model or a stale one.
+   */
+  currentModel?: (terminalId: string) => string | undefined,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -137,6 +144,9 @@ export function handleStructuredConnection(
   if (settled && !manager.getPending(id) && replayLeavesBusy(events)) {
     frames.push({ type: 'result', subtype: 'backfill', is_error: false });
   }
+  let model: string | undefined;
+  try { model = currentModel?.(id); } catch { model = undefined; }
+  if (model) frames.push({ type: 'system', subtype: 'model', model });
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
   const initialPending = manager.getPending(id);
   if (initialPending) frames.push({ type: 'permission', pending: initialPending });
