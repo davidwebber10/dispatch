@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
-import type { UsageLimitSettings } from '../../api/types';
+import type { UsageLimitSettings, UsageSummary } from '../../api/types';
 import { useSettings } from '../../stores/settings';
 import { useUsageLimits } from '../../stores/usageLimits';
 import { useNow } from '../../hooks/useNow';
-import { UsageTable } from '../layout/UsageChip';
-import { sectionLabel, row, item, Divider, Toggle } from './ui';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { TYPE_LABEL, HIDDEN_TYPES, whenLabel, windowLabel } from '../inspector/usageLimits';
+import { liveValue, entryName, ringTone, bannerText, RING_COLOR, CLI_NOTE, STALE_MS, type RingTone } from '../layout/usageGauge';
+import { Segmented } from '../common/Segmented';
+import { row, item, Toggle, SettingsPage, SettingsGroup, SettingsRow, EmptyState, ToneDot, sectionLabel } from './ui';
 
 export const WARN_MIN = 50;
 export const WARN_MAX = 99;
@@ -83,7 +86,11 @@ export function UsageAlertSetting() {
   );
 }
 
-/** Settings > Usage limits (#127): the threshold (all devices), the paused banner (this device), the figures. */
+/**
+ * Settings > Usage limits (#127), laid out 2026-11-07 (docs/design/settings-layout.md): the warning
+ * level (all devices), what this device shows (the paused banner, the phone header's rings, the
+ * ring's middle), and the current figures, one card per account with a meter per limit window.
+ */
 export function UsageLimitsSection() {
   const { cfg, draft, setDraft, err, save, summary } = useUsageLimitSettings();
   const showBanner = useSettings((s) => s.showUsageBanner);
@@ -92,64 +99,135 @@ export function UsageLimitsSection() {
   const now = useNow();
   const setWarn = (n: number) => { if (cfg && Number.isFinite(n)) { const v = clampWarn(n); if (v !== cfg.warnPercent) save({ warnPercent: v }); else setDraft(String(v)); } };
   const commitDraft = () => { const n = Number(draft); if (draft.trim() === '' || !Number.isFinite(n)) { if (cfg) setDraft(String(cfg.warnPercent)); return; } setWarn(n); };
-  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
 
   return (
-    <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={sectionLabel}>ALL DEVICES</span>
-        {cfg && (
-          <>
-            <div style={row}>
-              <span style={item}>Warn at</span>
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                <button type="button" aria-label="Lower the warning level" onClick={() => setWarn(cfg.warnPercent - STEP)} style={btn('l')}>−</button>
-                <input aria-label="Warning level percent" inputMode="numeric" value={draft}
-                  onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
-                  onBlur={commitDraft}
-                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  style={{ width: 52, height: 28, boxSizing: 'border-box', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', color: 'var(--color-text-body)', font: '400 12px var(--font-mono)' }} />
-                <button type="button" aria-label="Raise the warning level" onClick={() => setWarn(cfg.warnPercent + STEP)} style={btn('r')}>+</button>
-                <span style={{ marginLeft: 6, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>%</span>
+    <SettingsPage>
+      <SettingsGroup title="Warning" footer={err ? <span role="alert" style={{ color: 'var(--color-status-red)' }}>{err}</span> : 'The same on every device. The push alert at this level is in Notifications.'}>
+        <SettingsRow label="Warn at" hint="A 5-hour or weekly limit at this level turns its ring red. 50 to 99."
+          control={cfg ? (
+            <PercentStepper draft={draft} setDraft={setDraft} onCommit={commitDraft}
+              onDec={() => setWarn(cfg.warnPercent - STEP)} onInc={() => setWarn(cfg.warnPercent + STEP)} />
+          ) : <span style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>Loading…</span>} />
+      </SettingsGroup>
+
+      <SettingsGroup title="This device">
+        <SettingsRow label="Paused banner" hint="The red banner while agents wait on a usage limit."
+          control={<Toggle on={showBanner} onClick={() => useSettings.getState().setShowUsageBanner(!showBanner)} label="Show the paused banner on this device" />} />
+        <SettingsRow label="All accounts in the phone header" hint="Outside a thread. A thread shows the ring of its own account."
+          control={<Toggle on={phoneHeader} onClick={() => useSettings.getState().setPhoneHeaderUsage(!phoneHeader)} label="All accounts in the phone header" />} />
+        <SettingsRow label="In the usage ring" hint="The ring fills with the 5-hour and weekly limits, and a model's own weekly limit in a thread on that model.">
+          <Segmented ariaLabel="In the usage ring" value={ringCenter}
+            options={[{ value: 'logo', label: 'Logo' }, { value: 'percent', label: 'Percent used' }]}
+            onChange={(v) => useSettings.getState().setUsageRingCenter(v as 'logo' | 'percent')} />
+        </SettingsRow>
+      </SettingsGroup>
+
+      <UsageFigures summary={summary} now={now} />
+    </SettingsPage>
+  );
+}
+
+/** The warning level: − and + by 5, or type a number (clamped on blur or Enter). */
+function PercentStepper({ draft, setDraft, onCommit, onDec, onInc }: { draft: string; setDraft: (v: string) => void; onCommit: () => void; onDec: () => void; onInc: () => void }) {
+  const lg = useIsMobile();
+  const h = lg ? 34 : 28;
+  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: h, height: h, padding: 0, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 15px var(--font-sans)' });
+  return (
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <button type="button" aria-label="Lower the warning level" onClick={onDec} style={btn('l')}>−</button>
+      <span style={{ position: 'relative', display: 'flex' }}>
+        <input aria-label="Warning level percent" inputMode="numeric" value={draft}
+          onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
+          onBlur={onCommit}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          style={{ width: lg ? 64 : 58, height: h, boxSizing: 'border-box', padding: '0 16px 0 4px', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', borderRadius: 0, color: 'var(--color-text-primary)', font: `500 ${lg ? 16 : 13}px var(--font-sans)` }} />
+        <span aria-hidden style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: lg ? 14 : 12, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>%</span>
+      </span>
+      <button type="button" aria-label="Raise the warning level" onClick={onInc} style={btn('r')}>+</button>
+    </div>
+  );
+}
+
+interface FigureRow { type: string; label: string; used: number | null; tone: RingTone; note: string }
+interface FigureCard { key: string; name: string; plan?: string; asOf: string; stale: boolean; rows: FigureRow[] }
+
+/** Every account's windows in the same order as the popover table (UsageTable): known types first, then the rest. */
+function figureCards(s: UsageSummary, now: number): FigureCard[] {
+  return s.providers.map((p) => {
+    const known = Object.keys(TYPE_LABEL).filter((t) => p.windows[t] && !HIDDEN_TYPES.has(t));
+    const unknown = Object.keys(p.windows).filter((t) => !(t in TYPE_LABEL)).sort();
+    const rows = [...known, ...unknown].map((t): FigureRow => {
+      const w = p.windows[t];
+      const used = liveValue(w, now);
+      const note = used === null ? windowLabel(w, now)
+        : w.resetsAt !== null ? `Resets ${whenLabel(w.resetsAt, now)}` : 'No reset time reported';
+      return { type: t, label: TYPE_LABEL[t] ?? t, used, tone: used === null ? 'green' : ringTone(used, s.warnPercent), note };
+    });
+    return { key: `${p.provider}|${p.accountId ?? 'cli'}`, name: entryName(p, s.providers), plan: p.plan, asOf: whenLabel(p.asOf, now), stale: now - p.asOf > STALE_MS, rows };
+  });
+}
+
+const card: React.CSSProperties = { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' };
+
+/**
+ * The current figures: one card per account (name, plan, when the figures are from), a meter row per
+ * limit window colored like the rings, any pause above them, and an empty state before any report.
+ * A local stack of cards under one group label: SettingsGroup holds one card.
+ */
+function UsageFigures({ summary, now }: { summary: UsageSummary | null; now: number }) {
+  const cards = summary ? figureCards(summary, now) : [];
+  const paused = summary?.paused ?? [];
+  return (
+    <section role="group" aria-label="Current figures" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', minHeight: 22, padding: '0 4px' }}>
+        <span style={{ ...sectionLabel, textTransform: 'uppercase' }}>Current figures</span>
+      </div>
+      {paused.map((g) => (
+        <div key={g.provider} role="status" style={{ ...card, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderColor: 'var(--color-status-red)', fontSize: 13, lineHeight: 1.4, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
+          <span style={{ paddingTop: 5 }}><ToneDot tone="red" /></span>{bannerText(g, now)}
+        </div>
+      ))}
+      {cards.length === 0 ? (
+        <EmptyState>No figures reported yet. {CLI_NOTE}</EmptyState>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {cards.map((c) => (
+            <div key={c.key} data-testid="usage-account" style={card}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '11px 12px', minWidth: 0 }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--color-text-primary)' }}>{c.name}</span>
+                  {c.plan && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{c.plan}</span>}
+                </span>
+                <span title={c.stale ? 'Only Pretty threads and Chat report usage, so this figure can be old.' : undefined}
+                  style={{ flexShrink: 0, fontSize: 12, color: c.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>As of {c.asOf}</span>
               </div>
+              {c.rows.length === 0 && <div style={{ borderTop: '1px solid var(--color-border)', padding: '11px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No limits reported</div>}
+              {c.rows.map((r) => <MeterRow key={r.type} row={r} />)}
             </div>
-            <div style={note}>The chip turns amber when a 5-hour or weekly window reaches this level. 50 to 99. The push alert at this level is in Notifications.</div>
-          </>
-        )}
-        {err && <div role="alert" style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
-      </div>
-      <Divider />
+          ))}
+        </div>
+      )}
+      {cards.length > 0 && <div style={{ padding: '0 4px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{CLI_NOTE}</div>}
+    </section>
+  );
+}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={sectionLabel}>THIS DEVICE</span>
-        <div style={row}>
-          <span style={item}>Show the paused banner on this device</span>
-          <Toggle on={showBanner} onClick={() => useSettings.getState().setShowUsageBanner(!showBanner)} label="Show the paused banner on this device" />
-        </div>
-        <div style={note}>The red banner shown while agents are paused on a usage limit.</div>
-        <div style={row}>
-          <span style={item}>All accounts in the phone header</span>
-          <Toggle on={phoneHeader} onClick={() => useSettings.getState().setPhoneHeaderUsage(!phoneHeader)} label="All accounts in the phone header" />
-        </div>
-        <div style={note}>Outside a thread. An open thread always shows the ring of its own account.</div>
-        <div style={row}>
-          <span style={item}>In the usage ring</span>
-          <div role="radiogroup" aria-label="In the usage ring" style={{ display: 'inline-flex', padding: 2, gap: 2, borderRadius: 'var(--radius-md)', background: 'var(--color-hover)' }}>
-            {([['logo', 'Logo'], ['percent', 'Percent used']] as const).map(([v, label]) => (
-              <button key={v} type="button" role="radio" aria-checked={ringCenter === v} onClick={() => useSettings.getState().setUsageRingCenter(v)}
-                style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12.5, fontWeight: 500,
-                  background: ringCenter === v ? 'var(--color-elevated)' : 'transparent', color: ringCenter === v ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>{label}</button>
-            ))}
-          </div>
-        </div>
-        <div style={note}>The ring counts the 5-hour and weekly limits, and a model's own weekly limit in a thread on that model.</div>
+/** One limit window: its name and percent, a bar in the ring's color, and when it resets. */
+function MeterRow({ row: r }: { row: FigureRow }) {
+  const color = RING_COLOR[r.tone];
+  return (
+    <div style={{ borderTop: '1px solid var(--color-border)', padding: '10px 12px 11px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{r.label}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: r.used === null ? 'var(--color-text-tertiary)' : r.tone === 'green' ? 'var(--color-text-primary)' : color }}>
+          {r.used === null ? '–' : `${r.used}%`}
+        </span>
       </div>
-      <Divider />
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span style={sectionLabel}>CURRENT FIGURES</span>
-        <UsageTable summary={summary} now={now} />
+      <div role="meter" aria-label={r.label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={r.used ?? undefined} data-tone={r.tone}
+        style={{ height: 6, borderRadius: 'var(--radius-pill)', background: 'var(--color-hover)', overflow: 'hidden' }}>
+        {r.used !== null && r.used > 0 && <div style={{ width: `${Math.min(100, r.used)}%`, height: '100%', borderRadius: 'var(--radius-pill)', background: color }} />}
       </div>
-    </>
+      <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>{r.note}</span>
+    </div>
   );
 }

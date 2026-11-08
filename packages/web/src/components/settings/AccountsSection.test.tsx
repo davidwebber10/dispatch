@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { AccountsSection } from './AccountsSection';
 import { codexLoginTiming } from './CodexLogin';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
-import { useUI } from '../../stores/ui';
 import type { AccountsView } from '../../api/types';
 
 const view = (): AccountsView => ({
@@ -21,39 +20,73 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
+/** Opens an account's own page from its row (2026-11-07 redesign). */
+const openAccount = async (name: string, provider: string, id: string) => {
+  fireEvent.click(await screen.findByRole('button', { name }));
+  return screen.findByTestId(`account-detail-${provider}-${id}`);
+};
+
 describe('<AccountsSection>', () => {
-  it('lists every account under its harness with email, plan, the default, and the sign-in state', async () => {
+  it('lists every account as a row under its harness: email and plan on one line, Default as the value, the sign-in state', async () => {
     render(<AccountsSection />);
     expect(await screen.findByText('Work')).toBeInTheDocument();
     expect(screen.getByText(/me@work.com · Max/)).toBeInTheDocument();
-    expect(screen.getByTestId('account-claude-w1')).toHaveTextContent('default');
-    expect(screen.getByTestId('account-codex-p9')).toHaveTextContent('not signed in yet');
-    expect(screen.queryByRole('button', { name: 'Remove CLI login (this computer)' })).toBeNull(); // the CLI login stays
+    expect(screen.getByTestId('account-claude-w1')).toHaveTextContent('Default');
+    expect(screen.getByTestId('account-claude-cli')).not.toHaveTextContent('Default');
+    expect(screen.getByTestId('account-codex-p9')).toHaveTextContent('Not signed in');
+    // No per-row action buttons: they live on the account's page.
+    expect(screen.queryByRole('button', { name: 'Remove Work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Rename Work' })).toBeNull();
   });
 
-  it('makes another account the default; removing one names the threads that revert to the default', async () => {
+  it('the CLI login has no Remove on its page', async () => {
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: CLI login (this computer)', 'claude', 'cli');
+    expect(within(page).queryByRole('button', { name: 'Remove account' })).toBeNull();
+    expect(page).toHaveTextContent(/signed in on the daemon's computer/);
+  });
+
+  it('makes another account the default from its page', async () => {
     const setDefault = vi.spyOn(api, 'accountsSetDefault').mockResolvedValue({ claude: 'cli', codex: 'cli' });
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: CLI login (this computer)', 'claude', 'cli');
+    fireEvent.click(within(page).getByRole('button', { name: 'Make CLI login (this computer) the default' }));
+    await waitFor(() => expect(setDefault).toHaveBeenCalledWith('claude', 'cli'));
+  });
+
+  it('removing an account from its page names the threads that revert to the default, then returns to the list', async () => {
     const remove = vi.spyOn(api, 'accountsRemove').mockResolvedValue({ unpinned: 2 });
     vi.spyOn(api, 'accountsThreads').mockResolvedValue([{ id: 't1', label: 'Fix login', sessionId: 'P' }, { id: 't2', label: 'Docs', sessionId: 'P' }]);
     render(<AccountsSection />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Make CLI login (this computer) the default' }));
-    await waitFor(() => expect(setDefault).toHaveBeenCalledWith('claude', 'cli'));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Work' }));
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    fireEvent.click(within(page).getByRole('button', { name: 'Remove account' }));
     const notice = await screen.findByText(/2 threads run on "Work": "Fix login", "Docs"\. They will use "CLI login \(this computer\)" the next time they start\./);
     expect(notice).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(remove).toHaveBeenCalledWith('claude', 'w1'));
+    await waitFor(() => expect(screen.queryByTestId('account-detail-claude-w1')).toBeNull());
   });
 
-  it('renames an account in place (2026-11-06)', async () => {
+  it('renames an account on its page (2026-11-06)', async () => {
     const rename = vi.spyOn(api, 'accountsRename').mockResolvedValue(view());
     render(<AccountsSection />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Rename Work' }));
-    const input = screen.getByLabelText('New name') as HTMLInputElement;
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    const input = within(page).getByLabelText('New name') as HTMLInputElement;
     expect(input.value).toBe('Work');
     fireEvent.change(input, { target: { value: 'Side' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(rename).toHaveBeenCalledWith('claude', 'w1', 'Side'));
+  });
+
+  it('the CLI login renames from an empty field (empty restores the stock name)', async () => {
+    const rename = vi.spyOn(api, 'accountsRename').mockResolvedValue(view());
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: CLI login (this computer)', 'claude', 'cli');
+    const input = within(page).getByLabelText('New name') as HTMLInputElement;
+    expect(input.value).toBe('');
+    fireEvent.change(input, { target: { value: 'Laptop' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(rename).toHaveBeenCalledWith('claude', 'cli', 'Laptop'));
   });
 
   it('shows the thread count under an account that threads are pinned to', async () => {
@@ -81,15 +114,20 @@ describe('<AccountsSection>', () => {
     codexLoginTiming.pollMs = 2000;
   });
 
-  it('a Codex account with no login offers Sign in again, which starts the device sign-in for it', async () => {
+  it('a Codex account with no login offers Sign in again on its page, which starts the device sign-in for it', async () => {
     const login = vi.spyOn(api, 'accountsCodexLogin').mockResolvedValue({ accountId: 'p9', status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' });
     vi.spyOn(api, 'accountsCodexLoginStatus').mockResolvedValue({ accountId: 'p9', status: 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' });
     render(<AccountsSection />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in again to Personal' }));
+    const page = await openAccount('Codex: Personal', 'codex', 'p9');
+    fireEvent.click(within(page).getByRole('button', { name: 'Sign in again to Personal' }));
     await waitFor(() => expect(login).toHaveBeenCalledWith('p9'));
     expect(await screen.findByText('ABCD-12345')).toBeInTheDocument();
-    // Only an account with no login gets it: the CLI login and signed-in accounts do not.
-    expect(screen.queryByRole('button', { name: /Sign in again to CLI login/ })).toBeNull();
+  });
+
+  it('only an account with no login gets Sign in again: not the CLI login', async () => {
+    render(<AccountsSection />);
+    const page = await openAccount('Codex: CLI login (this computer)', 'codex', 'cli');
+    expect(within(page).queryByRole('button', { name: /Sign in again/ })).toBeNull();
   });
 
   it('adding a Claude account starts the headless login for a new account', async () => {

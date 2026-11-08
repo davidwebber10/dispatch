@@ -1,52 +1,131 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle, WarningCircle, X } from '@phosphor-icons/react';
+import { X, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
-import type { HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } from '../../api/types';
-import { HARNESSES } from '../../lib/harnesses';
-import { Toggle, sectionLabel, summaryLine, Divider } from './ui';
+import type { HarnessSettingsEntry, HarnessSettingsResponse, OpencodeCatalogEntry, OpencodeModel } from '../../api/types';
+import { HARNESSES, defaultModeFor, type Harness } from '../../lib/harnesses';
+import { DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, type DurationUnit } from '../../lib/autoArchive';
+import {
+  Toggle, SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark,
+  ghostBtn, solidBtn, fieldFor, miniChip, noteText,
+} from './ui';
 import { useSettings } from '../../stores/settings';
-import { AutoArchiveField } from '../sidebar/AutoArchiveField';
 import { SpinnerWordsField } from './SpinnerWordsField';
 import { useSpinnerWords } from '../../stores/spinnerWords';
 import { Select } from '../common/Select';
+import { Segmented } from '../common/Segmented';
+import { HARNESS_MARK } from '../common/HarnessStrip';
+import { useSubPage, scrollParentToTop } from './subPageNav';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 /**
- * Settings → Agents (formerly Harnesses): the Control Plane's name, then per-harness defaults. All of it is
- * the same on every device. Per-harness defaults are stored on the DAEMON (not localStorage) because spawn-time
- * behavior depends on them: the opencode key secret resolves on respawn after a daemon
- * restart with no browser anywhere in the loop. Only settings that act are offered:
- * default model (all), default mode (the two-mode harnesses), and for OpenCode the
- * Doppler secret NAME holding the OpenRouter key — the Dictation section's "your key
- * stays in Doppler" pattern, plus a live present/missing check and a replace-key field —
- * and the MODEL LIST the New Thread picker offers, curated from OpenRouter's catalog.
- * Every harness has a default auto-archive (off, or on at a deadline). Claude Code also has "Skip agent status summaries" (on unless turned off), which the daemon
- * applies to the next thread it starts.
+ * Settings → Agents (formerly Harnesses), redesigned 2026-11-07 (docs/design/settings-layout.md):
+ * the Control Plane's name, then one row per harness that opens the harness's own page. All of it
+ * is the same on every device. Per-harness defaults are stored on the DAEMON (not localStorage)
+ * because spawn-time behavior depends on them: the opencode key secret resolves on respawn after a
+ * daemon restart with no browser anywhere in the loop. Only settings that act are offered: default
+ * model (all), default mode (the two-mode harnesses), auto-archive (all); Claude Code's "Skip agent
+ * status summaries" (on unless turned off) and working words; and for OpenCode the MODEL LIST the
+ * New Thread picker offers (curated from OpenRouter's catalog) and the Doppler secret NAME holding
+ * the OpenRouter key (the Dictation section's "your key stays in Doppler" pattern), with a
+ * present/missing check and a replace-key field.
  */
-
-const selectStyle = { height: 34, fontSize: 13, width: 'auto', minWidth: 200, maxWidth: 280 } as const;
-const rowStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 } as const;
-const cardStyle = {
-  display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px',
-  background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)',
-} as const;
-const mono = { font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
-const ghostButton = {
-  height: 28, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
-  color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer',
-} as const;
 
 /** `openrouter/vendor/model` → `vendor/model`, the part worth reading. */
 const shortId = (id: string) => (id.startsWith('openrouter/') ? id.slice('openrouter/'.length) : id);
-const formatContext = (n: number | null) => (n ? `${Math.round(n / 1000)}k ctx` : '');
+const formatContext = (n: number | null) => (n ? `${Math.round(n / 1000)}k context` : '');
+const MODE_LABEL = { cli: 'CLI', pretty: 'Pretty' } as const;
+const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const errText: React.CSSProperties = { fontSize: 12, color: 'var(--color-status-red)' };
+/** The brand mark in the settings icon tile (IconTile draws any component that takes a `size`). */
+const markOf = (h: Harness) => HARNESS_MARK[h.id] as unknown as PhosphorIcon;
+
+/** "12 hours", "1 day": an auto-archive deadline in words. */
+function archiveWords(ms: number): string {
+  const { value, unit } = toDuration(ms);
+  return `${value} ${value === 1 ? unit.replace(/s$/, '') : unit}`;
+}
+
+/** The models a harness offers: OpenCode's list is the curated setting, the others ship theirs. */
+function modelsOf(h: Harness, data: HarnessSettingsResponse): { label: string; model: string | null }[] {
+  // The `?? []` covers a browser that refreshed onto this bundle before the daemon restarted onto the route that serves the list.
+  return h.id === 'opencode' ? data.opencodeModels ?? [] : h.models;
+}
+
+/** The row's value: the default model's name. OpenCode always pins a real model, so its "unset" is the first of its list. */
+function modelValue(h: Harness, s: HarnessSettingsEntry, data: HarnessSettingsResponse): string {
+  const models = modelsOf(h, data);
+  if (!s.defaultModel) return h.id === 'opencode' ? models[0]?.label ?? 'None' : 'Default';
+  return models.find((m) => m.model === s.defaultModel)?.label ?? shortId(s.defaultModel);
+}
+
+/** The row's one line: how new threads open, the archive deadline, OpenCode's list size. */
+function rowHint(h: Harness, s: HarnessSettingsEntry, data: HarnessSettingsResponse): React.ReactNode {
+  if (h.id === 'opencode' && !data.opencodeKey.present) return <StatusMark tone="yellow">No OpenRouter key yet</StatusMark>;
+  const parts = [
+    h.modes.length > 1 ? `Opens in ${MODE_LABEL[s.defaultMode ?? defaultModeFor(h)]}` : `${MODE_LABEL[h.modes[0]]} only`,
+    s.autoArchiveMs !== undefined ? `archives after ${archiveWords(s.autoArchiveMs)}` : null,
+    h.id === 'opencode' ? `${(data.opencodeModels ?? []).length} models` : null,
+  ];
+  return parts.filter(Boolean).join(' · ');
+}
+
+export function AgentsSection() {
+  const nav = useSubPage('agents');
+  const [data, setData] = useState<HarnessSettingsResponse | null>(null);
+  const [err, setErr] = useState('');
+  const top = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    api.getHarnessSettings().then(setData).catch(() => setErr('Could not load the agent settings.'));
+  }, []);
+  useEffect(() => { scrollParentToTop(top.current); }, [nav.openId]);
+
+  async function put(patch: Parameters<typeof api.putHarnessSettings>[0]) {
+    try {
+      const next = await api.putHarnessSettings(patch);
+      setData(next); setErr('');
+      useSpinnerWords.getState().set(next.settings?.['claude-code']?.spinnerVerbs ?? null);
+    } catch { setErr('Could not save. Is the daemon reachable?'); }
+  }
+
+  const agents = HARNESSES.filter((h) => h.provider !== null);
+  const open = data && nav.openId ? agents.find((h) => h.id === nav.openId) : undefined;
+
+  if (open && data) {
+    return (
+      <div ref={top}>
+        <HarnessPage h={open} data={data} err={err} put={put} setData={setData} setErr={setErr} onBack={nav.isMobile ? undefined : nav.close} />
+      </div>
+    );
+  }
+
+  return (
+    <div ref={top}>
+      <SettingsPage intro="Defaults for new threads, the same on every device.">
+        <ControlPlaneName />
+        <SettingsGroup title="Harnesses" footer={err ? <span role="alert" style={errText}>{err}</span> : undefined}>
+          {!data
+            ? <SettingsRow label={err ? 'Not loaded' : 'Loading…'} />
+            : agents.map((h) => {
+              const s = data.settings[h.type] ?? {};
+              return (
+                <SettingsRow key={h.id} icon={markOf(h)} label={h.label} ariaLabel={h.label}
+                  hint={rowHint(h, s, data)} value={modelValue(h, s, data)} onClick={() => nav.open(h.id)} />
+              );
+            })}
+        </SettingsGroup>
+      </SettingsPage>
+    </div>
+  );
+}
 
 /** The coordinator's display name (daemon-stored, see stores/settings.ts loadSharedSettings). */
 function ControlPlaneName() {
   const coordinatorName = useSettings((s) => s.coordinatorName);
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span style={sectionLabel}>CONTROL PLANE</span>
-      <div style={rowStyle}>
-        <label htmlFor="control-plane-name" style={{ fontSize: 13 }}>Name</label>
+    <SettingsGroup title="Control Plane">
+      <SettingsRow label="Name" hint="Shown wherever your coordinator appears. Leave it blank for “Control Plane”.">
         <input
           id="control-plane-name"
           value={coordinatorName}
@@ -54,50 +133,138 @@ function ControlPlaneName() {
           placeholder="Control Plane"
           aria-label="Control Plane name"
           maxLength={60}
-          style={{ ...selectStyle, width: 200, boxSizing: 'border-box' }}
+          style={{ ...fieldFor(isMobile), width: '100%', maxWidth: isMobile ? undefined : 360, boxSizing: 'border-box' }}
         />
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Shown wherever your coordinator appears. Leave blank to use “Control Plane”.</div>
-    </div>
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
 
-export function AgentsSection() {
+/** One harness's page: its defaults for new threads, then what only it has. */
+function HarnessPage({ h, data, err, put, setData, setErr, onBack }: {
+  h: Harness; data: HarnessSettingsResponse; err: string;
+  put: (patch: Parameters<typeof api.putHarnessSettings>[0]) => Promise<void>;
+  setData: (d: HarnessSettingsResponse) => void; setErr: (e: string) => void;
+  onBack?: () => void;
+}) {
+  const s = data.settings[h.type] ?? {};
+  const models = modelsOf(h, data);
+  const isMobile = onBack === undefined;
+  const autoDefault = MODE_LABEL[defaultModeFor(h)];
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={summaryLine}>ALL DEVICES · everything here is the same on every device.</div>
-      <ControlPlaneName />
-      <Divider />
-      <HarnessDefaults />
-    </div>
+    <SettingsSubPage testId={`agent-detail-${h.id}`} icon={markOf(h)} title={h.label}
+      subtitle={h.modes.length > 1 ? 'CLI and Pretty threads' : `${MODE_LABEL[h.modes[0]]} threads`}
+      description="What a new thread of this harness starts with. You can change each one in the New Thread window."
+      backLabel="Agents" onBack={onBack}>
+      {err && <div role="alert" style={errText}>{err}</div>}
+
+      <SettingsGroup title="New threads">
+        <SettingsRow label="Default model">
+          <Select
+            id={`hm-${h.id}`}
+            ariaLabel="Default model"
+            style={{ width: '100%', maxWidth: isMobile ? undefined : 320 }}
+            value={s.defaultModel ?? ''}
+            onChange={(v) => void put({ [h.type]: { defaultModel: v || null } })}
+            options={[
+              { value: '', label: h.id === 'opencode' ? `List default (${models[0]?.label ?? '—'})` : 'Harness default' },
+              ...models.filter((m) => m.model !== null).map((m) => ({ value: m.model!, label: m.label })),
+            ]}
+          />
+        </SettingsRow>
+        {h.modes.length > 1 && (
+          <SettingsRow label="Default mode">
+            <Segmented
+              ariaLabel="Default mode"
+              value={s.defaultMode ?? ''}
+              onChange={(v) => void put({ [h.type]: { defaultMode: (v || null) as 'cli' | 'pretty' | null } })}
+              options={[
+                { value: '', label: 'No preference', hint: `New threads open in ${autoDefault}.` },
+                { value: 'cli', label: 'CLI', hint: 'The terminal, as the CLI draws it.' },
+                { value: 'pretty', label: 'Pretty', hint: 'The chat view.' },
+              ]}
+            />
+          </SettingsRow>
+        )}
+        <AutoArchiveRow ms={s.autoArchiveMs} isMobile={isMobile}
+          onChange={(on, ms) => void put({ [h.type]: { autoArchiveMs: on ? ms : null } })} />
+      </SettingsGroup>
+
+      {h.type === 'claude-code' && (
+        <SettingsGroup title="While Claude works">
+          <SettingsRow label="Skip agent status summaries"
+            hint="Saves the tokens Claude spends on a background agent's status line. The line stops updating. New threads only."
+            control={
+              <Toggle on={s.skipAgentSummaries ?? true} label="Skip agent status summaries"
+                onClick={() => void put({ 'claude-code': { skipAgentSummaries: !(s.skipAgentSummaries ?? true) } })} />
+            } />
+          <SpinnerWordsField value={s.spinnerVerbs} onSave={(v) => void put({ 'claude-code': { spinnerVerbs: v } })}
+            sets={s.spinnerSets ?? []} onSaveSets={(sets) => void put({ 'claude-code': { spinnerSets: sets } })} />
+        </SettingsGroup>
+      )}
+
+      {h.id === 'opencode' && (
+        <>
+          <OpencodeModelList
+            models={data.opencodeModels ?? []}
+            defaultModel={s.defaultModel}
+            isMobile={isMobile}
+            onSave={(next, clearDefault) => void put({ opencode: { models: next, ...(clearDefault ? { defaultModel: null } : {}) } })}
+            onReset={() => void put({ opencode: { models: null } })}
+          />
+          <OpenRouterKey data={data} isMobile={isMobile} put={put} setData={setData} setErr={setErr} />
+        </>
+      )}
+    </SettingsSubPage>
   );
 }
 
-function HarnessDefaults() {
-  const [data, setData] = useState<HarnessSettingsResponse | null>(null);
+const UNITS: DurationUnit[] = ['minutes', 'hours', 'days'];
+
+/**
+ * Auto-archive as a settings row: the switch, and when on, the deadline under it. Off unless set:
+ * the New Thread window then opens with auto-archive on at this deadline. The same stored ms as
+ * the New Thread window's AutoArchiveField; the unit picker only changes how it reads.
+ */
+function AutoArchiveRow({ ms, isMobile, onChange }: { ms: number | undefined; isMobile: boolean; onChange: (on: boolean, ms: number) => void }) {
+  const enabled = ms !== undefined;
+  const { value, unit } = toDuration(ms || DEFAULT_AUTO_ARCHIVE_MS);
+  return (
+    <SettingsRow label="Auto-archive" hint="Archive a new thread once it sits idle. Never while it works or waits on you."
+      control={<Toggle on={enabled} label="Auto-archive thread" onClick={() => onChange(!enabled, ms || DEFAULT_AUTO_ARCHIVE_MS)} />}>
+      {enabled && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>After</span>
+          <input type="number" min={1} step={1} aria-label="Inactivity before archiving" value={value}
+            onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) onChange(true, fromDuration(n, unit)); }}
+            style={{ ...fieldFor(isMobile), width: 70, boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }} />
+          <Select ariaLabel="Inactivity unit" value={unit} style={{ width: 110 }}
+            options={UNITS.map((u) => ({ value: u, label: u }))}
+            onChange={(v) => onChange(true, fromDuration(value, v as DurationUnit))} />
+          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>of no activity</span>
+        </div>
+      )}
+    </SettingsRow>
+  );
+}
+
+/** OpenCode's key: which Doppler secret holds it, whether it has a value, and a field to replace it. */
+function OpenRouterKey({ data, isMobile, put, setData, setErr }: {
+  data: HarnessSettingsResponse; isMobile: boolean;
+  put: (patch: Parameters<typeof api.putHarnessSettings>[0]) => Promise<void>;
+  setData: (d: HarnessSettingsResponse) => void; setErr: (e: string) => void;
+}) {
   const [secretNames, setSecretNames] = useState<string[]>([]);
   const [secretsErr, setSecretsErr] = useState('');
   const [keyDraft, setKeyDraft] = useState('');
   const [keySaving, setKeySaving] = useState(false);
-  const [err, setErr] = useState('');
-
   useEffect(() => {
-    api.getHarnessSettings().then(setData).catch(() => setErr('Could not load harness settings.'));
     api.listSecrets().then((s) => setSecretNames(s.map((x) => x.name)))
-      .catch(() => setSecretsErr('Connect Doppler in Settings → Secrets.'));
+      .catch(() => setSecretsErr('Connect Doppler in Settings → Secrets to pick another secret.'));
   }, []);
 
-  async function put(patch: Parameters<typeof api.putHarnessSettings>[0]) {
-    try {
-      const next = await api.putHarnessSettings(patch);
-      setData(next); setErr('');
-      useSpinnerWords.getState().set(next.settings?.['claude-code']?.spinnerVerbs ?? null);
-    }
-    catch { setErr('Could not save — is the daemon reachable?'); }
-  }
-
   async function saveKey() {
-    if (!data || keySaving || !keyDraft.trim()) return;
+    if (keySaving || !keyDraft.trim()) return;
     setKeySaving(true);
     try {
       await api.setSecret({ name: data.opencodeKey.secret, value: keyDraft.trim() });
@@ -109,150 +276,47 @@ function HarnessDefaults() {
     }
     setKeySaving(false);
   }
-
-  if (!data) return <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{err || 'Loading…'}</div>;
-
-  const agents = HARNESSES.filter((h) => h.provider !== null);
+  const canSave = !keySaving && !!keyDraft.trim();
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <span style={sectionLabel}>DEFAULTS PER HARNESS</span>
-      <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-        Defaults applied when you open the New Thread modal. The OpenRouter key itself stays in
-        Doppler — Dispatch only stores which secret to use.
-      </div>
-      {err && <div style={{ fontSize: 11.5, color: 'var(--color-status-red)' }}>{err}</div>}
-
-      {agents.map((h) => {
-        const s = data.settings[h.type] ?? {};
-        const twoModes = h.modes.length > 1;
-        // OpenCode's list is the curated setting; the other harnesses ship theirs. The
-        // `?? []` covers a browser that refreshed onto this bundle before the daemon
-        // restarted onto the route that serves the list.
-        const models: { label: string; model: string | null }[] = h.id === 'opencode' ? data.opencodeModels ?? [] : h.models;
-        return (
-          <div key={h.id} style={cardStyle}>
-            <span style={sectionLabel}>{h.label.toUpperCase()}</span>
-
-            <div style={rowStyle}>
-              <label htmlFor={`hm-${h.id}`} style={{ fontSize: 13 }}>Default model</label>
-              {/* OpenCode always pins a real model, so its "unset" reads as the first of its list. */}
-              <Select
-                id={`hm-${h.id}`}
-                style={selectStyle}
-                value={s.defaultModel ?? ''}
-                onChange={(v) => void put({ [h.type]: { defaultModel: v || null } })}
-                options={[
-                  { value: '', label: h.id === 'opencode' ? `List default (${models[0]?.label ?? '—'})` : 'Harness default' },
-                  ...models.filter((m) => m.model !== null).map((m) => ({ value: m.model!, label: m.label })),
-                ]}
-              />
-            </div>
-
-            {twoModes && (
-              <div style={rowStyle}>
-                <label htmlFor={`hmode-${h.id}`} style={{ fontSize: 13 }}>Default mode</label>
-                <Select
-                  id={`hmode-${h.id}`}
-                  style={selectStyle}
-                  value={s.defaultMode ?? ''}
-                  onChange={(v) => void put({ [h.type]: { defaultMode: v || null } })}
-                  options={[{ value: '', label: 'No preference' }, { value: 'cli', label: 'CLI' }, { value: 'pretty', label: 'Pretty' }]}
-                />
-              </div>
-            )}
-
-            {/* Off unless set: the New Thread modal opens with auto-archive on at this deadline. */}
-            <AutoArchiveField
-              enabled={s.autoArchiveMs !== undefined}
-              ms={s.autoArchiveMs ?? 0}
-              flush
-              onChange={(on, ms) => void put({ [h.type]: { autoArchiveMs: on ? ms : null } })}
-            />
-
-            {h.type === 'claude-code' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div style={rowStyle}>
-                  <span style={{ fontSize: 13 }}>Skip agent status summaries</span>
-                  <Toggle
-                    on={s.skipAgentSummaries ?? true}
-                    label="Skip agent status summaries"
-                    onClick={() => void put({ 'claude-code': { skipAgentSummaries: !(s.skipAgentSummaries ?? true) } })}
-                  />
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
-                  Claude Code re-sends each background agent's whole transcript about every 30 s for a
-                  3–5 word status line. Skipping it saves those tokens; the status line stops updating.
-                  Applies to threads started after the change.
-                </div>
-              </div>
-            )}
-
-            {h.type === 'claude-code' && (
-              <SpinnerWordsField value={s.spinnerVerbs} onSave={(v) => void put({ 'claude-code': { spinnerVerbs: v } })}
-                sets={s.spinnerSets ?? []} onSaveSets={(sets) => void put({ 'claude-code': { spinnerSets: sets } })} />
-            )}
-
-            {h.id === 'opencode' && (
-              <>
-                <OpencodeModelList
-                  models={data.opencodeModels ?? []}
-                  defaultModel={s.defaultModel}
-                  onSave={(next, clearDefault) => void put({ opencode: { models: next, ...(clearDefault ? { defaultModel: null } : {}) } })}
-                  onReset={() => void put({ opencode: { models: null } })}
-                />
-
-                <div style={rowStyle}>
-                  <label htmlFor="oc-secret" style={{ fontSize: 13 }}>OpenRouter key (Doppler secret)</label>
-                  {/* The current name always shows, even when the secrets list failed to load. */}
-                  <Select
-                    id="oc-secret"
-                    style={selectStyle}
-                    value={data.opencodeKey.secret}
-                    onChange={(v) => void put({ opencode: { keySecret: v || null } })}
-                    options={[...(secretNames.includes(data.opencodeKey.secret) ? [] : [data.opencodeKey.secret]), ...secretNames].map((n) => ({ value: n, label: n }))}
-                  />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  {data.opencodeKey.present
-                    ? (<><CheckCircle size={14} weight="fill" color="var(--color-accent)" /> <span style={{ color: 'var(--color-text-secondary)' }}>Key found — applied on the next thread spawn.</span></>)
-                    : (<><WarningCircle size={14} weight="fill" color="var(--color-status-yellow)" /> <span style={{ color: 'var(--color-text-secondary)' }}>No value in this secret yet.</span></>)}
-                </div>
-                <div style={rowStyle}>
-                  <input
-                    type="password"
-                    placeholder={data.opencodeKey.present ? 'Replace key…' : 'sk-or-v1-…'}
-                    value={keyDraft}
-                    onChange={(e) => setKeyDraft(e.target.value)}
-                    style={{ ...selectStyle, flex: 1, minWidth: 0, font: '400 12px var(--font-mono)' }}
-                  />
-                  <button
-                    type="button"
-                    disabled={keySaving || !keyDraft.trim()}
-                    onClick={() => void saveKey()}
-                    style={{ height: 34, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: keySaving || !keyDraft.trim() ? 'default' : 'pointer', opacity: keySaving || !keyDraft.trim() ? 0.6 : 1 }}
-                  >
-                    {keySaving ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-                {secretsErr && <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>{secretsErr}</div>}
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <SettingsGroup title="OpenRouter key"
+      footer={secretsErr ? <span style={{ color: 'var(--color-status-yellow)' }}>{secretsErr}</span> : 'The key stays in Doppler. Dispatch keeps only the name of the secret.'}>
+      <SettingsRow label="Doppler secret">
+        {/* The current name always shows, even when the secrets list failed to load. */}
+        <Select id="oc-secret" ariaLabel="OpenRouter key secret" style={{ width: '100%', maxWidth: isMobile ? undefined : 320 }}
+          value={data.opencodeKey.secret}
+          onChange={(v) => void put({ opencode: { keySecret: v || null } })}
+          options={[...(secretNames.includes(data.opencodeKey.secret) ? [] : [data.opencodeKey.secret]), ...secretNames].map((n) => ({ value: n, label: n }))} />
+      </SettingsRow>
+      <SettingsRow label="Key" hint={data.opencodeKey.present ? 'New threads get it when they start.' : 'Paste a key below to save it in this secret.'}
+        control={data.opencodeKey.present ? <StatusMark tone="accent">Found</StatusMark> : <StatusMark tone="yellow">No value yet</StatusMark>} />
+      <SettingsRow label={data.opencodeKey.present ? 'Replace the key' : 'Add the key'}>
+        <div style={{ display: 'flex', gap: 8, minWidth: 0 }}>
+          <input type="password" aria-label="New OpenRouter key" placeholder="sk-or-v1-…" value={keyDraft} autoComplete="off"
+            onChange={(e) => setKeyDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void saveKey(); }}
+            style={{ ...fieldFor(isMobile), flex: 1, minWidth: 0, boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }} />
+          <button type="button" aria-label="Save key" disabled={!canSave} onClick={() => void saveKey()}
+            style={{ ...solidBtn(canSave), height: isMobile ? 36 : 30 }}>{keySaving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
+
+const listReset: React.CSSProperties = { listStyle: 'none', margin: 0, padding: 0 };
+const hairline = (i: number): React.CSSProperties => ({ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' });
+const iconX: React.CSSProperties = { width: 28, height: 28, padding: 0, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', cursor: 'pointer' };
 
 /**
  * The OpenCode picker list: the rows you have, a catalog search to add more, a reset.
  * Saves the WHOLE list on every change (the daemon stores it whole), so the parent just
  * re-renders from the response.
  */
-function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
+function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: {
   models: OpencodeModel[];
   defaultModel?: string;
+  isMobile: boolean;
   onSave: (next: OpencodeModel[], clearDefault: boolean) => void;
   onReset: () => void;
 }) {
@@ -287,74 +351,70 @@ function OpencodeModelList({ models, defaultModel, onSave, onReset }: {
   const typedMatched = results?.some((r) => r.id === typed) ?? false;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 2 }}>
-      <div style={rowStyle}>
-        <span style={{ fontSize: 13 }}>Models in the picker</span>
-        <button type="button" onClick={onReset} style={ghostButton}>Reset to defaults</button>
-      </div>
-      <ul aria-label="OpenCode models" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {models.map((m) => (
-          <li key={m.model} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 30, padding: '3px 6px 3px 10px', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)' }}>
-            {/* One line per model: the list is long, so the label and id sit side by side. */}
-            <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)', flex: '0 0 150px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span>
-            <span style={{ ...mono, flex: 1, minWidth: 0 }}>{shortId(m.model)}</span>
-            <button type="button" aria-label={`Remove ${m.label}`} title="Remove" onClick={() => remove(m.model)}
-              style={{ width: 24, height: 24, padding: 0, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>
-              <X size={12} weight="bold" />
-            </button>
+    <SettingsGroup title="Models in the picker"
+      action={<button type="button" onClick={onReset} style={{ ...ghostBtn, height: 26 }}>Reset to defaults</button>}
+      footer="The New Thread window offers these models, in this order.">
+      <ul aria-label="OpenCode models" style={listReset}>
+        {models.map((m, i) => (
+          <li key={m.model} style={hairline(i)}>
+            <SettingsRow style={{ padding: '7px 6px 7px 12px' }} label={m.label}
+              value={<span style={{ ...mono, display: 'block' }}>{shortId(m.model)}</span>}
+              control={
+                <button type="button" aria-label={`Remove ${m.label}`} title="Remove" onClick={() => remove(m.model)} style={iconX}>
+                  <X size={13} weight="bold" />
+                </button>
+              } />
           </li>
         ))}
+        {models.length === 0 && <li style={{ ...noteText, padding: '11px 12px' }}>No models. Add one below, or reset to the defaults.</li>}
       </ul>
-
-      <input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Add a model — search OpenRouter (e.g. grok, gemini flash, deepseek)"
-        aria-label="Add a model"
-        autoComplete="off"
-        spellCheck={false}
-        style={{ ...selectStyle, minWidth: 0, width: '100%', boxSizing: 'border-box', fontSize: 12.5 }}
-      />
-      {searchErr && <div style={{ fontSize: 11.5, color: 'var(--color-status-yellow)' }}>{searchErr}</div>}
-      {typed && !searchErr && (
-        <ul aria-label="Catalog results" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 260, overflowY: 'auto' }}>
-          {searching && results === null && (
-            <li style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '4px 2px' }}>Searching…</li>
-          )}
-          {results?.map((r) => {
-            const added = have.has(r.id);
-            return (
-              <li key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px 5px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid transparent' }}>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 0 }}>
-                  <span style={{ fontSize: 12.5, color: 'var(--color-text-primary)' }}>
-                    {r.label}
-                    {r.alias && <span style={{ marginLeft: 6, font: '600 9.5px var(--font-mono)', letterSpacing: '.05em', color: 'var(--color-accent)' }}>LATEST</span>}
-                    {r.tools === false && (
-                      // No endpoint takes a tool list, so Dispatch runs it with every tool off: it can
-                      // chat, but not run commands, touch files, or reach the peer tools.
-                      <span title="No tool calling: the thread can chat but cannot run commands, edit files, or use peer tools."
-                        style={{ marginLeft: 6, font: '600 9.5px var(--font-mono)', letterSpacing: '.05em', color: 'var(--color-status-yellow)' }}>CHAT ONLY</span>
-                    )}
+      <SettingsRow label="Add a model">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search OpenRouter: grok, gemini flash, deepseek"
+          aria-label="Add a model"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ ...fieldFor(isMobile), width: '100%', boxSizing: 'border-box' }}
+        />
+        {searchErr && <div style={{ fontSize: 12, color: 'var(--color-status-yellow)' }}>{searchErr}</div>}
+        {typed && !searchErr && (
+          <ul aria-label="Catalog results" style={{ ...listReset, display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+            {searching && results === null && <li style={{ ...noteText, padding: '8px 10px' }}>Searching…</li>}
+            {results?.map((r, i) => {
+              const added = have.has(r.id);
+              return (
+                <li key={r.id} style={{ ...hairline(i), display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px 7px 10px' }}>
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 13, color: 'var(--color-text-primary)' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
+                      {r.alias && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>Latest</span>}
+                      {r.tools === false && (
+                        // No endpoint takes a tool list, so Dispatch runs it with every tool off: it can
+                        // chat, but not run commands, touch files, or reach the peer tools.
+                        <span title="No tool calling: the thread can chat but cannot run commands, edit files, or use peer tools."
+                          style={{ ...miniChip, color: 'var(--color-status-yellow)', borderColor: 'var(--color-status-yellow)' }}>Chat only</span>
+                      )}
+                    </span>
+                    <span style={mono}>{shortId(r.id)}{r.aliasTarget ? ` → ${r.aliasTarget}` : ''}{r.contextLength ? ` · ${formatContext(r.contextLength)}` : ''}</span>
                   </span>
-                  <span style={mono}>{shortId(r.id)}{r.aliasTarget ? ` → ${r.aliasTarget}` : ''}{r.contextLength ? ` · ${formatContext(r.contextLength)}` : ''}</span>
-                </span>
-                {added
-                  ? <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)', flex: 'none' }}>Added</span>
-                  : <button type="button" aria-label={`Add ${r.label}`} onClick={() => add({ label: r.label, model: r.id })} style={ghostButton}>Add</button>}
+                  {added
+                    ? <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', flex: 'none' }}>Added</span>
+                    : <button type="button" aria-label={`Add ${r.label}`} onClick={() => add({ label: r.label, model: r.id })} style={{ ...ghostBtn, height: 28 }}>Add</button>}
+                </li>
+              );
+            })}
+            {results && results.length === 0 && !typedIsId && <li style={{ ...noteText, padding: '8px 10px' }}>No catalog match.</li>}
+            {results && typedIsId && !typedMatched && (
+              <li style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px 7px 10px', borderTop: results.length ? '1px solid var(--color-border)' : 'none' }}>
+                <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', flex: 1, minWidth: 0 }}>Not in the catalog. Add it anyway?</span>
+                <button type="button" aria-label={`Add ${typed} as typed`} onClick={() => add({ label: shortId(typed), model: typed })} style={{ ...ghostBtn, height: 28 }}>Add as typed</button>
               </li>
-            );
-          })}
-          {results && results.length === 0 && !typedIsId && (
-            <li style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '4px 2px' }}>No catalog match.</li>
-          )}
-          {results && typedIsId && !typedMatched && (
-            <li style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 8px 5px 10px' }}>
-              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', flex: 1, minWidth: 0 }}>Not in the catalog. Add it anyway?</span>
-              <button type="button" aria-label={`Add ${typed} as typed`} onClick={() => add({ label: shortId(typed), model: typed })} style={ghostButton}>Add as typed</button>
-            </li>
-          )}
-        </ul>
-      )}
-    </div>
+            )}
+          </ul>
+        )}
+      </SettingsRow>
+    </SettingsGroup>
   );
 }
