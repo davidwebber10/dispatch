@@ -12,7 +12,7 @@ import { withDefaults, DEFAULT_THRESHOLDS } from './lib/settings.mjs';
 import { mayShow, emptyCadence, noteShown, dismiss, mute, unmute, isMuted, mutedForever, inQuietHours, isStale, CARD_MAX_AGE_HOURS } from './lib/cadence.mjs';
 import { planCall, LARGE_DEFAULT, liveBudget } from './lib/plan.mjs';
 import { addGoal, setGoalStatus, editGoal, mapGoal, activeGoals, MAX_ACTIVE } from './lib/goals.mjs';
-import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts } from './lib/prompts.mjs';
+import { morePrompt, parseAnswer, partWords, buildPluginPrompt, cleanParts, contentExcerpt } from './lib/prompts.mjs';
 import { chatContext, chatPrompt, parseChat, threadObservations, appendTurns } from './lib/chat.mjs';
 import { REASONS, emptyMemory, normalizeMemory, applyFeedback, confirmFact, editFact, removeItem, allows, factsToReconfirm, dueForReview, reviewMuted, resetMemory, stripExcerpts, memoryItems, typeLabel } from './lib/memory.mjs';
 
@@ -91,7 +91,7 @@ export function createCoach(d, deps = {}) {
     const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
     const j = parseAnswer(r && r.text);
     if (!j || typeof j.better !== 'string' || !j.better.trim()) return null;
-    return { wrote: card.excerpt || '', better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
+    return { wrote: contentExcerpt(card.excerpt), better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
   }
   const requestMore = deps.requestMore || defaultRequestMore;
 
@@ -344,7 +344,7 @@ export function createCoach(d, deps = {}) {
         more && more.status === 'none' && h('div', { style: S.note }, 'The Coach could not get more detail just now.'),
         more && more.status === 'budget' && h('div', { style: S.note }, 'The Coach has used its budget for this week. More detail comes back when the week resets.'),
         more && more.status === 'ok' && [
-          (more.data.wrote || card.excerpt) && h('div', { key: 'w', style: S.ex }, h('b', { style: S.exLabel }, 'YOU WROTE'), more.data.wrote || card.excerpt),
+          contentExcerpt(more.data.wrote || card.excerpt) && h('div', { key: 'w', style: S.ex }, h('b', { style: S.exLabel }, 'YOU WROTE'), contentExcerpt(more.data.wrote || card.excerpt)),
           h('div', { key: 't', style: S.ex }, h('b', { style: S.exLabel }, 'TRY'), more.data.better),
           (more.data.bullets || []).length > 0 && h('ul', { key: 'b', style: { margin: '4px 0 0', paddingLeft: 18 } }, ...more.data.bullets.map((b, i) => h('li', { key: i, style: { margin: '3px 0' } }, b))),
         ]),

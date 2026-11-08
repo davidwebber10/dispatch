@@ -51,7 +51,24 @@ export function classify(text) {
   return 'other';
 }
 
-const APPROVE_RE = /^(?!.*\b(but|except|change|fix|instead)\b)(lgtm|looks good|looks great|ship it|go ahead|perfect|great|yes|yep|ok|okay|approved?|do it|sounds good|merge it|good)\b[\s\p{P}\w]{0,30}$/iu;
+const APPROVE_RE = /^(?!.*\b(but|except|change|fix|instead)\b)(lgtm|looks good|looks great|ship it|go ahead|perfect|great|yes|yep|ok|okay|approved?|do it|sounds good|merge it|good|proceed|keep going|carry on)\b[\s\p{P}\w]{0,30}$/iu;
+/** A whole-message go-ahead or check-in (coach fix T3): these words start real tasks too, so only the whole message counts. */
+const GO_RE = /^(continue|go|go on|next|sure|thanks|thank you|ty|k|y|push|push it|release it|cut (a|the) release|yes (do it|proceed|push|please))( please| now)?[\s\p{P}]*$/iu;
+
+/** True for a go-ahead ("proceed", "ship it", "looks good"). */
+export function isApproval(text) {
+  const t = String(text || '').trim();
+  return t.length <= 40 && (APPROVE_RE.test(t) || GO_RE.test(t));
+}
+/** True for a short reply: at most 3 words or 15 characters. */
+export function isShort(text) {
+  const t = String(text || '').trim();
+  return t.length <= 15 || t.split(/\s+/).filter(Boolean).length <= 3;
+}
+/** A go-ahead or a short check-in: normal, and never content to coach on or to quote (coach fix T3). */
+export function isCheckIn(text) {
+  return isApproval(text) || isShort(text);
+}
 const PLAN_RE = /\b(plan|planning|outline|propose|approach first|before you start|step[- ]by[- ]step plan)\b/i;
 
 /** Parts of a prompt: sentences and list items of three words or more. */
@@ -92,7 +109,8 @@ export function collect(event, state, settings) {
       lines: trimmed ? trimmed.split(/\n/).length : 0,
       parts: countParts(text),
       plan: PLAN_RE.test(text),
-      ok: trimmed.length <= 40 && APPROVE_RE.test(trimmed),
+      ok: isApproval(trimmed),
+      short: isShort(trimmed),
       gap: prev ? ms(e.at) - ms(prev.end) : null,
       prev: prev ? prev.ms : null,
     };

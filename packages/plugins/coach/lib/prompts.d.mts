@@ -20,3 +20,4 @@ export const SKILL_SYSTEM: string;
 export function skillDraftPrompt(candidate: { evidence?: Record<string, unknown> }): AssistReq;
 export function cleanSkill(ans: unknown): { name: string; description: string; body: string } | null;
 export function buildPluginPrompt(card: { plugin: string; parts?: string[]; excerpt?: string }): string;
+export function contentExcerpt(ex: unknown): string;

@@ -6,7 +6,7 @@
 // `assist(req)` is injected: it resolves to { result: { text, harness } | null, budget, refused }
 // (lib/client.mjs in the worker). The worker joins the outcomes into the `cards` document.
 import { planCall } from './plan.mjs';
-import { confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt, skillDraftPrompt, cleanSkill } from './prompts.mjs';
+import { contentExcerpt, confirmPrompt, writePrompt, parseAnswer, checkCard, cleanAction, cleanParts, buildPluginPrompt, skillDraftPrompt, cleanSkill } from './prompts.mjs';
 
 const KEEP_CARDS = 60;
 const KEEP_JUDGED = 300;
@@ -64,7 +64,7 @@ function cardBase(c, ans, at) {
   return {
     id: c.id, type: c.type, measure: c.measure, tip: c.tip, terminalId: c.terminalId ?? null, projectId: c.projectId ?? null,
     headline: ans.headline.trim(), why: ans.why.trim(), action: cleanAction(ans.action),
-    excerpt: c.evidence && typeof c.evidence.excerpt === 'string' ? c.evidence.excerpt : '',
+    excerpt: contentExcerpt(c.evidence && c.evidence.excerpt),
     reason: reasonFor(c), ...(c.goal ? { goal: c.goal } : {}), at,
   };
 }

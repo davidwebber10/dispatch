@@ -1,5 +1,5 @@
 /** Types for the Coach's signals module (the tests import it). */
-export interface PromptRec { t: string; p: string | null; at: string; ex: string; h: string; len: number; lines: number; parts: number; plan: boolean; ok: boolean; gap: number | null; prev: number | null }
+export interface PromptRec { t: string; p: string | null; at: string; ex: string; h: string; len: number; lines: number; parts: number; plan: boolean; ok: boolean; /** At most 3 words or 15 characters (coach fix T3). */ short?: boolean; gap: number | null; prev: number | null }
 export interface TurnRec { t: string; p: string | null; start: string; end: string; ms: number; outcome: string | null }
 export interface ThreadRec { p: string | null; first: string; end: string | null; kind: string; prompts: number; tools: number; /** The hash of the first prompt, when a schedule or an agent (not the person) started the thread. */ auto?: string }
 /** An instruction block (a paragraph of a longer prompt) and the threads it appeared in. */
@@ -24,3 +24,6 @@ export function classify(text: string): string;
 export function countParts(text: string): number;
 export function collect(event: Record<string, unknown>, state: SignalsState, settings?: { leaveAlone?: string[] } | null): SignalsState;
 export function prune(state: SignalsState, nowIso: string): SignalsState;
+export function isApproval(text: string): boolean;
+export function isShort(text: string): boolean;
+export function isCheckIn(text: string): boolean;

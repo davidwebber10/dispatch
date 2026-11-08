@@ -4,6 +4,10 @@
 // level adjustments, types turned off, goals) goes into every call: the memory is how advice
 // improves without training. Answers are JSON.
 import { normalizeMemory, typeLabel } from './memory.mjs';
+import { isCheckIn } from './signals.mjs';
+
+/** An excerpt worth showing: the person's words, not a go-ahead or a check-in (coach fix T3). */
+export const contentExcerpt = (ex) => (typeof ex === 'string' && ex.trim() && !isCheckIn(ex) ? ex : '');
 
 const RULES = [
   'You are the Coach inside Dispatch, an app where people work with AI agents in threads.',
@@ -44,7 +48,7 @@ export function memoryContext(memory) {
 
 function candidateText(c) {
   const ev = { ...(c.evidence || {}) };
-  const excerpt = typeof ev.excerpt === 'string' ? ev.excerpt : '';
+  const excerpt = contentExcerpt(ev.excerpt);
   delete ev.excerpt;
   return [
     `What the rule saw: ${typeLabel(c.type)} (measure: ${c.measure}, tip type: ${c.tip || 'prompt'}).`,
@@ -103,7 +107,7 @@ export function cleanSkill(ans) {
 
 export const confirmPrompt = (candidate, memory) => call(CONFIRM_SYSTEM, candidateText(candidate), memory, 500);
 export const writePrompt = (candidate, memory, draft) => call(WRITE_SYSTEM, `${candidateText(candidate)}\n\nThe confirmed card: ${JSON.stringify({ headline: draft && draft.headline, why: draft && draft.why, action: draft && draft.action })}`, memory, 700);
-export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${card.excerpt || '(not kept)'}`, memory, 600);
+export const morePrompt = (card, memory) => call(MORE_SYSTEM, `Tip: ${card.headline}\nWhy: ${card.why}\nWhat they wrote: ${contentExcerpt(card.excerpt) || '(not kept)'}`, memory, 600);
 export const recapPrompt = (draft, memory) => call(RECAP_SYSTEM, `The facts of the week: ${JSON.stringify(draft)}`, memory, 800);
 
 /** The JSON object in a model's answer, or null (no object, a broken one, or an array). */
