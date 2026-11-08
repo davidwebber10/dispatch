@@ -110,6 +110,8 @@ describe('Claude Pretty: the active model and a live switch', () => {
     const resolved = await m.setModel('c1', 'haiku');
     expect(resolved).toBe('claude-haiku-5-5');
     expect(m.getModel('c1')).toBe('claude-haiku-5-5');
+    // The CLI's answer to our own control request is plumbing: never in the chat ring.
+    expect(m.getEvents('c1').some((e: any) => e?.type === 'control_response')).toBe(false);
     const notice = m.getEvents('c1').find(isNotice) as any;
     expect(notice).toMatchObject({ model: 'claude-haiku-5-5' });
     m.sendMessage('c1', 'next');

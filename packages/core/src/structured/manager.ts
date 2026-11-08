@@ -364,8 +364,6 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (!trimmed) return;
       let event: any;
       try { event = JSON.parse(trimmed); } catch { return; } // skip non-JSON noise
-      session.events.push(event);
-      if (session.events.length > MAX_EVENTS) session.events.shift();
       // Capture the claude session_id (carried on the init/system event, and echoed
       // on later events). Surface it via a 'session' emit so the spawner can persist
       // it onto the terminal's external_id and resume this conversation after a restart.
@@ -387,6 +385,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           return;
         }
       }
+      session.events.push(event);
+      if (session.events.length > MAX_EVENTS) session.events.shift();
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
