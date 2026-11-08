@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { Account, AccountProvider, AccountsView, AccountThread } from '../../api/types';
@@ -7,7 +7,7 @@ import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { HARNESS_MARK } from '../common/HarnessStrip';
 import { CodexLogin } from './CodexLogin';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, Sheet, fieldFor, solidBtn, ghostBtn, noteText } from './ui';
-import { useSubPage, scrollParentToTop } from './subPageNav';
+import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
 /**
@@ -44,13 +44,11 @@ export function AccountsSection() {
   const [removing, setRemoving] = useState<{ provider: AccountProvider; account: Account; threads: AccountThread[] } | null>(null);
   // The Codex account whose device-code sign-in shows now (a new one, or "Sign in again").
   const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
-  const top = useRef<HTMLDivElement>(null);
 
   const load = async () => {
     try { setView(await api.getAccounts()); setError(null); } catch { setError('Could not load the accounts. Is the daemon up to date?'); }
   };
   useEffect(() => { void load(); }, []);
-  useEffect(() => { scrollParentToTop(top.current); }, [nav.openId]);
 
   const setDefault = async (provider: AccountProvider, id: string) => {
     try { await api.accountsSetDefault(provider, id); await load(); } catch { setError('Could not change the default.'); }
@@ -67,7 +65,7 @@ export function AccountsSection() {
     try { await api.accountsRemove(r.provider, r.account.id); nav.close(); await load(); } catch { setError('Could not remove the account.'); }
   };
   const rename = async (provider: AccountProvider, id: string, name: string) => {
-    try { await api.accountsRename(provider, id, name); await load(); return true; } catch { setError('Could not rename the account.'); return false; }
+    try { await api.accountsRename(provider, id, name); nav.retitle(name); await load(); return true; } catch { setError('Could not rename the account.'); return false; }
   };
   /** The notice under "Remove …?": which threads run on it, and what they fall back to. */
   const removeMessage = (r: { provider: AccountProvider; account: Account; threads: AccountThread[] }) => {
@@ -111,7 +109,7 @@ export function AccountsSection() {
     const a = opened;
     const isDefault = view.defaults[provider] === a.id;
     return (
-      <div ref={top}>
+      <div ref={nav.top}>
         <SettingsSubPage testId={`account-detail-${provider}-${a.id}`} icon={MARK[provider]} title={a.label}
           subtitle={`${PROVIDER_TITLE[provider]}${isDefault ? ' · Default for new threads' : ''}`}
           description={a.isCli ? "The login signed in on the daemon's computer. It always stays here; you can rename it." : undefined}
@@ -178,7 +176,7 @@ export function AccountsSection() {
                 <SettingsRow icon={MARK[provider]} label={a.label} ariaLabel={`${PROVIDER_TITLE[provider]}: ${a.label}`}
                   hint={a.signedIn === false ? <StatusMark tone="yellow">Not signed in</StatusMark> : detail ? <span style={oneLine}>{detail}</span> : undefined}
                   value={def === a.id ? 'Default' : undefined}
-                  onClick={() => nav.open(`${provider}:${a.id}`)} />
+                  onClick={() => nav.open(`${provider}:${a.id}`, a.label)} />
               </div>
             );
           })}
@@ -188,7 +186,7 @@ export function AccountsSection() {
 
   const addTitle = adding ? `Add a ${PROVIDER_TITLE[adding]} account` : undefined;
   return (
-    <div ref={top}>
+    <div ref={nav.top}>
       <SettingsPage intro="New threads use the default account unless you pick another. Usage limits show every account.">
         {error && <div role="alert" style={errText}>{error}</div>}
         {list('claude')}

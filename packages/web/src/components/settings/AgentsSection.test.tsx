@@ -74,7 +74,7 @@ describe('AgentsSection — the list (2026-11-07 redesign)', () => {
     try {
       render(<AgentsSection />);
       await openHarness('Grok', 'grok');
-      expect(history.state).toMatchObject({ nav: 1, settingsSection: 'agents', depth: 2, settingsSub: 'agents:grok' });
+      expect(history.state).toMatchObject({ nav: 1, settingsSection: 'agents', depth: 2, subPage: 'grok', subTitle: 'Grok' });
       expect(screen.queryByRole('button', { name: 'Back to agents' })).toBeNull();
       history.replaceState({ nav: 1, settingsSection: 'agents', depth: 1 }, '');
       act(() => { window.dispatchEvent(new PopStateEvent('popstate', { state: { nav: 1, settingsSection: 'agents', depth: 1 } })); });

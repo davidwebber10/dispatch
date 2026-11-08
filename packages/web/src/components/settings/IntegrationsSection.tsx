@@ -11,6 +11,7 @@ import {
   ghostBtn, solidBtn, fieldFor, Sheet, Toggle,
   SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, EmptyState,
 } from './ui';
+import { useSubPage } from './subPageNav';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5 };
 const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -27,36 +28,6 @@ function parseKV(text: string): Record<string, string> {
 const target = (i: Integration): string => (i.type === 'remote' ? i.url ?? '' : `${i.command ?? ''} ${i.args.join(' ')}`.trim());
 /** A header or env value shows only when it is a ${NAME} reference; a literal value may be a secret from before the check. */
 const shownValue = (v: string): string | null => (/\$\{[A-Za-z0-9_]+\}/.test(v) ? v : null);
-
-/**
- * A sub-page with a phone history entry (local primitive, 2026-11-07; promote with Plugins' copy in
- * stores/mobileNav.ts). On the phone, opening pushes an entry above the section, so the app
- * header's back and an edge swipe close the page; on the desktop it is plain state.
- */
-function useSubPage(section: string, isMobile: boolean) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!isMobile) return;
-    const onPop = (e: PopStateEvent) => {
-      const s = e.state as { settingsSection?: string; subDetail?: string } | null;
-      setOpenId(s?.settingsSection === section && s.subDetail ? s.subDetail : null);
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, [isMobile, section]);
-  const open = (id: string) => {
-    if (isMobile) {
-      const depth = ((history.state as { depth?: number } | null)?.depth ?? 0) + 1;
-      history.pushState({ nav: 1, settingsSection: section, subDetail: id, depth }, '', location.pathname);
-    }
-    setOpenId(id);
-  };
-  const close = () => {
-    if (isMobile && (history.state as { subDetail?: string } | null)?.subDetail) history.back();
-    else setOpenId(null);
-  };
-  return { openId, open, close };
-}
 
 /** A labeled field in the add sheet: the label, then the input, then one quiet hint. */
 function Field({ label, hint, children }: { label: string; hint?: string; children: (id: string) => React.ReactNode }) {
@@ -93,7 +64,7 @@ export function IntegrationsSection() {
   const [env, setEnv] = useState('');
   const [removing, setRemoving] = useState<Integration | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const page = useSubPage('integrations', isMobile);
+  const page = useSubPage('integrations');
 
   const doppler = useSecrets((s) => s.status);
 
@@ -169,7 +140,7 @@ export function IntegrationsSection() {
     const remote = current.type === 'remote';
     const pairs = Object.entries(remote ? current.headers : current.env);
     return (
-      <div data-testid="integration-page">
+      <div data-testid="integration-page" ref={page.top}>
         <SettingsSubPage title={current.name} icon={remote ? Globe : Terminal} backLabel="Integrations" onBack={isMobile ? undefined : page.close}
           subtitle={<>{remote ? 'Remote' : 'Local command'} · <span data-testid="integration-creator">Added by {describeCreator(current.createdBy)}</span></>}
           description={remote ? 'A server on the web that Dispatch reaches by its URL.' : 'A program that Dispatch starts on this Mac for each thread.'}>
@@ -229,7 +200,7 @@ export function IntegrationsSection() {
                 label={<span style={{ color: i.enabled ? undefined : 'var(--color-text-tertiary)' }}>{i.name}</span>} ariaLabel={`${i.name}, ${i.enabled ? 'on' : 'off'}`}
                 hint={<span style={{ ...oneLine, ...mono }}>{target(i)}</span>}
                 control={<Toggle on={i.enabled} label={`${i.name} on`} onClick={() => void toggle(i)} />}
-                onClick={() => page.open(i.id)} />
+                onClick={() => page.open(i.id, i.name)} />
             </div>
           ))}
         </SettingsGroup>

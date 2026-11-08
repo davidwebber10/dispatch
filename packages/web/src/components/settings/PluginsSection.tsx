@@ -10,7 +10,7 @@ import { Modal } from '../common/Modal';
 import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { useMobileNav, openSettingsPluginPage, closeSettingsPluginPage } from '../../stores/mobileNav';
+import { useSubPage } from './subPageNav';
 import { sectionLabel, ghostBtn, solidBtn, fieldInput, fieldFor, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
 import { Select } from '../common/Select';
 
@@ -111,15 +111,13 @@ export function PluginsSection() {
   const status = usePluginRegistry((s) => s.status);
   const views = usePluginRegistry((s) => s.views);
   const promoted = usePluginRegistry((s) => s.promoted);
-  // The open plugin's page. On a phone it is a screen of the Settings tab, kept in stores/mobileNav
-  // with a history entry, so back closes it and the tab bar can bring it back (2026-11-07).
-  const [deskOpenId, setDeskOpenId] = useState<string | null>(null);
-  const phoneOpenId = useMobileNav((s) => s.settingsPluginId);
-  const openId = isMobile ? phoneOpenId : deskOpenId;
+  // The open plugin's page (useSubPage): on a phone a screen of the Settings tab with a history
+  // entry, so back closes it, the header names it, and the tab bar can bring it back (2026-11-07).
+  const page = useSubPage('plugins');
+  const openId = page.openId;
   const setOpenId = (id: string | null) => {
-    if (!isMobile) setDeskOpenId(id);
-    else if (id) openSettingsPluginPage(id);
-    else closeSettingsPluginPage();
+    if (id) page.open(id, manifests.find((m) => m.id === id)?.name ?? id);
+    else page.close();
   };
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);

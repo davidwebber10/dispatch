@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: window.innerWidth <= 768, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
   localStorage.clear();
   useProjectsView.setState({ view: 'projects' });
-  useMobileNav.setState({ settingsPluginId: null });
+  useMobileNav.setState({ sub: null });
   useProjects.setState({ sessions: [{ id: 's1', name: 'Proj', workingDir: '/tmp/p', provider: 'claude-code', status: 'idle' } as any] });
   const t1 = { id: 't1', sessionId: 's1', type: 'shell', label: 'Fix it', config: {}, archivedAt: null };
   useTabs.setState({ byProject: { s1: [t1 as any] }, openTabIds: [], activeTabId: null, tabSession: {} });
@@ -133,17 +133,40 @@ describe('MobileApp bottom tabs remember their place', () => {
     await screen.findByTestId('plugin-detail-coach');
     // The page shows in the Settings screen, under the app header, with the tab bar still there.
     expect(screen.getByRole('button', { name: 'Back to Plugins' }).closest('header')).toBeInTheDocument();
-    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'plugins', pluginDetail: 'coach' });
+    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'plugins', subPage: 'coach' });
     fireEvent.click(tab('Chat'));
     await waitFor(() => expect(level()).toBe(0));
     await screen.findByTestId('chat-mode');
     expect(screen.queryByTestId('plugin-detail-coach')).toBeNull();
     fireEvent.click(tab('Settings'));
     await screen.findByTestId('plugin-detail-coach');
-    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'plugins', pluginDetail: 'coach', depth: 2 });
+    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'plugins', subPage: 'coach', depth: 2 });
     fireEvent.click(screen.getByRole('button', { name: 'Back to Plugins' }));
     await waitFor(() => expect(screen.queryByTestId('plugin-detail-coach')).toBeNull());
     expect(await screen.findByTestId('plugin-row-coach')).toBeInTheDocument();
+    expect(level()).toBe(1);
+  });
+
+  it('Settings → Skills → a skill: the header names the skill, back returns to Skills; Chat and back keeps the page', async () => {
+    vi.spyOn(api, 'listSkills').mockResolvedValue({ skills: [{ id: 'tidy-first', name: 'tidy-first', version: '1.0.0', description: 'Tidy first', harnesses: null, folder: '/s/t', install: null, enabled: true, enabledHere: true, text: '# t' }] } as any);
+    render(<MobileApp />);
+    fireEvent.click(tab('Settings'));
+    fireEvent.click(screen.getByText('Skills'));
+    const row = await screen.findByTestId('skill-row-tidy-first');
+    fireEvent.click(within(row).getByRole('button', { name: /tidy-first/ }));
+    await screen.findByTestId('skill-page-tidy-first');
+    expect(screen.getByTestId('settings-subpage-title')).toHaveTextContent('tidy-first');
+    expect(screen.getByRole('button', { name: 'Back to Skills' }).closest('header')).toBeInTheDocument();
+    fireEvent.click(tab('Chat'));
+    await waitFor(() => expect(level()).toBe(0));
+    fireEvent.click(tab('Settings'));
+    await screen.findByTestId('skill-page-tidy-first');
+    expect(screen.getByTestId('settings-subpage-title')).toHaveTextContent('tidy-first');
+    expect(history.state).toMatchObject({ nav: 1, settingsSection: 'skills', subPage: 'tidy-first', depth: 2 });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Skills' }));
+    await waitFor(() => expect(screen.queryByTestId('skill-page-tidy-first')).toBeNull());
+    expect(screen.queryByTestId('settings-subpage-title')).toBeNull();
+    expect(await screen.findByTestId('skill-row-tidy-first')).toBeInTheDocument();
     expect(level()).toBe(1);
   });
 
@@ -157,7 +180,7 @@ describe('MobileApp bottom tabs remember their place', () => {
     fireEvent.click(tab('Settings'));
     await waitFor(() => expect(level()).toBe(0));
     expect(screen.queryByTestId('plugin-detail-coach')).toBeNull();
-    expect(useMobileNav.getState().settingsPluginId).toBeNull();
+    expect(useMobileNav.getState().sub).toBeNull();
   });
 
   it('a tap on a promoted plugin tab while on it scrolls it back to the top', async () => {

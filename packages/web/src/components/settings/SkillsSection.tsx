@@ -6,7 +6,7 @@ import { useProjects } from '../../stores/projects';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { Select } from '../common/Select';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, SettingsDisclosure, EmptyState, StatusMark, Toggle, codeChip } from './ui';
-import { useSectionSubPage } from './useSectionSubPage';
+import { useSubPage } from './subPageNav';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5 };
 
@@ -26,7 +26,7 @@ export function SkillsSection() {
   const [skills, setSkills] = useState<SkillRow[] | null>(null);
   const [err, setErr] = useState('');
   const [removing, setRemoving] = useState<SkillRow | null>(null);
-  const page = useSectionSubPage('skills');
+  const page = useSubPage('skills');
   const load = async (p = project) => {
     try { setSkills((await api.listSkills(p || undefined)).skills); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   };
@@ -51,7 +51,7 @@ export function SkillsSection() {
     const source = s.install ? 'Installed' : 'Local';
     const only = s.harnesses ? ` · ${s.harnesses.join(', ')} only` : '';
     return (
-      <div data-subpage-top>
+      <div ref={page.top}>
         <SettingsSubPage testId={`skill-page-${s.id}`} icon={GraduationCap} title={s.name} subtitle={`v${s.version} · ${source}${only}`} description={s.description ?? undefined}
           backLabel="Skills" onBack={page.backLink ? page.close : undefined}>
           {s.error && <StatusMark tone="red">{s.error}</StatusMark>}
@@ -97,7 +97,7 @@ export function SkillsSection() {
                 <SettingsRow icon={GraduationCap} label={s.name} ariaLabel={`${s.name}: open`}
                   hint={s.error ? <StatusMark tone="red">{s.error}</StatusMark> : <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.description || (s.install ? 'Installed from a marketplace' : 'Local skill')}</span>}
                   control={<Toggle on={on} label={label} onClick={() => (project ? flipHere(s) : flipEverywhere(s))} />}
-                  onClick={() => page.open(s.id)} />
+                  onClick={() => page.open(s.id, s.name)} />
               </div>
             );
           })}

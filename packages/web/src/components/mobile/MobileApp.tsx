@@ -41,7 +41,7 @@ import { findTerminal, useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useAgents } from '../../stores/agents';
-import { useMobileNav, openSettingsPluginPage } from '../../stores/mobileNav';
+import { useMobileNav, openSettingsSubPage, subPageOfState, type SettingsSubPage } from '../../stores/mobileNav';
 import { useReconnect } from '../../stores/reconnect';
 import { useUI } from '../../stores/ui';
 import { useViewing } from '../../stores/viewing';
@@ -89,7 +89,7 @@ type TabSpot =
   | { kind: 'project'; projectId: string }
   | { kind: 'thread'; projectId: string; tabId: string; viaProject: boolean }
   | { kind: 'agent'; projectId: string; agentId: string; viaProject: boolean }
-  | { kind: 'settings'; section: string; pluginId: string | null }
+  | { kind: 'settings'; section: string; sub: SettingsSubPage | null }
   | { kind: 'plugin'; view: string };
 
 export function MobileApp() {
@@ -154,7 +154,7 @@ export function MobileApp() {
   // Each tab keeps its place (2026-11-07, iOS tab-bar style): the screen a tab was left on comes
   // back when you tap that tab again, with the same back history it had (a thread: project then
   // thread, or just the thread when it was opened from the Threads view; a plugin page in Settings:
-  // the Plugins section then the page). A tap on the tab you are on goes to its root (Projects:
+  // the section then the page). A tap on the tab you are on goes to its root (Projects:
   // one level per tap), or scrolls its list back to the top when it is at the root already.
   // One shared history stack holds only the tab that shows; the others wait here.
   const spots = useRef<Partial<Record<string, TabSpot>>>({});
@@ -162,7 +162,8 @@ export function MobileApp() {
   const spotOfCurrent = (): TabSpot | undefined => {
     const depth = (history.state as { depth?: number } | null)?.depth ?? level;
     if (level === 1 && bottomTab === 'settings' && settingsKey) {
-      return { kind: 'settings', section: settingsKey, pluginId: settingsKey === 'plugins' ? useMobileNav.getState().settingsPluginId : null };
+      const sub = useMobileNav.getState().sub;
+      return { kind: 'settings', section: settingsKey, sub: sub?.section === settingsKey ? sub : null };
     }
     if (level === 1 && bottomTab === 'plugins' && pluginKey) return { kind: 'plugin', view: pluginKey };
     if (bottomTab !== 'projects' || !projectId) return undefined;
@@ -175,7 +176,7 @@ export function MobileApp() {
   const restoreSpot = (spot: TabSpot) => {
     if (spot.kind === 'settings') {
       openSettingsSection(spot.section);
-      if (spot.pluginId) openSettingsPluginPage(spot.pluginId);
+      if (spot.sub) openSettingsSubPage(spot.sub.section, spot.sub.id, spot.sub.title);
     } else if (spot.kind === 'plugin') {
       if (usePluginRegistry.getState().views.some((v) => v.key === spot.view)) openPluginScreen(spot.view);
     } else if (!useProjects.getState().sessions.some((p) => p.id === spot.projectId)) {
@@ -264,7 +265,7 @@ export function MobileApp() {
   // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
   // so the entry only carries enough state for back/popstate to restore it.
   const openSettingsSection = (key: string) => {
-    setSettingsKey(key); setLevel(1); useMobileNav.getState().setSettingsPluginId(null);
+    setSettingsKey(key); setLevel(1); useMobileNav.getState().setSub(null);
     pushNav({ nav: 1, settingsSection: key }, '', location.pathname);
   };
   // A plugin screen from the Plugins tab: same idea as a settings section (level 1, no URL change).
@@ -334,9 +335,9 @@ export function MobileApp() {
       pushNav({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
     }
     const onPop = (e: PopStateEvent) => {
-      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string; pluginView?: string; pluginDetail?: string };
-      // A plugin's page in Settings shows only on its own entry.
-      useMobileNav.getState().setSettingsPluginId(s.pluginDetail ?? null);
+      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string; pluginView?: string };
+      // An item's page in Settings (a plugin, an account, a skill…) shows only on its own entry.
+      useMobileNav.getState().setSub(subPageOfState(s));
       // Returning to a settings section (edge-swipe forward, or back into one)
       // re-selects the tab too, so the level-1 slot renders the right screen.
       if (s.settingsSection) { setSettingsKey(s.settingsSection); setBottomTab('settings'); }
@@ -368,17 +369,20 @@ export function MobileApp() {
   const activeSettings = settingsKey ? settingsSection(settingsKey) : undefined;
   const pluginLabel = usePluginRegistry((s) => (pluginKey ? s.views.find((v) => v.key === pluginKey)?.label : undefined));
   const pluginScreen = level === 1 && inPlugins && pluginKey ? { label: pluginLabel ?? 'Plugin' } : null;
-  // Settings → Plugins → a plugin's page: the same leaf header, named after the plugin.
-  const settingsPluginId = useMobileNav((s) => s.settingsPluginId);
-  const settingsPluginName = usePluginRegistry((s) => (settingsPluginId ? s.manifests.find((m) => m.id === settingsPluginId)?.name : undefined));
-  const settingsPluginPage = level === 1 && inSettings && settingsKey === 'plugins' && settingsPluginId ? { label: settingsPluginName ?? settingsPluginId } : null;
+  // Settings → a section → an item's page (a plugin, an account, a harness, a skill, a device, an
+  // integration): the same leaf header, named after the item, its back arrow returning to the section.
+  const settingsSub = useMobileNav((s) => s.sub);
+  const subPluginName = usePluginRegistry((s) => (settingsSub?.section === 'plugins' ? s.manifests.find((m) => m.id === settingsSub.id)?.name : undefined));
+  const settingsSubPage = level === 1 && inSettings && settingsSub && settingsSub.section === settingsKey
+    ? { label: settingsSub.title ?? subPluginName ?? settingsSub.id, back: `Back to ${activeSettings?.label ?? 'Settings'}` } : null;
+  const settingsSubOpen = !!settingsSub;
   // The page opens at its top; back to the list returns to where the list was scrolled.
   const level1Ref = useRef<HTMLDivElement>(null);
-  const pluginListScroll = useRef(0);
+  const sectionListScroll = useRef(0);
   useEffect(() => {
     const el = level1Ref.current;
-    if (el) el.scrollTop = settingsPluginId ? 0 : pluginListScroll.current;
-  }, [settingsPluginId]);
+    if (el) el.scrollTop = settingsSubOpen ? 0 : sectionListScroll.current;
+  }, [settingsSubOpen, settingsSub?.id]);
   const headerTitle = level === 1 ? (inSettings ? 'Settings' : 'Projects') : level === 2 ? (project?.name ?? 'Back') : '';
   // In a thread (2026-11-06, header option C): the title is the thread's own name, with its status,
   // status dot and account underneath (no project or Pretty/CLI label since 2026-11-06: the Back
@@ -470,8 +474,8 @@ export function MobileApp() {
               )} />
           ) : pluginScreen ? (
             <LeafHeaderTitle title={pluginScreen.label} onBack={back} backLabel="Back to Plugins" testId="plugin-title" />
-          ) : settingsPluginPage ? (
-            <LeafHeaderTitle title={settingsPluginPage.label} onBack={back} backLabel="Back to Plugins" testId="settings-plugin-title" />
+          ) : settingsSubPage ? (
+            <LeafHeaderTitle title={settingsSubPage.label} onBack={back} backLabel={settingsSubPage.back} testId="settings-subpage-title" />
           ) : (
           <button onClick={back} style={{ background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2, padding: '4px 2px', minWidth: 0 }}>
             <CaretLeft size={20} weight="bold" />
@@ -506,7 +510,7 @@ export function MobileApp() {
         </div>
         {/* Centred section title, iOS-style, while drilled into a settings section
             (the back button on the left already reads "‹ Settings"). */}
-        {level === 1 && inSettings && activeSettings && !settingsPluginPage && (
+        {level === 1 && inSettings && activeSettings && !settingsSubPage && (
           <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 16, fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
         )}
       </header>
@@ -579,7 +583,7 @@ export function MobileApp() {
           {/* Level 1 — the project's threads + agents, with a Dispatch button at the
               top of the card (opens the coordinator as a full-screen overlay). */}
           <div ref={level1Ref} style={inPlugins ? { ...slot, display: 'flex', flexDirection: 'column' } : scrollSlot}
-            onScroll={(e) => { if (inSettings && !useMobileNav.getState().settingsPluginId) pluginListScroll.current = e.currentTarget.scrollTop; }}>
+            onScroll={(e) => { if (inSettings && !useMobileNav.getState().sub) sectionListScroll.current = e.currentTarget.scrollTop; }}>
             {inPlugins ? (
               pluginKey ? <PluginView viewKey={pluginKey} /> : null
             ) : inSettings ? (

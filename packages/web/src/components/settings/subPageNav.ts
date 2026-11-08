@@ -1,45 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useMobileNav, openSettingsSubPage, closeSettingsSubPage, retitleSettingsSubPage, subPageOfState } from '../../stores/mobileNav';
 
 /**
- * Which item's page a settings section shows (2026-11-07): a harness in Agents, an account in
- * Accounts. On the desktop it is plain state, closed by the page's own back link. On the phone the
- * page is one history entry above the section, the way Settings → Plugins does it: the app header's
- * back (history.back) and the edge swipe close it, and MobileApp keeps the section on screen because
- * the entry carries the section's own `settingsSection` and `nav` (it is a copy of the entry below).
- * The entry names the page as `settingsSub: "<section>:<id>"`.
+ * Which item's page a settings section shows (2026-11-07): an account, a harness, a skill, a device,
+ * an integration, a plugin. One hook for every section.
  *
- * A candidate for promotion next to stores/mobileNav (then the phone header could name the page).
+ * Desktop: plain state, closed by the page's own back link (`backLink` is true).
+ * Phone: the page is one history entry above the section (stores/mobileNav), so the app header's
+ * back arrow and the edge swipe close it; the header shows the `title` given to `open`, and the
+ * Settings tab brings the page back after a visit to another tab. The page has no back link of its
+ * own there (`backLink` is false).
+ *
+ * `retitle` renames the open page in the phone header (after a rename on the page itself).
+ * `top` goes on the section's outer element: a page opens at its top.
  */
-export function useSubPage(section: string): { openId: string | null; open: (id: string) => void; close: () => void; isMobile: boolean } {
+export function useSubPage(section: string) {
   const isMobile = useIsMobile();
-  const [openId, setOpenId] = useState<string | null>(null);
-  const prefix = `${section}:`;
-  const fromState = (st: unknown): string | null => {
-    const sub = (st as { settingsSub?: string } | null)?.settingsSub;
-    return typeof sub === 'string' && sub.startsWith(prefix) ? sub.slice(prefix.length) : null;
-  };
+  const [deskId, setDeskId] = useState<string | null>(null);
+  const phoneId = useMobileNav((s) => (s.sub?.section === section ? s.sub.id : null));
+  const openId = isMobile ? phoneId : deskId;
+  const top = useRef<HTMLDivElement>(null);
 
+  // The phone: history is the truth. A section that mounts on its page's entry shows the page, and
+  // back (outside MobileApp too) closes it.
   useEffect(() => {
     if (!isMobile) return;
-    const onPop = (e: PopStateEvent) => setOpenId(fromState(e.state));
+    const sync = (state: unknown) => {
+      const sub = subPageOfState(state);
+      const cur = useMobileNav.getState().sub;
+      if (sub?.section === section) { if (cur?.section !== section || cur.id !== sub.id) useMobileNav.getState().setSub(sub); }
+      else if (cur?.section === section) useMobileNav.getState().setSub(null);
+    };
+    sync(history.state);
+    const onPop = (e: PopStateEvent) => sync(e.state);
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, [isMobile, prefix]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isMobile, section]);
 
-  const open = (id: string) => {
-    if (isMobile) {
-      const below = (history.state ?? {}) as Record<string, unknown>;
-      const depth = ((below.depth as number | undefined) ?? 0) + 1;
-      history.pushState({ ...below, settingsSub: `${prefix}${id}`, depth }, '', location.pathname);
-    }
-    setOpenId(id);
+  useEffect(() => { scrollParentToTop(top.current); }, [openId]);
+
+  const open = (id: string, title?: string | null) => {
+    if (isMobile) openSettingsSubPage(section, id, title);
+    else setDeskId(id);
   };
   const close = () => {
-    if (isMobile && fromState(history.state) !== null) { history.back(); return; }
-    setOpenId(null);
+    if (isMobile) closeSettingsSubPage();
+    else setDeskId(null);
   };
-  return { openId, open, close, isMobile };
+  const retitle = (title: string) => { if (isMobile) retitleSettingsSubPage(title); };
+  return { openId, open, close, retitle, isMobile, backLink: !isMobile, top };
 }
 
 /** Scrolls the nearest scrolling parent of `el` back to its top (a page opens at its top). */

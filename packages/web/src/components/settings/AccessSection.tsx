@@ -4,7 +4,7 @@ import { BASE } from '../../lib/basePath';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DevicesList } from './DevicesList';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsDisclosure, fieldFor, solidBtn, ghostBtn, codeChip } from './ui';
-import { useSectionSubPage } from './useSectionSubPage';
+import { useSubPage } from './subPageNav';
 
 /**
  * Settings → Devices & access: sign in another device (network exposure spec, 8.1, first slice).
@@ -153,7 +153,7 @@ export function AccessSection() {
   const mm = Math.floor(secondsLeft / 60);
   const ss = String(secondsLeft % 60).padStart(2, '0');
   const isMobile = useIsMobile();
-  const page = useSectionSubPage('devices');
+  const page = useSubPage('devices');
   const subPage = page.openId !== null;
   const note: React.CSSProperties = { fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 
@@ -165,6 +165,7 @@ export function AccessSection() {
   );
 
   return (
+    <div ref={page.top}>
     <SettingsPage intro={subPage ? undefined : 'A phone or another computer signs in once, with a code from here. This computer needs no sign-in.'}>
       {!subPage && (
         <SettingsGroup title="Sign in a phone"
@@ -216,7 +217,8 @@ export function AccessSection() {
           </SettingsRow>
         </SettingsGroup>
       )}
-      <DevicesList openId={page.openId} onOpen={page.open} onClose={page.close} backLink={page.backLink} extra={tokenDisclosure} />
+      <DevicesList openId={page.openId} onOpen={page.open} onClose={page.close} onRenamed={page.retitle} backLink={page.backLink} extra={tokenDisclosure} />
     </SettingsPage>
+    </div>
   );
 }

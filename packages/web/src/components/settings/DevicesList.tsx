@@ -53,10 +53,12 @@ function EmptyGroup({ title, children }: { title: string; children: React.ReactN
 
 type Confirm = { kind: 'revoke'; device: DeviceInfo } | { kind: 'legacy' } | null;
 
-export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(); }, openId: openProp, onOpen, onClose, backLink = true, extra }: {
+export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(); }, openId: openProp, onOpen, onClose, onRenamed, backLink = true, extra }: {
   now?: () => number; reload?: () => void;
   /** The open device's page, when the parent keeps it (AccessSection, for phone history); else local. */
-  openId?: string | null; onOpen?: (id: string) => void; onClose?: () => void;
+  openId?: string | null; onOpen?: (id: string, name: string) => void; onClose?: () => void;
+  /** A device was renamed on its own page (the phone header shows the new name). */
+  onRenamed?: (name: string) => void;
   /** Show the "‹ Devices & access" link on a device's page (desktop). */
   backLink?: boolean;
   /** Rows the parent puts after the list and before the destructive group (a disclosure). */
@@ -71,7 +73,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
   const [localOpen, setLocalOpen] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const openId = openProp !== undefined ? openProp : localOpen;
-  const open = (id: string) => { setError(null); if (onOpen) onOpen(id); else setLocalOpen(id); };
+  const open = (id: string, name: string) => { setError(null); if (onOpen) onOpen(id, name); else setLocalOpen(id); };
   const close = () => { setError(null); if (onClose) onClose(); else setLocalOpen(null); };
 
   const load = useCallback(async () => {
@@ -106,6 +108,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
     setBusy(true); setError(null);
     try {
       await api.renameDevice(d.id, name);
+      onRenamed?.(name);
       await load();
     } catch {
       setError('Could not rename the device. Try again.');
@@ -147,7 +150,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
     const d = opened;
     const changed = !!draft.trim() && draft.trim() !== d.name;
     return (
-      <div data-subpage-top>
+      <div>
         <SettingsSubPage testId="device-page" icon={deviceIcon(d.name)} title={d.name}
           subtitle={d.current ? 'This device' : `Last active ${lastActive(d)}`}
           backLabel="Devices & access" onBack={backLink ? close : undefined}>
@@ -214,7 +217,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
               <SettingsRow icon={deviceIcon(d.name)} label={d.name} ariaLabel={`${d.name}: open`}
                 hint={<span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Last active {lastActive(d)} · {addressLabel(d.lastAddress, d.addressKind)}</span>}
                 value={d.current ? <span style={{ color: 'var(--color-accent)' }}>This device</span> : undefined}
-                onClick={() => open(d.id)} />
+                onClick={() => open(d.id, d.name)} />
             </div>
           ))}
         </SettingsGroup>

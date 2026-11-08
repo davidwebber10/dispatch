@@ -14,7 +14,7 @@ import { useSpinnerWords } from '../../stores/spinnerWords';
 import { Select } from '../common/Select';
 import { Segmented } from '../common/Segmented';
 import { HARNESS_MARK } from '../common/HarnessStrip';
-import { useSubPage, scrollParentToTop } from './subPageNav';
+import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 
 /**
@@ -73,12 +73,9 @@ export function AgentsSection() {
   const nav = useSubPage('agents');
   const [data, setData] = useState<HarnessSettingsResponse | null>(null);
   const [err, setErr] = useState('');
-  const top = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     api.getHarnessSettings().then(setData).catch(() => setErr('Could not load the agent settings.'));
   }, []);
-  useEffect(() => { scrollParentToTop(top.current); }, [nav.openId]);
 
   async function put(patch: Parameters<typeof api.putHarnessSettings>[0]) {
     try {
@@ -93,14 +90,14 @@ export function AgentsSection() {
 
   if (open && data) {
     return (
-      <div ref={top}>
+      <div ref={nav.top}>
         <HarnessPage h={open} data={data} err={err} put={put} setData={setData} setErr={setErr} onBack={nav.isMobile ? undefined : nav.close} />
       </div>
     );
   }
 
   return (
-    <div ref={top}>
+    <div ref={nav.top}>
       <SettingsPage intro="Defaults for new threads, the same on every device.">
         <ControlPlaneName />
         <SettingsGroup title="Harnesses" footer={err ? <span role="alert" style={errText}>{err}</span> : undefined}>
@@ -110,7 +107,7 @@ export function AgentsSection() {
               const s = data.settings[h.type] ?? {};
               return (
                 <SettingsRow key={h.id} icon={markOf(h)} label={h.label} ariaLabel={h.label}
-                  hint={rowHint(h, s, data)} value={modelValue(h, s, data)} onClick={() => nav.open(h.id)} />
+                  hint={rowHint(h, s, data)} value={modelValue(h, s, data)} onClick={() => nav.open(h.id, h.label)} />
               );
             })}
         </SettingsGroup>
