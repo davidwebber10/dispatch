@@ -1,16 +1,20 @@
 import { useEffect, useState } from 'react';
+import type { ReleaseNote } from '../../api/types';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from '../update/useApplyUpdate';
 import { STEP_LABEL } from '../update/UpdateProgress';
-import { ReleaseNotes } from '../update/ReleaseNotes';
-import { sectionLabel, row, item, ghostBtn as baseGhostBtn } from './ui';
-
-const ghostBtn: React.CSSProperties = { ...baseGhostBtn, padding: '0 14px', color: 'var(--color-text-primary)', fontSize: 12.5 };
+import { Markdown } from '../Markdown';
+import { splitNoteHeadline } from '../../lib/releaseNotes';
+import { SettingsGroup, SettingsRow, Sheet, ghostBtn, solidBtn, StatusMark } from './ui';
 
 /**
- * Settings → About & updates → UPDATES: always-reachable update surface (the modal can be
- * dismissed — or missed entirely on the PWA before it was a modal). Shows the
- * running version, checks GitHub on demand, and applies + auto-refreshes.
+ * Settings → About & updates → the "Dispatch" group: the always-reachable update surface (the
+ * modal can be dismissed — or missed entirely on the PWA before it was a modal). Shows the running
+ * version, checks GitHub on demand, applies + auto-refreshes, and opens the release notes.
+ *
+ * 2026-11-07 (docs/design/settings-layout.md): one group of rows — Version (a value), the update row
+ * (one button on the right, its result as the hint), and a release-notes row whose hint is the
+ * one-line headline; the full notes open in a sheet.
  */
 export function UpdatesSection() {
   const available = useUpdate((s) => s.available);
@@ -22,6 +26,7 @@ export function UpdatesSection() {
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [checkError, setCheckError] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
 
   // Opening Updates refreshes what it shows (2026-11-05): the stored release can be one behind when
   // a newer one shipped since the daemon's last check. Quiet — the daemon reuses a check from the
@@ -35,44 +40,89 @@ export function UpdatesSection() {
     setChecking(false);
   }
 
+  // Pending update → what it contains (every version being installed, newest first).
+  // Up to date → what the running version brought.
+  const pending = notes.length > 0;
+  const entries: ReleaseNote[] = pending
+    ? notes
+    : currentNotes
+      ? [{ version: currentVersion ? `v${currentVersion.replace(/^v/, '')}` : '', url: '', publishedAt: '', notes: currentNotes }]
+      : [];
+  const notesLabel = pending
+    ? (entries.length > 1 ? `Release notes (${entries.length} versions)` : 'Release notes')
+    : `What's new in ${entries[0]?.version || 'this version'}`;
+  const headline = entries[0] ? splitNoteHeadline(entries[0].notes).headline : null;
+
+  const updateRow = inProgress ? (
+    <SettingsRow label="Updating" hint={`${progressStep ? `${STEP_LABEL[progressStep]}. ` : ''}This page reloads by itself when the update is done.`}
+      control={<StatusMark tone="accent">In progress</StatusMark>} />
+  ) : available ? (
+    <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>}
+      hint="Dispatch restarts, and this page reloads by itself."
+      control={(
+        <button type="button" onClick={() => void apply()} disabled={applying} style={{ ...solidBtn(!applying), opacity: applying ? 0.7 : 1 }}>
+          {applying ? 'Updating…' : 'Update now'}
+        </button>
+      )} />
+  ) : (
+    <SettingsRow label="Check for updates"
+      hint={checkError
+        ? <span style={{ color: 'var(--color-status-red)' }}>Couldn't reach the server.</span>
+        : checked ? "You're up to date." : 'Looks for a newer release on GitHub.'}
+      control={<button type="button" onClick={() => void check()} disabled={checking} style={{ ...ghostBtn, opacity: checking ? 0.6 : 1 }}>{checking ? 'Checking…' : 'Check now'}</button>} />
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <span style={sectionLabel}>UPDATES</span>
-      <div style={row}>
-        <span style={item}>Version</span>
-        <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{currentVersion ? `Dispatch v${currentVersion}` : 'Dispatch'}</span>
-      </div>
-      {inProgress ? (
-        <div style={{ fontSize: 12.5, color: 'var(--color-accent)' }}>
-          Updating{progressStep ? ` — ${STEP_LABEL[progressStep]}` : ''}. This page reloads by itself when the update is done.
-        </div>
-      ) : available ? (
-        <div style={row}>
-          <span style={{ ...item, color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>
-          <button onClick={() => void apply()} disabled={applying} style={{ height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', opacity: applying ? 0.7 : 1 }}>
-            {applying ? 'Updating…' : 'Update now'}
-          </button>
-        </div>
-      ) : (
-        <div style={row}>
-          <button onClick={() => void check()} disabled={checking} style={{ ...ghostBtn, opacity: checking ? 0.6 : 1 }}>{checking ? 'Checking…' : 'Check for updates'}</button>
-          {checked && !checkError && <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>You're up to date.</span>}
-          {checkError && <span style={{ fontSize: 12, color: 'var(--color-status-red)' }}>Couldn't reach the server.</span>}
-        </div>
-      )}
+    <SettingsGroup title="Dispatch">
+      <SettingsRow label="Version" value={currentVersion ? `v${currentVersion}` : 'Unknown'} />
+      {updateRow}
       {failReason && (
-        <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-          {/* `dispatch update` is dead advice on a hosted workspace: there is no
-              checkout to pull and no shell to run it in. The honest fallback is the
-              person who can rebuild the fleet image. */}
-          Couldn't update automatically: {failReason}{' '}
-          {hosted
-            ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
-            : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
-        </div>
+        <SettingsRow label="Couldn't update automatically" hint={(
+          <>
+            {failReason}{' '}
+            {/* `dispatch update` is dead advice on a hosted workspace: there is no
+                checkout to pull and no shell to run it in. The honest fallback is the
+                person who can rebuild the fleet image. */}
+            {hosted
+              ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
+              : <>Run <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code> manually instead.</>}
+          </>
+        )} />
       )}
-      {/* Pending update → what it contains. Up to date → what the running version brought. */}
-      <ReleaseNotes notes={notes} currentNote={currentNotes} currentVersion={currentVersion} />
-    </div>
+      {entries.length > 0 && (
+        <SettingsRow label={notesLabel} ariaLabel={notesLabel} hint={headline ?? undefined} onClick={() => setNotesOpen(true)} />
+      )}
+      {entries.length > 0 && (
+        <Sheet open={notesOpen} onClose={() => setNotesOpen(false)} title={notesLabel}>
+          <div style={{ maxHeight: 'min(70vh, 560px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {entries.map((e, i) => <NoteEntry key={e.version || i} entry={e} first={i === 0} />)}
+          </div>
+        </Sheet>
+      )}
+    </SettingsGroup>
+  );
+}
+
+function formatDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** One release in the notes sheet: version and date, the headline, then the whole note. */
+function NoteEntry({ entry, first }: { entry: ReleaseNote; first: boolean }) {
+  const { headline, body } = splitNoteHeadline(entry.notes);
+  const date = formatDate(entry.publishedAt);
+  return (
+    <section style={{ marginTop: first ? 0 : 16, paddingTop: first ? 0 : 14, borderTop: first ? 'none' : '1px solid var(--color-border)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ font: '600 13px var(--font-mono)', color: 'var(--color-accent)' }}>{entry.version}</span>
+        {date && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>{date}</span>}
+        {entry.author && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>by {entry.author}</span>}
+      </div>
+      {headline && <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: 'var(--color-text-primary)' }}>{headline}</div>}
+      {body ? <div style={{ marginTop: 6 }}><Markdown source={body} /></div>
+        : !headline && <div style={{ marginTop: 4, fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No notes for this release.</div>}
+    </section>
   );
 }

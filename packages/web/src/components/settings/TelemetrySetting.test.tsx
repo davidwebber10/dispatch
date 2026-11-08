@@ -18,19 +18,21 @@ describe('TelemetrySetting', () => {
     await waitFor(() => expect(sw).toHaveAttribute('aria-checked', 'false'));
   });
 
-  it('is the last block of About & updates, under its own heading', async () => {
+  it('sits in its own group after Setup in About & updates, with the links last', async () => {
     vi.spyOn(api, 'getTelemetrySetting').mockResolvedValue({ enabled: true });
     vi.spyOn(api, 'checkUpdate').mockRejectedValue(new Error('offline'));
     const { container } = render(<AboutSection />);
     await screen.findByText('Send anonymous usage stats');
+    expect(screen.getByRole('group', { name: 'Usage stats' })).toHaveTextContent(/never text, paths or names/);
     const text = container.textContent!;
-    expect(text.indexOf('USAGE STATS')).toBeGreaterThan(text.indexOf('Re-run setup wizard'));
-    expect(text.trim().endsWith('Send anonymous usage stats')).toBe(true);
+    expect(text.indexOf('Usage stats')).toBeGreaterThan(text.indexOf('Re-run setup wizard'));
+    expect(text.indexOf('Report a problem')).toBeGreaterThan(text.indexOf('Send anonymous usage stats'));
+    expect(screen.getByRole('link', { name: /Report a problem/ })).toHaveAttribute('href', 'https://github.com/davidwebber10/dispatch/issues/new');
   });
 
-  it('shows no heading while the daemon has not answered', () => {
+  it('shows no group while the daemon has not answered', () => {
     vi.spyOn(api, 'getTelemetrySetting').mockReturnValue(new Promise(() => {}));
     render(<TelemetrySetting />);
-    expect(screen.queryByText('USAGE STATS')).toBeNull();
+    expect(screen.queryByText('Usage stats')).toBeNull();
   });
 });
