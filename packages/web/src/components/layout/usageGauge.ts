@@ -214,7 +214,7 @@ export function creditBalanceLabel(cb: UsageSummaryProvider['creditBalance']): s
   return cb.unlimited ? 'Unlimited credits' : `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(cb.balance)} credits`;
 }
 
-const SHORT: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_fable: 'Fable weekly' };
+const SHORT: Record<string, string> = { five_hour: '5-hour', seven_day: 'weekly', seven_day_opus: 'Opus weekly', seven_day_sonnet: 'Sonnet weekly', seven_day_fable: 'Fable weekly', credits: 'credits' };
 
 /**
  * The run-out estimate: a short label for the row ("out ~Thu 3:00 PM", "lasts to reset") and the
@@ -313,12 +313,13 @@ export function chipRings(s: UsageSummary | null, now: number, zone?: string, op
   const out: ChipRing[] = [];
   for (const p of s.providers) {
     seen.add(p.provider);
-    const peak = peakWindow(p, now, ringTypes(opts.model));
+    // A Codex Business account has no 5-hour or weekly window, only its credits (2026-11-07).
+    const peak = peakWindow(p, now, ringTypes(opts.model)) ?? peakWindow(p, now, ['credits']);
     // A pause is per tool (not per account yet): it reddens the tool's CLI-login ring.
     const isPaused = paused.has(p.provider) && (p.accountId ?? 'cli') === 'cli';
     if (!peak && !isPaused) continue;
     const name = entryName(p, s.providers);
-    const parts = COUNTED.filter((t) => liveValue(p.windows[t], now) !== null).map((t) => `${SHORT[t] ?? t} ${liveValue(p.windows[t], now)}% used`);
+    const parts = [...COUNTED, 'credits'].filter((t) => liveValue(p.windows[t], now) !== null).map((t) => `${SHORT[t] ?? t} ${liveValue(p.windows[t], now)}% used`);
     const stale = now - p.asOf > STALE_MS;
     out.push({
       provider: p.provider, accountId: p.accountId ?? 'cli', name, used: peak?.value ?? null, type: peak?.type ?? null,

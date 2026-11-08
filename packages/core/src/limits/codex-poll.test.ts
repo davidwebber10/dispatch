@@ -53,5 +53,20 @@ describe('direct Codex poll', () => {
     await poll.useCredit('c9');
     expect(picked).toEqual(['c9']);
   });
-});
 
+  it('a Business account with no 5-hour or weekly window records its credit allowance as the Credits limit (2026-11-07)', async () => {
+    // The real answer for a ChatGPT Business account (trimmed): no primary or secondary window at all.
+    const BUSINESS = { rateLimitsByLimitId: { codex: { limitId: 'codex', primary: null, secondary: null,
+      credits: { hasCredits: true, unlimited: false, balance: '19934.791000008583' },
+      individualLimit: { limit: '20000', used: '65.20899999141693', remainingPercent: 100, resetsAt: 1796083200 },
+      spendControlReached: false, planType: 'business' } } };
+    const db = new Database(':memory:'); initSchema(db);
+    const snaps = new LimitSnapshots(db);
+    const poll = createCodexPoll({ snapshots: snaps, accountFor: () => 'acct', env: () => ({}), now: () => 1793900000000, read: async () => BUSINESS });
+    expect(await poll('t1')).toBe(true);
+    const s = snaps.get('codex', 'acct', 't1')!;
+    expect(s.windows.credits?.resetsAt).toBe(1796083200000);
+    expect(s.windows.credits?.usedPercent).toBeCloseTo(0.326, 2);
+    expect(s.plan).toBe('business');
+  });
+});

@@ -105,7 +105,19 @@ export function createCodexPoll(d: CodexPollDeps): CodexPoll {
     const res = await read(accountId);
     if (res) { const c = parseResetCredits(res); if (c) credits.set(accountId, c); }
     const rl = res?.rateLimitsByLimitId?.codex ?? res?.rateLimits;
-    const { windows, plan } = parseCodexRateLimits(toSessionShape(rl));
+    const parsed = parseCodexRateLimits(toSessionShape(rl));
+    const windows = { ...parsed.windows };
+    let plan = parsed.plan;
+    // A ChatGPT Business (or Enterprise) account has no 5-hour or weekly window: it has a credit
+    // allowance per period instead (2026-11-07: an added Business account never showed in Usage).
+    const il = rl?.individualLimit;
+    const limit = Number(il?.limit);
+    const used = Number(il?.used);
+    if (il && Number.isFinite(limit) && limit > 0 && Number.isFinite(used)) {
+      const resetsAt = Number(il.resetsAt);
+      windows.credits = { usedPercent: Math.max(0, (used / limit) * 100), resetsAt: Number.isFinite(resetsAt) && resetsAt > 0 ? resetsAt * 1000 : null };
+      if (!plan && typeof rl?.planType === 'string' && rl.planType !== 'unknown') plan = rl.planType;
+    }
     if (!Object.keys(windows).length) return false;
     // The prepaid balance ("credits") rides along: the owner asked to see it next to the windows.
     const c = rl?.credits;

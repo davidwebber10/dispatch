@@ -31,6 +31,7 @@ export const TYPE_LABEL: Record<string, string> = {
   seven_day_opus: 'Opus',
   seven_day_sonnet: 'Sonnet',
   seven_day_fable: 'Fable',
+  credits: 'Credits', // a Codex Business account's allowance per period (2026-11-07)
   seven_day_overage_included: 'Weekly incl. extra',
   overage: 'Extra usage',
 };

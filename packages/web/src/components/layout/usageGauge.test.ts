@@ -177,3 +177,18 @@ describe('the ring ignores a model window the thread does not use (2026-11-07)',
     expect(chipRings(s(), NOW, undefined, { model: 'claude-opus-5-5' })[0].used).toBe(67);
   });
 });
+
+describe('a Codex Business account: credits only (2026-11-07)', () => {
+  const biz = () => sum([{ provider: 'codex', accountId: 't1', label: 'Team', plan: 'business', asOf: NOW - 60_000, windows: { credits: { usedPercent: 12.4, resetsAt: NOW + 500 * H } } } as UsageSummaryProvider]);
+  it('gets a ring from its credit allowance when it has no 5-hour or weekly window', () => {
+    const [r] = chipRings(biz(), NOW);
+    expect(r).toBeDefined();
+    expect(r.accountId).toBe('t1');
+    expect(r.used).toBe(12);
+    expect(r.type).toBe('credits');
+    expect(r.title).toContain('credits 12% used');
+  });
+  it('the table names the window Credits', () => {
+    expect(usageTables(biz(), NOW)[0].rows.map((x) => x.label)).toContain('Credits');
+  });
+});
