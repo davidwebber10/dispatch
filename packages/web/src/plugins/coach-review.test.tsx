@@ -73,7 +73,7 @@ describe('Coach reviews: pure helpers (coach plan Task 12f)', () => {
 });
 
 // ── the worker job, against a fake daemon ─────────────────────────────────────────────────
-function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string; config?: Record<string, unknown> }>; answers?: unknown[]; status?: unknown; settings?: unknown } = {}) {
+function daemon(over: { threads?: Record<string, { sessionId: string; items: unknown[]; lastActivityAt?: string; config?: Record<string, unknown>; label?: string }>; answers?: unknown[]; status?: unknown; settings?: unknown } = {}) {
   const docs = new Map<string, unknown>([['cadence', emptyCadence(new Date('2026-10-01T00:00:00Z'))]]);
   if (over.status) docs.set('status', over.status);
   const threads = over.threads ?? { t1: { sessionId: 's1', items: TRANSCRIPT, lastActivityAt: at(5) } };
@@ -90,7 +90,7 @@ function daemon(over: { threads?: Record<string, { sessionId: string; items: unk
       m = /^\/api\/terminals\/([^/?]+)\/conversation/.exec(route);
       if (m) return { items: threads[m[1]]?.items ?? [] };
       m = /^\/api\/terminals\/([^/?]+)$/.exec(route);
-      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, lastActivityAt: threads[m[1]].lastActivityAt ?? at(5), config: threads[m[1]].config ?? {} } : null;
+      if (m) return threads[m[1]] ? { id: m[1], sessionId: threads[m[1]].sessionId, label: threads[m[1]].label ?? m[1], lastActivityAt: threads[m[1]].lastActivityAt ?? at(5), config: threads[m[1]].config ?? {} } : null;
       return null;
     }),
     assist: vi.fn(async (_req: unknown) => ({ result: answers.length ? { text: String(answers.shift()), harness: 'claude' } : null, budget: { usedPercent: 0.5, capPercent: 3 }, refused: null })),
@@ -122,11 +122,68 @@ describe('Coach reviews in the worker (coach plan Task 12f)', () => {
     await step(e, 'reviews:r1');
     const states = f.writes.filter((w) => w.key === 'reviews:r1').map((w) => w.value.state);
     expect(states).toEqual(expect.arrayContaining(['reading', 'writing', 'done']));
-    expect(f.writes.find((w) => w.key === 'reviews:r1' && w.value.state === 'reading')!.value.progress).toEqual({ done: 0, total: 1 });
+    expect(f.writes.find((w) => w.key === 'reviews:r1' && w.value.state === 'reading')!.value.progress).toMatchObject({ done: 0, total: 1 });
     const done = f.docs.get('reviews:r1') as { report: { findings: { quote: string }[]; summary: string } };
     expect(done.report.findings[0].quote).toBe('now fix the same thing in parseInvoice');
     expect(f.io.assist.mock.calls[0][0]).toMatchObject({ harness: 'claude', model: 'opus' });
     expect((f.docs.get('chat') as { turns: { role: string; text: string }[] }).turns.at(-1)!.text).toContain('review');
+  });
+
+  it('reports progress after each part: the thread label, the part, and the totals (owner: "stuck on the first chat")', async () => {
+    // A long thread: about 3 parts. Each item is near the 800-character cap.
+    const LONG = Array.from({ length: 40 }, (_, i) => ({ kind: i % 2 ? 'assistant' : 'user', text: `${i} ${'x'.repeat(780)}`, ts: at(i) }));
+    const longParts = chunkTranscript(LONG).length;
+    expect(longParts).toBeGreaterThan(2);
+    const threads = { t1: { sessionId: 's1', items: LONG, lastActivityAt: at(60), label: 'Fix the parsers' }, t2: { sessionId: 's1', items: TRANSCRIPT, lastActivityAt: at(5), label: 'Ship the release' } };
+    const f = daemon({ threads, answers: Array(10).fill(GOOD) });
+    f.docs.set('reviews:p1', { id: 'p1', scope: { kind: 'project', ids: ['s1'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:p1');
+    const startedAt = new Date(NOW.getTime() - 60_000).toISOString();
+    f.docs.set('reviews:p1', { ...(f.docs.get('reviews:p1') as object), state: 'queued', startedAt });
+    await step(e, 'reviews:p1');
+    type P = { done: number; total: number; chunksDone: number; chunksTotal: number; startedAt: string; thread?: { id: string; label: string | null; chunk: number; chunks: number } };
+    const progress = f.writes.filter((w) => w.key === 'reviews:p1' && w.value.state === 'reading').map((w) => w.value.progress as P);
+    const total = longParts + 1;
+    // One write per part (a 20-second model call each), with the thread's own name.
+    const perPart = progress.filter((p) => p.thread && p.thread.chunk > 0);
+    expect(perPart.map((p) => [p.thread!.id, p.thread!.chunk, p.chunksDone])).toEqual([
+      ...Array.from({ length: longParts }, (_, i) => ['t1', i + 1, i]),
+      ['t2', 1, longParts],
+    ]);
+    expect(perPart[1]).toMatchObject({ done: 0, total: 2, chunksTotal: total, startedAt, thread: { id: 't1', label: 'Fix the parsers', chunk: 2, chunks: longParts } });
+    expect(perPart.at(-1)).toMatchObject({ done: 1, total: 2, thread: { id: 't2', label: 'Ship the release', chunk: 1, chunks: 1 } });
+    // Writing the report: every part is read.
+    const writing = f.writes.find((w) => w.key === 'reviews:p1' && w.value.state === 'writing')!.value.progress as P;
+    expect(writing).toMatchObject({ done: 2, total: 2, chunksDone: total, chunksTotal: total });
+    expect((f.docs.get('reviews:p1') as { state: string }).state).toBe('done');
+  });
+
+  it("a skipped or empty thread advances the progress at once, and the plan's part count is corrected", async () => {
+    const threads = { t1: { sessionId: 's1', items: TRANSCRIPT }, t2: { sessionId: 's1', items: [] }, t3: { sessionId: 's1', items: TRANSCRIPT } };
+    const f = daemon({ threads, answers: [GOOD, GOOD] });
+    // The plan said 3 + 4 + 3 parts; each thread really has 1, 0 and 1.
+    f.docs.set('reviews:p2', { id: 'p2', scope: { kind: 'project', ids: ['s1'] }, state: 'queued', plan: { threads: ['t1', 't2', 't3'], chunks: 10, parts: { t1: 3, t2: 4, t3: 3 }, estPercent: 0.5, fits: true } });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:p2');
+    type P = { done: number; chunksDone: number; chunksTotal: number; thread?: { id: string; chunk: number } };
+    const progress = f.writes.filter((w) => w.key === 'reviews:p2' && w.value.state === 'reading').map((w) => w.value.progress as P);
+    expect(progress[0]).toMatchObject({ done: 0, chunksDone: 0, chunksTotal: 10 });
+    // t1 has 1 part, not 3: the total drops to 8 when it is read.
+    expect(progress.find((p) => p.thread && p.thread.id === 't1' && p.thread.chunk === 1)).toMatchObject({ chunksDone: 0, chunksTotal: 8 });
+    // t2 is empty: the next write is at thread 3 already, without its 4 parts.
+    expect(progress.find((p) => p.done === 2)).toMatchObject({ chunksDone: 1, chunksTotal: 4 });
+    const writing = f.writes.find((w) => w.key === 'reviews:p2' && w.value.state === 'writing')!.value.progress as P;
+    expect(writing).toMatchObject({ done: 3, chunksDone: 2, chunksTotal: 2 });
+    expect(f.io.assist).toHaveBeenCalledTimes(2);
+  });
+
+  it("the estimate keeps each thread's part count, so the progress can correct it", async () => {
+    const f = daemon({ answers: [GOOD], status: { budget: { usedPercent: 0.5, capPercent: 3 } } });
+    f.docs.set('reviews:r1', { id: 'r1', scope: { kind: 'thread', ids: ['t1'] }, state: 'planning' });
+    const e = createEngine(f.io); await e.load();
+    await step(e, 'reviews:r1');
+    expect(f.docs.get('reviews:r1')).toMatchObject({ plan: { parts: { t1: 1 } } });
   });
 
   it('Cancel stops further model calls', async () => {
@@ -259,6 +316,46 @@ describe('Coach reviews in the app (coach plan Task 12f)', () => {
     expect(report).toHaveTextContent('"now fix parseInvoice"');
     expect(report).toHaveTextContent('Give it every parser at once.');
     expect(report).toHaveTextContent('Ask for all parsers at once.');
+  });
+
+  const runningPlan = { threads: Array.from({ length: 27 }, (_, i) => `t${i}`), chunks: 60, estPercent: 3, fits: true };
+  const running = (p: Record<string, unknown>, scope: Record<string, unknown> = { kind: 'range', from: '', to: '' }) => ({ 'reviews:rr': { id: 'rr', at: NOW.toISOString(), scope, backfill: true, state: 'reading', plan: runningPlan, startedAt: p.startedAt, progress: p } });
+
+  it('a running review shows a bar by parts, the thread it reads, and no estimate before 2 parts', async () => {
+    const { View } = await boot(running({ done: 2, total: 27, chunksDone: 1, chunksTotal: 60, thread: { id: 't2', label: 'Fix the parsers', chunk: 2, chunks: 12 }, startedAt: new Date(NOW.getTime() - 30_000).toISOString(), at: new Date(NOW.getTime() - 5_000).toISOString() }));
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    const bar = within(panel).getByRole('progressbar');
+    expect(bar).toHaveAttribute('aria-valuenow', '1');
+    expect(bar).toHaveAttribute('aria-valuemax', '60');
+    expect(panel).toHaveTextContent('Reading Fix the parsers');
+    expect(panel).toHaveTextContent('part 2 of 12');
+    expect(panel).toHaveTextContent('thread 3 of 27');
+    expect(panel).toHaveTextContent('0:30 elapsed');
+    expect(panel).not.toHaveTextContent(/left/);
+    expect(within(panel).getByRole('button', { name: 'Cancel review' })).toBeInTheDocument();
+  });
+
+  it('after 2 parts it estimates the time left from the average part', async () => {
+    // 4 parts in 100 seconds: 25 s a part, 56 parts left, about 23 minutes.
+    const { View } = await boot(running({ done: 1, total: 27, chunksDone: 4, chunksTotal: 60, thread: { id: 't1', label: 'Ship the release', chunk: 5, chunks: 20 }, startedAt: new Date(NOW.getTime() - 100_000).toISOString(), at: NOW.toISOString() }));
+    render(<View />);
+    const panel = await screen.findByTestId('coach-review');
+    expect(panel).toHaveTextContent('1:40 elapsed');
+    expect(panel).toHaveTextContent('about 23 minutes left');
+    expect(panel).toHaveTextContent('4 of 60 parts');
+  });
+
+  it('the Coach tab shows a running project or range review compactly, with a way to the Coach screen', async () => {
+    const { d, Tab } = await boot(running({ done: 1, total: 27, chunksDone: 4, chunksTotal: 60, thread: { id: 't1', label: 'Ship the release', chunk: 5, chunks: 20 }, startedAt: new Date(NOW.getTime() - 100_000).toISOString(), at: NOW.toISOString() }));
+    render(<Tab terminalId="t9" sessionId="s1" />);
+    const strip = await screen.findByTestId('coach-review-compact');
+    expect(within(strip).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '4');
+    expect(strip).toHaveTextContent('Look back');
+    expect(strip).toHaveTextContent('part 5 of 20');
+    expect(strip).toHaveTextContent('about 23 minutes left');
+    fireEvent.click(within(strip).getByRole('button', { name: 'Open' }));
+    expect(d.actions.setView).toHaveBeenCalledWith('plugin:coach:coach');
   });
 
   it('an estimate with an unknown cost shows "Cost unknown" and asks for the smaller scope first', async () => {
