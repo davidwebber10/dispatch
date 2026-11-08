@@ -955,7 +955,7 @@ export function createCoach(d, deps = {}) {
     const name = tier === 'small' ? 'Small model' : 'Large model';
     const set = (next) => saveSettings({ ...store.getState().settings, model: { ...store.getState().settings.model, mode: 'pick', [tier]: next } });
     return h(Row, { label: name, hint: tier === 'small' ? 'Checks each tip. Pick a cheap one.' : 'Writes tips, More, and the weekly recap.' },
-      h('div', { style: { display: 'flex', gap: 8, minWidth: 0 } },
+      h('div', { style: { display: 'flex', gap: 8, minWidth: 0, maxWidth: 520 } },
         h('div', { style: { width: 130, flexShrink: 0 } },
           h(d.ui.Select, { ariaLabel: `${name} harness`, value: cur.harness, onChange: (harness) => { void set({ harness, model: (tier === 'small' ? SMALL_DEFAULT : LARGE_DEFAULT)[harness] }); },
             options: Object.keys(HARNESS_NAME).map((k) => ({ value: k, label: HARNESS_NAME[k] })) })),
@@ -1049,10 +1049,10 @@ export function createCoach(d, deps = {}) {
         h(Row, { label: 'Show the five measures', hint: 'The bars on the Coach screen.', control: h(Toggle, { label: 'Show the five measures', on: s.showMeasures !== false, onClick: () => put({ showMeasures: s.showMeasures === false }) }) })),
       h(Group, { title: 'Cost and models' },
         h(Row, { label: 'Thoroughness' }, h(d.ui.Segmented, { ariaLabel: 'Thoroughness', value: s.thoroughness, options: THOROUGHNESS, onChange: (v) => put({ thoroughness: v }) })),
-        h(Row, { label: 'Weekly budget', hint: 'A share of the weekly limit. Dispatch stops the calls at it.',
+        h(Row, { label: 'Weekly budget', hint: 'A share of the weekly limit. Calls stop at it.',
           control: h(d.Fragment, null, h(NumField, { label: 'Budget, percent of the weekly limit', value: s.budgetPercentWeekly, min: 0.1, max: 100, step: 0.5, onSave: (v) => saveBudget({ budgetPercentWeekly: v }) }), unit('%')) })),
       h(Group, { title: 'Data' },
-        h(Row, { label: 'Memory, goals and reset', hint: 'What the Coach remembers, with Edit, Pause and Reset, is on the Coach screen.',
+        h(Row, { label: 'Memory, goals and reset', hint: 'See, edit, pause or reset it on the Coach screen.',
           control: h('button', { type: 'button', style: S.btn, onClick: () => { if (d.actions && typeof d.actions.setView === 'function') d.actions.setView(VIEW_KEY); } }, 'Open the Coach') })),
       h(Group, { title: 'Advanced' },
         h('button', { type: 'button', 'aria-label': 'Advanced', 'aria-expanded': adv, onClick: () => setAdv(!adv),

@@ -26,7 +26,7 @@ export function Segmented({ value, options, onChange, ariaLabel, size, style }: 
   const lg = (size ?? (isMobile ? 'lg' : 'md')) === 'lg';
   const hint = options.find((o) => o.value === value)?.hint;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, ...style }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, maxWidth: lg ? undefined : 520, ...style }}>
       <div role="radiogroup" aria-label={ariaLabel} style={{ display: 'flex', gap: 2, padding: 2, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-base)' }}>
         {options.map((o) => {
           const on = o.value === value;
