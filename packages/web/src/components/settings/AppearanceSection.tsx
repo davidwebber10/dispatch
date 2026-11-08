@@ -89,8 +89,13 @@ function AccentPicker() {
   const custom = accent !== '' && !isPreset(accent);
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-      <button type="button" onClick={() => set().setAccent('')} title="Theme default" aria-label="Theme default accent" aria-pressed={accent === ''} style={dot(themeAccent, accent === '')}>
-        {accent === '' ? <Check size={14} weight="bold" color={onAccent(themeAccent)} /> : <Palette size={14} weight="bold" color={onAccent(themeAccent)} />}
+      {/* The theme's own accent: a pill with a word, so it never reads as one more preset. */}
+      <button type="button" onClick={() => set().setAccent('')} title="Theme default" aria-label="Theme default accent" aria-pressed={accent === ''}
+        style={{ ...dot('var(--color-elevated)', accent === ''), width: 'auto', padding: '0 10px 0 4px', gap: 6, borderRadius: 'var(--radius-xl)' }}>
+        <span aria-hidden style={{ width: 20, height: 20, borderRadius: '50%', background: themeAccent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {accent === '' ? <Check size={12} weight="bold" color={onAccent(themeAccent)} /> : <Palette size={12} weight="bold" color={onAccent(themeAccent)} />}
+        </span>
+        <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Theme</span>
       </button>
       {ACCENTS.map((c) => {
         const on = accent.toLowerCase() === c.toLowerCase();
@@ -146,13 +151,14 @@ export function AppearanceSection() {
   const editor = useSettings((s) => s.editor);
   const set = useSettings.getState;
   const [themesOpen, setThemesOpen] = useState(false);
-  const accentName = accent === '' ? 'Theme default' : ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? null : 'Custom';
+  // The swatches show the pick; only a custom color, which has no swatch of its own, says it in words.
+  const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{accent.toUpperCase()}</span> : null;
 
   return (
     <SettingsPage intro="These settings apply to this device only, so a phone and a computer can differ.">
       <SettingsGroup title="Theme">
         <SettingsRow label="Theme" ariaLabel={`Theme: ${themeName(theme)}`} value={<ThemeValue setting={theme} />} onClick={() => setThemesOpen(true)} />
-        <SettingsRow label="Accent" hint="The color of buttons, switches and highlights." value={accentName}>
+        <SettingsRow label="Accent" hint="Buttons, switches and highlights." value={accentName}>
           <AccentPicker />
         </SettingsRow>
       </SettingsGroup>
@@ -168,7 +174,7 @@ export function AppearanceSection() {
           <Segmented ariaLabel="Density" value={density} options={DENSITIES} onChange={(v) => set().setDensity(v as Density)} />
         </SettingsRow>
         <SettingsRow label="Threads shown" control={<Stepper value={formatSidebarLimit(sidebarMaxThreads)} onDec={() => set().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, -1))} onInc={() => set().setSidebarMaxThreads(stepSidebarLimit(sidebarMaxThreads, 1))} />} />
-        <SettingsRow label="Pinned files" hint="The Files shelf in each project. Pins and Browse Files still work when off."
+        <SettingsRow label="Pinned files" hint="The Files shelf in each project."
           control={<Toggle on={showPinnedFiles} label="Pinned files" onClick={() => set().setShowPinnedFiles(!showPinnedFiles)} />} />
         {/* The master switch comes first and the count hides with the shelf: a "Files shown"
             stepper that still moved while no shelf existed would report a setting nothing obeys. */}
@@ -181,14 +187,14 @@ export function AppearanceSection() {
         <SettingsRow label="Scrollback" control={<Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => set().setScrollback(scrollback - 5000)} onInc={() => set().setScrollback(scrollback + 5000)} />} />
         <SettingsRow label="Autocorrect" hint="Spelling help in a CLI thread's composer on a phone."
           control={<Toggle on={ptyAutocorrect} label="Autocorrect in the terminal composer" onClick={() => set().setPtyAutocorrect(!ptyAutocorrect)} />} />
-        <SettingsRow label="Pretty hint" hint="The bar above CLI threads that suggests Pretty for long replies."
+        <SettingsRow label="Pretty hint" hint="The “Read best in Pretty” bar on CLI threads."
           control={<Toggle on={showPrettyHint} label="Pretty hint" onClick={() => set().setShowPrettyHint(!showPrettyHint)} />} />
       </SettingsGroup>
 
       <SettingsGroup title="Workspace">
-        <SettingsRow label="Multi-pane tabs (Operator)" hint="Drag tabs to rearrange them or merge them into split panes."
+        <SettingsRow label="Multi-pane tabs (Operator)" hint="Drag tabs to rearrange or split them."
           control={<Toggle on={multiPane} label="Multi-pane tabs (Operator)" onClick={() => set().setMultiPane(!multiPane)} />} />
-        <SettingsRow label="Open docs in" hint="The editor for the doc viewer's “Open in editor”. None hides the button."
+        <SettingsRow label="Open docs in" hint="Where “Open in editor” opens a doc."
           control={<Select ariaLabel="Open docs in" value={editor} onChange={(v) => set().setEditor(v as DocEditor)} style={{ width: 140 }} options={DOC_EDITORS} />} />
       </SettingsGroup>
 

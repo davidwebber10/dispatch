@@ -51,7 +51,7 @@ export function DictationSection() {
 
   const keyRow = noDoppler ? (
     <SettingsRow label="API key" ariaLabel="API key: connect Doppler in Secrets"
-      hint={<StatusMark tone="yellow">Doppler is not connected. Open Secrets to connect it.</StatusMark>}
+      hint={<StatusMark tone="yellow">Doppler is not connected</StatusMark>}
       value={sttSecretName ? <span style={mono}>{sttSecretName}</span> : undefined}
       onClick={() => useUI.getState().requestSettings('secrets')} />
   ) : (
@@ -80,7 +80,7 @@ export function DictationSection() {
 
       <SettingsGroup title="This device">
         <SettingsRow label="Recordings" ariaLabel="Recordings"
-          hint="Each dictation stays here until it is transcribed, so you can send a failed one again."
+          hint="Kept until transcribed, so a failed one can be sent again."
           value={recordingCount === null ? undefined : recordingCount === 0 ? 'None' : String(recordingCount)}
           onClick={() => setRecordingsOpen(true)} />
       </SettingsGroup>

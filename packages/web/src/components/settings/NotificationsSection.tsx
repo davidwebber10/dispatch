@@ -10,7 +10,7 @@ function UsageAlertGroup() {
   return (
     <SettingsGroup title="Usage alerts" footer={err ? <span role="alert" style={{ color: 'var(--color-status-red)' }}>{err}</span> : undefined}>
       <SettingsRow label="Usage warning"
-        hint={cfg ? `One push when a 5-hour or weekly window reaches ${cfg.warnPercent}%. Set the level in Usage limits.` : 'Loading…'}
+        hint={cfg ? `One push when a usage window reaches ${cfg.warnPercent}%. Set the level in Usage limits.` : 'Loading…'}
         control={cfg ? <Toggle on={cfg.pushOnWarn} onClick={() => save({ pushOnWarn: !cfg.pushOnWarn })} label="Push alert at the warning level" /> : null} />
     </SettingsGroup>
   );
