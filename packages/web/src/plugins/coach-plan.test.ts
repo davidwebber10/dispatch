@@ -57,7 +57,7 @@ describe('Coach judge: planCall (coach plan Task 9)', () => {
 
 const CAND = { id: 'idle-wait:t1:x', type: 'idle-wait', measure: 'delegation', tip: 'thinkBigger', terminalId: 't1', projectId: 's1', evidence: { minutes: 6 }, at: '2026-11-20T10:00:00.000Z' };
 const PROMPT_CAND = { id: 'no-plan-big-task:t1:y', type: 'no-plan-big-task', measure: 'judgment', tip: 'prompt', terminalId: 't1', projectId: 's1', evidence: { parts: 4, chars: 620, excerpt: 'Pull last week returns by reason, chart them, compare with the prior month and email Sam.' }, at: '2026-11-20T10:00:00.000Z' };
-const GOOD = { fit: true, confidence: 0.9, headline: 'Start a second thread while this runs', why: 'You waited 6 minutes with nothing else running.', action: { kind: 'compose', label: 'Try it: draft the next task', text: 'In a new thread: draft the release note.' } };
+const GOOD = { fit: true, ownWords: true, wouldChange: true, confidence: 0.9, headline: 'Start a second thread while this runs', why: 'You waited 6 minutes with nothing else running.', action: { kind: 'compose', label: 'Try it: draft the next task', text: 'In a new thread: draft the release note.' } };
 const answer = (v: unknown, budget = FREE) => ({ result: { text: typeof v === 'string' ? v : JSON.stringify(v), harness: 'claude' }, budget, refused: null });
 
 describe('Coach judge: the prompts and the answers (coach plan Task 9)', () => {

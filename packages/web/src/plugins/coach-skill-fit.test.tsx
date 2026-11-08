@@ -51,7 +51,7 @@ describe('Coach skill-fit detector (coach plan Task 12d)', () => {
 });
 
 const CAND = { id: 'skill-fit:x', type: 'skill-fit', measure: 'reuse', tip: 'prompt', terminalId: 't2', projectId: 's1', evidence: { threads: 3, days: 30, text: BLOCK, excerpt: BLOCK.slice(0, 200) }, at: NOW.toISOString() };
-const CONFIRM = { fit: true, confidence: 0.9, headline: 'Save your finishing steps as a skill', why: 'You pasted the same finishing steps into 3 threads.', action: { kind: 'compose', label: 'x', text: 'x' } };
+const CONFIRM = { fit: true, ownWords: true, wouldChange: true, confidence: 0.9, headline: 'Save your finishing steps as a skill', why: 'You pasted the same finishing steps into 3 threads.', action: { kind: 'compose', label: 'x', text: 'x' } };
 const DRAFT = { name: 'Finish and report', description: 'Run the tests, fix failures, list the changed files.', body: '# Finish and report\n\n- Run the full test suite and fix what fails.\n- List every changed file.' };
 
 describe('Coach skill draft (coach plan Task 12d)', () => {

@@ -29,14 +29,14 @@ describe('Coach: the plugin skeleton (coach plan Task 7)', () => {
 
   it('settings start from the defaults, and a saved partial setting keeps the other defaults', async () => {
     expect(DEFAULT_SETTINGS).toMatchObject({ howOften: 'normal', maxPerDay: 3, maxPerSession: 1, quietHours: null, phone: false, tipTypes: { prompt: true, thinkBigger: true }, leaveAlone: [], thoroughness: 'balanced', model: { mode: 'auto' }, budgetPercentWeekly: 3, budgetUsdWeekly: 5, recap: { inApp: true, push: false } });
-    expect(DEFAULT_SETTINGS.advanced.minConfidence).toBe(0.7);
+    expect(DEFAULT_SETTINGS.advanced.minConfidence).toBe(0.85);
     expect(DEFAULT_SETTINGS.advanced.thresholds).toEqual(DEFAULT_THRESHOLDS);
     const s = withDefaults({ howOften: 'chatty', advanced: { thresholds: { idleWait: { minutes: 5 } } } });
     expect(s.howOften).toBe('chatty');
     expect(s.maxPerSession).toBe(1);
     expect(s.advanced.thresholds.idleWait.minutes).toBe(5);
     expect(s.advanced.thresholds.repeatedPrompt).toEqual(DEFAULT_THRESHOLDS.repeatedPrompt);
-    expect(s.advanced.minConfidence).toBe(0.7);
+    expect(s.advanced.minConfidence).toBe(0.85);
     expect(withDefaults(null)).toEqual(DEFAULT_SETTINGS);
     const d = fakeD({ settings: { howOften: 'quiet' } });
     const coach = createCoach(d);

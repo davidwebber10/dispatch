@@ -57,7 +57,7 @@ describe('Coach plugin-fit detector (coach plan Task 12c)', () => {
 });
 
 const CAND = { id: 'plugin-fit:x', type: 'plugin-fit', measure: 'reuse', tip: 'thinkBigger', terminalId: 'c', projectId: 's1', evidence: { steps: 4, repeats: 3, days: 30, excerpt: STEPS[0] }, at: NOW.toISOString() };
-const ANSWER = { fit: true, confidence: 0.9, headline: 'Build a returns report plugin', why: 'A screen updates itself; a schedule only sends the same email.', plugin: 'A Returns screen that pulls, cleans and charts the export.', parts: ['view', 'worker', 'nonsense'] };
+const ANSWER = { fit: true, ownWords: true, wouldChange: true, confidence: 0.9, headline: 'Build a returns report plugin', why: 'A screen updates itself; a schedule only sends the same email.', plugin: 'A Returns screen that pulls, cleans and charts the export.', parts: ['view', 'worker', 'nonsense'] };
 
 describe('Coach plugin-fit card (coach plan Task 12c)', () => {
   it('the confirm prompt asks for the plugin parts', () => {

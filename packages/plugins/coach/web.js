@@ -1067,7 +1067,7 @@ export function createCoach(d, deps = {}) {
       h(Group, { title: 'Cards' },
         h(Row, { label: 'Most cards in a day', control: h(NumField, { label: 'Most cards in a day', value: s.maxPerDay, min: 0, max: 20, onSave: (v) => put({ maxPerDay: v }) }) }),
         h(Row, { label: 'Most cards in one session', control: h(NumField, { label: 'Most cards in one session', value: s.maxPerSession, min: 0, max: 20, onSave: (v) => put({ maxPerSession: v }) }) }),
-        h(Row, { label: 'Lowest confidence to show', hint: 'The small model says how sure it is, from 0 to 1. Default 0.7.',
+        h(Row, { label: 'Lowest confidence to show', hint: 'The small model says how sure it is, from 0 to 1. Default 0.85.',
           control: h(NumField, { label: 'Show a card at this confidence or more', value: s.advanced.minConfidence, min: 0, max: 1, step: 0.05, onSave: (v) => putAdv({ minConfidence: v }) }) }),
         h(Row, { label: 'Hide a card after', hint: `A card about something long past does not show. Default ${CARD_MAX_AGE_HOURS} hours.`,
           control: h(d.Fragment, null, h(NumField, { label: 'Hide a card after this many hours', value: s.advanced.maxCardAgeHours ?? CARD_MAX_AGE_HOURS, min: 1, max: 720, step: 1, onSave: (v) => putAdv({ maxCardAgeHours: v }) }), unit('h')) })),

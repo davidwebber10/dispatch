@@ -40,6 +40,24 @@ export const BUDGET_TTL_MS = 15 * 60_000;
 /** Before it settles on no call, the worker asks the daemon again, at most this often. */
 const BEFORE_NONE_GAP_MS = 60_000;
 
+/** A card of the same measure and type shown or dismissed within this many days blocks a new one (coach fix T6). */
+export const NOVELTY_DAYS = 14;
+/** A card's kind: its type (each rule has one measure, so measure and type match together). */
+const kindOf = (c) => c.type || String(c.id || '').split(':')[0];
+/** The kinds of cards the person saw or dismissed in the last NOVELTY_DAYS days. */
+function recentKinds(cardsDoc, cardState, t) {
+  const out = new Set();
+  if (!cardState || typeof cardState !== 'object') return out;
+  const items = Array.isArray(cardsDoc && cardsDoc.items) ? cardsDoc.items : [];
+  const from = t.getTime() - NOVELTY_DAYS * 86400_000;
+  for (const [id, st] of Object.entries(cardState)) {
+    if (!st || (st.state !== 'shown' && st.state !== 'dismissed') || !(Date.parse(st.at) >= from)) continue;
+    const card = items.find((x) => x && x.id === id);
+    out.add(kindOf(card || { id }));
+  }
+  return out;
+}
+
 export function createEngine(io) {
   let settings = withDefaults(null);
   let state = emptyState();
@@ -125,13 +143,22 @@ export function createEngine(io) {
 
   async function judge() {
     const t = now();
-    const cardsDoc = await io.getDoc('cards', null);
+    let cardsDoc = await io.getDoc('cards', null);
     // `retry`: { [candidateId]: { n, next } } for candidates a passing failure stopped.
     const retry = (cardsDoc && cardsDoc.retry && typeof cardsDoc.retry === 'object') ? cardsDoc.retry : {};
-    const fresh = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t)
+    const candidatesNow = unjudged(candidates.items, cardsDoc).filter((c) => t.getTime() - Date.parse(c.at) < FRESH_MS && allows(memory, c, t)
       && !(retry[c.id] && Date.parse(retry[c.id].next) > t.getTime()));
-    if (!fresh.length) return;
+    if (!candidatesNow.length) return;
     const at = t.toISOString();
+    // 14-day novelty (coach fix T6): no new card of a measure and type the person saw or dismissed lately.
+    const recent = recentKinds(cardsDoc, await io.getDoc('cardState', null), t);
+    const repeats = candidatesNow.filter((c) => recent.has(kindOf(c)));
+    const fresh = candidatesNow.filter((c) => !recent.has(kindOf(c)));
+    if (repeats.length) {
+      cardsDoc = joinCards(cardsDoc, repeats.map((c) => ({ id: c.id, outcome: 'repeat', card: null, calls: [] })), at);
+      await io.putDoc('cards', cardsDoc);
+    }
+    if (!fresh.length) return;
     // Nothing queues during a mute (coach spec section 4.3): the candidates are recorded as muted, never judged.
     const cadence = await io.getDoc('cadence', null);
     if (isMuted(cadence, t)) {
