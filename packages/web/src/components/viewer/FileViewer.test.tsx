@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { FileViewer, viewerKind, type ViewerFile } from './FileViewer';
+import { FileViewer, viewerKind, downloadFile, type ViewerFile } from './FileViewer';
 
 const files: ViewerFile[] = [
   { src: '/f/one.png', name: 'one.png', mime: 'image/png' },
@@ -146,5 +146,27 @@ describe('FileViewer (2026-11-07)', () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('dialog').querySelector('[data-backdrop]') as HTMLElement);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('an inline text file (2026-11-08)', () => {
+  const inline: ViewerFile = { src: '', name: 'REPORT.md', mime: 'text/markdown', loadText: async () => '# Hello\n\nBody' };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('downloads its own text, without a request', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const created: Blob[] = [];
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => { created.push(b); return 'blob:x'; };
+    (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
+    await downloadFile(inline);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(created).toHaveLength(1);
+    expect(await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsText(created[0]); })).toBe('# Hello\n\nBody');
+  });
+
+  it('a text or markdown file sits on an opaque backdrop (the page behind does not show)', async () => {
+    render(<FileViewer files={[inline]} index={0} onClose={() => {}} />);
+    await screen.findByText('Body');
+    expect(screen.getByRole('dialog').style.background).toContain('100%');
   });
 });

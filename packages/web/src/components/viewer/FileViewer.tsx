@@ -55,6 +55,8 @@ function slugify(input: string): string {
 /** The bytes of a file the viewer shows: an image through the clipboard helper (it decodes data: URIs without a request), the rest fetched. */
 async function fileBlob(file: ViewerFile): Promise<Blob> {
   if (viewerKind(file.mime) === 'image') return loadImageBlob(file.src);
+  // Text handed over inline (a preview's text): its own words, no request.
+  if (file.loadText) return new Blob([await file.loadText()], { type: file.mime });
   const res = await fetch(file.src);
   if (!res.ok) throw new Error(`GET ${file.src} failed: ${res.status}`);
   return res.blob();
@@ -389,7 +391,7 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
 
   return createPortal(
     <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={label ?? file.name ?? 'File viewer'}
-      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: `color-mix(in srgb, var(--color-media-bg) ${Math.max(0.35, 0.92 - sink / 400) * 100}%, transparent)`, display: 'flex', flexDirection: 'column', userSelect: 'none', WebkitUserSelect: 'none', overscrollBehavior: 'contain' }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 1300, background: `color-mix(in srgb, var(--color-media-bg) ${Math.max(0.35, ((kind === 'markdown' || kind === 'text') ? 1 : 0.92) - sink / 400) * 100}%, transparent)`, display: 'flex', flexDirection: 'column', userSelect: 'none', WebkitUserSelect: 'none', overscrollBehavior: 'contain' }}>
       {/* top bar: close, name and position, actions */}
       <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3, display: 'flex', alignItems: 'center', gap: 8, padding: 'max(10px, env(safe-area-inset-top)) 12px 10px', background: 'linear-gradient(color-mix(in srgb, var(--color-media-bg) 65%, transparent), transparent)', pointerEvents: 'none' }}>
         <button ref={closeRef} type="button" onClick={onClose} title="Close" aria-label="Close" style={{ ...btn(), pointerEvents: 'auto' }}><X size={18} weight="bold" /></button>
