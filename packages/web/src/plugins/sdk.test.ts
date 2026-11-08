@@ -136,3 +136,10 @@ describe('plugin SDK events and assist (2026-11-07)', () => {
     expect(call).toMatch(/^POST .*\/api\/plugins\/coach\/assist$/);
   });
 });
+
+describe('plugin SDK settings primitives (coach settings cleanup, 2026-11-07)', () => {
+  it('ui carries the shared MultiSelect, Segmented, SettingsGroup and SettingsRow', () => {
+    const d = buildSdk();
+    for (const k of ['MultiSelect', 'Segmented', 'SettingsGroup', 'SettingsRow'] as const) expect(typeof (d.ui as Record<string, unknown>)[k]).toBe('function');
+  });
+});

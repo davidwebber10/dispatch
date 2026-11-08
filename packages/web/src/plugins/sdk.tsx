@@ -15,11 +15,13 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { Modal } from '../components/common/Modal';
 import { FilterBar } from '../components/common/FilterBar';
 import { Select } from '../components/common/Select';
+import { MultiSelect } from '../components/common/MultiSelect';
+import { Segmented } from '../components/common/Segmented';
 import { Markdown } from '../components/Markdown';
 import { FileViewer } from '../components/viewer/FileViewer';
 import { copyText } from '../lib/clipboard';
 import { openThreadInPlace } from '../components/endless/openThread';
-import { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput, Toggle } from '../components/settings/ui';
+import { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput, Toggle, SettingsGroup, SettingsRow } from '../components/settings/ui';
 import { usePluginRegistry, useContributions, type Contributions, type InspectorTabIcon } from './registry';
 import { usePluginDialogs } from './PluginDialogs';
 
@@ -168,7 +170,7 @@ export interface DispatchSdk {
     createSkill: (draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }) => Promise<{ id: string } | null>;
   };
   api: typeof api;
-  ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; FilterBar: typeof FilterBar; Select: typeof Select; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
+  ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; FilterBar: typeof FilterBar; Select: typeof Select; MultiSelect: typeof MultiSelect; Segmented: typeof Segmented; SettingsGroup: typeof SettingsGroup; SettingsRow: typeof SettingsRow; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
   icons: Record<string, Icon>;
   storage: typeof storage;
   settings: typeof settings;
@@ -209,7 +211,7 @@ export function buildSdk(): DispatchSdk {
       createSkill: (draft) => usePluginDialogs.getState().openSkill(draft),
     },
     api,
-    ui: { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },
+    ui: { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, MultiSelect, Segmented, SettingsGroup, SettingsRow, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },
     icons: ICONS,
     storage,
     settings,
