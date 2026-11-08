@@ -32,7 +32,7 @@ export function SettingsView() {
   return (
     <div data-testid="settings-view" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', overflow: 'hidden', background: 'var(--color-base)' }}>
       {/* section nav */}
-      <nav aria-label="Settings sections" style={{ width: 214, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div role="navigation" aria-label="Settings sections" style={{ width: 214, flexShrink: 0, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 14px', borderBottom: '1px solid var(--color-border)' }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Settings</span>
         </div>
@@ -60,7 +60,7 @@ export function SettingsView() {
         <div style={{ borderTop: '1px solid var(--color-border)', padding: '8px 14px', font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
           Changes save as you edit
         </div>
-      </nav>
+      </div>
 
       {/* content */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

@@ -73,6 +73,7 @@ export function UpdatesSection() {
   );
 
   return (
+    <>
     <SettingsGroup title="Dispatch">
       <SettingsRow label="Version" value={currentVersion ? `v${currentVersion}` : 'Unknown'} />
       {updateRow}
@@ -92,14 +93,16 @@ export function UpdatesSection() {
       {entries.length > 0 && (
         <SettingsRow label={notesLabel} ariaLabel={notesLabel} hint={headline ?? undefined} onClick={() => setNotesOpen(true)} />
       )}
-      {entries.length > 0 && (
-        <Sheet open={notesOpen} onClose={() => setNotesOpen(false)} title={notesLabel}>
-          <div style={{ maxHeight: 'min(70vh, 560px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-            {entries.map((e, i) => <NoteEntry key={e.version || i} entry={e} first={i === 0} />)}
-          </div>
-        </Sheet>
-      )}
     </SettingsGroup>
+    {/* Outside the card: a closed sheet would still take a row slot (a stray hairline). */}
+    {entries.length > 0 && (
+      <Sheet open={notesOpen} onClose={() => setNotesOpen(false)} title={notesLabel}>
+        <div style={{ maxHeight: 'min(70vh, 560px)', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {entries.map((e, i) => <NoteEntry key={e.version || i} entry={e} first={i === 0} />)}
+        </div>
+      </Sheet>
+    )}
+    </>
   );
 }
 

@@ -18,7 +18,7 @@ export function TelemetrySetting() {
   if (on === null) return null;
   return (
     <SettingsGroup title="Usage stats">
-      <SettingsRow label="Send anonymous usage stats" hint="Counts only, never text, paths or names. For every device."
+      <SettingsRow label="Send anonymous usage stats" hint="Counts only: never text, paths or names."
         control={<Toggle on={on} onClick={flip} label="Send anonymous usage stats" />} />
     </SettingsGroup>
   );

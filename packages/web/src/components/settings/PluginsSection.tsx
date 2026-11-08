@@ -527,7 +527,7 @@ export function PluginsSection() {
                   onKeyDown={(e) => { if (e.key === 'Enter' && marketUrl.trim() && marketBusy === null) void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); }); }}
                   placeholder="https://github.com/your-org/plugins.git" spellCheck={false} autoCapitalize="off"
                   style={{ ...fieldFor(isMobile), flex: 1, fontFamily: 'var(--font-mono)' }} />
-                <button type="button" style={{ ...solidBtn(marketUrl.trim().length > 0), height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>Add marketplace</button>
+                <button type="button" aria-label="Add marketplace" style={{ ...solidBtn(marketUrl.trim().length > 0), height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>{isMobile ? 'Add' : 'Add marketplace'}</button>
               </div>
               {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
             </div>

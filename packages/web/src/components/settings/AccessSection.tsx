@@ -182,12 +182,12 @@ export function AccessSection() {
             {loopbackPage && auto && (
               <div data-testid="loopback-note" style={{ ...note, marginTop: -2 }}>
                 {auto === 'none'
-                  ? 'A phone cannot open localhost, and no other address for this computer was found. Type the address the phone will use.'
-                  : `A phone cannot open localhost, so Dispatch filled in this computer's ${auto === 'tailscale' ? 'Tailscale' : 'Wi-Fi'} address. Change it if the phone should use another.`}
+                  ? 'A phone cannot open localhost, and no other address was found. Type the address the phone will use.'
+                  : `A phone cannot open localhost, so Dispatch filled in this computer's ${auto === 'tailscale' ? 'Tailscale' : 'Wi-Fi'} address.`}
               </div>
             )}
           </SettingsRow>
-          <SettingsRow label="Sign-in code" hint="Type it on the phone, or scan the QR code. It works once, for 5 minutes."
+          <SettingsRow label="Sign-in code" hint="Works once, for 5 minutes."
             control={(
               <button type="button" disabled={busy} onClick={() => void makeCode()} style={solidBtn(!busy)}>
                 {live ? 'New code' : 'Make a code'}

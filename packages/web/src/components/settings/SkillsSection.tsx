@@ -79,7 +79,7 @@ export function SkillsSection() {
   return (
     <SettingsPage intro={<>Skills are short texts every thread gets. Install them from a marketplace on the Plugins page, or add a folder under <span style={codeChip}>~/.dispatch/skills</span>.</>}>
       <SettingsGroup>
-        <SettingsRow label="Project" hint={project ? `The switches turn a skill on or off for ${projectName}.` : 'The switches apply everywhere. Pick a project to set its own.'}
+        <SettingsRow label="Project" hint={project ? `The switches are for ${projectName}.` : 'The switches apply everywhere.'}
           control={<Select ariaLabel="Project" value={project} onChange={setProject} style={{ width: 160 }}
             options={[{ value: '', label: 'Everywhere' }, ...sessions.map((s) => ({ value: s.id, label: s.name }))]} />} />
       </SettingsGroup>
