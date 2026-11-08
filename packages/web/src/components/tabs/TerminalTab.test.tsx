@@ -388,6 +388,12 @@ test('the phone composer grows over the terminal, not into it; a handle shrinks 
   act(() => { fireEvent.change(box, { target: { value: 'a long message\n'.repeat(12) } }); });
   expect(box.style.height).toBe('300px');
   const handle = screen.getByRole('button', { name: 'Minimize the message box' });
+  // One box, not a box in a box (owner, 2026-11-07): the handle sits inside the message box, and
+  // the dock around it draws nothing of its own.
+  expect(screen.getByTestId('pill-composer')).toContainElement(handle);
+  expect(overlay.style.borderTop).toBe('');
+  expect(overlay.style.boxShadow).toBe('');
+  expect(overlay.style.background === '' || overlay.style.background === 'transparent').toBe(true);
   // Drag down: two lines, the text kept and scrollable inside.
   act(() => { fireEvent.pointerDown(handle, { clientY: 100, pointerId: 1 }); fireEvent.pointerMove(handle, { clientY: 160, pointerId: 1 }); fireEvent.pointerUp(handle, { clientY: 160, pointerId: 1 }); });
   expect(box.style.height).toBe('64px');

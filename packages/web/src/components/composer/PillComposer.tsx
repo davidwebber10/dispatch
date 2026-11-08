@@ -52,6 +52,10 @@ export interface PillComposerProps {
   sendLabel?: string;
   /** Cap the box at this many lines; the text scrolls inside (the CLI view's minimized box, 2026-11-07). */
   maxLines?: number;
+  /** A control drawn inside the box at its top centre (the CLI view's drag handle, 2026-11-07). */
+  handle?: ReactNode;
+  /** The box floats over other content (the CLI view's terminal): it takes a soft shadow. */
+  floating?: boolean;
   /** Called with true while the text is taller than two lines, false otherwise (the CLI view's handle). */
   onTallChange?: (tall: boolean) => void;
 }
@@ -61,7 +65,7 @@ const MAX_FRACTION = 0.5;
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
-  maxLines, onTallChange,
+  maxLines, onTallChange, handle, floating,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
@@ -183,7 +187,8 @@ export function PillComposer({
     )}
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
-      position: 'relative',
+      position: 'relative', boxShadow: floating ? '0 10px 30px -12px var(--color-shadow)' : undefined,
+      paddingTop: handle ? 14 : undefined,
       display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', alignItems: 'end', columnGap: 4, rowGap: 2,
       gridTemplateAreas: stacked ? '"text text text text" "plus . mic send"' : recording ? '"plus text text send"' : '"plus text mic send"',
       padding: mobile ? 8 : 5, borderRadius: 'var(--radius-xl)', // the terminal card's radius, so the two line up
@@ -223,6 +228,7 @@ export function PillComposer({
           }}
         />
       )}
+      {handle && <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 1 }}>{handle}</div>}
       {expandable && (
         <button type="button" aria-label="Expand the message" title="Expand"
           onMouseDown={(e) => e.preventDefault()}

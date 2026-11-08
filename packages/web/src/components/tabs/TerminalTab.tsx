@@ -1112,9 +1112,13 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
            grows upward OVER the terminal, so typing never resizes (and redraws) the terminal
            (owner, 2026-11-07). A handle on a tall box shrinks it to two lines and back. */
         <div data-testid="term-composer-dock" style={{ position: 'relative', flexShrink: 0, height: dockH ?? 'calc(72px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}>
-        <div ref={composerOverlayRef} data-testid="term-composer-overlay" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 9, padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', background: 'var(--color-pane)', boxShadow: tall && !minimized ? '0 -10px 24px -14px var(--color-shadow)' : undefined, borderTop: tall ? '1px solid var(--color-border)' : undefined }}>
+        <div ref={composerOverlayRef} data-testid="term-composer-overlay" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 9, padding: '4px 8px 8px', paddingBottom: 'calc(8px + var(--composer-safe-bottom, env(safe-area-inset-bottom)))', }}>
           {keysOpen && <KeysPager pages={keyPages(sheetKeysFor(meta?.type))} onKey={(seq) => sockRef.current?.send(seq)} onClose={() => setKeysOpen(false)} />}
-          {tall && (
+          <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
+          <PillComposer
+            pluginContext={{ surface: 'terminal', terminalId: terminalId }}
+            floating={tall}
+            handle={tall ? (
             <button type="button" aria-label={minimized ? 'Expand the message box' : 'Minimize the message box'}
               // Keep the pointer while the finger drags off the handle, so the release lands here.
               onPointerDown={(e) => { handleDownY.current = e.clientY; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom */ } }}
@@ -1125,13 +1129,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
                 // Drag down or tap: two lines. Drag up or tap: full size again.
                 if (minimized) { if (tap || dy < -24) setMinimized(false); } else if (tap || dy > 24) setMinimized(true);
               }}
-              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%', height: 18, margin: '-2px 0 2px', padding: 0, background: 'none', border: 'none', cursor: 'grab', touchAction: 'none' }}>
+              style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', width: 64, height: 16, margin: 0, padding: 0, background: 'none', border: 'none', cursor: 'grab', touchAction: 'none' }}>
               <span aria-hidden style={{ width: 36, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--color-text-tertiary)', opacity: 0.6 }} />
             </button>
-          )}
-          <input ref={termFileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { onFiles(e.target.files); e.currentTarget.value = ''; }} />
-          <PillComposer
-            pluginContext={{ surface: 'terminal', terminalId: terminalId }}
+            ) : undefined}
             value={mobileInput}
             onChange={setMobileInput}
             onSend={sendMobileInput}
