@@ -19,21 +19,69 @@ beforeEach(() => {
   useSettings.setState({ showPinnedFiles: true });
 });
 
-describe('AppearanceSection — what moved in, what left', () => {
-  it('the Theme row comes first: System, then the light themes, then the dark themes', () => {
+/** The Theme row opens the theme picker in a sheet. */
+function openThemes() {
+  fireEvent.click(screen.getByRole('button', { name: /^Theme:/ }));
+  return screen.getByRole('dialog', { name: 'Theme' });
+}
+
+describe('AppearanceSection — layout (2026-11-07 settings standard)', () => {
+  it('shows grouped cards, a one-line intro and no mono "THIS DEVICE" banner', () => {
     render(<AppearanceSection />);
-    const group = screen.getByRole('radiogroup', { name: 'Theme' });
+    expect(screen.queryByText(/THIS DEVICE ·/)).toBeNull();
+    expect(screen.getByTestId('settings-intro').textContent).toMatch(/this device/i);
+    for (const name of ['Theme', 'Text size', 'Sidebar', 'Terminal', 'Workspace']) {
+      expect(screen.getByRole('group', { name })).toBeInTheDocument();
+    }
+  });
+
+  it('the Theme row names the theme in use, and the 13 tiles live in the picker, not on the page', () => {
+    useSettings.getState().setTheme('dracula');
+    render(<AppearanceSection />);
+    expect(screen.queryByRole('radiogroup', { name: 'Theme' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Theme:/ }).textContent).toContain('Dracula');
+    useSettings.getState().setTheme('dispatch-dark');
+  });
+
+  it('picking an accent swatch saves it and marks it', () => {
+    useSettings.getState().setAccent('');
+    render(<AppearanceSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Accent #5E5CE6' }));
+    expect(useSettings.getState().accent).toBe('#5E5CE6');
+    expect(screen.getByRole('button', { name: 'Accent #5E5CE6' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Theme default accent' })).toHaveAttribute('aria-pressed', 'false');
+    useSettings.getState().setAccent('');
+  });
+
+  it('density is a segmented choice that saves at once', () => {
+    useSettings.setState({ density: 'cozy' });
+    render(<AppearanceSection />);
+    const seg = screen.getByRole('radiogroup', { name: 'Density' });
+    fireEvent.click(within(seg).getByRole('radio', { name: 'Roomy' }));
+    expect(useSettings.getState().density).toBe('roomy');
+  });
+});
+
+describe('AppearanceSection — what moved in, what left', () => {
+  it('the theme picker: System, then the light themes, then the dark themes', () => {
+    render(<AppearanceSection />);
+    const group = within(openThemes()).getByRole('radiogroup', { name: 'Theme' });
     const names = within(group).getAllByRole('radio').map((r) => r.getAttribute('aria-label'));
     expect(names).toEqual(['System', ...THEMES.filter((t) => t.kind === 'light').map((t) => t.name), ...THEMES.filter((t) => t.kind === 'dark').map((t) => t.name)]);
     expect(names).toHaveLength(13);
-    // First in the section: before the accent swatches.
+  });
+
+  it('the Theme row comes first on the page, before the accent swatches', () => {
+    render(<AppearanceSection />);
+    const row = screen.getByRole('button', { name: /^Theme:/ });
     const accent = screen.getByLabelText('Accent #3ECF6A');
-    expect(group.compareDocumentPosition(accent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.compareDocumentPosition(accent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('marks the theme in use, and selecting one applies it at once', () => {
     useSettings.getState().setTheme('dispatch-dark');
     render(<AppearanceSection />);
+    openThemes();
     expect(screen.getByRole('radio', { name: 'Dispatch Dark' })).toHaveAttribute('aria-checked', 'true');
     fireEvent.click(screen.getByRole('radio', { name: 'Nord' }));
     expect(useSettings.getState().theme).toBe('nord');
@@ -46,6 +94,7 @@ describe('AppearanceSection — what moved in, what left', () => {
 
   it('each theme shows a swatch preview of its background, pane, text and accent', () => {
     render(<AppearanceSection />);
+    openThemes();
     const dracula = getTheme('dracula')!;
     const swatch = within(screen.getByRole('radio', { name: 'Dracula' })).getByTestId('theme-swatch');
     const html = swatch.outerHTML.toLowerCase();
@@ -95,9 +144,9 @@ describe('AppearanceSection — what moved in, what left', () => {
 });
 
 // The Stepper renders bare −/+ buttons with no accessible names, so target the row by its
-// label text: the row div is the label's parent, and its two buttons are [dec, inc].
+// label text: the settings row around the label holds the stepper's two buttons [dec, inc].
 function limitRow(label: string) {
-  const row = screen.getByText(label).parentElement!;
+  const row = screen.getByText(label).closest('[data-testid="settings-row"]') as HTMLElement;
   const [dec, inc] = within(row).getAllByRole('button');
   return { row, dec, inc };
 }
@@ -139,7 +188,7 @@ describe('AppearanceSection — sidebar list limits', () => {
 
 describe('AppearanceSection — pinned files toggle', () => {
   const toggleFor = (label: string) => {
-    const row = screen.getByText(label).closest('div') as HTMLElement;
+    const row = screen.getByText(label).closest('[data-testid="settings-row"]') as HTMLElement;
     return within(row).getByRole('switch');
   };
 
