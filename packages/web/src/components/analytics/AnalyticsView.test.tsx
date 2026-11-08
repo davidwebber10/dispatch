@@ -1,9 +1,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { AnalyticsView, loadAnalyticsTab } from './AnalyticsView';
 import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
 import { CP_FIXTURE } from './controlPlaneFixture';
+import { pickOption, selectedText } from '../../test/select';
+
+// The Project and Provider filters are the shared FilterBar (2026-11-07): open Filters, wait for
+// the provider to be offered, pick it; the pick then shows as a pill.
+async function pickProvider(name: string) {
+  const filters = screen.getByRole('button', { name: /^Filters/ });
+  if (filters.getAttribute('aria-expanded') !== 'true') fireEvent.click(filters);
+  const group = await screen.findByRole('group', { name: 'Provider filter' });
+  fireEvent.click(await within(group).findByRole('button', { name }));
+  fireEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+}
+const providerPill = () => screen.queryByTestId('applied-filters')?.textContent ?? '';
+
 
 const EMPTY = {
   turns: 0, threads: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
@@ -175,8 +188,9 @@ describe('AnalyticsView', () => {
     ));
 
     render(<AnalyticsView />);
-    const select = await screen.findByLabelText(/provider/i);
-    await waitFor(() => expect(select.textContent).toMatch(/claude-code/));
+    fireEvent.click(await screen.findByRole('button', { name: 'Filters' }));
+    const group = screen.getByRole('group', { name: 'Provider filter' });
+    await waitFor(() => expect(within(group).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['All providers', 'claude-code']));
   });
 
   // The daemon filters by provider itself (routes/analytics.ts reads `provider`
@@ -186,15 +200,15 @@ describe('AnalyticsView', () => {
     const calls = mockFetch({ providers: ['codex'] });
     render(<AnalyticsView />);
 
-    const select = await screen.findByLabelText(/provider/i);
-    await waitFor(() => expect(select.textContent).toMatch(/codex/));
+    await screen.findByRole('button', { name: 'Filters' });
+    await waitFor(() => expect(calls.some((u) => u.includes('groupBy=provider'))).toBe(true));
     // Nothing is filtered until the reader asks for it.
     expect(calls.some((u) => u.includes('provider='))).toBe(false);
 
-    // Only requests made AFTER the select moves prove anything. Judging the whole
+    // Only requests made AFTER the pick prove anything. Judging the whole
     // list would pass on the first, unfiltered batch alone.
     const before = calls.length;
-    fireEvent.change(select, { target: { value: 'codex' } });
+    await pickProvider('codex');
 
     await waitFor(() => {
       const after = calls.slice(before);
@@ -228,9 +242,8 @@ describe('AnalyticsView', () => {
     const calls = mockFetch({ providers: ['codex'] });
     render(<AnalyticsView />);
 
-    const select = await screen.findByLabelText(/provider/i);
-    await waitFor(() => expect(select.textContent).toMatch(/codex/));
-    fireEvent.change(select, { target: { value: 'codex' } });
+    await screen.findByRole('button', { name: 'Filters' });
+    await pickProvider('codex');
     await waitFor(() => expect(calls.some((u) => u.includes('provider=codex'))).toBe(true));
 
     const before = calls.length;
@@ -241,7 +254,7 @@ describe('AnalyticsView', () => {
       expect(after.some((u) => u.startsWith('/api/analytics/summary') && u.includes('provider=codex'))).toBe(true);
       expect(after.some((u) => u.startsWith('/api/analytics/records'))).toBe(true);
     });
-    expect((select as HTMLSelectElement).value).toBe('codex');
+    expect(providerPill()).toContain('Providercodex');
     // The colour-domain queries read the whole table. They are deliberately left
     // out of the live refresh: re-pulling them on every closed turn would cost
     // more than it buys, and a domain that never shrinks is the property at stake.
@@ -304,17 +317,16 @@ describe('AnalyticsView · the view switch', () => {
     const cp = vi.spyOn(api, 'analyticsControlPlane').mockResolvedValue(CP_FIXTURE);
     render(<AnalyticsView />);
 
-    const provider = await screen.findByLabelText(/provider/i);
-    await waitFor(() => expect(provider.textContent).toMatch(/codex/));
-    fireEvent.change(provider, { target: { value: 'codex' } });
-    fireEvent.change(screen.getByLabelText('Range'), { target: { value: '7' } });
+    await screen.findByRole('button', { name: 'Filters' });
+    await pickProvider('codex');
+    pickOption('Range', 'Last 7 days');
 
     fireEvent.click(screen.getByRole('button', { name: 'Control Plane' }));
 
     await waitFor(() => expect(screen.getByText('AGENTS STARTED')).toBeTruthy());
     expect(cp).toHaveBeenLastCalledWith(expect.objectContaining({ provider: 'codex', from: expect.any(String) }));
-    expect((screen.getByLabelText(/provider/i) as HTMLSelectElement).value).toBe('codex');
-    expect((screen.getByLabelText('Range') as HTMLSelectElement).value).toBe('7');
+    expect(providerPill()).toContain('Providercodex');
+    expect(selectedText('Range')).toBe('Last 7 days');
     expect(localStorage.getItem('dispatch:analytics-view')).toBe('control-plane');
     expect(screen.queryByText('TOTAL TOKENS')).toBeNull();
   });

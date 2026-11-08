@@ -3,10 +3,12 @@ import { api } from '../../api/client';
 import { useAnalyticsFeed } from '../../stores/analytics';
 import { useProjects } from '../../stores/projects';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { inputStyle, muted, normKey, startOfLocalDay } from './parts';
+import { muted, normKey, startOfLocalDay } from './parts';
 import { UsageAnalytics } from './UsageAnalytics';
 import { ControlPlaneAnalytics } from './ControlPlaneAnalytics';
 import type { AnalyticsPoint } from '../../api/types';
+import { FilterBar } from '../common/FilterBar';
+import { Select } from '../common/Select';
 
 type RangeId = '7' | '30' | '90' | 'all';
 const RANGES: { id: RangeId; label: string; days: number | null }[] = [
@@ -82,20 +84,17 @@ export function AnalyticsView() {
         </div>
       )}
 
-      {/* The filter row: the same controls, in the same place, with the same values in both views. */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '14px 0 16px' }}>
-        <select aria-label="Project" value={projectId} onChange={(e) => setProjectId(e.target.value)} style={inputStyle}>
-          <option value="">All projects</option>
-          {sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select aria-label="Range" value={rangeId} onChange={(e) => setRangeId(e.target.value as RangeId)} style={inputStyle}>
-          {RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-        </select>
-        <select aria-label="Provider" value={provider} onChange={(e) => setProvider(e.target.value)} style={inputStyle}>
-          <option value="">All providers</option>
-          {providerDomain.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-      </div>
+      {/* The filter row: the same controls, in the same place, with the same values in both views.
+          The range is a field (it always has a value); Project and Provider are the shared FilterBar. */}
+      <FilterBar style={{ margin: '14px 0 16px' }}
+        leading={<Select ariaLabel="Range" value={rangeId} onChange={(v) => setRangeId(v as RangeId)} style={{ width: 160 }}
+          options={RANGES.map((r) => ({ value: r.id, label: r.label }))} />}
+        facets={[
+          { id: 'project', title: 'Project', allLabel: 'All projects', value: projectId || null, onChange: (v) => setProjectId(v ?? ''),
+            options: sessions.map((s) => ({ value: s.id, label: s.name })) },
+          { id: 'provider', title: 'Provider', allLabel: 'All providers', value: provider || null, onChange: (v) => setProvider(v ?? ''),
+            options: providerDomain.map((p) => ({ value: p, label: p })) },
+        ]} />
 
       {tab === 'usage'
         ? <UsageAnalytics from={from} projectId={projectId} provider={provider} filtered={filtered} />

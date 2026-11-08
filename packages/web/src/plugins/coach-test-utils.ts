@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { create } from 'zustand';
 import { vi } from 'vitest';
 import * as Icons from '@phosphor-icons/react';
+import { Select } from '../components/common/Select';
 
 /**
  * A fake plugin SDK for the Coach tests: documents and settings live in maps, events are
@@ -44,6 +45,8 @@ export function fakeD(over: { actions?: Record<string, unknown>; settings?: unkn
     ui: {
       styles: { sectionLabel: {}, row: {}, item: {}, ghostBtn: {}, solidBtn: () => ({}), chip: {}, fieldInput: {} },
       Toggle: (p: { on: boolean; label: string; onClick: () => void }) => h('button', { role: 'switch', 'aria-checked': p.on, 'aria-label': p.label, onClick: p.onClick }),
+      // The real shared dropdown: the Coach has no native select (2026-11-07).
+      Select,
     },
     storage: {
       get: async (_p: string, k: string, f: unknown) => (docs.has(k) ? clone(docs.get(k)) : f),
