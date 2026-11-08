@@ -132,7 +132,7 @@ async function shootDesktop(browser) {
     await settle(page, 800);
   };
   const nav = () => page.locator('[data-testid="settings-view"] > div').first();
-  if (wantIndex) { await open(); await page.screenshot({ path: path.join(outDir, 'index-desktop.png') }); console.log('shot index-desktop'); }
+  if (wantIndex) { await open(); await fit(page, W, H); await page.screenshot({ path: path.join(outDir, 'index-desktop.png') }); console.log('shot index-desktop'); }
   for (const [key, label] of wanted) {
     try {
       await open();

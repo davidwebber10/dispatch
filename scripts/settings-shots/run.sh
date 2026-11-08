@@ -30,8 +30,8 @@ fi
 
 DAEMON_PID=""
 start_daemon() {
-  # env -u: a thread's own key must not leak into the test daemon.
-  env -u DISPATCH_API -u DISPATCH_AUTH \
+  # env -u: a thread's own key, and the operator's real server list, must not leak into the test daemon.
+  env -u DISPATCH_API -u DISPATCH_AUTH -u DISPATCH_SERVERS -u DISPATCH_SERVER_URL -u DISPATCH_TERMINAL_ID \
     HOME="$FAKE_HOME" PORT="$PORT" DISPATCH_TELEMETRY=0 DISPATCH_WEB_DIST="$ROOT/packages/web/dist" \
     node "$ROOT/packages/core/dist/server.js" >>"$LOG" 2>&1 &
   DAEMON_PID=$!
