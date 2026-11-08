@@ -27,6 +27,11 @@ rl.on('line', (line) => {
     model = msg.request.model === 'haiku' ? 'claude-haiku-5-5' : msg.request.model;
     return write({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id, response: { model } } });
   }
+  if (msg.type === 'user' && JSON.stringify(msg.message.content).includes('signed-out')) {
+    write({ type: 'system', subtype: 'init', session_id: 'sid-1', model });
+    write({ type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Invalid API key · Please run /login' }] } });
+    return write({ type: 'result', subtype: 'success', is_error: true, result: 'Invalid API key · Please run /login' });
+  }
   if (msg.type === 'user') {
     write({ type: 'system', subtype: 'init', session_id: 'sid-1', model });
     write({ type: 'assistant', parent_tool_use_id: 'toolu_sub', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'sub' }] } });
@@ -47,6 +52,7 @@ rl.on('line', (line) => {
   log({ method: msg.method, params: msg.params });
   if (msg.method === 'initialize') return write({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } });
   if (msg.method === 'session/new') {
+    if (process.env.FAKE_AUTH === '1') return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Authentication required' } });
     const result = DIALECT === 'grok'
       ? { sessionId: 's1', models: { currentModelId: 'grok-4.7', availableModels: [] } }
       : { sessionId: 's1', configOptions: [{ id: 'model', currentValue: 'openrouter/a/one', options: [] }] };
@@ -175,5 +181,39 @@ describe('ACP Pretty: Grok session/set_model, OpenCode session/set_config_option
     await waitFor(m, 'g2', (e) => e.type === 'system' && e.subtype === 'init');
     await expect(m.setModel('g2', 'bogus')).rejects.toThrow(/unknown model/);
     expect(m.getModel('g2')).toBe('grok-4.7');
+  });
+});
+
+describe('a signed-out login becomes a typed system/auth_required event', () => {
+  it('Claude: the error result is followed by auth_required with provider, account, reason', async () => {
+    const m = new ClaudeStructuredSessionManager();
+    cleanups.push(() => m.killAll());
+    const seen: any[] = [];
+    m.on('auth-required', (id: string, f: any) => seen.push([id, f]));
+    m.spawn('c9', { command: process.execPath, args: [claudePath], workDir: dir, accountId: 'work' });
+    m.sendMessage('c9', 'signed-out please');
+    const frame = await waitFor(m, 'c9', (e) => e.type === 'system' && e.subtype === 'auth_required');
+    expect(frame).toMatchObject({ provider: 'claude', accountId: 'work', reason: 'The login is not valid' });
+    const ring = m.getEvents('c9');
+    expect(ring.findIndex((e: any) => e.subtype === 'auth_required')).toBeGreaterThan(ring.findIndex((e: any) => e.type === 'result'));
+    expect(seen).toEqual([['c9', expect.objectContaining({ reason: 'The login is not valid' })]]);
+  });
+
+  it('a normal turn carries no auth event', async () => {
+    const m = new ClaudeStructuredSessionManager();
+    cleanups.push(() => m.killAll());
+    m.spawn('c8', { command: process.execPath, args: [claudePath], workDir: dir });
+    m.sendMessage('c8', 'hi');
+    await waitFor(m, 'c8', (e) => e.type === 'result');
+    expect(m.getEvents('c8').some((e: any) => e.subtype === 'auth_required')).toBe(false);
+  });
+
+  it('Grok: a session/new refused for auth reports auth_required (no account for ACP)', async () => {
+    const m = new GrokStructuredSessionManager('grok');
+    cleanups.push(() => m.killAll());
+    m.spawn('g9', { command: process.execPath, args: [acpPath], workDir: dir, env: { FAKE_DIALECT: 'grok', FAKE_AUTH: '1' } } as any);
+    const frame = await waitFor(m, 'g9', (e) => e.type === 'system' && e.subtype === 'auth_required');
+    expect(frame).toMatchObject({ provider: 'grok', reason: 'Not signed in' });
+    expect(frame.accountId).toBeUndefined();
   });
 });

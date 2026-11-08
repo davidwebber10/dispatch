@@ -9,6 +9,7 @@ import { inheritedEnv } from '../platform/inherited-env.js';
 import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 import { killWithGrace } from '../platform/kill-grace.js';
+import { authRequiredFrame } from '../auth/auth-failure.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -96,6 +97,8 @@ interface Session {
   limit?: UsageLimit;
   /** The model the CLI last reported for the lead agent (init, a lead assistant frame, set_model). */
   model?: string;
+  /** The account the thread runs on (StructuredSpawnOpts.accountId), for auth_required. */
+  accountId?: string;
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
 }
@@ -158,6 +161,11 @@ export interface StructuredSpawnOpts {
    * config wins over an app-server `-c`, and thread/resume applies it. Ignored by other managers.
    */
   threadConfig?: Record<string, unknown>;
+  /**
+   * The account the thread runs on (config.accountId, else the harness default). Only stamped on a
+   * `system/auth_required` event, so the chat can name the signed-out account. Absent for Grok/OpenCode.
+   */
+  accountId?: string;
 }
 
 /** A permission decision written back to a blocked structured session. */
@@ -345,7 +353,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null };
+    const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -458,6 +466,15 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       }
       // Deliver the final frame before settle listeners close analytics or start another turn.
       this.emit('event', terminalId, { ...event, telemetry: { counterScope } });
+      // A signed-out or expired login: say so as a typed event right after the error frame, so the
+      // chat shows a sign-in card instead of the raw error (auth/auth-failure.ts).
+      const auth = authRequiredFrame(event, 'claude', session.accountId);
+      if (auth) {
+        session.events.push(auth);
+        if (session.events.length > MAX_EVENTS) session.events.shift();
+        this.emit('event', terminalId, auth);
+        this.emit('auth-required', terminalId, auth);
+      }
       // Turn boundary: a `result` event ends the current turn. Three things can have
       // happened: the agent DECLARED how it ended (via report_status — see
       // noteDeclaredStatus/Session.declared), the LAST tool called this turn was a

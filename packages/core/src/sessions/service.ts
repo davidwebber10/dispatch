@@ -3055,6 +3055,10 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
+      // Named on a system/auth_required event, so the chat can say WHICH login is signed out.
+      accountId: terminal.type === 'claude-code' || terminal.type === 'codex'
+        ? (typeof config.accountId === 'string' && config.accountId ? config.accountId : this.accountDirectory?.defaultId(terminal.type) ?? 'cli')
+        : undefined,
       // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts) — the
       // ONLY per-thread prompt channel it has, so it must carry the persona AND the peer/tools
       // block (structuredMcp.systemPrompt: roster, own id, secrets/tools note), exactly like the

@@ -30,6 +30,7 @@
 // ALL ACP↔Claude payload mapping lives in grok-translate.ts. This file is JSON-RPC plumbing
 // + the escalate/auto-allow permission membrane (identical policy to the other managers).
 
+import { authRequiredFrame } from '../auth/auth-failure.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
 import { pauseLabel } from '../limits/detect.js';
@@ -414,6 +415,14 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
     session.events.push(event);
     if (session.events.length > MAX_EVENTS) session.events.shift();
     this.emit('event', session.terminalId, event);
+    // A signed-out login (ACP's auth error, OpenCode's missing provider key): a typed event after it.
+    const auth = authRequiredFrame(event, this.dialect, undefined);
+    if (auth) {
+      session.events.push(auth);
+      if (session.events.length > MAX_EVENTS) session.events.shift();
+      this.emit('event', session.terminalId, auth);
+      this.emit('auth-required', session.terminalId, auth);
+    }
   }
 
   // --- IStructuredManager surface ------------------------------------------------------------

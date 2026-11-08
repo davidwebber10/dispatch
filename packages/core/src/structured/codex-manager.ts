@@ -14,6 +14,7 @@
 // ALL Codex↔Claude payload mapping lives in codex-translate.ts. This file is JSON-RPC plumbing
 // + the escalate/auto-allow permission membrane (identical policy to the Claude manager).
 
+import { authRequiredFrame } from '../auth/auth-failure.js';
 import { pauseLabel } from '../limits/detect.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { EventEmitter } from 'events';
@@ -169,6 +170,8 @@ interface CodexSession {
   turnActive: boolean;
   sessionId?: string;
   model?: string;
+  /** The account the thread runs on (StructuredSpawnOpts.accountId), for auth_required. */
+  accountId?: string;
   /** A model picked with setModel, sent as `model` on the next turn/start (then cleared). */
   nextTurnModel?: string;
   cwd: string;
@@ -269,6 +272,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const conn = this.ensureConnection(opts);
     const session: CodexSession = {
       terminalId,
+      accountId: opts.accountId,
       translator: new CodexTranslator(),
       events: [],
       escalate: opts.escalate ?? false,
@@ -649,6 +653,14 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     session.events.push(event);
     if (session.events.length > MAX_EVENTS) session.events.shift();
     this.emit('event', session.terminalId, event);
+    // A signed-out or expired login (a 401, a refresh that failed): a typed event after the error.
+    const auth = authRequiredFrame(event, 'codex', session.accountId);
+    if (auth) {
+      session.events.push(auth);
+      if (session.events.length > MAX_EVENTS) session.events.shift();
+      this.emit('event', session.terminalId, auth);
+      this.emit('auth-required', session.terminalId, auth);
+    }
   }
 
   // --- IStructuredManager surface ----------------------------------------------------------

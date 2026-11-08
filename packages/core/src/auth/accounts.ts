@@ -244,3 +244,20 @@ export class AccountsStore {
     return dir ? { CODEX_HOME: dir } : {};
   }
 }
+
+/**
+ * Keep the token a Claude login captured (POST /api/accounts/claude/login, the headless
+ * `claude setup-token` flow). The profile is read FIRST, so a login to a Claude account Dispatch
+ * already has (signing a signed-out account in again from a thread's "Sign in") replaces that
+ * account's token — addClaude matches it by its account id — instead of adding a duplicate the
+ * thread is not pinned to. Without a profile (offline) the token is added under the label.
+ */
+export async function adoptClaudeLoginToken(
+  accounts: AccountsStore,
+  token: string,
+  label: string,
+  fetchProfile: (token: string) => Promise<{ email?: string; accountUuid?: string; plan?: string } | null>,
+): Promise<ClaudeAccount> {
+  const p = await fetchProfile(token).catch(() => null);
+  return accounts.addClaude({ token, label: label.trim() || p?.email || '', ...(p?.email ? { email: p.email } : {}), ...(p?.accountUuid ? { accountUuid: p.accountUuid } : {}), ...(p?.plan ? { plan: p.plan } : {}) });
+}

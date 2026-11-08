@@ -92,7 +92,7 @@ import { createCodexRefresh } from './limits/codex-refresh.js';
 import { createCodexPoll } from './limits/codex-poll.js';
 import { createClaudeProbe } from './limits/claude-probe.js';
 import { createClaudeUsageReader, readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
-import { AccountsStore, type AccountProvider } from './auth/accounts.js';
+import { AccountsStore, adoptClaudeLoginToken, type AccountProvider } from './auth/accounts.js';
 import { CodexLoginService } from './auth/codex-login.js';
 import { TerminalMonitor } from './terminal-monitor.js';
 import { ThreadAutoNamer } from './sessions/thread-auto-namer.js';
@@ -848,8 +848,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // profile call fills in its email, account id and plan.
   accounts.migrateSavedClaudeToken(claudeLogin.getToken());
   claudeLogin.onAccountToken = (token, label) => {
-    const a = accounts.addClaude({ token, label });
-    void fetchClaudeProfile(token).then((p) => { if (p) accounts.updateClaude(a.id, { email: p.email, accountUuid: p.accountUuid, plan: p.plan, ...(label.trim() ? {} : { label: p.email ?? a.label }) }); }).catch(() => {});
+    // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
+    void adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile).catch(() => {});
   };
   sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
