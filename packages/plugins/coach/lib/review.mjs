@@ -5,6 +5,7 @@
 // the last 30 days that also seeds the signals. Pure helpers; the engine runs the job.
 import { normalizeMemory } from './memory.mjs';
 import { normalize, hashText } from './signals.mjs';
+import { isPersonText, personText, isPeerText } from './person.mjs';
 
 /** One model call reads at most this much transcript. */
 export const CHUNK_CHARS = 12_000;
@@ -18,13 +19,19 @@ const ITEM_CHARS = 800;
 export const FINDING_KINDS = Object.freeze(['went-well', 'handoff', 'plan', 'check', 'reuse', 'parallel']);
 const STEP_KINDS = new Set(['add-goal', 'create-skill', 'schedule', 'build-plugin', 'new-threads']);
 
+/** Who a user-role line is from: the person, another thread or the Control Plane, or an injected notice (coach fix T2). */
+function userLabel(it) {
+  if (it.source === 'coordinator' || it.source === 'thread' || isPeerText(it.text)) return 'Coordinator';
+  return isPersonText(it.text, 'user') ? 'Person' : 'Notice';
+}
+
 /** A transcript (the conversation route's items) as text, cut into chunks of at most `max` characters. */
 export function chunkTranscript(items, max = CHUNK_CHARS) {
   const lines = [];
   for (const it of items || []) {
     if (!it || typeof it !== 'object') continue;
     const t = typeof it.text === 'string' ? it.text.trim().slice(0, ITEM_CHARS) : '';
-    if (it.kind === 'user' && t) lines.push(`${it.source === 'coordinator' ? 'Coordinator' : 'Person'}: ${t}`);
+    if (it.kind === 'user' && t) lines.push(`${userLabel(it)}: ${t}`);
     else if (it.kind === 'assistant' && t) lines.push(`Agent: ${t}`);
     else if (it.kind === 'tool') lines.push(`Agent used a tool: ${it.toolName || it.toolTitle || 'tool'}`);
   }
@@ -142,7 +149,11 @@ export function eventsFromTranscript(terminalId, sessionId, items) {
     if (!it || typeof it.ts !== 'string' || !Number.isFinite(Date.parse(it.ts))) continue;
     if (it.kind === 'user' && typeof it.text === 'string' && it.text.trim()) {
       flush();
-      out.push({ type: 'thread:prompt', terminalId, sessionId, at: it.ts, source: it.source === 'coordinator' ? 'coordinator' : 'user', text: it.text });
+      // Only the person's own words are a 'user' prompt; a notice or a peer's message is not (coach fix T2).
+      const peer = it.source === 'coordinator' || it.source === 'thread' || isPeerText(it.text);
+      const own = peer ? null : personText(it.text, 'user');
+      if (!peer && own === null) continue; // an injected notice: nobody's prompt
+      out.push({ type: 'thread:prompt', terminalId, sessionId, at: it.ts, source: own !== null ? 'user' : (it.source === 'thread' ? 'thread' : 'coordinator'), text: own ?? it.text });
       open = it.ts; lastAgent = null;
     } else if (it.kind === 'tool') {
       out.push({ type: 'thread:tool', terminalId, sessionId, at: it.ts, tool: it.toolName || 'tool' });

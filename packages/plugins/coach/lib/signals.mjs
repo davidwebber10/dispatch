@@ -6,6 +6,8 @@
 // the Control Plane or the daemon (source !== 'user') and every event from a left-alone project are
 // dropped here.
 
+import { personText } from './person.mjs';
+
 export const EXCERPT_CHARS = 200;
 const KEEP_DAYS = 31;
 const KEEP_PROMPTS = 600;
@@ -77,7 +79,9 @@ export function collect(event, state, settings) {
       s.threads[t] = { ...(th || { p, first: e.at, end: null, kind: 'other', prompts: 0, tools: 0 }), auto: hashText(e.text) };
       return prune(s, e.at);
     }
-    const text = e.text;
+    // Text the harness injected, or a peer's message, is not the person's (coach fix T2).
+    const text = personText(e.text, e.source);
+    if (text === null) return state;
     const prev = s.last[t];
     const trimmed = text.trim();
     const rec = {
