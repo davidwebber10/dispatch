@@ -5,7 +5,7 @@ export type ReviewScope = { kind: 'thread' | 'project' | 'range'; ids?: string[]
 export type FindingKind = 'went-well' | 'handoff' | 'plan' | 'check' | 'reuse' | 'parallel';
 export interface Finding { kind: FindingKind; quote: string; note: string }
 export interface NextStep { text: string; action?: { kind: string; payload: Record<string, unknown> } }
-export interface ReviewPlan { scope: ReviewScope; threads: string[]; chunks: number; estPercent: number; fits: boolean | null; costUnknown?: boolean; smallerScope?: ReviewScope }
+export interface ReviewPlan { scope: ReviewScope; threads: string[]; chunks: number; parts?: Record<string, number>; estPercent: number; fits: boolean | null; costUnknown?: boolean; smallerScope?: ReviewScope }
 export const CHUNK_CHARS: number;
 export const PERCENT_PER_CHUNK: number;
 export const MAX_THREADS: number;

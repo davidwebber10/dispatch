@@ -51,9 +51,11 @@ export function planReview(scope, threads, budget) {
   const list = (threads || []).slice(0, MAX_THREADS);
   const chunks = list.reduce((n, t) => n + Math.max(0, t.chunks || 0), 0);
   const estPercent = Math.round(chunks * PERCENT_PER_CHUNK * 100) / 100;
+  // Each thread's part count: the progress corrects the total when a thread reads differently.
+  const parts = Object.fromEntries(list.map((t) => [t.id, Math.max(0, t.chunks || 0)]));
   const b = pct(budget);
   if (!b) {
-    const out = { scope, threads: list.map((t) => t.id), chunks, estPercent, fits: null, costUnknown: true };
+    const out = { scope, threads: list.map((t) => t.id), chunks, parts, estPercent, fits: null, costUnknown: true };
     if (chunks > UNKNOWN_SCOPE_CHUNKS) {
       let n = 0; let used = 0;
       while (n < list.length && used + (list[n].chunks || 0) <= UNKNOWN_SCOPE_CHUNKS) { used += list[n].chunks || 0; n++; }
@@ -63,7 +65,7 @@ export function planReview(scope, threads, budget) {
   }
   const room = b.capPercent - b.usedPercent;
   const fits = estPercent <= room;
-  const out = { scope, threads: list.map((t) => t.id), chunks, estPercent, fits };
+  const out = { scope, threads: list.map((t) => t.id), chunks, parts, estPercent, fits };
   if (!fits) {
     let n = 0; let used = 0;
     while (n < list.length && used + (list[n].chunks || 0) * PERCENT_PER_CHUNK <= room) { used += (list[n].chunks || 0) * PERCENT_PER_CHUNK; n++; }

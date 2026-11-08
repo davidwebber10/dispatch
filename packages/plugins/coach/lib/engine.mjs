@@ -306,19 +306,39 @@ export function createEngine(io) {
     const parts = [];
     let read = 0;
     const seeded = [];
+    // Progress by part, not only by thread (owner, 2026-11-07: a long first thread looked stuck).
+    // One part is one model call (~20 s); a write per part costs nothing next to it. The total
+    // starts from the plan and is corrected as each thread's real part count is known.
+    const planned = (doc.plan && doc.plan.parts && typeof doc.plan.parts === 'object') ? doc.plan.parts : null;
+    const plannedOf = (id) => (planned && typeof planned[id] === 'number' ? planned[id] : null);
+    let chunksTotal = (doc.plan && typeof doc.plan.chunks === 'number') ? doc.plan.chunks : 0;
+    let chunksDone = 0;
+    const startedAt = doc.startedAt || now().toISOString();
+    const progress = (done, thread) => ({ done, total: ids.length, chunksDone, chunksTotal: Math.max(chunksTotal, chunksDone), ...(thread ? { thread } : {}), startedAt, at: now().toISOString() });
+    // A thread that reads differently from the plan: swap its planned parts for the real ones.
+    const settle = (id, real) => {
+      const p = plannedOf(id);
+      chunksTotal = p !== null ? chunksTotal - p + real : (planned ? chunksTotal + real : Math.max(chunksTotal, chunksDone + real));
+    };
     for (let i = 0; i < ids.length; i++) {
-      const w = await writeReview(key, { state: 'reading', progress: { done: i, total: ids.length } });
+      const w = await writeReview(key, { state: 'reading', progress: progress(i, { id: ids[i], label: null, chunk: 0, chunks: plannedOf(ids[i]) }) });
       if (w.cancelled || w.cancel) return;
       // Checked again before any transcript is read: the plan may predate a leave-alone change.
       const t = await getJson(`/api/terminals/${encodeURIComponent(ids[i])}`);
-      if (t && (leftAlone(t.sessionId) || (automated(t) && doc.scope.kind !== 'thread'))) continue;
+      // Skipped: its planned parts leave the total at once.
+      if (t && (leftAlone(t.sessionId) || (automated(t) && doc.scope.kind !== 'thread'))) { settle(ids[i], 0); continue; }
+      const label = t && typeof t.label === 'string' && t.label.trim() ? t.label.trim() : null;
       const items = await transcript(ids[i]);
       if (doc.backfill && !automated(t)) seeded.push(...eventsFromTranscript(ids[i], (t && t.sessionId) || null, items));
       const chunks = chunkTranscript(items);
+      settle(ids[i], chunks.length);
       if (chunks.length) read++;
-      for (const chunk of chunks) {
+      for (let c = 0; c < chunks.length; c++) {
+        const chunk = chunks[c];
         const cur = await io.getDoc(key, null);
         if (!cur || cur.cancel || cur.state === 'cancelled') return;
+        const pw = await writeReview(key, { state: 'reading', progress: progress(i, { id: ids[i], label, chunk: c + 1, chunks: chunks.length }) });
+        if (pw.cancelled || pw.cancel) return;
         const plan = planCall('more', settings, await currentBudget(now(), 'more'), { harness: status.harness });
         if (plan.tier === 'none') { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const r = await io.assist({ ...reviewPrompt(chunk, memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
@@ -327,9 +347,11 @@ export function createEngine(io) {
         if (r && r.refused) { await writeReview(key, { state: 'failed', error: 'The Coach reached its budget for this week, so the review stopped.' }); return; }
         const p = parseReview(r && r.result ? r.result.text : '', chunk);
         if (p) parts.push(p);
+        chunksDone++;
       }
     }
-    const w = await writeReview(key, { state: 'writing', progress: { done: ids.length, total: ids.length } });
+    chunksTotal = chunksDone;
+    const w = await writeReview(key, { state: 'writing', progress: progress(ids.length, null) });
     if (w.cancelled || w.cancel) return;
     const report = mergeReview(parts, { read });
     await writeReview(key, { state: 'done', report, finishedAt: now().toISOString() });
