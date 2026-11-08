@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { test, expect, describe, it, beforeAll, beforeEach, vi } from 'vitest';
 import { MessageScroller } from '@shadcn/react/message-scroller';
 import type { ConvItem } from '../../../api/types';
-import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor } from './ChatView';
+import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor, authProseToHide } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
 
@@ -804,6 +804,16 @@ describe('Log in to Claude in a Pretty thread', () => {
     // hidden: the paint-settle gate keeps the scroller visibility:hidden for its first moments.
     expect(screen.getByText('Sign in').closest('button')).not.toBeNull();
     expect(screen.queryByText('Invalid API key · Please run /login')).toBeNull();
+  });
+
+  it('authProseToHide: the login-error prose of the CLI in the failed turn goes with the card', () => {
+    const u: ConvItem = { kind: 'user', text: 'hi' };
+    const prose: ConvItem = { kind: 'assistant', text: 'Not logged in · Please run /login' };
+    const real: ConvItem = { kind: 'assistant', text: 'Here is the plan.' };
+    expect([...authProseToHide([u, real, prose, failed], failed)]).toEqual([prose]);
+    expect(authProseToHide([u, prose, failed], null).size).toBe(0);
+    // An earlier turn's prose is never touched.
+    expect([...authProseToHide([prose, u, failed], failed)]).toEqual([]);
   });
 
   it('loginItemFor picks the last result only for a Claude thread and only for a login error', () => {

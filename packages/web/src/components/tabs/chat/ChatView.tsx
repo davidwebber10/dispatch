@@ -64,6 +64,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       if (it.kind === 'user' && it.source !== 'coordinator' && it.text) { send(it.text); return; }
     }
   }, [items, send]);
+  const authHidden = useMemo(() => (authRequired ? authProseToHide(items, loginItem) : new Set<ConvItem>()), [authRequired, items, loginItem]);
+  const shown = useCallback((list: ConvItem[]) => (authHidden.size ? list.filter((it) => !authHidden.has(it)) : list), [authHidden]);
   const authExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
@@ -288,7 +290,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
               {splitIdx === null ? (
-                renderTimeline(items, openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)
+                renderTimeline(shown(items), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)
               ) : (
                 <>
                   {/* Mid-compaction: the bar is a full-width divider pinned at the point the
@@ -296,11 +298,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                       below, so their position says "queued". The split is render-only — when
                       `compacting` clears, the timeline re-merges into one render and tool/result
                       pairing across the boundary works again. */}
-                  {renderTimeline(items.slice(0, splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
+                  {renderTimeline(shown(items.slice(0, splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
                   <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
                     <CompactingBar queued={items.length - splitIdx} />
                   </MessageScroller.Item>
-                  {renderTimeline(items.slice(splitIdx), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
+                  {renderTimeline(shown(items.slice(splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
                 </>
               )}
               {pending?.questions && pending.questions.length > 0 && (
@@ -569,6 +571,24 @@ export function loginItemFor(type: string | undefined, items: ConvItem[], authRe
     return it.isError && (authRequired || isClaudeAuthError(it.text ?? '')) ? it : null;
   }
   return null;
+}
+
+/**
+ * The CLI's own login-error prose in the failed turn (Claude Code writes "Not logged in · Please
+ * run /login" as a synthetic assistant message before the error result). With the signed-out card
+ * shown, it is the same raw error twice, so it is left out. Only between the turn's user message
+ * and the failed result; never another turn's prose.
+ */
+export function authProseToHide(items: ConvItem[], loginItem: ConvItem | null): Set<ConvItem> {
+  const out = new Set<ConvItem>();
+  if (!loginItem) return out;
+  const end = items.indexOf(loginItem);
+  for (let k = end - 1; k >= 0; k--) {
+    const it = items[k];
+    if (it.kind === 'user') break;
+    if (it.kind === 'assistant' && isClaudeAuthError(it.text ?? '') && (it.text ?? '').length < 300) out.add(it);
+  }
+  return out;
 }
 
 export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter, ext?: TimelineExtensions) {
