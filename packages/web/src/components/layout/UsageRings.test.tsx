@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, act } from '@testing-library/react';
 import { UsageRings } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
+import { useAccounts } from '../../stores/accounts';
 
 const now = Date.UTC(2026, 10, 5, 20);
 const H = 3600_000;
@@ -126,3 +127,13 @@ describe('usage rings', () => {
   });
 });
 
+
+describe('the account email on each card (2026-11-09)', () => {
+  afterEach(() => { useAccounts.setState({ view: null }); });
+  it('shows the email the daemon knows for the account; an account without one shows none', () => {
+    useAccounts.setState({ view: { claude: [{ id: 'cli', label: 'Ultra 1', email: 'owner@example.com', isCli: true, addedAt: null }], codex: [{ id: 'cli', label: 'Pro', isCli: true, addedAt: null }], defaults: { claude: 'cli', codex: 'cli' } } as never, loading: false });
+    render(<UsageRings summary={summary()} now={now} dense />);
+    expect(within(screen.getByRole('region', { name: 'Claude' })).getByTestId('usage-card-email')).toHaveTextContent('owner@example.com');
+    expect(within(screen.getByRole('region', { name: 'Codex' })).queryByTestId('usage-card-email')).toBeNull();
+  });
+});

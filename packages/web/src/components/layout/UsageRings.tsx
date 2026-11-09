@@ -3,6 +3,7 @@ import { ArrowSquareOut } from '@phosphor-icons/react';
 import type { UsageSummary } from '../../api/types';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 import { HARNESS_MARK } from '../common/HarnessStrip';
+import { useAccounts, accountProviderOf } from '../../stores/accounts';
 import { ringModels, RING_COLOR, yellowFrom, bannerText, COUNTED, type RingModel, type RingRow } from './usageGauge';
 
 /**
@@ -100,7 +101,7 @@ function LimitRow({ toolName, row, warn, first, dense }: { toolName: string; row
 /** The brand mark for a provider id (`claude-code` → the Claude mark). */
 const MARK_KEY: Record<string, string> = { 'claude-code': 'claude', codex: 'codex', grok: 'grok', opencode: 'opencode' };
 
-function ToolCard({ m, warn, current, dense }: { m: RingModel; warn: number; current?: boolean; dense?: boolean }) {
+function ToolCard({ m, warn, current, dense, email }: { m: RingModel; warn: number; current?: boolean; dense?: boolean; email?: string | null }) {
   // A steady order (5-hour, then weekly, …), not closest-to-the-limit first, so rows never swap.
   const order = (t: string) => { const i = (COUNTED as readonly string[]).indexOf(t); return i < 0 ? 99 : i; };
   const rows = [...m.rows].sort((a, b) => order(a.type) - order(b.type));
@@ -115,7 +116,11 @@ function ToolCard({ m, warn, current, dense }: { m: RingModel; warn: number; cur
       )}
       <div data-testid="usage-card-header" style={{ borderRadius: 'calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0', display: 'flex', alignItems: 'center', gap: dense ? 8 : 9, padding: dense ? '6px 12px' : '10px 14px', background: current ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', borderBottom: '1px solid var(--color-border)' }}>
         {Mark && <span aria-hidden style={{ width: dense ? 22 : 26, height: dense ? 22 : 26, flexShrink: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Mark size={dense ? 13 : 15} /></span>}
-        <span style={{ fontSize: dense ? 14.5 : 16, fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>{m.name}</span>
+        {/* The name, and under it the account's email when the daemon knows it (2026-11-09). */}
+        <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flexShrink: 0 }}>
+          <span style={{ fontSize: dense ? 14.5 : 16, fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.25 }}>{m.name}</span>
+          {email && <span data-testid="usage-card-email" title={email} style={{ font: `400 ${dense ? 11 : 11.5}px var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220, lineHeight: 1.3 }}>{email}</span>}
+        </span>
         {m.plan && <span style={{ font: '400 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', padding: '1px 7px' }}>{m.plan}</span>}
         <span title={m.stale ? 'These figures are old: no thread has reported in a while' : undefined}
           style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: '400 11px var(--font-mono)', color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{m.asOf}</span>
@@ -182,6 +187,12 @@ function ToolCard({ m, warn, current, dense }: { m: RingModel; warn: number; cur
 
 /** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab and listed first. */
 export function UsageRings({ summary, now, current, dense }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null; dense?: boolean }) {
+  const accounts = useAccounts((s) => s.view);
+  useEffect(() => { void useAccounts.getState().load(); }, []);
+  const emailOf = (m: RingModel): string | null => {
+    const harness = accountProviderOf(m.provider);
+    return (harness && accounts?.[harness]?.find((a) => a.id === m.accountId)?.email) || null;
+  };
   const isCurrent = (m: RingModel) => !!current && m.provider === current.provider && m.accountId === current.accountId;
   const rings = [...ringModels(summary, now)].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
   if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
@@ -190,7 +201,7 @@ export function UsageRings({ summary, now, current, dense }: { summary: UsageSum
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
-        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} />
+        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} email={emailOf(m)} />
       ))}
       {summary.paused.map((g) => (
         <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
