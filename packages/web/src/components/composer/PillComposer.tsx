@@ -60,6 +60,8 @@ export interface PillComposerProps {
   floating?: boolean;
   /** Called with true while the text is taller than two lines, false otherwise (the CLI view's handle). */
   onTallChange?: (tall: boolean) => void;
+  /** Drawn just above the box: the "/" menu's list, its notice and its sheet (composer/slash/useSlashMenu). */
+  slash?: ReactNode;
 }
 
 const MAX_FRACTION = 0.5;
@@ -67,7 +69,7 @@ const MAX_FRACTION = 0.5;
 export function PillComposer({
   value, onChange, onSend, canSend, stopMode = false, onStop, placeholder, onAddFile, menuExtra, afterPlus, pluginContext,
   dictation, sttConfigured, textareaRef, textareaProps, dragActive = false, mobile = false, sendLabel = 'Send',
-  maxLines, maxHeight, onTallChange, handle, floating,
+  maxLines, maxHeight, onTallChange, handle, floating, slash,
 }: PillComposerProps) {
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
@@ -188,6 +190,8 @@ export function PillComposer({
       </div>
     )}
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
+    <div style={{ position: 'relative' }}>
+    {slash}
     <div ref={boxRef} data-testid="pill-composer" data-stacked={stacked || undefined} style={{
       position: 'relative', boxShadow: floating ? '0 10px 30px -12px var(--color-shadow)' : undefined,
       paddingTop: handle ? 14 : undefined,
@@ -265,6 +269,7 @@ export function PillComposer({
           <ArrowUp size={mobile ? 20 : 17} weight="bold" />
         </button>
       )}
+    </div>
     </div>
     </>
   );

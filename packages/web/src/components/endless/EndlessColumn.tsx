@@ -16,6 +16,11 @@ import { ProjectMenuSection } from './ProjectPicker';
 
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
 import { PillComposer } from '../composer/PillComposer';
+import { useSlashMenu, runModelEffortCommand } from '../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../stores/pickerRequest';
+import { modelOptionsFor } from '../../lib/modelName';
+import { ChatModelSwitcher } from './ChatModelSwitcher';
+import { useChatSettings } from './useChatSettings';
 import { useDictation } from '../../hooks/useDictation';
 import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
@@ -156,6 +161,32 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     setSendError(null);
     useEndless.getState().stop().catch((err: unknown) => setSendError(`Stop failed: ${errorText(err)}`));
   };
+
+  // The "/" menu: Chat's short list (/model, /effort, /stop). The model and effort are one Chat-wide setting, on the same
+  // chip as a thread's. A refused change is also a visible line above the box (not only the chip's own status), like a failed send.
+  const chat = useChatSettings();
+  const applyChat = async (change: { model?: string | null; effort?: string | null }): Promise<string> => {
+    try { return await chat.apply(change); }
+    catch (err) { setSendError(`Model change refused: ${errorText(err)}`); throw err; }
+  };
+  const chatModels = modelOptionsFor('claude-code', [], chat.settings?.model ?? chat.settings?.defaultModel);
+  const slash = useSlashMenu({
+    surface: 'chat', harness: 'claude-code', value: text, setValue: setText, mobile,
+    model: chat.settings ? chat.settings.model ?? chat.settings.defaultModel : null, effort: chat.settings?.effort ?? null,
+    models: chatModels,
+    run: async (name, args) => {
+      if (name === 'stop') { await useEndless.getState().stop(); return; }
+      if (!chat.settings) throw new Error('Chat settings are not available on this daemon.');
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({
+          harness: 'claude-code', name, args, models: chatModels,
+          openPicker: () => usePickerRequest.getState().request('chat'),
+          pickModel: async (value) => { await applyChat({ model: value }); return 'Saved for all of Chat. Applies from the next message.'; },
+          pickEffort: async (level) => { await applyChat({ effort: level }); return 'Saved for all of Chat. Applies from the next message.'; },
+        });
+      }
+    },
+  });
 
   // Clear the draft the moment the send starts, not after it ends. The wait can last seconds on a
   // phone, and the user may keep typing, or the PWA may reload, during it. Clearing after the wait
@@ -313,19 +344,26 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
             pluginContext={{ surface: 'chat' }}
           value={text}
           onChange={setText}
-          onSend={() => void submit()}
+          onSend={() => { if (slash.interceptSend()) return; void submit(); }}
           canSend={canSend}
           stopMode={stopMode}
           onStop={stop}
           placeholder="Message Dispatch…"
           onAddFile={() => fileRef.current?.click()}
-          menuExtra={(close) => <ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} />}
+          menuExtra={(close) => (<>{slash.plusRow(close)}<ProjectMenuSection value={project} onChange={setProject} close={close} mobile={mobile} /></>)}
+          slash={slash.overlay}
           dictation={dictation}
           sttConfigured={sttConfigured}
           textareaRef={taRef}
-          textareaProps={{ 'aria-label': 'Message', onPaste }}
+          textareaProps={{ 'aria-label': 'Message', onPaste, onKeyDown: slash.onKeyDown }}
           mobile={mobile}
         />
+        {/* The model and effort of all of Chat: the chip opens the card. */}
+        {chat.settings && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <ChatModelSwitcher settings={chat.settings} apply={applyChat} reload={chat.reload} />
+          </div>
+        )}
       </div>
     </div>
   );

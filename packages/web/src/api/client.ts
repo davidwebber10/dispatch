@@ -3,7 +3,7 @@ import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { SpinnerVerbs, SpinnerSet } from './types';
+import type { SpinnerVerbs, SpinnerSet, ChatSettings } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -266,7 +266,17 @@ export const api = {
   // The Pretty model switcher: run `model` from the thread's next turn, keeping the conversation.
   // 409 while a turn runs (or a live CLI thread); 400 when the harness refuses the model.
   setThreadModel: (terminalId: string, model: string) =>
-    req<{ model: string; terminal: Terminal }>(`/api/terminals/${terminalId}/model`, { method: 'POST', body: body({ model }) }),
+    req<{ model: string; terminal: Terminal; clearedEffort?: string; effortNow?: string }>(`/api/terminals/${terminalId}/model`, { method: 'POST', body: body({ model }) }),
+  // The Pretty effort picker: run `effort` from the thread's next turn. Claude and Codex (a Codex effort must be one the
+  // thread's model takes); 409 while a turn runs, for a live CLI thread, or for Grok and OpenCode; 400 when refused.
+  setThreadEffort: (terminalId: string, effort: string) =>
+    req<{ effort: string; terminal: Terminal }>(`/api/terminals/${terminalId}/effort`, { method: 'POST', body: body({ effort }) }),
+  // The efforts each Codex model takes, and the one it runs at by default, as the running app-server reports them; live is null when none runs.
+  codexModelEfforts: () => req<{ live: Record<string, string[]> | null; defaults?: Record<string, string> | null }>('/api/codex/model-efforts'),
+  // Chat-wide model and effort (slash menu). null = the default. A change applies from the next turn.
+  endlessSettings: () => req<ChatSettings>('/api/endless/settings'),
+  setEndlessSettings: (change: { model?: string | null; effort?: string | null }) =>
+    req<ChatSettings>('/api/endless/settings', { method: 'PUT', body: body(change) }),
   // Move a Claude Code / Codex thread to another signed-in account (multi-account): pins
   // config.accountId server-side and restarts a running thread. 404 unknown account, 409 when the
   // thread type has no accounts, is a Codex Pretty thread off cli, or is busy (then `force`).

@@ -14,6 +14,7 @@
 //
 // scenario/setScenario are kept as VESTIGIAL no-ops (TopBar still references them).
 
+import { textToSend } from '../../lib/slashEscape';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { useEffect, useMemo } from 'react';
@@ -290,7 +291,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
     }),
 
   sendDirective: async (text) => {
-    const trimmed = (text || '').trim();
+    const trimmed = textToSend(text || '');
     const project = get().coordinatorProject;
     const images = (project && get().composerImagesByProject[project]) || EMPTY_IMAGES;
     if (!trimmed && images.length === 0) return; // nothing to send — don't spin up a coordinator for it

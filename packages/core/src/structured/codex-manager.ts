@@ -35,6 +35,12 @@ import { killWithGrace } from '../platform/kill-grace.js';
 
 const MAX_EVENTS = 5000;
 
+/**
+ * The app-server ANSWERED a request with an error: a refusal (an effort or a model it does not take). Distinct from a
+ * transport failure ('app-server exited', 'not connected', a timeout), which says nothing about the request's content.
+ */
+export class CodexRpcError extends Error {}
+
 /** A JSON-RPC message id (client requests use our counter; server requests use the server's). */
 type RpcId = string | number;
 
@@ -98,7 +104,7 @@ class CodexConnection extends EventEmitter {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error?.message || 'rpc error'));
+      if (msg.error) p.reject(new CodexRpcError(msg.error?.message || 'rpc error'));
       else p.resolve(msg.result);
       return;
     }
@@ -174,6 +180,11 @@ interface CodexSession {
   accountId?: string;
   /** A model picked with setModel, sent as `model` on the next turn/start (then cleared). */
   nextTurnModel?: string;
+  /** The model before the first pick that is still waiting for a turn: where a refused pick goes back to. */
+  modelBeforePick?: string;
+  /** The effort the owner picked (setEffort, or the saved one at spawn). Sent with EVERY turn/start: live-checked on
+   *  codex-cli 0.166, a thread keeps the effort of its last turn when the model changes, and forgets it on resume. */
+  pickedEffort?: string;
   cwd: string;
   resumeId?: string;
   /** The thread's persona (+ peer/tools block), sent as `developerInstructions` on `thread/start`
@@ -234,6 +245,8 @@ export interface CodexManagerOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /** How long a `thread/unsubscribe` may stay unanswered before we stop waiting (default 5s). */
   releaseTimeoutMs?: number;
+  /** How long `loadModelEfforts` waits for the app-server to be ready and to answer `model/list` (default 5s). */
+  modelListTimeoutMs?: number;
 }
 
 export class CodexStructuredSessionManager extends EventEmitter implements IStructuredManager {
@@ -245,11 +258,14 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
   private readonly sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   private readonly releaseTimeoutMs: number;
+  private readonly modelListTimeoutMs: number;
+  private effortCache?: { at: number; map: Record<string, string[]>; defaults: Record<string, string> };
 
   constructor(opts: CodexManagerOptions = {}) {
     super();
     this.setMaxListeners(0);
     this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
+    this.modelListTimeoutMs = opts.modelListTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
     this.sandbox = opts.sandbox ?? 'workspace-write';
   }
@@ -281,6 +297,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       turnActive: false,
       cwd: opts.workDir,
       model: opts.model,
+      pickedEffort: opts.effort,
       resumeId: opts.resumeId,
       systemPrompt: opts.systemPrompt,
       toolPolicy: opts.toolPolicy,
@@ -692,9 +709,49 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       // A pending model switch rides this turn: Codex applies `model` to "this turn and
       // subsequent turns" (TurnStartParams, codex-cli 0.167.0), so it is sent once.
       const model = session.nextTurnModel;
-      await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}) });
-      if (session.nextTurnModel === model) session.nextTurnModel = undefined;
+      const effort = session.pickedEffort;
+      try {
+        await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      } catch (err) {
+        if (model || effort) this.dropRefusedPick(session, model, effort, err);
+        throw err;
+      }
+      if (session.nextTurnModel === model) { session.nextTurnModel = undefined; session.modelBeforePick = undefined; }
     }
+  }
+
+  /**
+   * The app-server refused a turn/start that carried a changed model or effort. Drop the refused value so that no later
+   * turn sends it again (it would fail every turn), put the model back, tell the thread, and tell the service so the saved
+   * pick goes back too. The error names what it refused ("unsupported reasoning effort", "unknown model"); when it names
+   * neither, both are dropped.
+   */
+  private dropRefusedPick(session: CodexSession, model: string | undefined, effort: string | undefined, err: unknown): void {
+    // Only an ANSWER of "no" is a refusal. A dead app-server or a timeout says nothing about the picks, and a rejection that
+    // reaches a session that is no longer the current one (a replacement took its place) must not touch the replacement.
+    if (!(err instanceof CodexRpcError)) return;
+    if (this.sessions.get(session.terminalId) !== session) return;
+    const msg = err instanceof Error ? err.message : String(err);
+    const effortHit = !!effort && /effort|reasoning/i.test(msg);
+    const modelHit = !!model && /model/i.test(msg);
+    const dropEffort = !!effort && (effortHit || !modelHit);
+    const dropModel = !!model && (modelHit || !effortHit);
+    if (!dropEffort && !dropModel) return;
+    const info: { effort?: string; model?: string; restoredModel?: string } = {};
+    if (dropEffort) { session.pickedEffort = undefined; info.effort = effort; }
+    if (dropModel) {
+      session.nextTurnModel = undefined;
+      info.model = model;
+      info.restoredModel = session.modelBeforePick;
+      if (session.modelBeforePick) { session.model = session.modelBeforePick; session.translator.setModel(session.modelBeforePick); }
+      session.modelBeforePick = undefined;
+    }
+    const what = [dropModel ? `model ${model}` : '', dropEffort ? `effort ${effort}` : ''].filter(Boolean).join(' and ');
+    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message: `Codex refused the ${what}: ${msg}. It will not be sent again.` });
+    // The chip shows the newest model frame, which beats the saved config: tell connected clients (and the replay) which model
+    // the thread runs again. No `switched`, so no "Model switched" line.
+    if (info.restoredModel) this.pushEvent(session, { type: 'system', subtype: 'model', model: info.restoredModel });
+    this.emit('settings-refused', session.terminalId, info);
   }
 
   getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
@@ -707,11 +764,71 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   async setModel(terminalId: string, model: string): Promise<string> {
     const session = this.sessions.get(terminalId);
     if (!session) throw new Error('This thread is not running');
+    if (session.nextTurnModel === undefined) session.modelBeforePick = session.model;
     session.model = model;
     session.nextTurnModel = model;
     session.translator.setModel(model);
     this.pushEvent(session, { type: 'system', subtype: 'model', model, switched: true });
     return model;
+  }
+
+  /** Keep `effort` for the next turn: every `turn/start` carries it (the app-server has no standalone request). */
+  async setEffort(terminalId: string, effort: string): Promise<void> {
+    const session = this.sessions.get(terminalId);
+    if (!session) throw new Error('This thread is not running');
+    session.pickedEffort = effort;
+  }
+
+  postNotice(terminalId: string, message: string): void {
+    const session = this.sessions.get(terminalId);
+    if (session) this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message });
+  }
+
+  /** The efforts each model takes, from the last `model/list` (see loadModelEfforts), or null if never asked. */
+  modelEfforts(): Record<string, string[]> | null { return this.effortCache?.map ?? null; }
+  /** The effort each model runs at by default, from the same `model/list`. */
+  modelDefaultEfforts(): Record<string, string> | null { return this.effortCache?.defaults ?? null; }
+
+  /**
+   * Ask the running app-server which efforts each model takes (live-checked: they differ by model). Cached
+   * for ten minutes. null when no app-server is running or it did not answer: the caller falls back to
+   * the built-in table (codex-efforts.ts).
+   */
+  async loadModelEfforts(): Promise<Record<string, string[]> | null> {
+    const c = this.effortCache;
+    if (c && Date.now() - c.at < 10 * 60_000) return c.map;
+    const conn = this.conn;
+    if (!conn?.alive) return c?.map ?? null;
+    try {
+      // An app-server that is alive but never answers `initialize` would otherwise hold every caller (the
+      // settings lock of a thread) for ever: give up after the same limit as model/list itself.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          conn.ready,
+          new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('app-server not ready')), this.modelListTimeoutMs); timer.unref?.(); }),
+        ]);
+      } finally { clearTimeout(timer); }
+      const map: Record<string, string[]> = {};
+      const defaults: Record<string, string> = {};
+      let cursor: string | null = null;
+      for (let page = 0; page < 5; page++) {
+        const res: any = await conn.request('model/list', { includeHidden: true, limit: 100, ...(cursor ? { cursor } : {}) }, this.modelListTimeoutMs);
+        for (const m of res?.data ?? []) {
+          const efforts = (m?.supportedReasoningEfforts ?? []).map((e: any) => e?.reasoningEffort).filter((e: unknown): e is string => typeof e === 'string' && !!e);
+          if (typeof m?.model === 'string' && efforts.length) {
+            map[m.model] = efforts;
+            if (typeof m?.defaultReasoningEffort === 'string' && efforts.includes(m.defaultReasoningEffort)) defaults[m.model] = m.defaultReasoningEffort;
+          }
+        }
+        cursor = typeof res?.nextCursor === 'string' && res.nextCursor ? res.nextCursor : null;
+        if (!cursor) break;
+      }
+      if (Object.keys(map).length) this.effortCache = { at: Date.now(), map, defaults };
+      return this.effortCache?.map ?? null;
+    } catch {
+      return c?.map ?? null;
+    }
   }
 
   answerPermission(terminalId: string, requestId: string, decision: PermissionDecision): boolean {

@@ -123,11 +123,18 @@ class GrokConnection extends EventEmitter {
     if (typeof msg.method === 'string') this.emit('notification', msg.method, msg.params ?? {});
   }
 
-  request(method: string, params: unknown): Promise<any> {
+  /** `timeoutMs` (optional) rejects AND drops the pending entry, so an agent that never answers cannot hold the caller. */
+  request(method: string, params: unknown, timeoutMs?: number): Promise<any> {
     if (this.closed) return Promise.reject(new Error('grok agent not connected'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      if (timeoutMs !== undefined) {
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`The agent did not answer ${method} in time. It may still take it: check the model shown.`)); }, timeoutMs);
+        timer.unref?.();
+        this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+      } else {
+        this.pending.set(id, { resolve, reject });
+      }
       this.writeRaw({ jsonrpc: '2.0', id, method, params });
     });
   }
@@ -190,9 +197,13 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   private sessions = new Map<string, GrokSession>();
   private defaultEnv: Record<string, string> = {};
 
-  constructor(private readonly dialect: 'grok' | 'opencode' = 'grok') {
+  /** How long a model switch may wait for the agent (to be ready, and to answer): the settings lock of the thread waits behind it. */
+  private readonly switchTimeoutMs: number;
+
+  constructor(private readonly dialect: 'grok' | 'opencode' = 'grok', opts: { switchTimeoutMs?: number } = {}) {
     super();
     this.setMaxListeners(0);
+    this.switchTimeoutMs = opts.switchTimeoutMs ?? 15_000;
   }
 
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
@@ -302,15 +313,25 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   async setModel(terminalId: string, model: string): Promise<string> {
     const session = this.sessions.get(terminalId);
     if (!session) throw new Error('This thread is not running');
-    await session.ready;
+    // An agent that never gets ready, or never answers the switch, must not hold the thread's settings lock for ever. One
+    // deadline covers both waits: the lock is held for at most one budget, not one for readiness and another for the answer.
+    const deadline = Date.now() + this.switchTimeoutMs;
+    const left = () => Math.max(1, deadline - Date.now());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        session.ready,
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('The agent was not ready in time')), left()); timer.unref?.(); }),
+      ]);
+    } finally { clearTimeout(timer); }
     if (!session.sessionId) throw new Error('This thread has no session yet');
     let resolved = model;
     if (session.modelVia === 'config') {
-      const res = await session.conn.request('session/set_config_option', { sessionId: session.sessionId, configId: 'model', value: model });
+      const res = await session.conn.request('session/set_config_option', { sessionId: session.sessionId, configId: 'model', value: model }, left());
       const now = Array.isArray(res?.configOptions) ? res.configOptions.find((o: any) => o?.id === 'model')?.currentValue : undefined;
       if (typeof now === 'string' && now) resolved = now;
     } else {
-      const res = await session.conn.request('session/set_model', { sessionId: session.sessionId, modelId: model });
+      const res = await session.conn.request('session/set_model', { sessionId: session.sessionId, modelId: model }, left());
       const ok = res?._meta?.model?.Ok;
       if (typeof ok === 'string' && ok) resolved = ok;
     }

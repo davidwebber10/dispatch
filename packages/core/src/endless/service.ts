@@ -21,6 +21,8 @@ import type { KeyRegistry } from '../auth/principals.js';
 import { createSummarizer } from './summarizer-choice.js';
 import type { Summarizer, Usage } from './summarizer.js';
 import { systemPromptWith } from './prompt.js';
+import { TURN_MODEL } from './claude-args.js';
+import { catalogModelChoices, validateEffort } from '../providers/slash-commands.js';
 import { collectPaneThreads, type PaneThread } from './pane.js';
 import { buildStatusBlock, collectProjects, type ProjectStatus } from './status-block.js';
 import { zoom, dateOf, readImage, RecallError, type ZoomImage } from './recall.js';
@@ -147,6 +149,10 @@ export class EndlessService {
       readImage,
       onUsage: (u) => this.note('turns', u),
       keys: () => this.keys,
+      settings: () => {
+        const c = this.chatSettings();
+        return { model: c.model ?? undefined, effort: c.effort ?? undefined };
+      },
       ...o.turn,
     });
   }
@@ -196,6 +202,34 @@ export class EndlessService {
   stop(): void { this.compactor.stop(); }
 
   systemPrompt(): string { return systemPromptWith(this.instructions()); }
+  /**
+   * The owner's Chat-wide model and effort (slash menu, 2026-11-06). One setting for the whole of Chat,
+   * not per message. `model` null means the default (TURN_MODEL); `effort` null means the CLI's own.
+   * Every turn is a new `claude -p` process, so a change applies from the next turn with no restart.
+   */
+  chatSettings(): { model: string | null; effort: string | null; defaultModel: string } {
+    return { model: this.store.getState('chat_model') || null, effort: this.store.getState('chat_effort') || null, defaultModel: TURN_MODEL };
+  }
+  setChatSettings(change: { model?: string | null; effort?: string | null }): void {
+    if (change.model === undefined && change.effort === undefined) throw new UserError('Send a model or an effort to change.');
+    // Chat runs Claude only: a Claude tier alias (the chip's list) or a full Claude id; null goes back to the default.
+    if (change.model) {
+      const known = catalogModelChoices('claude-code').some((m) => m.value === change.model);
+      if (!known && !/^claude-[a-z0-9][a-z0-9.\-]{0,60}(\[[a-z0-9]{1,8}\])?$/.test(change.model)) {
+        throw new UserError('That model does not run in Chat. Pick a Claude model.');
+      }
+    }
+    if (change.effort) {
+      const bad = validateEffort('claude-code', change.effort);
+      if (bad) throw new UserError(bad);
+    }
+    if (change.model !== undefined) this.store.setState('chat_model', change.model ?? '');
+    if (change.effort !== undefined) this.store.setState('chat_effort', change.effort ?? '');
+    // Another device that has Chat open takes the change without a reload.
+    if (!this.closed) {
+      try { this.o.broadcaster.broadcast({ type: 'endless:settings', ...this.chatSettings() }); } catch { /* a missed broadcast is caught by the chip's reload on open */ }
+    }
+  }
   instructions(): string { return this.store.getState('instructions') ?? ''; }
   setInstructions(text: string): void { this.store.setState('instructions', text); }
 

@@ -77,6 +77,8 @@ rl.on('line', (line) => {
     return;
   }
 
+  // CODEX_FAKE_INIT_HANG=1: an app-server that is alive but never answers `initialize` (round 3 test).
+  if (msg.method === 'initialize' && process.env.CODEX_FAKE_INIT_HANG) return;
   if (msg.method === 'initialize') { respond(msg.id, { userAgent: 'fake', codexHome: '/tmp/.codex', platformFamily: 'unix', platformOs: 'macos' }); return; }
   if (msg.method === 'initialized') { return; }
 
@@ -107,12 +109,27 @@ rl.on('line', (line) => {
   }
 
   if (msg.method === 'turn/start') {
-    logRequest('turn/start', msg.params);
     // Echo back whichever threadId the client requested against (its OWN session.threadId,
     // e.g. the resumeId after a thread/resume) rather than always the hardcoded THREAD
     // constant — a resumed session's live-turn notifications must route back to it, exactly
     // like the real app-server would.
     const tid = msg.params?.threadId ?? THREAD;
+    logRequest('turn/start', msg.params);
+    // CODEX_FAKE_TURN_REJECT=effort|model|both: turn/start refuses a changed effort or model, like the real app-server does
+    // for a level or a model it does not take (round 4 test).
+    // CODEX_FAKE_EXIT_ON_TURN=1: the app-server dies on a turn/start (a transport failure, not a refusal).
+    if (process.env.CODEX_FAKE_EXIT_ON_TURN) process.exit(1);
+    // CODEX_FAKE_TURN_REJECT=generic: refuses a bad pick with a message that names neither the effort nor the model.
+    if (process.env.CODEX_FAKE_TURN_REJECT === 'generic' && (msg.params?.effort === 'bad' || msg.params?.model === 'bad-model')) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'invalid params' } });
+      return;
+    }
+    const rej = process.env.CODEX_FAKE_TURN_REJECT;
+    if (rej && ((rej !== 'model' && msg.params?.effort === 'bad') || (rej !== 'effort' && msg.params?.model === 'bad-model'))) {
+      const what = msg.params?.effort === 'bad' && rej !== 'model' ? 'unsupported reasoning effort: bad' : 'unknown model: bad-model';
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: what } });
+      return;
+    }
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
     notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
@@ -265,6 +282,15 @@ rl.on('line', (line) => {
     return;
   }
   if (msg.method === 'thread/compact/start') { respond(msg.id, {}); return; }
+  if (msg.method === 'model/list') {
+    logRequest('model/list', msg.params);
+    const eff = (list) => list.map((reasoningEffort) => ({ reasoningEffort, description: '' }));
+    respond(msg.id, { data: [
+      { model: 'gpt-6-astra', id: 'gpt-6-astra', defaultReasoningEffort: 'medium', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']) },
+      { model: 'gpt-6-luna', id: 'gpt-6-luna', defaultReasoningEffort: 'low', supportedReasoningEfforts: eff(['low', 'medium', 'high', 'xhigh', 'max']) },
+    ], nextCursor: null });
+    return;
+  }
   // Unknown requests still need a response so the client's pending map drains.
   if (msg.id !== undefined && msg.method) respond(msg.id, {});
 });

@@ -457,6 +457,8 @@ export type EndlessKind = 'user' | 'unii' | 'tool' | 'echo' | 'work' | 'note';
 export interface EndlessMessage { i: number; kind: EndlessKind; text: string; size: number; project: string | null; projectName: string | null; ref: string | null; media: string[]; createdAt: number }
 export interface EndlessPage { messages: EndlessMessage[]; hasMore: boolean; hasMoreAfter: boolean }
 export type EndlessTurnStatus = 'idle' | 'waiting' | 'running' | 'failed' | 'interrupted';
+/** Chat's one model and effort. null = the default; `defaultModel` is what null runs. */
+export interface ChatSettings { model: string | null; effort: string | null; defaultModel: string }
 export interface EndlessState { turn: { status: EndlessTurnStatus; error: string | null }; total: number; compactor: { unbuilt: number; merges: number; running: number } }
 export interface EndlessSearchHit { i: number; kind: EndlessKind; project: string | null; projectName: string | null; createdAt: number; snippet: string }
 export interface EndlessViewLine { name: string; l: number; i: number; text: string | null }

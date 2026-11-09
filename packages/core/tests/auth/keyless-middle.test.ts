@@ -104,6 +104,8 @@ const DANGEROUS = (): [string, string, string, unknown][] => [
   ['create the coordinator (POST)', 'POST', `/api/sessions/${sessionId}/overseer/coordinator`, {}],
   ['replace a thread config (PATCH with config)', 'PATCH', `/api/terminals/${shellId}`, { config: { queuedTask: 'swapped' } }],
   ['branch a thread', 'POST', `/api/terminals/${shellId}/branch`, {}],
+  ['switch a thread\'s model (spends more)', 'POST', `/api/terminals/${shellId}/model`, { model: 'opus' }],
+  ['change a thread\'s effort (spends more)', 'POST', `/api/terminals/${shellId}/effort`, { effort: 'high' }],
   ['change an integration', 'PATCH', `/api/integrations/${integrationId}`, { enabled: false }],
   ['delete an integration', 'DELETE', `/api/integrations/${integrationId}`, undefined],
   ['import integrations', 'POST', '/api/integrations/import', { integrations: [] }],
@@ -118,6 +120,18 @@ describe('a call with no credential is refused on the dangerous actions', () => 
     expect(json(r).message).toContain(`${method} ${p.split('?')[0]}`);
     expect(json(r).message).toMatch(/owner's credential or a thread key/);
     expect(json(r).message).toMatch(/dispatch api/);
+  });
+
+  test.each(['model', 'effort'] as const)('%s change: the web page, the owner token and the dispatch CLI (which sends the token) are let in', async (what) => {
+    const body = what === 'model' ? { model: 'opus' } : { effort: 'high' };
+    const p = `/api/terminals/${shellId}/${what}`;
+    // A shell tab has no model or effort, so a caller that gets past the guard is answered 409 by the service, never 401.
+    for (const headers of [WEB_PAGE(), FETCH_META, OWNER()]) {
+      const r = await call({ method: 'POST', path: p, headers, body });
+      expect(r.status, JSON.stringify(headers)).toBe(409);
+      expect(json(r).error).not.toBe('auth_required');
+    }
+    expect((await call({ method: 'POST', path: p, body })).status).toBe(401);
   });
 
   test('a real queued thread cannot be started or re-tasked without a credential; the owner can start it', async () => {

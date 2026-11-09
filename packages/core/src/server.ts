@@ -177,6 +177,14 @@ function wirePtyUsageCapture(
 }
 
 /**
+ * A pick the harness refused late and the daemon took back out of a thread's config: the web reloads the thread so the chip
+ * shows what the thread runs. createApp and startServer both call it.
+ */
+export function wireTerminalChanged(sessionService: SessionService, broadcaster: EventBroadcaster): void {
+  sessionService.setTerminalChangedListener((sessionId) => broadcaster.broadcast({ type: 'session:tabs-changed', sessionId }));
+}
+
+/**
  * The decision ledger's live wiring (pinned card spec 2026-10-08, Unit 3): every write of either
  * LedgerService — the router's, returned here, and the one inside SessionService (the agent
  * owner-decisions capture) — broadcasts `ledger:changed` on the events socket, so the web app's
@@ -459,6 +467,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
   sessionService.setTerminalStatusWriter((id, status) => statusService.setTerminalState(id, status));
+  wireTerminalChanged(sessionService, broadcaster);
 
   wireThreadSettledPush(db, statusService, pushService);
   wirePtyUsageCapture(db, statusService, sessionService, broadcaster);
@@ -722,6 +731,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // processes never reach SessionService's thread listeners.
   const endlessManager = new ClaudeStructuredSessionManager();
   const ledgerService = wireLedger(db, sessionService, broadcaster);
+  wireTerminalChanged(sessionService, broadcaster);
   const endless = new EndlessService({
     ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
@@ -765,7 +775,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     }
     return (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
   };
-  for (const m of [structuredManager, endlessManager]) {
+  for (const m of [structuredManager, endlessManager] as import('events').EventEmitter[]) {
     m.on('rate-limit', (id: string, info: unknown) => {
       // A thread with no account of its own runs on the daemon's default env, so its figures belong to the Claude default account.
       const acc = threadAccountId(terminalsDb.getById(db, id)?.config) ?? accounts.defaultId('claude');

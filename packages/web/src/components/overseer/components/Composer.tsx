@@ -22,6 +22,11 @@ import { PillComposer } from '../../composer/PillComposer';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
 import { useSettings } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
+import { ModelSwitcher } from '../../tabs/chat/ModelSwitcher';
+import { useThreadModelControls } from '../../tabs/chat/modelControls';
+import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../../stores/pickerRequest';
+import { useTabs, findTerminal } from '../../../stores/tabs';
 import { modLabel } from '../../../lib/hostkeys';
 import { CoordinatorMenu } from './CoordinatorMenu';
 import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
@@ -157,11 +162,41 @@ export function Composer() {
     [coordinatorProject, startUpload],
   );
 
+  // The "/" menu (composer/slash): /model and /effort for the overseer, on the same chip, lists and calls as a thread
+  // (modelControls.ts). The overseer's model stays free (PS-2): an explicit model wins over the coordinator tier.
+  const coordinatorTab = useTabs((s) => (coordinatorId ? findTerminal(s.byProject, coordinatorId) : undefined));
+  const controls = useThreadModelControls(coordinatorTab ?? { id: coordinatorId ?? '', sessionId: '', type: 'claude-code', config: {} });
+  const slashHarness = controls.harness ?? 'claude-code';
+  const coordinatorPending = useOverseer((s) => s.coordinatorPending);
+  // A turn parked on a question is still a turn that runs: the chip is off for it, like the daemon's 409.
+  const turnRuns = coordinatorBusy || coordinatorCompacting || !!coordinatorPending || coordinatorTab?.status === 'needs_input';
+  const slash = useSlashMenu({
+    surface: 'overseer', harness: slashHarness, value: composer, setValue: setComposer, mobile: isMobile,
+    model: controls.active ?? null, effort: controls.effort?.current ?? controls.effort?.defaultEffort ?? null,
+    models: controls.options, effortLevels: controls.effort?.levels,
+    run: async (name, args) => {
+      if (name === 'stop') { doStop(); return; }
+      if (!coordinatorId || !coordinatorTab) throw new Error('The Control Plane session has not started yet.');
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({
+          harness: slashHarness, name, args, models: controls.options, effortLevels: controls.effort?.levels,
+          openPicker: () => {
+            if (turnRuns) throw new Error(`The Control Plane is busy — change the ${name} when the turn ends`);
+            usePickerRequest.getState().request(`thread:${coordinatorId}`);
+          },
+          pickModel: controls.pickModel, pickEffort: controls.pickEffort,
+        });
+      }
+      if (name === 'compact') { compactCoordinator(); return; }
+    },
+  });
+
   // Return and the ↑ both land here (PillComposer handles the keys, Shift+Return and IME).
   const handleSend = useCallback(() => {
+    if (slash.interceptSend()) return; // a typed command is Dispatch's to run, never the model's
     sendDirective(composer);
     clearComposer();
-  }, [sendDirective, composer, clearComposer]);
+  }, [sendDirective, composer, clearComposer, slash]);
 
   // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
   // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
@@ -242,9 +277,11 @@ export function Composer() {
             dictation={dictation}
             sttConfigured={sttConfigured}
             textareaRef={textareaRef}
-            textareaProps={{ onPaste }}
+            textareaProps={{ onPaste, onKeyDown: slash.onKeyDown }}
             dragActive={dragActive}
             mobile={isMobile}
+            menuExtra={slash.plusRow}
+            slash={slash.overlay}
             sendLabel="Send directive"
           />
         </div>
@@ -270,7 +307,9 @@ export function Composer() {
           alignItems: 'center',
         }}
       >
+        {coordinatorTab && coordinatorTab.type !== 'shell' && <span style={{ marginRight: 6, display: 'inline-flex' }}><ModelSwitcher tab={coordinatorTab} busy={turnRuns} /></span>}
         <ContextIndicator
+          showModel={!coordinatorTab}
           contextTokens={coordinatorContextTokens}
           contextWindow={coordinatorContextWindow}
           compacting={coordinatorCompacting}

@@ -30,6 +30,12 @@ import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../Workin
 import { Spinner } from '../../common/Spinner';
 import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
+import { useThreadModelControls } from './modelControls';
+import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
+import { usePickerRequest } from '../../../stores/pickerRequest';
+import { useTransportSwitch } from '../../layout/TransportToggle';
+import { ConfirmModal } from '../../common/ConfirmModal';
+import { textToSend } from '../../../lib/slashEscape';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
@@ -164,7 +170,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   }
 
   function doSend() {
-    const v = draft.trim();
+    // A command typed in the box (/model, /compact…) is Dispatch's to run, never the model's.
+    if (slash.interceptSend()) return;
+    const v = textToSend(draft);
     if (!v && stagedImages.length === 0) return;
     if (advice) dismissResumeAdvice();
     // Text + any staged images go out as ONE turn: a leading text block (when there's a
@@ -248,6 +256,46 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     // api.stopTerminal, which kills the process.
     api.interrupt(terminalId).catch(() => { /* best-effort — nothing live to interrupt */ });
   }
+  // The "/" menu (composer/slash): Dispatch's own commands for this thread. /model and /effort use the chip's lists and
+  // calls (modelControls.ts); a bare one opens the chip's card. Mid-turn they fail like the chip is disabled: the daemon
+  // answers "busy" and the typed text stays in the box. /cli asks first when the thread is working, like the CLI/Pretty switch.
+  const controls = useThreadModelControls(tab ?? { id: terminalId, sessionId: '', type: 'claude-code', config: {} });
+  const transport = useTransportSwitch(terminalId);
+  const slashHarness = controls.harness ?? 'claude-code';
+  // A turn parked on a question is still a turn that runs (the daemon answers 409 then too), so the chip is off for it as well.
+  const [askRestart, setAskRestart] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+  const turnRuns = busy || compacting || !!pending || tab?.status === 'needs_input';
+  const slash = useSlashMenu({
+    surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, mobile: isMobile,
+    model: controls.active ?? null, effort: controls.effort?.current ?? controls.effort?.defaultEffort ?? null,
+    models: controls.options, effortLevels: controls.effort?.levels,
+    run: async (name, args) => {
+      if (name === 'model' || name === 'effort') {
+        return runModelEffortCommand({
+          harness: slashHarness, name, args, models: controls.options, effortLevels: controls.effort?.levels,
+          openPicker: () => {
+            if (turnRuns) throw new Error(`This thread is busy — change the ${name} when the turn ends`);
+            usePickerRequest.getState().request(`thread:${terminalId}`);
+          },
+          pickModel: controls.pickModel, pickEffort: controls.pickEffort,
+        });
+      }
+      if (name === 'compact') { await api.compactTerminal(terminalId); return; }
+      if (name === 'stop') { await api.interrupt(terminalId); return; }
+      if (name === 'cli') {
+        if (!transport.canSwitch) throw new Error(transport.tip ?? 'This thread cannot switch to the CLI right now.');
+        const why = await transport.request('cli');
+        if (why) { transport.clearError(); throw new Error(why); } // shown as the menu's own notice, and the text stays
+        return;
+      }
+      if (name === 'restart') {
+        // Always ask first, idle or working, from the menu and from the phone's Commands sheet alike. The modal's wording follows the live turn state.
+        setAskRestart(true);
+        return;
+      }
+    },
+  });
   // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
   // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
 
@@ -423,16 +471,18 @@ export function ChatView({ terminalId }: { terminalId: string }) {
             textareaRef={taRef}
             /* Prose only, so spelling help is on. autoCapitalize stays off so a path or a
                command name pasted mid-message is not altered. */
-            textareaProps={{ onPaste, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
+            textareaProps={{ onPaste, onKeyDown: slash.onKeyDown, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
             dragActive={dragActive}
             mobile={isMobile}
+            menuExtra={slash.plusRow}
+            slash={slash.overlay}
           />
         </div>
 
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
           {/* The active model, always shown once a thread has one, and the switcher behind it. */}
-          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={busy || compacting} />}
+          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
@@ -441,6 +491,35 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
         </div>
       </div>
+      {transport.confirmUi}
+      {restartError && (
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>Could not restart: {restartError}</span>
+          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => setRestartError(null)}
+            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
+            <X size={13} weight="bold" />
+          </button>
+        </div>
+      )}
+      <ConfirmModal
+        open={askRestart}
+        title={turnRuns ? 'Restart this thread now?' : 'Restart this thread?'}
+        message={turnRuns
+          ? 'This thread is working. Restarting stops the current turn and starts the thread again, carrying on the same conversation. What it was in the middle of will not finish.'
+          : 'The thread starts again and carries on the same conversation.'}
+        confirmLabel={turnRuns ? 'Stop and restart' : 'Restart'}
+        onConfirm={() => { setAskRestart(false); setRestartError(null); api.relaunchTerminal(terminalId).catch((e) => setRestartError(e instanceof Error ? e.message : 'The thread could not be restarted.')); }}
+        onCancel={() => setAskRestart(false)}
+      />
+      {transport.error && (
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>Could not switch: {transport.error}</span>
+          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={transport.clearError}
+            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
+            <X size={13} weight="bold" />
+          </button>
+        </div>
+      )}
       <DocViewer owner={terminalId} />
     </div>
     </ThreadDocsContext.Provider>
