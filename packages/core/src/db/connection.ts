@@ -33,6 +33,13 @@ export function createDatabase(path: string): Database.Database {
     }
   }
 
+  // Said here, not left to the driver's defaults (W1-E). A statement that finds the file locked waits
+  // up to 5 s before it fails. With WAL, NORMAL syncs at each checkpoint and not at each commit: a power
+  // loss can lose the last commits, and cannot corrupt the file. Without WAL (the fallback above did not
+  // take, or a rollback journal), NORMAL can corrupt the file, so that path keeps FULL.
+  db.pragma('busy_timeout = 5000');
+  db.pragma(`synchronous = ${journalMode(db) === 'wal' ? 'NORMAL' : 'FULL'}`);
+
   db.pragma('foreign_keys = ON');
   initSchema(db);
   return db;
