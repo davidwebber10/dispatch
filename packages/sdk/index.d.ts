@@ -1,11 +1,17 @@
 /**
  * The Dispatch plugin SDK (docs/plugins.md). A plugin's `web.js` exports `activate(d)`; `d` is
  * this object. There is no runtime in this package: the app hands the real SDK to the bundle.
- * `declare const d: import('@dispatchd/sdk').DispatchSdk` is enough to type a plugin.
+ *
+ * Two versions. A plugin whose `plugin.json` says `"sdk": 2` gets `DispatchSdkV2`: the plugin id is
+ * bound, and the app's data comes as plain objects. A plugin that says `"sdk": 1`, or nothing, gets
+ * `DispatchSdk` (version 1), which is kept for one release: its `api` and `stores` log a warning and
+ * go away in the next major version of Dispatch.
+ *
+ * `declare const d: import('@dispatchd/sdk').DispatchSdkV2` is enough to type a plugin.
  */
 import type * as React from 'react';
 
-export type SdkVersion = 1;
+export type SdkVersion = 1 | 2;
 
 // ── the app's data a plugin reads ────────────────────────────────────────────────────────────
 export interface Session { id: string; name: string; workingDir: string; provider: string; status: string }
@@ -197,6 +203,41 @@ export interface SettingsRowProps {
   style?: React.CSSProperties;
 }
 
+/** The controls and styles both SDK versions hand out as `ui`. */
+export interface UiKit {
+  Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children: React.ReactNode }>;
+  Markdown: React.ComponentType<{ source: string }>;
+  FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string> }[]; index?: number; onClose(): void; label?: string }>;
+  Toggle: React.ComponentType<{ on: boolean; onClick(): void; label?: string }>;
+  /**
+   * The app's filter control: a search field with a Filters button to its right. The button
+   * opens a panel (a popover on the desktop, a bottom sheet on the phone) with one section per
+   * facet, each a single-select list (with counts when given, and a search box past 8 options).
+   * Active filters show as removable pills under the row; Clear resets them all.
+   */
+  FilterBar: React.ComponentType<FilterBarProps>;
+  /** The app's dropdown for form fields (a native `<select>` is not used anywhere). Search box past 8 options. */
+  Select: React.ComponentType<SelectProps>;
+  /**
+   * The app's multi-pick: a small trigger that names the pick ("All projects", "All except 2")
+   * and opens a panel (a popover on the desktop, a bottom sheet on the phone) with a search box,
+   * Select all / None, and a scrolling checklist.
+   */
+  MultiSelect: React.ComponentType<MultiSelectProps>;
+  /** A full-width segmented choice (a radiogroup) for 2 to 5 options, with the picked option's hint under it. */
+  Segmented: React.ComponentType<SegmentedProps>;
+  /** A grouped settings card: a small heading over rows split by a hairline. */
+  SettingsGroup: React.ComponentType<SettingsGroupProps>;
+  /** One settings row: label and hint on the left, a small control on the right, a wide control below. */
+  SettingsRow: React.ComponentType<SettingsRowProps>;
+  styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn(on: boolean): React.CSSProperties; chip: React.CSSProperties; fieldInput: React.CSSProperties };
+}
+
+/**
+ * SDK version 1: the object a plugin gets when its manifest says `"sdk": 1` or names no version.
+ * Kept for one release. Move to `DispatchSdkV2` (docs/plugins.md, "Moving a plugin to SDK version 2").
+ * A call that passes another plugin's id is refused.
+ */
 export interface DispatchSdk {
   version: string;
   /** This plugin's id, as plugin.json names it: use it for register, storage, settings and fetch. */
@@ -212,7 +253,10 @@ export interface DispatchSdk {
     useStore<S, T>(store: Store<S>, selector: (s: S) => T): T;
   };
   zustand: { create: <S>(init: (set: (partial: Partial<S> | ((s: S) => Partial<S>)) => void, get: () => S) => S) => Store<S> };
-  /** The app's stores, typed by the fields a plugin reads; each has more. */
+  /**
+   * The app's stores, typed by the fields a plugin reads; each has more.
+   * @deprecated Goes away in the next major version. The first read logs one warning. Use `threads`, `projects`, `hooks.useThreads`, `hooks.useProjects` and `navigate` of `DispatchSdkV2`.
+   */
   stores: {
     useUI: Store<{ view: string; setView(view: string): void }>;
     useProjects: Store<{ sessions: Session[] }>;
@@ -243,41 +287,17 @@ export interface DispatchSdk {
      */
     createSkill(draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }): Promise<{ id: string } | null>;
   };
-  /** The app's API client. The methods a plugin uses most; the object has more. */
+  /**
+   * The app's API client. The methods a plugin uses most; the object has more.
+   * @deprecated Goes away in the next major version. The first read logs one warning. Use `docs`, `settings`, `worker`, `assist`, `model`, `files` and `plugin` of `DispatchSdkV2`.
+   */
   api: {
     listSessions(): Promise<Session[]>;
     listTerminals(sessionId: string): Promise<Terminal[]>;
     listPlugins(): Promise<{ plugins: PluginRow[] }>;
     [method: string]: (...args: any[]) => any;
   };
-  ui: {
-    Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children: React.ReactNode }>;
-    Markdown: React.ComponentType<{ source: string }>;
-    FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string> }[]; index?: number; onClose(): void; label?: string }>;
-    Toggle: React.ComponentType<{ on: boolean; onClick(): void; label?: string }>;
-    /**
-     * The app's filter control: a search field with a Filters button to its right. The button
-     * opens a panel (a popover on the desktop, a bottom sheet on the phone) with one section per
-     * facet, each a single-select list (with counts when given, and a search box past 8 options).
-     * Active filters show as removable pills under the row; Clear resets them all.
-     */
-    FilterBar: React.ComponentType<FilterBarProps>;
-    /** The app's dropdown for form fields (a native `<select>` is not used anywhere). Search box past 8 options. */
-    Select: React.ComponentType<SelectProps>;
-    /**
-     * The app's multi-pick: a small trigger that names the pick ("All projects", "All except 2")
-     * and opens a panel (a popover on the desktop, a bottom sheet on the phone) with a search box,
-     * Select all / None, and a scrolling checklist.
-     */
-    MultiSelect: React.ComponentType<MultiSelectProps>;
-    /** A full-width segmented choice (a radiogroup) for 2 to 5 options, with the picked option's hint under it. */
-    Segmented: React.ComponentType<SegmentedProps>;
-    /** A grouped settings card: a small heading over rows split by a hairline. */
-    SettingsGroup: React.ComponentType<SettingsGroupProps>;
-    /** One settings row: label and hint on the left, a small control on the right, a wide control below. */
-    SettingsRow: React.ComponentType<SettingsRowProps>;
-    styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn(on: boolean): React.CSSProperties; chip: React.CSSProperties; fieldInput: React.CSSProperties };
-  };
+  ui: UiKit;
   /** Icon components by name (`eye`, `star`, `sparkle`, `sun`, …); the same names `contributes.views[].icon` takes. */
   icons: Record<string, React.ComponentType<any>>;
   /** Documents in this plugin's storage on the daemon (`threads:*-storage` lets threads reach them). */
@@ -321,6 +341,173 @@ export interface DispatchSdk {
   copyText(text: string): Promise<void>;
   register(plugin: string, c: Contributions): void;
   unregister(plugin: string): void;
+}
+
+// ── SDK version 2 ────────────────────────────────────────────────────────────────────────
+/** A thread, as a plugin sees it. Plain data: a copy, not the app's row. */
+export interface ThreadInfo {
+  id: string;
+  /** The project the thread belongs to. */
+  projectId: string;
+  label: string;
+  /** The harness: `claude-code`, `codex`, `shell`, … */
+  kind: string;
+  /** The stored coarse status: `working`, `needs_input`, `waiting`, `error`, … */
+  status: string;
+  archived: boolean;
+  createdAt: string;
+  lastActivityAt: string | null;
+}
+/** A thread's live status. */
+export interface ThreadStatusInfo {
+  /** The coarse status; the live one when the daemon sent one since the page loaded, else the stored one. */
+  status: string;
+  /** The finer state (`starting`, `working`, `needs_input`, `idle`, `done`, `error`); null when no live event carried it. */
+  state: string | null;
+  /** What the thread is doing, in words ("Running: npm test"); null when not known. */
+  activity: string | null;
+  /** Epoch ms since which a working thread sent no output; null when the thread is not flagged. */
+  stalledSince: number | null;
+}
+/** A project, as a plugin sees it. */
+export interface ProjectInfo { id: string; name: string; workingDir: string; archived: boolean }
+
+/** A screen of the app, for `navigate`. A plugin's own view is `{ view: 'plugin:<id>:<view>' }`. */
+export type Route =
+  | { view: 'workspace'; projectId?: string; threadId?: string; agentId?: string }
+  | { view: 'settings'; section?: string; subPage?: string }
+  | { view: 'chat' }
+  | { view: 'analytics' }
+  | { view: `plugin:${string}` };
+
+export interface AssistRequest {
+  system?: string;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  maxTokens?: number;
+  harness?: 'claude' | 'codex' | 'openrouter' | 'auto';
+  model?: string;
+  accountId?: string;
+}
+export interface AssistResult {
+  text: string;
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number };
+  ms: number;
+  model: string;
+  harness?: 'claude' | 'codex' | 'openrouter';
+  accountId?: string | null;
+  costUsd?: number | null;
+}
+export interface AssistUsage { calls: number; failed: number; inputTokens: number; outputTokens: number; costUsd: number; byModel: { model: string; harness: string; calls: number; inputTokens: number; outputTokens: number }[] }
+export interface AssistShare { usedPercent: number; pluginPercent: number; pluginTokens: number; accountTokens: number; resetsAt: string | null }
+export interface PluginBudget { percentWeekly: number | null; usdWeekly: number | null }
+
+/**
+ * SDK version 2: the object a plugin gets when its manifest says `"sdk": 2`. It is bound to the
+ * plugin: no function takes a plugin id, so a bundle cannot name another plugin's documents,
+ * settings, worker, files or budget. It gives no API client and no store. The object and its
+ * namespaces are frozen.
+ */
+export interface DispatchSdkV2 {
+  readonly version: 2;
+  /** This plugin's id, as plugin.json names it. */
+  readonly id: string;
+  React: typeof React;
+  h: typeof React.createElement;
+  Fragment: typeof React.Fragment;
+  hooks: {
+    useState: typeof React.useState; useEffect: typeof React.useEffect; useMemo: typeof React.useMemo; useCallback: typeof React.useCallback; useRef: typeof React.useRef;
+    useIsMobile(): boolean;
+    /** The contributions of one kind that loaded plugins registered (`views`, `commands`, …). */
+    useContributions(kind: keyof Contributions, filter?: (x: any) => boolean): any[];
+    /** A document of this plugin as React state: `[value, set, loading]`, refreshed when the daemon says it changed. */
+    useDoc<T>(key: string, fallback: T): [T, (next: T) => Promise<void>, boolean];
+    /** The projects, as React state. The array is the same object until the list changes. */
+    useProjects(): ProjectInfo[];
+    /** The loaded threads of every project, as React state. */
+    useThreads(): ThreadInfo[];
+  };
+  zustand: { create: <S>(init: (set: (partial: Partial<S> | ((s: S) => Partial<S>)) => void, get: () => S) => S) => Store<S> };
+  /** This plugin's documents on the daemon (`threads:*-storage` lets threads reach them). */
+  docs: {
+    /** The document's value; the fallback when there is none. */
+    get<T>(key: string, fallback: T): Promise<T>;
+    set(key: string, value: unknown): Promise<void>;
+    /** Removes the document; a missing one is not an error. */
+    delete(key: string): Promise<void>;
+    keys(): Promise<string[]>;
+    /** Every document with its value, in one request. */
+    entries<T = unknown>(): Promise<{ key: string; value: T }[]>;
+  };
+  /** This plugin's settings: one JSON value. `get` gives the fallback (null when you pass none) while nothing is saved. */
+  settings: { get<T = unknown>(fallback?: T): Promise<T>; set(value: unknown): Promise<void> };
+  threads: {
+    /** The threads of every project whose list the app has loaded. */
+    list(): ThreadInfo[];
+    get(id: string): ThreadInfo | null;
+    status(id: string): ThreadStatusInfo | null;
+    /** Called when a thread is added, removed or changed, or a status changes. Returns the function that stops it; a reload stops it too. */
+    onChange(fn: () => void): () => void;
+  };
+  projects: {
+    list(): ProjectInfo[];
+    /** The open project. */
+    active(): ProjectInfo | null;
+    onChange(fn: () => void): () => void;
+  };
+  /** Go to a screen: a thread, a project, a settings section, a plugin view. One history entry. */
+  navigate(route: Route): void;
+  actions: {
+    setView(key: string): void;
+    openThread(projectId: string, terminalId: string): Promise<void>;
+    openSettings(sectionKey: string): void;
+    /** An unseen count on one of this plugin's views: the view's id, or its key `plugin:<id>:<view>`. 0 clears it. Another plugin's key is ignored. */
+    setBadge(view: string, n: number): void;
+    /** Opens the new-automation dialog with the prompt (and the cron and name) filled. Nothing is saved until the person presses Save. */
+    openSchedule(p: { projectId?: string; prompt: string; cron?: string; label?: string }): void;
+    /** Opens the new-thread dialog listing one thread per prompt. Nothing starts until the person presses Start. */
+    openNewThreads(p: { projectId?: string; prompts: string[] }): void;
+    /** Opens the review sheet for a drafted skill; resolves with `{ id }` on Create, null on Cancel. */
+    createSkill(draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }): Promise<{ id: string } | null>;
+  };
+  ui: UiKit & {
+    /** A short line at the bottom of the screen, gone after a few seconds. */
+    hint(text: string): void;
+    copyText(text: string): Promise<void>;
+  };
+  /** Icon components by name (`eye`, `star`, `sparkle`, `sun`, …); the same names `contributes.views[].icon` takes. */
+  icons: Record<string, React.ComponentType<any>>;
+  /** The daemon's event stream; a listener is dropped when the plugin reloads. */
+  events: { on(type: string | string[], handler: (e: ServerEvent) => void): () => void };
+  /**
+   * One model call through the daemon (`model:assist`). `harness` runs one harness only (no
+   * fallback); `auto` runs on the account with the most room; absent = Claude, then OpenRouter.
+   */
+  assist(req: AssistRequest): Promise<AssistResult>;
+  /** What this plugin's model calls cost, and its budget. */
+  model: {
+    usage(range?: { from?: string; to?: string }): Promise<AssistUsage>;
+    share(q?: { accountId?: string; harness?: 'claude' | 'codex' }): Promise<{ fiveHour: AssistShare | null; sevenDay: AssistShare | null }>;
+    budget(): Promise<PluginBudget>;
+    setBudget(budget: Partial<PluginBudget>): Promise<PluginBudget>;
+  };
+  /** This plugin itself. */
+  plugin: {
+    /** Turns this plugin off, as the switch on the Plugins page does. */
+    disable(): Promise<void>;
+  };
+  /** The file references threads registered with this plugin (`POST /api/plugins/<id>/files`). */
+  files: {
+    /** The address of a file's bytes, for an `<img src>` or the FileViewer. */
+    url(fileId: string): string;
+    /** Removes the reference; a missing one is not an error. */
+    remove(fileId: string): Promise<void>;
+  };
+  /** This plugin's worker, through the daemon's proxy: `worker.fetch('jobs/run', { method: 'POST' })`. A path that leaves the worker is refused. */
+  worker: { fetch(path: string, init?: RequestInit): Promise<Response> };
+  /** An app-root-relative path (`/api/...`, `/plugins/...`) as the browser must request it. */
+  url(path: string): string;
+  /** Replaces this plugin's contributions. */
+  register(c: Contributions): void;
 }
 
 declare global { interface Window { dispatch?: DispatchSdk } }

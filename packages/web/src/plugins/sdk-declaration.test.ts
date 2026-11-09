@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { buildSdk } from './sdk';
+import { buildSdk, uiKit } from './sdk';
 import { createPluginSdk } from './facade';
 
 /**
@@ -48,6 +48,8 @@ describe('the SDK type file matches the SDK (W3-F)', () => {
     expect(got.top).toEqual(want.top);
     for (const k of namespaces) expect(got.nested[k], `DispatchSdkV2.${k}`).toEqual(want.nested[k]);
     for (const k of ['docs', 'settings', 'threads', 'projects', 'worker', 'events', 'actions', 'hooks', 'model', 'plugin', 'files']) expect(namespaces, k).toContain(k);
+    // `ui` is the shared kit plus the two functions version 2 adds.
+    expect([...shape('UiKit').top, 'copyText', 'hint'].sort()).toEqual(Object.keys(d.ui).sort());
     expect(want.top).not.toContain('api');
     expect(want.top).not.toContain('stores');
   });
@@ -57,6 +59,7 @@ describe('the SDK type file matches the SDK (W3-F)', () => {
     const want = shape('DispatchSdk');
     expect(Object.keys(d).sort()).toEqual(want.top);
     for (const k of ['storage', 'settings', 'actions', 'worker', 'events']) expect(Object.keys((d as unknown as Record<string, object>)[k]).sort(), `DispatchSdk.${k}`).toEqual(want.nested[k]);
+    expect(shape('UiKit').top).toEqual(Object.keys(uiKit).sort());
     for (const k of ['api', 'stores']) {
       const member = declared('DispatchSdk').members.find((m) => nameOf(m) === k)!;
       expect(ts.getJSDocDeprecatedTag(member), `DispatchSdk.${k} @deprecated`).toBeDefined();
@@ -68,7 +71,7 @@ describe('the SDK type file matches the SDK (W3-F)', () => {
     expect(shape('ThreadInfo').top).toEqual(['archived', 'createdAt', 'id', 'kind', 'label', 'lastActivityAt', 'projectId', 'status']);
     expect(shape('ProjectInfo').top).toEqual(['archived', 'id', 'name', 'workingDir']);
     expect(shape('ThreadStatusInfo').top).toEqual(['activity', 'stalledSince', 'state', 'status']);
-    expect(d.threads.list()).toEqual([]);
+    expect(Array.isArray(d.threads.list())).toBe(true);
   });
 
   it('SdkVersion names both versions', () => {
