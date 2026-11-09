@@ -398,7 +398,7 @@ export function buildWatchDeliver(sessionService: SessionService): (terminalId: 
       if (sessionService.ensureStructuredAlive(terminalId) === false) return 'not-alive';
       sessionService.sendStructuredMessage(terminalId, text);
     } else {
-      if (!sessionService.isThreadProcessAlive(terminalId)) return 'not-alive';
+      if (!sessionService.isPtyAlive(terminalId)) return 'not-alive';
       // Same bytes a peer message to a CLI thread uses: a bare "\n" only types a newline into the
       // input box, so the parent never woke. Bracketed paste, then one CR, submits it.
       sessionService.writeToTerminal(terminalId, ptyMessagePayload(text));

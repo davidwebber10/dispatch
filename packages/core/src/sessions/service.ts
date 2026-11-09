@@ -1523,9 +1523,9 @@ export class SessionService {
     return 'delivered';
   }
 
-  /** True when a process backs the thread now (a PTY or a structured session). */
-  isThreadProcessAlive(terminalId: string): boolean {
-    return this.ptyManager.isAlive(terminalId) || !!this.structuredManagerForTerminal(terminalId)?.isAlive(terminalId);
+  /** True when a CLI (PTY) process backs the thread now: text typed into it reaches a program. */
+  isPtyAlive(terminalId: string): boolean {
+    return this.ptyManager.isAlive(terminalId);
   }
 
   /** A question that only the database still holds after a restart (sessions/boot-reconcile.ts, W2-C). */

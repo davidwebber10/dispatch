@@ -12,7 +12,7 @@ function fakeSessions(terminal: { type: string; config?: Record<string, any> } |
     structuredManagerFor: () => (structuredFor ? {} : undefined),
     ensureStructuredAlive: (id: string) => { calls.alive.push(id); return opts.revives ?? true; },
     // Added with the delivery outbox (W2-C): a wake is no longer typed into a CLI thread that has no process.
-    isThreadProcessAlive: () => opts.alive ?? true,
+    isPtyAlive: () => opts.alive ?? true,
     sendStructuredMessage: (id: string, text: string) => { calls.sent.push([id, text]); },
     writeToTerminal: (id: string, data: string) => { calls.writes.push([id, data]); },
   };
