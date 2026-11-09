@@ -85,6 +85,8 @@ rl.on('line', (l) => {
     console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: id, error: 'effort refused' } }));
   } else if (m.request.subtype === 'apply_flag_settings' && m.request.settings.effortLevel === 'silent') {
     // never answers
+  } else if (m.request.subtype === 'apply_flag_settings' && m.request.settings.effortLevel === 'die') {
+    setTimeout(() => process.exit(0), 50); // the CLI ends by itself while the change is pending
   } else {
     console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: id, response: {} } }));
   }
@@ -125,6 +127,15 @@ rl.on('line', (l) => {
       await new Promise((r) => setTimeout(r, 100));
       t.mgr.kill('t1');
       expect(await caught).toBe('The thread stopped');
+    } finally { t.done(); }
+  });
+
+  it('a CLI that ends by itself while the change is pending rejects at once with "The thread stopped", not after the 15 s wait', async () => {
+    const t = await boot();
+    try {
+      const t0 = Date.now();
+      await expect(t.mgr.setEffort('t1', 'die')).rejects.toThrow('The thread stopped');
+      expect(Date.now() - t0).toBeLessThan(5000);
     } finally { t.done(); }
   });
 
