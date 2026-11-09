@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import { Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, ArrowBendDownRight } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../../api/types';
 import { friendlyModelName } from '../../../../lib/modelName';
@@ -12,6 +12,10 @@ import { ToolCall, editDiffStat } from '../../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
 import { stableId } from './stableId';
 
+// The leaf rows are memoized (W1-F): renderTimeline builds new elements on every walk, and a walk
+// happens for each streamed delta. A row whose props are equal (the same text, the same item) is
+// then skipped, so a delta renders the block that grew and not the whole transcript.
+
 /**
  * A system-injected background-task completion (see lib/taskNotification.ts). Styled to
  * read as machine bookkeeping, not speech: muted, small, flush-left, at the same indent as
@@ -19,7 +23,7 @@ import { stableId } from './stableId';
  * Only the CLI's own <summary> line is shown; the surrounding XML (task-id, tool-use-id,
  * output-file) is bookkeeping the reader has no use for.
  */
-export function TaskNotice({ text }: { text: string }) {
+export const TaskNotice = memo(function TaskNotice({ text }: { text: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 6px', minWidth: 0 }}>
       <CheckCircle size={13} weight="bold" color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
@@ -28,7 +32,7 @@ export function TaskNotice({ text }: { text: string }) {
       </span>
     </div>
   );
-}
+});
 
 /** One assistant turn: a flush-left flex-column holding all its blocks. */
 export function AssistantTurn({ children }: { children: React.ReactNode }) {
@@ -167,7 +171,7 @@ export function EmptyState({ model }: { model?: string }) {
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
 // `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
-export function UserBubble({ text, source, grouped = false, relayName, renderText }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode }) {
+export const UserBubble = memo(function UserBubble({ text, source, grouped = false, relayName, renderText }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
@@ -202,13 +206,13 @@ export function UserBubble({ text, source, grouped = false, relayName, renderTex
       </div>
     </div>
   );
-}
+});
 
 // Assistant prose flows through the SHARED <InsightText>; the chat surface uses the redesign's
 // left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
 // callouts. The wrapper sets the redesign's reading size — md-view inherits it.
 // `ledger` (the Control Plane) draws known ledger numbers as chips.
-export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerChips }) {
+export const AssistantText = memo(function AssistantText({ text, ledger }: { text: string; ledger?: LedgerChips }) {
   const docs = useThreadDocs();
   if (!text) return null;
   return (
@@ -216,7 +220,7 @@ export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerC
       <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} />
     </div>
   );
-}
+});
 
 // Collapsed, the row IS the preview: brain icon + the thought's first words in one dim italic
 // line (the icon alone says "thinking" — pairing the word with a preview read as two competing
@@ -226,7 +230,7 @@ export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerC
 // "Thinking" returns as the header only while the row is open.
 /** `id`: the block's stable key (hooks/useToolUIState `uiKeyOf`). The open state lives under it, so
  *  it survives the remount that every appended block and the uuid upgrade cause (2026-11-06). */
-export function Thinking({ id, text }: { id?: string; text: string }) {
+export const Thinking = memo(function Thinking({ id, text }: { id?: string; text: string }) {
   const [open, setOpen] = useThoughtExpanded(id, false);
   if (!text.trim()) return null;
   // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
@@ -255,7 +259,7 @@ export function Thinking({ id, text }: { id?: string; text: string }) {
       )}
     </div>
   );
-}
+});
 
 /** Under a turn that failed on the Claude login: log the daemon in, then the user sends again. */
 function ResultLogin() {
@@ -264,7 +268,7 @@ function ResultLogin() {
   return <ClaudeLogin onDone={() => setDone(true)} />;
 }
 
-export function ResultFooter({ item, login = false }: { item: ConvItem; login?: boolean }) {
+export const ResultFooter = memo(function ResultFooter({ item, login = false }: { item: ConvItem; login?: boolean }) {
   const parts: string[] = [];
   if (typeof item.costUsd === 'number') parts.push(`$${item.costUsd.toFixed(item.costUsd < 0.01 ? 4 : 2)}`);
   const tok = (item.tokensIn ?? 0) + (item.tokensOut ?? 0);
@@ -288,4 +292,4 @@ export function ResultFooter({ item, login = false }: { item: ConvItem; login?: 
       <CheckCircle size={13} weight="fill" color="var(--color-accent)" /> {parts.join(' · ')}
     </div>
   );
-}
+});

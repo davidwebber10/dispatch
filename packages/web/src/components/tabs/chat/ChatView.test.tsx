@@ -5,6 +5,21 @@ import type { ConvItem } from '../../../api/types';
 import { UserBubble, renderTimeline, LoadEarlierButton, ChatView, relayNameFor, loginItemFor, authProseToHide } from './ChatView';
 import { api } from '../../../api/client';
 import * as sock from '../../../api/structured-socket';
+import { useTabs } from '../../../stores/tabs';
+
+// Counts every walk of the timeline (W1-F); the real walk still runs. A plain counter, not
+// vi.fn, so the vi.restoreAllMocks() below cannot strip the pass-through.
+const walks = vi.hoisted(() => ({ n: 0 }));
+// Renders of the assistant prose, by its text (W1-F): the real InsightText still renders.
+const prose = vi.hoisted(() => ({} as Record<string, number>));
+vi.mock('../../InsightText', async (orig) => {
+  const actual = await orig<typeof import('../../InsightText')>();
+  return { ...actual, InsightText: (props: any) => { prose[props.source] = (prose[props.source] ?? 0) + 1; return <actual.InsightText {...props} />; } };
+});
+vi.mock('./timeline', async (orig) => {
+  const actual = await orig<typeof import('./timeline')>();
+  return { ...actual, renderTimeline: (...args: Parameters<typeof actual.renderTimeline>) => { walks.n++; return actual.renderTimeline(...args); } };
+});
 
 test('a human-sent turn (untagged/legacy or explicit "user") renders as a plain bubble with no "via" label', () => {
   render(<UserBubble text="hi claude" />);
@@ -905,5 +920,60 @@ describe('an open thought and tool result stay open while the turn streams (2026
     fireEvent.click(screen.getByRole('button', { name: /First thought/ }));
     expect(screen.getAllByText('Thinking')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /Second thought/ })).toBeInTheDocument(); // still folded
+  });
+});
+
+
+// W1-F: ChatView renders for many reasons that do not touch the transcript (busy, the context
+// meter, the reveal latch, a parent render). None of them may walk the items again.
+describe('ChatView memoizes the timeline (W1-F)', () => {
+  let onEvent: ((e: any) => void) | undefined;
+  beforeEach(() => {
+    onEvent = undefined;
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation((h: any) => { onEvent = h.onEvent; return { close: () => {} } as any; });
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
+    useTabs.setState({ byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'T', status: 'waiting', config: { transport: 'structured' } } as any] } } as never);
+  });
+  const say = (uuid: string, text: string) => act(() => { onEvent!({ type: 'assistant', uuid, message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'text', text }] } }); });
+
+  it('the timeline node is reused between two renders with equal items', async () => {
+    const { rerender } = render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    say('a1', 'first answer');
+    const node = screen.getByText('first answer');
+    const before = walks.n;
+
+    rerender(<ChatView terminalId="t1" />);                                              // a parent render
+    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working' }); });   // the thread's own status
+
+    expect(walks.n).toBe(before);                        // no new walk
+    expect(screen.getByText('first answer')).toBe(node); // and the same DOM node
+  });
+
+  it('a new turn walks the timeline again and keeps the row of the earlier turn', async () => {
+    render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    say('a1', 'first answer');
+    // A user turn closes the first assistant group. (Inside ONE turn the group is keyed by its
+    // last item, on purpose, so an appended block remounts that group: see renderTimeline.)
+    act(() => { onEvent!({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'text', text: 'next question' }] } }); });
+    const node = screen.getByText('first answer');
+    const before = walks.n;
+    say('a2', 'second answer');
+    expect(walks.n).toBeGreaterThan(before);
+    expect(screen.getByText('second answer')).toBeInTheDocument();
+    expect(screen.getByText('first answer')).toBe(node);
+  });
+
+  it('a new turn does not render the prose of an earlier turn again (memoized leaf rows)', async () => {
+    render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    say('a1', 'first answer');
+    act(() => { onEvent!({ type: 'user', uuid: 'u1', message: { role: 'user', content: [{ type: 'text', text: 'next question' }] } }); });
+    const before = prose['first answer'];
+    say('a2', 'second answer');
+    say('a3', 'third answer');
+    expect(prose['third answer']).toBeGreaterThan(0);
+    expect(prose['first answer']).toBe(before);
   });
 });
