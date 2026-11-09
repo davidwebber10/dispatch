@@ -27,7 +27,7 @@ describe('doppler-mcp connection', () => {
     const seen: { url: string; auth: string }[] = [];
     const fetchFn: FetchLike = async (url, init) => {
       seen.push({ url, auth: (init.headers as Record<string, string>).Authorization });
-      return new Response(JSON.stringify({ secrets: { API_KEY: { raw: 'fake-value' }, DB_URL: { raw: 'fake-db' } } }), { status: 200 });
+      return new Response(JSON.stringify({ names: ['DB_URL', 'API_KEY'] }), { status: 200 });
     };
     const server = new McpServer({ name: 'doppler', version: '0.1.0' });
     registerTools(server, createDopplerClient(conn.token, fetchFn), conn);
