@@ -16,6 +16,7 @@ import { SessionService } from './sessions/service.js';
 import { ptyMessagePayload } from './sessions/pty-message.js';
 import { PTYManager } from './pty/manager.js';
 import { AgentService } from './agents/service.js';
+import { createDaemonStallWatchdog } from './runtime/stall-watchdog.js';
 import { RolesService } from './roles/service.js';
 import { aggregateSessionStatus } from './status/aggregate.js';
 import { AuthRequestService } from './auth/service.js';
@@ -1293,6 +1294,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       try {
         const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
         statusService.reconcileProcesses(alive);
+        // Runs that the restart left open: closed here, so their schedules can fire again (W1-D).
+        // After the kickstart and the process check, so a thread that runs again keeps its run.
+        const orphaned = agentService.reconcileRunsAtBoot(alive);
+        if (orphaned.length) console.log(`Closed ${orphaned.length} run(s) that the restart left open`);
         // Old per-thread MCP files: removed once the threads that will run again have rewritten theirs.
         const swept = sweepThreadMcpConfigs(dataDir, alive);
         if (swept) console.log(`Removed ${swept} stale thread MCP config file(s)`);
@@ -1313,11 +1318,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   const updateCheckInterval = startUpdateCheckLoop(db, broadcaster);
   // Anonymous usage report: 60 s after boot, then an hourly check (Settings → About & updates switch).
   const telemetryLoop = startTelemetryLoop(db);
+  // Stall watchdog (W1-D): flags a working thread that sent no frame for 10 minutes
+  // (DISPATCH_STALL_MINUTES). It only flags. It rides the scheduler tick below; it has no timer.
+  const stallWatchdog = createDaemonStallWatchdog({
+    db, broadcaster,
+    lastFrameAt: (id) => sessionService.structuredManagerForTerminal(id)?.lastFrameAt?.(id) ?? ptyManager.lastOutputAt(id),
+  });
+  app.locals.stallWatchdog = stallWatchdog; // GET /api/terminals/stalls reads it
   const agentSchedulerInterval = setInterval(() => {
     try {
       agentService.processDueRuns();
     } catch (err) {
       console.error(err);
+    }
+    try {
+      stallWatchdog.tick();
+    } catch (err) {
+      console.error('[stall] tick failed:', err);
     }
   }, 30_000);
 

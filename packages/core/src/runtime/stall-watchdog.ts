@@ -6,6 +6,8 @@
  * thread: its deps hold no function that could. It has no timer either; the daemon's existing
  * 30 s scheduler tick calls `tick()`.
  */
+import type Database from 'better-sqlite3';
+import { logLifecycle } from './diagnostics.js';
 
 export interface StallDeps {
   /** Threads whose status is `working` and that are not archived. */
@@ -107,4 +109,33 @@ export class StallWatchdog {
   private report(change: StallChange): void {
     try { this.deps.onChange(change); } catch (err) { console.error('[stall] onChange failed:', err); }
   }
+}
+
+/**
+ * The daemon's watchdog: the working, not archived threads of the database; a flag change goes to
+ * the clients as `{ type: 'terminal:stall', terminalId, stalledSince: ISO string | null }` and
+ * into `lifecycle_events` as one `stall.flagged` or `stall.cleared` row.
+ */
+export function createDaemonStallWatchdog(opts: {
+  db: Database.Database;
+  broadcaster: { broadcast(event: Record<string, unknown>): void };
+  lastFrameAt(id: string): number | undefined;
+  now?: () => number;
+  thresholdMs?: number;
+}): StallWatchdog {
+  const { db, broadcaster } = opts;
+  const now = opts.now ?? Date.now;
+  return new StallWatchdog({
+    listWorking: () => (db.open
+      ? db.prepare("SELECT id FROM terminals WHERE status = 'working' AND archived_at IS NULL").all() as { id: string }[]
+      : []),
+    lastFrameAt: opts.lastFrameAt,
+    now,
+    thresholdMs: opts.thresholdMs ?? stallThresholdMs(),
+    onChange: ({ terminalId, stalledSince }) => {
+      broadcaster.broadcast({ type: 'terminal:stall', terminalId, stalledSince: stalledSince === null ? null : new Date(stalledSince).toISOString() });
+      if (!db.open) return;
+      logLifecycle(db, { terminalId, type: stalledSince === null ? 'stall.cleared' : 'stall.flagged', observedAt: new Date(now()).toISOString() }, 'applied');
+    },
+  });
 }
