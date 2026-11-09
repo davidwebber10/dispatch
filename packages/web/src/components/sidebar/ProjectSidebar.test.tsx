@@ -5,6 +5,21 @@ import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { api } from '../../api/client';
 import { useProjectsView } from '../../stores/projectsView';
+import { Profiler } from 'react';
+
+/* Render counters (W1-F). ProjectCard and ThreadRow are not mocked: each renders one of these
+   two children on every render of its own, and the children are not memoized, so a child's
+   count IS its parent's render count. The real child still renders, so every other test in
+   this file sees the real sidebar. */
+const renders = vi.hoisted(() => ({ card: {} as Record<string, number>, row: {} as Record<string, number> }));
+vi.mock('./ArchivedSection', async (orig) => {
+  const actual = await orig<typeof import('./ArchivedSection')>();
+  return { ...actual, ArchivedSection: (props: any) => { renders.card[props.sessionId] = (renders.card[props.sessionId] ?? 0) + 1; return <actual.ArchivedSection {...props} />; } };
+});
+vi.mock('./ThreadLabel', async (orig) => {
+  const actual = await orig<typeof import('./ThreadLabel')>();
+  return { ...actual, ThreadLabel: (props: any) => { renders.row[props.tab.id] = (renders.row[props.tab.id] ?? 0) + 1; return <actual.ThreadLabel {...props} />; } };
+});
 
 beforeEach(() => {
   vi.spyOn(api, 'listTerminals').mockResolvedValue([
@@ -374,5 +389,94 @@ describe('Projects ⇄ Threads on the desktop (2026-11-07)', () => {
     expect(screen.queryByText('An archived thread')).toBeNull();
     fireEvent.click(archived);
     expect(await screen.findByText('An archived thread')).toBeInTheDocument();
+  });
+});
+
+
+/* W1-F: the sidebar must not render for threads it does not show.
+
+   Before: applyEvent rebuilt every project's array on each terminal:status, ProjectSidebar
+   selected all of byProject, and nothing was memoized, so ONE status event rendered every
+   ProjectCard and every ThreadRow of every project. */
+describe('ProjectSidebar render counts on a status event (W1-F)', () => {
+  const term = (id: string, sessionId: string, status = 'working') => ({ id, sessionId, type: 'shell', label: id, status, config: {}, createdAt: '2026-11-01T00:00:00Z' }) as any;
+  const statusEvent = (terminalId: string, status: string) => act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId, status }); });
+  const sum = (o: Record<string, number>, keep: (k: string) => boolean) => Object.entries(o).reduce((n, [k, v]) => n + (keep(k) ? v : 0), 0);
+
+  function seed(projects: number, threadsEach: number) {
+    const sessions = Array.from({ length: projects }, (_, p) => ({ id: `P${p}`, name: `project-${p}`, workingDir: `/p${p}`, status: 'working' }) as any);
+    const byProject: Record<string, any[]> = {};
+    for (const s of sessions) byProject[s.id] = Array.from({ length: threadsEach }, (_, i) => term(`${s.id}-t${i}`, s.id));
+    // Every card loads its threads when it opens; answer what is already in the store.
+    (api.listTerminals as any).mockImplementation(async (sid: string) => useTabs.getState().byProject[sid] ?? []);
+    useProjectsView.setState({ view: 'projects' });
+    useProjects.setState({ sessions, activeId: 'P0' });
+    useTabs.setState({ byProject, openTabIds: [], activeTabId: null, tabSession: {}, loading: {} });
+    return sessions;
+  }
+  /** Mount, open every card (as a user who expanded them), and let each card's loadTabs land. */
+  async function mountOpen(sessions: { id: string; name: string }[], onRender: (id: string, phase: string, actualDuration: number) => void = () => {}) {
+    const stable = () => {};
+    const view = render(<Profiler id="sidebar" onRender={onRender}><ProjectSidebar onSelectTab={stable} /></Profiler>);
+    await screen.findByText(sessions[0].name);
+    for (const s of sessions.slice(1)) fireEvent.click(screen.getByText(s.name));
+    await act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    return view;
+  }
+
+  it('a status event for project A does not render the ProjectCard of project B', async () => {
+    const sessions = seed(2, 2);
+    await mountOpen(sessions);
+    const before = { ...renders.card };
+    const rowsBefore = { ...renders.row };
+
+    statusEvent('P0-t0', 'waiting');
+
+    expect(screen.getByText('P1-t0')).toBeInTheDocument();
+    expect(renders.card.P1).toBe(before.P1);                    // project B: no render at all
+    expect(renders.row['P1-t0']).toBe(rowsBefore['P1-t0']);     // nor any of its rows
+    expect(renders.row['P1-t1']).toBe(rowsBefore['P1-t1']);
+    expect(renders.card.P0).toBeGreaterThan(before.P0);         // project A did update
+    expect(renders.row['P0-t0']).toBeGreaterThan(rowsBefore['P0-t0']);
+    expect(renders.row['P0-t1']).toBe(rowsBefore['P0-t1']);     // the sibling row in A: untouched
+  });
+
+  it('a session:status for project A does not render the ProjectCard of project B', async () => {
+    const sessions = seed(2, 2);
+    await mountOpen(sessions);
+    const before = { ...renders.card };
+    act(() => { useProjects.getState().applyEvent({ type: 'session:status', sessionId: 'P0', status: 'idle', lastActivityAt: '2026-11-09T10:00:00Z' }); });
+    expect(renders.card.P1).toBe(before.P1);
+    expect(renders.card.P0).toBeGreaterThan(before.P0);
+  });
+
+  it('a status event still updates the row and the project header it belongs to', async () => {
+    const sessions = seed(2, 1);
+    useProjects.setState({ sessions: sessions.map((s) => ({ ...s, status: 'idle' })) });
+    await mountOpen(sessions);
+    statusEvent('P1-t0', 'needs_input');
+    const card = document.querySelector('[data-project-id="P1"]') as HTMLElement;
+    // One dot on the row, one on the project header.
+    expect(within(card).getAllByLabelText('status-needs_input').length).toBe(2);
+    expect(within(document.querySelector('[data-project-id="P0"]') as HTMLElement).queryByLabelText('status-needs_input')).toBeNull();
+  });
+
+  // The 1A.3 number: 30 working threads (6 projects x 5), 60 status events spread over them
+  // (each thread flips idle then back to working). Logged so the hand-off can quote it.
+  it('30 working threads: unrelated cards and rows do not render (perf numbers)', async () => {
+    const sessions = seed(6, 5);
+    const prof = { commits: 0, ms: 0 };
+    await mountOpen(sessions, (_id, _phase, actualDuration) => { prof.commits++; prof.ms += actualDuration; });
+    prof.commits = 0; prof.ms = 0;
+    const cardBefore = { ...renders.card }; const rowBefore = { ...renders.row };
+    const ids = sessions.flatMap((s) => Array.from({ length: 5 }, (_, i) => `${s.id}-t${i}`));
+    for (const id of ids) { statusEvent(id, 'waiting'); statusEvent(id, 'working'); }
+    const events = ids.length * 2;
+    const cardRenders = sum(renders.card, () => true) - sum(cardBefore, () => true);
+    const rowRenders = sum(renders.row, () => true) - sum(rowBefore, () => true);
+    // eslint-disable-next-line no-console
+    console.log(`[W1-F perf] sidebar, 30 working threads in 6 projects, ${events} status events: ProjectCard renders=${cardRenders} (per event ${(cardRenders / events).toFixed(2)}), ThreadRow renders=${rowRenders} (per event ${(rowRenders / events).toFixed(2)}), React commits=${prof.commits}, render time=${prof.ms.toFixed(1)}ms`);
+    expect(cardRenders).toBeLessThanOrEqual(events);            // at most the one card that holds the thread
+    expect(rowRenders).toBeLessThanOrEqual(events);             // at most the one row
   });
 });
