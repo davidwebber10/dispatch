@@ -179,9 +179,13 @@ describe('the bundled plugins run on SDK version 2 (W3-F)', () => {
     for (const cmd of c.commands) expect(typeof cmd.run).toBe('function');
 
     expect(missing).toEqual([]);
-    expect(daemon.calls.length).toBeGreaterThan(0);
-    expect(daemon.calls.every((call) => /\/api\/plugins\/coach\//.test(call))).toBe(true);
-    expect(daemon.bound.every((b) => b === 'coach')).toBe(true);
+    // Every request is bound, and a request bound to the Coach names the Coach's routes only. (A late
+    // write of the Previews test before this one can land here: it is bound to Previews.)
+    const mine = daemon.calls.filter((_, i) => daemon.bound[i] === 'coach');
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.filter((call) => !/\/api\/plugins\/coach\//.test(call))).toEqual([]);
+    expect(daemon.bound.filter((b) => b === null)).toEqual([]);
+    expect(daemon.calls.filter((call, i) => !call.includes(`/api/plugins/${daemon.bound[i]}/`))).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
   });
 
