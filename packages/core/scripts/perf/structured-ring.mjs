@@ -9,7 +9,7 @@
 //
 // Run it the same way on the wave base and on the branch:
 //   pnpm -C packages/core build && node --expose-gc packages/core/scripts/perf/structured-ring.mjs
-// Options (environment): THREADS=30 MESSAGES=200 DELTAS=40
+// Options (environment): THREADS=30 MESSAGES=200 DELTAS=40 HARNESS=claude|acp (default: both)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,9 +111,12 @@ async function measure(name, manager, command, args) {
 const WORDS = ['alpha ', 'bravo ', 'charlie ', 'delta ', 'echo ', 'foxtrot ', 'golf ', 'hotel '];
 let sentChars = 0;
 for (let m = 0; m < MESSAGES; m++) for (let i = 0; i < DELTAS; i++) sentChars += WORDS[(m + i) % WORDS.length].length;
+// HARNESS=claude or HARNESS=acp measures one harness alone. Use that for the heap figure: with both
+// in one process, the garbage of the first changes the baseline of the second.
+const only = process.env.HARNESS;
 const rows = [];
-rows.push(await measure('claude', new ClaudeStructuredSessionManager(), process.execPath, [fakeClaude]));
-rows.push(await measure('acp', new GrokStructuredSessionManager('grok'), process.execPath, [acpAgent]));
+if (!only || only === 'claude') rows.push(await measure('claude', new ClaudeStructuredSessionManager(), process.execPath, [fakeClaude]));
+if (!only || only === 'acp') rows.push(await measure('acp', new GrokStructuredSessionManager('grok'), process.execPath, [acpAgent]));
 console.log(`threads=${THREADS} messages=${MESSAGES} deltas=${DELTAS} node=${process.version}`);
 console.table(rows);
 fs.rmSync(tmp, { recursive: true, force: true });

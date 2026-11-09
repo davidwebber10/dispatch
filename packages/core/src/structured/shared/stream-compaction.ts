@@ -27,6 +27,8 @@ interface OpenMessage {
   messageId: string;
   /** The tag on this message's stream frames in the ring. */
   tag: string;
+  /** `ring.pushes` when the message started: compaction looks only at the events after it. */
+  since: number;
   /** Content blocks that started. */
   blocks: number;
   /** Content blocks that arrived whole. */
@@ -53,7 +55,7 @@ export class ClaudeStreamCompactor {
       if (se.type === 'message_start') {
         const messageId = se.message?.id;
         // Not tagged: the message_start stays in the ring (see the file comment).
-        if (typeof messageId === 'string' && messageId) this.open.set(key, { messageId, tag: `m${++this.seq}`, blocks: 0, wholes: 0, stopped: false });
+        if (typeof messageId === 'string' && messageId) this.open.set(key, { messageId, tag: `m${++this.seq}`, since: ring.pushes, blocks: 0, wholes: 0, stopped: false });
         else this.open.delete(key); // no id to match the whole frames on: leave this message alone
         return 0;
       }
@@ -80,12 +82,14 @@ export class ClaudeStreamCompactor {
   private finish(ring: EventRing, key: string, msg: OpenMessage): number {
     if (!msg.stopped || msg.blocks === 0 || msg.wholes < msg.blocks) return 0;
     this.open.delete(key);
-    return ring.compact(this.tagOf, msg.tag);
+    return ring.compact(this.tagOf, msg.tag, undefined, msg.since);
   }
 }
 
 interface OpenBlock {
   tag: string;
+  /** `ring.pushes` when the block started: compaction looks only at the events after it. */
+  since: number;
   /** The delta type and its text field, from the first delta. */
   deltaType?: string;
   field?: string;
@@ -118,7 +122,7 @@ export class BlockDeltaCoalescer {
     if (typeof index !== 'number') return 0;
     if (se.type === 'content_block_start') {
       const removed = this.close(ring, index);
-      this.blocks.set(index, { tag: `b${++this.seq}`, text: '', deltas: 0, mixed: false });
+      this.blocks.set(index, { tag: `b${++this.seq}`, since: ring.pushes, text: '', deltas: 0, mixed: false });
       return removed;
     }
     if (se.type === 'content_block_delta') {
@@ -152,6 +156,6 @@ export class BlockDeltaCoalescer {
     if (block.mixed || block.deltas < 2 || !block.deltaType || !block.field) return 0;
     const merged = { type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: block.deltaType, [block.field]: block.text } } };
     // One event takes the place of `deltas` events.
-    return ring.compact(this.tagOf, block.tag, merged) - 1;
+    return ring.compact(this.tagOf, block.tag, merged, block.since) - 1;
   }
 }

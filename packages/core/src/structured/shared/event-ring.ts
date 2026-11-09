@@ -31,6 +31,7 @@ export class EventRing {
   private events: unknown[] = [];
   private sizes: number[] = [];
   private total = 0;
+  private pushCount = 0;
   private pushedAt: number | undefined;
   private readonly maxEvents: number;
   private readonly maxBytes: number;
@@ -51,6 +52,8 @@ export class EventRing {
   get length(): number { return this.events.length; }
   /** The JSON size of the events the ring holds (see the file comment for the unit). */
   get bytes(): number { return this.total; }
+  /** How many events `push` has added in the ring's life. A caller keeps it as a mark for `compact`. */
+  get pushes(): number { return this.pushCount; }
   /** Epoch ms of the last push that was not quiet, or undefined. Seeded history does not count. */
   get lastPushAt(): number | undefined { return this.pushedAt; }
 
@@ -59,6 +62,7 @@ export class EventRing {
     this.events.push(event);
     this.sizes.push(size);
     this.total += size;
+    this.pushCount += 1;
     if (!opts.quiet) this.pushedAt = Date.now();
     this.trim();
     this.onCommit?.(event);
@@ -91,14 +95,18 @@ export class EventRing {
    * that an event is a delta of, or null. Every event whose id equals `messageId` is removed.
    * With a `replacement`, that one event takes the place of the first removed event (the
    * managers that get no whole message use it to keep the text as one delta).
+   * `sincePushes` is the value of `pushes` from before the message's first delta was pushed: only
+   * the events pushed after it are looked at, so the cost follows the message, not the ring.
    * Returns how many events were removed.
    */
-  compact(isDeltaOf: (event: unknown) => string | null, messageId: string, replacement?: unknown): number {
+  compact(isDeltaOf: (event: unknown) => string | null, messageId: string, replacement?: unknown, sincePushes?: number): number {
+    const window = sincePushes === undefined ? this.events.length : Math.min(this.events.length, Math.max(0, this.pushCount - sincePushes));
+    const from = this.events.length - window;
     let first = -1;
     let removed = 0;
     const events: unknown[] = [];
     const sizes: number[] = [];
-    for (let i = 0; i < this.events.length; i++) {
+    for (let i = from; i < this.events.length; i++) {
       if (isDeltaOf(this.events[i]) === messageId) {
         if (first < 0) first = events.length;
         removed += 1;
@@ -115,8 +123,9 @@ export class EventRing {
       sizes.splice(first, 0, size);
       this.total += size;
     }
-    this.events = events;
-    this.sizes = sizes;
+    this.events.length = from;
+    this.sizes.length = from;
+    for (let i = 0; i < events.length; i++) { this.events.push(events[i]); this.sizes.push(sizes[i]); }
     return removed;
   }
 

@@ -112,6 +112,19 @@ describe('EventRing', () => {
     expect(ring.bytes).toBe(ring.snapshot().reduce((n: number, e) => n + JSON.stringify(e).length, 0));
   });
 
+  it('compact with a pushes mark looks only at the events pushed after the mark', () => {
+    const ring = new EventRing({ maxEvents: 6 });
+    const seen: unknown[] = [];
+    const isDelta = (e: unknown) => { seen.push(e); return typeof e === 'string' && e.startsWith('d') ? 'm' : null; };
+    for (const e of ['old1', 'd-old', 'old2']) ring.push(e);
+    const mark = ring.pushes;
+    for (const e of ['start', 'd1', 'd2', 'whole']) ring.push(e); // the count limit drops 'old1'
+    expect(ring.compact(isDelta, 'm', undefined, mark)).toBe(2);
+    expect(seen).toEqual(['start', 'd1', 'd2', 'whole']); // nothing before the mark was looked at
+    expect(ring.snapshot()).toEqual(['d-old', 'old2', 'start', 'whole']);
+    expect(ring.bytes).toBe(ring.snapshot().reduce((n: number, e) => n + JSON.stringify(e).length, 0));
+  });
+
   it('compact that finds nothing changes nothing', () => {
     const ring = new EventRing();
     ring.push('a');
