@@ -56,6 +56,45 @@ function buildInstallOpts(ctx: Ctx): DaemonInstallOptions {
   };
 }
 
+/**
+ * DISPATCH_BIND for the daemon environment (W1-B). `dispatch install` bakes it in as it does PORT, so
+ * `DISPATCH_BIND=127.0.0.1 dispatch install` makes the daemon listen on that address only. Unset or empty
+ * adds nothing. The rule is the daemon's own (core platform/bind.ts): an IP literal or "localhost". An
+ * invalid value throws here, so install never writes a service that cannot start.
+ */
+export function bindEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const raw = env.DISPATCH_BIND;
+  const value = (raw ?? '').trim();
+  if (value === '') return {};
+  const bare = /^\[.*\]$/.test(value) ? value.slice(1, -1) : value;
+  const net = require('net') as typeof import('net');
+  if (net.isIP(bare) !== 0) return { DISPATCH_BIND: bare };
+  if (bare.toLowerCase() === 'localhost') return { DISPATCH_BIND: 'localhost' };
+  throw new Error(`DISPATCH_BIND=${JSON.stringify(raw)} is not valid. Use an IP address of this computer (for example 127.0.0.1) or "localhost", or remove the variable to listen on all interfaces.`);
+}
+
+/**
+ * The "Listens on" lines of `dispatch status`. The running daemon writes `<dataDir>/listen.json` (pid, port,
+ * bind) when its port is bound. A file from another daemon (another port, or another pid when the service
+ * manager knows the pid) is not believed. No file means a daemon from before DISPATCH_BIND: all interfaces.
+ */
+export function listenLines(ctx: Pick<Ctx, 'dataDir' | 'port'>, pid?: number): string[] {
+  let bind: string | null = null;
+  try {
+    if (ctx.dataDir) {
+      const info = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'listen.json'), 'utf8')) as { pid?: unknown; port?: unknown; bind?: unknown };
+      const ours = info.port === ctx.port && (pid === undefined || info.pid === pid);
+      if (ours && typeof info.bind === 'string' && info.bind) bind = info.bind;
+    }
+  } catch { /* no file, or not JSON: all interfaces */ }
+  if (bind) return [`Listens on: ${bind} (and the loopback addresses)`];
+  return [
+    'Listens on: all interfaces',
+    '  A forwarder on this computer that adds no forwarding header (a plain proxy_pass, socat, ssh -R) looks like a local caller: give it its own sign-in.',
+    '  If only this computer uses Dispatch, run "DISPATCH_BIND=127.0.0.1 dispatch install". See docs/network-access.md.',
+  ];
+}
+
 export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
@@ -81,6 +120,7 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
       // Stage 1 counts need a request. A test that injects a probe and no HTTP client makes none.
       const reachable = probeHttp(ctx.port, ctx.probe).startsWith('HTTP: reachable');
+      if (reachable) for (const l of listenLines(ctx, s.pid)) console.log(l);
       if (reachable && (ctx.apiFetch !== undefined || ctx.probe === undefined)) return printNoCredentialCounts(ctx);
       return;
     }
@@ -922,6 +962,11 @@ async function main(): Promise<void> {
   };
 
   try {
+    // DISPATCH_BIND goes to the daemon as PORT does. An invalid value stops a command that starts the daemon, with one
+    // line; the other commands (status, stop, logs, access) ignore it, so a typing error cannot lock the CLI.
+    try { Object.assign(ctx.env!, bindEnv(process.env)); } catch (err) {
+      if (['install', 'start', 'restart', 'update', 'run', 'daemon-run'].includes(process.argv[2] ?? '')) throw err;
+    }
     await runCommand(process.argv.slice(2), ctx);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
