@@ -10,6 +10,7 @@ import type { ThreadStatus } from './events.js';
 import { providerForHook } from '../providers/registry.js';
 import { aggregateSessionStatus } from './aggregate.js';
 import { resolveTranscriptPath } from '../sessions/transcript-path.js';
+import { threadStatusOf, toParkInfo, type LifecycleEventRow } from './explain.js';
 
 // Normalized thread status -> the persisted terminal-status enum. `terminals.status` is a
 // free-form TEXT column (no CHECK constraint) — 'scheduled' rides the same convention as
@@ -38,11 +39,24 @@ export type SettledListener = (info: { terminalId: string; sessionId: string; th
  * broadcasts `terminal:status` (with the rich threadStatus + activity) + session status.
  */
 export class StatusService {
+  /**
+   * What the daemon recorded about one thread: the lifecycle record, the newest 200 lifecycle events
+   * (newest first) and the last capture failure. W2-G adds the facts the explanation needs from this
+   * database: the thread status behind the stored status, the open-turn flag and the usage-limit pause.
+   * Metadata only.
+   */
   diagnostics(terminalId: string) {
+    const lifecycle = (this.db.prepare('SELECT * FROM thread_lifecycle WHERE terminal_id=?').get(terminalId) ?? null) as
+      ({ status?: string; generation?: string | null; turn_open?: number } & Record<string, unknown>) | null;
+    const terminal = terminalsDb.getById(this.db, terminalId);
     return {
-      lifecycle: this.db.prepare('SELECT * FROM thread_lifecycle WHERE terminal_id=?').get(terminalId) ?? null,
+      lifecycle,
       captureFailure: this.db.prepare('SELECT * FROM capture_failures WHERE terminal_id=?').get(terminalId) ?? null,
-      events: this.db.prepare('SELECT event_type,generation,turn_id,observed_at,status,disposition FROM lifecycle_events WHERE terminal_id=? ORDER BY id DESC LIMIT 200').all(terminalId),
+      events: this.db.prepare('SELECT event_type,generation,turn_id,observed_at,status,disposition FROM lifecycle_events WHERE terminal_id=? ORDER BY id DESC LIMIT 200').all(terminalId) as LifecycleEventRow[],
+      status: threadStatusOf(terminal?.status ?? 'waiting', lifecycle?.status),
+      // Only harness events keep the flag. A thread with no harness generation (a CLI thread on hooks) has none.
+      turnOpen: lifecycle?.generation ? !!lifecycle.turn_open : null,
+      park: toParkInfo(this.db.prepare('SELECT * FROM usage_limit_parks WHERE terminal_id=?').get(terminalId)),
     };
   }
 

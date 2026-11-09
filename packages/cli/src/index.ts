@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import type { DaemonController, DaemonInstallOptions } from 'dispatch-server/platform';
+import { formatDoctor, type DoctorAnswer } from './doctor.js';
 
 const require = createRequire(import.meta.url);
 
@@ -157,13 +158,15 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       return cmdAccess(ctx, rest);
     case 'api':
       return cmdApi(ctx, rest);
+    case 'doctor':
+      return cmdDoctor(ctx, rest);
     case 'plugin':
       return cmdPlugin(ctx, rest);
     case 'skill':
       return cmdSkill(ctx, rest);
     default:
       throw new Error(
-        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|api|release|plugin|skill>`,
+        `usage: dispatch <build|install|uninstall|start|stop|restart|status|update|run|logs|tools|roles|access|api|doctor|release|plugin|skill>`,
       );
   }
 }
@@ -401,6 +404,28 @@ async function cmdApi(ctx: Ctx, args: string[]): Promise<void> {
     try { console.log(JSON.stringify(JSON.parse(text), null, 2)); } catch { console.log(text); }
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+const DOCTOR_USAGE = 'usage: dispatch doctor <thread id> [--json]';
+
+/**
+ * `dispatch doctor <thread id>`: why the thread is in its state (W2-G). It reads
+ * GET /api/terminals/:id/diagnostics as `dispatch api` does and prints the headline, the reasons and
+ * the event table as plain text; `--json` prints the raw answer. It only reads.
+ * The route is for the owner, so the command refuses inside a Dispatch thread, before any request.
+ */
+async function cmdDoctor(ctx: Ctx, args: string[]): Promise<void> {
+  const flags = args.filter((a) => a.startsWith('--'));
+  const ids = args.filter((a) => !a.startsWith('--'));
+  if (ids.length !== 1 || flags.some((f) => f !== '--json')) throw new Error(DOCTOR_USAGE);
+  if (await inThreadMode(ctx)) throw new Error('Run this in your own terminal, not in a Dispatch thread.');
+  const id = ids[0];
+  const apiPath = `/api/terminals/${encodeURIComponent(id)}/diagnostics`;
+  const res = await daemonFetch(ctx, ctx.apiFetch ?? fetch, await daemonUrl(ctx, apiPath), { method: 'GET' });
+  if (res.status === 404) throw new Error(`Thread not found: ${id}`);
+  if (!res.ok) throw new Error(`GET ${apiPath} -> HTTP ${res.status}`);
+  const answer = (await res.json()) as DoctorAnswer;
+  console.log(flags.includes('--json') ? JSON.stringify(answer, null, 2) : formatDoctor(id, answer));
 }
 
 async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {

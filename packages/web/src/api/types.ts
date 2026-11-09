@@ -634,3 +634,26 @@ export interface PluginRow {
 export interface PluginDocWriter { terminalId: string; sessionId: string; label: string | null }
 export interface PluginDocMeta { key: string; writer: PluginDocWriter | null; updatedAt: string; bytes: number }
 export interface PluginDoc extends PluginDocMeta { value: unknown }
+
+/**
+ * GET /api/terminals/:id/diagnostics (W2-G): what the daemon recorded about a thread and why the
+ * thread is in its state. The fields after `events` are absent on a daemon older than W2-G.
+ * Metadata only: no message body, no question text.
+ */
+export interface ThreadDiagnostics {
+  lifecycle: Record<string, unknown> | null;
+  captureFailure: { event_type: string; observed_at: string; occurrences: number; reason: string } | null;
+  /** Newest first, at most 200. */
+  events: { event_type: string; generation: string | null; turn_id: string | null; observed_at: string; status: string | null; disposition: string }[];
+  status?: 'queued' | 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
+  transport?: 'structured' | 'pty';
+  turnOpen?: boolean | null;
+  /** Null when the daemon could not read the process state. */
+  process?: { alive: boolean; transport: 'structured' | 'pty' } | null;
+  stall?: { stalledSince: string; lastFrameAt: string | null } | null;
+  park?: { state: 'parked' | 'woken' | 'capped'; provider: string; kind: string; resetsAt: number | null; wakeAt: number; attempts: number; parkedAt: number } | null;
+  pendingQuestion?: { source: 'live' | 'saved'; toolName: string | null; question: boolean; createdAt: string | null } | null;
+  /** The last 20 rows of the delivery outbox to and from the thread. `direction` is seen from this thread. */
+  deliveries?: { id: number; direction: 'to' | 'from'; peerId: string | null; peerLabel: string | null; kind: string; state: 'pending' | 'delivered' | 'dropped'; attempts: number; lastError: string | null; createdAt: string | null; deliveredAt: string | null }[];
+  explanation?: { rule: string; headline: string; since: string | null; reasons: string[]; nextSteps: { label: string; action: 'reset-status' | 'restart' | 'open-usage' | 'none' }[] } | null;
+}

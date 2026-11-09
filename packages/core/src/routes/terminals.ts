@@ -13,6 +13,18 @@ import { modelSupportsTools } from '../settings/model-capabilities.js';
 import { clientMessage } from '../http/client-message.js';
 import { createIdempotencyCache } from '../http/idempotency.js';
 import type { StallState } from '../runtime/stall-watchdog.js';
+import { explainThread, threadStatusOf, toDeliveryInfo, type DeliveryInfo } from '../status/explain.js';
+
+/**
+ * The optional sources of the diagnostics route, read from `app.locals`. The names are the wiring
+ * contract: `stallWatchdog` is set today (W1-D); the integrator sets `deliveryOutbox` to the
+ * `DeliveryOutbox` and `pendingQuestions` to `pendingQuestionsDb` bound to the database (W2-C).
+ */
+interface DiagnosticsSources {
+  stallWatchdog?: { get?(terminalId: string): StallState | null };
+  deliveryOutbox?: { list(filter: { terminalId?: string; limit?: number }): unknown[] };
+  pendingQuestions?: { get(terminalId: string): { created_at?: unknown } | null | undefined };
+}
 
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
@@ -158,10 +170,51 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
   });
 
+  // GET /api/terminals/:terminalId/diagnostics — what the daemon recorded about the thread, and why the
+  // thread is in its state (W2-G: the "Why is this thread in this state?" panel and `dispatch doctor`).
+  // The fields before W2-G stay: `lifecycle`, `captureFailure`, `events` (newest first, at most 200).
+  // Added: `status`, `process`, `stall`, `park`, `pendingQuestion`, `deliveries` (last 20, to and from
+  // the thread) and `explanation` (status/explain.ts). The route only reads. Metadata only: no message
+  // body, no question text, no limit banner.
+  // Each source outside the database is optional and comes from `app.locals`: `stallWatchdog` (W1-D),
+  // `deliveryOutbox` and `pendingQuestions` (W2-C). An absent source, or one that throws, gives null or [].
   router.get('/terminals/:terminalId/diagnostics', (req, res) => {
     const id = req.params.terminalId;
-    if (!sessionService.getTerminal(id)) return res.status(404).json({ error: 'Thread not found' });
-    return res.json(statusService?.diagnostics(id) ?? { lifecycle: null, captureFailure: null, events: [] });
+    const terminal = sessionService.getTerminal(id);
+    if (!terminal) return res.status(404).json({ error: 'Thread not found' });
+    const attempt = <T,>(fn: () => T | null | undefined): T | null => { try { return fn() ?? null; } catch { return null; } };
+    const base = statusService?.diagnostics(id)
+      ?? { lifecycle: null, captureFailure: null, events: [], status: threadStatusOf(terminal.status, null), turnOpen: null, park: null };
+    const sources = req.app.locals as DiagnosticsSources;
+
+    // The process. A Pretty thread asks its manager; a CLI thread asks the PTY manager.
+    const manager = attempt(() => (terminal.config?.transport === 'structured' ? sessionService.structuredManagerFor(terminal.type) : null));
+    const transport: 'structured' | 'pty' = manager ? 'structured' : 'pty';
+    const pty = (sessionService as unknown as { ptyManager?: { isAlive(id: string): boolean } }).ptyManager;
+    const alive = attempt(() => (manager ? manager.isAlive(id) : pty ? pty.isAlive(id) : null));
+    const process = alive === null ? null : { alive, transport };
+
+    const flag = attempt(() => sources.stallWatchdog?.get?.(id));
+    const stall = flag ? { stalledSince: new Date(flag.stalledSince).toISOString(), lastFrameAt: flag.lastFrameAt === null ? null : new Date(flag.lastFrameAt).toISOString() } : null;
+
+    // An open question of the live process, or one that W2-C saved across a restart.
+    const live = attempt(() => sessionService.getPendingPermission(id));
+    const saved = live ? null : attempt(() => sources.pendingQuestions?.get(id));
+    const pendingQuestion = live ? { source: 'live' as const, toolName: live.toolName ?? null, question: !!live.questions?.length, createdAt: null }
+      : saved ? { source: 'saved' as const, toolName: null, question: true, createdAt: typeof saved.created_at === 'string' ? saved.created_at : null }
+        : null;
+
+    const labelOf = (peer: string) => sessionService.getTerminal(peer)?.label ?? null;
+    const deliveries = (attempt(() => sources.deliveryOutbox?.list({ terminalId: id, limit: 20 })) ?? [])
+      .map((row) => toDeliveryInfo(row, id, labelOf))
+      .filter((d): d is DeliveryInfo => d !== null)
+      .slice(0, 20);
+
+    const explanation = explainThread({
+      status: base.status, turnOpen: base.turnOpen, processAlive: alive, transport,
+      lastEvents: base.events, stall: flag, park: base.park, pendingQuestion: pendingQuestion !== null, deliveries, now: Date.now(),
+    });
+    return res.json({ ...base, transport, process, stall, pendingQuestion, deliveries, explanation });
   });
 
   // POST /api/terminals/:terminalId/message { text } | { content } — send a structured
