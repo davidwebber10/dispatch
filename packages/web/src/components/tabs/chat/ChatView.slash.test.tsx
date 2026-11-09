@@ -1,4 +1,4 @@
-// The "/" menu and the effort picker in a Pretty thread, on top of David's model chip (4.2.0). Rebuild of PR #155.
+// The "/" menu and the effort picker in a Pretty thread, on top of the 4.2.0 model chip. Rebuild of PR #155.
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ChatView } from './ChatView';

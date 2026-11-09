@@ -38,13 +38,13 @@ connect, and the "Model switched" line. Nothing of that is duplicated here.
 | Effort route and service | `POST /terminals/:id/effort`, `SessionService.setThreadEffort`, manager `setEffort` (Claude `apply_flag_settings`; Codex: sent with every `turn/start`) |
 | Codex efforts by model | `GET /api/codex/model-efforts` (from `model/list`, 5 s limit, built-in table as fallback), `providers/codex-efforts.ts` |
 | Model switch on Codex brings the model's default effort | inside `setThreadModel` |
-| Overseer may change model (David's route refused every role) | `settingsTarget` allows `coordinator` |
+| Overseer may change model (the 4.2.0 route refused every role) | `settingsTarget` allows `coordinator` |
 | Chat-wide model and effort | `GET`/`PUT /api/endless/settings`, used by the Chat turn command |
 | Typed `/model` and `/effort` guard | `handleTypedSlash` in `POST /terminals/:id/message` |
 | Refusal notice in the thread | manager `postNotice` -> `system/settings_refused` -> an error line |
 | Codex CLI keeps the effort | `-c model_reasoning_effort` on new and resume |
 | "/" menu | `providers/slash-commands.ts` (shared), `composer/slash/*`, `PillComposer` `slash` slot, the + menu Commands row |
-| Chip | `ModelChip` (David's card plus an Effort section), used by threads, the Control Plane and Chat |
+| Chip | `ModelChip` (the 4.2.0 card plus an Effort section), used by threads, the Control Plane and Chat |
 
 ## Rounds 1 to 3 of #155, one by one
 

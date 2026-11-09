@@ -162,7 +162,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
   );
 }
 
-/** The Pretty composer's model chip for a thread (or an overseer): David's chip fed by modelControls.ts. */
+/** The Pretty composer's model chip for a thread (or an overseer): the 4.2.0 chip fed by modelControls.ts. */
 export function ModelSwitcher({ tab, busy }: { tab: Terminal; busy: boolean }) {
   const c = useThreadModelControls(tab);
   return (
