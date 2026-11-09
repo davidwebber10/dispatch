@@ -207,6 +207,8 @@ export class ClaudeLoginService {
 
   /** A waiting attempt is reused only for the same destination; a token must not change owner. */
   private async startLogin(accountLabel: string | null): Promise<LoginSession> {
+    // An attempt that is storing its token finishes first, so an old save cannot land after a new one.
+    if (this.live?.saving) await this.live.saving;
     const pending = this.live;
     if (pending && pending.session.status === 'awaiting_code' && pending.session.url && pending.accountLabel === accountLabel) {
       return { ...pending.session };
@@ -275,6 +277,10 @@ export class ClaudeLoginService {
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
     if (!live) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
+    if (live.saving) {
+      await live.saving;
+      return { ...live.session };
+    }
     if (live.session.status !== 'awaiting_code') {
       throw new Error(`login is ${live.session.status}, not awaiting a code`);
     }
@@ -282,7 +288,7 @@ export class ClaudeLoginService {
     if (!trimmed) throw new Error('code is required');
 
     // The CLI may have printed its token just before this code arrived.
-    const printed = extractToken(live.buf.slice(live.scanFrom));
+    const printed = this.printedToken(live);
     if (printed) {
       await this.finish(live, printed);
       return { ...live.session };
@@ -353,15 +359,20 @@ export class ClaudeLoginService {
   }
 
   /**
-   * A token the CLI printed while the login still waited for a code. A token at the very end of
-   * the output can be half of a split chunk, so it must have something after it. (The CLI prints
-   * more text after the token; a CLI that exits instead is handled by onExit.)
+   * A token the CLI printed while the login waited for a code, or null. A token at the very end
+   * of the output can be half of a split chunk, so it must have something after it. (The CLI
+   * prints more text after the token; a CLI that exits instead is handled by onExit.)
    */
-  private adoptPrintedToken(live: Live): void {
-    if (this.live !== live || live.session.status !== 'awaiting_code') return;
+  private printedToken(live: Live): string | null {
     const text = stripAnsi(live.buf.slice(live.scanFrom));
     const token = extractToken(text);
-    if (token && !text.endsWith(token)) void this.finish(live, token);
+    return token && !text.endsWith(token) ? token : null;
+  }
+
+  private adoptPrintedToken(live: Live): void {
+    if (this.live !== live || live.session.status !== 'awaiting_code') return;
+    const token = this.printedToken(live);
+    if (token) void this.finish(live, token);
   }
 
   /** Keep the token, one time, whichever path found it first. */

@@ -430,6 +430,52 @@ describe('one link: the code link', () => {
     expect(svc.status()).toBeNull();
   });
 
+  test('a code that arrives during the save waits for the save and reports it', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let stored = () => {};
+    svc.onAccountToken = () => new Promise<void>((r) => { stored = r; });
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    f.emit('\r\nsk-ant-oat01-SAVING\r\n');
+    await sleep(400);
+    const done = svc.submitCode('late');
+    await sleep(20);
+    stored();
+    expect((await done).status).toBe('complete');
+    expect(f.written).toEqual([]);
+  });
+
+  test('a code submitted between the two halves of a token does not save the first half', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-FIRSTHALF');
+    const done = svc.submitCode('c');
+    await sleep(300);
+    expect(svc.getToken()).toBeNull();
+    expect(f.written).toEqual(['c', '\r']);
+    f.emit('\r\nOAuth error: Invalid code\r\n');
+    expect((await done).status).toBe('awaiting_code');
+  });
+
+  test('a start during a save waits for that save before it replaces the attempt', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    let stored = () => {};
+    svc.onAccountToken = () => new Promise<void>((r) => { stored = r; });
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    seq.fakes[0].emit('\r\nsk-ant-oat01-OLD_SAVE\r\n');
+    await sleep(400);
+    const next = svc.startForAccount('Personal');
+    await sleep(50);
+    expect(seq.fakes).toHaveLength(1);
+    stored();
+    await sleep(20);
+    expect(seq.fakes).toHaveLength(2);
+    seq.fakes[1].emit(URL_LINE);
+    expect((await next).status).toBe('awaiting_code');
+  });
+
   test('a CLI that prints the link and exits at once is reported as failed', async () => {
     const f = fakePty();
     const svc = new ClaudeLoginService(dir, f.spawn as any);
