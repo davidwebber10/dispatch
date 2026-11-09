@@ -23,11 +23,11 @@ async function run(label, wss) {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/`);
   let received = 0;
-  let sock;
-  ws.on('upgrade', (res) => { sock = res.socket; });
+  let sock; let extHeader = '';
+  ws.on('upgrade', (res) => { sock = res.socket; extHeader = String(res.headers['sec-websocket-extensions'] ?? ''); });
   ws.on('message', () => { received++; });
   await new Promise((r) => ws.on('close', r));
-  const out = { label, extensions: ws.extensions || '(none)', framesReceived: received, payloadBytes, wireBytes: sock.bytesRead };
+  const out = { label, extensions: extHeader || '(none)', framesReceived: received, payloadBytes, wireBytes: sock.bytesRead };
   server.close();
   return out;
 }

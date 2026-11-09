@@ -21,11 +21,12 @@ describe('createClientWss: permessage-deflate', () => {
     const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}/`);
     let text = '';
     let socket: import('node:net').Socket | undefined;
-    ws.on('upgrade', (res) => { socket = res.socket; });
+    let header = '';
+    ws.on('upgrade', (res) => { socket = res.socket; header = String(res.headers['sec-websocket-extensions'] ?? ''); });
     ws.on('message', (d) => { text = d.toString(); });
     await new Promise((r, rej) => { ws.on('close', r); ws.on('error', rej); });
     expect(text).toBe(payload);
-    return { extensions: ws.extensions, text, wireBytes: socket?.bytesRead ?? -1 };
+    return { extensions: header, text, wireBytes: socket?.bytesRead ?? -1 };
   }
 
   it('the structured server negotiates permessage-deflate', async () => {
