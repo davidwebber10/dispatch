@@ -198,7 +198,7 @@ export function CommandPalette() {
             <ul ref={list} id="command-list" role="listbox" aria-label="Results" style={{ listStyle: 'none', margin: 0, padding: 6, maxHeight: '50vh', overflowY: 'auto' }}>
               {shown.length === 0 && <li style={{ padding: '10px 12px', fontSize: 13, color: 'var(--color-text-tertiary)' }}>No thread, project or command matches.</li>}
               {shown.map((r, i) => (
-                <li key={r.key} id={optionId(r.key)} role="option" aria-label={r.label} aria-selected={i === cursor} onMouseEnter={() => setCursor(i)} onClick={() => pick(r)}
+                <li key={r.key} id={optionId(r.key)} role="option" aria-label={r.label} aria-selected={i === cursor} onMouseMove={() => { if (i !== cursor) setCursor(i); }} onClick={() => pick(r)}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--radius-md)', cursor: 'pointer', background: i === cursor ? 'var(--color-elevated)' : 'transparent', color: 'var(--color-text-primary)', fontSize: 14 }}>
                   <span aria-hidden={r.key.startsWith('thread:') ? undefined : true} style={{ width: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-tertiary)' }}>{r.icon}</span>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
