@@ -600,9 +600,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Create WebSocket servers (noServer mode)
   // maxPayload: one client message over the cap closes that socket (the default of ws is 100 MiB).
-  const eventsWss = createClientWss(wsMaxPayload());
+  const eventsWss = createClientWss(wsMaxPayload(), { deflate: true }); // JSON text: permessage-deflate (ws/client-wss.ts)
   const terminalWss = createClientWss(wsTerminalMaxPayload()); // typed and pasted input comes through this one
-  const structuredWss = createClientWss(wsMaxPayload());
+  const structuredWss = createClientWss(wsMaxPayload(), { deflate: true });
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.
