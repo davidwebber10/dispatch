@@ -3,7 +3,8 @@ import type { ServerEvent } from '../api/events-socket';
 import type { PluginRow } from '../api/types';
 import { usePluginRegistry, isPluginView, pluginView } from './registry';
 import { useUI } from '../stores/ui';
-import { installSdk, notifyDocChanged, dispatchServerEvent, type DispatchSdk } from './sdk';
+import { createLegacySdk, installSdk, notifyDocChanged, dispatchServerEvent, type DispatchSdk } from './sdk';
+import { createPluginSdk, type DispatchSdkV2 } from './facade';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.1): loads every enabled
@@ -46,6 +47,12 @@ export async function loadPlugins(importer: Importer = defaultImporter): Promise
   if (isPluginView(view) && !pluginView(view)) useUI.getState().setView('workspace');
 }
 
+/** The SDK major a manifest asks for: `sdk` (what the daemon sends), or `sdkVersion`; 1 when it names none. */
+export function sdkVersionOf(m: PluginRow): number {
+  const v = m.sdk ?? (m as { sdkVersion?: unknown }).sdkVersion;
+  return typeof v === 'number' && Number.isFinite(v) ? v : 1;
+}
+
 /** Load (or load again) one plugin from its row. Never throws: a failure becomes the plugin's status. */
 export async function reloadPlugin(m: PluginRow, importer: Importer = defaultImporter): Promise<void> {
   const reg = usePluginRegistry.getState();
@@ -55,26 +62,18 @@ export async function reloadPlugin(m: PluginRow, importer: Importer = defaultImp
   if (!m.enabled) { reg.setStatus(m.id, { state: 'error', error: 'disabled', version: m.version, at }); return; }
   if (!m.web) { reg.setStatus(m.id, { state: 'ready', version: m.version, at }); return; }
   reg.setStatus(m.id, { state: 'loading', version: m.version, at });
-  // The bundle's `register` is bound to its own id: a copied plugin that still says the old id
-  // cannot register under another plugin (spec section 14), nor unregister one.
-  const base = installSdk();
-  // Event listeners the bundle adds are dropped with its contributions, so a reload (or a file save
-  // on a local plugin) never leaves a second copy of `activate`'s listeners behind.
-  const sdk: DispatchSdk = {
-    ...base,
-    id: m.id,
-    events: {
-      on: (type, handler) => { const off = base.events.on(type, handler); usePluginRegistry.getState().addCleanup(m.id, off); return off; },
-    },
-    register: (id, c) => {
-      if (id !== m.id) throw new Error(`The bundle registered as "${id}" but plugin.json says "${m.id}". A plugin registers under its own id.`);
-      base.register(id, c);
-    },
-    unregister: (id) => { if (id === m.id) base.unregister(id); else console.warn(`[plugin ${m.id}] tried to unregister "${id}"; ignored`); },
-  };
+  // The object is bound to the plugin's own id (spec section 14; engineering program 2026-11-09,
+  // W3-F): a copied plugin that still says the old id cannot register under another plugin, nor
+  // reach its storage. Listeners the bundle adds are dropped with its contributions, so a reload
+  // (or a file save on a local plugin) never leaves a second copy of `activate`'s listeners behind.
+  // `sdk: 2` in the manifest gets the narrow object; anything else the version 1 object, whose
+  // `api` and `stores` warn on first use.
+  // A version 1 bundle with no default export registers through the shared `window.dispatch`.
+  installSdk();
+  const sdk: DispatchSdk | DispatchSdkV2 = sdkVersionOf(m) >= 2 ? createPluginSdk(m.id) : createLegacySdk(m.id);
   const url = `${apiPath(`/plugins/${encodeURIComponent(m.id)}/${m.web}`)}?v=${m.stamp}`;
   try {
-    const mod = (await importer(url)) as { default?: (sdk: DispatchSdk) => unknown } | null;
+    const mod = (await importer(url)) as { default?: (sdk: DispatchSdk | DispatchSdkV2) => unknown } | null;
     if (mod && typeof mod.default === 'function') await mod.default(sdk);
     usePluginRegistry.getState().setStatus(m.id, { state: 'ready', version: m.version, at: Date.now() });
   } catch (e) {

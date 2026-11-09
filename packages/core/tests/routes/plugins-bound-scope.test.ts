@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -115,8 +115,14 @@ describe('a plugin reaches its own id only (W3-F)', () => {
     });
 
     it('the refusal is logged with both ids', async () => {
-      await request(app).get('/api/plugins/theirs/data').set(bound('mine')).expect(403);
-      expect(lines.join('\n')).toMatch(/plugin "mine".*"theirs"/);
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await request(app).get('/api/plugins/theirs/data').set(bound('mine')).expect(403);
+        await request(app).get('/api/plugins/theirs/data').set(bound('mine')).expect(403);
+        const said = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[plugins] refused'));
+        expect(said).toHaveLength(1); // once for the pair, not once for each request
+        expect(said[0]).toMatch(/plugin "mine".*"theirs"/);
+      } finally { log.mockRestore(); }
     });
   });
 
