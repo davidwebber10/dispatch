@@ -65,6 +65,7 @@ import { createWatchesRouter } from './routes/watches.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
+import { createBootstrapRouter } from './routes/bootstrap.js';
 
 /** Everything the `/api` routes need. `createApp` (tests) and `startServer` (daemon) both build one. */
 export interface ApiRouteDeps {
@@ -222,6 +223,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, useResetCredit: d.usageLimits.useResetCredit }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
+  app.use('/api/bootstrap', createBootstrapRouter(app)); // W2-H: the launch calls in one answer, each part read through its own route
 }
 
 /**
