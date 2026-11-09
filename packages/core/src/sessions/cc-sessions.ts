@@ -5,6 +5,7 @@ import { isInjectedUserEntry } from '../conversation/task-notification.js';
 import { SYNTHETIC_MODEL } from '../analytics/frames.js';
 import { resolveTranscriptPath, claudeProjectsRoot } from './transcript-path.js';
 import { encodeClaudeProjectDir } from '../platform/encode.js';
+import { readTail, readRange } from './tail-read.js';
 
 // Re-exported so callers can resolve a terminal's transcript without reaching
 // past sessions/ into the transcript-path module directly.
@@ -44,8 +45,12 @@ async function readCapped(file: string, size: number): Promise<{ text: string; t
   }
 }
 
-/** Cap on a transcript file we'll read whole for backfill (skip beyond — documented limitation). */
+/** The most of a transcript's tail that a backfill or a uuid lookup reads. */
 const MAX_BACKFILL_BYTES = 16 * 1024 * 1024;
+/** First tail read of a backfill; it widens ×4 (2, 8, 16 MB) until it holds `limit` events. */
+const BACKFILL_FIRST_BYTES = 2 * 1024 * 1024;
+/** First tail read of findNewestUnresolvedUserUuid; it widens ×4 (256 KB, 1, 4, 16 MB) until it finds the answer. */
+const UUID_FIRST_BYTES = 256 * 1024;
 
 /**
  * Convert a Claude Code transcript JSONL into a compact list of structured
@@ -66,6 +71,11 @@ const MAX_BACKFILL_BYTES = 16 * 1024 * 1024;
  * identity instead of a lossy content fingerprint.
  */
 export function backfillEventsFromTranscript(text: string, limit = 2000): unknown[] {
+  return capBackfill(collectBackfill(text), limit);
+}
+
+/** Every user and assistant event of `text`, oldest first, with no cap. */
+function collectBackfill(text: string): unknown[] {
   const out: unknown[] = [];
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
@@ -84,6 +94,11 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
     if (!hasContent) continue;
     out.push(typeof o.uuid === 'string' ? { type: o.type, message: msg, uuid: o.uuid } : { type: o.type, message: msg });
   }
+  return out;
+}
+
+/** The newest `limit` events, plus the synthetic `result` when the last one is a finished assistant turn. */
+function capBackfill(out: unknown[], limit: number): unknown[] {
   const capped = out.length > limit ? out.slice(out.length - limit) : out;
   const tail = capped[capped.length - 1] as { type: string; message: unknown } | undefined;
   if (tail && tail.type === 'assistant' && !messageHasToolUse(tail.message)) {
@@ -100,16 +115,22 @@ export function backfillEventsFromTranscript(text: string, limit = 2000): unknow
  * Synchronously read a claude session's transcript and return it as structured
  * backfill events (see backfillEventsFromTranscript). Resolves the standard
  * `~/.claude/projects/<enc-workDir>/<sessionId>.jsonl` path. Returns [] on any
- * error or when the file is missing / too large to read whole.
+ * error or when the file is missing.
+ *
+ * Reads the TAIL only (W1-E): 2 MB first, then wider (×4, to 16 MB at most) until the tail holds
+ * `limit` events or the read reached the start of the file. The answer is then the same as a full
+ * read gives: the newest `limit` events. A transcript over 16 MB used to get NO backfill; it now
+ * gets the events of its last 16 MB.
  */
 export function readSessionBackfill(workDir: string, sessionId: string, limit = 2000): unknown[] {
   try {
     const file = resolveTranscriptPath(workDir, sessionId);
     if (!file) return [];
-    const stat = fs.statSync(file);
-    if (stat.size > MAX_BACKFILL_BYTES) return []; // too large — skip backfill
-    const text = fs.readFileSync(file, 'utf-8');
-    return backfillEventsFromTranscript(text, limit);
+    for (let bytes = BACKFILL_FIRST_BYTES; ; bytes = Math.min(bytes * 4, MAX_BACKFILL_BYTES)) {
+      const { text, truncatedHead } = readTail(file, bytes);
+      const events = collectBackfill(text);
+      if (!truncatedHead || events.length >= limit || bytes >= MAX_BACKFILL_BYTES) return capBackfill(events, limit);
+    }
   } catch {
     return [];
   }
@@ -121,39 +142,48 @@ export function readSessionBackfill(workDir: string, sessionId: string, limit = 
  * `excludeUuids`. Used right after a turn's `result` fires (see structured/manager.ts's
  * 'message-source' emit + sessions/service.ts's listener) to identify the uuid Claude Code
  * just assigned to the human/coordinator turn that started it — the CLI never echoes that
- * uuid back over stdout, so a fresh disk read is the only way to learn it. Scans the WHOLE
- * transcript (cheap: this runs against the same files backfill already reads whole) and
- * keeps the LAST match, since `excludeUuids` only screens out turns already resolved.
+ * uuid back over stdout, so a fresh disk read is the only way to learn it. Keeps the LAST
+ * match, since `excludeUuids` only screens out turns already resolved. Reads the tail first
+ * (see the body); a match more than 16 MB from the end of the file is not found.
  * Returns undefined on any error (missing file, no match) — resolution is best-effort.
  */
 export function findNewestUnresolvedUserUuid(workDir: string, sessionId: string, excludeUuids: Set<string>): string | undefined {
   try {
     const file = resolveTranscriptPath(workDir, sessionId);
     if (!file) return undefined;
-    const text = fs.readFileSync(file, 'utf-8');
-    let found: string | undefined;
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      let o: any;
-      try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
-      if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || typeof o.uuid !== 'string') continue;
-      if (excludeUuids.has(o.uuid)) continue;
-      // A background-task completion OR a slash-command echo (/compact etc.) is written as a
-      // `user` line WITH real text and no isMeta flag (see conversation/task-notification.ts).
-      // If one lands after the turn being resolved, it would be picked as "the newest human
-      // turn" and the source tag would attach to its uuid instead of the real message.
-      if (isInjectedUserEntry(o)) continue;
-      const content = o.message?.content;
-      const hasRealText = typeof content === 'string' ? content.trim().length > 0
-        : Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)
-        : false;
-      if (hasRealText) found = o.uuid; // keep scanning — we want the newest match
+    // The turn that just ended is at the end of the file, so the tail has the answer (W1-E). A match in
+    // the tail IS the newest match of the file. With no match, the read widens ×4, to 16 MB at most.
+    for (let bytes = UUID_FIRST_BYTES; ; bytes = Math.min(bytes * 4, MAX_BACKFILL_BYTES)) {
+      const { text, truncatedHead } = readTail(file, bytes);
+      const found = newestUnresolvedUserUuidIn(text, excludeUuids);
+      if (found || !truncatedHead || bytes >= MAX_BACKFILL_BYTES) return found;
     }
-    return found;
   } catch {
     return undefined;
   }
+}
+
+function newestUnresolvedUserUuidIn(text: string, excludeUuids: Set<string>): string | undefined {
+  let found: string | undefined;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let o: any;
+    try { o = JSON.parse(trimmed); } catch { continue; } // partial/garbled line
+    if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || typeof o.uuid !== 'string') continue;
+    if (excludeUuids.has(o.uuid)) continue;
+    // A background-task completion OR a slash-command echo (/compact etc.) is written as a
+    // `user` line WITH real text and no isMeta flag (see conversation/task-notification.ts).
+    // If one lands after the turn being resolved, it would be picked as "the newest human
+    // turn" and the source tag would attach to its uuid instead of the real message.
+    if (isInjectedUserEntry(o)) continue;
+    const content = o.message?.content;
+    const hasRealText = typeof content === 'string' ? content.trim().length > 0
+      : Array.isArray(content) ? content.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)
+      : false;
+    if (hasRealText) found = o.uuid; // keep scanning — we want the newest match
+  }
+  return found;
 }
 
 /**
@@ -194,60 +224,116 @@ export interface TranscriptTokenStats {
  * logic lives in one place.
  */
 export function sumTranscriptTokens(raw: string): TranscriptTokenStats {
-  let model = '';
-  let messageCount = 0;
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheCreationTokens = 0;
+  const totals = newTokenTotals();
+  for (const line of raw.split('\n')) addTokenLine(totals, line);
+  return tokenStats(totals);
+}
+
+interface TokenTotals {
+  model: string;
+  messageCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   // Claude Code writes one JSONL line per content block (thinking/text/tool_use) within a
   // single assistant message, repeating the identical whole-message `usage` on every line.
   // Dedup by message.id so a message split across N lines is only counted once.
-  const seenMessageIds = new Set<string>();
+  seenMessageIds: Set<string>;
+}
 
-  for (const line of raw.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const entry = JSON.parse(line);
-      const msg = entry.message;
-      if (!msg || typeof msg !== 'object') continue;
-      if (msg.model && msg.model !== SYNTHETIC_MODEL) model = msg.model;
-      if (msg.usage) {
-        if (msg.id) {
-          if (seenMessageIds.has(msg.id)) continue;
-          seenMessageIds.add(msg.id);
-        }
-        const u = msg.usage;
-        inputTokens += u.input_tokens || 0;
-        outputTokens += u.output_tokens || 0;
-        cacheReadTokens += u.cache_read_input_tokens || 0;
-        cacheCreationTokens += u.cache_creation_input_tokens || 0;
-        messageCount++;
+function newTokenTotals(): TokenTotals {
+  return { model: '', messageCount: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, seenMessageIds: new Set() };
+}
+
+/** Adds one transcript line to `t`. `remember: false` counts the line and leaves the seen-id set as it is. */
+function addTokenLine(t: TokenTotals, line: string, remember = true): void {
+  if (!line.trim()) return;
+  try {
+    const entry = JSON.parse(line);
+    const msg = entry.message;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.model && msg.model !== SYNTHETIC_MODEL) t.model = msg.model;
+    if (msg.usage) {
+      if (msg.id) {
+        if (t.seenMessageIds.has(msg.id)) return;
+        if (remember) t.seenMessageIds.add(msg.id);
       }
-    } catch { /* partial/garbled line */ }
-  }
+      const u = msg.usage;
+      t.inputTokens += u.input_tokens || 0;
+      t.outputTokens += u.output_tokens || 0;
+      t.cacheReadTokens += u.cache_read_input_tokens || 0;
+      t.cacheCreationTokens += u.cache_creation_input_tokens || 0;
+      t.messageCount++;
+    }
+  } catch { /* partial/garbled line */ }
+}
 
+function tokenStats(t: TokenTotals): TranscriptTokenStats {
   return {
-    model,
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    totalTokens: inputTokens + outputTokens + cacheReadTokens,
-    messageCount,
+    model: t.model,
+    inputTokens: t.inputTokens,
+    outputTokens: t.outputTokens,
+    cacheReadTokens: t.cacheReadTokens,
+    cacheCreationTokens: t.cacheCreationTokens,
+    totalTokens: t.inputTokens + t.outputTokens + t.cacheReadTokens,
+    messageCount: t.messageCount,
   };
 }
+
+/**
+ * Token totals per transcript file, kept between reads (W1-E). A transcript only grows, so each read
+ * sums only the bytes that were added since the last one. The totals cover the file up to its last
+ * newline; a last line with no newline yet is counted for that read only, and read again next time.
+ * A file that got smaller, or that is a different file now (another inode), starts again from zero.
+ * The cache holds the newest 200 files.
+ */
+export class TokenTotalsCache {
+  private entries = new Map<string, { ino: number; offset: number; totals: TokenTotals }>();
+  constructor(private maxEntries = 200) {}
+
+  /** Throws when the file cannot be read. */
+  read(file: string): TranscriptTokenStats {
+    const stat = fs.statSync(file);
+    let entry = this.entries.get(file);
+    if (!entry || stat.size < entry.offset || stat.ino !== entry.ino) entry = { ino: stat.ino, offset: 0, totals: newTokenTotals() };
+    // Newest last, so the oldest entry is the first key.
+    this.entries.delete(file);
+    this.entries.set(file, entry);
+    if (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value as string);
+
+    if (stat.size === entry.offset) return tokenStats(entry.totals);
+    const added = readRange(file, entry.offset, stat.size);
+    const lastNewline = added.lastIndexOf(0x0a);
+    if (lastNewline >= 0) {
+      for (const line of added.toString('utf8', 0, lastNewline).split('\n')) addTokenLine(entry.totals, line);
+      entry.offset += lastNewline + 1;
+    }
+    if (lastNewline === added.length - 1) return tokenStats(entry.totals);
+    // The file ends with a line that has no newline yet. The full read counted it when it parsed, so
+    // count it for this answer; the kept totals do not include it.
+    const withLast: TokenTotals = { ...entry.totals };
+    addTokenLine(withLast, added.toString('utf8', lastNewline + 1), false);
+    return tokenStats(withLast);
+  }
+
+  clear(): void { this.entries.clear(); }
+}
+
+/** The cache that readTerminalTokenUsage uses. Exported for tests. */
+export const tokenTotalsCache = new TokenTotalsCache();
 
 /**
  * Read a terminal's transcript by workDir + session id and sum its token usage (see
  * sumTranscriptTokens). Resolves the same `~/.claude/projects/<enc-workDir>/<id>.jsonl`
  * path as readSessionBackfill. Returns null when the file is missing/unreadable.
+ * Reads only the bytes added since the last call for that file (TokenTotalsCache).
  */
 export function readTerminalTokenUsage(workDir: string, sessionId: string): TranscriptTokenStats | null {
   try {
     const file = resolveTranscriptPath(workDir, sessionId);
     if (!file) return null;
-    return sumTranscriptTokens(fs.readFileSync(file, 'utf-8'));
+    return tokenTotalsCache.read(file);
   } catch {
     return null;
   }
