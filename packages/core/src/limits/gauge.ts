@@ -25,6 +25,7 @@ const WINDOW_NAME: Record<string, string> = {
 };
 import { forecast, type Forecast } from './forecast.js';
 import type { ResetCredits } from './codex-poll.js';
+import { nextReadAfter, type UsageReadResult } from './claude-usage.js';
 
 const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude', codex: 'Codex' };
 const WEEKLY_KINDS = new Set(['weekly', 'fable', 'opus', 'sonnet']);
@@ -38,8 +39,16 @@ export function accountIdOf(config: string | null | undefined): string {
   try { const c = JSON.parse(config || '{}'); return typeof c?.accountId === 'string' && c.accountId ? c.accountId : 'cli'; } catch { return 'cli'; }
 }
 const MIN = 60_000;
-/** How long an added Claude account waits after a failed usage read before it tries again. */
+/** While an added Claude account's usage read waits (see nextReadAfter), its tiny turn runs at most this often. */
 const CLAUDE_READ_BACKOFF_MS = 30 * MIN;
+/**
+ * What an account's sign-in can do for the usage figures (W1-H, 2026-11-09):
+ * `sign-in-needed` (401, or a 403 that says expired or revoked: a new sign-in repairs it),
+ * `not-available` (403 for scope: the sign-in runs threads but may not read usage; the tiny turn
+ * gives the figures), `rate-limited` (429: the last figures stay), `ok`.
+ */
+export type UsageAccessState = 'ok' | 'sign-in-needed' | 'not-available' | 'rate-limited';
+export interface UsageAccess { state: UsageAccessState; /** When the usage read last worked (ms), or null. */ lastOkAt: number | null }
 const DEFAULTS = {
   /** At most one broadcast per this gap (trailing edge). A pause or settings change skips the wait. */
   throttleMs: 5000,
@@ -135,7 +144,9 @@ export interface GaugeDeps {
   /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
   probeClaude?: (accountId?: string) => Promise<boolean>;
   /** Read one Claude account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
-  readClaudeUsage?: (accountId?: string) => Promise<boolean>;
+  readClaudeUsage?: (accountId?: string) => Promise<UsageReadResult | boolean>;
+  /** A short stamp of one account's token, never the token (null: not known, as for `cli`). A change ends a 401 or 403 wait at once. */
+  claudeTokenStamp?: (accountId: string) => string | null;
   now?: () => number;
   /** The zone the push shows the reset time in. Default: this machine. */
   zone?: string;
@@ -404,8 +415,16 @@ export class UsageGauge {
   private codexPolling = new Set<string>();
   private lastClaudeProbe = new Map<string, number>();
   private lastClaudeRead = new Map<string, number>();
-  /** An added account whose usage read failed: no read before this time (its token cannot read usage, the endpoint answers 429). */
-  private claudeReadAfter = new Map<string, number>();
+  /**
+   * An account whose usage read failed: no read before `until` (nextReadAfter; the CLI login too).
+   * `auth`: a 401 or 403, which a changed token (`stamp`) ends at once. `probe`: the tiny turn still runs meanwhile.
+   */
+  private claudeWait = new Map<string, { until: number; auth: boolean; stamp: string | null; probe: boolean }>();
+  /** Failed reads in a row, per account. A good read clears it. */
+  private claudeFailures = new Map<string, number>();
+  private claudeAccess = new Map<string, UsageAccess>();
+  /** Accounts the owner asked to check again: read on the next pass, whatever the wait. */
+  private claudeForced = new Set<string>();
   private claudeReading = new Set<string>();
   private claudeProbing = new Set<string>();
 
@@ -425,18 +444,28 @@ export class UsageGauge {
       for (const a of this.accountRefs()) {
         if (a.provider !== 'claude-code' || this.claudeReading.has(a.accountId)) continue;
         const id = a.accountId;
-        if (!active && this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', id), id)) continue;
-        if (now - (this.lastClaudeRead.get(id) ?? -Infinity) < this.o.claudeUsageMs) continue;
-        if (now < (this.claudeReadAfter.get(id) ?? -Infinity)) continue;
+        const hasFigures = !!this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', id), id);
+        const forced = this.claudeForced.delete(id);
+        const stamp = this.d.claudeTokenStamp?.(id) ?? null;
+        const wait = this.claudeWait.get(id);
+        if (wait && !forced) {
+          if (wait.auth && stamp !== null && stamp !== wait.stamp) {
+            // The account was signed in again (its token changed): read it at once, with a fresh count.
+            this.claudeWait.delete(id); this.claudeFailures.delete(id); this.lastClaudeRead.delete(id);
+          } else if (now < wait.until) {
+            // No read inside the wait. The tiny turn keeps the figures: the CLI login at its usual pace, an added account every 30 minutes.
+            if (wait.probe && (active || !hasFigures)) this.fallbackProbe(now, id, id === 'cli' ? this.o.claudeStaleMs : Math.max(this.o.claudeStaleMs, CLAUDE_READ_BACKOFF_MS));
+            continue;
+          }
+        }
+        if (!forced) {
+          if (!active && hasFigures) continue;
+          if (now - (this.lastClaudeRead.get(id) ?? -Infinity) < this.o.claudeUsageMs) continue;
+        }
         this.lastClaudeRead.set(id, now);
         this.claudeReading.add(id);
         void this.d.readClaudeUsage(id).catch(() => false)
-          .then((ok) => {
-            if (ok) { this.claudeReadAfter.delete(id); return; }
-            // An added account's token may only run a model: back off its read, and take the tiny turn as it.
-            if (id !== 'cli') this.claudeReadAfter.set(id, now + CLAUDE_READ_BACKOFF_MS);
-            this.fallbackProbe(now, id);
-          })
+          .then((r) => this.claudeReadDone(id, r, now, stamp))
           .finally(() => { this.claudeReading.delete(id); });
       }
       return;
@@ -444,16 +473,62 @@ export class UsageGauge {
     if (active) this.fallbackProbe(now, 'cli');
   }
 
-  /** The tiny Claude turn as one account, only when its figures are stale: at most one per claudeStaleMs per account. */
-  private fallbackProbe(now: number, accountId = 'cli'): void {
+  /** One usage read ended: keep what the sign-in can do, and on a failure set the wait by its reason (nextReadAfter). */
+  private claudeReadDone(id: string, r: UsageReadResult | boolean, now: number, stamp: string | null): void {
+    // A reader that answers true or false (before W1-H): false is a failure with no reason, and claims no state.
+    const known = typeof r !== 'boolean';
+    const res: UsageReadResult = known ? r : r ? { ok: true } : { ok: false, reason: 'network' };
+    const prev = this.claudeAccess.get(id);
+    if (res.ok) {
+      this.claudeWait.delete(id);
+      this.claudeFailures.delete(id);
+      if (known) this.claudeAccess.set(id, { state: 'ok', lastOkAt: this.now() });
+      return;
+    }
+    const failures = (this.claudeFailures.get(id) ?? 0) + 1;
+    this.claudeFailures.set(id, failures);
+    // A refused sign-in stays said through a later 429 or network failure: only a good read or a 401/403 changes it.
+    const refused = prev?.state === 'sign-in-needed' || prev?.state === 'not-available';
+    const state: UsageAccessState | null = !known ? null
+      : res.reason === 'unauthorized' ? 'sign-in-needed'
+      : res.reason === 'forbidden' ? (res.detail === 'expired' ? 'sign-in-needed' : 'not-available')
+      : res.reason === 'rate-limited' && !refused ? 'rate-limited'
+      : null;
+    if (state) this.claudeAccess.set(id, { state, lastOkAt: prev?.lastOkAt ?? null });
+    const current = this.claudeAccess.get(id)?.state;
+    // A refused token cannot run a turn either, so an added account takes none. The CLI login does: the turn makes the CLI renew its token.
+    const probe = !(current === 'sign-in-needed' && id !== 'cli');
+    this.claudeWait.set(id, { until: nextReadAfter(res, failures, now), auth: res.reason === 'unauthorized' || res.reason === 'forbidden', stamp, probe });
+    if (probe) this.fallbackProbe(now, id);
+  }
+
+  /** What one Claude account's sign-in can do for the usage figures, or null when no read has said yet. Never the token. */
+  claudeUsageAccess(accountId = 'cli'): UsageAccess | null {
+    const a = this.claudeAccess.get(accountId);
+    return a ? { ...a } : null;
+  }
+
+  /** The owner pressed "Check again": read this account now, inside its wait and with nothing active. */
+  checkClaudeNow(accountId = 'cli'): void {
+    this.claudeForced.add(accountId);
+    try { this.maybeProbeClaude(); } catch (err) { console.warn('[usage-gauge] account read failed:', err); }
+  }
+
+  /** The tiny Claude turn as one account, only when its figures are stale: at most one per `minGapMs` (claudeStaleMs) per account. */
+  private fallbackProbe(now: number, accountId = 'cli', minGapMs = this.o.claudeStaleMs): void {
     if (!this.d.probeClaude) return;
-    if (now - (this.lastClaudeProbe.get(accountId) ?? -Infinity) < this.o.claudeStaleMs) return;
+    if (now - (this.lastClaudeProbe.get(accountId) ?? -Infinity) < minGapMs) return;
     const s = this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', accountId), accountId);
     if (s && now - s.asOf < this.o.claudeStaleMs) return;
     if (this.claudeProbing.has(accountId)) return;
     this.lastClaudeProbe.set(accountId, now);
     this.claudeProbing.add(accountId);
-    void this.d.probeClaude(accountId).catch(() => false).finally(() => { this.claudeProbing.delete(accountId); });
+    const turn = this.d.probeClaude(accountId).catch(() => false);
+    void turn.finally(() => { this.claudeProbing.delete(accountId); });
+    // A turn that worked made the CLI renew its own token: a 401 wait on the CLI login ends here, not 6 hours later.
+    void turn.then((ok) => {
+      if (ok && accountId === 'cli' && this.claudeAccess.get('cli')?.state === 'sign-in-needed' && this.claudeWait.get('cli')?.auth) this.claudeWait.delete('cli');
+    });
   }
 
   /**
