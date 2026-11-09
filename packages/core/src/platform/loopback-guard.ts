@@ -10,9 +10,11 @@ import net from 'net';
  * Linux and WSL refuse the extra bind next to the wildcard one, and they refuse it to the
  * other process too, so there a failed guard is expected and quiet.
  */
-export async function guardLoopback(server: http.Server, port: number, warn: (msg: string) => void = (m) => console.warn(m)): Promise<net.Server[]> {
+export async function guardLoopback(server: http.Server, port: number, warn: (msg: string) => void = (m) => console.warn(m), skip: string[] = []): Promise<net.Server[]> {
   const guards: net.Server[] = [];
   for (const host of ['127.0.0.1', '::1']) {
+    // `skip`: the daemon itself listens on this address (DISPATCH_BIND), so there is nothing to guard and no other process to report.
+    if (skip.includes(host)) continue;
     const guard = net.createServer((socket) => { server.emit('connection', socket); });
     try {
       await new Promise<void>((resolve, reject) => {

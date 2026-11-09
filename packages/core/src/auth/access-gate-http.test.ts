@@ -272,7 +272,8 @@ describe('sign-in limiter under a flood of callers', () => {
     const { app, getToken } = build();
     const server = app.listen(0);
     try {
-      const login = (xff: string, token: string) => request(server).post('/api/access/login')
+      const url = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+      const login = (xff: string, token: string) => request(url).post('/api/access/login')
         .set('Host', 'localhost:3456').set('X-Forwarded-For', xff).send({ token });
       for (let i = 0; i < 10; i++) expect((await login('203.0.113.9', 'nope')).status).toBe(401);
       expect((await login('203.0.113.9', 'nope')).status).toBe(429);
