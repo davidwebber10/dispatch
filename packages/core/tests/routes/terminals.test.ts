@@ -4,6 +4,7 @@ import { createApp } from '../../src/server.js';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db/schema.js';
 import * as terminalsDb from '../../src/db/terminals.js';
+import { ConversationReader } from '../../src/conversation/reader.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -140,6 +141,55 @@ describe('terminal routes', () => {
     terminalsDb.create(db, { id: 'sh-c', sessionId, type: 'shell', label: 's', skipPermissions: false });
     const r = await request(app).get('/api/terminals/sh-c/conversation').expect(200);
     expect(r.body.unsupported).toBe(true);
+  });
+
+  it('a reader error answers 500 with a client message, not a hung request', async () => {
+    terminalsDb.create(db, { id: 'cc-err', sessionId, type: 'claude-code', label: 't', skipPermissions: true, workingDir: '/tmp/proj-err', externalId: 'sess-err' });
+    const boom = Object.assign(new Error("EIO: i/o error, read '/Users/someone/.claude/projects/x/sess-err.jsonl'"), { code: 'EIO' });
+    const page = vi.spyOn(ConversationReader.prototype, 'page').mockRejectedValue(boom);
+    const search = vi.spyOn(ConversationReader.prototype, 'search').mockRejectedValue(boom);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const r = await request(app).get('/api/terminals/cc-err/conversation?limit=5').timeout(5000);
+      expect(r.status).toBe(500);
+      expect(r.body).toEqual({ error: 'Could not read the conversation' }); // no path, no system text
+      expect(page).toHaveBeenCalledWith('cc-err', { since: undefined, before: undefined, beforeUuid: undefined, limit: 5 });
+
+      const s = await request(app).get('/api/terminals/cc-err/conversation/search?q=x').timeout(5000);
+      expect(s.status).toBe(500);
+      expect(s.body).toEqual({ error: 'Could not search the conversation' });
+      expect(log).toHaveBeenCalledTimes(2); // the detail stays in the daemon log
+    } finally {
+      page.mockRestore(); search.mockRestore(); log.mockRestore();
+    }
+  });
+
+  it('GET /conversation/search finds text in a Claude transcript, newest first; a Codex thread gives no match', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-conv-search-'));
+    const oldHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const wd = '/tmp/proj-search';
+      terminalsDb.create(db, { id: 'cc-s', sessionId, type: 'claude-code', label: 't', skipPermissions: true, workingDir: wd, externalId: 'sess-s' });
+      terminalsDb.create(db, { id: 'cx-s', sessionId, type: 'codex', label: 't', skipPermissions: true, workingDir: wd, externalId: 'sess-s' });
+      const dir = path.join(home, '.claude', 'projects', wd.replace(/\//g, '-'));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'sess-s.jsonl'),
+        '{"type":"user","message":{"role":"user","content":"find the Marker here"},"uuid":"u1"}\n' +
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"nothing"}]},"uuid":"u2"}\n' +
+        '{"type":"user","message":{"role":"user","content":"a second marker"},"uuid":"u3"}\n');
+      const r = await request(app).get('/api/terminals/cc-s/conversation/search?q=MARKER').expect(200);
+      expect(r.body.matches).toEqual([
+        { line: 2, kind: 'user', snippet: 'a second marker' },
+        { line: 0, kind: 'user', snippet: 'find the Marker here' },
+      ]);
+      expect((await request(app).get('/api/terminals/cc-s/conversation/search?q=').expect(200)).body).toEqual({ matches: [] });
+      expect((await request(app).get('/api/terminals/cx-s/conversation/search?q=marker').expect(200)).body).toEqual({ matches: [] });
+      expect((await request(app).get('/api/terminals/nope/conversation/search?q=marker').expect(200)).body).toEqual({ matches: [] });
+    } finally {
+      if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   describe('GET /api/terminals/:terminalId/scrollback', () => {

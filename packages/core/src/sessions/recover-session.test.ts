@@ -48,24 +48,64 @@ function coordinator(): { svc: SessionService; terminalId: string } {
 }
 
 describe('getConversation transcript recovery for a coordinator with no external_id', () => {
-  it('does NOT adopt an unrelated session when multiple transcripts exist (ambiguous → empty)', () => {
+  it('does NOT adopt an unrelated session when multiple transcripts exist (ambiguous → empty)', async () => {
     const { svc, terminalId } = coordinator();
     // A busy project dir: the coordinator never ran (no external_id), and two UNRELATED
     // claude sessions live in the dir (e.g. the user's own terminal sessions). Picking the
     // newest would render a conversation the coordinator never owned (issue #7).
     writeJsonl('older-session', userLine('older unrelated turn', 'o1'));
     writeJsonl('newer-unrelated-session', userLine('newest unrelated turn', 'n1'));
-    const conv = svc.getConversation(terminalId, { limit: 10 });
+    const conv = await svc.getConversation(terminalId, { limit: 10 });
     expect(conv.items).toEqual([]); // no misattributed transcript
     // …and it must not claim someone else's session id as this terminal's identity.
     expect(terminalsDb.getById(db, terminalId)?.external_id).toBeNull();
   });
 
-  it('still recovers + persists the session id when exactly one transcript exists (unambiguous)', () => {
+  it('still recovers + persists the session id when exactly one transcript exists (unambiguous)', async () => {
     const { svc, terminalId } = coordinator();
     writeJsonl('the-only-session', userLine('the real turn', 'r1'));
-    const conv = svc.getConversation(terminalId, { limit: 10 });
+    const conv = await svc.getConversation(terminalId, { limit: 10 });
     expect(conv.items.map((i) => i.text)).toEqual(['the real turn']);
     expect(terminalsDb.getById(db, terminalId)?.external_id).toBe('the-only-session');
+  });
+});
+
+// W2-B: getConversation is async now. The two in-process callers that read the last assistant text
+// stay synchronous and read a bounded tail of the same transcript (SessionService.conversationTail).
+describe('the synchronous transcript fallback of finalOutput and agentOutputText', () => {
+  const assistantLine = (text: string, uuid: string) =>
+    JSON.stringify({ type: 'assistant', uuid, timestamp: '2026-01-01T00:00:01Z', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+
+  function thread(lines: string[]): SessionService {
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'acme', workingDir: WORKDIR });
+    terminalsDb.create(db, { id: 'w1', sessionId: 's1', type: 'claude-code', label: 'worker' });
+    terminalsDb.updateExternalId(db, 'w1', 'sess-w1');
+    fs.writeFileSync(path.join(projectsDir(), 'sess-w1.jsonl'), lines.join('\n') + '\n');
+    return new SessionService(db, fakePty, path.join(tmp, 'mcp.json'));
+  }
+
+  it('finalOutput gives the last assistant text of the transcript when no harness runs the thread', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 120; i++) lines.push(userLine(`question ${i}`, `u${i}`), assistantLine(`answer ${i}`, `a${i}`));
+    const svc = thread(lines);
+    const readFile = vi.spyOn(fs, 'readFileSync');
+    expect(svc.finalOutput('w1')).toBe('answer 119');
+    expect(readFile.mock.calls.filter(([file]) => String(file).endsWith('sess-w1.jsonl'))).toEqual([]); // a tail read, not a full read
+  });
+
+  it('agentOutputText joins the assistant texts of the newest 500 lines, as the full read did', () => {
+    const lines: string[] = [];
+    for (let i = 0; i < 400; i++) lines.push(userLine(`q${i}`, `u${i}`), assistantLine(`a${i}`, `a${i}`));
+    const svc = thread(lines);
+    // 800 lines: the newest 500 are lines 300..799, so the first assistant text is a150.
+    expect((svc as any).agentOutputText('w1', 30)).toBe('a150\n\na151\n\na152\n\na153\n\na154\n\n…');
+    expect((svc as any).agentOutputText('missing')).toBe('');
+  });
+
+  it('a thread with no transcript gives an empty final output', () => {
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'acme', workingDir: WORKDIR });
+    terminalsDb.create(db, { id: 'w2', sessionId: 's1', type: 'claude-code', label: 'worker' });
+    const svc = new SessionService(db, fakePty, path.join(tmp, 'mcp.json'));
+    expect(svc.finalOutput('w2')).toBe('');
   });
 });
