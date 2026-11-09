@@ -61,6 +61,9 @@ import { appPath, href } from './lib/basePath';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
+import { loadBootstrap } from './lib/bootstrap';
+
+void loadBootstrap(); // W2-H: one launch request. Here, not in the boot effect: the effects of the child components run first.
 
 const AnalyticsView = lazy(() => import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 
