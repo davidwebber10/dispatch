@@ -1,30 +1,35 @@
 ---
 title: Dispatch security overview
 date: 2026-10-22
-status: final status recorded 2026-11-04 (the review itself was read-only; no code was changed by it)
-base: origin/main 9feba0cb (v3.3.2) for the review; statuses checked against origin/main 778d03a0 (v3.10.5)
-related: issue 94 (closed 2026-11-04), PRs 102 and 103 (spec docs/superpowers/specs/2026-10-22-network-exposure-design.md)
-sensitivity: every "fix now" item has shipped, so this file may be published; the items still open are listed in the status section
+status: final status recorded 2026-11-09 (the review itself was read-only; no code was changed by it)
+base: origin/main 9feba0cb (v3.3.2) for the review; most statuses checked against origin/main 778d03a0 (v3.10.5); SEC-05, SEC-20, SEC-21 and SEC-23 rechecked against origin/main dcb5fa68 (v4.4.0)
+related: issue 94 (closed 2026-11-04), PRs 102, 103, 124 and 126 (spec docs/superpowers/specs/2026-10-22-network-exposure-design.md)
+sensitivity: every "fix now" item has shipped, so this file may be published; what is still open is listed in the status section, and what this review did not cover is in section 11
 ---
 
 # Dispatch security overview
 
-## Status as of 2026-11-04
+## Status as of 2026-11-09
 
-The review found 29 confirmed problems and 5 suspected ones. Almost all are now
-fixed or accepted by the owner. A few small parts are still open.
+The review found 29 confirmed problems and 5 suspected ones. All 29 are now fixed
+or accepted by the owner, and none is still open. The one security item left is
+WSL sign-in (R-2), described below. Features added after the review were not
+reviewed: see section 11.
 
 **Read this first.** Sections 1 to 5 and 9 describe the app as it was at v3.3.2,
 when the review ran. Their words "fix now" and "fix soon" are the ratings of that
 day. The **Status** line under each finding and the table in section 6 give the
-current state. The current release is v3.10.5.
+current state. The current release is v4.4.0. SEC-05, SEC-20, SEC-21 and SEC-23
+were rechecked against the code at v4.4.0. The other findings were last checked
+at v3.10.5 and were not retested.
 
-**Fixed (20 of 29):** SEC-01, 02, 03, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16,
-17, 18, 19, 24, 25, 26, 29. The biggest ones: the network gate (SEC-01, SEC-03,
+**Fixed (21 of 29):** SEC-01, 02, 03, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16,
+17, 18, 19, 21, 24, 25, 26, 29. The biggest ones: the network gate (SEC-01, SEC-03,
 SEC-09, SEC-18) shipped in v3.4.0. Names-only secrets, safer file routes, click to
 load images, the Content-Security-Policy and "Update follows release tags" shipped
 in v3.4.1. Thread reports and worker output are now marked as data (SEC-07,
-SEC-25) in v3.8.0.
+SEC-25) in v3.8.0. The push subscription list with Revoke (SEC-21) shipped in
+v3.10.6.
 
 **Accepted by the owner (6 of 29):** SEC-04 (the Doppler token stays in every
 thread), SEC-06 (agents run with approvals off), SEC-20 (threads may add
@@ -35,17 +40,20 @@ purpose (`nohup`, `setsid`) can outlive a stopped thread, the tail of
 `update.log` that `GET /api/update/progress` returns, process id reuse in a 200 ms
 window, and the same-machine proxy that adds no header (R-6).
 
-**Still open (3 of 29, each partly fixed):**
+**Partly fixed, with the rest accepted by the owner (2 of 29):**
 
-- **SEC-05, stage 2.** Each thread has its own key since v3.5.0, and the daemon
-  enforces the rules for keyed calls. A call with no key still works from this
-  computer. Stage 2 would refuse it. This is the largest open item, and it only
-  matters for an agent that was already steered by hostile text.
-- **SEC-21.** The push address check shipped. There is still no list of push
-  subscriptions to view or revoke.
-- **SEC-23.** The size and count limits shipped. Back-pressure on socket sends, a
-  cap per spawn tree, caps on watches and push subscriptions, and an
-  `uncaughtException` handler are not built.
+- **SEC-05.** Each thread has its own key since v3.5.0, and the daemon enforces the
+  rules for keyed calls. Since v3.10.6 (PR 126), a call with no credential is
+  refused on the dangerous actions: acting as the user, answering a held tool
+  call, starting threads, and changing integrations. The owner chose this middle
+  option on 2026-11-04 and dropped stage 2 (no credential, no access anywhere) as
+  too restrictive. It is a drift check, not a lock: a program on this computer can
+  still read the token file or set the header by hand.
+- **SEC-23.** The size and count limits shipped in v3.8.0. Back-pressure on socket
+  sends, the run-stream cap, caps on watches and push subscriptions, and the
+  `uncaughtException` handler shipped in v3.10.6 (PR 124). Only the cap per spawn
+  tree was not built. The owner accepted that on 2026-11-09, because the spawn
+  depth limit and the cap of 60 live threads per project remain.
 
 **Suspected findings:** SUS-1, SUS-2 and SUS-3 were tested, confirmed where
 stated, and fixed in v3.10.4. SUS-4 and SUS-5 cannot be tested here and stay as notes.
@@ -142,7 +150,9 @@ suspected findings. Section 9 lists the work order.
 PR 101 was the spec. Its Phase 1 shipped as PR 102 in v3.4.0. The table keeps the
 review-time view. Two rows changed later: the framing row was closed by SEC-09 in
 v3.4.0, and the "text that agents read" row was reduced by SEC-07 and SEC-25 in
-v3.8.0. The row for programs on this computer is still true: see SEC-05 stage 2.
+v3.8.0. The row for programs on this computer is still true in substance: SEC-05 added
+keys and refuses credential-free calls on the dangerous actions, but a program
+that reads the token file still has full control.
 
 | Caller | Today | After PR 101 Phase 1 |
 |---|---|---|
@@ -258,7 +268,7 @@ spec does not say.
 
 #### SEC-21. Push subscriptions: any endpoint, no device list (medium)
 
-- **Status (2026-11-04): Partly fixed; the rest is open.** Fixed in v3.10.3 (PR 117): only https push services of Apple, Google FCM, Mozilla and Microsoft are accepted (`core/push/endpoints.ts`), and the remote subscribe was closed in v3.4.0. **Open:** there is still no list of push subscriptions and no way to revoke one in Settings. The device list in v3.10.4 (PR 119) covers signed-in devices, not push subscriptions. Low residual: a stored subscription cannot be seen or removed except through the API.
+- **Status (2026-11-09): Fixed.** v3.10.3 (PR 117): only https push services of Apple, Google FCM, Mozilla and Microsoft are accepted (`core/push/endpoints.ts`), and the remote subscribe was closed in v3.4.0. v3.10.6 (PR 124): Settings lists the stored push subscriptions, each with Revoke (`GET` and `DELETE /api/push/subscriptions`, owner only), and at most 50 are stored by default.
 - **Evidence:** `core/routes/push.ts:7-14` accepts any `deviceId` and any
   `endpoint`. `core/push/service.ts:66-79` sends a POST to each endpoint on every
   thread event. No route lists the subscriptions.
@@ -409,7 +419,7 @@ reach. The race stays a documented limit. No new action.
 
 #### SEC-05. The daemon trusts every local caller, so its guards are advisory (high)
 
-- **Status (2026-11-04): Partly fixed; stage 2 is open.** Stage 1 (per-thread keys) shipped in v3.5.0 (PR 104). A call that carries a thread key is judged as that thread: it cannot pose as the owner, it is held to its project, and owner-only routes give 403. **Open:** a call with no key still works from this computer, and the daemon only counts it (`dispatch status` shows the count). So an injected agent can still skip its key and call the API as an unkeyed local caller. Stage 2 ("no credential, no access", per-thread key spec section 6.6) is not built. The v3.8.0 release note lists it as still open. The related items SEC-25 and SEC-20 were handled in other ways (see them).
+- **Status (2026-11-09): Partly fixed; the rest accepted by the owner on 2026-11-04.** Stage 1 (per-thread keys) shipped in v3.5.0 (PR 104). A call that carries a thread key is judged as that thread: it cannot pose as the owner, and owner-only routes give 403. A key was held to its project until v3.26.0; it now may list, read and message threads of any project, and is still held to its own project for start, archive, answer, spawn and ledger writes (see section 11). The middle option shipped in v3.10.6 (PR 126): a call with no credential gets 401 on sending a message or input as the user, answering or releasing a held tool call, starting threads, and changing, deleting or importing integrations, unless it looks like the web page (an `Origin` or `Sec-Fetch-Site: same-origin` header). Stage 2 ("no credential, no access", per-thread key spec section 6.6) was dropped as too restrictive. **Limit:** this is a drift check, not a lock. The token file is readable by any process running as the user and a program can set the header, so it stops an ordinary keyless `curl` but not a thread that reads the token or forges the header. Also left open on purpose: all reads, hooks, the browser shim, adding an integration, ledger routes, `/compact`, schedule create, prompt edit and `run-now`, and restart of an existing tab. Details are in `docs/security.md`.
 - **Evidence:**
   - Every thread gets `DISPATCH_SERVER_URL` and a port (`core/server.ts:607-626`).
   - The spawn-depth limit and the message rate limit run only inside the agent's
@@ -642,8 +652,8 @@ socket).
 
 - **Lost phone:** at review time, the only revoke was to remove it from the tailnet.
   Phase 1 added token rotation (all devices at once, v3.4.0). Per-device revoke
-  shipped in v3.10.4 (PR 119, Settings > Access). A push subscription still stays
-  until it is removed by hand (SEC-21, open).
+  shipped in v3.10.4 (PR 119, Settings > Access). A push subscription can be seen
+  and revoked since v3.10.6 (SEC-21).
 - **Shared token:** after Phase 1, a person with the token gets a shell as the
   owner and every secret (SEC-02, SEC-04). Decision SO-5.
 - **Two accounts on one computer:** SEC-14 and SEC-18. Phase 1 trusts loopback,
@@ -653,7 +663,7 @@ socket).
 
 #### SEC-23. Large inputs and no counts (low)
 
-- **Status (2026-11-04): Partly fixed; the rest is open.** Fixed in v3.8.0 (PR 112): the JSON cap (1 MiB), WebSocket message caps, resize bounds, a cap of 60 live threads per project, and a one-minute schedule floor. PR 113 (v3.8.1) closed the schedule-floor bypasses. **Not done:** back-pressure on socket sends, the run-stream line buffer, a cap per spawn tree, caps on watches and push subscriptions, and an `uncaughtException` handler. PR 112 left these out of scope. They are low severity.
+- **Status (2026-11-09): Partly fixed; the rest accepted by the owner on 2026-11-09.** Fixed in v3.8.0 (PR 112): the JSON cap (1 MiB), WebSocket message caps, resize bounds, a cap of 60 live threads per project, and a one-minute schedule floor. PR 113 (v3.8.1) closed the schedule-floor bypasses. Fixed in v3.10.6 (PR 124): back-pressure on socket sends (32 MiB), a run-stream line cap (32 MiB), caps on live watches (500) and push subscriptions (50), and an `uncaughtException` handler that logs and stays up, then exits after 10 in one minute. **Accepted, not built:** a cap per spawn tree. The spawn depth limit and the cap of 60 live threads per project remain.
 - **Evidence:** `express.json({ limit: '50mb' })` on every route
   (`core/server.ts:465`). No `maxPayload` on the three WebSocket servers
   (`core/server.ts:471-473`; the `ws` default is 100 MiB). The terminal socket's
@@ -703,7 +713,8 @@ socket).
 ## 6. Final status of every finding
 
 The first four columns are the review-time view. "Final status" is the result on
-2026-11-04, checked against `origin/main` at v3.10.5 (git history and the merged PRs).
+2026-11-09. SEC-05, SEC-20, SEC-21 and SEC-23 were checked against `origin/main` at
+v4.4.0. The rest were checked at v3.10.5 (git history and the merged PRs).
 
 | ID | Severity | Rating at review | Covered by PR 101 Phase 1? | Final status | Where, and in which version |
 |---|---|---|---|---|---|
@@ -713,7 +724,7 @@ The first four columns are the review-time view. "Final status" is the result on
 | SEC-18 | medium | fix now | No (file modes) | Fixed | PR 102, v3.4.0 |
 | SEC-02 | high | fix soon | Remote only | Fixed | PR 103, v3.4.1 |
 | SEC-04 | high | fix soon | No | **Accepted** (owner, 2026-11-03, SO-3 option C) | none |
-| SEC-05 | high | fix soon | No (loopback trusted) | **Open, partly fixed.** Stage 1 keys shipped; stage 2 (refuse a call with no key) is not built | PR 104, v3.5.0 (stage 1) |
+| SEC-05 | high | fix soon | No (loopback trusted) | **Partly fixed, rest accepted** (owner, 2026-11-04, middle option). Keys, and credential-free calls refused on the dangerous actions; stage 2 dropped; a drift check, not a lock | PR 104, v3.5.0; PR 126, v3.10.6 |
 | SEC-06 | high | accept + docs | No | Accepted, with docs; false switch removed | PR 112, v3.8.0 |
 | SEC-07 | high | fix soon | No | Fixed | PR 111, v3.8.0; PR 113, v3.8.1 |
 | SEC-25 | high | fix soon | No | Fixed (the coordinator denylist limit is not in the user docs) | PR 111, v3.8.0 |
@@ -727,17 +738,17 @@ The first four columns are the review-time view. "Final status" is the result on
 | SEC-16 | medium | fix soon | No | Fixed for `mcp-remote`; vendor installers accepted | PR 112, v3.8.0 |
 | SEC-17 | medium | fix soon | No | Fixed | PR 112, v3.8.0 |
 | SEC-20 | medium | fix soon | No | **Accepted** (owner, 2026-11-03, creator shown) | PR 117, v3.10.3 |
-| SEC-21 | medium | fix soon | Remote only; revoke in Phase 2 | **Open, partly fixed.** Host allowlist shipped; no list or revoke of push subscriptions | PR 117, v3.10.3 |
+| SEC-21 | medium | fix soon | Remote only; revoke in Phase 2 | Fixed | PR 117, v3.10.3; PR 124, v3.10.6 |
 | SEC-22 | medium | fix soon | Remote only | **Accepted** (owner, 2026-11-03) | none (remote part: PR 102, v3.4.0) |
 | SEC-19 | low | fix soon | No | Fixed | PR 103, v3.4.1 |
-| SEC-23 | low | fix soon | Remote only | **Open, partly fixed.** Caps and floors shipped; back-pressure, spawn-tree cap, watch and push caps, `uncaughtException` not built | PR 112, v3.8.0; PR 113, v3.8.1 |
+| SEC-23 | low | fix soon | Remote only | **Partly fixed, rest accepted** (owner, 2026-11-09). Only the spawn-tree cap not built | PR 112, v3.8.0; PR 113, v3.8.1; PR 124, v3.10.6 |
 | SEC-24 | low | fix soon | No | Fixed | PR 103, v3.4.1 |
 | SEC-26 | low | when convenient | Remote only | Fixed | PR 103, v3.4.1; PR 116, v3.10.2 |
 | SEC-27 | low | accept + docs | No | Accepted, with docs | PR 112, v3.8.0 |
 | SEC-28 | low | accept | No | Accepted; the fixes were also made | PR 112, v3.8.0 |
 | SEC-29 | low | fix soon | No | Fixed | PR 103, v3.4.1 |
 
-**Counts:** 20 fixed, 6 accepted, 3 open (each partly fixed). Total 29.
+**Counts:** 21 fixed, 6 accepted, 2 partly fixed with the rest accepted, 0 open. Total 29.
 
 | ID | Final status | Where, and in which version |
 |---|---|---|
@@ -790,7 +801,8 @@ was removed.
 
 The list below is the order that the review recommended. The outcome is in the
 status section and in section 6: step 1 shipped in v3.4.0, step 2 in v3.4.1, step 3
-as stage 1 in v3.5.0 (stage 2 not built), step 4 in v3.8.0 to v3.10.3 (SEC-04 was
+as stage 1 in v3.5.0 and the middle option in v3.10.6 (stage 2 dropped), step 4 in
+v3.8.0 to v3.10.6 (SEC-04 was
 accepted instead), and step 5 in v3.4.1 and v3.8.0.
 
 1. **With PR 101 Phase 1 (fix now):** SEC-01 and SEC-03 (the gate, plus two test
@@ -830,3 +842,19 @@ SO-5. SO-3 went to option C. See section 6 for where each shipped.
   and do not share the token. (B) Support a shared daemon with accounts later.
   Recommended: A. The daemon gives a shell as its owner, so a shared token gives
   every holder the owner's rights.
+
+## 11. Added after the review (not reviewed)
+
+The review covered v3.3.2. The findings above were followed through their fixes,
+but the features below came later and nobody has reviewed them for security. This
+table comes from release notes, commit messages and a short read of the key rules.
+It is a list of what was not covered, not a finding that any of them is unsafe.
+
+| Change | Release | What it changes |
+|---|---|---|
+| Cross-project reach for every thread (owner decision PK-5) | v3.26.0 | Any thread can list projects and read or message threads in any project. The daemon enforces it and writes the sender line. A thread still cannot start, archive, answer, spawn or write in another project, and a role run keeps to its own project. A thread steered by hostile text can now reach further than this review assumed. |
+| More than one account per harness | v3.21.0 | Dispatch holds sign-ins for several Claude and Codex accounts and can switch a thread between them. |
+| Plugins, with their own keys | v4.0.0 | Plugins add screens, tabs, menu items and tools. A key is issued on enable and revoked on disable or remove. |
+| The Coach | v4.0.0 (off by default since v4.3.0) | Reads how you work and can create a skill in one click (`POST /api/skills`). |
+
+A separate review of these can follow if the owner wants one.
