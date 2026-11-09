@@ -173,7 +173,11 @@ export const ringTone = (used: number, warn: number): RingTone => (used >= warn 
 
 export interface RingRow { type: string; label: string; left: number | null; tone: RingTone; reset: string | null; estimate: string | null; estimateTitle: string | null }
 /** The page where a provider's banked reset is used. Codex's app-server refuses the in-app spend until a limit is hit. */
-export const USE_RESET_URL: Record<string, string> = { codex: 'https://chatgpt.com/settings/usage?tab=overview' };
+export const USE_RESET_URL: Record<string, string> = {
+  codex: 'https://chatgpt.com/settings/usage?tab=overview',
+  // Claude's limit resets (the Fable launch resets, 2026-11-09) are used under Settings → Usage → Limit resets.
+  'claude-code': 'https://claude.ai/settings/usage',
+};
 
 export interface RingModel {
   provider: string;
@@ -190,7 +194,8 @@ export interface RingModel {
   /** Banked resets the tool can spend now (Codex), or 0. */
   credits: number;
   /** Each banked reset, soonest to expire first: its id and when it expires. */
-  creditList: { id: string; expires: string | null; soon: boolean }[];
+  /** One entry per expiry date: three resets that end the same day read "Mar 9 ×3". */
+  creditList: { id: string; expires: string | null; soon: boolean; count: number }[];
   /** Where a banked reset is used: the provider's own usage page (2026-11-06), or null. */
   useUrl: string | null;
   /** "Extra usage $2.51 of $1,000.00 this month" (Claude), or null. */
@@ -267,8 +272,14 @@ export function ringModels(s: UsageSummary | null, now: number, zone?: string): 
       rows, asOf: `as of ${whenLabel(p.asOf, now, zone)}`, stale: now - p.asOf > STALE_MS, paused: paused.has(p.provider),
       credits: p.resetCredits?.available ?? 0,
       spend: spendLabel(p.spend), creditBalance: creditBalanceLabel(p.creditBalance),
-      useUrl: p.provider === 'codex' ? USE_RESET_URL.codex : null,
-      creditList: (p.resetCredits?.credits ?? []).map((c) => ({ id: c.id, expires: c.expiresAt === null ? null : expiryLabel(c.expiresAt, now, zone), soon: c.expiresAt !== null && c.expiresAt - now < 48 * 3600_000 })),
+      useUrl: USE_RESET_URL[p.provider] ?? null,
+      creditList: (p.resetCredits?.credits ?? []).reduce<RingModel['creditList']>((out, c) => {
+        const expires = c.expiresAt === null ? null : expiryLabel(c.expiresAt, now, zone);
+        const same = out.find((x) => x.expires === expires);
+        if (same) same.count++;
+        else out.push({ id: c.id, expires, soon: c.expiresAt !== null && c.expiresAt - now < 48 * 3600_000, count: 1 });
+        return out;
+      }, []),
     });
   }
   return out;

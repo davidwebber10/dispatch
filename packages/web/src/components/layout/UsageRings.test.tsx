@@ -81,6 +81,17 @@ describe('usage rings', () => {
     expect(screen.queryByRole('button', { name: 'Use one' })).toBeNull();
   });
 
+  it('Claude limit resets (the Fable launch resets) show on the Claude card; Use opens claude.ai, and equal expiries are counted once (2026-11-09)', () => {
+    const s = summary();
+    const end = now + 120 * 24 * H;
+    (s as any).providers[0].resetCredits = { available: 3, nextExpiresAt: end, credits: ['a', 'b', 'c'].map((id) => ({ id, expiresAt: end, title: 'New model launch: Fable reset' })) };
+    render(<UsageRings summary={s} now={now} />);
+    const card = screen.getByRole('region', { name: 'Claude' });
+    expect(card.textContent).toContain('3resets banked');
+    expect(within(card).getByTestId('reset-expiries').textContent).toMatch(/^Expire \w{3} \d{1,2} ×3$/);
+    expect(within(card).getByRole('link', { name: 'Use a reset on the Claude usage page' })).toHaveAttribute('href', 'https://claude.ai/settings/usage');
+  });
+
   // The count-up reads performance.now() and the frame time. Under jsdom those are two clocks with
   // different origins, so on a slow CI runner the count sat at 0 for longer than waitFor waits.
   // Faking both on one clock makes the test step through the animation by hand.

@@ -15,10 +15,18 @@ import path from 'path';
 import { createHash } from 'crypto';
 import { execFile } from 'child_process';
 import type { LimitSnapshots, LimitWindows, ProviderExtras } from './snapshot.js';
+import type { ResetCredits, ResetCredit } from './codex-poll.js';
 
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+/**
+ * The read Dispatch makes (2026-11-09): `cedar_ember=1` adds the limit-reset block (the Fable launch
+ * resets) to the same answer, every window still in it. Anthropic offers the resets to Claude Code
+ * only: any other User-Agent is answered `eligible: false, ineligible_reason: "surface"`.
+ */
+export const USAGE_READ_URL = `${USAGE_URL}?cedar_ember=1`;
 export const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
-const HEADERS = { 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01', Accept: 'application/json', 'User-Agent': 'dispatch' };
+const USER_AGENT = 'claude-cli/2.1.321 (external, cli)';
+const HEADERS = { 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01', Accept: 'application/json', 'User-Agent': USER_AGENT };
 const TIMEOUT_MS = 15_000;
 const PROFILE_TTL_MS = 60 * 60_000;
 
@@ -141,6 +149,26 @@ export async function fetchClaudeProfile(token: string, f: typeof fetch = fetch)
   };
 }
 
+/**
+ * The account's limit resets (`cedar_ember`, 2026-11-09): one entry per reset left on each grant that is
+ * not paused, soonest expiry first. Null when the account is not eligible or has none left. Spending one
+ * stays on claude.ai (Settings → Usage → Limit resets).
+ */
+export function parseClaudeResets(body: any): ResetCredits | null {
+  const c = body?.cedar_ember;
+  if (!c || c.eligible !== true || !Array.isArray(c.grants)) return null;
+  const credits: ResetCredit[] = [];
+  for (const g of c.grants) {
+    if (!g || g.paused === true || typeof g.id !== 'string') continue;
+    const left = Number(g.resets_left);
+    if (!Number.isFinite(left) || left <= 0) continue;
+    for (let i = 0; i < Math.min(left, 20); i++) credits.push({ id: i === 0 ? g.id : `${g.id}#${i + 1}`, expiresAt: iso(g.ends_at), title: typeof g.label === 'string' ? g.label : null });
+  }
+  if (!credits.length) return null;
+  credits.sort((a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity));
+  return { available: credits.length, nextExpiresAt: credits[0].expiresAt, credits };
+}
+
 // --- the reader ------------------------------------------------------------------------------
 
 export interface ClaudeUsageDeps {
@@ -165,17 +193,23 @@ async function getJson(f: typeof fetch, url: string, token: string): Promise<{ s
   } catch { return null; } finally { clearTimeout(t); }
 }
 
+export type ClaudeUsageReader = ((accountId?: string) => Promise<boolean>) & {
+  /** The limit resets from the account's last good read, or null. */
+  credits: (accountId?: string) => ResetCredits | null;
+};
+
 /** One read for one account: fetch the usage (and, hourly, the plan name), record it. True when figures were recorded. */
-export function createClaudeUsageReader(d: ClaudeUsageDeps): (accountId?: string) => Promise<boolean> {
+export function createClaudeUsageReader(d: ClaudeUsageDeps): ClaudeUsageReader {
   const now = d.now ?? Date.now;
   const f = d.fetch ?? fetch;
   const log = d.log ?? ((l: string) => console.log(l));
   const profiles = new Map<string, { at: number; plan?: string }>();
   const lastFailure = new Map<string, string>();
-  return async (accountId = 'cli') => {
+  const resets = new Map<string, ResetCredits | null>();
+  const read = async (accountId = 'cli') => {
     const token = await d.token(accountId);
     if (!token) return false;
-    const r = await getJson(f, USAGE_URL, token);
+    const r = await getJson(f, USAGE_READ_URL, token);
     if (!r || r.status !== 200 || !r.body) {
       const why = r ? `HTTP ${r.status}` : 'no answer';
       if (why !== lastFailure.get(accountId)) { log(`[usage] Claude usage read failed (${accountId}): ${why}`); lastFailure.set(accountId, why); }
@@ -184,6 +218,7 @@ export function createClaudeUsageReader(d: ClaudeUsageDeps): (accountId?: string
     lastFailure.delete(accountId);
     const { windows, extras } = parseClaudeUsage(r.body);
     if (!Object.keys(windows).length) return false;
+    resets.set(accountId, parseClaudeResets(r.body));
     const key = createHash('sha256').update(token).digest('hex').slice(0, 12);
     const t = now();
     let profile = profiles.get(key);
@@ -197,4 +232,5 @@ export function createClaudeUsageReader(d: ClaudeUsageDeps): (accountId?: string
     d.snapshots.record('claude-code', d.accountFor('claude-code', accountId), windows, t, profile.plan, true, extras, accountId);
     return true;
   };
+  return Object.assign(read, { credits: (accountId = 'cli') => resets.get(accountId) ?? null });
 }

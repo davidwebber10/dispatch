@@ -817,7 +817,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     ...accounts.list('claude').map((a) => ({ provider: 'claude-code', accountId: a.id, label: a.label })),
     ...accounts.list('codex').map((a) => ({ provider: 'codex', accountId: a.id, label: a.label })),
   ];
-  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, accounts: accountRefs, refreshCodex, pollCodex, codexCredits: (accountId) => pollCodex.credits(accountId), probeClaude, readClaudeUsage });
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, accounts: accountRefs, refreshCodex, pollCodex, codexCredits: (accountId) => pollCodex.credits(accountId), claudeCredits: (accountId) => readClaudeUsage.credits(accountId), probeClaude, readClaudeUsage });
   accounts.onChange(() => usageGauge.accountsChanged());
   limitSnapshots.addRecordListener((provider, accountId) => usageGauge.onRecord(provider, accountId));
   usageLimits.addChangeListener(() => usageGauge.pausesChanged());

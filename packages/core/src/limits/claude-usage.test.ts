@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { LimitSnapshots } from './snapshot.js';
-import { parseClaudeUsage, limitKey, createClaudeUsageReader, readClaudeToken, USAGE_URL, PROFILE_URL } from './claude-usage.js';
+import { parseClaudeUsage, parseClaudeResets, limitKey, createClaudeUsageReader, readClaudeToken, USAGE_READ_URL as USAGE_URL, PROFILE_URL } from './claude-usage.js';
 
 // The shape api.anthropic.com/api/oauth/usage answered on 2026-11-06 (figures shortened).
 const BODY = {
@@ -92,5 +92,43 @@ describe('readClaudeToken', () => {
     // Both expired: still hand back one (the read fails cleanly and the probe takes over), rather than nothing.
     expect(await readClaudeToken({ home, env: {}, now: () => 5_000, keychain: async () => null })).toBe('file');
     expect(await readClaudeToken({ home: path.join(home, 'none'), env: {}, keychain: async () => null })).toBeNull();
+  });
+});
+
+// The reset block (`cedar_ember`) answered on 2026-11-09 for an Ultra account, the Fable 5.2 launch resets (shortened).
+const grant = (id: string, left: number, o: Record<string, unknown> = {}) => ({
+  id, label: `New model launch: ${id}`, resets_total: 1, resets_left: left, starts_at: '2026-11-09T18:00:00+00:00', ends_at: '2027-03-09T07:59:00+00:00',
+  clears: ['seven_day_overage_included'], paused: false, usable_now: true, use_requires_limit: false, type: 'full', unavailable_reason: null, gives_back_weekly: true, ...o,
+});
+const CEDAR = { eligible: true, ineligible_reason: null, at_limit: true, exhausted: ['seven_day_overage_included'], grants: [grant('launch-2610-fable', 1), grant('launch-2610-fable-12mo', 1), grant('launch-2610-fable-6mo', 1)], next_grant_id: 'launch-2610-fable' };
+
+describe('Claude limit resets (2026-11-09: the Fable 5.2 launch resets)', () => {
+  it('counts every reset left on the grants that are not paused, soonest expiry first', () => {
+    const r = parseClaudeResets({ ...BODY, cedar_ember: { ...CEDAR, grants: [...CEDAR.grants, grant('used-up', 0), grant('paused', 1, { paused: true }), grant('early', 2, { ends_at: '2026-12-01T00:00:00+00:00' })] } });
+    expect(r!.available).toBe(5);
+    expect(r!.nextExpiresAt).toBe(Date.parse('2026-12-01T00:00:00+00:00'));
+    expect(r!.credits).toHaveLength(5);
+    expect(r!.credits[0]).toEqual({ id: 'early', expiresAt: Date.parse('2026-12-01T00:00:00+00:00'), title: 'New model launch: early' });
+  });
+
+  it('none when the account is not eligible, has no block, or no reset left', () => {
+    expect(parseClaudeResets(BODY)).toBeNull();
+    expect(parseClaudeResets({ cedar_ember: { eligible: false, ineligible_reason: 'surface', grants: [] } })).toBeNull();
+    expect(parseClaudeResets({ cedar_ember: { ...CEDAR, grants: [grant('x', 0)] } })).toBeNull();
+  });
+
+  it('the reader asks for the reset block as Claude Code does and keeps the resets per account', async () => {
+    const seen: { url: string; ua: string }[] = [];
+    const f = (async (url: string, init: any) => {
+      seen.push({ url, ua: init.headers['User-Agent'] });
+      return { status: 200, text: async () => JSON.stringify(url.startsWith(USAGE_URL) ? { ...BODY, cedar_ember: CEDAR } : {}) } as any;
+    }) as unknown as typeof fetch;
+    const db = new Database(':memory:'); initSchema(db);
+    const read = createClaudeUsageReader({ snapshots: new LimitSnapshots(db), accountFor: () => 'acct', token: async () => 'tok', fetch: f, log: () => {} });
+    expect(await read('work')).toBe(true);
+    expect(seen[0].url).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1');
+    expect(seen[0].ua).toMatch(/^claude-cli\/\S+ \(external, cli\)$/); // anything else is answered "ineligible: surface"
+    expect(read.credits('work')?.available).toBe(3);
+    expect(read.credits('cli')).toBeNull();
   });
 });

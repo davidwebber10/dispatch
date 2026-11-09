@@ -935,3 +935,16 @@ describe('added Claude accounts show without use (2026-11-07)', () => {
     g.stop();
   });
 });
+
+describe('Claude limit resets in the summary (2026-11-09)', () => {
+  it('a Claude account carries the resets of its last read; Codex keeps its own', () => {
+    gauge.stop();
+    const credits = { available: 3, nextExpiresAt: WEEK, credits: [{ id: 'g1', expiresAt: WEEK, title: 'Fable reset' }] };
+    const g = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
+      claudeCredits: (id) => (id === 'cli' ? credits : null), codexCredits: () => null });
+    claude(10, 74);
+    const p = g.summary().providers.find((x) => x.provider === 'claude-code')!;
+    expect(p.resetCredits).toEqual(credits);
+    g.stop();
+  });
+});

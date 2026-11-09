@@ -130,6 +130,8 @@ export interface GaugeDeps {
   pollCodex?: (accountId?: string) => Promise<boolean>;
   /** Codex's banked limit resets, from the last direct read. */
   codexCredits?: (accountId?: string) => ResetCredits | null;
+  /** Claude's limit resets (the Fable launch resets), from the last usage read (claude-usage.ts). */
+  claudeCredits?: (accountId?: string) => ResetCredits | null;
   /** Run one tiny Claude turn to read the account's windows (claude-probe.ts), for when no Pretty thread reports. */
   probeClaude?: (accountId?: string) => Promise<boolean>;
   /** Read one Claude account's usage from Anthropic (claude-usage.ts): every window, Fable included, and the extra-usage spend. Preferred over the probe. */
@@ -194,7 +196,8 @@ export class UsageGauge {
       const f = forecast(history[type], w, now);
       windows[type] = { usedPercent: w.usedPercent === null ? null : Math.round(w.usedPercent), resetsAt: w.resetsAt, ...(f ? { forecast: f } : {}) };
     }
-    const credits = provider === 'codex' ? this.d.codexCredits?.(accountId) ?? null : null;
+    const credits = provider === 'codex' ? this.d.codexCredits?.(accountId) ?? null
+      : provider === 'claude-code' ? this.d.claudeCredits?.(accountId) ?? null : null;
     return {
       provider, accountId, label: label ?? PROVIDER_NAME[provider] ?? provider, account: s.account, plan: s.plan, asOf: s.asOf, windows, figureAt: s.figureAt ?? {}, raw,
       ...(credits && credits.available > 0 ? { resetCredits: credits } : {}),

@@ -96,7 +96,7 @@ function ToolCard({ m, warn, current }: { m: RingModel; warn: number; current?: 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 15, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{m.credits}</span>
             <span style={{ fontSize: 14 }}>reset{m.credits === 1 ? '' : 's'} banked</span>
-            {/* A reset is used on the ChatGPT usage page (2026-11-06). Codex's own app-server refuses the
+            {/* A reset is used on the tool's own usage page: ChatGPT (2026-11-06), claude.ai (2026-11-09). Codex's own app-server refuses the
                 in-app spend until a limit is hit ("nothingToReset"), so the link is the way that works. */}
             {m.useUrl && (
               <a href={m.useUrl} target="_blank" rel="noopener noreferrer" aria-label={`Use a reset on the ${m.name} usage page`}
@@ -109,7 +109,7 @@ function ToolCard({ m, warn, current }: { m: RingModel; warn: number; current?: 
             <div data-testid="reset-expiries" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 6 }}>
               Expire{' '}
               {m.creditList.map((c, i) => (
-                <span key={c.id} style={{ color: c.soon ? 'var(--color-status-yellow)' : undefined }}>{i > 0 ? ' · ' : ''}{c.expires ?? 'never'}</span>
+                <span key={c.id} style={{ color: c.soon ? 'var(--color-status-yellow)' : undefined }}>{i > 0 ? ' · ' : ''}{c.expires ?? 'never'}{c.count > 1 ? ` ×${c.count}` : ''}</span>
               ))}
             </div>
           )}
