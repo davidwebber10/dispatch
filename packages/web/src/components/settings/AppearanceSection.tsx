@@ -3,7 +3,7 @@ import { Check, Palette } from '@phosphor-icons/react';
 import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type DocEditor, type Density } from '../../stores/settings';
 import { THEMES, SYSTEM_DARK, SYSTEM_LIGHT, getTheme, resolveTokens, onAccent, type Theme } from '../../themes';
 import { useActiveTheme } from '../../themes/apply';
-import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet, Slider } from './ui';
 import { Select } from '../common/Select';
 import { Segmented } from '../common/Segmented';
 import { fontVar } from '../../lib/fontSize';
@@ -139,6 +139,7 @@ export function AppearanceSection() {
   const theme = useSettings((s) => s.theme);
   const accent = useSettings((s) => s.accent);
   const fontSize = useSettings((s) => s.fontSize);
+  const textScale = useSettings((s) => s.textScale);
   const scrollback = useSettings((s) => s.scrollback);
   const sidebarFontSize = useSettings((s) => s.sidebarFontSize);
   const projectFontSize = useSettings((s) => s.projectFontSize);
@@ -165,6 +166,8 @@ export function AppearanceSection() {
       </SettingsGroup>
 
       <SettingsGroup title="Text size">
+        <SettingsRow label="Text scale"
+          control={<Slider label="Text scale" value={Math.round(textScale * 100)} min={75} max={150} step={5} defaultValue={100} display={`${Math.round(textScale * 100)}%`} onChange={(v) => set().setTextScale(v / 100)} onReset={() => set().resetTextScale()} />} />
         <SettingsRow label="Terminal" control={<Stepper value={String(fontSize)} onDec={() => set().setFontSize(fontSize - 1)} onInc={() => set().setFontSize(fontSize + 1)} />} />
         <SettingsRow label="Project names" control={<Stepper value={String(projectFontSize)} onDec={() => set().setProjectFontSize(projectFontSize - 1)} onInc={() => set().setProjectFontSize(projectFontSize + 1)} />} />
         <SettingsRow label="Thread and file names" control={<Stepper value={String(sidebarFontSize)} onDec={() => set().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => set().setSidebarFontSize(sidebarFontSize + 1)} />} />

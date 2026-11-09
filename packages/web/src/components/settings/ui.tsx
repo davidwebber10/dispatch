@@ -298,3 +298,15 @@ export function Stepper({ value, unit, onDec, onInc }: { value: string; unit?: s
     </div>
   );
 }
+
+/** A native range slider with its value and a reset button. The reset button is disabled at `defaultValue` (0 unless told otherwise). */
+export function Slider({ value, min, max, step, label, display, onChange, onReset, defaultValue = 0 }: { value: number; min: number; max: number; step: number; label: string; display: string; onChange: (v: number) => void; onReset: () => void; defaultValue?: number }) {
+  const atDefault = value === defaultValue;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <input type="range" aria-label={label} min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 160, maxWidth: '40vw', accentColor: 'var(--color-accent)', cursor: 'pointer' }} />
+      <div style={{ height: 28, minWidth: 52, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-body)' }}>{display}</div>
+      <button type="button" aria-label={`Reset ${label}`} title={`Reset ${label}`} disabled={atDefault} onClick={onReset} style={{ ...iconBtn, width: 28, height: 28, font: `500 ${fontVar(14)} var(--font-sans)`, cursor: atDefault ? 'default' : 'pointer', opacity: atDefault ? 0.4 : 1 }}>↺</button>
+    </div>
+  );
+}
