@@ -861,7 +861,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
     void adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile).catch(() => {});
   };
-  sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
+  sessionService.setAccountEnv((type, config) => ({ ...accounts.spawnEnv(type, config), ...secretsService.getThreadTokenEnv(config) }));
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
   sessionService.setAccountDirectory({
     has: (type, id) => { const p = providerOfType(type); return p ? accounts.has(p, id) : false; },
@@ -916,7 +916,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       DISPATCH_API: daemonApi,
       ...claudeLogin.getSpawnEnv(),
       ...osConnections.getSpawnEnv(),
-      ...secretsService.getSpawnEnv(),
+      ...secretsService.getBaseSpawnEnv(),
       ...getToolsSpawnEnv({ base: toolsBase }),
     };
     // Each of those builds its own PATH off process.env.PATH, so the last spread wins

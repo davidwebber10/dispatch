@@ -4,12 +4,22 @@ import { fileURLToPath } from 'url';
 import { DopplerClient, type DopplerProject, type DopplerConfig } from './doppler.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 
+/**
+ * Which threads get DOPPLER_TOKEN in their process environment.
+ * `all`: every thread (the behaviour of every version before the scope existed).
+ * `opted-in`: only a thread whose config has `secretsEnv: true`.
+ * The Doppler MCP tools and the integrations work in both scopes: they read the saved connection.
+ */
+export type TokenScope = 'all' | 'opted-in';
+const isTokenScope = (v: unknown): v is TokenScope => v === 'all' || v === 'opted-in';
+
 export interface DopplerStatus {
   connected: boolean;
   project: string | null;
   config: string | null;
   enabled: boolean;
   readOnly: boolean;
+  tokenScope: TokenScope;
 }
 
 export interface SetConnectionInput {
@@ -18,6 +28,7 @@ export interface SetConnectionInput {
   config?: string;
   enabled?: boolean;
   readOnly?: boolean;
+  tokenScope?: TokenScope;
 }
 
 interface StoredConnection {
@@ -26,7 +37,12 @@ interface StoredConnection {
   config: string | null;
   enabled: boolean;
   readOnly: boolean;
+  /** A file from before the scope existed has no field: that reads as `all`. */
+  tokenScope: TokenScope;
 }
+
+/** What `read` gives: the connection, plus whether the token is in the file (not only in the daemon's environment). */
+interface ReadConnection extends StoredConnection { tokenSaved: boolean }
 
 // From packages/core/{src,dist}/secrets/service.* up to packages/, then into the sibling package.
 const DEFAULT_MCP_REL = '../../../doppler-mcp/dist/index.js';
@@ -63,22 +79,31 @@ export class SecretsService {
   onChange(cb: () => void): void { this.onChangeCb = cb; }
 
   // --- persistence -------------------------------------------------------
-  private read(): StoredConnection {
+  private read(): ReadConnection {
     let stored: Partial<StoredConnection> = {};
-    try { stored = JSON.parse(fs.readFileSync(this.filePath, 'utf8')); } catch { /* none yet */ }
-    const token = (typeof stored.token === 'string' && stored.token) ? stored.token : (process.env.DOPPLER_TOKEN || null);
+    try { stored = JSON.parse(fs.readFileSync(this.filePath, 'utf8')) ?? {}; } catch { /* none yet */ }
+    const tokenSaved = typeof stored.token === 'string' && !!stored.token;
+    const token = tokenSaved ? stored.token! : (process.env.DOPPLER_TOKEN || null);
     return {
       token,
+      tokenSaved,
       project: stored.project ?? null,
       config: stored.config ?? null,
       enabled: stored.enabled !== false,
       readOnly: stored.readOnly === true,
+      tokenScope: isTokenScope(stored.tokenScope) ? stored.tokenScope : 'all',
     };
+  }
+
+  /** True when the file holds a `tokenScope` the owner (or a new connection) wrote. */
+  private scopeSaved(): boolean {
+    try { return isTokenScope(JSON.parse(fs.readFileSync(this.filePath, 'utf8'))?.tokenScope); } catch { return false; }
   }
 
   private write(c: StoredConnection): void {
     fs.mkdirSync(this.configDir, { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(c, null, 2), { mode: 0o600 });
+    const { token, project, config, enabled, readOnly, tokenScope } = c;
+    fs.writeFileSync(this.filePath, JSON.stringify({ token, project, config, enabled, readOnly, tokenScope }, null, 2), { mode: 0o600 });
     try { fs.chmodSync(this.filePath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
   }
 
@@ -91,7 +116,20 @@ export class SecretsService {
       config: c.config,
       enabled: c.enabled,
       readOnly: c.readOnly,
+      tokenScope: c.tokenScope,
     };
+  }
+
+  /**
+   * Change which threads get the token in their environment. It reaches a thread at its next
+   * spawn; a running process keeps the environment it started with.
+   */
+  setTokenScope(scope: TokenScope): DopplerStatus {
+    if (!isTokenScope(scope)) throw new Error('invalid tokenScope');
+    const cur = this.read();
+    this.write({ ...cur, tokenScope: scope });
+    this.refresh();
+    return this.status();
   }
 
   /**
@@ -100,8 +138,13 @@ export class SecretsService {
    * and project/config changes don't require re-entering the token).
    */
   async setConnection(input: SetConnectionInput): Promise<DopplerStatus> {
+    if (input.tokenScope !== undefined && !isTokenScope(input.tokenScope)) throw new Error('invalid tokenScope');
     const cur = this.read();
     let token = cur.token;
+    // A connection that is made new (no token in the file before, and no scope chosen) starts
+    // narrow. A file that already held a token keeps what it had: `all` when it has no field.
+    const scope: TokenScope = input.tokenScope
+      ?? (this.scopeSaved() || cur.tokenSaved ? cur.tokenScope : 'opted-in');
     if (typeof input.token === 'string' && input.token.trim()) {
       const candidate = input.token.trim();
       if (!(await this.clientFactory(candidate).verify())) throw new Error('Invalid Doppler token');
@@ -113,6 +156,7 @@ export class SecretsService {
       config: input.config !== undefined ? (input.config || null) : cur.config,
       enabled: input.enabled !== undefined ? !!input.enabled : cur.enabled,
       readOnly: input.readOnly !== undefined ? !!input.readOnly : cur.readOnly,
+      tokenScope: scope,
     });
     this.refresh();
     return this.status();
@@ -174,16 +218,28 @@ export class SecretsService {
   }
 
   // --- spawn-time injection for Claude/Codex ----------------------------
-  /** Env injected into spawned CLIs (resolves ${DOPPLER_*} refs in the MCP config). */
-  getSpawnEnv(): Record<string, string> {
+  /**
+   * Env in every spawned CLI: the project, the config and the read-only flag. The token is here
+   * only with scope `all`. With `opted-in` it is in no shared env; `getThreadTokenEnv` adds it
+   * to the one process of a thread the owner turned on.
+   */
+  getBaseSpawnEnv(): Record<string, string> {
     const c = this.read();
     if (!c.token || !c.project || !c.config || !c.enabled) return {};
     return {
-      DOPPLER_TOKEN: c.token,
+      ...(c.tokenScope === 'all' ? { DOPPLER_TOKEN: c.token } : {}),
       DOPPLER_PROJECT: c.project,
       DOPPLER_CONFIG: c.config,
       DOPPLER_READ_ONLY: c.readOnly ? '1' : '0',
     };
+  }
+
+  /** `{ DOPPLER_TOKEN }` for a thread whose config says `secretsEnv: true`, with scope `opted-in`; otherwise `{}`. */
+  getThreadTokenEnv(config: { secretsEnv?: boolean }): Record<string, string> {
+    if (config?.secretsEnv !== true) return {};
+    const c = this.read();
+    if (!c.token || !c.project || !c.config || !c.enabled || c.tokenScope !== 'opted-in') return {};
+    return { DOPPLER_TOKEN: c.token };
   }
 
   private active(): boolean {
@@ -192,21 +248,28 @@ export class SecretsService {
       && !!this.dopplerMcpPath && fs.existsSync(this.dopplerMcpPath);
   }
 
-  /** Write (and return the path to) the Claude `--mcp-config` file; token by reference. */
+  /**
+   * How the Doppler MCP server starts. It reads the saved connection (token, project, config,
+   * read-only) from `--secrets-dir`, as the integration launcher does, so no config file and no
+   * CLI environment has to carry the token for it. One case keeps the old shape: a token that is
+   * only in the daemon's own environment is in no file, so the server gets it by reference.
+   */
+  private mcpLaunch(): { args: string[]; env?: Record<string, string>; envVars?: string[] } {
+    if (this.read().tokenSaved) return { args: [this.dopplerMcpPath, '--secrets-dir', this.configDir] };
+    return {
+      args: [this.dopplerMcpPath],
+      env: { DOPPLER_TOKEN: '${DOPPLER_TOKEN}', DOPPLER_PROJECT: '${DOPPLER_PROJECT}', DOPPLER_CONFIG: '${DOPPLER_CONFIG}', DOPPLER_READ_ONLY: '${DOPPLER_READ_ONLY}' },
+      envVars: ['DOPPLER_TOKEN', 'DOPPLER_PROJECT', 'DOPPLER_CONFIG', 'DOPPLER_READ_ONLY'],
+    };
+  }
+
+  /** Write (and return the path to) the Claude `--mcp-config` file. It holds no token and no reference to one. */
   ensureClaudeMcpConfig(): string | null {
     if (!this.active()) return null;
+    const launch = this.mcpLaunch();
     const cfg = {
       mcpServers: {
-        doppler: {
-          command: 'node',
-          args: [this.dopplerMcpPath],
-          env: {
-            DOPPLER_TOKEN: '${DOPPLER_TOKEN}',
-            DOPPLER_PROJECT: '${DOPPLER_PROJECT}',
-            DOPPLER_CONFIG: '${DOPPLER_CONFIG}',
-            DOPPLER_READ_ONLY: '${DOPPLER_READ_ONLY}',
-          },
-        },
+        doppler: { command: 'node', args: launch.args, ...(launch.env ? { env: launch.env } : {}) },
       },
     };
     fs.mkdirSync(this.configDir, { recursive: true });
@@ -226,9 +289,11 @@ export class SecretsService {
     const base =
       `This workspace uses Doppler for secrets management (project "${c.project}", config "${c.config}"). ` +
       `A "doppler" MCP server is available to you; doppler_list_secrets lists the secret names only (no values). ` +
-      `When a command needs an API key, token, password, or other secret, prefer ` +
-      `\`doppler run --project ${c.project} --config ${c.config} -- <command>\` (DOPPLER_TOKEN is already set), ` +
-      `so the value goes into the process env instead of this transcript. The command must read the secret from its ` +
+      `Use the "doppler" MCP tools to find and check secrets. ` +
+      `When a command needs an API key, token, password, or other secret: If \`$DOPPLER_TOKEN\` is set in the shell, prefer ` +
+      `\`doppler run --project ${c.project} --config ${c.config} -- <command>\`, ` +
+      `so the value goes into the process env instead of this transcript. If it is not set, the owner can turn on ` +
+      `the Doppler token for this thread in the thread menu; never ask for the token itself. The command must read the secret from its ` +
       `own environment (a tool that reads an env var, or a config that references it); never expand \`$NAME\` into ` +
       `a command argument or inside \`sh -c\`, because every process's arguments are visible on this machine. ` +
       `doppler_get_secret checks whether a secret exists; it returns the value only with reveal: true, which you ` +
@@ -242,11 +307,7 @@ export class SecretsService {
 
   getServerSpec(): McpServerSpec | null {
     if (!this.active()) return null;
-    return {
-      name: 'doppler', command: 'node', args: [this.dopplerMcpPath],
-      env: { DOPPLER_TOKEN: '${DOPPLER_TOKEN}', DOPPLER_PROJECT: '${DOPPLER_PROJECT}', DOPPLER_CONFIG: '${DOPPLER_CONFIG}', DOPPLER_READ_ONLY: '${DOPPLER_READ_ONLY}' },
-      envVars: ['DOPPLER_TOKEN', 'DOPPLER_PROJECT', 'DOPPLER_CONFIG', 'DOPPLER_READ_ONLY'],
-    };
+    return { name: 'doppler', command: 'node', ...this.mcpLaunch() };
   }
 
   getInjection(): { claudeConfigPath: string | null; codexArgs: string[]; systemPrompt: string | null } {
