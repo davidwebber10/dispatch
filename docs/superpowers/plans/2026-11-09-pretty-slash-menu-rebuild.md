@@ -53,3 +53,25 @@ See the PR body for the table (ported, no longer needed because of main, or drop
 ## Not in this PR
 
 Effort for Grok and OpenCode, a reset-effort option, the native passthrough menu, queueing a typed change until the turn ends.
+
+## Review round 4 (owner answers and the two reviews)
+
+Owner answers: a typed `/model` or `/effort` while a turn runs stays refused ("busy", text kept); `/model` now needs owner
+proof like `/effort`; other agent threads stay blocked.
+
+- A turn parked on a question (`needs_input`) counts as a turn that runs: the daemon refuses with 409 and the chip is off, for
+  threads and for the Control Plane.
+- `/restart` asks first when the thread is working, from the menu and from the phone's Commands sheet. Tab only fills in the
+  word (or the whole command for a model or effort option) and never runs it; Enter runs.
+- Grok and OpenCode `setModel` give up after 15 s (ready and answer), so a silent agent cannot hold the settings lock.
+- A Codex `turn/start` that refuses the effort or model: the refused value is dropped, never sent again, the model goes back,
+  the thread shows a notice, and the saved pick goes back in the config (the web reloads).
+- After the Codex model list loads, the busy and CLI checks run again before anything is applied.
+- Chat settings reach a second open device: the daemon announces `endless:settings`, the store takes it, the chip reloads when it
+  opens and after a reconnect, and a Chat pick is always sent (a stale chip cannot say "already selected").
+- Exit during a change: reproduced (a replacement process already running made the old stop look like a refusal). Fixed with an
+  exit watch on the change; the pick is kept.
+- Small items fixed: the default effort a Codex switch sends is not saved as a pick; a saved effort with no saved model is kept at
+  spawn; the 15 s CLI timeout message says the change may still apply. Not fixed: the CLI can still take a change after the 15 s
+  limit while Dispatch has reported it as not answered (the chip may then show a model the config does not have until the next frame).
+- Real-turn effort check: not run. A scratch daemon has no Claude sign-in and the daemon has no data-directory setting.
