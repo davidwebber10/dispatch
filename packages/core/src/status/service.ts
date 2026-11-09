@@ -434,7 +434,10 @@ export class StatusService {
       sessionsDb.touchActivity(this.db, sessionId);
       this.defer(() => this.onActivity?.(terminalId));
     }
-    if (status !== 'starting') this.defer(() => this.onWatchStatus?.(terminalId, status));
+    // A watch fires on a CHANGE of the persisted status, not on every report of it: Claude sends a
+    // second idle notification about 60 s after Stop, and that one must not spend a one-shot watch
+    // or wake a watcher twice (engineering program W1-D).
+    if (status !== 'starting' && terminalStatus !== prior) this.defer(() => this.onWatchStatus?.(terminalId, status));
     // A manual override is a correction to a stale derived status. `apply()` only ever runs
     // in response to a genuine status event, so EVERY call here is real activity — resumes,
     // escalations, settles, errors, all of it — and clears the override. Deliberately not a

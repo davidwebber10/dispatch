@@ -888,3 +888,20 @@ it('a rate_limit_event below any warning level still carries unifiedWindows (CLI
   const [info] = await p;
   expect(info).toMatchObject({ status: 'allowed', utilization: 0.46, unifiedWindows: { five_hour: { utilization: 0.46 }, seven_day: { utilization: 0.21 } } });
 });
+
+// W1-D (stall watchdog): the time of the last frame the CLI sent.
+it('lastFrameAt moves when a frame arrives', async () => {
+  expect(m.lastFrameAt('t1')).toBeUndefined(); // no session
+  const before = Date.now();
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const first = m.lastFrameAt('t1')!;
+  expect(first).toBeGreaterThanOrEqual(before);
+  await new Promise((r) => setTimeout(r, 15));
+  expect(m.lastFrameAt('t1')).toBe(first); // no frame, no move
+  m.sendMessage('t1', 'hello');
+  await waitForEvent(m, 't1', (e) => e.type === 'assistant');
+  expect(m.lastFrameAt('t1')!).toBeGreaterThan(first);
+  m.kill('t1');
+  expect(m.lastFrameAt('t1')).toBeUndefined();
+});

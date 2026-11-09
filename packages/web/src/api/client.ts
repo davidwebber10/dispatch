@@ -79,6 +79,37 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const body = (data: unknown) => JSON.stringify(data);
 
+/** A flag of the daemon's stall watchdog: a working thread that sent no output since `stalledSince` (epoch ms). */
+export interface StallState { terminalId: string; stalledSince: number; lastFrameAt: number | null }
+
+/** A UUID for an `Idempotency-Key`. `crypto.randomUUID` does not exist on a plain-http origin, so there is a fallback. */
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * POST a message with an `Idempotency-Key` (a UUID for this send). When the network fails before an
+ * answer arrives, the request is sent once more with the SAME key: if the daemon did get the first
+ * copy, it answers `{ duplicate: true }` and delivers nothing again. An answer from the daemon,
+ * also an error answer, is final: only a network error is tried again.
+ */
+async function postOnce(path: string, payload: unknown): Promise<void> {
+  const init: RequestInit = { method: 'POST', body: body(payload), headers: { 'Idempotency-Key': newIdempotencyKey() } };
+  try {
+    await req<unknown>(path, init);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    await req<unknown>(path, init);
+  }
+}
+
 export interface PluginImportResult { docs: number; files: number; settings: boolean }
 /** A plugin's model call (coach spec section 7.1): the harness and the model are optional. */
 export type PluginAssistHarness = 'claude' | 'codex' | 'openrouter';
@@ -237,7 +268,9 @@ export const api = {
   // `canned: true` marks fixed text a card click sent (the need-card acknowledgement): the
   // daemon logs it as 'canned', so it can never count as the user's own words in the ledger.
   sendStructuredMessage: (id: string, content: string | ContentBlock[], opts?: { canned?: boolean }) =>
-    req<void>(`/api/terminals/${id}/message`, { method: 'POST', body: body({ ...(typeof content === 'string' ? { text: content } : { content }), source: 'user', ...(opts?.canned ? { canned: true } : {}) }) }),
+    postOnce(`/api/terminals/${id}/message`, { ...(typeof content === 'string' ? { text: content } : { content }), source: 'user', ...(opts?.canned ? { canned: true } : {}) }),
+  // The stall watchdog's flags: read once after the events socket connects; changes then come as `terminal:stall` events.
+  listStalls: () => req<StallState[]>('/api/terminals/stalls'),
   // The membrane: the gated tool/question a structured AGENT thread is blocked on (or null).
   getPermission: (terminalId: string) => req<PendingPermission | null>(`/api/terminals/${terminalId}/permission`),
   // Resolve it: allow (optionally with an AskUserQuestion answers map) or deny (with a message).

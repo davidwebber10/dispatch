@@ -169,6 +169,8 @@ class GrokConnection extends EventEmitter {
 
 interface GrokSession {
   terminalId: string;
+  /** Epoch ms of the last frame that entered the ring (see IStructuredManager.lastFrameAt). */
+  lastFrameAt?: number;
   conn: GrokConnection;
   translator: GrokTranslator;
   events: unknown[];
@@ -434,6 +436,7 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
 
   private pushEvent(session: GrokSession, event: unknown): void {
     session.events.push(event);
+    session.lastFrameAt = Date.now();
     if (session.events.length > MAX_EVENTS) session.events.shift();
     this.emit('event', session.terminalId, event);
     // A signed-out login (ACP's auth error, OpenCode's missing provider key): a typed event after it.
@@ -545,6 +548,8 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
 
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
+
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
   /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the closed prose blocks, not the ring's deltas. */
   getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }

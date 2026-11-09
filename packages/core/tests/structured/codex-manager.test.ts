@@ -240,3 +240,21 @@ it('announces the new process number when the shared app-server restarts', async
   expect(newPid).toBeGreaterThan(0);
   expect(newPid).not.toBe(oldPid);
 });
+
+// W1-D (stall watchdog): the time of the last frame that entered the ring.
+it('lastFrameAt moves when a frame arrives', async () => {
+  expect(m.lastFrameAt('t1')).toBeUndefined(); // no session
+  const before = Date.now();
+  spawnFake(m, 't1');
+  await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'init');
+  const first = m.lastFrameAt('t1')!;
+  expect(first).toBeGreaterThanOrEqual(before);
+  await new Promise((r) => setTimeout(r, 15));
+  expect(m.lastFrameAt('t1')).toBe(first); // no frame, no move
+  const idle = waitForManagerEvent(m, 'idle', 't1');
+  m.sendMessage('t1', 'stream please');
+  await idle;
+  expect(m.lastFrameAt('t1')!).toBeGreaterThan(first);
+  m.kill('t1');
+  expect(m.lastFrameAt('t1')).toBeUndefined();
+});

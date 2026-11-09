@@ -11,6 +11,8 @@ import type { StatusService } from '../status/service.js';
 import { redactKeysDeep } from '../auth/redact-keys.js';
 import { modelSupportsTools } from '../settings/model-capabilities.js';
 import { clientMessage } from '../http/client-message.js';
+import { createIdempotencyCache } from '../http/idempotency.js';
+import type { StallState } from '../runtime/stall-watchdog.js';
 
 const VALID_TYPES: readonly string[] = [...THREAD_TYPES, ...TAB_ONLY_TYPES];
 
@@ -27,6 +29,8 @@ function markThreadMessage(payload: unknown, id: string, label: string | undefin
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = policyRouter();
   const answerPermissionRule = answerRule((id) => sessionService.getPendingPermission(id));
+  // Answered message POSTs by `Idempotency-Key`, per thread (W1-D). In memory: a restart forgets them.
+  const messageKeys = createIdempotencyCache();
 
   // GET /api/sessions/:id/terminals/archived — MUST be before the generic list route
   router.get('/sessions/:id/terminals/archived', (req, res) => {
@@ -96,6 +100,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   });
 
   // GET /api/terminals/:terminalId — get a single terminal
+  // GET /api/terminals/stalls — the working threads that sent no output for longer than the stall
+  // threshold (runtime/stall-watchdog.ts). A client reads it once after it connects; changes then
+  // come as `terminal:stall` events. MUST be before the generic /terminals/:terminalId route.
+  router.get('/terminals/stalls', (req, res) => {
+    const watchdog = req.app.locals.stallWatchdog as { all(): StallState[] } | undefined;
+    res.json(watchdog?.all() ?? []);
+  });
+
   router.get('/terminals/:terminalId', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule , plugin: needs('read:threads') }), (req, res) => {
     const terminal = sessionService.getTerminal(req.params.terminalId);
     if (!terminal) return res.status(404).json({ error: 'Terminal not found' });
@@ -156,12 +168,27 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
+    // Optional `Idempotency-Key` header (W1-D): a client that could not read the answer sends the same
+    // POST again with the same key. The copy gets the first answer plus `duplicate: true` (200), and
+    // nothing is delivered a second time. A copy that arrives while the first is still in flight
+    // gets 409 `in_flight`. A failed request keeps nothing, so its key can run again. With no header
+    // the route behaves as before.
+    const scope = req.params.terminalId;
+    const rawKey = req.get('Idempotency-Key');
+    const key = typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : undefined;
+    if (key) {
+      if (key.length > 200) return res.status(400).json({ error: 'Idempotency-Key is too long (200 characters at most)' });
+      const first = messageKeys.seen(scope, key);
+      if (first) return res.status(200).json({ ...(first.body && typeof first.body === 'object' ? first.body : {}), duplicate: true });
+      if (!messageKeys.begin(scope, key)) return res.status(409).json({ error: 'in_flight' });
+    }
     try {
       // A typed /model or /effort in a Pretty Claude thread is Dispatch's to run (the CLI's own version is masked
       // by Dispatch's own control request); it is never sent to the model. 200 tells the client it was a command.
       const typed = await sessionService.handleTypedSlash(req.params.terminalId, payload, source);
       if (typed) {
         broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: typed.sessionId });
+        if (key) messageKeys.remember(scope, key, { status: 200, body: { handled: 'settings' } });
         return void res.status(200).json({ handled: 'settings' });
       }
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
@@ -179,6 +206,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
           name: sessionService.get(from.sessionId)?.name ?? from.sessionId, terminalId: from.terminalId, thread: from.thread, overseer: from.overseer,
         })
         : sessionService.sendThreadMessage(req.params.terminalId, body, source, logAs);
+      // Delivered: from here a copy with the same key is a duplicate, whatever the bookkeeping below does.
+      if (key) messageKeys.remember(scope, key, { status: 204 });
       // Plugins hear every prompt with who sent it; the thread namer and the coordinator hear the owner's only.
       // They hear the text the receiver sees (the wrapped body, the sender line): a CLI thread's hook reports
       // that text again, and only an exact match is consumed (coach fix T1).
@@ -188,7 +217,10 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // signal, so mark it here exactly like the /input route does for a submitted line.
       if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
-    } catch (e: any) { res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) }); }
+    } catch (e: any) {
+      if (key) messageKeys.release(scope, key); // no effect once the delivery is remembered
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
+    }
   });
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread

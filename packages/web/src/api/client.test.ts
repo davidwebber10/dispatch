@@ -149,3 +149,45 @@ test('other 401s and other errors do not reload', async () => {
   await expect(api.listSessions()).rejects.toThrow(/500/);
   expect(reload).not.toHaveBeenCalled();
 });
+
+// W1-D: an Idempotency-Key on each message send, and one retry on a network error.
+test('sendStructuredMessage sends an Idempotency-Key header, a new one for each send', async () => {
+  (fetch as any).mockResolvedValue({ ok: true, status: 204, json: async () => ({}) });
+  await api.sendStructuredMessage('t1', 'one');
+  await api.sendStructuredMessage('t1', 'two');
+  const keys = (fetch as any).mock.calls.map((c: any[]) => c[1].headers['Idempotency-Key']);
+  expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/);
+  expect(keys[0]).not.toBe(keys[1]);
+  expect((fetch as any).mock.calls[0][1].headers['Content-Type']).toBe('application/json');
+});
+
+test('sendStructuredMessage retries once on a network error with the same key', async () => {
+  (fetch as any)
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ duplicate: true }) });
+  await expect(api.sendStructuredMessage('t1', 'hello')).resolves.not.toThrow();
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const [first, second] = (fetch as any).mock.calls;
+  expect(second[0]).toBe(first[0]);
+  expect(second[1].body).toBe(first[1].body);
+  expect(second[1].headers['Idempotency-Key']).toBe(first[1].headers['Idempotency-Key']);
+});
+
+test('sendStructuredMessage gives up after the one retry', async () => {
+  (fetch as any).mockRejectedValue(new TypeError('Failed to fetch'));
+  await expect(api.sendStructuredMessage('t1', 'hello')).rejects.toThrow('Failed to fetch');
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+test('sendStructuredMessage does not retry when the server answered with an error', async () => {
+  (fetch as any).mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ error: 'the thread is not running' }) });
+  await expect(api.sendStructuredMessage('t1', 'hello')).rejects.toThrow(/400/);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test('listStalls reads the stall flags', async () => {
+  mockJson([{ terminalId: 't1', stalledSince: 1_700_000_000_000, lastFrameAt: null }]);
+  expect(await api.listStalls()).toEqual([{ terminalId: 't1', stalledSince: 1_700_000_000_000, lastFrameAt: null }]);
+  expect(fetch).toHaveBeenCalledWith('/api/terminals/stalls', expect.objectContaining({ method: 'GET' }));
+});

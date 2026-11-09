@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { ServerEvent } from '../api/events-socket';
+import { api } from '../api/client';
 
 /**
  * Live per-terminal status + activity, driven by `terminal:status` events.
@@ -20,17 +21,50 @@ export interface ThreadStatus {
 
 interface ThreadStatusState {
   byTerminal: Record<string, ThreadStatus>;
+  /**
+   * The stall watchdog's flags: terminal id to the time (epoch ms) since which a working thread
+   * sent no output. Set and cleared by `terminal:stall` events; `loadStalls` reads the full list.
+   * A flag is information only: the thread can still be at work.
+   */
+  stalls: Record<string, number>;
   applyEvent: (e: ServerEvent) => void;
   /** Drop the whole live overlay. Called on socket reconnect: while we were
    *  disconnected we missed every `terminal:status` broadcast, so an entry can be
    *  frozen at a stale `working` that outlived the real settle. Clearing lets the
    *  board fall back to the authoritative persisted rows until fresh events arrive. */
   reset: () => void;
+  /** Replace `stalls` with the daemon's list (after a connect or a reconnect). A failed read keeps the old flags. */
+  loadStalls: () => Promise<void>;
+}
+
+/** `obj` without `key`; the same object when the key is absent (no needless store update). */
+function without<T>(obj: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in obj)) return obj;
+  const next = { ...obj };
+  delete next[key];
+  return next;
+}
+
+let stallsRequested = false;
+/** Read the stall flags once for this page load (the first StallBadge calls it). Reconnects go through `resyncAfterReconnect`. */
+export function ensureStallsLoaded(): void {
+  if (stallsRequested) return;
+  stallsRequested = true;
+  void useThreadStatus.getState().loadStalls();
 }
 
 export const useThreadStatus = create<ThreadStatusState>((set, get) => ({
   byTerminal: {},
+  stalls: {},
   reset: () => set({ byTerminal: {} }),
+  loadStalls: async () => {
+    try {
+      const list = await api.listStalls();
+      const stalls: Record<string, number> = {};
+      for (const s of list) if (typeof s?.terminalId === 'string' && typeof s.stalledSince === 'number') stalls[s.terminalId] = s.stalledSince;
+      set({ stalls });
+    } catch { /* offline or an older daemon: keep what the events gave */ }
+  },
   applyEvent: (e) => {
     if (e.type === 'terminal:status' && typeof e.terminalId === 'string') {
       const prev = get().byTerminal[e.terminalId] ?? {};
@@ -41,10 +75,16 @@ export const useThreadStatus = create<ThreadStatusState>((set, get) => ({
         // previous value when the field is entirely absent from the event.
         activity: 'activity' in e ? (e.activity as string | null) : prev.activity,
       };
-      set({ byTerminal: { ...get().byTerminal, [e.terminalId]: next } });
+      // A thread that left "working" is not stalled: do not wait for the daemon's next 30 s tick to say so.
+      const stalls = next.status !== 'working' ? without(get().stalls, e.terminalId) : get().stalls;
+      set({ byTerminal: { ...get().byTerminal, [e.terminalId]: next }, stalls });
     } else if (e.type === 'terminal:exit' && typeof e.terminalId === 'string') {
       const prev = get().byTerminal[e.terminalId] ?? {};
-      set({ byTerminal: { ...get().byTerminal, [e.terminalId]: { ...prev, status: 'waiting', threadStatus: 'idle', activity: null } } });
+      set({ byTerminal: { ...get().byTerminal, [e.terminalId]: { ...prev, status: 'waiting', threadStatus: 'idle', activity: null } }, stalls: without(get().stalls, e.terminalId) });
+    } else if (e.type === 'terminal:stall' && typeof e.terminalId === 'string') {
+      if (e.stalledSince === null) return set({ stalls: without(get().stalls, e.terminalId) });
+      const since = typeof e.stalledSince === 'string' ? Date.parse(e.stalledSince) : NaN;
+      if (Number.isFinite(since)) set({ stalls: { ...get().stalls, [e.terminalId]: since } });
     }
   },
 }));

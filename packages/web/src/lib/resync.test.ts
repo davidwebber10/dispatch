@@ -55,3 +55,14 @@ test('a failing project reload is swallowed so one dead project cannot abort the
   await expect(resyncAfterReconnect()).resolves.toBeUndefined();
   expect(listTerminals).toHaveBeenCalledWith('ok');
 });
+
+test('loads the stall flags again: a terminal:stall missed while the socket was down', async () => {
+  vi.spyOn(api, 'listTerminals').mockResolvedValue([]);
+  useThreadStatus.setState({ stalls: { stale: 1 } });
+  const listStalls = vi.spyOn(api, 'listStalls').mockResolvedValue([{ terminalId: 't1', stalledSince: 99, lastFrameAt: null }]);
+
+  await resyncAfterReconnect();
+
+  expect(listStalls).toHaveBeenCalledTimes(1);
+  expect(useThreadStatus.getState().stalls).toEqual({ t1: 99 });
+});

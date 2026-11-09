@@ -317,6 +317,13 @@ export function listActiveRoleRuns(db: Database.Database): AgentRunRow[] {
   `).all() as AgentRunRow[];
 }
 
+/** Every run that listDueSchedules counts as in flight. The boot check reads it (AgentService.reconcileRunsAtBoot). */
+export function listOpenRuns(db: Database.Database): AgentRunRow[] {
+  return db.prepare(`
+    SELECT * FROM agent_runs WHERE status IN ('queued', 'starting', 'working', 'needs_input') ORDER BY created_at ASC
+  `).all() as AgentRunRow[];
+}
+
 export function attachTerminal(db: Database.Database, runId: string, terminalId: string): AgentRunRow | null {
   db.prepare('UPDATE agent_runs SET terminal_id = ?, updated_at = ? WHERE id = ?').run(terminalId, nowIso(), runId);
   return getRun(db, runId);
