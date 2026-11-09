@@ -105,6 +105,40 @@ describe('the "/" menu', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith('stop', ''));
   });
 
+  it('Tab only fills in the word for every command: /re+Tab and /co+Tab run nothing; Enter then runs', async () => {
+    render(<Host />);
+    type('/re');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/restart');
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(run).toHaveBeenCalledWith('restart', ''));
+    run.mockClear();
+    type('/co');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/compact');
+    expect(run).not.toHaveBeenCalled();
+    type('/st');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/stop');
+    expect(run).not.toHaveBeenCalled();
+    type('/cl');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/cli');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('Tab on a model or an effort option fills the whole command and does not change anything', () => {
+    render(<Host />);
+    type('/model so');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/model sonnet');
+    type('/effort hi');
+    fireEvent.keyDown(box(), { key: 'Tab' });
+    expect(box().value).toBe('/effort high');
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('Escape closes the list and leaves the text', () => {
     render(<Host />);
     type('/');

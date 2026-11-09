@@ -2316,7 +2316,9 @@ export class SessionService {
     let config: Record<string, any> = {};
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     if (config.agentType || (config.role && config.role !== 'coordinator')) throw transportError(409, 'An agent thread runs on its policy model');
+    // A turn parked on a question (needs_input) is still a turn: the question is answered inside it, so the change waits like the chip does.
     if (terminal.status === 'working') throw transportError(409, `This thread is busy — change the ${what} when the turn ends`);
+    if (terminal.status === 'needs_input') throw transportError(409, `This thread is busy, waiting for your answer — change the ${what} when the turn ends`);
     const structured = config.transport === 'structured' || terminal.type === 'grok' || terminal.type === 'opencode';
     if (!structured && this.ptyManager.isAlive(terminalId)) throw transportError(409, `This thread runs in the CLI — use /${what} there`);
     return { terminal, config, structured, manager: this.structuredManagerFor(terminal.type) };

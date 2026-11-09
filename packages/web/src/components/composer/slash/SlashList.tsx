@@ -11,6 +11,8 @@ export interface SlashItem {
   /** The saved choice: shown with a mark. */
   current?: boolean;
   run: () => void;
+  /** Tab: put this item's text in the box and run nothing, for a command and for an option alike. */
+  fill?: () => void;
   /** Enter on a command that is typed out in full (`/model`): do this instead of `run`. */
   runExact?: () => void;
 }

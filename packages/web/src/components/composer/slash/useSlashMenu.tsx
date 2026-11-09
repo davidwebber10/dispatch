@@ -94,6 +94,7 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
       return commands.filter((c) => c.name.startsWith(q)).map((c) => ({
         key: c.name, label: `/${c.name}`, description: c.description, disabledReason: c.disabledReason,
         run: () => (c.takesArgs ? setValue(`/${c.name} `) : void exec(c.name, '')),
+        fill: () => setValue(c.takesArgs ? `/${c.name} ` : `/${c.name}`),
         // `/model` typed out and Enter opens the picker; a second Enter must not pick an option by accident.
         runExact: c.takesArgs && q === c.name ? () => void exec(c.name, '') : undefined,
       }));
@@ -107,10 +108,10 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
       if (name === 'model') {
         return o.models
           .filter((m) => m.value.toLowerCase().startsWith(q) || m.label.toLowerCase().startsWith(q))
-          .map((m) => ({ key: `m:${m.value}`, label: m.label, description: m.value, current: isSameModel(m.value, o.model ?? undefined), run: () => void exec('model', m.value) }));
+          .map((m) => ({ key: `m:${m.value}`, label: m.label, description: m.value, current: isSameModel(m.value, o.model ?? undefined), run: () => void exec('model', m.value), fill: () => setValue(`/model ${m.value}`) }));
       }
       const levels = o.effortLevels ?? (harness === 'claude-code' || harness === 'codex' ? EFFORT_LEVELS[harness] : []);
-      return levels.filter((l) => l.startsWith(q)).map((l) => ({ key: `e:${l}`, label: l, current: o.effort === l, run: () => void exec('effort', l) }));
+      return levels.filter((l) => l.startsWith(q)).map((l) => ({ key: `e:${l}`, label: l, current: o.effort === l, run: () => void exec('effort', l), fill: () => setValue(`/effort ${l}`) }));
     }
     return [];
   }, [value, dismissedFor, commands, harness, o.model, o.effort, o.effortLevels, o.models, setValue, exec]);
@@ -128,7 +129,8 @@ export function useSlashMenu(o: UseSlashMenuOptions): SlashMenu {
       const it = items[active] ?? items[0];
       stop();
       if (it.disabledReason) say(it.disabledReason, true);
-      else if (e.key === 'Enter' && it.runExact) it.runExact();
+      else if (e.key === 'Tab') (it.fill ?? it.run)();  // Tab only completes the text; Enter is what runs it
+      else if (it.runExact) it.runExact();
       else it.run();
     }
   }, [items, active, value, say]);

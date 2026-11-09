@@ -167,7 +167,9 @@ export function Composer() {
   const coordinatorTab = useTabs((s) => (coordinatorId ? findTerminal(s.byProject, coordinatorId) : undefined));
   const controls = useThreadModelControls(coordinatorTab ?? { id: coordinatorId ?? '', sessionId: '', type: 'claude-code', config: {} });
   const slashHarness = controls.harness ?? 'claude-code';
-  const turnRuns = coordinatorBusy || coordinatorCompacting;
+  const coordinatorPending = useOverseer((s) => s.coordinatorPending);
+  // A turn parked on a question is still a turn that runs: the chip is off for it, like the daemon's 409.
+  const turnRuns = coordinatorBusy || coordinatorCompacting || !!coordinatorPending || coordinatorTab?.status === 'needs_input';
   const slash = useSlashMenu({
     surface: 'overseer', harness: slashHarness, value: composer, setValue: setComposer, mobile: isMobile,
     model: controls.active ?? null, effort: controls.effort?.current ?? controls.effort?.defaultEffort ?? null,

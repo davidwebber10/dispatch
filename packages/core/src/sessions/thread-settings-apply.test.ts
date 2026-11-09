@@ -147,6 +147,15 @@ describe('setThreadEffort', () => {
     expect(claude.calls).toEqual([]);
   });
 
+  it('a turn parked on a question (needs_input) is a turn that runs: model and effort are refused like the chip is disabled', async () => {
+    seed('q1', { status: 'needs_input', config: { model: 'sonnet' } });
+    await expect(svc.setThreadModel('q1', 'opus')).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/busy, waiting for your answer/) });
+    await expect(svc.setThreadEffort('q1', 'high')).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/busy, waiting for your answer/) });
+    await expect(svc.handleTypedSlash('q1', '/model opus', 'user')).rejects.toMatchObject({ status: 409 });
+    expect(claude.calls).toEqual([]);
+    expect(cfg('q1').model).toBe('sonnet');
+  });
+
   it('an overseer may change its model and effort (PS-2): an explicit model wins over the tier', async () => {
     seed('c1', { config: { role: 'coordinator' } });
     await svc.setThreadEffort('c1', 'max');

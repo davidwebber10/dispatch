@@ -366,8 +366,9 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/terminals/:terminalId/model { model } — the Pretty model switcher: run `model` from
   // the thread's next turn, keeping the conversation (SessionService.setThreadModel). 409 while a
   // turn runs or for a live CLI thread; 400 when the harness refuses the model. Answers
-  // { model: <the id the harness reports>, terminal }.
-  router.post('/terminals/:terminalId/model', async (req, res) => {
+  // { model: <the id the harness reports>, terminal }. Owner work (a pricier model spends more): the web page
+  // or a token, never a credential-free script or a thread key (same as /effort).
+  router.post('/terminals/:terminalId/model', requireOwnerProof, async (req, res) => {
     const { model } = req.body ?? {};
     if (typeof model !== 'string' || !model.trim()) return res.status(400).json({ error: 'model is required' });
     try {

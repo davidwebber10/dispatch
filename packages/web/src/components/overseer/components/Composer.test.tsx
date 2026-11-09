@@ -137,6 +137,12 @@ describe('Composer — the "/" menu and the model chip', () => {
     expect(box().value).toBe('/model');
   });
 
+  it('a turn parked on a question disables the overseer\'s chip too', () => {
+    useTabs.setState({ byProject: { 'proj-a': [{ id: 'coord-1', sessionId: 'proj-a', type: 'claude-code', label: 'CP', pid: 1, externalId: 'e', workingDir: '/w', status: 'needs_input', createdAt: '', config: { role: 'coordinator', transport: 'structured', model: 'sonnet' }, archivedAt: null, sortOrder: 0 }] } } as never);
+    render(<Composer />);
+    expect(screen.getByRole('button', { name: /^Model:/ })).toBeDisabled();
+  });
+
   it('a normal directive still goes out', () => {
     render(<Composer />);
     fireEvent.change(box(), { target: { value: 'status please' } });

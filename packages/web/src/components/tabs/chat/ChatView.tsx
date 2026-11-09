@@ -34,6 +34,7 @@ import { useThreadModelControls } from './modelControls';
 import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
 import { usePickerRequest } from '../../../stores/pickerRequest';
 import { useTransportSwitch } from '../../layout/TransportToggle';
+import { ConfirmModal } from '../../common/ConfirmModal';
 import { textToSend } from '../../../lib/slashEscape';
 import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../hooks/useToolUIState';
@@ -261,6 +262,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   const controls = useThreadModelControls(tab ?? { id: terminalId, sessionId: '', type: 'claude-code', config: {} });
   const transport = useTransportSwitch(terminalId);
   const slashHarness = controls.harness ?? 'claude-code';
+  // A turn parked on a question is still a turn that runs (the daemon answers 409 then too), so the chip is off for it as well.
+  const [askRestart, setAskRestart] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+  const turnRuns = busy || compacting || !!pending || tab?.status === 'needs_input';
   const slash = useSlashMenu({
     surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, mobile: isMobile,
     model: controls.active ?? null, effort: controls.effort?.current ?? controls.effort?.defaultEffort ?? null,
@@ -270,7 +275,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         return runModelEffortCommand({
           harness: slashHarness, name, args, models: controls.options, effortLevels: controls.effort?.levels,
           openPicker: () => {
-            if (busy || compacting) throw new Error(`This thread is busy — change the ${name} when the turn ends`);
+            if (turnRuns) throw new Error(`This thread is busy — change the ${name} when the turn ends`);
             usePickerRequest.getState().request(`thread:${terminalId}`);
           },
           pickModel: controls.pickModel, pickEffort: controls.pickEffort,
@@ -284,7 +289,12 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         if (why) { transport.clearError(); throw new Error(why); } // shown as the menu's own notice, and the text stays
         return;
       }
-      if (name === 'restart') { await api.relaunchTerminal(terminalId); return; }
+      if (name === 'restart') {
+        // Restarting a working thread stops its turn: ask first, like the CLI/Pretty switch does. From the menu and from the phone's Commands sheet alike.
+        if (turnRuns) { setAskRestart(true); return; }
+        await api.relaunchTerminal(terminalId);
+        return;
+      }
     },
   });
   // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
@@ -473,7 +483,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
           {/* The active model, always shown once a thread has one, and the switcher behind it. */}
-          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={busy || compacting} />}
+          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
@@ -483,6 +493,23 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         </div>
       </div>
       {transport.confirmUi}
+      {restartError && (
+        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>Could not restart: {restartError}</span>
+          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => setRestartError(null)}
+            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
+            <X size={13} weight="bold" />
+          </button>
+        </div>
+      )}
+      <ConfirmModal
+        open={askRestart}
+        title="Restart this thread now?"
+        message="This thread is working. Restarting stops the current turn and starts the thread again, carrying on the same conversation. What it was in the middle of will not finish."
+        confirmLabel="Stop and restart"
+        onConfirm={() => { setAskRestart(false); setRestartError(null); api.relaunchTerminal(terminalId).catch((e) => setRestartError(e instanceof Error ? e.message : 'The thread could not be restarted.')); }}
+        onCancel={() => setAskRestart(false)}
+      />
       {transport.error && (
         <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
           <span style={{ flex: 1, minWidth: 0 }}>Could not switch: {transport.error}</span>

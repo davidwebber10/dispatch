@@ -1,5 +1,5 @@
 // The "/" menu and the effort picker in a Pretty thread, on top of the 4.2.0 model chip. Rebuild of PR #155.
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { ChatView } from './ChatView';
 import { api } from '../../../api/client';
@@ -134,6 +134,71 @@ describe('the "/" menu in a Pretty thread', () => {
     expect(screen.getAllByRole('radiogroup', { name: 'Model' })).toHaveLength(1);
     expect(setModel).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('/restart asks first when the thread is working (round 4)', () => {
+  it('idle: it restarts at once', async () => {
+    const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
+    await typeAndEnter('/restart');
+    await waitFor(() => expect(relaunch).toHaveBeenCalledWith('t1'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('working: it asks, restarts only on "Stop and restart", and Cancel leaves the thread alone', async () => {
+    const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
+    render(<ChatView terminalId="t1" />);
+    await typeAndEnter('hello');                       // a turn starts: the thread is busy
+    await typeAndEnter('/restart');
+    expect(await screen.findByRole('alertdialog', { name: /Restart this thread now\?/ })).toBeInTheDocument();
+    expect(relaunch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(relaunch).not.toHaveBeenCalled();
+    await typeAndEnter('/restart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and restart' }));
+    await waitFor(() => expect(relaunch).toHaveBeenCalledWith('t1'));
+  });
+
+  it('a thread parked on a question asks too', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), status: 'needs_input' }] } } as never);
+    const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
+    await typeAndEnter('/restart');
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it('the phone\'s Commands sheet confirms it too', async () => {
+    const mobile = await import('../../../hooks/useIsMobile');
+    vi.spyOn(mobile, 'useIsMobile').mockReturnValue(true);
+    const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
+    render(<ChatView terminalId="t1" />);
+    await typeAndEnter('hello');
+    fireEvent.click(screen.getByRole('button', { name: 'More input options' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Commands/ }));
+    const sheet = await screen.findByRole('listbox', { name: 'Commands' });
+    fireEvent.click(within(sheet).getByText('/restart'));
+    expect(await screen.findByRole('alertdialog', { name: /Restart this thread now\?/ })).toBeInTheDocument();
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it('a restart that fails says why', async () => {
+    vi.spyOn(api, 'relaunchTerminal').mockRejectedValue(new Error('Could not start'));
+    render(<ChatView terminalId="t1" />);
+    await typeAndEnter('hello');
+    await typeAndEnter('/restart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and restart' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not restart: Could not start'));
+  });
+});
+
+describe('a turn parked on a question disables the chip like a running turn (round 4, decision 1)', () => {
+  it('the chip is off, and a bare /model says busy', async () => {
+    useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), status: 'needs_input' }] } } as never);
+    render(<ChatView terminalId="t1" />);
+    expect(await screen.findByRole('button', { name: /^Model:/ })).toBeDisabled();
+    await typeAndEnter('/model');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/busy — change the model when the turn ends/));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });
 
