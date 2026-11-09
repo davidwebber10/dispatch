@@ -11,7 +11,7 @@ import { FakeSummarizer, settle } from './fake-summarizer.js';
 import { FakeManager, texts } from './fake-manager.js';
 import { KeyRegistry } from '../../src/auth/principals.js';
 
-function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: () => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
+function setup(opts: { keys?: KeyRegistry; waitMs?: number; failLogOn?: string; readImage?: (file: string) => { mimeType: string; data: string } | null; onEmit?: (e: EndlessEvent) => void } = {}) {
   const db = new Database(':memory:');
   initSchema(db);
   const store = new EndlessStore(db);

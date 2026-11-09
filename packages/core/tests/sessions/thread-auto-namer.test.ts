@@ -342,7 +342,7 @@ describe('ThreadAutoNamer', () => {
     });
     terminalsDb.create(db, {
       id: 'auto1', sessionId: 's1', type: 'claude-code', label: 'Already named',
-      externalId: 'ext-auto', labelSource: 'auto',
+      externalId: 'ext-auto', labelSource: 'auto' as never,
     });
     terminalsDb.create(db, {
       id: 'user1', sessionId: 's1', type: 'claude-code', label: 'User named',

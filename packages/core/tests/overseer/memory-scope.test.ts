@@ -402,7 +402,7 @@ describe('prepareOverseerMemory', () => {
       const read = vi.spyOn(fs, 'readSync');
 
       const out = prepare([OVERSEER]);
-      const pastHead = read.mock.calls.filter(([, , , len]) => (len as number) > COPY_LIMITS.headBytes).length;
+      const pastHead = read.mock.calls.filter((call) => ((call as unknown[])[3] as number) > COPY_LIMITS.headBytes).length;
       read.mockRestore();
 
       expect(out.copied).toEqual(['big.md']); // late.md names the overseer only after the first 8 KB

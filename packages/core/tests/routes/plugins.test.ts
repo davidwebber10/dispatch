@@ -152,7 +152,7 @@ describe('plugin routes', () => {
       const registry = new PluginRegistry(dir, { broadcast: (e) => { events.push(e); } }, '3.28.0', { keys: app.locals.keys, keyDir: path.join(tmp, 'keys') });
       const bare = express();
       bare.use(express.json());
-      bare.use('/api', createPluginsRouter(registry));
+      bare.use('/api', createPluginsRouter(registry, db));
       const r = await request(bare).post('/api/plugins/p/reload');
       expect(r.status).toBe(200);
       expect(events).toEqual([{ type: 'plugin:changed', id: 'p', plugin: expect.objectContaining({ id: 'p' }) }]);

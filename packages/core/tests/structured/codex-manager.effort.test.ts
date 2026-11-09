@@ -193,5 +193,5 @@ it('a refused model puts the chip back too: the restored model is sent to connec
   await f;
   expect(frames).toEqual([{ type: 'system', subtype: 'model', model: 'gpt-6-luna' }]);
   const ring = m.getEvents('t1').filter((e: any) => e.type === 'system' && e.subtype === 'model');
-  expect(ring[ring.length - 1].model).toBe('gpt-6-luna');   // a reconnecting client replays the restored model last
+  expect((ring[ring.length - 1] as any).model).toBe('gpt-6-luna');   // a reconnecting client replays the restored model last
 });
