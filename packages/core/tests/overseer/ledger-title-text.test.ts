@@ -134,7 +134,7 @@ describe('the service — ledger_list and ledger_add', () => {
 // Review fix (2026-10-09): the overseer's own-use lines carry the title too, so after a compaction
 // it can still write "N41 · title" from what ledger_list gives it.
 describe('the own-use lines — the title before the question', () => {
-  const CTX = { now: NOW };
+  const CTX: { now: typeof NOW; timeZone?: string } = { now: NOW };
   it('renderItem: "N41 [Do] title — question"; without a title, the question as before', () => {
     expect(renderItem(item({ seq: 41, kind: 'do', text: 'Check the banner on staging.', title: 'Check the staging banner' }), CTX).split('\n')[0])
       .toBe('N41 [Do] Check the staging banner — Check the banner on staging. (open 2d)');

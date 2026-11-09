@@ -7,7 +7,7 @@ function sched(overrides: Partial<AgentScheduleRow>): AgentScheduleRow {
     id: 's', project_id: 'p', name: 'n', provider: 'claude-code', working_dir: '/',
     prompt: '', schedule_kind: 'recurring', run_at: null, recurrence_rule: null,
     timezone: 'UTC', enabled: 1, next_run_at: null, default_terminal_label: null,
-    created_at: '', updated_at: '', ...overrides,
+    role_name: null, consecutive_failures: 0, created_by: null, created_at: '', updated_at: '', ...overrides,
   };
 }
 

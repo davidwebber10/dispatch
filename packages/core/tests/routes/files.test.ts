@@ -252,8 +252,8 @@ describe('file routes', () => {
 
   describe('POST /reveal', () => {
     let originalFileManagerName: PropertyDescriptor;
-    let revealSpy: ReturnType<typeof vi.spyOn>;
-    let isLocalClientSpy: ReturnType<typeof vi.spyOn>;
+    let revealSpy: import('vitest').MockInstance<typeof platform.revealInFileManager>;
+    let isLocalClientSpy: import('vitest').MockInstance<typeof platform.isLocalClient>;
 
     beforeEach(() => {
       // Pin a capable platform (non-null file manager) regardless of which OS this suite runs on;

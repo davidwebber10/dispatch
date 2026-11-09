@@ -8,7 +8,7 @@ import { initSchema } from '../../src/db/schema.js';
 
 describe('GET /api/state/host', () => {
   let app: any;
-  let isLocalClientSpy: ReturnType<typeof vi.spyOn>;
+  let isLocalClientSpy: import('vitest').MockInstance<typeof platform.isLocalClient>;
   let fileManagerDesc: PropertyDescriptor | undefined;
 
   beforeEach(() => {

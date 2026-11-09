@@ -85,7 +85,7 @@ describe('SecretsService', () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x' });
     expect(s.status().connected).toBe(false);
-    expect((s.status() as Record<string, unknown>).token).toBeUndefined();
+    expect((s.status() as unknown as Record<string, unknown>).token).toBeUndefined();
     expect((fs.statSync(path.join(dir, 'doppler.json')).mode & 0o777)).toBe(0o600);
   });
 

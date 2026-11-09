@@ -426,7 +426,7 @@ describe('terminal routes', () => {
       .expect(201);
     expect(created.body.config.origin).toBe('endless');
     const stored = terminalsDb.getById(db, created.body.id);
-    expect(JSON.parse(stored!.config).origin).toBe('endless');
+    expect(JSON.parse(stored!.config!).origin).toBe('endless');
   });
 
   describe('PATCH /api/terminals/:terminalId/auto-archive', () => {

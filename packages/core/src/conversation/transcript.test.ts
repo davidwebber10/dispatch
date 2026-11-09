@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseClaudeTranscript } from './transcript';
+import { parseClaudeTranscript } from './transcript.js';
 
 // The Grok/ACP transcript shape: thinking blocks land BETWEEN a tool_use and its
 // tool_result (each ACP update is appended as its own JSONL line in arrival order).

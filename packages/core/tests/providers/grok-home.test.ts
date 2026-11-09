@@ -73,7 +73,7 @@ describe('writeGrokHome', () => {
 
   it('writes both from one call, which is the point of the per-thread home', () => {
     const out = writeGrokHome({
-      dir,
+      dir, realHome,
       mcpServers: { agency: { command: 'node', args: ['/opt/agency.js'] } },
       eventsUrl: 'http://x/events', hookHelperPath: '/opt/h.mjs', nodePath: '/usr/bin/node',
     });

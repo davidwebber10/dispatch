@@ -26,7 +26,7 @@ describe('plugin assist route (2026-11-07)', () => {
   const asPlugin = (id: string) => ({ Authorization: `Bearer ${fs.readFileSync(path.join(tmp, 'keys', `plugin-${id}`), 'utf8').trim()}` });
   const fakeRunner: AssistRunner = {
     available: async () => true,
-    run: async (req) => { calls.push(req); return { text: `judged: ${req.messages[0]?.content ?? ''}`, usage: { inputTokens: 120, outputTokens: 30 }, ms: 250, model: 'fake-model' }; },
+    run: async (req) => { calls.push(req); return { text: `judged: ${req.messages[0]?.content ?? ''}`, usage: { inputTokens: 120, outputTokens: 30 }, ms: 250, model: 'fake-model' } as AssistResult; },
   };
   let summary: UsageSummary | null = null;
   const build = (runner: AssistRunner | null) => {
@@ -57,7 +57,7 @@ describe('plugin assist route (2026-11-07)', () => {
     expect((await request(app).post('/api/plugins/coach/assist').set(thread).send(body)).status).toBe(403);
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => { release = r; });
-    const slow: AssistRunner = { available: async () => true, run: async () => { await gate; return { text: 'late', usage: { inputTokens: 1, outputTokens: 1 }, ms: 1, model: 'm' }; } };
+    const slow: AssistRunner = { available: async () => true, run: async () => { await gate; return { text: 'late', usage: { inputTokens: 1, outputTokens: 1 }, ms: 1, model: 'm' } as AssistResult; } };
     app = build(slow);
     // supertest sends lazily: `.then` starts each request now, so three are in flight before the fourth.
     const inflight = [1, 2, 3].map(() => request(app).post('/api/plugins/coach/assist').set(asPlugin('coach')).send(body).then((r) => r));

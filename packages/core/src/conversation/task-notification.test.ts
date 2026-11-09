@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isTaskNotification, isTaskNotificationEntry, taskNotificationSummary,
   commandEchoSummary, isCommandEcho, classifyUserText, isInjectedUserEntry,
-} from './task-notification';
+} from './task-notification.js';
 
 // Captured verbatim from a real transcript line (origin.kind: 'task-notification').
 const BODY = `<task-notification>

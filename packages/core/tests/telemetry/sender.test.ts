@@ -5,7 +5,7 @@ import { checkTelemetryOnce, setTelemetryEnabled, telemetryEnabled, startTelemet
 
 function setup() {
   const db = new Database(':memory:'); initSchema(db);
-  const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+  const fetchImpl = vi.fn(async (..._args: unknown[]) => new Response(null, { status: 204 }));
   let now = new Date('2026-10-15T10:00:00Z');
   const deps = { fetchImpl: fetchImpl as unknown as typeof fetch, now: () => now, env: {} as NodeJS.ProcessEnv, version: '3.0.0', platform: 'darwin' as const, url: 'https://example.test/v1/ping' };
   return { db, fetchImpl, deps, setNow: (d: string) => { now = new Date(d); } };

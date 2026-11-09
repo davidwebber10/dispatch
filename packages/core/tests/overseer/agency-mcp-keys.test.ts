@@ -122,7 +122,7 @@ describe('agency-mcp sends the thread key', () => {
     ]);
     const first = await callTool('list_threads', {});
     expect(first.isError).toBe(true);
-    expect(first.content[0].text).toBe('Error: That project is not yours.');
+    expect((first.content[0] as any).text).toBe('Error: That project is not yours.');
     const second = await callTool('list_threads', {});
     expect(second.isError).toBeUndefined();
     expect(whoamiCalls).toBe(2);
@@ -136,9 +136,9 @@ describe('agency-mcp sends the thread key', () => {
       (u) => (u.includes('/terminals/a/') ? { status: 401, body: { error: 'auth_required', message: 'raw' } } : undefined),
       (u) => (u.includes('/terminals/d/') ? { status: 403, body: { error: 'depth_exceeded', message: 'Too deep for you.' } } : undefined),
     ]);
-    expect((await callTool('start_agent', { agentId: 'o' })).content[0].text).toBe('Error: only the owner can do this. Ask the owner to do it in the browser.');
-    expect((await callTool('start_agent', { agentId: 'a' })).content[0].text).toBe("Error: this thread's Dispatch key is not valid. Ask the owner to relaunch the thread.");
-    expect((await callTool('start_agent', { agentId: 'd' })).content[0].text).toBe('Error: Too deep for you.');
+    expect(((await callTool('start_agent', { agentId: 'o' })).content[0] as any).text).toBe('Error: only the owner can do this. Ask the owner to do it in the browser.');
+    expect(((await callTool('start_agent', { agentId: 'a' })).content[0] as any).text).toBe("Error: this thread's Dispatch key is not valid. Ask the owner to relaunch the thread.");
+    expect(((await callTool('start_agent', { agentId: 'd' })).content[0] as any).text).toBe('Error: Too deep for you.');
   });
 
   it('watch and ledger helpers show the key error texts too', async () => {
@@ -147,8 +147,8 @@ describe('agency-mcp sends the thread key', () => {
       (u) => (u.startsWith(`${API}/api/watches`) ? { status: 403, body: { error: 'owner_only', message: 'raw' } } : undefined),
       (u) => (u.includes('/ledger') ? { status: 403, body: { error: 'out_of_scope', message: 'Not your project.' } } : undefined),
     ]);
-    expect((await callTool('list_watches', {})).content[0].text).toBe('Error: only the owner can do this. Ask the owner to do it in the browser.');
-    expect((await callTool('ledger_list', {})).content[0].text).toBe('Error: Not your project.');
+    expect(((await callTool('list_watches', {})).content[0] as any).text).toBe('Error: only the owner can do this. Ask the owner to do it in the browser.');
+    expect(((await callTool('ledger_list', {})).content[0] as any).text).toBe('Error: Not your project.');
   });
 
   it('complete_agent sends ?force=1 only when force is true', async () => {
@@ -182,7 +182,7 @@ describe('agency-mcp sends the thread key', () => {
       ]);
       const out = await callTool('list_projects', {});
       expect(calls[1].url).toBe(`${API}/api/sessions`);
-      expect(JSON.parse(out.content[0].text)).toEqual([
+      expect(JSON.parse((out.content[0] as any).text)).toEqual([
         { id: 'sess-1', name: 'One', coordinatorId: 'c1', isOwn: true },
         { id: 'sess-B', name: 'Bee', coordinatorId: 'c2', isOwn: false },
       ]);
@@ -197,7 +197,7 @@ describe('agency-mcp sends the thread key', () => {
       ]);
       const out = await callTool('list_threads', { projectId: 'sess-B' });
       expect(calls[1].url).toBe(`${API}/api/sessions/sess-B/terminals`);
-      expect(JSON.parse(out.content[0].text)[0]).toMatchObject({ id: 'x', projectId: 'sess-B' });
+      expect(JSON.parse((out.content[0] as any).text)[0]).toMatchObject({ id: 'x', projectId: 'sess-B' });
     });
 
     it('a worker passing another project gets the daemon out_of_scope message', async () => {
@@ -206,14 +206,14 @@ describe('agency-mcp sends the thread key', () => {
         (u) => (u === `${API}/api/sessions/sess-B/terminals` ? { status: 403, body: { error: 'out_of_scope', message: 'Workers read their own project only.' } } : undefined),
       ]);
       const out = await callTool('list_threads', { projectId: 'sess-B' });
-      expect(out.content[0].text).toBe('Error: Workers read their own project only.');
+      expect((out.content[0] as any).text).toBe('Error: Workers read their own project only.');
     });
 
     it('overseer: read_thread and read_agent on a project B id pass the client check', async () => {
       install([whoamiRoute({ overseer: true }), foreign('f1', 'agent'), convo, (u) => (u.endsWith('/permission') ? { status: 404 } : undefined)]);
       const t = await callTool('read_thread', { id: 'f1' });
       expect(t.isError).toBeUndefined();
-      expect(JSON.parse(t.content[0].text).output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread f1[^\n]*\n+hello\n\[\[\[END UNTRUSTED \1\]\]\]$/);
+      expect(JSON.parse((t.content[0] as any).text).output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread f1[^\n]*\n+hello\n\[\[\[END UNTRUSTED \1\]\]\]$/);
       const a = await callTool('read_agent', { agentId: 'f1' });
       expect(a.isError).toBeUndefined();
     });
@@ -245,13 +245,13 @@ describe('agency-mcp sends the thread key', () => {
       install([whoamiRoute({ overseer: false }), foreign('sh', 'agent'), (u, i) => (i?.method === 'POST' ? { status: 403, body: { error: 'out_of_scope', message: 'Daemon says no.' } } : undefined)]);
       const out = await callTool('message_thread', { id: 'sh', text: 'hi' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: Daemon says no.');
+      expect((out.content[0] as any).text).toBe('Error: Daemon says no.');
     });
 
     it('assertReadable shows a 403 as itself, not as not in this project', async () => {
       install([whoamiRoute({ overseer: true }), (u) => (u === `${API}/api/terminals/f1` ? { status: 403, body: { error: 'out_of_scope', message: 'Daemon says no.' } } : undefined)]);
       const out = await callTool('read_thread', { id: 'f1' });
-      expect(out.content[0].text).toBe('Error: Daemon says no.');
+      expect((out.content[0] as any).text).toBe('Error: Daemon says no.');
     });
 
     it('descriptions name the cross-project reach and the sender line', () => {

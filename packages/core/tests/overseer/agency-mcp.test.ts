@@ -67,7 +67,7 @@ describe('agency-mcp', () => {
 
     const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'investigate X' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'agent-1', label: 'researcher agent' });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ agentId: 'agent-1', label: 'researcher agent' });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     // worker-defaults
@@ -126,7 +126,7 @@ describe('agency-mcp', () => {
 
     const out = await callTool('read_agent', { agentId: 'agent-1' });
     expect(out.isError).toBeUndefined();
-    const body = JSON.parse(out.content[0].text);
+    const body = JSON.parse((out.content[0] as any).text);
     expect(body).toEqual({ agentId: 'agent-1', status: 'waiting', output: expect.any(String), tools: ['Grep'] });
     // The agent's words come back inside a marked data block.
     expect(body.output).toMatch(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from agent agent-1[^\n]*\n+Found A\n\nRecommend B\n\[\[\[END UNTRUSTED \1\]\]\]$/);
@@ -141,7 +141,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('spawn_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'a3', label: 'implementer agent', mission: 'Auth refactor' });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ agentId: 'a3', label: 'implementer agent', mission: 'Auth refactor' });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
       type: 'claude-code',
       label: 'implementer agent',
@@ -237,7 +237,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('list_missions', {});
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual([
+    expect(JSON.parse((out.content[0] as any).text)).toEqual([
       { mission: 'Auth refactor', live: 1, total: 2 },
       { mission: 'Checkout bug', live: 1, total: 1 },
       { mission: 'General', live: 1, total: 1 },
@@ -280,7 +280,7 @@ describe('agency-mcp', () => {
       const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', harness: 'grok' });
 
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('grok CLI is not installed');
+      expect((out.content[0] as any).text).toContain('grok CLI is not installed');
       // Never reached the create call — the guard fires before any thread is created.
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -292,7 +292,7 @@ describe('agency-mcp', () => {
       const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x', model: 'gpt-6-astra' });
 
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain("pass harness 'codex' with it");
+      expect((out.content[0] as any).text).toContain("pass harness 'codex' with it");
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
@@ -311,7 +311,7 @@ describe('agency-mcp', () => {
       const out = await callTool('queue_agent', { agentType: 'researcher', task: 'x' });
 
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('not installed');
+      expect((out.content[0] as any).text).toContain('not installed');
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
@@ -328,7 +328,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('list_agents', {});
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual([
+    expect(JSON.parse((out.content[0] as any).text)).toEqual([
       { id: 'a1', label: 'researcher agent', agentType: 'researcher', status: 'working' },
       { id: 'a2', label: 'planner agent', agentType: 'planner', status: 'idle' },
     ]);
@@ -348,7 +348,7 @@ describe('agency-mcp', () => {
       return ok(null);
     }) as any;
     const out = await callTool('list_agents', {});
-    expect(JSON.parse(out.content[0].text)).toEqual([
+    expect(JSON.parse((out.content[0] as any).text)).toEqual([
       { id: 'a1', label: 'one', agentType: 'researcher', status: 'working', pendingQuestionRequestId: 'req-9' },
       { id: 'a2', label: 'two', agentType: 'planner', status: 'idle' },
     ]);
@@ -364,7 +364,7 @@ describe('agency-mcp', () => {
       return ok({ id: 'a1', sessionId: 'sess-1', status: 'working' });
     }) as any;
     const out = await callTool('read_agent', { agentId: 'a1' });
-    expect(JSON.parse(out.content[0].text).pendingQuestion).toEqual({
+    expect(JSON.parse((out.content[0] as any).text).pendingQuestion).toEqual({
       requestId: 'req-9',
       questions: [{ header: 'Choice', question: 'Which?', options: ['A', 'B'] }],
     });
@@ -378,7 +378,7 @@ describe('agency-mcp', () => {
       return ok({ id: 'a1', sessionId: 'sess-1', status: 'working' });
     }) as any;
     const out = await callTool('read_agent', { agentId: 'a1' });
-    expect(JSON.parse(out.content[0].text)).not.toHaveProperty('pendingQuestion');
+    expect(JSON.parse((out.content[0] as any).text)).not.toHaveProperty('pendingQuestion');
   });
 
   it('answer_agent without a requestId points at read_agent', async () => {
@@ -447,7 +447,7 @@ describe('agency-mcp', () => {
 
     const out = await callTool('queue_agent', { agentType: 'researcher', task: 'investigate X' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q1', label: 'researcher agent', queued: true });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ agentId: 'q1', label: 'researcher agent', queued: true });
 
     // Unlike spawn_agent, queueing does NOT seed a message — the task is parked in the create body.
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -470,7 +470,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', mission: 'Auth refactor' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ agentId: 'q2', label: 'implementer agent', mission: 'Auth refactor', queued: true });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', mission: 'Auth refactor', spawnDepth: 1,
     });
@@ -483,7 +483,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('queue_agent', { agentType: 'implementer', task: 'do it', dependsOn: 'agent-1' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ agentId: 'q3', label: 'implementer agent', queued: true });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).config).toEqual({
       transport: 'structured', agentType: 'implementer', role: 'agent', dependsOn: 'agent-1', spawnDepth: 1,
     });
@@ -527,7 +527,7 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('start_agent', { agentId: 'q1' });
     expect(out.isError).toBeUndefined();
-    expect(JSON.parse(out.content[0].text)).toEqual({ ok: true, agentId: 'q1' });
+    expect(JSON.parse((out.content[0] as any).text)).toEqual({ ok: true, agentId: 'q1' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [startUrl, startInit] = fetchMock.mock.calls[0];
     expect(startUrl).toBe('http://localhost:9999/api/terminals/q1/start');
@@ -541,14 +541,14 @@ describe('agency-mcp', () => {
     global.fetch = fetchMock as any;
     const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'x' });
     expect(out.isError).toBe(true);
-    expect(out.content[0].text).toContain('Error:');
+    expect((out.content[0] as any).text).toContain('Error:');
   });
 
   it('tools/call routes through handleRequest and reports unknown tools as isError', async () => {
     const res = await handleRequest({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'nope', arguments: {} } });
     const r = res!.result as any;
     expect(r.isError).toBe(true);
-    expect(r.content[0].text).toContain('Unknown tool');
+    expect((r.content[0] as any).text).toContain('Unknown tool');
   });
 
   describe('report_status', () => {
@@ -566,7 +566,7 @@ describe('agency-mcp', () => {
       expect(JSON.parse(init.body)).toEqual({ state: 'needs_you', summary: 'need a decision', ask: 'Which provider?' });
       // The result tells the model its turn is over (2026-11-06): a model that continues after any
       // tool result otherwise invents the next user question and answers it.
-      expect(JSON.parse(out.content[0].text)).toEqual({ ok: true, note: 'Your turn is over. Write nothing more and call no other tool; the human speaks next.' });
+      expect(JSON.parse((out.content[0] as any).text)).toEqual({ ok: true, note: 'Your turn is over. Write nothing more and call no other tool; the human speaks next.' });
       const tool = TOOLS.find((t) => t.name === 'report_status') as any;
       expect(tool.description).toContain('After it returns, stop: write nothing more and call no other tool.');
     });
@@ -575,7 +575,7 @@ describe('agency-mcp', () => {
       process.env.DISPATCH_TERMINAL = 'self-1';
       const out = await callTool('report_status', { state: 'done', summary: 'x', id: 'other-thread' } as any);
       // `id` is not in the schema and must be ignored — the URL is always the caller's own.
-      expect(String(out.content[0].text)).not.toContain('other-thread');
+      expect(String((out.content[0] as any).text)).not.toContain('other-thread');
     });
   });
 
@@ -595,7 +595,7 @@ describe('agency-mcp', () => {
 
       const out = await callTool('list_threads', {});
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual([
+      expect(JSON.parse((out.content[0] as any).text)).toEqual([
         { id: 'self-1', label: 'My Thread', type: 'claude-code', role: null, agentType: null, status: 'working', projectId: 'sess-1', lastActivityAt: 't1', isSelf: true },
         { id: 'a1', label: 'researcher agent', type: 'claude-code', role: 'agent', agentType: 'researcher', status: 'idle', projectId: 'sess-1', lastActivityAt: 't2', isSelf: false },
         { id: 'c1', label: 'Overseer', type: 'claude-code', role: 'coordinator', agentType: null, status: 'idle', projectId: 'sess-1', lastActivityAt: 't3', isSelf: false },
@@ -611,7 +611,7 @@ describe('agency-mcp', () => {
       });
       global.fetch = fetchMock as any;
       const out = await callTool('list_threads', {});
-      expect(JSON.parse(out.content[0].text)[0].isSelf).toBe(false);
+      expect(JSON.parse((out.content[0] as any).text)[0].isSelf).toBe(false);
     });
   });
 
@@ -629,7 +629,7 @@ describe('agency-mcp', () => {
 
       const out = await callTool('read_thread', { id: 'p1' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({ id: 'p1', status: 'idle', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread p1[^\n]*\n+Did the thing\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Edit'] });
+      expect(JSON.parse((out.content[0] as any).text)).toEqual({ id: 'p1', status: 'idle', output: expect.stringMatching(/^\[\[\[UNTRUSTED ([0-9a-f]{16}) from thread p1[^\n]*\n+Did the thing\n\[\[\[END UNTRUSTED \1\]\]\]$/), tools: ['Edit'] });
       expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:9999/api/terminals/p1');
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/p1/conversation?limit=500');
     });
@@ -650,7 +650,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('read_thread', { id: 'foreign-1' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text).output).toContain('from B');
+      expect(JSON.parse((out.content[0] as any).text).output).toContain('from B');
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/terminals/foreign-1/conversation?limit=500');
     });
 
@@ -659,7 +659,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('read_thread', { id: 'nope' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: nope is not a thread Dispatch knows');
+      expect((out.content[0] as any).text).toBe('Error: nope is not a thread Dispatch knows');
     });
   });
 
@@ -696,7 +696,7 @@ describe('agency-mcp', () => {
 
       const out = await callTool('watch_thread', { id: 'p1', when: 'idle', note: 'review its diff' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({ watchId: 'watch-1' });
+      expect(JSON.parse((out.content[0] as any).text)).toEqual({ watchId: 'watch-1' });
       expect(fetchMock.mock.calls[1][0]).toBe('http://localhost:9999/api/watches');
       expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
         watcherTerminalId: 'self-1', targetTerminalId: 'p1', criteria: 'idle', note: 'review its diff',
@@ -711,7 +711,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('watch_thread', { id: 'foreign-1', when: 'idle' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toBe('Error: foreign-1 is not a thread in this project');
+      expect((out.content[0] as any).text).toBe('Error: foreign-1 is not a thread in this project');
       expect(fetchMock).toHaveBeenCalledTimes(1); // no POST /api/watches for a foreign thread
     });
 
@@ -721,7 +721,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('watch_thread', { id: 'p1', when: 'idle' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect((out.content[0] as any).text).toContain('DISPATCH_TERMINAL');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -733,7 +733,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('watch_thread', { id: 'p1', when: 'idle' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('watch limit');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('watch limit');
     });
   });
 
@@ -744,7 +744,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('unwatch_thread', { watchId: 'watch-1' });
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({ ok: true });
+      expect(JSON.parse((out.content[0] as any).text)).toEqual({ ok: true });
       expect(fetchMock.mock.calls[0][1].method).toBe('DELETE');
       const url = new URL(fetchMock.mock.calls[0][0]);
       expect(url.origin + url.pathname).toBe('http://localhost:9999/api/watches/watch-1');
@@ -757,7 +757,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('unwatch_thread', { watchId: 'nope' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('watch not found');
+      expect((out.content[0] as any).text).toContain('watch not found');
     });
 
     it('fails clearly when DISPATCH_TERMINAL is unset, without calling the daemon', async () => {
@@ -766,7 +766,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('unwatch_thread', { watchId: 'watch-1' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect((out.content[0] as any).text).toContain('DISPATCH_TERMINAL');
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
@@ -783,7 +783,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('list_watches', {});
       expect(out.isError).toBeUndefined();
-      expect(JSON.parse(out.content[0].text)).toEqual({
+      expect(JSON.parse((out.content[0] as any).text)).toEqual({
         watching: [{ id: 'w1', target_terminal_id: 'p1' }],
         watchedBy: [{ id: 'w2', watcher_terminal_id: 'p2' }],
       });
@@ -798,7 +798,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('list_watches', {});
       expect(out.isError).toBe(true);
-      expect(out.content[0].text).toContain('DISPATCH_TERMINAL');
+      expect((out.content[0] as any).text).toContain('DISPATCH_TERMINAL');
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
@@ -812,7 +812,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('spawn_agent', { agentType: 'researcher', task: 'go deeper' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('depth');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('depth');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -834,7 +834,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('queue_agent', { agentType: 'researcher', task: 'go deeper' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('depth');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('depth');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -859,7 +859,7 @@ describe('agency-mcp', () => {
       }
       const eleventh = await callTool('message_agent', { agentId: 'rl-target-agent', text: 'msg 11' });
       expect(eleventh.isError).toBe(true);
-      expect(eleventh.content[0].text.toLowerCase()).toContain('rate limit');
+      expect((eleventh.content[0] as any).text.toLowerCase()).toContain('rate limit');
       expect(fetchMock).toHaveBeenCalledTimes(10); // the 11th never hit the network
     });
 
@@ -885,11 +885,11 @@ describe('agency-mcp', () => {
       // The 11th overall, sent via message_thread, must be refused...
       const eleventh = await callTool('message_thread', { id: 'cross-target-shared', text: 'msg 11' });
       expect(eleventh.isError).toBe(true);
-      expect(eleventh.content[0].text.toLowerCase()).toContain('rate limit');
+      expect((eleventh.content[0] as any).text.toLowerCase()).toContain('rate limit');
       // ...and so must the next one via message_agent — same pair, same shared counter.
       const twelfth = await callTool('message_agent', { agentId: 'cross-target-shared', text: 'msg 12' });
       expect(twelfth.isError).toBe(true);
-      expect(twelfth.content[0].text.toLowerCase()).toContain('rate limit');
+      expect((twelfth.content[0] as any).text.toLowerCase()).toContain('rate limit');
     });
   });
 
@@ -900,7 +900,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('message_agent', { agentId: 'self-x', text: 'hi' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('yourself');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -910,7 +910,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('message_thread', { id: 'self-x', text: 'hi' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('yourself');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -920,7 +920,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('watch_thread', { id: 'self-x', when: 'idle' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('yourself');
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -930,7 +930,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('complete_agent', { agentId: 'self-x' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('yourself');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('yourself');
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
@@ -943,7 +943,7 @@ describe('agency-mcp', () => {
       global.fetch = fetchMock as any;
       const out = await callTool('complete_agent', { agentId: 'p1' });
       expect(out.isError).toBe(true);
-      expect(out.content[0].text.toLowerCase()).toContain('force');
+      expect((out.content[0] as any).text.toLowerCase()).toContain('force');
       expect(fetchMock).toHaveBeenCalledTimes(1); // role lookup only — no DELETE
     });
 
