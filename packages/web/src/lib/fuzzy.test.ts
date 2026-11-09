@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatch, fuzzyFilter } from './fuzzy';
+import { fuzzyMatch, fuzzyFilter, fuzzyScore } from './fuzzy';
 
 describe('fuzzyMatch', () => {
   it('matches a substring and returns contiguous indices', () => {
@@ -37,5 +37,37 @@ describe('fuzzyMatch', () => {
   it('caps the result list', () => {
     const paths = Array.from({ length: 600 }, (_, i) => `file-${i}.ts`);
     expect(fuzzyFilter('file', paths, 500)).toHaveLength(500);
+  });
+});
+
+// The command palette's ranking (W1-G, 2026-11-09).
+describe('fuzzyScore', () => {
+  it('matches a subsequence', () => {
+    expect(fuzzyScore('fxl', 'Fix login')).not.toBeNull();
+    expect(fuzzyScore('FIX', 'fix login')).not.toBeNull(); // case does not matter
+    expect(fuzzyScore('', 'anything')).toBe(0);
+  });
+
+  it('ranks a word-start match above a mid-word match', () => {
+    const wordStart = fuzzyScore('log', 'Fix login')!;
+    const midWord = fuzzyScore('log', 'Catalog sync')!;
+    expect(wordStart).toBeGreaterThan(midWord);
+  });
+
+  it('ranks adjacent characters above scattered characters', () => {
+    const adjacent = fuzzyScore('set', 'Open settings')!;
+    const scattered = fuzzyScore('set', 'Some extra text')!;
+    expect(adjacent).toBeGreaterThan(scattered);
+  });
+
+  it('finds the best placement, not the first one', () => {
+    // A greedy match takes the "a" of "Cat" and then cannot be adjacent; the best match is "api".
+    expect(fuzzyScore('api', 'Cat pics api')!).toBeGreaterThan(fuzzyScore('api', 'Cat pics a p i')!);
+  });
+
+  it('returns null with no match', () => {
+    expect(fuzzyScore('xyz', 'Fix login')).toBeNull();
+    expect(fuzzyScore('nigol', 'login')).toBeNull(); // the order matters
+    expect(fuzzyScore('login page', 'login')).toBeNull(); // a needle longer than the text
   });
 });
