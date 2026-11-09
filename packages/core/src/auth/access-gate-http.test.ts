@@ -264,3 +264,25 @@ describe('login with a pairing code', () => {
     expect(r.text).toContain('#(access|code)=');
   });
 });
+
+// W1-B: the failure map is bounded by eviction, never by a clear. A flood of other callers must not free a blocked one.
+describe('sign-in limiter under a flood of callers', () => {
+  test('a blocked caller stays blocked after 1,001 other callers fail', async () => {
+    peer = '127.0.0.1';
+    const { app, getToken } = build();
+    const server = app.listen(0);
+    try {
+      const login = (xff: string, token: string) => request(server).post('/api/access/login')
+        .set('Host', 'localhost:3456').set('X-Forwarded-For', xff).send({ token });
+      for (let i = 0; i < 10; i++) expect((await login('203.0.113.9', 'nope')).status).toBe(401);
+      expect((await login('203.0.113.9', 'nope')).status).toBe(429);
+      for (let i = 0; i < 1001; i++) {
+        const r = await login(`198.51.${Math.floor(i / 250)}.${i % 250}`, 'nope');
+        if (r.status !== 401) throw new Error(`caller ${i} got ${r.status}`);
+      }
+      // Still blocked, even with the right token. A new caller is not affected.
+      expect((await login('203.0.113.9', getToken())).status).toBe(429);
+      expect((await login('192.0.2.77', getToken())).status).toBe(200);
+    } finally { server.close(); }
+  }, 60_000);
+});
