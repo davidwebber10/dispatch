@@ -1,4 +1,8 @@
 import { create } from 'zustand';
+// A cycle with stores/navigation.ts on purpose: each side uses the other only inside a function, after both modules loaded.
+import { useNavigation } from './navigation';
+import { useProjects } from './projects';
+import { useTabs, findTerminal } from './tabs';
 
 // 'workspace' is the normal project/thread layout (the "Threads" view). The desktop thread board
 // ('board') was removed on 2026-11-09 (W1-G); a saved 'board' value loads as 'workspace' (loadView).
@@ -38,25 +42,17 @@ export const useUI = create<{
   toggleRight: () => void;
   setLeftCollapsed: (v: boolean) => void;
   setRightCollapsed: (v: boolean) => void;
-  // Cross-shell "navigate to this tab" intent (e.g. View's "open file" button).
-  // Desktop navigates via tabs.openTab directly; mobile consumes this to run its
-  // own leaf navigation (openThread). Set, then cleared by the consumer.
-  pendingOpenTab: string | null;
+  // The four "go there" intents (W2-F, 2026-11-09). Each was a pending field that a caller set and
+  // an effect in the mounted shell cleared; each is a thin wrapper around `navigate` now
+  // (stores/navigation.ts), kept because the plugin SDK exposes `useUI` (W3-F removes that).
+  /** Open this tab (a file tab that was just made, a sign-in tab) in its project. */
   requestOpenTab: (id: string) => void;
-  clearOpenTab: () => void;
-  // Cross-shell "open this thread (possibly in another project)" intent — set by
-  // the SW notification tap / deep-link boot, consumed by whichever shell is live.
-  pendingOpenThread: { sessionId: string; terminalId: string } | null;
+  /** Open this thread, in whichever project it is (a notification tap, a link in Chat). */
   requestOpenThread: (v: { sessionId: string; terminalId: string }) => void;
-  clearOpenThread: () => void;
-  // Cross-shell "open this project in the Threads view" intent (the Chat pane's Docs "+N more").
-  pendingOpenProject: string | null;
+  /** Open this project in the Threads view (the Chat pane's Docs "+N more"). */
   requestOpenProject: (id: string) => void;
-  clearOpenProject: () => void;
-  /** Cross-shell "open Settings at this section" intent (the mic's "Set up" link). */
-  pendingSettingsSection: string | null;
+  /** Open Settings at this section (the mic's "Set up" link). */
   requestSettings: (section: string) => void;
-  clearSettingsRequest: () => void;
 }>((set, get) => ({
   view: loadView(),
   // 'board' left the View type; an untyped caller (a plugin, an old link) that still asks for it gets Threads.
@@ -69,16 +65,12 @@ export const useUI = create<{
   toggleRight: () => { const v = !get().rightCollapsed; saveBool(RKEY, v); set({ rightCollapsed: v }); },
   setLeftCollapsed: (v) => { saveBool(LKEY, v); set({ leftCollapsed: v }); },
   setRightCollapsed: (v) => { saveBool(RKEY, v); set({ rightCollapsed: v }); },
-  pendingOpenTab: null,
-  requestOpenTab: (id) => set({ pendingOpenTab: id }),
-  clearOpenTab: () => set({ pendingOpenTab: null }),
-  pendingOpenThread: null,
-  requestOpenThread: (v) => set({ pendingOpenThread: v }),
-  clearOpenThread: () => set({ pendingOpenThread: null }),
-  pendingOpenProject: null,
-  requestOpenProject: (id) => set({ pendingOpenProject: id }),
-  clearOpenProject: () => set({ pendingOpenProject: null }),
-  pendingSettingsSection: null,
-  requestSettings: (section) => { saveView('settings'); set({ view: 'settings', pendingSettingsSection: section }); },
-  clearSettingsRequest: () => set({ pendingSettingsSection: null }),
+  requestOpenTab: (id) => {
+    const tabs = useTabs.getState();
+    const projectId = findTerminal(tabs.byProject, id)?.sessionId ?? tabs.tabSession[id] ?? useProjects.getState().activeId;
+    if (projectId) useNavigation.getState().navigate({ view: 'workspace', projectId, threadId: id });
+  },
+  requestOpenThread: ({ sessionId, terminalId }) => useNavigation.getState().navigate({ view: 'workspace', projectId: sessionId, threadId: terminalId }),
+  requestOpenProject: (id) => useNavigation.getState().navigate({ view: 'workspace', projectId: id }),
+  requestSettings: (section) => useNavigation.getState().navigate({ view: 'settings', section }),
 }));

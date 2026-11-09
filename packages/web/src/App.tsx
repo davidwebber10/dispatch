@@ -34,7 +34,7 @@ import { writeSnapshot } from './lib/launchSnapshot';
 import { useSpinnerWords } from './stores/spinnerWords';
 import { useConnection } from './stores/connection';
 import { useProjects } from './stores/projects';
-import { useTabs, isDispatchTab, findTerminal } from './stores/tabs';
+import { useTabs, isDispatchTab } from './stores/tabs';
 import { useActivity } from './stores/activity';
 import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
@@ -56,8 +56,7 @@ import { useServers } from './stores/servers';
 import { useGroups } from './components/panes/store';
 import { useViewing } from './stores/viewing';
 import { useUI } from './stores/ui';
-import { parseThreadPath } from './lib/deepLink';
-import { appPath, href } from './lib/basePath';
+import { bootDesktopNavigation, stopDesktopSync } from './stores/navigation';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
@@ -91,15 +90,13 @@ export default function App() {
   const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
   const reconnectGen = useReconnect((s) => s.gen);
   const sockRef = useRef<EventsSocket | null>(null);
+  const hydrated = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     void useProjects.getState().load();
     void useServers.getState().load();
-    void useTabs.getState().hydrate().then(() => {
-      if (window.innerWidth <= 768) return; // MobileApp restores /p/… URLs natively
-      const deep = parseThreadPath(appPath());
-      if (deep) { history.replaceState({}, '', href('/')); useUI.getState().requestOpenThread(deep); }
-    });
+    // The open tabs of the last visit come back first; the address is read after them (the effect below).
+    hydrated.current = useTabs.getState().hydrate();
     void useAuth.getState().load();
     void useUpdate.getState().load();
     void useHost.getState().load();
@@ -202,28 +199,16 @@ export default function App() {
     useViewing.getState().set(activeTerminalId && !isDispatchTab(activeTerminalId) ? activeTerminalId : null);
   }, [activeTerminalId, isMobile]);
 
-  // Desktop consumer of the open-thread intent (mobile's lives in MobileApp).
-  const pendingThread = useUI((s) => s.pendingOpenThread);
+  // Desktop addresses (W2-F): after the restore of the open tabs, the address wins (a thread link
+  // opens its thread and stays in the address bar), and from then on the address follows the app,
+  // so Back returns to the earlier thread. The phone shell does its own (useMobileNavigation). The
+  // four "pending" intents that two effects here consumed are `navigate` now (stores/navigation.ts).
   useEffect(() => {
-    if (!pendingThread || isMobile) return;
-    const { sessionId, terminalId } = pendingThread;
-    useUI.getState().clearOpenThread();
-    void (async () => {
-      try { await useTabs.getState().loadTabs(sessionId); } catch { return; } // project gone → open normally
-      if (!findTerminal(useTabs.getState().byProject, terminalId)) return;    // thread gone → open normally
-      useProjects.getState().setActive(sessionId);
-      useTabs.getState().setActiveTab(terminalId);
-    })();
-  }, [pendingThread, isMobile]);
-
-  // Desktop consumer of the open-project intent (the Chat pane's Docs "+N more"); mobile's lives in MobileApp.
-  const pendingProject = useUI((s) => s.pendingOpenProject);
-  useEffect(() => {
-    if (!pendingProject || isMobile) return;
-    useUI.getState().clearOpenProject();
-    useProjects.getState().setActive(pendingProject);
-    useUI.getState().setView('workspace'); // the "Threads" view; `workspace` is its code name
-  }, [pendingProject, isMobile]);
+    if (isMobile) return;
+    let off = false;
+    void (hydrated.current ?? Promise.resolve()).catch(() => {}).then(() => { if (!off) void bootDesktopNavigation(); });
+    return () => { off = true; stopDesktopSync(); };
+  }, [isMobile]);
 
   // Returning from the background: first ask the daemon whether the connection is still alive
   // (2026-11-05). Usually it is, and then nothing is torn down: no spinner, no "Reconnecting",
