@@ -35,7 +35,9 @@ export function adoptTranscriptSettings(
     const target = family ?? seen.model;
     if (saved !== target && saved !== seen.model) { config.model = target; changed = true; }
   }
-  if (seen.effort && (seen.effortChanged || config.effort !== undefined) && config.effort !== seen.effort) {
+  // Likewise an effort picked with the Pretty picker (config.effortSetAt) after the last turn the transcript shows.
+  const effortPickedLater = typeof config.effortSetAt === 'number' && typeof seen.at === 'number' && seen.at < config.effortSetAt;
+  if (seen.effort && !effortPickedLater && (seen.effortChanged || config.effort !== undefined) && config.effort !== seen.effort) {
     config.effort = seen.effort; changed = true;
   }
   return changed;

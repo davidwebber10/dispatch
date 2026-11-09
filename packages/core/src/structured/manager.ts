@@ -130,6 +130,8 @@ export interface StructuredSpawnOpts {
    */
   resumeId?: string;
   model?: string;
+  /** Codex only: the effort the owner picked earlier (config.effort), sent with each turn. Claude carries it in argv. */
+  effort?: string;
   /**
    * Persona/system prompt for harnesses that inject it out-of-band rather than via argv, e.g.
    * Codex's `thread/start` `developerInstructions` param. Argv-based harnesses (Claude
@@ -263,6 +265,20 @@ export interface IStructuredManager extends EventEmitter {
    * a `{type:'system', subtype:'model', model, switched:true}` notice into the ring and emits it.
    */
   setModel?(terminalId: string, model: string): Promise<string>;
+  /**
+   * Change the live session's reasoning effort from its next turn (Claude `apply_flag_settings`; Codex: sent with each
+   * `turn/start`). Absent on Grok and OpenCode, which have no effort control in this phase. Rejects when the harness
+   * refuses it, or with 'The thread stopped' when the thread ends before it answers (that is not a refusal).
+   */
+  setEffort?(terminalId: string, effort: string): Promise<void>;
+  /** A line in the thread for a model/effort change the harness refused (kept in the replay ring). */
+  postNotice?(terminalId: string, message: string): void;
+  /** Codex: the efforts each model takes, from the app-server's last `model/list`, or null if never asked. */
+  modelEfforts?(): Record<string, string[]> | null;
+  /** Codex: the effort each model runs at by default (same source), or null if never asked. */
+  modelDefaultEfforts?(): Record<string, string> | null;
+  /** Codex: ask the app-server for them now (cached for a while). null when no app-server is running. */
+  loadModelEfforts?(): Promise<Record<string, string[]> | null>;
   isAlive(terminalId: string): boolean;
   kill(terminalId: string): void;
   killAll(): void;
@@ -574,6 +590,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
       if (this.sessions.get(terminalId)?.child !== child) return;
       session.pending = null; // drop any unanswered permission — the process is gone
+      for (const c of session.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
+      session.controls?.clear();
       this.sessions.delete(terminalId);
       const detail = redactKeys(session.stderrTail?.trim() ?? '') || undefined;
       // The daemon log is the only place this reaches when no browser is watching.
@@ -755,17 +773,9 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    */
   setModel(terminalId: string, model: string): Promise<string> {
     const s = this.sessions.get(terminalId);
-    if (!s || !s.child.stdin.writable) return Promise.reject(new Error('This thread is not running'));
-    const requestId = `set-model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    s.controls ??= new Map();
-    const answer = new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => { s.controls?.delete(requestId); reject(new Error('The CLI did not answer the model switch')); }, CONTROL_TIMEOUT_MS);
-      s.controls!.set(requestId, { resolve, reject, timer });
-    });
-    this.write(terminalId, { type: 'control_request', request_id: requestId, request: { subtype: 'set_model', model } });
-    return answer.then((r) => {
+    return this.control(terminalId, { subtype: 'set_model', model }, 'model switch').then((r) => {
       const resolved = typeof r?.model === 'string' && r.model ? r.model : model;
-      if (this.sessions.get(terminalId) !== s) return resolved;
+      if (!s || this.sessions.get(terminalId) !== s) return resolved;
       s.model = resolved;
       const notice = { type: 'system', subtype: 'model', model: resolved, switched: true };
       s.events.push(notice);
@@ -773,6 +783,40 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       this.emit('event', terminalId, notice);
       return resolved;
     });
+  }
+
+  /**
+   * Change the running CLI's reasoning effort for this session with `apply_flag_settings {effortLevel}`
+   * (live-verified on Claude Code 2.1.316: no model call, nothing written to the user's settings.json, and
+   * it survives later `set_model` calls). The CLI silently ignores a level it does not know, so the caller
+   * checks the level first.
+   */
+  async setEffort(terminalId: string, effort: string): Promise<void> {
+    await this.control(terminalId, { subtype: 'apply_flag_settings', settings: { effortLevel: effort } }, 'effort change');
+  }
+
+  /** A line in the thread for the viewers and the replay: a model/effort change the CLI refused. */
+  postNotice(terminalId: string, message: string): void {
+    const s = this.sessions.get(terminalId);
+    if (!s) return;
+    const ev = { type: 'system', subtype: 'settings_refused', message };
+    s.events.push(ev);
+    if (s.events.length > MAX_EVENTS) s.events.shift();
+    this.emit('event', terminalId, ev);
+  }
+
+  /** One of our own control requests, answered through `controls` (see the control_response branch in spawn()). */
+  private control(terminalId: string, request: Record<string, unknown>, what: string): Promise<any> {
+    const s = this.sessions.get(terminalId);
+    if (!s || s.exitCode !== undefined || !s.child.stdin.writable) return Promise.reject(new Error('This thread is not running'));
+    const requestId = `ctl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    s.controls ??= new Map();
+    const answer = new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => { s.controls?.delete(requestId); reject(new Error(`The CLI did not answer the ${what}`)); }, CONTROL_TIMEOUT_MS);
+      s.controls!.set(requestId, { resolve, reject, timer });
+    });
+    this.write(terminalId, { type: 'control_request', request_id: requestId, request });
+    return answer;
   }
 
   kill(terminalId: string): void {

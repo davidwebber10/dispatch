@@ -70,6 +70,8 @@ export interface TurnDeps {
   commandArgs?: string[];
   /** The daemon's key registry, read at each turn (it can be set after construction). */
   keys?: () => KeyRegistry | undefined;
+  /** The owner's Chat-wide model and effort (slash menu), read at each turn: every turn is a new process. */
+  settings?: () => { model?: string; effort?: string };
 }
 
 function toolResultText(content: unknown): string {
@@ -268,7 +270,7 @@ export class TurnRunner {
       if (minted) keyHandle = minted.handle;
       d.manager.spawn(id, {
         command: d.command ?? 'claude',
-        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: TURN_MODEL, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true, reportTurn: this.turnReduced })],
+        args: [...(d.commandArgs ?? []), ...endlessClaudeArgs({ model: d.settings?.().model ?? TURN_MODEL, effort: d.settings?.().effort, systemPrompt: d.systemPrompt(), mcpConfigPath: d.mcpConfigPath, userTools: true, reportTurn: this.turnReduced })],
         workDir: d.chatDir,
         env: minted ? { ...FIXED_CONTEXT_ENV, DISPATCH_AUTH: minted.key } : FIXED_CONTEXT_ENV,
       });

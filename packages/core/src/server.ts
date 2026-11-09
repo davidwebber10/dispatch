@@ -765,7 +765,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     }
     return (provider === 'claude-code' && tokenAccountId(claudeLogin.getToken())) || accountIdFor(provider);
   };
-  for (const m of [structuredManager, endlessManager]) {
+  for (const m of [structuredManager, endlessManager] as import('events').EventEmitter[]) {
     m.on('rate-limit', (id: string, info: unknown) => {
       // A thread with no account of its own runs on the daemon's default env, so its figures belong to the Claude default account.
       const acc = threadAccountId(terminalsDb.getById(db, id)?.config) ?? accounts.defaultId('claude');

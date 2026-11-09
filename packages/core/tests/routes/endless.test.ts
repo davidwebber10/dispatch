@@ -518,3 +518,29 @@ describe('endless fix round 1', () => {
     s.stop();
   });
 });
+
+describe('Chat-wide model and effort (slash menu)', () => {
+  it('starts on the default, saves a choice, and the next turn runs with it', async () => {
+    const get = await request(app).get('/api/endless/settings').expect(200);
+    expect(get.body).toEqual({ model: null, effort: null, defaultModel: 'opus' });
+    const put = await request(app).put('/api/endless/settings').send({ model: 'haiku', effort: 'low' }).expect(200);
+    expect(put.body).toMatchObject({ model: 'haiku', effort: 'low' });
+    await request(app).post('/api/endless/send').send({ text: 'hello' }).expect(202);
+    await settle();
+    const args: string[] = fake.spawned[fake.spawned.length - 1].opts.args;
+    expect(args[args.indexOf('--model') + 1]).toBe('haiku');
+    expect(args[args.indexOf('--effort') + 1]).toBe('low');
+    await endTurn();
+  });
+
+  it('a null resets, a bad value is a 400, and nothing is saved on error', async () => {
+    await request(app).put('/api/endless/settings').send({ model: 'sonnet', effort: 'max' }).expect(200);
+    const reset = await request(app).put('/api/endless/settings').send({ model: null, effort: null }).expect(200);
+    expect(reset.body).toMatchObject({ model: null, effort: null });
+    await request(app).put('/api/endless/settings').send({ model: 'gpt-6-astra' }).expect(400);
+    await request(app).put('/api/endless/settings').send({ effort: 'turbo' }).expect(400);
+    await request(app).put('/api/endless/settings').send({}).expect(400);
+    await request(app).put('/api/endless/settings').send({ model: 4 }).expect(400);
+    expect((await request(app).get('/api/endless/settings')).body).toMatchObject({ model: null, effort: null });
+  });
+});

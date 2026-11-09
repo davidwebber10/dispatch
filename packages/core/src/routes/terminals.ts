@@ -151,12 +151,19 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // Optional `canned: true` marks fixed text that a card click sent (the need-card
   // acknowledgement). It changes only the overseer message log ('canned', never 'user'),
   // so a ledger quote can never match it; `source` and the "via Dispatch" badge are unchanged.
-  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), requireOwnerProof, (req, res) => {
+  router.post('/terminals/:terminalId/message', keyRoute({ thread: messageRule, chat: chatMessageRule }), requireOwnerProof, async (req, res) => {
     const { text, content, source, canned } = req.body ?? {};
     const payload = content !== undefined ? content : text;
     const ok = typeof payload === 'string' ? payload.length > 0 : Array.isArray(payload) && payload.length > 0;
     if (!ok) return res.status(400).json({ error: 'text (string) or content (string | block[]) is required' });
     try {
+      // A typed /model or /effort in a Pretty Claude thread is Dispatch's to run (the CLI's own version is masked
+      // by Dispatch's own control request); it is never sent to the model. 200 tells the client it was a command.
+      const typed = await sessionService.handleTypedSlash(req.params.terminalId, payload, source);
+      if (typed) {
+        broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: typed.sessionId });
+        return void res.status(200).json({ handled: 'settings' });
+      }
       // Transport-agnostic: a Pretty thread takes it over its structured channel, a CLI/PTY
       // thread gets it typed into its TUI. Before this, a PTY target threw "no structured
       // session for terminal" — which is why one thread could only message a Pretty peer.
@@ -181,7 +188,7 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       // signal, so mark it here exactly like the /input route does for a submitted line.
       if (sent.transport === 'pty') statusService?.markWorking(req.params.terminalId, 'Thinking…');
       res.status(204).end();
-    } catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
+    } catch (e: any) { res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) }); }
   });
 
   // GET /api/terminals/:terminalId/permission — the gated tool/question this thread
@@ -370,6 +377,30 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     } catch (e: any) {
       res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
     }
+  });
+
+  // POST /api/terminals/:terminalId/effort { effort } — the Pretty effort picker: run `effort` from the
+  // thread's next turn (SessionService.setThreadEffort). Claude and Codex; a Codex effort must be one the
+  // thread's model takes. 409 while a turn runs, for a live CLI thread, or for Grok and OpenCode; 400 when
+  // the harness refuses it. Answers { effort, terminal }. Owner work, like the model switch.
+  router.post('/terminals/:terminalId/effort', async (req, res) => {
+    const { effort } = req.body ?? {};
+    if (typeof effort !== 'string' || !effort.trim()) return res.status(400).json({ error: 'effort is required' });
+    try {
+      const out = await sessionService.setThreadEffort(req.params.terminalId, effort.trim());
+      broadcaster?.broadcast({ type: 'session:tabs-changed', sessionId: out.terminal.sessionId });
+      res.json(out);
+    } catch (e: any) {
+      res.status(typeof e?.status === 'number' ? e.status : 400).json({ error: clientMessage(e) });
+    }
+  });
+
+  // GET /api/codex/model-efforts — the efforts each Codex model takes, as the running app-server reports them
+  // (they differ by model). `live` is null when no Codex app-server is running; the client then uses the
+  // built-in table (providers/codex-efforts.ts). `defaults` is the effort each model runs at when none is sent.
+  router.get('/codex/model-efforts', async (_req, res) => {
+    try { const live = await sessionService.codexModelEfforts(); res.json({ live, defaults: live ? sessionService.codexModelDefaults() : null }); }
+    catch (e: any) { res.status(400).json({ error: clientMessage(e) }); }
   });
 
   // PATCH /api/terminals/:terminalId/account { accountId, force? } — move the thread to another

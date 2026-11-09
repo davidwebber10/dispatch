@@ -127,6 +127,15 @@ export function createEndlessRouter(svc: EndlessService): Router {
     res.json({ ok: true });
   });
 
+  // Chat-wide model and effort (slash menu). One setting for all of Chat; a change applies from the next turn.
+  router.get('/settings', (_req, res) => { res.json(svc.chatSettings()); });
+  router.put('/settings', ownerOnlyStrict, (req, res) => {
+    const { model, effort } = req.body ?? {};
+    const ok = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+    if (!ok(model) || !ok(effort)) { res.status(400).json({ error: 'model and effort must be strings or null' }); return; }
+    try { svc.setChatSettings({ model, effort }); res.json(svc.chatSettings()); } catch (err) { fail(res, err); }
+  });
+
   router.get('/media/:name', (req, res) => {
     const file = svc.mediaFile(req.params.name);
     if (!file) { res.status(404).end(); return; }

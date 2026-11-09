@@ -47,6 +47,8 @@ import { COORDINATOR_DISALLOWED_TOOLS, coordinatorMemoryFolders, makeCoordinator
 import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memory-scope.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
+import { parseSlash, resolveEffortArg, resolveModelArg, catalogModelChoices, validateEffort } from '../providers/slash-commands.js';
+import { codexEffortsFor, codexDefaultEffortFor } from '../providers/codex-efforts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, readSessionSettings, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
@@ -2273,6 +2275,67 @@ export class SessionService {
     return typeof config.model === 'string' && config.model ? config.model : undefined;
   }
 
+  /** One thread's model and effort changes run one at a time: the second is judged against what the first left. */
+  private readonly settingsLock = new Map<string, Promise<unknown>>();
+  private withSettingsLock<T>(terminalId: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.settingsLock.get(terminalId) ?? Promise.resolve();
+    const next = prior.then(fn);
+    const tail = next.then(() => undefined, () => undefined);
+    this.settingsLock.set(terminalId, tail);
+    void tail.then(() => { if (this.settingsLock.get(terminalId) === tail) this.settingsLock.delete(terminalId); });
+    return next;
+  }
+
+  /** The efforts each Codex model takes according to the running app-server, or null when none is running. */
+  async codexModelEfforts(): Promise<Record<string, string[]> | null> {
+    return (await this.structuredManagerFor('codex')?.loadModelEfforts?.().catch(() => null)) ?? null;
+  }
+  /** The effort each Codex model runs at by default, as the app-server reports it (call after codexModelEfforts), or null. */
+  codexModelDefaults(): Record<string, string> | null {
+    return this.structuredManagerFor('codex')?.modelDefaultEfforts?.() ?? null;
+  }
+  /** The efforts a Codex model takes: the app-server's own list when it has answered, else the table. */
+  private codexEffortsFor(model: string | null | undefined): readonly string[] {
+    return codexEffortsFor(model, this.structuredManagerFor('codex')?.modelEfforts?.() ?? null);
+  }
+  /** The saved Codex effort, if the thread's model still takes it. */
+  private codexEffortFor(config: Record<string, any>, model?: string): string | undefined {
+    const e = config.effort;
+    return typeof e === 'string' && this.codexEffortsFor(model ?? config.model).includes(e) ? e : undefined;
+  }
+
+  /**
+   * The checks the model and the effort change share: the thread exists and is a Claude, Codex, Grok or OpenCode thread; an
+   * agent runs on its policy (an OVERSEER may change freely: an explicit `config.model` wins over the coordinator tier);
+   * it is not mid-turn; and it is not a live CLI thread (its model belongs to the CLI's own /model).
+   */
+  private settingsTarget(terminalId: string, what: 'model' | 'effort') {
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) throw transportError(404, 'Terminal not found');
+    if (!['claude-code', 'codex', 'grok', 'opencode'].includes(terminal.type)) throw transportError(409, `This thread has no ${what} to switch`);
+    let config: Record<string, any> = {};
+    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
+    if (config.agentType || (config.role && config.role !== 'coordinator')) throw transportError(409, 'An agent thread runs on its policy model');
+    if (terminal.status === 'working') throw transportError(409, `This thread is busy — change the ${what} when the turn ends`);
+    const structured = config.transport === 'structured' || terminal.type === 'grok' || terminal.type === 'opencode';
+    if (!structured && this.ptyManager.isAlive(terminalId)) throw transportError(409, `This thread runs in the CLI — use /${what} there`);
+    return { terminal, config, structured, manager: this.structuredManagerFor(terminal.type) };
+  }
+
+  /** Read-merge-write one or more config keys: never clobber the others. */
+  private mergeConfig(terminalId: string, patch: Record<string, unknown>): void {
+    const fresh = terminalsDb.getById(this.db, terminalId);
+    let merged: Record<string, any> = {};
+    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
+    terminalsDb.updateConfig(this.db, terminalId, { ...merged, ...patch });
+  }
+
+  /** A change the harness refused: say so in the thread (visible on every Pretty surface), then fail with its words. */
+  private refuse(manager: import('../structured/manager.js').IStructuredManager | undefined, terminalId: string, what: string, error: string): never {
+    try { manager?.postNotice?.(terminalId, `Could not change the ${what}: ${error}`); } catch { /* a notice is best effort */ }
+    throw transportError(400, error);
+  }
+
   /**
    * The Pretty model switcher: run `model` from the thread's next turn, keeping the conversation.
    *
@@ -2285,37 +2348,123 @@ export class SessionService {
    * Refused (409) while a turn runs — a switch mid-turn would change the model under a running
    * tool loop, and Codex would only apply it to the NEXT turn anyway, so the switcher is disabled
    * then — and for a live CLI thread, whose model belongs to the CLI (`/model`). A harness that
-   * refuses the model fails with 400 and its own message; the saved model is left alone.
+   * refuses the model fails with 400 and its own message (also posted as a line in the thread); the saved
+   * model is left alone. A thread that stops before the harness answers is not a refusal: the pick is saved
+   * and the next start uses it.
+   *
+   * Codex (slash menu): the new model must say which effort it runs at. A thread keeps the effort of its last
+   * turn when the model changes (live-checked on codex-cli 0.166), so a saved effort the new model does not take,
+   * or none saved, becomes the new model's own default (`effortNow`, with `clearedEffort` for a dropped one).
    */
-  async setThreadModel(terminalId: string, model: string): Promise<{ model: string; terminal: terminalsDb.Terminal }> {
-    const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) throw transportError(404, 'Terminal not found');
-    if (!['claude-code', 'codex', 'grok', 'opencode'].includes(terminal.type)) throw transportError(409, 'This thread has no model to switch');
-    if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]~-]{0,120}$/.test(model)) throw transportError(400, 'model is not a valid model id');
-    let config: Record<string, any> = {};
-    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-    if (config.role || config.agentType) throw transportError(409, 'A coordinator or agent thread runs on its policy model');
-    if (terminal.status === 'working') throw transportError(409, 'This thread is busy — switch the model when the turn ends');
-    const structured = config.transport === 'structured' || terminal.type === 'grok' || terminal.type === 'opencode';
-    if (!structured && this.ptyManager.isAlive(terminalId)) throw transportError(409, 'This thread runs in the CLI — use /model there');
+  setThreadModel(
+    terminalId: string,
+    model: string,
+  ): Promise<{ model: string; terminal: terminalsDb.Terminal; clearedEffort?: string; effortNow?: string }> {
+    return this.withSettingsLock(terminalId, () => this.setThreadModelLocked(terminalId, model));
+  }
 
-    const manager = this.structuredManagerFor(terminal.type);
+  private async setThreadModelLocked(
+    terminalId: string,
+    model: string,
+  ): Promise<{ model: string; terminal: terminalsDb.Terminal; clearedEffort?: string; effortNow?: string }> {
+    if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]~-]{0,120}$/.test(model)) throw transportError(400, 'model is not a valid model id');
+    const { terminal, config, structured, manager } = this.settingsTarget(terminalId, 'model');
+
+    // Codex: which efforts the new model takes (the app-server's list, else the table), and what it runs at by default.
+    let effortNow: string | undefined;
+    let clearedEffort: string | undefined;
+    if (terminal.type === 'codex') {
+      await manager?.loadModelEfforts?.().catch(() => null);
+      const was = this.activeModel(terminalId);
+      const kept = typeof config.effort === 'string' && this.codexEffortsFor(model).includes(config.effort);
+      if (!kept && model !== was) {
+        if (typeof config.effort === 'string') clearedEffort = config.effort;
+        effortNow = codexDefaultEffortFor(model, manager?.modelDefaultEfforts?.() ?? null);
+      }
+    }
+
     let resolved = model;
     if (structured && manager?.isAlive(terminalId) && manager.setModel) {
       try {
         resolved = await manager.setModel(terminalId, model);
+        if (effortNow) await manager.setEffort?.(terminalId, effortNow);
       } catch (e) {
-        throw transportError(400, (e as Error)?.message || 'The harness refused the model');
+        // The thread ended before it answered: nothing was refused, so the pick is kept and the next start uses it.
+        if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'model', (e as Error)?.message || 'The harness refused the model');
       }
     }
-    // Read-merge-write: never clobber the other keys.
-    const fresh = terminalsDb.getById(this.db, terminalId);
-    let merged: Record<string, any> = {};
-    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
-    merged.model = model;
-    merged.modelSetAt = Date.now();
-    terminalsDb.updateConfig(this.db, terminalId, merged);
-    return { model: resolved, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!) };
+    this.mergeConfig(terminalId, {
+      model, modelSetAt: Date.now(),
+      ...(effortNow ? { effort: effortNow, effortSetAt: Date.now() } : {}),
+    });
+    return {
+      model: resolved, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!),
+      ...(clearedEffort ? { clearedEffort } : {}), ...(effortNow ? { effortNow } : {}),
+    };
+  }
+
+  /**
+   * The Pretty effort picker: run `effort` from the thread's next turn. Claude and Codex only in this phase (Grok and
+   * OpenCode have no effort control wired: 409). Per thread: it is not saved as a default for new threads. A Codex effort
+   * is checked against the model the thread runs, because the efforts differ by model (model/list, else the built-in
+   * table). Same guards as the model switch (mid-turn 409, live CLI thread 409, an overseer may change). The pick is saved
+   * with `config.effortSetAt` after the harness took it, so a relaunch keeps it (thread-settings.ts); a refusal is posted
+   * in the thread; a thread that stops before it answers keeps the pick for its next start.
+   */
+  setThreadEffort(terminalId: string, effort: string): Promise<{ effort: string; terminal: terminalsDb.Terminal }> {
+    return this.withSettingsLock(terminalId, () => this.setThreadEffortLocked(terminalId, effort));
+  }
+
+  private async setThreadEffortLocked(terminalId: string, effort: string): Promise<{ effort: string; terminal: terminalsDb.Terminal }> {
+    const { terminal, config, structured, manager } = this.settingsTarget(terminalId, 'effort');
+    let codexEfforts: readonly string[] | undefined;
+    let codexModel: string | undefined;
+    if (terminal.type === 'codex') {
+      await manager?.loadModelEfforts?.().catch(() => null);
+      codexModel = this.activeModel(terminalId) ?? (typeof config.model === 'string' ? config.model : undefined);
+      codexEfforts = this.codexEffortsFor(codexModel);
+    }
+    const bad = validateEffort(terminal.type, effort, { codexEfforts, codexModel });
+    if (bad) throw transportError(terminal.type === 'claude-code' || terminal.type === 'codex' ? 400 : 409, bad);
+    if (structured && manager?.isAlive(terminalId)) {
+      if (!manager.setEffort) throw transportError(409, 'Not yet available for this agent.');
+      try {
+        await manager.setEffort(terminalId, effort);
+      } catch (e) {
+        if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
+      }
+    }
+    this.mergeConfig(terminalId, { effort, effortSetAt: Date.now() });
+    return { effort, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!) };
+  }
+
+  /**
+   * A typed `/model x` or `/effort x` in a Pretty Claude thread, sent by the owner. Claude would run it
+   * itself, but Dispatch's own control request then masks the CLI's version (spike 2026-11-06: the CLI says
+   * "set" and the model does not change), so Dispatch runs it. Returns null for anything else, which then
+   * goes to the agent as a normal message: other text, the leading-space escape, a coordinator's message, a
+   * Codex or CLI thread. Throws a 400 with a plain reason for a bare command or a bad value, so the text
+   * never reaches the model by mistake; mid-turn it fails 409 like the chip (the text stays in the box).
+   */
+  async handleTypedSlash(
+    terminalId: string,
+    content: unknown,
+    source: import('../structured/manager.js').MessageSource | undefined,
+  ): Promise<terminalsDb.Terminal | null> {
+    if (source !== 'user' || typeof content !== 'string') return null;
+    const slash = parseSlash(content);
+    if (!slash?.known || (slash.name !== 'model' && slash.name !== 'effort')) return null;
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row || row.type !== 'claude-code' || !this.isStructuredTerminal(row)) return null;
+    if (!slash.args) throw transportError(400, `Pick a ${slash.name} with the picker, or type /${slash.name} followed by a value.`);
+    if (slash.name === 'model') {
+      const parsed = resolveModelArg(catalogModelChoices('claude-code'), slash.args);
+      if ('error' in parsed) throw transportError(400, parsed.error);
+      return (await this.setThreadModel(terminalId, parsed.model)).terminal;
+    }
+    const parsed = resolveEffortArg('claude-code', slash.args);
+    if ('error' in parsed) throw transportError(400, parsed.error);
+    return (await this.setThreadEffort(terminalId, parsed.effort)).terminal;
   }
 
   /**
@@ -2672,7 +2821,7 @@ export class SessionService {
         // modelFor returns config.model for a plain user thread (no role/agentType).
         this.adoptTranscriptSettings(terminal, config, workDir);
         const model = modelFor(config);
-        const effort = effortFor(config);
+        const effort = terminal.type === 'codex' ? this.codexEffortFor(config, model) : effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
         // stored once the process is alive. Without it a relaunch after a daemon restart
         // had no id to resume into and silently began a new conversation.
@@ -3059,6 +3208,7 @@ export class SessionService {
       // ignores these); shared on the interface so this one call drives either manager.
       resumeId: resumeSessionId,
       model: resolvedModel,
+      effort: terminal.type === 'codex' ? this.codexEffortFor(config, resolvedModel) : undefined,
       // Named on a system/auth_required event, so the chat can say WHICH login is signed out.
       accountId: terminal.type === 'claude-code' || terminal.type === 'codex'
         ? (typeof config.accountId === 'string' && config.accountId ? config.accountId : this.accountDirectory?.defaultId(terminal.type) ?? 'cli')

@@ -33,6 +33,12 @@ function modelArgs(model?: string): string[] {
   return model ? ['--model', model] : [];
 }
 
+// Pins the reasoning effort for a codex thread, so a CLI launch keeps what the owner picked in Pretty.
+// `-c` is a global override and must precede `resume`. The value is a TOML string.
+function effortArgs(effort?: string): string[] {
+  return effort && /^[a-z]+$/.test(effort) ? ['-c', `model_reasoning_effort="${effort}"`] : [];
+}
+
 /** Seconds an unsubscribed, idle thread stays loaded in the shared `codex app-server` (see buildStructuredCommand). */
 export const CODEX_THREAD_UNLOAD_DELAY_SECS = 10;
 
@@ -42,18 +48,18 @@ export const codexProvider: SessionProvider = {
   telemetry: { ...DEFAULT_TELEMETRY, runnerFrame: codexRunnerFrame, hookNames: ['codex'], normalizeHook: normalizeCodex, ptyCapture: 'codex-transcript' },
   displayName: 'Codex',
   statusStrategy: 'pty-timing',
-  buildNewCommand({ prompt, secretsMcp, statusHooks, model }) {
+  buildNewCommand({ prompt, secretsMcp, statusHooks, model, effort }) {
     // Without FULL_PERMISSIONS an interactive Codex thread launches with Codex's default
     // approval policy + sandbox and stalls waiting for approvals — the bug this fixes.
-    const args: string[] = [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model)];
+    const args: string[] = [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), ...effortArgs(effort)];
     if (prompt) args.push(prompt);
     return { command: 'codex', args };
   },
 
-  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model }) {
+  buildResumeCommand({ externalSessionId, secretsMcp, statusHooks, model, effort }) {
     // A resumed thread must run as autonomously as a fresh one — same FULL_PERMISSIONS flag,
     // preceding the `resume` subcommand.
-    return { command: 'codex', args: [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), 'resume', externalSessionId] };
+    return { command: 'codex', args: [FULL_PERMISSIONS, INLINE_TUI, ...mcpArgs(secretsMcp), ...hookArgs(statusHooks), ...modelArgs(model), ...effortArgs(effort), 'resume', externalSessionId] };
   },
 
   // Branch = `codex fork <id>`: a new session seeded with the source's history, the
