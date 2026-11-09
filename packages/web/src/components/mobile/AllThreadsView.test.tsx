@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render as rtlRender, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { api } from '../../api/client';
 import { AllThreadsView } from './AllThreadsView';
@@ -423,5 +423,40 @@ describe('<AllThreadsView> render counts (W1-F)', () => {
     fireEvent.click(document.querySelector('[data-thread-id="b1"]') as HTMLElement);
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledWith('B', 'b1');
+  });
+});
+
+// Active within (2026-11-09): one filter keeps the threads active in the last hour, today, this week or this month.
+describe('Active within filter', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const MIN = 60_000, DAY = 86_400_000;
+  const startOfDay = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 12, 15, 0, 0)); // Thursday 12 November 2026, 15:00 local
+    useTabs.setState({ byProject: {
+      A: [t('a1', 'A', 'Ten minutes', ago(10 * MIN)), t('a2', 'A', 'This morning', new Date(startOfDay() + 8 * 3600_000).toISOString())],
+      B: [t('b1', 'B', 'Monday', new Date(2026, 10, 9, 10).toISOString()), t('b2', 'B', 'Last week', new Date(2026, 10, 6, 10).toISOString()), t('b3', 'B', 'Last month', ago(40 * DAY))],
+    }, loading: {} } as any);
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const pick = (name: RegExp) => { openSection('Active within'); fireEvent.click(screen.getByRole('button', { name })); };
+
+  it('Last hour, Today, This week and This month each keep the right threads; Any time shows all', () => {
+    render(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toHaveLength(5);
+    pick(/^Last hour/); expect(labels()).toEqual(['Ten minutes']);
+    pick(/^Today/); expect(labels()).toEqual(['Ten minutes', 'This morning']);
+    pick(/^This week/); expect(labels()).toEqual(['Ten minutes', 'This morning', 'Monday']);
+    pick(/^This month/); expect(labels()).toEqual(['Ten minutes', 'This morning', 'Monday', 'Last week']);
+    pick(/^Any time/); expect(labels()).toHaveLength(5);
+  });
+
+  it('the choice is remembered', () => {
+    const { unmount } = render(<AllThreadsView onOpenThread={() => {}} />);
+    pick(/^Today/);
+    unmount();
+    render(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual(['Ten minutes', 'This morning']);
   });
 });

@@ -26,6 +26,26 @@ type Starter = 'mine' | 'agents' | 'all';
 const STARTERS: { id: Starter; label: string }[] = [{ id: 'mine', label: 'Mine' }, { id: 'agents', label: 'Agents' }, { id: 'all', label: 'All' }];
 const readStarter = (): Starter => { try { const v = localStorage.getItem(STARTER_KEY); return v === 'agents' || v === 'mine' ? v : 'all'; } catch { return 'all'; } };
 const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
+/**
+ * Active within (2026-11-09): keep the threads active in the last hour, since local midnight, since
+ * Monday 00:00, or since the 1st of the month. Remembered per device.
+ */
+type Within = 'hour' | 'today' | 'week' | 'month';
+const WITHIN: { value: Within; label: string }[] = [
+  { value: 'hour', label: 'Last hour' }, { value: 'today', label: 'Today' }, { value: 'week', label: 'This week' }, { value: 'month', label: 'This month' },
+];
+const WITHIN_KEY = 'dispatch:threadsActiveWithin';
+const readWithin = (): Within | null => {
+  try { const v = localStorage.getItem(WITHIN_KEY); return WITHIN.some((w) => w.value === v) ? (v as Within) : null; } catch { return null; }
+};
+/** The start of the period, as an ISO string comparable with lastActivityAt. */
+export function withinSince(w: Within, now = new Date()): string {
+  if (w === 'hour') return new Date(now.getTime() - 3600_000).toISOString();
+  const d = new Date(now); d.setHours(0, 0, 0, 0);
+  if (w === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+  if (w === 'month') d.setDate(1);
+  return d.toISOString();
+}
 
 /** The list filters besides Started by. Project is the oldest; the other three came 2026-11-06. */
 type FacetId = 'project' | 'account' | 'harness' | 'model';
@@ -116,6 +136,8 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const [menu, setMenu] = useState<ThreadMenuAt | null>(null);
   const [facets, setFacets] = useState<Facets>(readFacets);
   const [chosenStarter, setStarter] = useState<Starter>(readStarter);
+  const [within, setWithin] = useState<Within | null>(readWithin);
+  useEffect(() => { try { if (within) localStorage.setItem(WITHIN_KEY, within); else localStorage.removeItem(WITHIN_KEY); } catch { /* private mode */ } }, [within]);
   useEffect(() => { try { localStorage.setItem(STARTER_KEY, chosenStarter); } catch { /* ignore */ } }, [chosenStarter]);
   useEffect(() => {
     try {
@@ -178,10 +200,12 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const pool = useMemo(() => {
     const all: Terminal[] = [];
     for (const p of projects) for (const t of byProject[p.id] ?? []) if (t.type !== 'file' && !t.archivedAt) all.push(t);
+    const since = within ? withinSince(within) : '';
     return all
+      .filter((t) => !since || lastActive(t) >= since)
       .filter((t) => !q || t.label.toLowerCase().includes(q) || (nameOf.get(t.sessionId) ?? '').toLowerCase().includes(q))
       .sort((a, b) => (lastActive(a) < lastActive(b) ? 1 : lastActive(a) > lastActive(b) ? -1 : 0));
-  }, [projects, byProject, q, nameOf]);
+  }, [projects, byProject, q, nameOf, within]);
   const matching = pool.filter((t) => passes(t));
   const nMine = matching.filter(isMine).length;
   const counts: Record<Starter, number> = { mine: nMine, agents: matching.length - nMine, all: matching.length };
@@ -237,6 +261,12 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
       value: starter === 'all' ? null : starter,
       options: STARTERS.filter((o) => o.id !== 'all').map((o) => ({ value: o.id, label: o.label, count: counts[o.id] })),
       onChange: (v: string | null) => setStarter((v ?? 'all') as Starter),
+    }] : []),
+    ...(tab === 'active' ? [{
+      id: 'within', title: 'Active within', defaultOpen: !!within, allLabel: 'Any time',
+      value: within,
+      options: WITHIN.map((w) => ({ value: w.value, label: w.label })),
+      onChange: (v: string | null) => setWithin(WITHIN.some((w) => w.value === v) ? (v as Within) : null),
     }] : []),
     ...shownFacets.map((id) => ({
       id, title: FACET_TITLE[id], allLabel: FACET_ALL[id], value: active[id], defaultOpen: !!active[id],
