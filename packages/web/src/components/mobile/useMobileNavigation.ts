@@ -221,7 +221,8 @@ export function useMobileNavigation() {
    * - a thread (a notification tap, a link in Chat, a file tab that was just made): straight to it,
    *   the project seeded first, one entry above the screen that shows;
    * - a project (the Chat pane's Docs "+N more"): the Projects tab, then the project;
-   * - a settings section (the mic's "Set up" link): the Settings tab, then the section.
+   * - a settings section (the mic's "Set up" link): the Settings tab, then the section (after the walk
+ *   back to the root, where a 50 ms timer was).
    * `replace` has no meaning on the rail (each level is an entry) and is ignored.
    */
   const navigate = (route: Route) => {
@@ -232,12 +233,14 @@ export function useMobileNavigation() {
       else showTab('projects');
     } else if (route.view === 'settings') {
       if (!route.section) { showTab('settings'); return; }
-      const section = route.section;
+      const spot: TabSpot = { kind: 'settings', section: route.section, sub: null };
+      const deep = ((history.state as { depth?: number } | null)?.depth ?? level) > 0;
       if (bottomTab !== 'settings') leaveTab(); else toRoot();
       spots.current.settings = undefined;
       setBottomTab('settings');
-      // After the walk back to the root lands, push the section (one frame for the popstate).
-      setTimeout(() => openSettingsSection(section), 50);
+      // Push the section once the walk back to the root has landed (onPop runs it), as a tab switch
+      // does. This was a 50 ms timer; a walk that took longer left the section on top of the thread.
+      if (deep) pendingSpot.current = spot; else restoreSpot(spot);
     } else {
       showTab(route.view);
     }

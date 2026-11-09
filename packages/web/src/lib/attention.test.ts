@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { attentionList, nextAttention, openNextAttention, useAttention, useAttentionShortcut, __resetAttentionForTest, type AttentionItem } from './attention';
-import { beforeEach, afterEach, vi } from 'vitest';
+import { beforeEach, afterEach, vi, type MockInstance } from 'vitest';
 import { renderHook, act, fireEvent, waitFor } from '@testing-library/react';
 import { useTabs } from '../stores/tabs';
 import { useProjects } from '../stores/projects';
@@ -88,7 +88,7 @@ describe('nextAttention', () => {
 });
 
 describe('the live queue and the "next" shortcut', () => {
-  let loadTabs: ReturnType<typeof vi.spyOn>;
+  let loadTabs: MockInstance<(projectId: string) => Promise<void>>;
   beforeEach(() => {
     window.history.pushState({}, '', '/');
     __resetNavigationForTest();

@@ -309,8 +309,9 @@ export function MobileApp() {
               <AllThreadsView onOpenThread={openThreadFromList} query={query} />
             ) : (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
-              {/* The attention queue across all projects (W2-F): a list above the projects, hidden when empty. */}
-              {!query && <NeedsYouSection onOpen={openThreadFromList} />}
+              {/* The attention queue across all projects (W2-F): a list above the projects, hidden when empty.
+                  Only while this list shows: the rail keeps level 0 mounted under a project or a thread. */}
+              {level === 0 && !query && <NeedsYouSection onOpen={openThreadFromList} />}
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}
