@@ -84,6 +84,7 @@ export class DeliveryOutbox {
 
   /** Tries the pending rows of every target (the boot flush). Returns the number delivered. */
   flushAll(): number {
+    if (!this.db.open) return 0; // a daemon that stops during its own boot has closed the database
     let n = 0;
     for (const targetId of outboxDb.pendingTargets(this.db)) n += this.run(targetId);
     return n;
@@ -102,6 +103,7 @@ export class DeliveryOutbox {
 
   /** Removes delivered and dropped rows older than `olderThanMs`. Called at boot, never on a timer. */
   prune(olderThanMs: number): number {
+    if (!this.db.open) return 0;
     return outboxDb.prune(this.db, new Date(this.now() - olderThanMs).toISOString());
   }
 

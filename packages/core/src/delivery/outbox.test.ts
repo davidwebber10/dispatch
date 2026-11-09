@@ -252,4 +252,13 @@ describe('DeliveryOutbox', () => {
     expect(outbox.prune(7 * 24 * 3600_000)).toBe(1);
     expect(outbox.list({}).map((r) => r.body).sort()).toEqual(['notice 2', 'notice 3']);
   });
+
+  it('a closed database is not an error for the boot flush (the daemon stopped during its boot)', () => {
+    const h = harness();
+    h.outbox.enqueue(notice(1));
+    h.db.close();
+    expect(h.outbox.flushAll()).toBe(0);
+    expect(h.outbox.flush('coord')).toBe(0);
+    expect(h.outbox.prune(1)).toBe(0);
+  });
 });
