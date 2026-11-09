@@ -217,6 +217,17 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     return res.json({ ...base, transport, process, stall, pendingQuestion, deliveries, explanation });
   });
 
+  // GET /api/terminals/:terminalId/status — the status snapshot (W3-C): the same object as the
+  // `system/status` frame of the structured socket. A chat whose send got no status frame in 10 s reads it
+  // here. Read-only. Owner only (the router's default policy), like the diagnostics route: only the owner's
+  // web client reads it.
+  router.get('/terminals/:terminalId/status', (req, res) => {
+    if (!statusService) return res.status(503).json({ error: 'Status service unavailable' });
+    const snapshot = statusService.snapshot(req.params.terminalId);
+    if (!snapshot) return res.status(404).json({ error: 'Thread not found' });
+    return res.json(snapshot);
+  });
+
   // POST /api/terminals/:terminalId/message { text } | { content } — send a structured
   // message to a stream-json session. Back-compat: a plain `text` string still works;
   // `content` additionally accepts a string OR an array of content blocks (e.g. a real
