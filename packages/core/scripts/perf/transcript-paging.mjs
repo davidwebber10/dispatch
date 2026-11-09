@@ -4,6 +4,7 @@
 //
 // Run from the worktree root, once for each build (the same machine, the same file):
 //   node packages/core/scripts/perf/transcript-paging.mjs <label> <core dist dir> [megabytes]
+//   (W2B_SEED_ONLY=1 makes the fake HOME with the transcript and stops, for a manual check.)
 //   e.g.  node packages/core/scripts/perf/transcript-paging.mjs before packages/core/dist-before
 //         node packages/core/scripts/perf/transcript-paging.mjs after  packages/core/dist
 // The fake HOME is /private/tmp/claude-501/w2-b-home/<label>. The port is 4122. Never 3456, never the real HOME.
@@ -36,8 +37,11 @@ const { createDatabase } = await import(pathToFileURL(path.join(dist, 'db/connec
 const db = createDatabase(path.join(home, '.dispatch', 'dispatch.db'));
 const now = new Date().toISOString();
 db.prepare("INSERT OR IGNORE INTO sessions (id, provider, name, working_dir, status, created_at, updated_at, last_activity_at) VALUES ('perf-project','claude-code','perf',?, 'waiting', ?,?,?)").run(workDir, now, now, now);
-db.prepare("INSERT OR IGNORE INTO terminals (id, session_id, type, label, external_id, working_dir, status, created_at, archived_at) VALUES ('big-thread','perf-project','claude-code','big','big-session',?, 'waiting', ?, ?)").run(workDir, now, now);
+// Archived, so no agent process starts when the thread is opened; Pretty, so the web app pages it through the REST route.
+db.prepare("INSERT OR IGNORE INTO terminals (id, session_id, type, label, external_id, working_dir, status, created_at, archived_at, config) VALUES ('big-thread','perf-project','claude-code','big transcript','big-session',?, 'waiting', ?, ?, ?)").run(workDir, now, now, JSON.stringify({ transport: 'structured' }));
 db.close();
+// W2B_SEED_ONLY=1: make the fake HOME and stop. Start the daemon by hand on it (manual verification).
+if (process.env.W2B_SEED_ONLY === '1') { console.log(JSON.stringify({ home, transcript, lines: made.turns * 2, thread: 'big-thread' })); process.exit(0); }
 
 // ── the daemon, with the probe loaded first ──
 const probeOut = path.join(home, 'probe.json');
