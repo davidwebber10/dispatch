@@ -26,7 +26,7 @@ import type { Reachable } from './auth/reachable-addresses.js';
 import { COOKIE_NAME } from './auth/access-token.js';
 import { principalOf } from './auth/request-principal.js';
 import { noCredentialStatsHandler, whoamiHandler } from './auth/request-principal.js';
-import { ownerOnly, publicRoute } from './auth/route-policy.js';
+import { ownerOnly, ownerOnlyStrict, publicRoute } from './auth/route-policy.js';
 import { TranscriptionService } from './transcription/service.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
@@ -136,8 +136,9 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.get('/api/whoami', publicRoute, whoamiHandler);
   app.get('/api/access/no-credential-stats', ownerOnly, noCredentialStatsHandler(d.noCredentialStats));
   // The owner (a signed-in or local browser) makes a code; a thread key gets owner_only. The code
-  // is the only secret that leaves the daemon: the token itself is never served.
-  app.post('/api/access/pair-code', ownerOnly, (_req, res) => {
+  // is the only secret that leaves the daemon: the token itself is never served. Strict (W1-B): a code signs a
+  // device in as the owner, so a local call with no credential must look like the web page.
+  app.post('/api/access/pair-code', ownerOnlyStrict, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!d.pairCodes) return void res.status(404).json({ error: 'not_available' });
     res.json(d.pairCodes.issue());

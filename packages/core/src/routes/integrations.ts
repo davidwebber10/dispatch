@@ -1,5 +1,6 @@
 import type { Router } from 'express';
 import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
+import { ownerOnlyStrictRead } from '../auth/owner-read-proof.js';
 import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import { principalOf } from '../auth/request-principal.js';
@@ -43,7 +44,8 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
     catch { res.status(500).json({ error: 'Could not remove the integration.' }); }
   });
 
-  router.get('/export', (_req, res) => res.json(integrations.export()));
+  // The export carries every header and env value unmasked. Strict: a local call with no credential must look like the web page (W1-B).
+  router.get('/export', ownerOnlyStrictRead, (_req, res) => res.json(integrations.export()));
 
   router.post('/import', ownerOnlyStrict, (req, res) => {
     if (!Array.isArray(req.body?.integrations)) return res.status(400).json({ error: 'Invalid import document.' });

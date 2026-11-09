@@ -72,3 +72,59 @@ describe('GET /:name/value', () => {
     expect(res.status).toBe(404);
   });
 });
+
+// W1-B: the value route is strict. A local call with no credential must look like the web page.
+describe('GET /:name/value is strict owner', () => {
+  const TOKEN = 'owner-access-token-for-the-secrets-test-0123456789';
+  async function gated() {
+    const Database = (await import('better-sqlite3')).default;
+    const { initSchema } = await import('../db/schema.js');
+    const { createPrincipalMiddleware } = await import('../auth/request-principal.js');
+    const { createKeyScope } = await import('../auth/key-scope.js');
+    const { KeyRegistry } = await import('../auth/principals.js');
+    const { GATE_VIA } = await import('../auth/access-gate.js');
+    const { configureRefusalLog } = await import('../auth/route-policy.js');
+    configureRefusalLog({ log: () => {} });
+    const db = new Database(':memory:'); initSchema(db);
+    const svc = new SecretsService(dir, () => fakeClient());
+    const g = express();
+    g.use((req, _res, next) => { (req as any)[GATE_VIA] = 'local'; next(); });
+    g.use(createPrincipalMiddleware({ registry: new KeyRegistry(), scope: createKeyScope(db), getToken: () => TOKEN, via: 'test' }));
+    g.use(express.json());
+    g.use('/api/secrets', createSecretsRouter(svc));
+    return g;
+  }
+  const value = (g: express.Express) => request(g).get('/api/secrets/A_KEY/value').set('X-Dispatch-Reveal', '1');
+
+  it('a call with no credential and no browser headers answers 401 auth_required', async () => {
+    const res = await value(await gated());
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('auth_required');
+    expect(res.text).not.toContain('sekret');
+  });
+
+  it('the web page (browser headers) gets the value', async () => {
+    const g = await gated();
+    for (const [h, v] of [['Sec-Fetch-Site', 'same-origin'], ['Origin', 'http://localhost:3456']] as const) {
+      const res = await value(g).set(h, v);
+      expect(res.status, h).toBe(200);
+      expect(res.body).toEqual({ value: 'sekret-a' });
+    }
+    // A page on plain http (a tailnet name) sends neither header on a GET; its Referer names the page.
+    const plain = await value(g).set('Host', 'mac.tail1.ts.net:3456').set('Referer', 'http://mac.tail1.ts.net:3456/');
+    expect(plain.status).toBe(200);
+    expect(plain.body).toEqual({ value: 'sekret-a' });
+  });
+
+  it('a bearer token gets the value', async () => {
+    const res = await value(await gated()).set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ value: 'sekret-a' });
+  });
+
+  it('the list of names stays open to a local call with no credential (only the value is strict)', async () => {
+    const res = await request(await gated()).get('/api/secrets');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([{ name: 'A_KEY' }, { name: 'B_KEY' }]);
+  });
+});

@@ -1,5 +1,6 @@
 import type { Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
+import { ownerOnlyStrictRead } from '../auth/owner-read-proof.js';
 import type { SecretsService } from '../secrets/service.js';
 import { clientMessage } from '../http/client-message.js';
 
@@ -42,8 +43,9 @@ export function createSecretsRouter(secrets: SecretsService, onWrite?: () => voi
   });
 
   // One value, on an explicit request. The header keeps it off any plain link or form
-  // navigation; the listing above never carries values.
-  router.get('/:name/value', async (req, res) => {
+  // navigation; the listing above never carries values. Strict: a local call with no credential must
+  // look like the web page (W1-B), so a script or a hook on this machine cannot read a value by accident.
+  router.get('/:name/value', ownerOnlyStrictRead, async (req, res) => {
     if (req.get('x-dispatch-reveal') !== '1') { res.status(400).json({ error: 'invalid request: reveal header required' }); return; }
     try {
       const value = await secrets.getSecret(req.params.name);
