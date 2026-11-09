@@ -68,6 +68,8 @@ interface SettingsState {
   accent: string;
   /** 'system' follows the device (Dispatch Light / Dark); else a theme id (src/themes). Per device. */
   theme: ThemeSetting;
+  /** Text scale, 0.75 to 1.5 in 5% steps. 1 = 100%. Per device. */
+  textScale: number;
   /**
    * Raw value; empty falls back to "Control Plane" at display (see useDispatchName). The same on
    * every device: stored on the daemon (/api/settings/coordinator), cached here for first paint.
@@ -118,6 +120,8 @@ interface SettingsState {
   setDensity: (d: Density) => void;
   setAccent: (c: string) => void;
   setTheme: (t: ThemeSetting) => void;
+  setTextScale: (n: number) => void;
+  resetTextScale: () => void;
   setPushEnabled: (b: boolean) => Promise<void>;
   /** Set the switch only (saved), with no network call: for code that already did the work. */
   setPushEnabledLocal: (b: boolean) => void;
@@ -152,6 +156,22 @@ function scheduleIconSync(accent: string) {
   iconTimer = setTimeout(() => void syncAppIcons(accent), 600);
 }
 
+/** Clamp a saved or set text scale to 0.75..1.5, rounded to 5%. Anything not a finite number is 1. */
+export function clampTextScale(n: unknown): number {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 1;
+  return Math.max(0.75, Math.min(1.5, Math.round(n * 20) / 20));
+}
+/** Scale every rem on the page: <html> font-size is 16px × scale. At 1 the inline value is removed (theme.css sets 16px). */
+function applyTextScale(scale: number) {
+  try {
+    const style = document.documentElement.style;
+    if (scale === 1) style.removeProperty('font-size');
+    else style.fontSize = `calc(16px * ${scale})`;
+  } catch { /* ssr */ }
+}
+const initialTextScale = clampTextScale(load<unknown>('dispatch:textScale', 1));
+applyTextScale(initialTextScale);
+
 const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && getTheme(t)) ? t as ThemeSetting : DEFAULT_THEME_ID);
 const initialTheme = validTheme(load<string>('dispatch:theme', DEFAULT_THEME_ID));
 const initialAccent = load('dispatch:accent', '');
@@ -175,6 +195,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   density: load<Density>('dispatch:density', 'cozy'),
   accent: initialAccent,
   theme: initialTheme,
+  textScale: initialTextScale,
   coordinatorName: load('dispatch:coordinatorName', 'Control Plane'),
   pushEnabled: load('dispatch:pushEnabled', false),
   multiPane: load('dispatch:multiPane', true),
@@ -204,6 +225,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
     save('dispatch:theme', theme); set({ theme }); setThemeSetting(theme, get().accent);
     if (effectiveAccent() !== before) scheduleIconSync(effectiveAccent());
   },
+  setTextScale: (n) => { const textScale = clampTextScale(n); save('dispatch:textScale', textScale); set({ textScale }); applyTextScale(textScale); },
+  resetTextScale: () => get().setTextScale(1),
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); putShared(() => api.putDictationSettings({ provider: id })); },
   setSttModel: (id) => { save('dispatch:sttModel', id); set({ sttModel: id }); putShared(() => api.putDictationSettings({ model: id })); },
   setSttSecretName: (name) => { save('dispatch:sttSecretName', name); set({ sttSecretName: name }); putShared(() => api.putDictationSettings({ secretName: name })); },

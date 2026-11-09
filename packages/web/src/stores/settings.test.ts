@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useSettings, stepSidebarLimit, formatSidebarLimit, loadSharedSettings } from './settings';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { useSettings, stepSidebarLimit, formatSidebarLimit, loadSharedSettings, clampTextScale } from './settings';
 import { api } from '../api/client';
 
 beforeEach(() => { try { localStorage.clear(); } catch {} });
@@ -168,5 +168,68 @@ describe('showUsageBanner setting (#127)', () => {
     expect(JSON.parse(localStorage.getItem('dispatch:usageBanner')!)).toBe(false);
     useSettings.getState().setShowUsageBanner(true);
     expect(JSON.parse(localStorage.getItem('dispatch:usageBanner')!)).toBe(true);
+  });
+});
+
+describe('text scale', () => {
+  const clearFontSize = () => document.documentElement.style.removeProperty('font-size');
+  beforeEach(() => { clearFontSize(); useSettings.setState({ textScale: 1 }); });
+  afterEach(clearFontSize);
+
+  async function reload() {
+    vi.resetModules();
+    return (await import('./settings')).useSettings;
+  }
+
+  it('clamps to 0.75..1.5 and rounds to 5%', () => {
+    expect(clampTextScale(1.53)).toBe(1.5);
+    expect(clampTextScale(1.12)).toBe(1.1);
+    expect(clampTextScale(0.1)).toBe(0.75);
+    expect(clampTextScale(9)).toBe(1.5);
+    expect(clampTextScale(1.25)).toBe(1.25);
+  });
+  it('anything not a finite number is 1', () => {
+    for (const junk of ['abc', '1.2', null, undefined, NaN, Infinity, {}, true]) expect(clampTextScale(junk)).toBe(1);
+  });
+  it('a saved scale loads clamped and rounded', async () => {
+    localStorage.setItem('dispatch:textScale', '1.53');
+    expect((await reload()).getState().textScale).toBe(1.5);
+    localStorage.setItem('dispatch:textScale', '0.1');
+    expect((await reload()).getState().textScale).toBe(0.75);
+  });
+  it('a garbage saved scale loads as 1', async () => {
+    localStorage.setItem('dispatch:textScale', '"abc"');
+    expect((await reload()).getState().textScale).toBe(1);
+    localStorage.setItem('dispatch:textScale', '{not json');
+    expect((await reload()).getState().textScale).toBe(1);
+  });
+  it('a saved scale is applied to <html> at load', async () => {
+    localStorage.setItem('dispatch:textScale', '1.2');
+    await reload();
+    expect(document.documentElement.style.fontSize).toMatch(/19\.2px|16px \* 1\.2/);
+  });
+  it('a saved scale of 1 leaves no inline font-size at load', async () => {
+    localStorage.setItem('dispatch:textScale', '1');
+    await reload();
+    expect(document.documentElement.style.fontSize).toBe('');
+  });
+  it('setTextScale saves, applies, and at 1 removes the inline font-size', () => {
+    useSettings.getState().setTextScale(1.2);
+    expect(useSettings.getState().textScale).toBe(1.2);
+    expect(JSON.parse(localStorage.getItem('dispatch:textScale')!)).toBe(1.2);
+    expect(document.documentElement.style.fontSize).toMatch(/19\.2px|16px \* 1\.2/);
+    useSettings.getState().setTextScale(1);
+    expect(document.documentElement.style.fontSize).toBe('');
+    expect(document.documentElement.getAttribute('style') ?? '').not.toContain('font-size');
+  });
+  it('setTextScale clamps, and resetTextScale goes back to 1', () => {
+    useSettings.getState().setTextScale(3);
+    expect(useSettings.getState().textScale).toBe(1.5);
+    useSettings.getState().setTextScale(Number.NaN);
+    expect(useSettings.getState().textScale).toBe(1);
+    useSettings.getState().setTextScale(0.8);
+    useSettings.getState().resetTextScale();
+    expect(useSettings.getState().textScale).toBe(1);
+    expect(document.documentElement.style.fontSize).toBe('');
   });
 });
