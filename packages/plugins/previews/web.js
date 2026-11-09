@@ -259,6 +259,23 @@ export default function activate(d) {
           ...g.items.map((p) => h(Item, { key: p.id, preview: p, onDelete: (id) => void usePv.getState().remove(id) }))))));
   }
 
+  // ── the right-column tab (desktop, 2026-11-09): the open thread's previews only ───────────
+  function ThreadTab({ terminalId }) {
+    const all = usePv((s) => s.items);
+    const loaded = usePv((s) => s.loaded);
+    useEffect(() => {
+      void usePv.getState().load();
+      if (!terminalId) return;
+      return () => { for (const x of usePv.getState().items) if (!x.seenAt && x.terminalId === terminalId) void usePv.getState().markSeen(x.id); };
+    }, [terminalId]);
+    const mine = useMemo(() => (terminalId ? all.filter((p) => p.terminalId === terminalId) : []), [all, terminalId]);
+    const empty = (text) => h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '4px 2px' } }, text);
+    return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+      !terminalId ? empty('Open a thread to see its previews.')
+        : mine.length === 0 ? empty(loaded ? 'No previews from this thread yet. A thread can hand you files and text with its preview tool.' : 'Loading…')
+        : mine.map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })));
+  }
+
   // ── the header eye: the project's unseen count, opens the sheet ──────────────────────────
   function Eye({ sessionId, floating }) {
     const n = usePv((s) => unseenOf(s.items, sessionId));
@@ -276,6 +293,7 @@ export default function activate(d) {
 
   d.register(ID, {
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
+    inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
     // The count of new previews for the thread's project: the row shows it and the ⋯ button gets a dot.
     threadMenu: [{ id: 'open', label: 'Previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId),

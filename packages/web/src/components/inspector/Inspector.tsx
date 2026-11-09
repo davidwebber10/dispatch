@@ -8,7 +8,8 @@ import { PluginBoundary } from '../../plugins/PluginBoundary';
 import { tabIcon } from '../../plugins/sdk';
 
 const tabStyle = (on: boolean): React.CSSProperties => ({
-  flex: 1, minWidth: 0, background: 'transparent', border: 'none',
+  // Each tab is as wide as its name, then they share the rest (2026-11-09: four equal tabs cut "Previews").
+  flex: '1 1 auto', minWidth: 0, background: 'transparent', border: 'none',
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '0 6px',
   borderBottom: on ? '2px solid var(--color-accent)' : '2px solid transparent',
   color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
