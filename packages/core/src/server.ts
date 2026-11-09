@@ -43,6 +43,7 @@ import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
 import { compressedAssets, IMMUTABLE } from './web-assets.js';
+import { jsonCompression } from './http/compress.js';
 import { lockDownDataDir } from './auth/private-dir.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
@@ -409,6 +410,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const noCredentialStats = createNoCredentialStats({});
   app.use(createPrincipalMiddleware({ registry: keys, scope: createKeyScope(db), via: 'test' }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
+  app.use(jsonCompression()); // API JSON over 1 KB goes out as br or gzip (http/compress.ts)
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -592,6 +594,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats, devices,
   }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
+  app.use(jsonCompression()); // API JSON over 1 KB goes out as br or gzip (http/compress.ts)
   // Create HTTP server
   const server = http.createServer(app);
 
