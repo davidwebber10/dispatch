@@ -34,6 +34,7 @@ const daemonPid = Number(process.env.DAEMON_PID);
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+const RUNS = process.env.QUICK ? 1 : 5;
 const result = { label: LABEL, latencyMs: LATENCY };
 
 // ---------- replay bytes (a WebSocket client that offers permessage-deflate, as a browser does) ----------
@@ -87,7 +88,7 @@ function sameStream(a, b) {
 // ---------- the browser ----------
 const browser = await chromium.launch();
 let MODEL = 'cdp';
-async function fresh({ width = 1400, height = 900, colorScheme = 'dark', latency = LATENCY } = {}) {
+async function fresh({ width = 1400, height = 900, colorScheme = 'dark', latency = LATENCY, ready = 'Alpha' } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, colorScheme });
   await ctx.addInitScript(() => { try { localStorage.setItem('dispatch:theme', JSON.stringify('system')); } catch { /* ignore */ } });
   const page = await ctx.newPage();
@@ -119,7 +120,7 @@ async function fresh({ width = 1400, height = 900, colorScheme = 'dark', latency
   const sockets = [];
   page.on('websocket', (ws) => sockets.push(ws.url()));
   await page.goto(BASE);
-  await page.getByText('Alpha', { exact: true }).first().waitFor();
+  await page.getByText(ready, { exact: true }).first().waitFor();
   return { ctx, page, setLatency, sockets };
 }
 // In the page: run `action`, then count the time and the animation frames until `done()` is true.
@@ -140,13 +141,13 @@ const LAST_ALPHA = 'echo:Alpha question 69';
 const LAST_BETA = 'echo:Beta question 3';
 
 const doomed = ['Doomed one', 'Doomed two', 'Doomed three', 'Doomed four', 'Doomed five', 'Doomed six'];
-for (MODEL of (process.env.MODEL ? [process.env.MODEL] : ['cdp', 'path'])) {
+for (MODEL of (process.env.ONLY ? [] : process.env.MODEL ? [process.env.MODEL] : ['cdp', 'path'])) {
   result[MODEL] = {};
   // 1. tab switch back
   {
     const runs = [];
     let first;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < RUNS; i++) {
       const { ctx, page } = await fresh();
       const open = await timed(page, rowClick('Alpha'), hasText(LAST_ALPHA)); // the first open of the thread (no cache possible)
       if (i === 0) first = open;
@@ -162,7 +163,7 @@ for (MODEL of (process.env.MODEL ? [process.env.MODEL] : ['cdp', 'path'])) {
   // 2. send to bubble
   {
     const runs = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < RUNS; i++) {
       const { ctx, page } = await fresh();
       await timed(page, rowClick('Beta'), hasText(LAST_BETA));
       const text = `latency probe ${LABEL} ${Date.now()} ${i}`;
@@ -211,31 +212,35 @@ async function resume(stopMs) {
   const { ctx, page, sockets } = await fresh();
   await timed(page, rowClick('Alpha'), hasText(LAST_ALPHA));
   await sleep(800);
-  // Mark the chat's DOM: a remount makes new nodes, so the mark is gone from the document.
-  await page.evaluate((t) => { const el = [...document.querySelectorAll('*')].find((e) => e.childElementCount === 0 && e.textContent.includes(t)); window.__mark = el; window.__blank = 0; const watch = () => { if (!document.body.innerText.includes(t)) window.__blank++; requestAnimationFrame(watch); }; requestAnimationFrame(watch); }, LAST_ALPHA);
+  // Mark the chat view's DOM (its composer): a remount makes new nodes, so the mark is gone from the document.
+  // The message node is marked too, for information only: a replay may draw a message again with a new node.
+  await page.evaluate((t) => { window.__composer = document.querySelector('textarea'); const el = [...document.querySelectorAll('*')].find((e) => e.childElementCount === 0 && e.textContent.includes(t)); window.__mark = el; window.__blank = 0; const watch = () => { if (!document.body.innerText.includes(t)) window.__blank++; requestAnimationFrame(watch); }; requestAnimationFrame(watch); }, LAST_ALPHA);
   const before = sockets.length;
   process.kill(daemonPid, 'SIGSTOP');
   await page.evaluate(() => window.dispatchEvent(new Event('online'))); // one of useResume's three signals
   await sleep(stopMs);
   process.kill(daemonPid, 'SIGCONT');
   await sleep(6000);
-  const out = await page.evaluate((t) => ({ markStillInDocument: !!window.__mark?.isConnected, framesWithoutContent: window.__blank, contentShown: document.body.innerText.includes(t) }), LAST_ALPHA);
+  const out = await page.evaluate((t) => ({ composerStillInDocument: !!window.__composer?.isConnected, messageNodeStillInDocument: !!window.__mark?.isConnected, framesWithoutContent: window.__blank, contentShown: document.body.innerText.includes(t) }), LAST_ALPHA);
   out.newSockets = sockets.slice(before).map((u) => u.replace(/^.*\/api\//, '/api/').replace(/[0-9a-f-]{36}/, '<id>'));
-  out.remounted = !out.markStillInDocument;
+  out.remounted = !out.composerStillInDocument;
   await page.screenshot({ path: path.join(OUT, `${LABEL}-resume-${stopMs}ms.png`) });
   await ctx.close();
   return out;
 }
-if (daemonPid) {
+if (daemonPid && process.env.ONLY !== 'ui') {
   result.slowResume3s = await resume(3000);   // pong after 3 s: under the new 4 s wait, over the old 1.5 s
   result.deadFor6s = await resume(6000);      // no pong in time on either build: the sockets must come back
 }
 
+const save = () => fs.writeFileSync(path.join(OUT, `${LABEL}.json`), JSON.stringify(result, null, 2));
+save();
+
 // 5. screenshots of the changed UI (this branch only): the bubble while sending, and a refused send
 if (LABEL === 'after') {
   for (const [name, opts] of [['desktop-dark', {}], ['desktop-light', { colorScheme: 'light' }], ['phone-dark', { width: 390, height: 844 }], ['phone-light', { width: 390, height: 844, colorScheme: 'light' }]]) {
-    const { ctx, page } = await fresh({ ...opts, latency: 0 });
-    if (opts.width) { await page.getByText('Threads', { exact: true }).first().click().catch(() => {}); }
+    const { ctx, page } = await fresh({ ...opts, latency: 0, ready: opts.width ? 'Latency' : 'Alpha' });
+    if (opts.width) await page.getByText('Latency', { exact: true }).first().click(); // the phone: project list, then its threads
     await page.getByText('Beta', { exact: true }).first().click();
     await page.getByText(LAST_BETA).first().waitFor();
     await page.route('**/api/terminals/*/message', (route) => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'the daemon could not be reached' }) }));
@@ -251,5 +256,5 @@ if (LABEL === 'after') {
 }
 
 await browser.close();
-fs.writeFileSync(path.join(OUT, `${LABEL}.json`), JSON.stringify(result, null, 2));
+if (process.env.ONLY !== 'ui') save();
 console.log(JSON.stringify(result, null, 2));

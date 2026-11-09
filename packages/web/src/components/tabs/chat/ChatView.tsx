@@ -1,3 +1,4 @@
+import { threadViewCache } from '../../../lib/threadViewCache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
 import { ModelSwitcher } from './ModelSwitcher';
@@ -201,13 +202,18 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // lands at the bottom with zero visible catch-up motion. A pending question forces the
   // view visible — the CLI is parked on stdin, nothing is bursting, and the question must
   // never be swallowed by the gate. See StickToEndOnLoad for the full mechanics.
-  const [ready, setReady] = useState(false);
+  // W2-I: a thread this page showed before opens with its cached items (lib/threadViewCache.ts). Nothing is
+  // bursting then, so the gate starts open: the content paints in the same frame as the tab switch. The
+  // replay that replaces the cached items lands in one render and does not close the gate again.
+  const opensFromCache = () => !!(terminalId && threadViewCache.get(terminalId)?.length);
+  const [ready, setReady] = useState(opensFromCache);
   const handleReady = useCallback(() => setReady(true), []);
   const hasPendingQuestion = !!pending?.questions?.length;
   // Doc chips and link clicks in this thread's messages, whichever harness wrote them.
   const threadDocs = useThreadDocChips(sessionId, terminalId);
   // Re-hide on an in-place thread switch — a layout effect so it lands before paint.
-  useLayoutEffect(() => setReady(false), [terminalId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- opensFromCache reads the cache for this terminalId
+  useLayoutEffect(() => setReady(opensFromCache()), [terminalId]);
 
   return (
     <ThreadDocsContext.Provider value={threadDocs}>
