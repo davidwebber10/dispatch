@@ -358,4 +358,25 @@ describe('queued ACP turn boundaries', () => {
     await done;
     expect(order).toEqual(['busy', 'idle', 'busy', 'idle']);
   });
+  // W1-D (stall watchdog): the time of the last frame that entered the ring.
+  it('lastFrameAt moves when a frame arrives', async () => {
+    const m = makeManager();
+    expect(m.lastFrameAt('t1')).toBeUndefined(); // no session
+    const before = Date.now();
+    m.spawn('t1', spawnOpts());
+    await until<void>((resolve) => {
+      const tick = () => (m.getEvents('t1').some((e: any) => e?.type === 'system' && e?.subtype === 'init') ? resolve() : setTimeout(tick, 10));
+      tick();
+    });
+    const first = m.lastFrameAt('t1')!;
+    expect(first).toBeGreaterThanOrEqual(before);
+    await new Promise((r) => setTimeout(r, 15));
+    expect(m.lastFrameAt('t1')).toBe(first); // no frame, no move
+    const idle = until<void>((resolve) => m.on('idle', () => resolve()));
+    m.sendMessage('t1', 'hello', 'user');
+    await idle;
+    expect(m.lastFrameAt('t1')!).toBeGreaterThan(first);
+    m.kill('t1');
+    expect(m.lastFrameAt('t1')).toBeUndefined();
+  });
 });

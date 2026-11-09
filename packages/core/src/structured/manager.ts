@@ -49,6 +49,8 @@ interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
   events: unknown[]; // ring of recent events for replay
+  /** Epoch ms of the last CLI frame that entered the ring (see IStructuredManager.lastFrameAt). */
+  lastFrameAt?: number;
   /** When true, gated tools are surfaced as a Need instead of auto-allowed. */
   escalate: boolean;
   /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
@@ -280,6 +282,14 @@ export interface IStructuredManager extends EventEmitter {
   /** Codex: ask the app-server for them now (cached for a while). null when no app-server is running. */
   loadModelEfforts?(): Promise<Record<string, string[]> | null>;
   isAlive(terminalId: string): boolean;
+  /**
+   * Epoch ms of the last frame the live session's CLI put in the ring, or undefined when there is
+   * no live session or no frame yet. The stall watchdog reads it (runtime/stall-watchdog.ts).
+   * History seeded at spawn does not count: it is not a sign of life.
+   * Optional in the type only because the test fakes of other suites do not have it; the three
+   * real managers all implement it.
+   */
+  lastFrameAt?(terminalId: string): number | undefined;
   kill(terminalId: string): void;
   killAll(): void;
 }
@@ -410,6 +420,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         }
       }
       session.events.push(event);
+      session.lastFrameAt = Date.now();
       if (session.events.length > MAX_EVENTS) session.events.shift();
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
@@ -843,6 +854,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
 
   /** The claude session_id captured for a live thread (from its init event), or undefined. */
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
+
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
 
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
 

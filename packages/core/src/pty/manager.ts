@@ -13,6 +13,8 @@ interface ManagedPty {
 
 export class PTYManager extends EventEmitter {
   private ptys = new Map<string, ManagedPty>();
+  /** Epoch ms of each live PTY's last output (see lastOutputAt). An entry ends with its PTY. */
+  private lastOutput = new Map<string, number>();
   /** How long a killed process gets to end after the hang-up before it is killed outright. */
   killGraceMs = KILL_GRACE_MS;
 
@@ -53,6 +55,7 @@ export class PTYManager extends EventEmitter {
 
     proc.onData((data: string) => {
       buffer.write(data);
+      if (this.ptys.get(sessionId) === managed) this.lastOutput.set(sessionId, Date.now());
       this.emit('data', sessionId, data);
     });
 
@@ -63,6 +66,7 @@ export class PTYManager extends EventEmitter {
       const current = this.ptys.get(sessionId);
       if (current && current !== managed) return;
       this.ptys.delete(sessionId);
+      this.lastOutput.delete(sessionId);
       this.emit('exit', sessionId, exitCode, proc.pid); // the pid lets a key revoke only this process's handle
     });
 
@@ -121,6 +125,7 @@ export class PTYManager extends EventEmitter {
     if (!managed) return;
     managed.process.kill();
     this.ptys.delete(sessionId);
+    this.lastOutput.delete(sessionId);
     // A CLI (or a shell) that ignores the hang-up must not outlive its thread: kill it outright
     // after the grace period. Its own background children are not touched.
     if (process.platform === 'win32') return;
@@ -173,6 +178,14 @@ export class PTYManager extends EventEmitter {
 
   getLastActivity(sessionId: string): Date | null {
     return this.ptys.get(sessionId)?.buffer.lastWriteAt ?? null;
+  }
+
+  /**
+   * Epoch ms of the last output of a live PTY, or undefined when the PTY is gone or wrote nothing
+   * yet. The stall watchdog reads it (runtime/stall-watchdog.ts).
+   */
+  lastOutputAt(sessionId: string): number | undefined {
+    return this.lastOutput.get(sessionId);
   }
 
   isAlive(sessionId: string): boolean {

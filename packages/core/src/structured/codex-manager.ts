@@ -165,6 +165,8 @@ class CodexConnection extends EventEmitter {
 
 interface CodexSession {
   terminalId: string;
+  /** Epoch ms of the last frame that entered the ring (see IStructuredManager.lastFrameAt). */
+  lastFrameAt?: number;
   translator: CodexTranslator;
   events: unknown[];
   escalate: boolean;
@@ -668,6 +670,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
 
   private pushEvent(session: CodexSession, event: unknown): void {
     session.events.push(event);
+    session.lastFrameAt = Date.now();
     if (session.events.length > MAX_EVENTS) session.events.shift();
     this.emit('event', session.terminalId, event);
     // A signed-out or expired login (a 401, a refresh that failed): a typed event after the error.
@@ -884,6 +887,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
 
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
+
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
   getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
   /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the completed agentMessage items, not the ring's deltas. */
   getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }

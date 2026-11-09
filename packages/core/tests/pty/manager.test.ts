@@ -145,4 +145,21 @@ describe('PTYManager (real PTY)', () => {
       if (saved === undefined) delete process.env.PORT; else process.env.PORT = saved;
     }
   }, 10_000);
+  // W1-D (stall watchdog): the time of the last output of a live PTY.
+  it('lastOutputAt moves when output arrives', async () => {
+    const manager = new PTYManager();
+    expect(manager.lastOutputAt('sess-out')).toBeUndefined(); // no PTY
+    const chunks: string[] = [];
+    manager.on('data', (_id: string, data: string) => chunks.push(data));
+    const before = Date.now();
+    manager.spawn('sess-out', '/bin/sh', ['-c', 'printf ONE; sleep 0.4; printf TWO; sleep 30'], os.tmpdir());
+    const waitFor = async (text: string) => { while (!chunks.join('').includes(text)) await new Promise((r) => setTimeout(r, 10)); };
+    await waitFor('ONE');
+    const first = manager.lastOutputAt('sess-out')!;
+    expect(first).toBeGreaterThanOrEqual(before);
+    await waitFor('TWO');
+    expect(manager.lastOutputAt('sess-out')!).toBeGreaterThan(first);
+    manager.kill('sess-out');
+    expect(manager.lastOutputAt('sess-out')).toBeUndefined();
+  });
 });
