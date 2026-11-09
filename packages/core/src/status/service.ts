@@ -3,6 +3,7 @@ import { recordHarnessUsage } from '../analytics/recorder.js';
 import { logLifecycle, recordCaptureFailure } from '../runtime/diagnostics.js';
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
+import { ThreadConfigStore } from '../sessions/thread-config.js';
 import * as sessionsDb from '../db/sessions.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import type { ThreadStatus } from './events.js';
@@ -178,7 +179,13 @@ export class StatusService {
     private onWatchStatus?: (terminalId: string, status: ThreadStatus) => void,
     private onUserPrompt?: (terminalId: string, prompt: string) => void,
     private onHook?: (provider: string, terminalId: string, payload: unknown) => void,
-  ) {}
+    opts: { configStore?: ThreadConfigStore } = {},
+  ) {
+    this.configStore = opts.configStore ?? new ThreadConfigStore(db);
+  }
+
+  /** The one writer of a thread's config (W2-A). */
+  private readonly configStore: ThreadConfigStore;
 
   /**
    * Subscribe to the turn-settled edge. A LIST, not a single hook: push notifications
@@ -268,11 +275,10 @@ export class StatusService {
     const decl = cfg.pendingDeclaration;
     if (!decl || typeof decl !== 'object') return null;
 
-    delete cfg.pendingDeclaration; // per-turn — must not leak into the next Stop
     const needsHelp = decl.state === 'needs_you';
     const declaredState = decl.state === 'done' || decl.state === 'blocked' ? decl.state : undefined;
     const blocker = declaredState === 'blocked' && typeof decl.blocker === 'string' && decl.blocker.trim() ? decl.blocker : undefined;
-    cfg.lastOutcome = {
+    const lastOutcome = {
       summary: String(decl.summary ?? '').slice(0, 400),
       needsHelp,
       inferred: false,
@@ -280,7 +286,8 @@ export class StatusService {
       ...(blocker ? { blocker } : {}),
       at: new Date().toISOString(),
     };
-    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
+    // The declaration is per-turn: it is removed so it cannot leak into the next Stop. Only these two keys are written.
+    try { this.configStore.patch(terminalId, { pendingDeclaration: null, lastOutcome }); } catch { /* best effort */ }
 
     if (needsHelp) {
       const ask = typeof decl.ask === 'string' && decl.ask ? decl.ask : decl.summary;
@@ -348,12 +355,11 @@ export class StatusService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.apply(terminal.session_id, terminalId, 'scheduled', activity);
-    // Best-effort: stamp when it went dormant for a future "resumes when…" tooltip. The
-    // terminal row is already in hand (no extra read); updateConfig replaces the whole
-    // blob, so merge onto the existing parsed config rather than clobbering it.
+    // Best-effort: stamp when it went dormant for a future "resumes when…" tooltip. A patch of
+    // the one key: the row read above is older than the override clear that `apply` just made,
+    // so a write of that copy would undo it (W2-A).
     try {
-      const config = JSON.parse(terminal.config || '{}');
-      terminalsDb.updateConfig(this.db, terminalId, { ...config, scheduledWake: activity ?? 'Scheduled — will resume automatically' });
+      this.configStore.patch(terminalId, { scheduledWake: activity ?? 'Scheduled — will resume automatically' });
     } catch { /* best effort */ }
   }
 
@@ -445,11 +451,9 @@ export class StatusService {
     // thread that settled normally (idle) keep a stale override forever. Nothing on this
     // board should be able to permanently silence itself.
     try {
-      const cfg = JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}');
-      if (cfg.boardState?.override) {
-        cfg.boardState = { ...cfg.boardState, override: null };
-        terminalsDb.updateConfig(this.db, terminalId, cfg);
-      }
+      this.configStore.patch(terminalId, (current) => (
+        current.boardState?.override ? { boardState: { ...current.boardState, override: null } } : null
+      ));
     } catch { /* best effort — status must never fail on board bookkeeping */ }
     this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null }));
     if (status !== 'starting' && prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {

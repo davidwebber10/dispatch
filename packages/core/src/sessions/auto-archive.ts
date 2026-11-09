@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { SessionService } from './service.js';
 import type { EventBroadcaster } from '../ws/events.js';
 import * as terminalsDb from '../db/terminals.js';
+import type { ConfigPatch } from './thread-config.js';
 
 /** Default inactivity deadline: 12 hours. */
 export const DEFAULT_AUTO_ARCHIVE_MS = 43_200_000;
@@ -35,10 +36,17 @@ export function getAutoArchiveMs(config: Record<string, any>): number | null {
 }
 
 /**
- * Read-merge-write helper. `terminalsDb.updateConfig` REPLACES the whole blob,
- * so callers must never hand it a partial config — doing so would silently drop
- * `transport`, `role`, `agentType`, etc. Disabling strips both keys rather than
- * leaving `autoArchive: false` noise behind.
+ * The auto-archive change as a patch of its two keys (for ThreadConfigStore.patch).
+ * Disabling removes both keys rather than leaving `autoArchive: false` noise behind.
+ */
+export function autoArchivePatch(enabled: boolean, ms: number = DEFAULT_AUTO_ARCHIVE_MS): ConfigPatch {
+  if (!enabled) return { autoArchive: null, autoArchiveMs: null };
+  return { autoArchive: true, autoArchiveMs: (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) ? ms : DEFAULT_AUTO_ARCHIVE_MS };
+}
+
+/**
+ * The same change applied to a whole config object. Pure; it writes nothing. A write goes
+ * through ThreadConfigStore with `autoArchivePatch`, never with this whole object.
  */
 export function withAutoArchive(
   config: Record<string, any>,

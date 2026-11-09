@@ -54,6 +54,7 @@ import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createAccountsRouter } from './routes/accounts.js';
 import type { AccountsStore, AccountProvider } from './auth/accounts.js';
 import * as terminalsDb from './db/terminals.js';
+import { ThreadConfigStore } from './sessions/thread-config.js';
 import { readClaudeToken, fetchClaudeProfile } from './limits/claude-usage.js';
 import { createStateRouter } from './routes/state.js';
 import { createIntegrationsRouter } from './routes/integrations.js';
@@ -200,11 +201,8 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
         pinnedTo: (provider, accountId) => terminalsDb.listPinnedToAccount(d.db, typeOf(provider), accountId).map((t) => ({ id: t.id, label: t.label, sessionId: t.session_id })),
         unpin: (provider, accountId) => {
           const rows = terminalsDb.listPinnedToAccount(d.db, typeOf(provider), accountId);
-          for (const t of rows) {
-            const config = terminalsDb.rowToTerminal(t).config as Record<string, unknown>;
-            delete config.accountId;
-            terminalsDb.updateConfig(d.db, t.id, config);
-          }
+          const store = new ThreadConfigStore(d.db);
+          for (const t of rows) store.patch(t.id, { accountId: null });
           return rows.length;
         },
       },
