@@ -53,6 +53,9 @@ interface Opts {
 // omits replayBytes, which defaults to the same value) so its replay is never
 // trimmed and the rebuild path in TerminalTab never triggers there.
 export const INITIAL_REPLAY_MOBILE = 256_000;
+// Desktop (W2-I): the first replay is 1 MB, not the full 4 MB ring, and a scroll to the top steps it
+// up through the same rebuild path the phone uses. On a remote link the open no longer waits on 4 MB.
+export const INITIAL_REPLAY_DESKTOP = 1_000_000;
 export const MAX_REPLAY = 4_000_000;
 
 const REPLAY_STEPS = [INITIAL_REPLAY_MOBILE, 1_000_000, MAX_REPLAY];
@@ -91,6 +94,18 @@ function parseReplayMeta(data: unknown): ReplayMeta | null {
   };
 }
 
+/** A socket that has not opened after this long is closed and tried again. */
+export const CONNECT_TIMEOUT_MS = 8000;
+
+/** The live sockets of this page, so a resume can replace them without a remount of the terminals. */
+const live = new Set<() => void>();
+
+/** Replace every open or connecting terminal socket with a new connection, now (onReset fires when
+ *  each opens, then the replay lands). Used after a resume whose liveness check failed. */
+export function reconnectTerminalSockets(): void {
+  for (const reconnect of [...live]) reconnect();
+}
+
 export function openTerminalSocket(opts: Opts) {
   // Mutable, NOT captured once: every reconnect must re-read it. Capturing the
   // construction-time value meant a mobile reconnect re-requested the initial
@@ -106,6 +121,18 @@ export function openTerminalSocket(opts: Opts) {
   let connectedOnce = false;  // distinguishes the first connect from a reconnect (for onReset)
   let backoff = 500;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** Drop the current socket without its close handler: the caller decides what happens next. */
+  function detach() {
+    clearTimeout(connectTimer);
+    const old = ws;
+    ws = null;
+    open = false;
+    if (!old) return;
+    old.onopen = null; old.onclose = null; old.onmessage = null;
+    try { old.close(); } catch { /* ignore */ }
+  }
 
   // Buffer sends until the socket is OPEN — otherwise resize/input thrown before
   // connect ("Still in CONNECTING state") are lost. The queue also survives a
@@ -123,7 +150,16 @@ export function openTerminalSocket(opts: Opts) {
     // The server sends the control frame first on EVERY connect that asked for it,
     // so the window is exactly one frame wide, per connection.
     let expectMeta = wantMeta;
+    clearTimeout(connectTimer);
+    connectTimer = setTimeout(() => {
+      if (stopped || ws !== sock || open) return;
+      // Still CONNECTING: give up on this attempt and start another one at once. Queued input is kept.
+      detach();
+      opts.onClose?.();
+      connect();
+    }, CONNECT_TIMEOUT_MS);
     sock.onopen = () => {
+      clearTimeout(connectTimer);
       open = true;
       backoff = 500;
       // On a reconnect the server replays the scrollback next; tell the consumer
@@ -141,6 +177,7 @@ export function openTerminalSocket(opts: Opts) {
       opts.onData(ev.data);
     };
     sock.onclose = () => {
+      clearTimeout(connectTimer);
       open = false;
       opts.onClose?.();
       if (stopped) return;
@@ -151,6 +188,15 @@ export function openTerminalSocket(opts: Opts) {
     };
   }
 
+  const reconnect = () => {
+    if (stopped) return;
+    if (timer) { clearTimeout(timer); timer = undefined; }
+    backoff = 500;
+    detach();
+    opts.onClose?.();
+    connect();
+  };
+  live.add(reconnect);
   connect();
 
   return {
@@ -163,7 +209,9 @@ export function openTerminalSocket(opts: Opts) {
     setReplayBytes: (bytes: number) => { replay = bytes; },
     close: () => {
       stopped = true;
+      live.delete(reconnect);
       if (timer) clearTimeout(timer);
+      clearTimeout(connectTimer);
       ws?.close();
     },
   };

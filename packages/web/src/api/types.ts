@@ -256,6 +256,12 @@ export interface ConvItem {
   tokensOut?: number;
   model?: string;
   level?: 'info' | 'error'; // for 'system' markers
+  // kind 'user' only (W2-I): a bubble this client added when the owner pressed Send, before the
+  // daemon's echo. `localId` names the send (every text block of one send shares it); the echo with
+  // the same text replaces the item and both fields go. `sendState`: 'sending' while the POST is
+  // open, 'failed' when it was refused (the bubble then offers Retry), absent once it was accepted.
+  localId?: string;
+  sendState?: 'sending' | 'failed';
 }
 
 export interface Conversation {

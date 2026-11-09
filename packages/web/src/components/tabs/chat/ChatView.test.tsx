@@ -977,3 +977,27 @@ describe('ChatView memoizes the timeline (W1-F)', () => {
     expect(prose['first answer']).toBe(before);
   });
 });
+
+// W2-I: the paint-settle gate hid every open for 180 ms. A thread with cached items shows them at once.
+describe('ChatView opens from the view cache (W2-I)', () => {
+  beforeEach(() => {
+    vi.spyOn(sock, 'openStructuredSocket').mockImplementation(() => ({ close: () => {} }) as any);
+    vi.spyOn(api, 'getResumeAdvice').mockResolvedValue({ shouldPrompt: false, ageMinutes: 0, contextTokens: 0 });
+    useTabs.setState({ byProject: { s1: [{ id: 't1', sessionId: 's1', type: 'claude-code', label: 'T', status: 'waiting', config: { transport: 'structured' } } as any] } } as never);
+  });
+  const hiddenAncestor = (el: HTMLElement) => { for (let n: HTMLElement | null = el; n; n = n.parentElement) if (n.style.visibility === 'hidden') return true; return false; };
+
+  it('cached items are visible on the first render, before any socket event', async () => {
+    const { threadViewCache } = await import('../../../lib/threadViewCache');
+    threadViewCache.put('t1', [{ kind: 'assistant', text: 'cached answer', uuid: 'a1' }]);
+    render(<ChatView terminalId="t1" />);
+    const node = screen.getByText('cached answer'); // synchronous: the first render
+    expect(hiddenAncestor(node)).toBe(false);
+  });
+
+  it('a thread with no cached items keeps the gate closed until the replay settles (unchanged)', async () => {
+    const { container } = render(<ChatView terminalId="t1" />);
+    await screen.findByPlaceholderText('Message…');
+    expect([...container.querySelectorAll<HTMLElement>('*')].some((n) => n.style.visibility === 'hidden')).toBe(true);
+  });
+});

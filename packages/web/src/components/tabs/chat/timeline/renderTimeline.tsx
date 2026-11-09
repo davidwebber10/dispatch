@@ -44,6 +44,8 @@ export interface TimelineExtensions {
    *  focus outline, the project label and file chips). It never changes the grouping, keys or
    *  pairing. Default: the node as is. */
   frame?(items: ConvItem[], node: ReactNode): ReactNode;
+  /** Send again the message of a failed local bubble (W2-I). Absent: the bubble shows "Not sent" with no button. */
+  retrySend?(localId: string): void;
 }
 
 /**
@@ -146,7 +148,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
       }
       rows.push(
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          {frame([it], <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} />)}
+          {frame([it], <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} sendState={it.sendState} onRetry={it.sendState === 'failed' && it.localId && ext?.retrySend ? () => ext.retrySend!(it.localId!) : undefined} />)}
         </MessageScroller.Item>,
       );
       lastRowWasUser = true;

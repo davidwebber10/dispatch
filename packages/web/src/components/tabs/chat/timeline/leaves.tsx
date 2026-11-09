@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from 'react';
-import { Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, ArrowBendDownRight } from '@phosphor-icons/react';
+import { Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, ArrowBendDownRight, ArrowClockwise } from '@phosphor-icons/react';
 import type { ConvItem } from '../../../../api/types';
 import { friendlyModelName } from '../../../../lib/modelName';
 import { ClaudeLogin } from '../../../endless/ClaudeLogin';
@@ -172,7 +172,9 @@ export function EmptyState({ model }: { model?: string }) {
 // injected notices) and a muted/bordered bubble instead of the bright human-accent one.
 // `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
 // `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
-export const UserBubble = memo(function UserBubble({ text, source, grouped = false, relayName, renderText }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode }) {
+// `sendState` (W2-I): the bubble was added at Send, before the daemon's echo. 'sending' dims it;
+// 'failed' adds a "Not sent" line and, when the surface can send again, a Retry button.
+export const UserBubble = memo(function UserBubble({ text, source, grouped = false, relayName, renderText, sendState, onRetry }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode; sendState?: 'sending' | 'failed'; onRetry?: () => void }) {
   const dispatchName = useDispatchName();
   const viaCoordinator = source === 'coordinator';
   return (
@@ -191,7 +193,11 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
         <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
       )}
       <div
+        data-testid="user-bubble"
+        data-send-state={sendState}
+        aria-busy={sendState === 'sending' || undefined}
         style={{
+          ...(sendState ? { opacity: sendState === 'sending' ? 0.72 : 0.6 } : {}),
           background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
           border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
           color: viaCoordinator ? 'var(--color-text-primary)' : 'var(--color-on-accent)',
@@ -205,6 +211,22 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
       >
         {renderText ? renderText(text) : text}
       </div>
+      {sendState === 'failed' && (
+        <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, font: '500 12px var(--font-sans)', color: 'var(--color-status-red)' }}>
+          <WarningCircle size={14} weight="fill" />
+          <span>Not sent</span>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minHeight: 28, padding: '0 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: '500 12px var(--font-sans)', cursor: 'pointer' }}
+            >
+              <ArrowClockwise size={13} weight="bold" />
+              Retry
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 });

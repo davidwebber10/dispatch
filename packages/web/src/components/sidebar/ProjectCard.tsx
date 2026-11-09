@@ -321,7 +321,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
 
   async function archive(tab: Terminal) {
     setArchiveTarget(null);
-    try { await api.archiveTerminal(tab.id); await useTabs.getState().loadTabs(session.id); } catch { /* surfaced via connection state */ }
+    await useTabs.getState().archive(tab.id); // optimistic (W2-I): the row goes at once; a failure puts it back with a hint
   }
 
   async function deleteAgent(a: AgentSchedule) {

@@ -6,6 +6,7 @@ import type { SessionService } from '../sessions/service.js';
 import type { TerminalMonitor } from '../terminal-monitor.js';
 import { isPtyType } from '../db/terminals.js';
 import { sendOrDrop } from './backpressure.js';
+import { sendCompressed } from './client-wss.js';
 
 /** The largest terminal a resize message may ask for (the same bounds the declared size at connect time uses). */
 const MAX_TERMINAL_COLS = 1000;
@@ -152,7 +153,9 @@ export function handleTerminalConnection(
   } else {
     buffer = ptyManager.getBuffer(targetId, replayBytes);
   }
-  if (buffer) sendOrDrop(ws, buffer, 'terminal'); // the scrollback ring is 4 MB, far under the hard ceiling
+  // The replay is the one frame of this socket that is compressed (W2-I): megabytes of text and escape codes go down
+  // to a fraction on a slow link. `ws` sends in order, so live output that arrives while zlib works waits behind it.
+  if (buffer) sendCompressed(ws, () => sendOrDrop(ws, buffer, 'terminal')); // the scrollback ring is 4 MB, far under the hard ceiling
   // A trimmed replay can't reconstruct a diff-painting TUI's screen (codex only
   // redraws changed cells, so the viewer would see just the actively-updating
   // rows on black). Deliver a SIGWINCH so the app repaints everything.

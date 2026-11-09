@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Modal } from '../common/Modal';
-import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 
 export function RenameThreadModal({ terminalId, sessionId, current, onClose }: { terminalId: string; sessionId: string; current: string; onClose: () => void }) {
@@ -10,12 +9,11 @@ export function RenameThreadModal({ terminalId, sessionId, current, onClose }: {
   async function save() {
     const v = name.trim();
     if (!v) { onClose(); return; }
+    // Optimistic (W2-I): the label changes and the dialog closes at once. A failure puts the old label
+    // back and shows a hint (stores/tabs.ts).
     setBusy(true);
-    try {
-      await api.updateTerminal(terminalId, { label: v });
-      await useTabs.getState().loadTabs(sessionId);
-      onClose();
-    } finally { setBusy(false); }
+    void useTabs.getState().rename(terminalId, v);
+    onClose();
   }
 
   const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };

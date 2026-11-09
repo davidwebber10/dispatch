@@ -29,6 +29,7 @@ import { useHost } from './stores/host';
 import { useAnalyticsFeed } from './stores/analytics';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
+import { resumeSockets } from './lib/resumeSockets';
 import { useSettings, loadSharedSettings } from './stores/settings';
 import { useAgents } from './stores/agents';
 import { useLedgerCard } from './stores/ledgerCard';
@@ -189,16 +190,12 @@ export default function App() {
 
   // Returning from the background: first ask the daemon whether the connection is still alive
   // (2026-11-05). Usually it is, and then nothing is torn down: no spinner, no "Reconnecting",
-  // every view stays as it was. Only when the ping goes unanswered (iOS killed the sockets while
-  // the app was away) re-establish the events socket and remount every terminal and chat, as before.
+  // every view stays as it was. When the ping goes unanswered for 4 s (iOS killed the sockets while
+  // the app was away), the events socket and every thread socket get a new connection. The views
+  // are not remounted (W2-I): each keeps its content until its own replay arrives (lib/resumeSockets.ts).
   useResume(() => {
     const sock = sockRef.current;
-    if (!sock) return;
-    void sock.checkAlive(1500).then((alive) => {
-      if (alive || sockRef.current !== sock) return;
-      sock.reconnect();
-      useReconnect.getState().bump();
-    });
+    if (sock) void resumeSockets(sock, () => sockRef.current === sock);
   }, 2000);
 
   // Browser close / refresh with unsaved file edits — the tab-close guard can't see this one.

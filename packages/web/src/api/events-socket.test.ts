@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { createEventsSocket, type WebSocketLike } from './events-socket';
 
 class FakeWS implements WebSocketLike {
@@ -75,4 +75,45 @@ test('checkAlive: false when no answer comes in time (a socket iOS killed), or t
   ws.readyState = 3;
   await expect(sock.checkAlive(20)).resolves.toBe(false);
   sock.close();
+});
+
+// W2-I: a socket that never leaves CONNECTING (a cellular link that swallowed the handshake) is not waited on for ever.
+test('a socket in CONNECTING for 8 s closes and tries again', () => {
+  vi.useFakeTimers();
+  try {
+    const made: FakeWS[] = [];
+    const statuses: string[] = [];
+    const sock = createEventsSocket({ onEvent: () => {}, onStatus: (s) => statuses.push(s), wsFactory: () => { const w = new FakeWS(); made.push(w); return w; } });
+    vi.advanceTimersByTime(7999);
+    expect(made).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(made[0].closed).toBe(true);
+    expect(made).toHaveLength(2);
+    expect(statuses).toEqual(['connecting', 'closed', 'connecting']);
+    made[1].emitOpen();
+    vi.advanceTimersByTime(60_000);
+    expect(made).toHaveLength(2); // an open socket is left alone
+    expect(statuses).toEqual(['connecting', 'closed', 'connecting', 'open']);
+    // The socket that timed out fires its close late: it must not start another connection.
+    made[0].onclose?.();
+    vi.advanceTimersByTime(10_000);
+    expect(made).toHaveLength(2);
+    sock.close();
+  } finally { vi.useRealTimers(); }
+});
+
+test('a connection that opens in time is not closed by the timer, and a later drop still reconnects with backoff', () => {
+  vi.useFakeTimers();
+  try {
+    const made: FakeWS[] = [];
+    const sock = createEventsSocket({ onEvent: () => {}, onStatus: () => {}, wsFactory: () => { const w = new FakeWS(); made.push(w); return w; } });
+    vi.advanceTimersByTime(3000);
+    made[0].emitOpen();
+    vi.advanceTimersByTime(20_000);
+    expect(made).toHaveLength(1);
+    made[0].close();
+    vi.advanceTimersByTime(500);
+    expect(made).toHaveLength(2);
+    sock.close();
+  } finally { vi.useRealTimers(); }
 });

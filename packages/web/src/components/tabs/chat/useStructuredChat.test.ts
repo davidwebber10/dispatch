@@ -376,12 +376,18 @@ test('fallback: whole assistant handling when no stream_events ever arrive', () 
   expect(result.current.items.find((i) => i.kind === 'tool' && i.toolName === 'Bash')).toBeTruthy();
 });
 
-test('send sets busy and does NOT optimistically append a user bubble', () => {
+// W2-I changed this on purpose: the bubble shows at once (it was "does NOT optimistically append"),
+// and the daemon's echo replaces it instead of adding a second one.
+test('send sets busy and shows the bubble at once; the echo replaces it (no dup)', () => {
   vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
   act(() => { result.current.send('hello'); });
   expect(result.current.busy).toBe(true);
-  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(0); // no optimistic dup
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(1);
+  expect(result.current.items[0].localId).toBeTruthy();
+  act(() => cbs.onEvent({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } }));
+  expect(result.current.items.filter((i) => i.kind === 'user')).toHaveLength(1); // no dup
+  expect(result.current.items[0].localId).toBeUndefined();
   expect(api.sendStructuredMessage).toHaveBeenCalledWith('t1', 'hello');
 });
 
@@ -788,11 +794,14 @@ test('a reconnect reset (onReset) re-arms pagination so a later loadOlder re-pro
   expect(result.current.hasMore).toBe(false); // exhausted before the reconnect
 
   act(() => cbs.onReset?.());
-  expect(result.current.hasMore).toBe(true); // re-armed — a fresh replay may have new older content
+  // W2-I: the items stay on screen (stale) until the replay; a stale view offers no older page.
+  expect(result.current.hasMore).toBe(false);
   expect(result.current.loadingOlder).toBe(false);
 
-  // onReset cleared items; the fresh replay settles a NEW anchor before older-paging resumes.
+  // The fresh replay replaces the stale items and settles a NEW anchor before older-paging resumes.
   act(() => cbs.onEvent({ type: 'assistant', uuid: 'anchor2', message: { content: [{ type: 'text', text: 'n2' }] } }));
+  expect(result.current.hasMore).toBe(true); // re-armed — a fresh replay may have new older content
+  expect(result.current.items.map((i) => i.uuid)).toEqual(['anchor2']);
   act(() => { result.current.loadOlder(); });
   await flushAsync();
   // The post-reset fetch re-probes the tail (no numeric `before`), anchored on the fresh uuid.

@@ -120,7 +120,7 @@ import { useSettings } from '../../stores/settings';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useProjects } from '../../stores/projects';
 import { useDocViewer } from '../../stores/docViewer';
-import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
+import { INITIAL_REPLAY_DESKTOP, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { PAGE_UP, WHEEL_UP } from '../../lib/ptyWheel';
 
 type FakeMeta = { startOffset: number; totalWritten: number; complete: boolean; hasReplay?: boolean };
@@ -290,14 +290,16 @@ test('mobile mount requests the small initial replay (256_000)', async () => {
   expect(created[0].opts.replayBytes).toBe(INITIAL_REPLAY_MOBILE);
 });
 
-test('desktop mount requests MAX_REPLAY (4_000_000) — byte-identical to today', async () => {
+// W2-I changed this on purpose: desktop asked for the full 4 MB ring on every connect.
+test('desktop mount requests 1 MB (INITIAL_REPLAY_DESKTOP), not the full ring', async () => {
   isMobileMock.mockReturnValue(false);
   const { factory, created } = makeSocketFactory();
 
   render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
   await waitFor(() => expect(created).toHaveLength(1));
 
-  expect(created[0].opts.replayBytes).toBe(MAX_REPLAY);
+  expect(created[0].opts.replayBytes).toBe(INITIAL_REPLAY_DESKTOP);
+  expect(INITIAL_REPLAY_DESKTOP).toBe(1_000_000);
 });
 
 // ---- mobile composer: spell check on by default, toggleable, capitalisation never ----
@@ -574,8 +576,9 @@ test('anchor restoration is computed from the post-write buffer length, not read
 
 // ---- ceiling: no further rebuild once at MAX_REPLAY, or once delivered === totalBytes ----
 
-test('at MAX_REPLAY, no further rebuild is attempted even if more history is (implausibly) reported', async () => {
-  isMobileMock.mockReturnValue(false); // desktop starts at MAX_REPLAY already
+// W2-I: desktop starts at 1 MB, so it now uses the phone's step-up path (it started at MAX_REPLAY before).
+test('desktop: a scroll to the top steps 1 MB up to MAX_REPLAY, and at MAX_REPLAY no further rebuild is attempted', async () => {
+  isMobileMock.mockReturnValue(false);
   (api.getScrollbackSize as Mock).mockResolvedValue(MAX_REPLAY + 1_000_000);
   const { factory, created } = makeSocketFactory();
 
@@ -590,7 +593,16 @@ test('at MAX_REPLAY, no further rebuild is attempted even if more history is (im
   term.buffer.active.viewportY = 0;
   act(() => { term.fireScroll(); });
   await tick();
-  expect(created).toHaveLength(1);
+  expect(created).toHaveLength(2);
+  expect(created[1].opts.replayBytes).toBe(MAX_REPLAY);
+
+  // The bigger replay lands; the view is now at MAX_REPLAY.
+  act(() => { created[1].opts.onData('BIGGER REPLAY'); });
+  await tick();
+  term.buffer.active.viewportY = 0;
+  act(() => { term.fireScroll(); });
+  await tick();
+  expect(created).toHaveLength(2);
 });
 
 test('no rebuild when the delivered bytes already equal the reported total', async () => {

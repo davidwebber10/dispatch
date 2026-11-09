@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { CaretDoubleDown, CaretUp, CaretDown, CaretLeft, CaretRight, ArrowElbowDownLeft, MagnifyingGlass, Keyboard, X, type Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import '@xterm/xterm/css/xterm.css';
-import { openTerminalSocket, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
+import { openTerminalSocket, INITIAL_REPLAY_DESKTOP, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep } from '../../api/terminal-socket';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -370,11 +370,10 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     termRef.current = term;
     if (hostRef.current) { try { term.open(hostRef.current); } catch { /* jsdom */ } }
 
-    // --- Progressive scrollback (mobile) ---
-    // Desktop always requests MAX_REPLAY explicitly — same size, same call shape
-    // as before this feature existed, so its replay is never trimmed and none of
-    // the rebuild machinery below ever engages there.
-    const initialReplay = isMobile ? INITIAL_REPLAY_MOBILE : MAX_REPLAY;
+    // --- Progressive scrollback ---
+    // The phone attaches with 256 KB and steps up on a scroll to the top. Desktop attaches with
+    // 1 MB (W2-I; it was the full 4 MB ring on every connect) and uses the same step-up path.
+    const initialReplay = isMobile ? INITIAL_REPLAY_MOBILE : INITIAL_REPLAY_DESKTOP;
     let currentReplay = initialReplay;
     let hasOlder = false;   // the ring holds more than we've currently loaded
     let rebuilding = false; // guards re-entry: one rebuild at a time

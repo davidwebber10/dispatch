@@ -15,6 +15,10 @@ export interface WebSocketLike {
 /** The daemon's answer to the liveness check (core ws/events.ts). Mirrors EVENTS_PONG. */
 const PONG = '{"type":"pong"}';
 
+/** A socket that has not opened after this long is closed and tried again (W2-I). On a cellular
+ *  link a handshake can vanish; the browser waits a minute or more before it reports that. */
+export const CONNECT_TIMEOUT_MS = 8000;
+
 interface Opts {
   onEvent: (e: ServerEvent) => void;
   onStatus: (s: 'connecting' | 'open' | 'closed') => void;
@@ -44,12 +48,24 @@ export function createEventsSocket(opts: Opts): EventsSocket {
   let backoff = 500;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pongWaiters: Array<() => void> = [];
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
 
   function connect() {
     if (stopped) return;
     opts.onStatus('connecting');
-    ws = factory(defaultUrl());
-    ws.onopen = () => { backoff = 500; opts.onStatus('open'); };
+    const sock = factory(defaultUrl());
+    ws = sock;
+    clearTimeout(connectTimer);
+    connectTimer = setTimeout(() => {
+      if (stopped || ws !== sock) return;
+      // Still CONNECTING after 8 s. Detach it (its late close must not start a second connection),
+      // report the loss, and try again at once.
+      sock.onopen = null; sock.onclose = null; sock.onmessage = null;
+      try { sock.close(); } catch { /* ignore */ }
+      opts.onStatus('closed');
+      connect();
+    }, CONNECT_TIMEOUT_MS);
+    ws.onopen = () => { clearTimeout(connectTimer); backoff = 500; opts.onStatus('open'); };
     ws.onmessage = (ev) => {
       if (ev.data === PONG) { const w = pongWaiters; pongWaiters = []; w.forEach((f) => f()); return; }
       // A frame that is not an object with a string `type`, or a known type with a bad field, is dropped.
@@ -57,6 +73,7 @@ export function createEventsSocket(opts: Opts): EventsSocket {
       if (e) opts.onEvent(e);
     };
     ws.onclose = () => {
+      clearTimeout(connectTimer);
       opts.onStatus('closed');
       if (stopped) return;
       timer = setTimeout(connect, backoff);
@@ -69,6 +86,7 @@ export function createEventsSocket(opts: Opts): EventsSocket {
     close() {
       stopped = true;
       if (timer) clearTimeout(timer);
+      clearTimeout(connectTimer);
       ws?.close();
     },
     checkAlive(timeoutMs) {

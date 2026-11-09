@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Modal } from '../common/Modal';
-import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
 
 export function RenameProjectModal({ sessionId, current, onClose }: { sessionId: string; current: string; onClose: () => void }) {
@@ -10,12 +9,11 @@ export function RenameProjectModal({ sessionId, current, onClose }: { sessionId:
   async function save() {
     const v = name.trim();
     if (!v) { onClose(); return; }
+    // Optimistic (W2-I): the name changes and the dialog closes at once. A failure puts the old name
+    // back and shows a hint (stores/projects.ts).
     setBusy(true);
-    try {
-      await api.updateSession(sessionId, { name: v });
-      await useProjects.getState().load();
-      onClose();
-    } finally { setBusy(false); }
+    void useProjects.getState().rename(sessionId, v);
+    onClose();
   }
 
   const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
