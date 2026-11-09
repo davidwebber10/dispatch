@@ -2432,6 +2432,9 @@ export class SessionService {
       try {
         resolved = await manager.setModel(terminalId, model);
         if (effortNow) await manager.setEffort?.(terminalId, effortNow);
+        // The old process answered "ok" but may have ended, and been replaced, before this code resumed: the replacement runs
+        // whatever it was started with, so it counts as replaced exactly like a rejected request does.
+        if (exit.happened()) replaced = true;
       } catch (e) {
         // The thread ended before it answered (even if a new process already took its place): nothing was refused, so the
         // pick is kept and the next start uses it. A refusal is an answer from a process that is still the same one.
@@ -2503,6 +2506,7 @@ export class SessionService {
       const exit = this.watchExit(manager, terminalId);
       try {
         await manager.setEffort(terminalId, effort);
+        if (exit.happened()) replaced = true; // see setThreadModelLocked: a success from a process that was replaced meanwhile
       } catch (e) {
         if (exit.happened()) replaced = true;
         else if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');

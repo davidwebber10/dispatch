@@ -93,3 +93,11 @@ proof like `/effort`; other agent threads stay blocked.
 Known gaps (not closed, by design): a refused Codex model with no earlier model on record cannot be restored (the chip keeps the
 rejected model until the next frame); the reconcile on a replacement is one attempt; the CLI can still take a change after the 15 s
 limit while Dispatch has reported it as not answered.
+
+## Review round 6
+
+- Chat settings: GET ordering and save reconciliation are kept apart. A GET only competes with other GETs and gives way to
+  anything that wrote after it was sent (a broadcast or a PUT answer); a GET never makes a successful PUT answer be thrown away.
+  A PUT answer is taken unless a broadcast arrived while it was in flight or a later PUT already answered.
+- Replacement reconcile: an exit seen while the old request SUCCEEDED now counts as replaced, like a rejected request, so the saved
+  pick is applied to the replacement (model and effort), with the same refusal handling.

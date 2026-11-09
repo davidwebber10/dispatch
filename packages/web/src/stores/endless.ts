@@ -124,9 +124,18 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   /** The newest doc counts request. */
   let countsSeq = 0;
   // Chat's settings can reach the store three ways: a GET, a PUT's answer and the daemon's `endless:settings` broadcast. They can
-  // arrive in any order, so each carries the generation it was sent in; an answer is taken only if no newer value has been
-  // installed since (a broadcast, or another answer that was sent later). Otherwise an old answer would put an old value back.
-  let settingsGen = 0;
+  // arrive in any order, and the order the requests were SENT in does not say which one the server applied last, so the three are
+  // kept apart:
+  //   - GETs only compete with each other (the latest GET wins) and give way to anything that WROTE after they were sent: a
+  //     broadcast or a PUT answer installed since. A GET never blocks a save.
+  //   - A PUT answer is a save the server confirmed: it is taken unless a broadcast (a newer change, maybe from another device)
+  //     arrived while it was in flight, or a later PUT already answered. A GET never makes it be discarded.
+  //   - A broadcast is taken at once and outranks every answer that was sent before it.
+  let getGen = 0;        // GET order
+  let writeGen = 0;      // bumped by every installed write (a broadcast or a PUT answer): older GETs give way to it
+  let broadcastGen = 0;  // bumped by every broadcast: a PUT sent before it gives way
+  let putGen = 0;        // PUT order
+  let putInstalled = 0;  // the latest PUT whose answer was installed
   const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
   return {
@@ -215,16 +224,18 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
     // An older daemon has no setting: the chip then stays off. A failed reload keeps what is shown.
     loadSettings: async () => {
-      const mine = ++settingsGen;
+      const mine = ++getGen;
+      const wrote = writeGen;
       try {
         const next = await api.endlessSettings();
-        if (mine === settingsGen) set({ settings: next });
+        if (mine === getGen && wrote === writeGen) set({ settings: next });
       } catch { /* keep the old one */ }
     },
     saveSettings: async (change) => {
-      const mine = ++settingsGen;
+      const mine = ++putGen;
+      const heard = broadcastGen;
       const next = await api.setEndlessSettings(change);
-      if (mine === settingsGen) set({ settings: next });
+      if (heard === broadcastGen && mine > putInstalled) { putInstalled = mine; writeGen++; set({ settings: next }); }
       return next;
     },
     loadProjects: () => load(() => api.endlessProjects(), (v) => {
@@ -290,7 +301,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         return;
       }
       if (e.type === 'endless:settings') {
-        settingsGen++; // anything sent before this broadcast is older than it
+        broadcastGen++; writeGen++; // anything sent before this broadcast is older than it
         set({ settings: { model: typeof e.model === 'string' ? e.model : null, effort: typeof e.effort === 'string' ? e.effort : null, defaultModel: String(e.defaultModel ?? 'opus') } });
         return;
       }

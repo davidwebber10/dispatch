@@ -51,13 +51,15 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   getEventsTail() { return []; }
   getTurnTexts(): string[] | null { return null; }
   getModel(id: string) { return this.models.get(id); }
+  /** Bumped when a process ends: an answer from the old process must not change what the replacement runs. */
+  incarnation = new Map<string, number>();
   private async next() {
     const n = this.script.shift();
     if (n instanceof Error) throw n;
     if (typeof n === 'function') await n();
   }
-  async setModel(id: string, model: string) { this.calls.push({ kind: 'model', value: model }); await this.next(); this.models.set(id, model); return model; }
-  async setEffort(id: string, effort: string) { this.calls.push({ kind: 'effort', value: effort }); await this.next(); this.effortOf.set(id, effort); }
+  async setModel(id: string, model: string) { this.calls.push({ kind: 'model', value: model }); const inc = this.incarnation.get(id) ?? 0; await this.next(); if ((this.incarnation.get(id) ?? 0) === inc) this.models.set(id, model); return model; }
+  async setEffort(id: string, effort: string) { this.calls.push({ kind: 'effort', value: effort }); const inc = this.incarnation.get(id) ?? 0; await this.next(); if ((this.incarnation.get(id) ?? 0) === inc) this.effortOf.set(id, effort); }
   postNotice(_id: string, message: string) { this.notices.push(message); }
   modelEfforts() { return this.efforts; }
   modelDefaultEfforts() { return this.defaults; }
@@ -67,7 +69,7 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
     return this.efforts;
   }
   isAlive(id: string) { return this.live.has(id); }
-  kill(id: string) { this.live.delete(id); this.emit('exit', id, 0); }
+  kill(id: string) { this.incarnation.set(id, (this.incarnation.get(id) ?? 0) + 1); this.live.delete(id); this.emit('exit', id, 0); }
   killAll() { this.live.clear(); }
 }
 
@@ -565,5 +567,65 @@ describe('a saved effort with no saved model is kept at spawn (round 4, small it
     seed('x1', { type: 'codex', config: { effort: 'turbo' }, live: false });
     svc.ensureStructuredAlive('x1');
     expect(codex.opts[0].effort).toBeUndefined();
+  });
+});
+
+describe('the old request SUCCEEDS but its process is replaced before the service resumes (round 6)', () => {
+  /** The old process answers "ok", then dies; a replacement started from the OLD config is already running. */
+  const exitThenReplace = (id: string, setReplacement: () => void) => async () => { claude.kill(id); claude.live.add(id); setReplacement(); };
+
+  it('model: the saved pick is applied to the replacement, whose live model is then the pick', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.models.set('t1', 'sonnet');
+    claude.script = [exitThenReplace('t1', () => claude.models.set('t1', 'sonnet'))];     // the replacement runs the old model
+    await svc.setThreadModel('t1', 'opus');
+    expect(cfg('t1').model).toBe('opus');
+    expect(claude.models.get('t1')).toBe('opus');                                        // what the replacement RUNS
+    expect(claude.calls.map((c) => c.value)).toEqual(['opus', 'opus']);
+    expect(claude.notices).toEqual([]);
+  });
+
+  it('effort: the same, and the replacement runs the picked effort', async () => {
+    seed('t1', { config: { effort: 'low' } });
+    claude.effortOf.set('t1', 'low');
+    claude.script = [exitThenReplace('t1', () => claude.effortOf.set('t1', 'low'))];
+    await svc.setThreadEffort('t1', 'max');
+    expect(cfg('t1').effort).toBe('max');
+    expect(claude.effortOf.get('t1')).toBe('max');
+    expect(claude.notices).toEqual([]);
+  });
+
+  it('model: a replacement that refuses the pick is a refusal (notice, 400, the saved model goes back)', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.models.set('t1', 'sonnet');
+    claude.script = [exitThenReplace('t1', () => claude.models.set('t1', 'sonnet')), new Error('Model not found')];
+    await expect(svc.setThreadModel('t1', 'opus')).rejects.toMatchObject({ status: 400, message: 'Model not found' });
+    expect(claude.notices).toEqual(['Could not change the model: Model not found']);
+    expect(cfg('t1').model).toBe('sonnet');
+    expect(claude.models.get('t1')).toBe('sonnet');
+  });
+
+  it('effort: a replacement that refuses is a refusal too', async () => {
+    seed('t1', { config: { effort: 'low' } });
+    claude.effortOf.set('t1', 'low');
+    claude.script = [exitThenReplace('t1', () => claude.effortOf.set('t1', 'low')), new Error('effort refused')];
+    await expect(svc.setThreadEffort('t1', 'max')).rejects.toMatchObject({ status: 400, message: 'effort refused' });
+    expect(cfg('t1').effort).toBe('low');
+    expect(claude.notices).toEqual(['Could not change the effort: effort refused']);
+  });
+
+  it('the old process succeeds and ends with no replacement: the pick stays saved for the next start, nothing more is sent', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.script = [async () => { claude.kill('t1'); }];
+    await svc.setThreadModel('t1', 'opus');
+    expect(cfg('t1').model).toBe('opus');
+    expect(claude.calls).toHaveLength(1);
+  });
+
+  it('an old request that succeeds with its process still the same one is not applied twice', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    await svc.setThreadModel('t1', 'opus');
+    await svc.setThreadEffort('t1', 'high');
+    expect(claude.calls).toEqual([{ kind: 'model', value: 'opus' }, { kind: 'effort', value: 'high' }]);
   });
 });

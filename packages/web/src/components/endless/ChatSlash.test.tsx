@@ -146,7 +146,7 @@ describe('a second open device (round 4)', () => {
 
 // ---- Round 5: ordering. The earlier tests answer at once and reconnect at the tail, so they could not see these. ----
 describe('Chat settings: the newest answer wins, whatever order they arrive in (round 5)', () => {
-  const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const deferred = <T,>() => { let resolve!: (v: T) => void; let reject!: (e: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; };
   const broadcast = (model: string | null, effort: string | null) =>
     act(() => useEndless.getState().applyEvent({ type: 'endless:settings', model, effort, defaultModel: 'opus' }));
 
@@ -203,5 +203,72 @@ describe('Chat settings: the newest answer wins, whatever order they arrive in (
     const get = vi.spyOn(api, 'endlessSettings').mockResolvedValue({ model: 'haiku', effort: null, defaultModel: 'opus' });
     act(() => useEndless.getState().resyncAfterReconnect());
     await waitFor(() => expect(get).toHaveBeenCalled());
+  });
+
+  // ---- Round 6: a GET must never discard a successful save, and an old GET must not undo it ----
+  it('socket down: a PUT for Sonnet, then a GET that still returns Opus and answers first, then the PUT commits: the chip ends on Sonnet', async () => {
+    const put = deferred<any>(); const get = deferred<any>();
+    vi.spyOn(api, 'setEndlessSettings').mockReturnValue(put.promise);
+    vi.spyOn(api, 'endlessSettings').mockReturnValue(get.promise);
+    const { result } = renderHook(() => useChatSettings());
+    const saving = result.current.apply({ model: 'sonnet' });                 // PUT sent first
+    const loading = useEndless.getState().loadSettings();                      // then a GET, sent before the PUT commits
+    get.resolve({ model: null, effort: null, defaultModel: 'opus' });          // it sees the still-current Opus
+    await loading;
+    put.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });      // the PUT commits and answers
+    await saving;
+    expect(useEndless.getState().settings).toEqual({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+  });
+
+  it('the same when the PUT answers first and the GET answers after it', async () => {
+    const put = deferred<any>(); const get = deferred<any>();
+    vi.spyOn(api, 'setEndlessSettings').mockReturnValue(put.promise);
+    vi.spyOn(api, 'endlessSettings').mockReturnValue(get.promise);
+    const { result } = renderHook(() => useChatSettings());
+    const saving = result.current.apply({ model: 'sonnet' });
+    const loading = useEndless.getState().loadSettings();
+    put.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+    await saving;
+    get.resolve({ model: null, effort: null, defaultModel: 'opus' });          // an old answer, after the save landed
+    await loading;
+    expect(useEndless.getState().settings?.model).toBe('sonnet');
+  });
+
+  it('reverse overlap: a GET sent BEFORE the PUT that returns the old value after the PUT landed does not overwrite the saved value', async () => {
+    const put = deferred<any>(); const get = deferred<any>();
+    vi.spyOn(api, 'endlessSettings').mockReturnValue(get.promise);
+    vi.spyOn(api, 'setEndlessSettings').mockReturnValue(put.promise);
+    const loading = useEndless.getState().loadSettings();                      // GET first
+    const { result } = renderHook(() => useChatSettings());
+    const saving = result.current.apply({ model: 'sonnet' });                  // then the PUT
+    put.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+    await saving;
+    get.resolve({ model: null, effort: null, defaultModel: 'opus' });          // the old value arrives last
+    await loading;
+    expect(useEndless.getState().settings?.model).toBe('sonnet');
+  });
+
+  it('two PUTs: the later one wins even if the earlier one answers last; a failed later PUT does not discard the earlier success', async () => {
+    const a = deferred<any>(); const b = deferred<any>();
+    const put = vi.spyOn(api, 'setEndlessSettings').mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const { result } = renderHook(() => useChatSettings());
+    const first = result.current.apply({ model: 'sonnet' });
+    const second = result.current.apply({ model: 'haiku' });
+    b.resolve({ model: 'haiku', effort: null, defaultModel: 'opus' });
+    await second;
+    a.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+    await first;
+    expect(useEndless.getState().settings?.model).toBe('haiku');
+    // a later PUT that fails: the earlier PUT's success is still installed
+    useEndless.setState({ settings: { model: null, effort: null, defaultModel: 'opus' } } as never);
+    const c = deferred<any>(); const d = deferred<any>();
+    put.mockReturnValueOnce(c.promise).mockReturnValueOnce(d.promise);
+    const one = result.current.apply({ model: 'sonnet' });
+    const two = result.current.apply({ model: 'haiku' }).catch(() => 'failed');
+    d.reject(new Error('Chat is unavailable'));
+    await two;
+    c.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+    await one;
+    expect(useEndless.getState().settings?.model).toBe('sonnet');
   });
 });
