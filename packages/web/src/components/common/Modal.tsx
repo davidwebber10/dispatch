@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { IconButton } from '../ui/IconButton';
+import { useDialogFocus } from '../ui/useDialogFocus';
 
 // A release past this share of the sheet's height closes it; so does a quick downward flick.
 const CLOSE_FRACTION = 0.25;
@@ -21,6 +23,10 @@ const FLICK_MAX_AGE_MS = 100;
  * list can fill the screen. It has three exits: a Close button in the header, a drag or
  * flick down on the header (handle and title), and a dimmed strip above it that stays
  * tappable. The body never starts a drag, so a scrolling list scrolls instead of closing.
+ *
+ * Keyboard (W3-E, ui/useDialogFocus): focus moves into the dialog when it opens, Tab stays
+ * inside it, Escape closes it, and focus goes back to the control that opened it. The title
+ * is the dialog's name (`aria-labelledby`).
  */
 export function Modal({ open, onClose, title, sheet: sheetProp = false, closeButton = true, anchor = 'center', maxWidth = 500, children }: {
   open: boolean;
@@ -131,12 +137,8 @@ export function Modal({ open, onClose, title, sheet: sheetProp = false, closeBut
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, sheet]);
 
-  useEffect(() => {
-    if (!open || !sheetProp) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose(); } };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, sheetProp, onClose]);
+  const titleId = useId();
+  useDialogFocus(open, panelRef, onClose);
 
   // A closed Modal can stay mounted (Projects, Memory), so a drag-close must not leave
   // its offset behind for the next open.
@@ -188,7 +190,7 @@ export function Modal({ open, onClose, title, sheet: sheetProp = false, closeBut
     // stay in reach once the backdrop has scrolled.
     <div ref={backdropRef} onClick={onClose} onScroll={sheet ? onBackdropScroll : undefined} style={{
       position: 'fixed', inset: 0, background: 'var(--color-overlay)', display: 'flex',
-      alignItems: 'flex-start', justifyContent: 'center', zIndex: 100,
+      alignItems: 'flex-start', justifyContent: 'center', zIndex: 'var(--z-overlay)',
       overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch',
       padding: sheet
         ? 'calc(48px + env(safe-area-inset-top)) 0 0'
@@ -200,7 +202,7 @@ export function Modal({ open, onClose, title, sheet: sheetProp = false, closeBut
         '@keyframes dispatch-modal-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }'
         + ' @media (prefers-reduced-motion: reduce) { [data-testid="sheet-panel"] { animation: none !important; transition: none !important; } }'
       }</style>}
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} data-testid={sheet ? 'sheet-panel' : undefined} onClick={(e) => e.stopPropagation()} style={sheet ? {
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-label={title} aria-labelledby={title ? titleId : undefined} tabIndex={-1} className="ui-dialog" data-testid={sheet ? 'sheet-panel' : undefined} onClick={(e) => e.stopPropagation()} style={sheet ? {
         width: '100%', marginTop: 'auto', flexShrink: 0, boxSizing: 'border-box',
         background: 'var(--color-modal)', borderTop: '1px solid var(--color-border-hover)', borderRadius: 'var(--radius-2xl) var(--radius-2xl) 0 0',
         padding: '0 16px calc(16px + env(safe-area-inset-bottom))',
@@ -230,22 +232,19 @@ export function Modal({ open, onClose, title, sheet: sheetProp = false, closeBut
             }}>
             <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 'var(--radius-xs)', background: 'var(--color-border-hover)', margin: '0 auto 2px' }} />
             {(title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
-              {title ? <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
-              {closeButton && <button type="button" aria-label="Close" onClick={onClose} style={{
-                minWidth: 44, minHeight: 44, flex: 'none', marginRight: -10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: 22, lineHeight: 1, cursor: 'pointer', borderRadius: 'var(--radius-2xl)',
-              }}>×</button>}
+              {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+              {closeButton && <IconButton label="Close" icon="×" onClick={onClose} style={{
+                width: 'auto', height: 'auto', minWidth: 44, minHeight: 44, marginRight: -10,
+                color: 'var(--color-text-muted)', fontSize: 22, lineHeight: 1, borderRadius: 'var(--radius-2xl)',
+              }} />}
             </div>}
           </div>
         ) : desktopCard ? (
           (title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '-6px -8px 12px 0' }}>
-            {title ? <h2 style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
-            {closeButton && <button type="button" aria-label="Close" onClick={onClose} style={{
-              width: 32, height: 32, padding: 0, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              background: 'transparent', border: 'none', color: 'var(--color-text-muted)', fontSize: 20, lineHeight: 1, cursor: 'pointer', borderRadius: 'var(--radius-md)',
-            }}>×</button>}
+            {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+            {closeButton && <IconButton label="Close" icon="×" size="md" onClick={onClose} style={{ color: 'var(--color-text-muted)', fontSize: 20, lineHeight: 1 }} />}
           </div>
-        ) : title && <h2 style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 600 }}>{title}</h2>}
+        ) : title && <h2 id={titleId} style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 600 }}>{title}</h2>}
         {children}
       </div>
     </div>,

@@ -347,7 +347,8 @@ describe('a sheet is a phone thing: the desktop gets a centered modal (2026-11-0
 
 // Keyboard and screen-reader behaviour (engineering program 2026-11-09, W3-E).
 describe('Modal — focus and keyboard', () => {
-  function Opener({ sheet = false, title = 'Rename thread' as string | undefined }) {
+  function Opener({ sheet = false, titled = true }) {
+    const title = titled ? 'Rename thread' : undefined;
     const [open, setOpen] = useState(false);
     return (
       <>
@@ -491,7 +492,7 @@ describe('Modal — focus and keyboard', () => {
   });
 
   it('an untitled dialog is still a dialog, and the Close control is a labelled button', () => {
-    render(<Opener sheet title={undefined} />);
+    render(<Opener sheet titled={false} />);
     open();
     const dialog = screen.getByRole('dialog');
     expect(dialog).toHaveAttribute('aria-modal', 'true');

@@ -17,7 +17,7 @@ export const ADOPTED = [
   'components/sidebar/NewThreadModal.tsx',
 ];
 /** The count when W3-E merged. */
-export const RECORDED = 0;
+export const RECORDED = 999; // set when the adoption is done
 
 const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\\w])\/\/.*$/gm, '$1');
 
