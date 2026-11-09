@@ -231,10 +231,14 @@ describe('service worker: a new build (W2-H)', () => {
   it('the first launch (no saved shell) answers from the network, stores the shell and its files, and sends no message', async () => {
     const w = load();
     answers(w, { '/': ok(html('A'), 'text/html'), '/assets/index-A.js': ok('entry A', 'text/javascript'), '/assets/index-A.css': ok('css A', 'text/css') });
+    // The entry download is slow: the page must get the shell without it.
+    const slow = deferred();
+    answers(w, { '/': ok(html('A'), 'text/html'), '/assets/index-A.js': () => slow.promise, '/assets/index-A.css': ok('css A', 'text/css') });
     const e = w.get('/', 'navigate');
     expect(await (await e.responded).text()).toBe(html('A'));
-    await e.settled();
     expect(await (await w.stored('/')).text()).toBe(html('A'));
+    slow.resolve(ok('entry A', 'text/javascript'));
+    await e.settled();
     expect(await (await w.stored('/assets/index-A.js')).text()).toBe('entry A');
     expect(w.client.messages).toEqual([]);
   });

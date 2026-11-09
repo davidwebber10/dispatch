@@ -93,18 +93,23 @@ async function tellClients(message) {
  * `announce`: the page asked for this refresh, so it gets the message also when the saved shell was
  * already the new one.
  */
-async function refreshShell(request, announce) {
+async function refreshShell(request, announce, keep) {
   const res = await fetch(request);
   const cache = await caches.open(CACHE);
   if (!good(res)) { await cache.delete(SHELL_URL); return res; }
   const saved = await cache.match(SHELL_URL);
   const savedEntry = saved ? shellFiles(await saved.text()).entry : null;
   const files = shellFiles(await res.clone().text());
+  if (!saved && !announce) {
+    // No saved shell yet: the page waits on this answer, so it goes back at once. The shell is saved,
+    // and its files are saved after (the page loads them itself in the meantime).
+    await cache.put(SHELL_URL, res.clone());
+    keep(Promise.all(files.all.map((u) => store(cache, u))).catch(() => {}));
+    return res;
+  }
   try {
     await Promise.all(files.all.map((u) => store(cache, u)));
   } catch (err) {
-    // No saved shell yet (the first launch): save this one anyway, the page loads its files itself.
-    if (!saved) await cache.put(SHELL_URL, res.clone());
     if (announce) throw err;
     return res;
   }
@@ -162,7 +167,7 @@ self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('message', (event) => {
   const type = event.data && event.data.type;
   if (type === 'refresh-shell') {
-    event.waitUntil(refreshShell(new Request(self.registration.scope, { cache: 'no-store' }), true)
+    event.waitUntil(refreshShell(new Request(self.registration.scope, { cache: 'no-store' }), true, (p) => event.waitUntil(p))
       .then((res) => { if (!good(res)) throw new Error('not the shell'); })
       .catch(() => { try { event.source && event.source.postMessage({ type: 'shell-refresh-failed' }); } catch { /* the page is gone */ } }));
   } else if (type === 'warm-chunks') {
@@ -235,7 +240,7 @@ self.addEventListener('fetch', (event) => {
       const cache = await caches.open(CACHE);
       const saved = await cache.match(SHELL_URL);
       // The refresh also saves a new build's files and tells the page (refreshShell above).
-      const fresh = refreshShell(req, false);
+      const fresh = refreshShell(req, false, (p) => event.waitUntil(p));
       if (saved) {
         event.waitUntil(fresh.catch(() => {}));
         return saved;
