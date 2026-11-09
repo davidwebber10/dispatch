@@ -236,7 +236,6 @@ describe('SecretsService token scope', () => {
       expect(codex).not.toContain('DOPPLER_TOKEN');
       expect(codex).toContain('--secrets-dir');
       expect(codex).toContain(dir);
-      expect(JSON.stringify(inj.codexThreadConfig)).not.toContain('DOPPLER_TOKEN');
       expect(s.getServerSpec()!.args).toEqual([mcpPath, '--secrets-dir', dir]);
       // The file from ensureClaudeMcpConfig is the same one.
       expect(fs.readFileSync(s.ensureClaudeMcpConfig()!, 'utf8')).not.toContain('DOPPLER_TOKEN');

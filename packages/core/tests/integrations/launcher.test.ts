@@ -44,7 +44,7 @@ function doppler(opts: { connected?: boolean; enabled?: boolean; secrets?: Recor
     return opts.secrets?.[name] ?? null;
   });
   const source: SecretSource = {
-    status: () => ({ connected: opts.connected ?? true, enabled: opts.enabled ?? true, project: 'acme', config: 'dev', readOnly: false }),
+    status: () => ({ connected: opts.connected ?? true, enabled: opts.enabled ?? true, project: 'acme', config: 'dev', readOnly: false, tokenScope: 'all' as const }),
     getSecret,
   };
   return { source, getSecret };
