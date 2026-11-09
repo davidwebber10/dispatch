@@ -21,6 +21,12 @@ import { v4 as uuid } from 'uuid';
  *     /etc/claude-code/managed-settings.json, goes straight to the OAuth URL with
  *     ZERO keystrokes and asks only for a short code to be pasted back.
  *
+ * `setup-token` makes two links. It opens one in a browser by itself: that one redirects to
+ * localhost, so Claude shows no code, and the user is left with nothing to paste. It prints the
+ * other, which shows the code. `BROWSER=true` (spawn env below) stops the first, so the printed
+ * link is the only one. Should a CLI ever finish without a code anyway, the watch in
+ * startLogin keeps the token it prints.
+ *
  * The resulting token is written 0600 into the daemon's own data dir and injected
  * as CLAUDE_CODE_OAUTH_TOKEN at spawn. It never leaves the box, which is what makes
  * it equivalent in risk to the `.credentials.json` a normal login would write.
@@ -44,6 +50,8 @@ const START_TIMEOUT_MS = 45_000;
 const EXCHANGE_TIMEOUT_MS = 45_000;
 /** Gap between typing the code and pressing Enter, so the two aren't one paste burst. */
 const SUBMIT_KEYPRESS_DELAY_MS = 250;
+/** How often a login waiting for a code looks for a token the CLI printed by itself. */
+const TOKEN_WATCH_MS = 250;
 
 /** Strip ANSI/OSC so regexes see plain text — setup-token emits hyperlink escapes. */
 export function stripAnsi(s: string): string {
@@ -117,10 +125,19 @@ interface Live {
   session: LoginSession;
   proc: pty.IPty;
   buf: string;
+  /** Where a token can start: after the login link, then after the last code submitted. */
+  scanFrom: number;
+  /** Where this attempt's token goes: an account of this label, or null for the single saved login. */
+  accountLabel: string | null;
+  watch: ReturnType<typeof setInterval>;
+  /** Set once a token is being kept, so that only one path can keep it. */
+  saving: Promise<void> | null;
 }
 
 export class ClaudeLoginService {
   private live: Live | null = null;
+  /** The last attempt that ended with a token, for a screen that polls status(). Holds no token. */
+  private finished: LoginSession | null = null;
   private onChangeCb: (() => void) | null = null;
   private readonly tokenPath: string;
 
@@ -132,10 +149,8 @@ export class ClaudeLoginService {
   }
 
   onChange(cb: () => void): void { this.onChangeCb = cb; }
-  /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). */
-  onAccountToken: ((token: string, label: string) => void) | null = null;
-  /** The label of the account the live attempt is for, or null for the single saved login. */
-  private accountLabel: string | null = null;
+  /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). The login is complete when this settles. */
+  onAccountToken: ((token: string, label: string) => void | Promise<void>) | null = null;
 
   // --- token storage ------------------------------------------------------
   getToken(): string | null {
@@ -168,7 +183,8 @@ export class ClaudeLoginService {
 
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
-    return this.live ? { ...this.live.session } : null;
+    const session = this.live?.session ?? this.finished;
+    return session ? { ...session } : null;
   }
 
   /**
@@ -181,19 +197,20 @@ export class ClaudeLoginService {
    * leave them submitting a code against a session that no longer existed.
    */
   async start(): Promise<LoginSession> {
-    this.accountLabel = null;
-    return this.startLogin();
+    return this.startLogin(null);
   }
 
   /** The same flow, but the captured token becomes a NEW account with this label (onAccountToken). */
   async startForAccount(label: string): Promise<LoginSession> {
-    this.accountLabel = label.trim() || 'Claude account';
-    return this.startLogin();
+    return this.startLogin(label.trim() || 'Claude account');
   }
 
-  private async startLogin(): Promise<LoginSession> {
+  /** A waiting attempt is reused only for the same destination; a token must not change owner. */
+  private async startLogin(accountLabel: string | null): Promise<LoginSession> {
+    // An attempt that is storing its token finishes first, so an old save cannot land after a new one.
+    if (this.live?.saving) await this.live.saving;
     const pending = this.live;
-    if (pending && pending.session.status === 'awaiting_code' && pending.session.url) {
+    if (pending && pending.session.status === 'awaiting_code' && pending.session.url && pending.accountLabel === accountLabel) {
       return { ...pending.session };
     }
     this.cancel();
@@ -211,29 +228,40 @@ export class ClaudeLoginService {
       cwd: this.dataDir,
       // Deliberately NOT inheriting an existing CLAUDE_CODE_OAUTH_TOKEN: re-authenticating
       // while a stale token is present makes the CLI skip the flow we're trying to run.
-      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: '' } as Record<string, string>,
+      // BROWSER=true: the CLI's own browser tab gives no code (see the top of this file).
+      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: '', BROWSER: 'true' } as Record<string, string>,
     });
-    const live: Live = { session, proc, buf: '' };
+    const live: Live = {
+      session, proc, buf: '', scanFrom: 0, accountLabel, saving: null,
+      watch: setInterval(() => this.adoptPrintedToken(live), TOKEN_WATCH_MS),
+    };
+    live.watch.unref?.();
     this.live = live;
 
     proc.onData((d) => { live.buf += d; });
     proc.onExit(() => {
-      if (this.live === live && live.session.status !== 'complete') {
-        this.fail(live, 'claude setup-token exited before completing');
-      }
+      clearInterval(live.watch);
+      const { status } = live.session;
+      if (this.live !== live || status === 'complete' || status === 'error' || live.saving) return;
+      // The token and the exit can arrive together, before anything has looked.
+      const token = status === 'awaiting_code' || status === 'exchanging' ? extractToken(live.buf.slice(live.scanFrom)) : null;
+      if (token) void this.finish(live, token);
+      else this.fail(live, 'claude setup-token exited before completing');
     });
 
     const deadline = Date.now() + START_TIMEOUT_MS;
     while (Date.now() < deadline) {
+      // Cast: the onExit handler can flip this to 'error' while we wait, which TS's
+      // narrowing from the assignment above can't see. Checked first: a link from a CLI
+      // that has already exited is of no use.
+      if ((live.session.status as LoginStatus) === 'error') return { ...live.session };
       const url = extractUrl(live.buf);
       if (url) {
         live.session.url = url;
         live.session.status = 'awaiting_code';
+        live.scanFrom = live.buf.length;
         return { ...live.session };
       }
-      // Cast: the onExit handler can flip this to 'error' while we wait, which TS's
-      // narrowing from the assignment above can't see.
-      if ((live.session.status as LoginStatus) === 'error') return { ...live.session };
       await sleep(250);
     }
     this.fail(live, 'timed out waiting for an OAuth URL');
@@ -249,16 +277,28 @@ export class ClaudeLoginService {
     // Structured so the UI can offer "start again" instead of surfacing a raw 400.
     // Reachable whenever the daemon restarted while the user was away authorising.
     if (!live) throw Object.assign(new Error('no login in progress'), { code: 'no_session' });
+    if (live.saving) {
+      await live.saving;
+      return { ...live.session };
+    }
     if (live.session.status !== 'awaiting_code') {
       throw new Error(`login is ${live.session.status}, not awaiting a code`);
     }
     const trimmed = code.trim();
     if (!trimmed) throw new Error('code is required');
 
+    // The CLI may have printed its token just before this code arrived.
+    const printed = this.printedToken(live);
+    if (printed) {
+      await this.finish(live, printed);
+      return { ...live.session };
+    }
+
     live.session.status = 'exchanging';
     // Mark where the transcript is now, so the token regex can't match anything
     // echoed before this point (the pasted code itself is echoed back).
     const from = live.buf.length;
+    live.scanFrom = from;
 
     // Send the code and the Enter SEPARATELY.
     //
@@ -290,13 +330,7 @@ export class ClaudeLoginService {
       }
       const token = extractToken(live.buf.slice(from));
       if (token) {
-        if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel);
-        else this.saveToken(token);
-        this.accountLabel = null;
-        live.session.status = 'complete';
-        live.session.url = null;
-        try { live.proc.kill(); } catch { /* already gone */ }
-        this.live = null;
+        await this.finish(live, token);
         return { ...live.session };
       }
       // Cast: see start() — onExit can set 'error' asynchronously.
@@ -317,12 +351,58 @@ export class ClaudeLoginService {
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
   cancel(): void {
+    this.finished = null;
     if (!this.live) return;
+    clearInterval(this.live.watch);
     try { this.live.proc.kill(); } catch { /* already gone */ }
     this.live = null;
   }
 
+  /**
+   * A token the CLI printed while the login waited for a code, or null. A token at the very end
+   * of the output can be half of a split chunk, so it must have something after it. (The CLI
+   * prints more text after the token; a CLI that exits instead is handled by onExit.)
+   */
+  private printedToken(live: Live): string | null {
+    const text = stripAnsi(live.buf.slice(live.scanFrom));
+    const token = extractToken(text);
+    return token && !text.endsWith(token) ? token : null;
+  }
+
+  private adoptPrintedToken(live: Live): void {
+    if (this.live !== live || live.session.status !== 'awaiting_code') return;
+    const token = this.printedToken(live);
+    if (token) void this.finish(live, token);
+  }
+
+  /** Keep the token, one time, whichever path found it first. */
+  private finish(live: Live, token: string): Promise<void> {
+    return (live.saving ??= this.keep(live, token));
+  }
+
+  /** The login is complete only when the token is stored. Never rejects. */
+  private async keep(live: Live, token: string): Promise<void> {
+    clearInterval(live.watch);
+    live.session.status = 'exchanging';
+    try {
+      if (live.accountLabel && this.onAccountToken) await this.onAccountToken(token, live.accountLabel);
+      else this.saveToken(token);
+    } catch {
+      this.fail(live, 'Dispatch could not save this login. Try again.');
+      return;
+    }
+    live.session.status = 'complete';
+    live.session.url = null;
+    live.session.error = null;
+    try { live.proc.kill(); } catch { /* already gone */ }
+    if (this.live === live) {
+      this.finished = live.session;
+      this.live = null;
+    }
+  }
+
   private fail(live: Live, message: string): void {
+    clearInterval(live.watch);
     live.session.status = 'error';
     live.session.error = message;
     try { live.proc.kill(); } catch { /* already gone */ }

@@ -6,6 +6,9 @@ export function isClaudeAuthError(text: string): boolean {
   return /authenticat|oauth|not logged in|\/login|invalid api key|\b401\b|unauthorized/i.test(text);
 }
 
+/** How often the code box asks the daemon whether this login is still going. */
+const STATUS_POLL_MS = 2000;
+
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit', fontSize: 13 };
@@ -16,11 +19,12 @@ const btn: React.CSSProperties = { flexShrink: 0, padding: '5px 12px', borderRad
  * The daemon keeps the token and gives it to Chat and to every Claude thread; `onDone`
  * then retries the failed turn.
  */
-export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false }: { onDone: () => void; start?: () => Promise<{ url: string | null; error: string | null }>; buttonLabel?: string; /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean }) {
+export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to Claude', autoStart = false }: { onDone: () => void; start?: () => Promise<{ id?: string; url: string | null; error: string | null }>; buttonLabel?: string; /** Start at once (the caller's own button already asked to sign in). */ autoStart?: boolean }) {
   const [phase, setPhase] = useState<'idle' | 'starting' | 'code' | 'sending'>('idle');
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const attemptId = useRef<string | undefined>(undefined);
 
   const start = async () => {
     setError(null);
@@ -28,6 +32,7 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     try {
       const s = await (startFlow ?? api.claudeLoginStart)();
       if (!s.url) throw new Error(s.error ?? 'Claude did not give a login link');
+      attemptId.current = s.id;
       setUrl(s.url);
       setPhase('code');
     } catch (err) {
@@ -44,6 +49,28 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStart]);
 
+  // The login can end with no code from this screen. Finish, or say so, so that no code goes to
+  // a login that is gone.
+  useEffect(() => {
+    if (phase !== 'code') return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      api.claudeAuthStatus().then(({ session }) => {
+        if (stopped) return;
+        const mine = session && (!attemptId.current || session.id === attemptId.current);
+        if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
+        if (!mine || session.status === 'error') {
+          stopped = true;
+          setError('This login ended. Start it again.');
+          setUrl(null);
+          setPhase('idle');
+        }
+      }).catch(() => { /* a network blip says nothing about the login */ });
+    }, STATUS_POLL_MS);
+    return () => { stopped = true; clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   const submit = async () => {
     const c = code.trim();
     if (!c) return;
@@ -55,6 +82,9 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       setError(s.error ?? 'The login did not finish. Try the code again.');
       setPhase('code');
     } catch (err) {
+      // The login may have finished just before this code arrived.
+      const session = (await api.claudeAuthStatus().catch(() => null))?.session;
+      if (session?.status === 'complete' && (!attemptId.current || session.id === attemptId.current)) { onDone(); return; }
       // The attempt is gone (a 400 with no session to resume): start again.
       setError(errorText(err));
       setUrl(null);

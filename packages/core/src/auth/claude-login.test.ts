@@ -235,3 +235,252 @@ describe('submission is a paste THEN a keypress', () => {
     expect(f.written).toEqual([long, '\r'])   // two writes, never one
   })
 })
+
+describe('one link: the code link', () => {
+  /** A fake PTY whose spawn call records its options. */
+  function recording() {
+    const f = fakePty();
+    const calls: any[] = [];
+    return { f, calls, spawn: ((cmd: string, args: string[], opts: any) => { calls.push({ cmd, args, opts }); return f.spawn(); }) as any };
+  }
+  const URL_LINE = 'https://claude.com/cai/oauth/authorize?code=true&x=1\r\n';
+  const ready = async (svc: ClaudeLoginService, f: ReturnType<typeof fakePty>, begin: () => Promise<unknown> = () => svc.start()) => {
+    const p = begin();
+    setTimeout(() => f.emit(URL_LINE), 20);
+    await p;
+  };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test('the CLI cannot open its own browser tab: that tab gives no code', async () => {
+    // Observed on claude 2.1.319: setup-token opens a tab with a localhost redirect by itself,
+    // and only the printed link shows a code. A user who approved the tab got no code.
+    const r = recording();
+    const svc = new ClaudeLoginService(dir, r.spawn);
+    await ready(svc, r.f);
+    expect(r.calls[0].args).toEqual(['setup-token']);
+    expect(r.calls[0].opts.env.BROWSER).toBe('true');
+    expect(r.calls[0].opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('');
+  });
+
+  test('a token the CLI prints with no code submitted is saved', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-NOCODE_TOKEN\r\n');
+    await sleep(700);
+    expect(svc.getToken()).toBe('sk-ant-oat01-NOCODE_TOKEN');
+    expect(svc.status()?.status).toBe('complete');
+    expect(f.killed).toBe(true);
+  });
+
+  test('that token becomes the new account for an account login', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    const got: Array<[string, string]> = [];
+    svc.onAccountToken = (token, label) => { got.push([token, label]); };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    f.emit('\r\nsk-ant-oat01-ACCOUNT_TOKEN\r\n');
+    await sleep(700);
+    expect(got).toEqual([['sk-ant-oat01-ACCOUNT_TOKEN', 'Work']]);
+    expect(svc.getToken()).toBeNull();
+  });
+
+  test('a token cut in two by the terminal waits for the rest, however long', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-FIRSTHALF');
+    await sleep(700); // longer than two watches
+    expect(svc.getToken()).toBeNull();
+    f.emit('_SECONDHALF\r\n');
+    await sleep(400);
+    expect(svc.getToken()).toBe('sk-ant-oat01-FIRSTHALF_SECONDHALF');
+  });
+
+  test('a CLI that prints the token and exits at once still saves it', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-THEN_EXIT\r\n');
+    f.exit();
+    expect(svc.getToken()).toBe('sk-ant-oat01-THEN_EXIT');
+    expect(svc.status()?.status).toBe('complete');
+  });
+
+  test('a CLI that exits right after a submitted code still saves the token, once', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let saved = 0;
+    svc.onAccountToken = () => { saved++; };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    const done = svc.submitCode('code');
+    f.emit('\r\nsk-ant-oat01-SUBMIT_EXIT\r\n');
+    f.exit();
+    expect((await done).status).toBe('complete');
+    expect(saved).toBe(1);
+  });
+
+  /** Spawns a new fake PTY for each attempt. */
+  const sequence = () => {
+    const fakes: Array<ReturnType<typeof fakePty>> = [];
+    return { fakes, spawn: (() => { const f = fakePty(); fakes.push(f); return f.spawn(); }) as any };
+  };
+  const readyOn = async (seq: ReturnType<typeof sequence>, begin: () => Promise<unknown>) => {
+    const p = begin();
+    setTimeout(() => seq.fakes[seq.fakes.length - 1].emit(URL_LINE), 20);
+    await p;
+  };
+
+  test('status() still reports the finished login, and a real new start clears it', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    await readyOn(seq, () => svc.start());
+    const first = svc.status()!.id;
+    const done = svc.submitCode('c');
+    setTimeout(() => seq.fakes[0].emit('sk-ant-oat01-DONE\r\n'), 20);
+    await done;
+    expect(svc.status()).toMatchObject({ id: first, status: 'complete', error: null });
+    await readyOn(seq, () => svc.start());
+    expect(svc.status()!.id).not.toBe(first);
+    expect(svc.status()!.status).toBe('awaiting_code');
+    svc.cancel();
+    expect(svc.status()).toBeNull();
+  });
+
+  test('a code submitted after the CLI printed a token keeps that token', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-PRINTED_FIRST\r\n');
+    const s = await svc.submitCode('late-code');
+    expect(s.status).toBe('complete');
+    expect(svc.getToken()).toBe('sk-ant-oat01-PRINTED_FIRST');
+    expect(f.written).toEqual([]);
+  });
+
+  test('a second start with the same destination returns the waiting login', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    const first = svc.status()!.id;
+    const again = await svc.startForAccount(' Work ');
+    expect(again.id).toBe(first);
+    expect(seq.fakes).toHaveLength(1);
+  });
+
+  test('a start for another destination replaces the waiting login, so its token cannot change owner', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    const got: string[] = [];
+    svc.onAccountToken = (_token, label) => { got.push(label); };
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    const first = svc.status()!.id;
+    await readyOn(seq, () => svc.start());
+    expect(seq.fakes[0].killed).toBe(true);
+    expect(svc.status()!.id).not.toBe(first);
+    seq.fakes[1].emit('\r\nsk-ant-oat01-SINGLE\r\n');
+    await sleep(700);
+    expect(got).toEqual([]);
+    expect(svc.getToken()).toBe('sk-ant-oat01-SINGLE');
+  });
+
+  test('the login is complete only after the account is stored, even if the CLI exits first', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let stored = () => {};
+    let calls = 0;
+    svc.onAccountToken = () => { calls++; return new Promise<void>((r) => { stored = r; }); };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    f.emit('\r\nsk-ant-oat01-SLOW_STORE\r\n');
+    await sleep(700);
+    expect(svc.status()?.status).toBe('exchanging');
+    f.exit();
+    await sleep(50);
+    expect(svc.status()?.status).toBe('exchanging');
+    stored();
+    await sleep(20);
+    expect(svc.status()?.status).toBe('complete');
+    expect(calls).toBe(1);
+  });
+
+  test('an account that cannot be stored ends the login and is not tried again', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let calls = 0;
+    svc.onAccountToken = () => { calls++; return Promise.reject(new Error('disk full')); };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    const done = svc.submitCode('c');
+    setTimeout(() => f.emit('\r\nsk-ant-oat01-NOSTORE\r\n'), 20);
+    const s = await done;
+    expect(s.status).toBe('error');
+    expect(s.error).toMatch(/could not save/i);
+    expect(calls).toBe(1);
+    expect(f.killed).toBe(true);
+  });
+
+  test('a saved login that cannot be written ends the attempt from the watch', async () => {
+    const f = fakePty();
+    const notADir = path.join(dir, 'file');
+    fs.writeFileSync(notADir, 'x');
+    const svc = new ClaudeLoginService(notADir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-NOWRITE\r\n');
+    await sleep(700);
+    expect(f.killed).toBe(true);
+    expect(svc.status()).toBeNull();
+  });
+
+  test('a code that arrives during the save waits for the save and reports it', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let stored = () => {};
+    svc.onAccountToken = () => new Promise<void>((r) => { stored = r; });
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    f.emit('\r\nsk-ant-oat01-SAVING\r\n');
+    await sleep(400);
+    const done = svc.submitCode('late');
+    await sleep(20);
+    stored();
+    expect((await done).status).toBe('complete');
+    expect(f.written).toEqual([]);
+  });
+
+  test('a code submitted between the two halves of a token does not save the first half', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-FIRSTHALF');
+    const done = svc.submitCode('c');
+    await sleep(300);
+    expect(svc.getToken()).toBeNull();
+    expect(f.written).toEqual(['c', '\r']);
+    f.emit('\r\nOAuth error: Invalid code\r\n');
+    expect((await done).status).toBe('awaiting_code');
+  });
+
+  test('a start during a save waits for that save before it replaces the attempt', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    let stored = () => {};
+    svc.onAccountToken = () => new Promise<void>((r) => { stored = r; });
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    seq.fakes[0].emit('\r\nsk-ant-oat01-OLD_SAVE\r\n');
+    await sleep(400);
+    const next = svc.startForAccount('Personal');
+    await sleep(50);
+    expect(seq.fakes).toHaveLength(1);
+    stored();
+    await sleep(20);
+    expect(seq.fakes).toHaveLength(2);
+    seq.fakes[1].emit(URL_LINE);
+    expect((await next).status).toBe('awaiting_code');
+  });
+
+  test('a CLI that prints the link and exits at once is reported as failed', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    const p = svc.start();
+    setTimeout(() => { f.emit(URL_LINE); f.exit(); }, 20);
+    expect((await p).status).toBe('error');
+  });
+});
