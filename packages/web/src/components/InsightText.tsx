@@ -68,7 +68,7 @@ const SCHEMES: Record<Scheme, Tokens> = {
   },
 };
 
-function InsightCallout({ content, tokens, ledger, docs }: { content: string; tokens: Tokens; ledger?: LedgerChips; docs?: DocChips }) {
+function InsightCallout({ content, tokens, ledger, docs, streaming }: { content: string; tokens: Tokens; ledger?: LedgerChips; docs?: DocChips; streaming?: boolean }) {
   return (
     <div
       style={{
@@ -98,7 +98,7 @@ function InsightCallout({ content, tokens, ledger, docs }: { content: string; to
       </div>
       {/* enclosed content — still markdown, so lists/code inside a callout render normally */}
       <div style={{ minWidth: 0 }}>
-        <Markdown source={content} ledger={ledger} docs={docs} />
+        <Markdown source={content} ledger={ledger} docs={docs} streaming={streaming} />
       </div>
     </div>
   );
@@ -110,7 +110,7 @@ function InsightCallout({ content, tokens, ledger, docs }: { content: string; to
  * click anywhere to expand. Deliberately quieter than the coordinator's tinted callout: in a
  * thread the insight is an aside to the work, not a headline.
  */
-function InsightRail({ content, ledger, docs }: { content: string; ledger?: LedgerChips; docs?: DocChips }) {
+function InsightRail({ content, ledger, docs, streaming }: { content: string; ledger?: LedgerChips; docs?: DocChips; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
@@ -137,7 +137,7 @@ function InsightRail({ content, ledger, docs }: { content: string; ledger?: Ledg
           ...(open ? {} : { display: '-webkit-box', WebkitBoxOrient: 'vertical' as const, WebkitLineClamp: 2, overflow: 'hidden' }),
         }}
       >
-        <Markdown source={content} ledger={ledger} docs={docs} />
+        <Markdown source={content} ledger={ledger} docs={docs} streaming={streaming} />
       </div>
     </div>
   );
@@ -149,7 +149,7 @@ function InsightRail({ content, ledger, docs }: { content: string; ledger?: Ledg
  * `variant="rail"` (agent chat) swaps the callout for the clamped left-rail block. `ledger` (the
  * Control Plane) draws known ledger numbers as chips; `docs` (Chat) draws doc paths as doc chips (see Markdown).
  */
-export function InsightText({ source, scheme = 'scoped', variant = 'callout', ledger, docs }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail'; ledger?: LedgerChips; docs?: DocChips }) {
+export function InsightText({ source, scheme = 'scoped', variant = 'callout', ledger, docs, streaming }: { source: string; scheme?: Scheme; variant?: 'callout' | 'rail'; ledger?: LedgerChips; docs?: DocChips; /** The text is still arriving (W2-E): passed to <Markdown>, which then throttles its parser. */ streaming?: boolean }) {
   const segs = splitInsights(source);
   if (segs.length === 0) return null; // all-blank body → nothing to render
   const tokens = SCHEMES[scheme];
@@ -157,9 +157,9 @@ export function InsightText({ source, scheme = 'scoped', variant = 'callout', le
     <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       {segs.map((seg, i) =>
         seg.type === 'insight' ? (
-          variant === 'rail' ? <InsightRail key={i} content={seg.content} ledger={ledger} docs={docs} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} docs={docs} />
+          variant === 'rail' ? <InsightRail key={i} content={seg.content} ledger={ledger} docs={docs} streaming={streaming} /> : <InsightCallout key={i} content={seg.content} tokens={tokens} ledger={ledger} docs={docs} streaming={streaming} />
         ) : (
-          <Markdown key={i} source={seg.content} ledger={ledger} docs={docs} />
+          <Markdown key={i} source={seg.content} ledger={ledger} docs={docs} streaming={streaming} />
         ),
       )}
     </div>

@@ -1,6 +1,7 @@
 import { CaretRight, FileText } from '@phosphor-icons/react';
 import type { ConvItem } from '../../api/types';
-import { highlightCode, langFromPath } from '../../lib/markdown';
+import { langFromPath } from '../../lib/markdown';
+import { HighlightedCode } from '../HighlightedCode';
 import { getToolView, parseToolInput } from './toolviews/registry';
 import { useToolExpanded, useToolTab, uiKeyOf } from '../../hooks/useToolUIState';
 
@@ -174,7 +175,7 @@ export function ToolCall({ tool, result, onViewFile }: { tool: ConvItem; result?
                 )}
               </div>
               <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                <code dangerouslySetInnerHTML={{ __html: highlightCode(content, lang) }} />
+                <HighlightedCode code={content} lang={lang} />
               </pre>
             </>
           )}

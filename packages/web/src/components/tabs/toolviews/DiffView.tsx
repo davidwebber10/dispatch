@@ -1,5 +1,6 @@
 import type { ConvItem } from '../../../api/types';
-import { highlightCode, langFromPath } from '../../../lib/markdown';
+import { langFromPath } from '../../../lib/markdown';
+import { HighlightedCode } from '../../HighlightedCode';
 import { lineDiff, type DiffLine } from './diff';
 
 function Hunk({ lines }: { lines: DiffLine[] }) {
@@ -25,7 +26,7 @@ export function DiffView({ tool }: { tool: ConvItem }) {
     const content = String(input.content ?? '');
     return (
       <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', maxHeight: 360, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        <code dangerouslySetInnerHTML={{ __html: highlightCode(content, langFromPath(tool.toolFile)) }} />
+        <HighlightedCode code={content} lang={langFromPath(tool.toolFile)} />
       </pre>
     );
   }

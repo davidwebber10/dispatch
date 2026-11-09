@@ -10,6 +10,7 @@ import { useThreadDocs } from '../../../threadDocs';
 import { Spinner } from '../../../common/Spinner';
 import { ToolCall, editDiffStat } from '../../ToolCall';
 import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../../hooks/useToolUIState';
+import { useRecentlyChanged } from '../../../../hooks/useThrottledValue';
 import { stableId } from './stableId';
 
 // The leaf rows are memoized (W1-F): renderTimeline builds new elements on every walk, and a walk
@@ -212,12 +213,19 @@ export const UserBubble = memo(function UserBubble({ text, source, grouped = fal
 // left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
 // callouts. The wrapper sets the redesign's reading size — md-view inherits it.
 // `ledger` (the Control Plane) draws known ledger numbers as chips.
+//
+// A text that changes is a message that still streams (W2-E). The leaf sees that by itself
+// (useRecentlyChanged), so each surface that draws it (a thread, the Control Plane) gets the
+// throttled parser, and the flag always ends: STREAM_QUIET_MS after the last delta the message is
+// rendered once more in one pass, as a message from history is.
+const STREAM_QUIET_MS = 400;
 export const AssistantText = memo(function AssistantText({ text, ledger }: { text: string; ledger?: LedgerChips }) {
   const docs = useThreadDocs();
+  const streaming = useRecentlyChanged(text, STREAM_QUIET_MS);
   if (!text) return null;
   return (
     <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
-      <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} />
+      <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} streaming={streaming} />
     </div>
   );
 });

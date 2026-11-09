@@ -71,7 +71,7 @@ it('a 4,000-token streamed reply: markdown work for each second of the stream', 
   expect(view.container.querySelectorAll('pre').length).toBe(16);
   if (!UNTHROTTLED) {
     // At most one parse pass for each 100 ms, and each pass parses the open block only.
-    expect(report.parserCallsPerSecond).toBeLessThanOrEqual(11);
+    expect(report.parserCallsPerSecond).toBeLessThanOrEqual(13); // 10 passes, plus each block once more when it closes
     expect(report.parserCharsPerSecond).toBeLessThan(10_000);
   }
 }, 300_000);
