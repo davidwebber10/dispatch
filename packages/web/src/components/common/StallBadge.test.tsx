@@ -33,7 +33,7 @@ test('shows an hourglass icon with the minutes of silence in its title', () => {
   expect(badge.getAttribute('aria-label')).toBe('No output for 12 min. The thread can still be at work.');
   expect(container.querySelector('svg')).not.toBeNull();
   // Neutral colour: a text token, not a status colour. No emoji.
-  expect(badge.style.color).toBe('var(--color-text-faint)');
+  expect(badge.style.color).toBe('var(--color-text-tertiary)');
   expect(badge.textContent).toBe('');
 });
 

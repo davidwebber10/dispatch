@@ -32,7 +32,7 @@ export function StallBadge({ terminalId, size = 13 }: { terminalId: string; size
       aria-label={title}
       title={title}
       data-testid="stall-badge"
-      style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, color: 'var(--color-text-faint)', lineHeight: 0 }}
+      style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, color: 'var(--color-text-tertiary)', lineHeight: 0 }}
     >
       <HourglassMedium size={size} weight="regular" aria-hidden />
     </span>
