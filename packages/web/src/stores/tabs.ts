@@ -271,12 +271,22 @@ export const useTabs = create<TabsState>((set, get) => ({
   },
   applyEvent: (e) => {
     if (e.type === 'terminal:status' || e.type === 'terminal:exit') {
+      // These events fire constantly while agents flip working<->idle. Replace only the one
+      // row and the one array that holds it; every other project's array keeps its identity,
+      // so a selector on another project (stores/tabsSelectors.ts) does not notify. An equal
+      // status, or a terminal this client has not loaded, changes nothing at all.
       const status = e.type === 'terminal:exit' ? 'waiting' : (e.status as Terminal['status']);
-      const byProject = { ...get().byProject };
-      for (const pid of Object.keys(byProject)) {
-        byProject[pid] = byProject[pid].map((t) => (t.id === e.terminalId ? { ...t, status } : t));
+      const prev = get().byProject;
+      for (const pid of Object.keys(prev)) {
+        const list = prev[pid];
+        const idx = list.findIndex((t) => t.id === e.terminalId);
+        if (idx < 0) continue;
+        if (list[idx].status === status) return;
+        const next = list.slice();
+        next[idx] = { ...list[idx], status };
+        set({ byProject: { ...prev, [pid]: next } });
+        return;
       }
-      set({ byProject });
     } else if (e.type === 'terminal:removed' && typeof e.terminalId === 'string') {
       get().closeTab(e.terminalId, { force: true });
       if (typeof e.sessionId === 'string') void get().loadTabs(e.sessionId);
