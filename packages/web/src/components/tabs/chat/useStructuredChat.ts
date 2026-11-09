@@ -7,6 +7,7 @@ import { openStructuredSocket } from '../../../api/structured-socket';
 import { api, ApiError, type ContentBlock } from '../../../api/client';
 import { sendFailureText } from '../../../lib/sendError';
 import { classifyUserText } from '../../../lib/taskNotification';
+import { threadViewCache } from '../../../lib/threadViewCache';
 
 /** Fallback context window (tokens) for when no model is known yet. Every model Dispatch
  *  actually runs (sonnet-5, opus-4.x) has a native 1M-token window; only Haiku is 200k. */
@@ -47,6 +48,9 @@ export interface AuthRequired {
 
 export interface StructuredChat {
   items: ConvItem[];
+  /** True while `items` is what this page last saw of the thread (the view cache, or the items
+   *  kept through a reconnect) and the daemon's replay has not replaced it yet (W2-I). */
+  stale: boolean;
   busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
   model?: string;
   /** Context tokens used AS OF the latest assistant turn (input + cache_read + cache_creation).
@@ -70,6 +74,8 @@ export interface StructuredChat {
   authRequired: AuthRequired | null;
   // Accepts plain text OR a content-block array (e.g. a real image block the model SEES).
   send: (content: string | ContentBlock[]) => void;
+  /** Send again the message of a bubble whose POST failed (`sendState: 'failed'`), by its `localId`. */
+  retrySend: (localId: string) => void;
   /** The AskUserQuestion / gated tool this thread is blocked on, or null. */
   pending: PendingPermission | null;
   /** Answer the pending AskUserQuestion. `answers` is keyed by question TEXT →
@@ -233,6 +239,39 @@ function userOrNotice(text: string, source: ConvItem['source'], uuid?: string): 
   return { kind: 'user', text, ...(source ? { source } : {}), ...(uuid ? { uuid } : {}) };
 }
 
+/** The text of a user turn for the echo match: runs of white space are one space, the ends are cut.
+ *  The daemon and the CLI may trim or re-wrap a message; the words are what identifies it. */
+function echoKey(text: string | undefined): string {
+  return (text ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Append `add` to `prev`. A `user` item from the daemon whose text matches a local bubble (one this
+ * client added at Send, see `send`) REPLACES that bubble: one message, one bubble. It keeps the
+ * bubble's row key, so the DOM node stays. When other items already follow the local bubble (a replay
+ * after a reconnect put the history under it), the bubble is removed and the echo is appended, so the
+ * turn sits where the daemon has it. A coordinator-relayed turn is never the echo of an owner send.
+ */
+function appendWithEchoMatch(prev: ConvItem[], add: ConvItem[]): ConvItem[] {
+  let next = prev;
+  const rest: ConvItem[] = [];
+  for (const it of add) {
+    if (it.kind === 'user' && !it.localId && it.source !== 'coordinator' && next.some((x) => x.localId)) {
+      const want = echoKey(it.text);
+      const idx = next.findIndex((x) => !!x.localId && x.kind === 'user' && echoKey(x.text) === want);
+      if (idx >= 0) {
+        const local = next[idx];
+        next = next.slice();
+        const inPlace = rest.length === 0 && next.slice(idx + 1).every((x) => !!x.localId);
+        if (inPlace) { next[idx] = { ...it, uuid: it.uuid ?? local.uuid }; continue; }
+        next.splice(idx, 1);
+      }
+    }
+    rest.push(it);
+  }
+  return rest.length ? [...next, ...rest] : next;
+}
+
 /** An error `result`'s reason: its `result` text, else Claude's `errors[]` (a failed resume, for
  *  example, has no `result` field and says why only there — #76). */
 function errorText(event: any): string | undefined {
@@ -311,7 +350,10 @@ export function useStructuredChat(
   // Read by the reset paths inside effects/callbacks keyed only on terminalId.
   const pageableRef = useRef(pageable);
   pageableRef.current = pageable;
-  const [items, setItems] = useState<ConvItem[]>([]);
+  // W2-I: the FIRST render of a thread this page showed before has its last items (lib/threadViewCache),
+  // so a tab switch back paints content in the same frame. They are stale until the replay replaces them.
+  const [items, setItems] = useState<ConvItem[]>(() => (terminalId ? threadViewCache.get(terminalId) ?? [] : []));
+  const [stale, setStale] = useState(() => items.length > 0);
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<string | undefined>();
   const [authRequired, setAuthRequired] = useState<AuthRequired | null>(null);
@@ -336,9 +378,10 @@ export function useStructuredChat(
   // Older-history pagination (loadOlder). Refs mirror the state so the stable loadOlder
   // callback below always reads the CURRENT hasMore/loadingOlder without needing them in
   // its dependency array (which would otherwise change its identity on every fetch).
-  const [hasMore, setHasMore] = useState(pageable); // optimistic until the first loadOlder() settles
+  // Not from a stale view: its paging anchor would be thrown away with it when the replay lands.
+  const [hasMore, setHasMore] = useState(() => pageable && !stale); // optimistic until the first loadOlder() settles
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const hasMoreRef = useRef(pageable);
+  const hasMoreRef = useRef(pageable && !stale);
   const loadingOlderRef = useRef(false);
   const oldestLineRef = useRef<number | undefined>(undefined); // REST `before` anchor; undefined = not yet probed
   const pageTokenRef = useRef(0); // bumped on terminal switch to discard a stale in-flight fetch
@@ -398,7 +441,7 @@ export function useStructuredChat(
 
   useEffect(() => {
     if (!terminalId) {
-      setItems([]); setBusy(false); setModel(undefined); setPending(null);
+      setItems([]); setStale(false); setBusy(false); setModel(undefined); setPending(null);
       setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
       hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
       loadingOlderRef.current = false; setLoadingOlder(false);
@@ -406,10 +449,16 @@ export function useStructuredChat(
       inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       return;
     }
-    setItems([]); setBusy(false); setModel(undefined); setPending(null); setAuthRequired(null);
+    // W2-I: start from what this page last showed of the thread (the same array the first render used, so
+    // this is no second render). `staleSet` holds the items that the daemon's replay will replace.
+    const cached = threadViewCache.get(terminalId) ?? [];
+    let staleSet = new Set<ConvItem>(cached);
+    let staleActive = cached.length > 0;
+    setItems(cached); setStale(staleActive);
+    setBusy(false); setModel(undefined); setPending(null); setAuthRequired(null);
     useActiveModel.getState().clear(terminalId); // the connect's system/model frame brings the current one
     setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
-    hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
+    hasMoreRef.current = pageableRef.current && !staleActive; setHasMore(hasMoreRef.current);
     loadingOlderRef.current = false; setLoadingOlder(false);
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
@@ -476,7 +525,19 @@ export function useStructuredChat(
     // inactive-rescue page only lands on a view with no conversation items to collide with
     // (see the 'system'/'inactive' handler below).
     const appendItems = (add: ConvItem[]) => {
-      if (add.length) setItems((p) => [...p, ...add]);
+      if (add.length) setItems((p) => appendWithEchoMatch(p, add));
+    };
+
+    // W2-I: the stale items (the view cache at open, or the items kept through a reconnect) go the moment
+    // the replay brings the first real item, in the same render. A local bubble that still waits for its
+    // echo stays: the replay holds its echo (which then replaces it), or the echo is still to come.
+    // Paging is armed again here: a stale view offers no older page (see the reset above).
+    const isStale = (it: ConvItem) => staleSet.has(it) && !it.localId;
+    const dropStale = () => {
+      if (!staleActive) return;
+      staleActive = false; setStale(false);
+      setItems((p) => (p.some(isStale) ? p.filter((it) => !isStale(it)) : p));
+      hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
     };
 
     const sock = openStructuredSocket({
@@ -487,7 +548,13 @@ export function useStructuredChat(
         // Drop any queued flush so a stale frame can't write into the cleared view.
         if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
         pendingRef.current.clear();
-        setItems([]); setBusy(false);
+        // W2-I: the items stay on screen, marked stale, until the replay's first item replaces them
+        // (dropStale). Emptying the view here left it blank for the 3 to 4 round trips of the replay.
+        // The mark is taken inside an updater, so it sees every item already queued, and it runs
+        // before dropStale's updater, which is queued later.
+        staleActive = true; setStale(true);
+        setItems((p) => { staleSet = new Set(p); return p; });
+        setBusy(false);
         setPending(null); // the server re-sends a still-pending permission after replay
         setAuthRequired(null); // the replay re-sends a standing system/auth_required
         setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
@@ -495,7 +562,8 @@ export function useStructuredChat(
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
         // history between the new tail replay and where the old anchor left off.
-        hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
+        // No older page from the stale view; dropStale arms paging again.
+        hasMoreRef.current = false; setHasMore(false);
         loadingOlderRef.current = false; setLoadingOlder(false);
         oldestLineRef.current = undefined; pageTokenRef.current += 1;
         inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
@@ -505,8 +573,21 @@ export function useStructuredChat(
         // emit `result`, so stop spinning. A live reconnect re-sets busy via deltas.
         setBusy(false);
       },
+      onReplayEnd: () => {
+        // A batched replay is folded. A local bubble with no echo in it (its POST is still on its way)
+        // was kept above the replayed history: put it back at the end, where the owner typed it.
+        setItems((p) => {
+          const firstLocal = p.findIndex((it) => !!it.localId);
+          if (firstLocal < 0 || p.slice(firstLocal).every((it) => !!it.localId)) return p;
+          return [...p.filter((it) => !it.localId), ...p.filter((it) => !!it.localId)];
+        });
+      },
       onEvent: (event: any) => {
         const type = event?.type;
+        // W2-I: the first frame that can render (not a `system` line, not a permission) is the replay
+        // or a live turn: the stale items go now, in the same render as what replaces them. The
+        // `system/inactive` sentinel is handled below: it keeps them until the REST page is here.
+        if (staleActive && type !== 'system' && type !== 'permission') dropStale();
 
         // The active model: the newest frame that names one wins (lib/modelName's modelFromFrame).
         const reported = modelFromFrame(event);
@@ -538,6 +619,10 @@ export function useStructuredChat(
           api.getConversation(terminalId, { limit: OLDER_PAGE_LIMIT })
             .then((conv) => {
               if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight
+              // W2-I: the page is here, so the stale items it replaces go (they were kept on screen
+              // while it loaded). `isStale` keeps them out of the "who owns the view" test below.
+              const wasStale = staleActive ? new Set(staleSet) : null;
+              dropStale();
               // Apply only while nothing CONVERSATIONAL is rendered. A ring that earned this
               // rescue replays no conversation items, but can still deposit a stale `result`
               // FOOTER (the result handler appends one for any non-backfill result) — a footer
@@ -556,7 +641,7 @@ export function useStructuredChat(
               // page, and is dropped only when the page already holds it (it completed before the
               // page was read) — else a recovery after a reconnect would cost the whole history.
               const recovered = (it: ConvItem) => !!it.uuid && recoveredRef.current.has(it.uuid);
-              const conversational = (it: ConvItem) => it.kind !== 'result' && !recovered(it);
+              const conversational = (it: ConvItem) => it.kind !== 'result' && !recovered(it) && !(wasStale?.has(it) && !it.localId);
               if (itemsRef.current.some(conversational)) return; // fast path only
               setItems((prev) => {
                 if (prev.some(conversational)) return prev; // authoritative — skips the anchor too
@@ -903,6 +988,9 @@ export function useStructuredChat(
       if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
       pendingRef.current.clear();
       sock.close();
+      // W2-I: keep what the view showed for the next open of this thread. Not while it is still
+      // stale: then the cache already holds the same items, and an empty view must not replace them.
+      if (!staleActive) threadViewCache.put(terminalId, itemsRef.current);
     };
   }, [terminalId, setPending]);
 
@@ -970,6 +1058,10 @@ export function useStructuredChat(
     setItems((p) => [...p, { kind: 'result', isError: true, text: sendFailureText(err) }]);
   }, []);
 
+  // W2-I: the content of each local bubble, for Retry. Keyed by `localId`.
+  const localSendsRef = useRef<Map<string, string | ContentBlock[]>>(new Map());
+  const localSeqRef = useRef(0);
+
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
     // just needs at least one block. Both flow through the SAME widened API.
@@ -981,13 +1073,40 @@ export function useStructuredChat(
       replyToQuestion(payload).catch(showSendFailure);
       return;
     }
-    // No optimistic user bubble: the backend echoes the turn as a `user` event (text or
-    // image blocks, surviving reconnect replay), so an optimistic append would double up.
+    // W2-I: the owner's bubble shows NOW, not one round trip later. The daemon still echoes the turn
+    // as a `user` event (live and in every replay); that echo replaces this item (appendWithEchoMatch),
+    // so there is one bubble. One item for each text block, as the echo has. No local bubble for an
+    // image (the echo brings it) or for a slash command (the daemon runs it and may send no echo).
+    const texts = (typeof payload === 'string' ? [payload] : payload.flatMap((b) => (b.type === 'text' && b.text ? [b.text] : [])))
+      .filter((t) => t.trim() && !t.startsWith('/'));
+    let localId: string | undefined;
+    if (texts.length) {
+      const id = `local-${++localSeqRef.current}`;
+      localId = id;
+      localSendsRef.current.set(id, payload);
+      // The `s-` prefix marks the key as not a transcript uuid (hasRealUuid), like a streamed block's.
+      setItems((p) => [...p, ...texts.map((text, k): ConvItem => ({ kind: 'user', text, localId: id, sendState: 'sending', uuid: `s-${id}-${k}` }))]);
+    }
+    const settle = (state: 'failed' | undefined) => {
+      if (!localId) return;
+      if (!state) localSendsRef.current.delete(localId);
+      setItems((p) => (p.some((it) => it.localId === localId)
+        ? p.map((it) => { if (it.localId !== localId) return it; const { sendState: _s, ...rest } = it; return state ? { ...rest, sendState: state } : rest; })
+        : p));
+    };
     setBusy(true);
     // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
-    // stop spinning instead of leaving "Working…" forever.
-    api.sendStructuredMessage(terminalId, payload).catch(showSendFailure);
+    // stop spinning instead of leaving "Working…" forever. The bubble is marked failed and offers Retry.
+    api.sendStructuredMessage(terminalId, payload).then(() => settle(undefined), (err) => { settle('failed'); showSendFailure(err); });
   }, [terminalId, replyToQuestion, showSendFailure]);
+
+  const retrySend = useCallback((localId: string) => {
+    const payload = localSendsRef.current.get(localId);
+    if (payload === undefined) return;
+    localSendsRef.current.delete(localId);
+    setItems((p) => p.filter((it) => it.localId !== localId));
+    send(payload);
+  }, [send]);
 
   // The card's own Discuss (with text) and Dismiss buttons. Errors land in the timeline.
   const replyFromCard = useCallback((text: string): Promise<boolean> =>
@@ -1119,7 +1238,7 @@ export function useStructuredChat(
   }, [terminalId, anchorRetry]);
 
   return {
-    items, busy, model, authRequired, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, pending, answer,
+    items, stale, busy, model, authRequired, contextTokens, contextWindow, compacting, compactResult, apiRetry, send, retrySend, pending, answer,
     replyToQuestion, denyQuestion, replyFromCard, denyFromCard, compact, hasMore, loadingOlder, loadOlder,
   };
 }

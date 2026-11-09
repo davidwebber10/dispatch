@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep, openTerminalSocket, type ReplayMeta, type TerminalWS } from './terminal-socket';
+import { INITIAL_REPLAY_DESKTOP, INITIAL_REPLAY_MOBILE, MAX_REPLAY, nextReplayStep, openTerminalSocket, reconnectTerminalSockets, type ReplayMeta, type TerminalWS } from './terminal-socket';
 
 class FakeTermWS implements TerminalWS {
   onopen: (() => void) | null = null;
@@ -438,5 +438,48 @@ describe('declared size on the URL', () => {
     });
     expect(urls[0]).not.toContain('cols=');
     sock.close();
+  });
+});
+
+// ---- W2-I ----
+describe('W2-I: connect timeout, forced reconnect, desktop first replay', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test('the desktop first replay is 1 MB and steps up to 4 MB', () => {
+    expect(INITIAL_REPLAY_DESKTOP).toBe(1_000_000);
+    expect(nextReplayStep(INITIAL_REPLAY_DESKTOP)).toBe(MAX_REPLAY);
+  });
+
+  test('a socket in CONNECTING for 8 s closes and tries again, and keeps queued input', () => {
+    const made: FakeTermWS[] = [];
+    const sock = openTerminalSocket({ terminalId: 't1', onData: () => {}, wsFactory: () => { const w = new FakeTermWS(); made.push(w); return w; } });
+    sock.send('typed while connecting');
+    vi.advanceTimersByTime(8000);
+    expect(made).toHaveLength(2);
+    made[1].onopen!();
+    expect(made[1].sent).toEqual(['typed while connecting']);
+    vi.advanceTimersByTime(60_000);
+    expect(made).toHaveLength(2);
+    sock.close();
+  });
+
+  test('reconnectTerminalSockets opens a new socket with the current replay size; onReset fires on its open', () => {
+    const urls: string[] = [];
+    const made: FakeTermWS[] = [];
+    let resets = 0;
+    const sock = openTerminalSocket({ terminalId: 't1', replayBytes: INITIAL_REPLAY_DESKTOP, onData: () => {}, onReset: () => { resets++; }, wsFactory: (u) => { urls.push(u); const w = new FakeTermWS(); made.push(w); return w; } });
+    made[0].onopen!();
+    sock.setReplayBytes(MAX_REPLAY);
+    reconnectTerminalSockets();
+    expect(made).toHaveLength(2);
+    expect(urls[1]).toContain(`replayBytes=${MAX_REPLAY}`);
+    made[1].onopen!();
+    expect(resets).toBe(1);
+    vi.advanceTimersByTime(10_000);
+    expect(made).toHaveLength(2); // the old socket's close does not start a second reconnect
+    sock.close();
+    reconnectTerminalSockets();
+    expect(made).toHaveLength(2);
   });
 });
