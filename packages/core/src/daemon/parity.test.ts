@@ -30,7 +30,7 @@ const testBuild = (): Express => createApp({ db: database(), skipPty: true, secr
 /** What startServer builds, on a temp data dir. Nothing listens and no timer starts. */
 function productionBuild(): Express {
   const dir = tmp();
-  const d = buildDaemon({ db: database(), dataDir: dir, auth: 'gate', network: true, timers: false, bundledDir: null, pty: new NoopPTYManager(), port: 4131, home: dir });
+  const d = buildDaemon({ db: database(), dataDir: dir, auth: 'gate', network: true, timers: false, bundledDir: null, pty: new NoopPTYManager(), port: 4131 });
   daemons.push(d);
   return d.app;
 }
@@ -57,7 +57,7 @@ describe('the test build and the production build', () => {
     // The sign-in route belongs to the gate, and the test build has no gate. It is the one difference.
     expect(p.filter((r) => !t.includes(r))).toEqual(['POST /api/access/login']);
     expect(p.filter((r) => r !== 'POST /api/access/login')).toEqual(t);
-    for (const must of ['/api/usage-limits/refresh', '/api/terminals/stalls', '/accounts', '/api/whoami']) expect(t.some((r) => r.includes(must)), must).toBe(true);
+    for (const must of ['/usage-limits/refresh', '/terminals/stalls', 'accounts', '/api/whoami', '/api/access/devices']) expect(t.some((r) => r.includes(must)), must).toBe(true);
   });
 
   test('every service that production wires into SessionService is also wired in the test build', () => {
@@ -78,9 +78,10 @@ describe('the test build and the production build', () => {
     };
     const t = wired(testBuild);
     const p = wired(productionBuild);
-    // Facts of the daemon process, not wires: the port it will listen on and the home folder of its user.
-    // A test build has neither (tests/sessions/overseer-memory-spawn.test.ts covers the home; listening() sets the port).
-    const PROCESS_FACTS = ['SessionService.setDaemonPort', 'SessionService.setOverseerMemoryHome'];
+    // A fact of the daemon process, not a wire: the port that it will ask for. A test build has none, and
+    // listening() sets the real one. (startServer itself sets the home folder of the overseer memory:
+    // tests/sessions/overseer-memory-spawn.test.ts pins that line.)
+    const PROCESS_FACTS = ['SessionService.setDaemonPort'];
     expect(p.filter((n) => !t.includes(n))).toEqual(PROCESS_FACTS);
     expect(t.filter((n) => !p.includes(n))).toEqual([]);
     // The list is not empty by accident: these wires were absent from createApp before W3-A.
@@ -101,9 +102,9 @@ describe('the test build and the production build', () => {
     const b = buildDaemon({ db: database(), dataDir: tmp(), auth: 'gate', network: true, timers: false, bundledDir: null, pty: new NoopPTYManager() });
     daemons.push(a, b);
     const present = (s: object) => Object.entries(s).filter(([, v]) => v !== undefined && v !== null).map(([k]) => k).sort();
-    // The gate's own parts exist only with the gate.
-    const GATE_ONLY = ['accessGate', 'devices', 'pairCodes'];
-    expect(present(b.services).filter((k) => !GATE_ONLY.includes(k))).toEqual(present(a.services));
-    expect(present(b.services)).toEqual(expect.arrayContaining(GATE_ONLY));
+    // The gate's own parts exist only with the gate. The model assist runs a CLI or calls OpenRouter: only with the network.
+    const NOT_IN_A_TEST_BUILD = ['accessGate', 'assistRunner', 'devices', 'pairCodes'];
+    expect(present(b.services).filter((k) => !NOT_IN_A_TEST_BUILD.includes(k))).toEqual(present(a.services));
+    expect(present(b.services)).toEqual(expect.arrayContaining(NOT_IN_A_TEST_BUILD));
   });
 });

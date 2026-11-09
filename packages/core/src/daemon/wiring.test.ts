@@ -4,6 +4,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import request from 'supertest';
 import { createSign, generateKeyPairSync } from 'node:crypto';
 import { WebSocket } from 'ws';
+import fs from 'node:fs';
+import path from 'node:path';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as appState from '../db/app-state.js';
@@ -74,7 +76,9 @@ describe('the order of the request gate (auth: gate)', () => {
     const who = await request(server).get('/api/whoami').set('Host', 'localhost:3456').set('Authorization', `Bearer ${key}`);
     expect(who.body).toMatchObject({ kind: 'thread', terminalId: 't1' });
     expect((await request(server).get('/api/outbox').set('Host', 'localhost:3456').set('Authorization', `Bearer ${key}`)).status).toBe(403);
-    expect((await request(server).get('/api/whoami').set('Host', 'localhost:3456')).body).toMatchObject({ kind: 'owner' });
+    // With no credential the caller is the local program or page: `none`, which the owner routes admit.
+    expect((await request(server).get('/api/whoami').set('Host', 'localhost:3456')).body).toMatchObject({ kind: 'none' });
+    expect((await request(server).get('/api/outbox').set('Host', 'localhost:3456')).status).toBe(200);
   });
 
   test('pair codes are wired to the route and to the sign-in route', async () => {
@@ -84,7 +88,7 @@ describe('the order of the request gate (auth: gate)', () => {
     expect(code.status).toBe(200);
     expect(typeof code.body.code).toBe('string');
     lan(k);
-    const login = await request(server).post('/api/access/login').set('Host', LAN_HOST).send({ token: code.body.code });
+    const login = await request(server).post('/api/access/login').set('Host', LAN_HOST).send({ code: code.body.code });
     expect(login.status).toBe(200);
   });
 
@@ -139,15 +143,19 @@ describe('compression (W1-E)', () => {
   test('API JSON over 1 KB goes out compressed, in both builds', async () => {
     for (const auth of ['open', 'gate'] as const) {
       const k = kit({ auth });
-      const r = await request(await k.server()).get('/api/providers').set('Host', 'localhost:3456').set('Accept-Encoding', 'gzip');
+      seedThread(k);
+      const r = await request(await k.server()).get('/api/bootstrap').set('Host', 'localhost:3456').set('Accept-Encoding', 'gzip');
       expect(r.status).toBe(200);
       expect(r.headers['content-encoding'], auth).toBe('gzip');
-      const br = await request(await k.server()).get('/api/providers').set('Host', 'localhost:3456').set('Accept-Encoding', 'br');
+      expect(r.body.sessions).toHaveLength(1);
+      const br = await request(await k.server()).get('/api/bootstrap').set('Host', 'localhost:3456').set('Accept-Encoding', 'br');
       expect(br.headers['content-encoding'], auth).toBe('br');
+      // A small answer goes out as it is.
+      expect((await request(await k.server()).get('/api/providers').set('Host', 'localhost:3456').set('Accept-Encoding', 'gzip')).headers['content-encoding']).toBeUndefined();
     }
   });
 
-  test('the events and structured sockets offer permessage-deflate; the terminal socket does not', async () => {
+  test('the three sockets offer permessage-deflate (W1-E, W2-I)', async () => {
     const k = kit({ auth: 'gate' });
     const port = await k.port();
     const ext = (path: string) => new Promise<string>((resolve, reject) => {
@@ -158,7 +166,7 @@ describe('compression (W1-E)', () => {
     expect(await ext('/api/events')).toContain('permessage-deflate');
     seedThread(k);
     expect(await ext('/api/terminals/t1/structured-ws')).toContain('permessage-deflate');
-    expect(await ext('/api/terminals/t1/ws')).toBe('');
+    expect(await ext('/api/terminals/t1/ws')).toContain('permessage-deflate'); // only the scrollback replay is compressed (ws/client-wss.ts)
   });
 });
 
@@ -245,10 +253,9 @@ describe('the stall watchdog, the outbox, bootstrap and the usage refresh', () =
     const due = vi.spyOn(agentService, 'processDueRuns');
     vi.useFakeTimers();
     k.daemon.startTimers();
-    stallWatchdog.tick(); // the first sight of the thread starts its clock
-    now += 11 * 60_000;
-    vi.advanceTimersByTime(30_000);
-    expect(due).toHaveBeenCalledTimes(1);
+    // 11 minutes of 30 s ticks with no frame from the thread (one long jump would read as a sleep of the computer).
+    for (let n = 0; n < 22; n++) { now += 30_000; vi.advanceTimersByTime(30_000); }
+    expect(due).toHaveBeenCalledTimes(22);
     vi.useRealTimers();
     const stalls = await request(await k.server()).get('/api/terminals/stalls');
     expect(stalls.body).toHaveLength(1);
@@ -277,12 +284,14 @@ describe('the stall watchdog, the outbox, bootstrap and the usage refresh', () =
     expect(k.daemon.app.locals.deliveryOutbox).toBe(outbox);
     expect(k.daemon.app.locals.pendingQuestions.get('t1')).toBeFalsy();
     // No process runs for t1: the notice waits in the outbox.
-    outbox.enqueue({ kind: 'notice', targetId: 't1', body: 'A worker finished.', dedupeKey: 'k1' } as never);
+    outbox.enqueue({ kind: 'notice', targetId: 't1', body: 'A worker finished.', dedupKey: 'k1' });
     const list = await request(await k.server()).get('/api/outbox');
     expect(list.status).toBe(200);
     expect(JSON.stringify(list.body)).toContain('A worker finished.');
+    // The diagnostics route lists the delivery (no body: the route never shows a message text).
     const diag = await request(await k.server()).get('/api/terminals/t1/diagnostics');
-    expect(JSON.stringify(diag.body)).toContain('A worker finished.');
+    expect(diag.body.deliveries).toHaveLength(1);
+    expect(diag.body.deliveries[0]).toMatchObject({ kind: 'notice' });
   });
 
   test('GET /api/bootstrap gives every part, each from its own route (W2-H)', async () => {
@@ -332,26 +341,44 @@ describe('a thread through the build', () => {
     expect(k.manager.sent).toHaveLength(1);
     // The usage-limit wire, absent from createApp before W3-A: a stop from the CLI parks the thread.
     const park = vi.spyOn(k.daemon.services.usageLimits, 'park');
-    k.manager.emit('usage-limit', 't1', { resetAt: Date.now() + 60_000, raw: 'limit' });
+    k.manager.emit('usage-limit', 't1', { kind: 'usage', resetsAt: Date.now() + 3_600_000, message: 'You have hit your limit' });
     expect(park).toHaveBeenCalledWith('t1', 'claude-code', expect.anything());
+    // The park reaches the status (markPaused) and the gauge (the change listener): two more wires of the same build.
+    expect(terminalsDb.getById(k.db, 't1')!.status).toBe('scheduled');
+    expect(k.daemon.services.usageGauge.summary().paused).toHaveLength(1);
   });
 
   test('listening(port) gives the threads the address of the daemon and saves the port', () => {
     const k = kit();
+    const env = vi.spyOn(k.manager, 'setDefaultEnv');
     k.daemon.listening(4131);
     expect(appState.get(k.db, 'port')).toBe('4131');
+    // The spawn env of every thread is built again with the address.
+    expect((env.mock.calls.at(-1) as unknown as [Record<string, string>])[0].DISPATCH_API).toBe('http://127.0.0.1:4131');
     seedThread(k);
     k.daemon.services.sessionService.ensureStructuredAlive('t1');
-    const env = k.manager.spawned[0]?.opts.env ?? {};
-    expect(env.DISPATCH_PORT ?? env.DISPATCH_API).toBeTruthy();
-    expect(JSON.stringify(env)).toContain('4131');
+    const mcp = fs.readFileSync(path.join(k.dir, 'thread-t1.mcp.json'), 'utf8');
+    expect(mcp).toContain('"DISPATCH_API": "http://127.0.0.1:4131"');
+    expect(mcp).toContain('"DISPATCH_PORT": "4131"');
   });
 
-  test('before listening, no thread is told an address: a test build never points a thread at port 3456', () => {
+  test('before listening, the spawn env names no daemon address: a test build never points a thread at a daemon', () => {
     const k = kit();
+    const env = vi.spyOn(k.manager, 'setDefaultEnv');
+    k.daemon.services.refreshSpawnEnv();
+    const last = (env.mock.calls.at(-1) as unknown as [Record<string, string>])[0];
+    expect(last.DISPATCH_API).toBeUndefined();
+    expect(typeof last.PATH).toBe('string');
     seedThread(k);
     k.daemon.services.sessionService.ensureStructuredAlive('t1');
-    expect(JSON.stringify(k.manager.spawned[0]?.opts.env ?? {})).not.toContain('3456');
+    expect(fs.readFileSync(path.join(k.dir, 'thread-t1.mcp.json'), 'utf8')).not.toContain('DISPATCH_API');
+  });
+
+  test('the build with a port tells the threads that address at once, as startServer does', () => {
+    const k = kit({ port: 4131 });
+    const env = vi.spyOn(k.manager, 'setDefaultEnv');
+    k.daemon.services.refreshSpawnEnv();
+    expect((env.mock.calls.at(-1) as unknown as [Record<string, string>])[0].DISPATCH_API).toBe('http://127.0.0.1:4131');
   });
 
   test('bootRecover closes the status of a working thread whose process is gone, and delivers what waited in the outbox', async () => {
@@ -365,7 +392,8 @@ describe('a thread through the build', () => {
     const k = kit();
     seedThread(k);
     k.daemon.services.sessionService.ensureStructuredAlive('t1');
-    const key = k.daemon.services.keys.mint({ kind: 'thread', terminalId: 't1' }).key;
+    const key = k.manager.spawned[0].opts.env!.DISPATCH_AUTH; // the key that the build minted for the process
+    expect(k.daemon.services.keys.resolve(key)).toMatchObject({ kind: 'thread', terminalId: 't1' });
     expect(k.manager.isAlive('t1')).toBe(true);
     k.daemon.stop();
     expect(k.manager.isAlive('t1')).toBe(false);
