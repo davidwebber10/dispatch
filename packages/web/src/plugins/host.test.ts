@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { usePluginRegistry } from './registry';
 import { loadPlugins, reloadPlugin, applyPluginEvent, isSafeMode } from './host';
-import { installSdk, type DispatchSdk } from './sdk';
+import { installSdk, __resetDeprecationWarningsForTest, type DispatchSdk } from './sdk';
+import type { DispatchSdkV2 } from './facade';
 import type { PluginRow } from '../api/types';
 import { useUI } from '../stores/ui';
 
@@ -163,6 +164,64 @@ describe('plugin host (2026-11-07)', () => {
     useUI.setState({ view: 'plugin:a:v' });
     await loadPlugins(async () => ({ default: (d: DispatchSdk) => d.register('a', { views: [{ id: 'v', label: 'A', Component: () => null }] }) }));
     expect(useUI.getState().view).toBe('plugin:a:v');
+  });
+
+  it('a manifest with sdkVersion 2 gets the v2 object', async () => {
+    __resetDeprecationWarningsForTest();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const got: Record<string, DispatchSdkV2> = {};
+    const importer = async (url: string) => {
+      const id = /plugins\/([^/]+)\//.exec(url)![1];
+      return { default: (d: DispatchSdkV2) => { got[id] = d; d.register({ views: [{ id: 'v', label: id, Component: () => null }] }); } };
+    };
+    // `sdk: 2` is the manifest field the daemon has always sent; `sdkVersion: 2` is the name the plan gave it.
+    await reloadPlugin(row('two', { sdk: 2 }), importer);
+    await reloadPlugin(row('also-two', { sdkVersion: 2 } as never), importer);
+    for (const id of ['two', 'also-two']) {
+      const d = got[id] as unknown as Record<string, unknown>;
+      expect(d.version).toBe(2);
+      expect(d.id).toBe(id);
+      expect('api' in d).toBe(false);
+      expect('stores' in d).toBe(false);
+      expect('storage' in d).toBe(false);
+      expect(typeof (d.docs as { get: unknown }).get).toBe('function');
+    }
+    const s = usePluginRegistry.getState();
+    expect(s.views.map((v) => v.key).sort()).toEqual(['plugin:also-two:v', 'plugin:two:v']);
+    expect(s.status.two.state).toBe('ready');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a manifest with no sdk field, or sdk 1, gets the version 1 object: api and stores are there and warn on first use', async () => {
+    __resetDeprecationWarningsForTest();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const got: DispatchSdk[] = [];
+    const importer = async () => ({ default: (d: DispatchSdk) => { got.push(d); } });
+    await reloadPlugin(row('legacy'), importer);
+    await reloadPlugin(row('legacy-one', { sdk: 1 }), importer);
+    expect(got.map((d) => d.version)).toEqual(['1.0', '1.0']);
+    expect(got.map((d) => d.id)).toEqual(['legacy', 'legacy-one']);
+    expect(warn).not.toHaveBeenCalled();
+    expect(typeof got[0].api.listPlugins).toBe('function');
+    expect(typeof got[0].stores.useProjects).toBe('function');
+    void got[0].api;
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toContain('legacy');
+    warn.mockRestore();
+  });
+
+  it("a v2 bundle's event listeners and store listeners are dropped on reload", async () => {
+    const seen: string[] = [];
+    const importer = async () => ({ default: (d: DispatchSdkV2) => { d.events.on('thread:prompt', () => seen.push('e')); d.projects.onChange(() => seen.push('p')); } });
+    const m = row('p2', { sdk: 2 });
+    await reloadPlugin(m, importer);
+    await reloadPlugin(m, importer);
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't' } as never);
+    expect(seen).toEqual(['e']);
+    usePluginRegistry.getState().unregister('p2');
+    applyPluginEvent({ type: 'thread:prompt', terminalId: 't' } as never);
+    expect(seen).toEqual(['e']);
   });
 
   it('installSdk puts one object on window.dispatch and keeps it across calls', () => {
