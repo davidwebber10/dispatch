@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { LimitSnapshots } from './snapshot.js';
-import { parseClaudeUsage, parseClaudeResets, limitKey, createClaudeUsageReader, readClaudeToken, nextReadAfter, USAGE_READ_URL as USAGE_URL, PROFILE_URL } from './claude-usage.js';
+import { parseClaudeUsage, parseClaudeResets, limitKey, createClaudeUsageReader, readClaudeToken, nextReadAfter, anthropicBase, USAGE_READ_URL as USAGE_URL, PROFILE_URL } from './claude-usage.js';
 
 // The shape api.anthropic.com/api/oauth/usage answered on 2026-11-06 (figures shortened).
 const BODY = {
@@ -239,5 +239,16 @@ describe('no code path refreshes or rewrites a Claude credential (W1-H)', () => 
     expect(await read('cli')).toEqual({ ok: false, reason: 'unauthorized', status: 401 });
     expect(seen).toEqual([{ url: USAGE_URL, method: 'GET' }]);
     expect(tokenSource).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the stand-in endpoint for a manual check (W1-H)', () => {
+  it('only a plain loopback origin replaces api.anthropic.com: no env value sends a token off the machine', () => {
+    expect(anthropicBase({})).toBe('https://api.anthropic.com');
+    expect(anthropicBase({ DISPATCH_TEST_ANTHROPIC_BASE: 'http://127.0.0.1:4119' })).toBe('http://127.0.0.1:4119');
+    expect(anthropicBase({ DISPATCH_TEST_ANTHROPIC_BASE: 'http://localhost:4119' })).toBe('http://localhost:4119');
+    for (const bad of ['https://evil.example', 'http://evil.example:80', 'http://127.0.0.1:4119@evil.example', 'http://127.0.0.1:4119/x', 'http://127.0.0.1.evil.example:80', 'http://localhost:4119.evil.example', ''])
+      expect(anthropicBase({ DISPATCH_TEST_ANTHROPIC_BASE: bad }), bad).toBe('https://api.anthropic.com');
+    expect(USAGE_URL).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1'); // the test run itself uses the real name
   });
 });

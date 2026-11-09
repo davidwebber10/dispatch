@@ -22,14 +22,23 @@ import { execFile } from 'child_process';
 import type { LimitSnapshots, LimitWindows, ProviderExtras } from './snapshot.js';
 import type { ResetCredits, ResetCredit } from './codex-poll.js';
 
-export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+/**
+ * Where the reads go. Always api.anthropic.com, except for a manual check against a stand-in on this
+ * machine (W1-H): `DISPATCH_TEST_ANTHROPIC_BASE` is taken only when it is a plain loopback origin
+ * (`http://127.0.0.1:<port>` or `http://localhost:<port>`), so no env value can send a token off the machine.
+ */
+export function anthropicBase(env: NodeJS.ProcessEnv = process.env): string {
+  const v = env.DISPATCH_TEST_ANTHROPIC_BASE ?? '';
+  return /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}$/.test(v) ? v : 'https://api.anthropic.com';
+}
+export const USAGE_URL = `${anthropicBase()}/api/oauth/usage`;
 /**
  * The read Dispatch makes (2026-11-09): `cedar_ember=1` adds the limit-reset block (the Fable launch
  * resets) to the same answer, every window still in it. Anthropic offers the resets to Claude Code
  * only: any other User-Agent is answered `eligible: false, ineligible_reason: "surface"`.
  */
 export const USAGE_READ_URL = `${USAGE_URL}?cedar_ember=1`;
-export const PROFILE_URL = 'https://api.anthropic.com/api/oauth/profile';
+export const PROFILE_URL = `${anthropicBase()}/api/oauth/profile`;
 const USER_AGENT = 'claude-cli/2.1.321 (external, cli)';
 const HEADERS = { 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01', Accept: 'application/json', 'User-Agent': USER_AGENT };
 const TIMEOUT_MS = 15_000;
