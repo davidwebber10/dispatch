@@ -77,7 +77,11 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
  * chip is one button. `only` (an open thread, 2026-11-07) keeps the ring of that thread's account
  * alone; a thread whose tool reports no limits shows no chip.
  */
-export function UsageChip({ variant, only, hideAll }: { variant: 'rail' | 'phone'; only?: { provider: string; accountId: string; model?: string | null } | null; hideAll?: boolean }) {
+export function UsageChip({ variant, only, hideAll, current }: {
+  variant: 'rail' | 'phone'; only?: { provider: string; accountId: string; model?: string | null } | null; hideAll?: boolean;
+  /** The open thread's account (desktop rail, 2026-11-09): every ring stays, and that one is marked "This thread". */
+  current?: { provider: string; accountId: string } | null;
+}) {
   const summary = useUsageLimits((s) => s.summary);
   const now = useNow();
   const [open, setOpen] = useState(false);
@@ -96,7 +100,9 @@ export function UsageChip({ variant, only, hideAll }: { variant: 'rail' | 'phone
   if (!summary || rings.length === 0 || (hideAll && !only)) return null;
   const tone = chipTone(rings, summary.warnPercent);
   const color = TONE_COLOR[tone];
-  const title = `Usage. ${rings.map((r) => r.title).join('. ')}`;
+  const isCurrent = (r: ChipRing) => !!current && r.provider === current.provider && (r.accountId ?? 'cli') === current.accountId;
+  const mine = rings.find(isCurrent);
+  const title = `Usage. ${mine ? `This thread uses ${mine.name}. ` : ''}${rings.map((r) => r.title).join('. ')}`;
 
   if (variant === 'phone') {
     return (
@@ -116,12 +122,18 @@ export function UsageChip({ variant, only, hideAll }: { variant: 'rail' | 'phone
     <div ref={wrap} style={{ position: 'relative' }}>
       <button type="button" data-testid="usage-chip" data-tone={tone} aria-label={title} title={title} aria-expanded={open} onClick={() => setOpen((o) => !o)}
         style={{ width: 52, padding: '6px 0', borderRadius: 'var(--radius-md)', border: '1px solid transparent', background: open ? 'var(--color-elevated)' : 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        {rings.map((r) => <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
+        {rings.map((r) => isCurrent(r) ? (
+          <span key={`${r.provider}|${r.accountId}`} data-testid="usage-ring-current"
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, width: 46, padding: '5px 0 4px', borderRadius: 'var(--radius-md)', border: '1px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)' }}>
+            <ProviderRing ring={r} size={30} />
+            <span style={{ font: '600 7px var(--font-mono)', lineHeight: 1.15, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--color-accent)', textAlign: 'center' }}>{'This '}<br />thread</span>
+          </span>
+        ) : <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
       </button>
       {open && (
         <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Usage</div>
-          <UsageRings summary={summary} now={now} current={only} />
+          <UsageRings summary={summary} now={now} current={only ?? current} />
         </div>
       )}
     </div>

@@ -147,3 +147,34 @@ describe('UsageChip', () => {
     expect(screen.getByTestId('usage-chip')).toBeInTheDocument();
   });
 });
+
+describe('rail: the open thread\'s account (2026-11-09)', () => {
+  const two = () => summary(0, { providers: [
+    { provider: 'claude-code', accountId: 'work', label: 'Work', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 10, resetsAt: Date.now() + H } } },
+    { provider: 'claude-code', accountId: 'home', label: 'Home', asOf: Date.now() - 60_000, windows: { five_hour: { usedPercent: 30, resetsAt: Date.now() + H } } },
+  ] as never });
+
+  it('marks the ring of the current thread\'s account with THIS THREAD, and only that ring', () => {
+    useUsageLimits.setState({ summary: two() });
+    render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    expect(screen.getAllByTestId('usage-ring')).toHaveLength(2); // every account still shows
+    const marks = screen.getAllByTestId('usage-ring-current');
+    expect(marks).toHaveLength(1);
+    expect(marks[0].querySelector('[data-testid="usage-ring"]')!.getAttribute('data-account')).toBe('home');
+    expect(marks[0]).toHaveTextContent('This thread');
+    expect(screen.getByTestId('usage-chip').getAttribute('aria-label')).toContain('This thread uses Claude · Home');
+  });
+
+  it('the popover marks the same account', () => {
+    useUsageLimits.setState({ summary: two() });
+    render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    fireEvent.click(screen.getByTestId('usage-chip'));
+    expect(screen.getByRole('region', { name: 'Claude · Home' }).getAttribute('data-current')).toBe('true');
+  });
+
+  it('no open thread: no mark', () => {
+    useUsageLimits.setState({ summary: two() });
+    render(<UsageChip variant="rail" current={null} />);
+    expect(screen.queryByTestId('usage-ring-current')).toBeNull();
+  });
+});

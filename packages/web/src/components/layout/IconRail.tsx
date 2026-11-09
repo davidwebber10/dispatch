@@ -8,6 +8,8 @@ import { useShownStatus } from '../../stores/connection';
 import { useServers, currentLabel } from '../../stores/servers';
 import { useUI, type View } from '../../stores/ui';
 import { UsageChip } from './UsageChip';
+import { useTabs, isDispatchTab, findTerminal } from '../../stores/tabs';
+import { useAccounts, threadAccount } from '../../stores/accounts';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
@@ -77,6 +79,13 @@ export function IconRail() {
   // The first item is named after the Projects ⇄ Threads switch (2026-11-07).
   const projectsView = useProjectsView((s) => s.view);
   const badges = usePluginRegistry((s) => s.badges);
+  // The open thread's account (2026-11-09): its usage ring is marked "This thread".
+  const activeId = useTabs((s) => s.activeTabId);
+  const activeTab = useTabs((s) => (activeId && !isDispatchTab(activeId) ? findTerminal(s.byProject, activeId) : undefined));
+  const accountsView = useAccounts((s) => s.view);
+  useEffect(() => { if (activeTab) void useAccounts.getState().load(); }, [activeTab]);
+  const usageCurrent = view === 'workspace' && activeTab
+    ? { provider: activeTab.type, accountId: threadAccount(accountsView, activeTab)?.id ?? 'cli' } : null;
 
   // ⌘, — the platform-standard preferences shortcut, now that Settings is a page.
   useEffect(() => {
@@ -106,7 +115,7 @@ export function IconRail() {
       ))}
       <div style={{ flex: 1 }} />
       {/* Account usage (#127): above the connection dot, hidden until a provider reports. */}
-      <UsageChip variant="rail" />
+      <UsageChip variant="rail" current={usageCurrent} />
       <div title={conn.label} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, padding: '6px 0 2px' }}>
         <span style={{
           width: 6, height: 6, borderRadius: '50%', background: conn.color,
