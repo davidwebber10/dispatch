@@ -35,6 +35,12 @@ import { killWithGrace } from '../platform/kill-grace.js';
 
 const MAX_EVENTS = 5000;
 
+/**
+ * The app-server ANSWERED a request with an error: a refusal (an effort or a model it does not take). Distinct from a
+ * transport failure ('app-server exited', 'not connected', a timeout), which says nothing about the request's content.
+ */
+export class CodexRpcError extends Error {}
+
 /** A JSON-RPC message id (client requests use our counter; server requests use the server's). */
 type RpcId = string | number;
 
@@ -98,7 +104,7 @@ class CodexConnection extends EventEmitter {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error?.message || 'rpc error'));
+      if (msg.error) p.reject(new CodexRpcError(msg.error?.message || 'rpc error'));
       else p.resolve(msg.result);
       return;
     }
@@ -721,6 +727,10 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    * neither, both are dropped.
    */
   private dropRefusedPick(session: CodexSession, model: string | undefined, effort: string | undefined, err: unknown): void {
+    // Only an ANSWER of "no" is a refusal. A dead app-server or a timeout says nothing about the picks, and a rejection that
+    // reaches a session that is no longer the current one (a replacement took its place) must not touch the replacement.
+    if (!(err instanceof CodexRpcError)) return;
+    if (this.sessions.get(session.terminalId) !== session) return;
     const msg = err instanceof Error ? err.message : String(err);
     const effortHit = !!effort && /effort|reasoning/i.test(msg);
     const modelHit = !!model && /model/i.test(msg);
@@ -738,6 +748,9 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
     const what = [dropModel ? `model ${model}` : '', dropEffort ? `effort ${effort}` : ''].filter(Boolean).join(' and ');
     this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message: `Codex refused the ${what}: ${msg}. It will not be sent again.` });
+    // The chip shows the newest model frame, which beats the saved config: tell connected clients (and the replay) which model
+    // the thread runs again. No `switched`, so no "Model switched" line.
+    if (info.restoredModel) this.pushEvent(session, { type: 'system', subtype: 'model', model: info.restoredModel });
     this.emit('settings-refused', session.terminalId, info);
   }
 

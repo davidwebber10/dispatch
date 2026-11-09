@@ -129,7 +129,7 @@ class GrokConnection extends EventEmitter {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (timeoutMs !== undefined) {
-        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`The agent did not answer ${method} in time`)); }, timeoutMs);
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`The agent did not answer ${method} in time. It may still take it: check the model shown.`)); }, timeoutMs);
         timer.unref?.();
         this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
       } else {
@@ -313,22 +313,25 @@ export class GrokStructuredSessionManager extends EventEmitter implements IStruc
   async setModel(terminalId: string, model: string): Promise<string> {
     const session = this.sessions.get(terminalId);
     if (!session) throw new Error('This thread is not running');
-    // An agent that never gets ready, or never answers the switch, must not hold the thread's settings lock for ever.
+    // An agent that never gets ready, or never answers the switch, must not hold the thread's settings lock for ever. One
+    // deadline covers both waits: the lock is held for at most one budget, not one for readiness and another for the answer.
+    const deadline = Date.now() + this.switchTimeoutMs;
+    const left = () => Math.max(1, deadline - Date.now());
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         session.ready,
-        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('The agent was not ready in time')), this.switchTimeoutMs); timer.unref?.(); }),
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error('The agent was not ready in time')), left()); timer.unref?.(); }),
       ]);
     } finally { clearTimeout(timer); }
     if (!session.sessionId) throw new Error('This thread has no session yet');
     let resolved = model;
     if (session.modelVia === 'config') {
-      const res = await session.conn.request('session/set_config_option', { sessionId: session.sessionId, configId: 'model', value: model }, this.switchTimeoutMs);
+      const res = await session.conn.request('session/set_config_option', { sessionId: session.sessionId, configId: 'model', value: model }, left());
       const now = Array.isArray(res?.configOptions) ? res.configOptions.find((o: any) => o?.id === 'model')?.currentValue : undefined;
       if (typeof now === 'string' && now) resolved = now;
     } else {
-      const res = await session.conn.request('session/set_model', { sessionId: session.sessionId, modelId: model }, this.switchTimeoutMs);
+      const res = await session.conn.request('session/set_model', { sessionId: session.sessionId, modelId: model }, left());
       const ok = res?._meta?.model?.Ok;
       if (typeof ok === 'string' && ok) resolved = ok;
     }

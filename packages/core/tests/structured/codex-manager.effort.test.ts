@@ -128,12 +128,70 @@ it('a model the app-server refuses on turn/start goes back to the model before i
   expect(sent[sent.length - 1].params).not.toHaveProperty('model');
 });
 
-it('a refusal that names neither drops both, a good pick is kept, and a turn without picks is untouched', async () => {
+it('a refusal that names neither the effort nor the model drops both picks', async () => {
+  await start({ model: 'gpt-6-luna' }, { CODEX_FAKE_TURN_REJECT: 'generic' });
+  const seen = refusals();
+  await m.setModel('t1', 'bad-model');
+  await m.setEffort('t1', 'bad');
+  const f = failed('t1');
+  m.sendMessage('t1', 'first');            // turn/start carries both; the app-server says only "invalid params"
+  await f;
+  expect(seen).toEqual([{ effort: 'bad', model: 'bad-model', restoredModel: 'gpt-6-luna' }]);
+  expect(m.getModel('t1')).toBe('gpt-6-luna');
+  await turn('second');
+  const sent = logged('turn/start');
+  expect(sent[sent.length - 1].params).not.toHaveProperty('effort');
+  expect(sent[sent.length - 1].params).not.toHaveProperty('model');
+});
+
+it('a good pick is kept, and a turn without picks is untouched', async () => {
   await start({});
   const seen = refusals();
   await m.setEffort('t1', 'high');
-  await turn('one');                       // accepted: nothing is dropped
+  await turn('one');
   await turn('two');
   expect(seen).toEqual([]);
   expect(logged('turn/start')[1].params.effort).toBe('high');
+});
+
+// ---- Round 5 ----
+it('a transport failure (the app-server dies on the turn) is not a refusal: the saved effort is kept (round 5, item 1)', async () => {
+  await start({}, { CODEX_FAKE_EXIT_ON_TURN: '1' });
+  const seen = refusals();
+  const session = (m as any).sessions.get('t1');
+  await m.setEffort('t1', 'high');
+  const f = failed('t1');
+  m.sendMessage('t1', 'first');
+  await f;
+  expect(seen).toEqual([]);
+  expect(session.pickedEffort).toBe('high');
+  expect(m.getEvents('t1').some((e: any) => e.subtype === 'settings_refused')).toBe(false);
+});
+
+it('a late rejection that reaches a session that is no longer current changes nothing: no notice, no event for the replacement (round 5, item 1)', async () => {
+  await start({ model: 'gpt-6-luna' });
+  const seen = refusals();
+  const old = (m as any).sessions.get('t1');
+  old.pickedEffort = 'bad'; old.nextTurnModel = 'bad-model'; old.modelBeforePick = 'gpt-6-luna';
+  m.kill('t1');
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), effort: 'bad', env: { CODEX_FAKE_LOG: logPath } });   // the replacement holds the same value
+  const replacement = (m as any).sessions.get('t1');
+  const { CodexRpcError } = await import('../../src/structured/codex-manager.js');
+  (m as any).dropRefusedPick(old, 'bad-model', 'bad', new CodexRpcError('unsupported reasoning effort: bad'));
+  expect(seen).toEqual([]);
+  expect(replacement.pickedEffort).toBe('bad');
+});
+
+it('a refused model puts the chip back too: the restored model is sent to connected clients as a model frame, without a "switched" line (round 5, item 2)', async () => {
+  await start({ model: 'gpt-6-luna' }, { CODEX_FAKE_TURN_REJECT: 'model' });
+  const frames: any[] = [];
+  m.on('event', (_id: string, e: any) => { if (e.type === 'system' && e.subtype === 'model') frames.push(e); });
+  await m.setModel('t1', 'bad-model');
+  frames.length = 0;                       // only what the refusal sends
+  const f = failed('t1');
+  m.sendMessage('t1', 'first');
+  await f;
+  expect(frames).toEqual([{ type: 'system', subtype: 'model', model: 'gpt-6-luna' }]);
+  const ring = m.getEvents('t1').filter((e: any) => e.type === 'system' && e.subtype === 'model');
+  expect(ring[ring.length - 1].model).toBe('gpt-6-luna');   // a reconnecting client replays the restored model last
 });

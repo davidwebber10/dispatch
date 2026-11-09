@@ -117,6 +117,13 @@ rl.on('line', (line) => {
     logRequest('turn/start', msg.params);
     // CODEX_FAKE_TURN_REJECT=effort|model|both: turn/start refuses a changed effort or model, like the real app-server does
     // for a level or a model it does not take (round 4 test).
+    // CODEX_FAKE_EXIT_ON_TURN=1: the app-server dies on a turn/start (a transport failure, not a refusal).
+    if (process.env.CODEX_FAKE_EXIT_ON_TURN) process.exit(1);
+    // CODEX_FAKE_TURN_REJECT=generic: refuses a bad pick with a message that names neither the effort nor the model.
+    if (process.env.CODEX_FAKE_TURN_REJECT === 'generic' && (msg.params?.effort === 'bad' || msg.params?.model === 'bad-model')) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'invalid params' } });
+      return;
+    }
     const rej = process.env.CODEX_FAKE_TURN_REJECT;
     if (rej && ((rej !== 'model' && msg.params?.effort === 'bad') || (rej !== 'effort' && msg.params?.model === 'bad-model'))) {
       const what = msg.params?.effort === 'bad' && rej !== 'model' ? 'unsupported reasoning effort: bad' : 'unknown model: bad-model';

@@ -2426,6 +2426,7 @@ export class SessionService {
     }
 
     let resolved = model;
+    let replaced = false;
     if (structured && manager?.isAlive(terminalId) && manager.setModel) {
       const exit = this.watchExit(manager, terminalId);
       try {
@@ -2434,7 +2435,8 @@ export class SessionService {
       } catch (e) {
         // The thread ended before it answered (even if a new process already took its place): nothing was refused, so the
         // pick is kept and the next start uses it. A refusal is an answer from a process that is still the same one.
-        if (!exit.happened() && manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'model', (e as Error)?.message || 'The harness refused the model');
+        if (exit.happened()) replaced = true;
+        else if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'model', (e as Error)?.message || 'The harness refused the model');
       } finally { exit.off(); }
     }
     // The new model's default effort is sent so the thread is not left on the old model's level, but it is not the owner's
@@ -2444,6 +2446,15 @@ export class SessionService {
       const cfg = this.configOf(terminalId);
       delete cfg.effort; delete cfg.effortSetAt;
       terminalsDb.updateConfig(this.db, terminalId, cfg);
+    }
+    // A replacement process may already be running, started from the config as it was before this pick: it runs the old value
+    // and nothing else would tell it. Apply the saved pick to it now (and take the save back if it refuses).
+    if (replaced && manager?.isAlive(terminalId) && manager.setModel) {
+      const target = manager;
+      await this.reapplyToReplacement(manager, terminalId, 'model', async () => {
+        resolved = await target.setModel!(terminalId, model);
+        if (effortNow) await target.setEffort?.(terminalId, effortNow);
+      }, { model: config.model, modelSetAt: config.modelSetAt, effort: config.effort, effortSetAt: config.effortSetAt });
     }
     return {
       model: resolved, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!),
@@ -2486,17 +2497,46 @@ export class SessionService {
     }
     const bad = validateEffort(terminal.type, effort, { codexEfforts, codexModel });
     if (bad) throw transportError(terminal.type === 'claude-code' || terminal.type === 'codex' ? 400 : 409, bad);
+    let replaced = false;
     if (structured && manager?.isAlive(terminalId)) {
       if (!manager.setEffort) throw transportError(409, 'Not yet available for this agent.');
       const exit = this.watchExit(manager, terminalId);
       try {
         await manager.setEffort(terminalId, effort);
       } catch (e) {
-        if (!exit.happened() && manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
+        if (exit.happened()) replaced = true;
+        else if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
       } finally { exit.off(); }
     }
     this.mergeConfig(terminalId, { effort, effortSetAt: Date.now() });
+    // A replacement started from the config before this pick runs the old effort: apply the saved pick to it (see setThreadModelLocked).
+    if (replaced && manager?.isAlive(terminalId) && manager.setEffort) {
+      const target = manager;
+      await this.reapplyToReplacement(manager, terminalId, 'effort', () => target.setEffort!(terminalId, effort), { effort: config.effort, effortSetAt: config.effortSetAt });
+    }
     return { effort, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!) };
+  }
+
+  /**
+   * The process that was asked died and a replacement is running: apply the (already saved) pick to the replacement. If the
+   * replacement refuses it, that IS a refusal: the save is taken back, the thread says so. If it ends too, the pick stays
+   * saved for the start after it.
+   */
+  private async reapplyToReplacement(
+    manager: import('../structured/manager.js').IStructuredManager,
+    terminalId: string,
+    what: 'model' | 'effort',
+    apply: () => Promise<unknown>,
+    restore: Record<string, unknown>,
+  ): Promise<void> {
+    const exit = this.watchExit(manager, terminalId);
+    try {
+      await apply();
+    } catch (e) {
+      if (exit.happened() || !manager.isAlive(terminalId)) return;
+      this.mergeConfig(terminalId, restore);
+      this.refuse(manager, terminalId, what, (e as Error)?.message || `The harness refused the ${what}`);
+    } finally { exit.off(); }
   }
 
   /**

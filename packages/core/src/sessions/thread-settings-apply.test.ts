@@ -29,6 +29,8 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
   live = new Set<string>();
   opts: any[] = [];
   models = new Map<string, string>();
+  /** What each thread's process runs for effort (set by setEffort), like `models` for the model. */
+  effortOf = new Map<string, string>();
   calls: Array<{ kind: 'model' | 'effort'; value: string }> = [];
   notices: string[] = [];
   script: Array<Error | (() => Promise<unknown>) | null> = [];
@@ -55,7 +57,7 @@ class FakeStructured extends EventEmitter implements IStructuredManager {
     if (typeof n === 'function') await n();
   }
   async setModel(id: string, model: string) { this.calls.push({ kind: 'model', value: model }); await this.next(); this.models.set(id, model); return model; }
-  async setEffort(_id: string, effort: string) { this.calls.push({ kind: 'effort', value: effort }); await this.next(); }
+  async setEffort(id: string, effort: string) { this.calls.push({ kind: 'effort', value: effort }); await this.next(); this.effortOf.set(id, effort); }
   postNotice(_id: string, message: string) { this.notices.push(message); }
   modelEfforts() { return this.efforts; }
   modelDefaultEfforts() { return this.defaults; }
@@ -493,20 +495,41 @@ describe('a change that waits for the Codex model list is checked again afterwar
 });
 
 describe('exit during a change (round 4: the reviewers disagreed)', () => {
-  it('the thread stops and a replacement process is already running when the answer comes back: still a stop, the pick is kept, no notice', async () => {
+  it('the thread stops and a replacement process is already running when the answer comes back: the pick is kept AND applied to the replacement (round 5, item 3)', async () => {
     seed('t1', { config: { model: 'sonnet' } });
+    claude.models.set('t1', 'sonnet');                 // the replacement was started from the config before the pick
     claude.script = [async () => { claude.kill('t1'); claude.live.add('t1'); throw new Error('The thread stopped'); }]; // exit, then a new spawn
     await svc.setThreadModel('t1', 'opus');
     expect(cfg('t1').model).toBe('opus');
     expect(claude.notices).toEqual([]);
+    expect(claude.models.get('t1')).toBe('opus');       // what the replacement RUNS, not only what is saved
+    expect(claude.calls.map((c) => c.value)).toEqual(['opus', 'opus']);
   });
 
   it('the same for an effort', async () => {
     seed('t1', { config: { effort: 'low' } });
+    claude.effortOf.set('t1', 'low');
     claude.script = [async () => { claude.kill('t1'); claude.live.add('t1'); throw new Error('The thread stopped'); }];
     await svc.setThreadEffort('t1', 'max');
     expect(cfg('t1').effort).toBe('max');
     expect(claude.notices).toEqual([]);
+    expect(claude.effortOf.get('t1')).toBe('max');
+  });
+
+  it('a replacement that refuses the pick is a refusal: a notice, the old values stay, 400', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.script = [async () => { claude.kill('t1'); claude.live.add('t1'); throw new Error('The thread stopped'); }, new Error('Model not found')];
+    await expect(svc.setThreadModel('t1', 'opus')).rejects.toMatchObject({ status: 400, message: 'Model not found' });
+    expect(claude.notices).toEqual(['Could not change the model: Model not found']);
+    expect(cfg('t1').model).toBe('sonnet');
+  });
+
+  it('a thread that is gone for good (no replacement) just keeps the pick for its next start', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.script = [async () => { claude.kill('t1'); throw new Error('The thread stopped'); }];
+    await svc.setThreadModel('t1', 'opus');
+    expect(cfg('t1').model).toBe('opus');
+    expect(claude.calls).toHaveLength(1);
   });
 
   it('a real refusal while the same process lives is still a refusal', async () => {
