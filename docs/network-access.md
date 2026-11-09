@@ -176,24 +176,6 @@ Dispatch ends all keys, and the threads that come back get new ones.
   program that works around it on purpose.
 - **See the counts** with `dispatch status`. The refusals also log one rate-limited line,
   `[keys] refused keyless caller METHOD ROUTE`.
-||||||| 778d03a0
-  `403`. Examples are changing a thread's settings or role. Your browser, the `dispatch` CLI and
-  your own scripts are not affected.
-- **Calls with no credential still work in this release.** From this computer they are allowed
-  as before, and Dispatch counts them. A later release will refuse them.
-- **See the counts** with `dispatch status`. A count that stays at zero means nothing relies on
-  the old behavior.
-- **Scripts.** `dispatch api METHOD PATH` makes one call to the daemon on this computer with the
-  right credential. The token never appears in the command line. To send a body, use
-  `--body FILE` or `--body -` for standard input. For example:
-  `dispatch api GET /api/sessions`.
-- **Overseers.** The overseer of a project can read the threads of every project. It can also
-  message the overseer of another project, at most 10 messages per hour to the same overseer.
-  Each such message starts with a sender line that names the sending project and thread. An
-  overseer cannot start, archive, answer or spawn in another project. Other threads cannot reach
-  across projects at all.
-- **Chat and workers are unchanged.** Chat turns and worker threads keep working as before,
-  inside their own project.
 
 ## Files
 
