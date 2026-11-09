@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(() => { repo.cleanup(); fs.rmSync(outside, { recursive: true, force: true }); });
 
 const roots = () => ({ home: path.join(repo.dir, 'no-home'), dataDir: path.join(repo.dir, 'no-data') });
-const staged = () => repo.git('diff', '--cached', '--name-only').trim().split('\n').filter(Boolean).sort();
+const staged = () => repo.git('diff', '--cached', '--no-renames', '--name-only').trim().split('\n').filter(Boolean).sort();
 
 /** Every kind of change at once. `b.txt` and `also-untracked.txt` are the unrelated work that must survive. */
 function dirty() {
@@ -152,7 +152,7 @@ describe('discardPaths', () => {
     expect(fs.readFileSync(path.join(outside, 'keep.txt'), 'utf8')).toBe('outside the project\n');
   });
 
-  it('refuses a working directory that is itself reached through a different real path only when the path leaves it', async () => {
+  it('a working directory that is a link to the repository: the real paths are compared, so a normal file works', async () => {
     // The thread's directory is a link to the repository: the real paths are compared, so a normal file works.
     const alias = `${repo.dir}.alias`;
     fs.symlinkSync(repo.dir, alias);
@@ -160,7 +160,7 @@ describe('discardPaths', () => {
       repo.write('a.txt', 'edited\n');
       await discardPaths(alias, ['a.txt'], roots());
       expect(repo.read('a.txt')).toBe('one\ntwo\nthree\n');
-    } finally { fs.rmSync(alias, { force: true }); }
+    } finally { fs.unlinkSync(alias); }
   });
 
   it('refuses a credentials path', async () => {
@@ -189,5 +189,25 @@ describe('discardPaths', () => {
     await discardPaths(sub, ['c.txt'], roots());
     expect(repo.read('dir/c.txt')).toBe('sea\n');
     expect(repo.read('a.txt')).toBe('edited\n');
+  });
+});
+
+describe('a repository cannot make the review run a command', () => {
+  it('diff, approve and discard do not run core.fsmonitor', async () => {
+    const { threadDiff } = await import('./diff.js');
+    const marker = `${repo.dir}.marker`;
+    const hook = `${repo.dir}.hook.sh`;
+    fs.writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker}"\nexit 1\n`, { mode: 0o755 });
+    try {
+      repo.git('config', 'core.fsmonitor', hook);
+      repo.write('a.txt', 'edited\n');
+      repo.write('b.txt', 'edited\n');
+      fs.rmSync(marker, { force: true });
+      expect((await threadDiff(repo.dir)).files.map((f) => f.path)).toEqual(['a.txt', 'b.txt']);
+      await approvePaths(repo.dir, ['a.txt'], roots());
+      await discardPaths(repo.dir, ['b.txt'], roots());
+      expect(repo.read('b.txt')).toBe('bee\n');
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally { fs.rmSync(marker, { force: true }); fs.rmSync(hook, { force: true }); }
   });
 });
