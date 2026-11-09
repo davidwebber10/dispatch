@@ -303,7 +303,10 @@ describe('StatusService onActivity callback (feeds ThreadAutoNamer)', () => {
 describe('StatusService onWatchStatus callback (feeds WatchDispatcher)', () => {
   it('a status edge fires the onWatchStatus callback with the terminal id and normalized status', () => {
     const onWatchStatus = vi.fn();
-    new StatusService(db, broadcaster, undefined, onWatchStatus).ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
+    const s = new StatusService(db, broadcaster, undefined, onWatchStatus);
+    // W1-D: the callback fires on a status CHANGE, so the turn starts first (a new row is already 'waiting').
+    s.ingest('claude', 'term', { hook_event_name: 'UserPromptSubmit', session_id: 'sid-1' });
+    s.ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
     expect(onWatchStatus).toHaveBeenCalledWith('term', 'idle');
   });
 
@@ -444,5 +447,61 @@ describe('StatusService process exit and activity', () => {
     db.prepare("UPDATE terminals SET last_activity_at='2026-01-01T00:00:00.000Z' WHERE id='term'").run();
     svc.markExited('term', 1);
     expect(terminalsDb.getById(db, 'term')!.last_activity_at).not.toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+// W1-D item 4: a watch fires on a status CHANGE. Claude sends a second idle notification about
+// 60 s after Stop; before the fix that second idle burned a one-shot watch and woke a watcher twice.
+describe('StatusService watch hook fires on a change only', () => {
+  const setup = () => {
+    const onWatchStatus = vi.fn();
+    const service = new StatusService(db, broadcaster, undefined, onWatchStatus);
+    return { service, onWatchStatus, calls: () => onWatchStatus.mock.calls.map((c) => c[1]) };
+  };
+
+  it('a repeated idle status does not call onWatchStatus again', () => {
+    const { service, calls } = setup();
+    service.markWorking('term');
+    service.markIdle('term');
+    service.markIdle('term'); // the late second idle notification
+    service.ingest('claude', 'term', { hook_event_name: 'Notification', notification_type: 'idle_prompt' });
+    expect(calls().filter((s) => s === 'idle')).toEqual(['idle']);
+  });
+
+  it('working then idle calls it once', () => {
+    const { service, onWatchStatus, calls } = setup();
+    service.markWorking('term');
+    service.markIdle('term');
+    expect(calls()).toEqual(['working', 'idle']);
+    expect(onWatchStatus).toHaveBeenLastCalledWith('term', 'idle');
+  });
+
+  it('each new turn fires again: idle, working, idle is two idle calls', () => {
+    const { service, calls } = setup();
+    service.markWorking('term');
+    service.markIdle('term');
+    service.markWorking('term');
+    service.markIdle('term');
+    expect(calls()).toEqual(['working', 'idle', 'working', 'idle']);
+  });
+
+  it('a repeated needs_input or error does not call it again, a change between them does', () => {
+    const { service, calls } = setup();
+    service.markWorking('term');
+    service.markNeedsInput('term');
+    service.markNeedsInput('term');
+    service.markFailed('term');
+    service.markFailed('term');
+    expect(calls()).toEqual(['working', 'needs_input', 'error']);
+  });
+
+  it('a repeated idle still records the status and its broadcast (only the watch hook is skipped)', () => {
+    const { service } = setup();
+    service.markWorking('term');
+    service.markIdle('term');
+    const before = statusEvents().length;
+    service.markIdle('term');
+    expect(statusEvents().length).toBe(before + 1);
+    expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
   });
 });
