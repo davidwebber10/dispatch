@@ -480,3 +480,141 @@ describe('ProjectSidebar render counts on a status event (W1-F)', () => {
     expect(rowRenders).toBeLessThanOrEqual(events);             // at most the one row
   });
 });
+
+/* W2-F (2026-11-09): the attention queue in the navigation. A filter in the Threads list and one
+   "Needs you" section above the projects. It is a list: a row opens the thread. It is never a strip
+   in a thread and it has no Answer button (lib/noAskStrip.test.ts). */
+describe('the attention queue in the sidebar (W2-F)', () => {
+  const th = (id: string, sessionId: string, label: string, status: string, lastActivityAt: string, over: Record<string, unknown> = {}) =>
+    ({ id, sessionId, type: 'claude-code', label, status, config: {}, createdAt: lastActivityAt, lastActivityAt, archivedAt: null, ...over }) as any;
+  beforeEach(async () => {
+    localStorage.clear();
+    useProjectsView.setState({ view: 'projects' });
+    useProjects.setState({ sessions: [{ id: 's1', name: 'alpha', workingDir: '/a', status: 'waiting' } as any, { id: 's2', name: 'beta', workingDir: '/b', status: 'waiting' } as any], activeId: 's1' });
+    useTabs.setState({
+      byProject: {
+        s1: [
+          th('ask-new', 's1', 'Asks a new question', 'needs_input', '2026-11-09T10:30:00Z'),
+          th('busy', 's1', 'Works on it', 'working', '2026-11-09T10:40:00Z'),
+          th('quiet', 's1', 'Rests', 'waiting', '2026-11-09T10:50:00Z'),
+          th('archived', 's1', 'Archived question', 'needs_input', '2026-11-09T09:00:00Z', { archivedAt: '2026-11-09T09:30:00Z' }),
+        ],
+        s2: [
+          th('broke', 's2', 'Broke down', 'error', '2026-11-09T08:00:00Z'),
+          th('ask-old', 's2', 'Asks an old question', 'needs_input', '2026-11-09T07:00:00Z'),
+          th('stuck', 's2', 'Sends nothing', 'working', '2026-11-09T10:45:00Z'),
+        ],
+      },
+      activeTabId: null,
+    });
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+    vi.spyOn(api, 'listStalls').mockResolvedValue([]);
+    const { useThreadStatus } = await import('../../stores/threadStatus');
+    const { useSectionCollapse } = await import('../../stores/sectionCollapse');
+    useSectionCollapse.setState({ collapsed: {} });
+    useThreadStatus.setState({ byTerminal: {}, stalls: { stuck: Date.parse('2026-11-09T10:45:00Z') } });
+  });
+  const rowLabels = () => Array.from(document.querySelectorAll('[data-thread-id]')).map((row) => row.querySelector('span[aria-label]')?.getAttribute('aria-label'));
+  const pickStatus = (name: RegExp) => {
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+    const header = screen.getByRole('button', { name: /^Status: / });
+    if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name }));
+  };
+
+  it('the Needs you filter shows only threads that need input or have an error', async () => {
+    useProjectsView.setState({ view: 'threads' });
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    await waitFor(() => expect(rowLabels()).toHaveLength(6));
+    pickStatus(/^Needs you/);
+    expect(rowLabels().sort()).toEqual(['Asks a new question', 'Asks an old question', 'Broke down']);
+    // The choice names its count, and the closed panel shows it as a pill.
+    expect(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: /^Needs you/ })).toHaveTextContent('3');
+    fireEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+    expect(screen.getByTestId('applied-filters')).toHaveTextContent('Status');
+    expect(screen.getByTestId('applied-filters')).toHaveTextContent('Needs you');
+  });
+
+  it('the Working filter shows only the threads that work, and All shows every thread again', async () => {
+    useProjectsView.setState({ view: 'threads' });
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    await waitFor(() => expect(rowLabels()).toHaveLength(6));
+    pickStatus(/^Working/);
+    expect(rowLabels().sort()).toEqual(['Sends nothing', 'Works on it']);
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Status' })).getByRole('radio', { name: /^All/ }));
+    expect(rowLabels()).toHaveLength(6);
+  });
+
+  it('the status filter follows a live status event', async () => {
+    useProjectsView.setState({ view: 'threads' });
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    await waitFor(() => expect(rowLabels()).toHaveLength(6));
+    pickStatus(/^Needs you/);
+    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 'quiet', status: 'needs_input' } as any); });
+    expect(rowLabels()).toContain('Rests');
+    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 'broke', status: 'working' } as any); });
+    expect(rowLabels()).not.toContain('Broke down');
+  });
+
+  it('the Needs you section lists the queue across projects, above the projects: needs input, error, stalled; oldest first', async () => {
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    const section = await screen.findByRole('region', { name: 'Needs you' });
+    expect(within(section).getByRole('button', { name: /needs you/i })).toHaveTextContent('Needs you (4)');
+    const rows = within(section).getAllByRole('listitem');
+    expect(rows.map((r) => r.getAttribute('data-attention-id'))).toEqual(['ask-old', 'ask-new', 'broke', 'stuck']);
+    expect(rows[0]).toHaveTextContent('Asks an old question');
+    expect(rows[0]).toHaveTextContent('beta');
+    expect(rows[0]).toHaveTextContent('Needs input');
+    expect(rows[2]).toHaveTextContent('Error');
+    expect(rows[3]).toHaveTextContent('No output');
+    // Above the project cards.
+    const card = document.querySelector('[data-project-id="s1"]')!;
+    expect(section.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // An archived thread is not in it.
+    expect(section).not.toHaveTextContent('Archived question');
+  });
+
+  it('the Needs you section has no button with the name Answer', async () => {
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    const section = await screen.findByRole('region', { name: 'Needs you' });
+    expect(within(section).queryByRole('button', { name: /answer/i })).toBeNull();
+    expect(section).not.toHaveTextContent(/answer/i);
+    expect(section).not.toHaveTextContent(/asking you/i);
+    // One control per row (the row itself), plus the fold of the section.
+    expect(within(section).getAllByRole('button')).toHaveLength(1 + 4);
+  });
+
+  it('a row of the Needs you section opens the thread in its project', async () => {
+    const onSelectTab = vi.fn();
+    render(<ProjectSidebar onSelectTab={onSelectTab} />);
+    const section = await screen.findByRole('region', { name: 'Needs you' });
+    fireEvent.click(within(section).getByRole('button', { name: /Asks an old question/ }));
+    expect(useProjects.getState().activeId).toBe('s2');
+    expect(onSelectTab).toHaveBeenCalledWith('ask-old');
+  });
+
+  it('the Needs you section folds, remembers that, and is absent when nothing waits', async () => {
+    const { unmount } = render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    const section = await screen.findByRole('region', { name: 'Needs you' });
+    const fold = within(section).getByRole('button', { name: /needs you/i });
+    expect(fold).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(fold);
+    expect(fold).toHaveAttribute('aria-expanded', 'false');
+    expect(within(section).queryAllByRole('listitem')).toHaveLength(0);
+    expect(fold).toHaveTextContent('Needs you (4)'); // the count stays while folded
+    unmount();
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    expect(within(await screen.findByRole('region', { name: 'Needs you' })).getByRole('button', { name: /needs you/i })).toHaveAttribute('aria-expanded', 'false');
+    act(() => { useTabs.setState({ byProject: { s1: [th('quiet', 's1', 'Rests', 'waiting', '2026-11-09T10:50:00Z')] } }); });
+    expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
+  });
+
+  it('the Needs you section does not render the project cards on a status event (W1-F stays true)', async () => {
+    render(<ProjectSidebar onSelectTab={vi.fn()} />);
+    await screen.findByRole('region', { name: 'Needs you' });
+    const before = { ...renders.card };
+    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 'ask-new', status: 'working' } as any); });
+    expect(within(screen.getByRole('region', { name: 'Needs you' })).getAllByRole('listitem')).toHaveLength(3);
+    expect(renders.card.s2).toBe(before.s2);
+  });
+});

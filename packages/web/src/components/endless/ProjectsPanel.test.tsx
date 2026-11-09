@@ -123,7 +123,7 @@ describe('ProjectsPanel thread list', () => {
 
 describe('Docs fold', () => {
   const docRow = (k: number, o: Partial<Record<string, unknown>> = {}) => ({ path: `docs/specs/d${k}.md`, name: `d${k}.md`, status: 'draft', source: 'worktree', worktree: 'chat-visibility-spec', worktreeRel: '.worktrees/chat-visibility-spec', branch: 'spec/chat-thread-visibility', vsMain: 'not_on_main', modifiedAt: '2026-10-19T11:00:00Z', copies: 1, writer: { id: 't1', label: 'Plan' }, ...o });
-  afterEach(() => { useDocViewer.setState({ open: null, back: [] }); useUI.setState({ pendingOpenProject: null }); isMobileMock.mockReturnValue(false); });
+  afterEach(() => { useDocViewer.setState({ open: null, back: [] }); isMobileMock.mockReturnValue(false); });
   it('is hidden at a count of 0', () => {
     useEndless.setState({ projects: [P('s1', 'dispatch', { live: 1 })], threads: [row('w', 's1', 'working')] as any, docCounts: { s1: 0 } } as any);
     render(<ProjectsPanel />);

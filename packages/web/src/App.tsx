@@ -28,6 +28,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
+import { useAttentionShortcut } from './lib/attention';
 import { createEventsSocket, type EventsSocket } from './api/events-socket';
 import { preloadTerminalTab } from './components/tabs/LazyTerminalTab';
 import { writeSnapshot } from './lib/launchSnapshot';
@@ -81,6 +82,7 @@ export default function App() {
   const view = useUI((s) => s.view);
   const isMobile = useIsMobile();
   useTabCycleShortcut(); // Ctrl+Tab / Ctrl+Shift+Tab cycle open tabs
+  useAttentionShortcut(); // Alt+N: the next thread that needs you (W2-F)
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);

@@ -54,6 +54,10 @@ import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
 import { useSettings } from '../stores/settings';
 import { usePickerRequest } from '../stores/pickerRequest';
+import { useThreadStatus } from '../stores/threadStatus';
+import { useNavigation, __resetNavigationForTest } from '../stores/navigation';
+import { useHint } from '../stores/hint';
+import { waitFor } from '@testing-library/react';
 
 // The real dialog loads harness data. The palette only has to show it; a stub proves that.
 vi.mock('./sidebar/NewThreadModal', () => ({
@@ -89,9 +93,12 @@ describe('the command palette opens projects and threads (W1-G)', () => {
     });
     useSettings.setState({ coordinatorName: 'Control Plane' });
     usePickerRequest.setState({ owner: null });
-    useUI.setState({ view: 'workspace', pendingOpenThread: null, pendingOpenProject: null });
+    useUI.setState({ view: 'workspace' });
+    useThreadStatus.setState({ byTerminal: {}, stalls: {} });
+    window.history.pushState({}, '', '/');
+    __resetNavigationForTest();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); window.history.pushState({}, '', '/'); });
 
   const open = () => { render(<CommandPalette />); fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true }); };
   const type = (value: string) => fireEvent.change(screen.getByRole('combobox', { name: 'Command' }), { target: { value } });
@@ -111,7 +118,10 @@ describe('the command palette opens projects and threads (W1-G)', () => {
     open();
     type('invoice');
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
-    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 'p2', terminalId: 't3' });
+    // W2-F: the thread opens at its address, and Back returns to the screen before.
+    expect(window.location.pathname).toBe('/p/p2/t/t3');
+    expect(useTabs.getState().activeTabId).toBe('t3');
+    expect(useProjects.getState().activeId).toBe('p2');
     expect(useUI.getState().view).toBe('workspace'); // the thread shows in the Threads view
     expect(screen.queryByRole('dialog', { name: 'Commands' })).toBeNull();
   });
@@ -130,7 +140,8 @@ describe('the command palette opens projects and threads (W1-G)', () => {
     type('billing');
     expect(labels()[0]).toBe('Billing');
     fireEvent.click(screen.getAllByRole('option')[0]);
-    expect(useUI.getState().pendingOpenProject).toBe('p2');
+    expect(useProjects.getState().activeId).toBe('p2');
+    expect(window.location.pathname).toBe('/p/p2');
   });
 
   it('New thread opens the picker and creates nothing', () => {
@@ -205,5 +216,63 @@ describe('the command palette opens projects and threads (W1-G)', () => {
     expect(loadTabs).toHaveBeenCalledWith('p2');
     expect(loadTabs).not.toHaveBeenCalledWith('p1');
     loadTabs.mockRestore();
+  });
+
+  // ── W2-F (2026-11-09): addresses and the attention queue ───────────────────────────────────
+  it('Back after a thread opened from the palette returns to the earlier thread', async () => {
+    open();
+    type('login');
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
+    expect(window.location.pathname).toBe('/p/p1/t/t1');
+    fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
+    type('invoice');
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
+    expect(window.location.pathname).toBe('/p/p2/t/t3');
+    act(() => { window.history.back(); });
+    await waitFor(() => expect(useTabs.getState().activeTabId).toBe('t1'));
+    expect(window.location.pathname).toBe('/p/p1/t/t1');
+  });
+
+  it('a settings row and a view row open at their address', () => {
+    open();
+    type('secrets');
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
+    expect(window.location.pathname).toBe('/settings/secrets');
+    expect(useUI.getState().view).toBe('settings');
+    fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
+    fireEvent.click(screen.getByRole('option', { name: 'Chat' }));
+    expect(window.location.pathname).toBe('/chat');
+    expect(useUI.getState().view).toBe('chat');
+  });
+
+  it('the row "Next thread that needs you" goes through the queue: needs input, then the error, then round again', () => {
+    const next = () => {
+      fireEvent.keyDown(window, { key: 'k', metaKey: true, ctrlKey: true });
+      type('next thread that needs');
+      expect(labels()[0]).toBe('Next thread that needs you');
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Command' }), { key: 'Enter' });
+    };
+    render(<CommandPalette />);
+    next();
+    expect(window.location.pathname).toBe('/p/p2/t/t3'); // needs input
+    next();
+    expect(window.location.pathname).toBe('/p/p2/t/t4'); // the error
+    next();
+    expect(window.location.pathname).toBe('/p/p2/t/t3'); // round again; the working thread is not in the queue
+    expect(useNavigation.getState().route).toEqual({ view: 'workspace', projectId: 'p2', threadId: 't3' });
+  });
+
+  it('the row shows in the list before a query is typed, with its shortcut', () => {
+    open();
+    const row = screen.getByRole('option', { name: 'Next thread that needs you' });
+    expect(row).toHaveTextContent('Alt+N');
+  });
+
+  it('with nothing in the queue the row says so and opens nothing', () => {
+    useTabs.setState({ byProject: { p1: [thread('t1', 'p1', 'Fix the login form', 'waiting', '2026-11-09T10:00:00Z')] } });
+    open();
+    fireEvent.click(screen.getByRole('option', { name: 'Next thread that needs you' }));
+    expect(useHint.getState().msg).toBe('No thread needs you.');
+    expect(window.location.pathname).toBe('/');
   });
 });

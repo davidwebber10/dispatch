@@ -84,11 +84,12 @@ describe('SignedOutCard', () => {
 
   it('Codex CLI login: Sign in opens the CLI sign-in thread (the existing path) and keeps Retry at hand', async () => {
     (api.createTerminal as any).mockResolvedValue({ id: 'signin-1' });
+    const openTab = vi.spyOn(useUI.getState(), 'requestOpenTab').mockImplementation(() => {});
     const t = tab({ type: 'codex', config: { transport: 'structured' } });
     render(<SignedOutCard tab={t} auth={{ provider: 'codex', accountId: 'cli', reason: 'Not signed in' }} onRetry={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(api.createTerminal).toHaveBeenCalledWith('s1', { type: 'shell', label: 'Sign in — Codex', config: { signIn: 'codex' } }));
-    await waitFor(() => expect(useUI.getState().pendingOpenTab).toBe('signin-1'));
+    await waitFor(() => expect(openTab).toHaveBeenCalledWith('signin-1'));
     expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 

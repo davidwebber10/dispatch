@@ -1,11 +1,14 @@
 import { it, expect } from 'vitest';
 import { useUI, loadView } from './ui';
+import { useNavigation } from './navigation';
 
-it('requestOpenProject sets and clears the intent', () => {
+// W2-F (2026-11-09): the pending fields are gone; a request is a `navigate` (stores/navigation.test.ts has the rest).
+it('requestOpenProject navigates to the project and keeps no pending field', () => {
   useUI.getState().requestOpenProject('s1');
-  expect(useUI.getState().pendingOpenProject).toBe('s1');
-  useUI.getState().clearOpenProject();
-  expect(useUI.getState().pendingOpenProject).toBeNull();
+  expect(useNavigation.getState().route).toEqual({ view: 'workspace', projectId: 's1' });
+  expect('pendingOpenProject' in useUI.getState()).toBe(false);
+  expect('clearOpenProject' in useUI.getState()).toBe(false);
+  window.history.pushState({}, '', '/');
 });
 
 it('a saved plugin view key is accepted by loadView; an unknown key falls back (2026-11-07)', () => {

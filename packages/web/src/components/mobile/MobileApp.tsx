@@ -1,4 +1,3 @@
-import { appPath, href } from '../../lib/basePath';
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Gear, CaretLeft, CaretRight, Plus, ChartBar, ChatCircleDots, TerminalWindow } from '@phosphor-icons/react';
 import { PROJECTS_ICON, THREADS_ICON } from '../common/viewIcons';
@@ -25,6 +24,7 @@ import { useTransportSwitch } from '../layout/TransportToggle';
 import { useShownStatus } from '../../stores/connection';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { ProjectCard } from '../sidebar/ProjectCard';
+import { NeedsYouSection } from '../sidebar/NeedsYouSection';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { AllThreadsView } from './AllThreadsView';
@@ -41,9 +41,9 @@ import { findTerminal, useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useAgentUI } from '../../stores/agentUI';
 import { useAgents } from '../../stores/agents';
-import { useMobileNav, openSettingsSubPage, subPageOfState, type SettingsSubPage } from '../../stores/mobileNav';
+import { useMobileNav } from '../../stores/mobileNav';
+import { useMobileNavigation, type BottomTab } from './useMobileNavigation';
 import { useReconnect } from '../../stores/reconnect';
-import { useUI } from '../../stores/ui';
 import { useViewing } from '../../stores/viewing';
 import { useSettings } from '../../stores/settings';
 import { useThreadMenuBadge } from '../../plugins/menuBadge';
@@ -75,23 +75,6 @@ function homePath(p: string): string {
 type ProjectSort = 'recent' | 'alpha' | 'custom';
 const PROJECT_SORTS: [ProjectSort, string][] = [['recent', 'Most recent'], ['alpha', 'Alphabetical'], ['custom', 'Custom']];
 
-type NavInit = { level: 0 | 1 | 2; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string };
-function parsePath(path: string): NavInit {
-  const m = path.match(/^\/p\/([^/]+)(?:\/(t|a)\/([^/]+))?/);
-  if (!m) return { level: 0 };
-  if (m[2] === 't') return { level: 2, projectId: m[1], leaf: 'tab', tabId: m[3] };
-  if (m[2] === 'a') return { level: 2, projectId: m[1], leaf: 'agent', agentId: m[3] };
-  return { level: 1, projectId: m[1] };
-}
-
-// Where a bottom tab was left (2026-11-07): the screen it reopens on.
-type TabSpot =
-  | { kind: 'project'; projectId: string }
-  | { kind: 'thread'; projectId: string; tabId: string; viaProject: boolean }
-  | { kind: 'agent'; projectId: string; agentId: string; viaProject: boolean }
-  | { kind: 'settings'; section: string; sub: SettingsSubPage | null }
-  | { kind: 'plugin'; view: string };
-
 export function MobileApp() {
   const projects = useProjects((s) => s.sessions);
   const byProject = useTabs((s) => s.byProject); // every project on purpose (W1-F): the project list shows a working mark per project, and the open thread can be in any of them
@@ -99,33 +82,11 @@ export function MobileApp() {
   const reconnectGen = useReconnect((s) => s.gen);
 
 
-  // Initialise straight from the URL so a reload restores the page (no flash to
-  // the index, and the rail renders at the right level without an entry slide).
-  const [level, setLevel] = useState<0 | 1 | 2>(() => parsePath(appPath()).level);
-  const [projectId, setProjectId] = useState<string | null>(() => parsePath(appPath()).projectId ?? null);
-  const [leaf, setLeaf] = useState<'tab' | 'agent'>(() => parsePath(appPath()).leaf ?? 'tab');
-  // The thread shown at level 2 is tracked locally (from the URL) rather than via
-  // the global activeTab store, which App's hydrate() can reset to null on reload.
-  const [leafTabId, setLeafTabId] = useState<string | null>(() => parsePath(appPath()).tabId ?? null);
-  // Settings is a bottom-tab destination, not an overlay: the list sits at level 0
-  // and drilling into a section pushes it onto level 1 (where a project's threads
-  // would otherwise be), so back / edge-swipe walk out of it like any other screen.
-  const [settingsKey, setSettingsKey] = useState<string | null>(null);
-  // The plugin screen opened from the Plugins tab: pushed onto level 1, like a settings section.
-  const [pluginKey, setPluginKey] = useState<string | null>(null);
-  const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
-  useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
-  // The thread list highlights a row ONLY for the thread you last opened (set in
-  // openThread), so backing out of it highlights its row (then fades). Opening a
-  // project fresh clears it → nothing highlighted.
-  const [highlightThreadId, setHighlightThreadId] = useState<string | null>(null);
   const [newProject, setNewProject] = useState(false);
   const [browseFiles, setBrowseFiles] = useState(false);
   const [query, setQuery] = useState('');
   const [projectSort, setProjectSort] = useState<ProjectSort>(() => (localStorage.getItem('dispatch:sort') as ProjectSort) || 'recent');
   useEffect(() => { try { localStorage.setItem('dispatch:sort', projectSort); } catch { /* ignore */ } }, [projectSort]);
-  // 'plugins' is the fixed Plugins tab; 'plugin:<id>:<view>' a promoted plugin screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
-  const [bottomTab, setBottomTab] = useState<'projects' | 'chat' | 'agents' | 'analytics' | 'settings' | 'plugins' | `plugin:${string}`>('projects');
   // The Projects tab shows either the project list or every thread across projects (2026-10-28,
   // replaced the Pinned tab). Remembered per device.
   // Projects ⇄ Threads: one switch shared with the desktop's left panel (stores/projectsView.ts).
@@ -135,225 +96,22 @@ export function MobileApp() {
   // over the active project (mirrors browseFiles). Closing returns to the project.
   const [dispatchOpen, setDispatchOpen] = useState(false);
 
+  // The rail's state, its history entries and the restore on back / forward (W2-F: the logic moved
+  // to useMobileNavigation, on top of the navigation store; the four pending-intent effects that
+  // lived here are that hook's `navigate`).
+  const {
+    level, projectId, leaf, leafTabId, settingsKey, pluginKey, bottomTab, highlightThreadId, level0Ref,
+    onTab, openProject, openThread, openAgent, openAgentFromList, openThreadFromList, openSettingsSection, openPluginScreen, back,
+  } = useMobileNavigation();
   const project = projects.find((p) => p.id === projectId) ?? null;
-
-  // Every entry this screen pushes records how many steps it sits above the root, so "back to
-  // the root" is exact: a thread opened from the Threads view is ONE step up (no project entry
-  // between), one opened from a project is two.
-  const pushNav = (state: Record<string, unknown>, title: string, url: string) => {
-    const depth = ((history.state as { depth?: number } | null)?.depth ?? 0) + 1;
-    history.pushState({ ...state, depth }, title, url);
-  };
-  const toRoot = () => {
-    const depth = (history.state as { depth?: number } | null)?.depth ?? level;
-    if (depth > 0) history.go(-depth);
-  };
-  // The bottom bar's tabs. The Projects tab walks back one screen at a time from a thread
-  // (thread → its project → the list), unless the Threads view is showing, where it goes
-  // straight back to that list. Any other tab goes to the root with that tab showing.
-  // Each tab keeps its place (2026-11-07, iOS tab-bar style): the screen a tab was left on comes
-  // back when you tap that tab again, with the same back history it had (a thread: project then
-  // thread, or just the thread when it was opened from the Threads view; a plugin page in Settings:
-  // the section then the page). A tap on the tab you are on goes to its root (Projects:
-  // one level per tap), or scrolls its list back to the top when it is at the root already.
-  // One shared history stack holds only the tab that shows; the others wait here.
-  const spots = useRef<Partial<Record<string, TabSpot>>>({});
-  const pendingSpot = useRef<TabSpot | null>(null);
-  const spotOfCurrent = (): TabSpot | undefined => {
-    const depth = (history.state as { depth?: number } | null)?.depth ?? level;
-    if (level === 1 && bottomTab === 'settings' && settingsKey) {
-      const sub = useMobileNav.getState().sub;
-      return { kind: 'settings', section: settingsKey, sub: sub?.section === settingsKey ? sub : null };
-    }
-    if (level === 1 && bottomTab === 'plugins' && pluginKey) return { kind: 'plugin', view: pluginKey };
-    if (bottomTab !== 'projects' || !projectId) return undefined;
-    if (level === 1) return { kind: 'project', projectId };
-    if (level === 2 && leaf === 'tab' && leafTabId) return { kind: 'thread', projectId, tabId: leafTabId, viaProject: depth >= 2 };
-    const agentId = useAgents.getState().selectedId;
-    if (level === 2 && leaf === 'agent' && agentId) return { kind: 'agent', projectId, agentId, viaProject: depth >= 2 };
-    return undefined;
-  };
-  const restoreSpot = (spot: TabSpot) => {
-    if (spot.kind === 'settings') {
-      openSettingsSection(spot.section);
-      if (spot.sub) openSettingsSubPage(spot.sub.section, spot.sub.id, spot.sub.title);
-    } else if (spot.kind === 'plugin') {
-      if (usePluginRegistry.getState().views.some((v) => v.key === spot.view)) openPluginScreen(spot.view);
-    } else if (!useProjects.getState().sessions.some((p) => p.id === spot.projectId)) {
-      // The project is gone: the tab opens at its list.
-    } else if (spot.kind === 'project') {
-      openProject(spot.projectId);
-    } else if (spot.kind === 'thread') {
-      if (useTabs.getState().byProject[spot.projectId]?.some((t) => t.id === spot.tabId)) reopenThread(spot);
-      else openProject(spot.projectId);
-    } else {
-      useProjects.getState().setActive(spot.projectId); setProjectId(spot.projectId);
-      if (spot.viaProject) pushNav({ nav: 1, projectId: spot.projectId }, '', href(`/p/${spot.projectId}`));
-      useAgentUI.getState().selectAgent(spot.agentId); setLeaf('agent'); setLevel(2);
-      pushNav({ nav: 2, projectId: spot.projectId, leaf: 'agent', agentId: spot.agentId }, '', href(`/p/${spot.projectId}/a/${spot.agentId}`));
-    }
-  };
-  // The popstate handler is bound once, so it reaches the current restore through a ref.
-  const restoreRef = useRef(restoreSpot);
-  restoreRef.current = restoreSpot;
-  // Leaves the tab that shows, keeping its place, and walks the history back to the root.
-  const leaveTab = () => {
-    spots.current[bottomTab] = spotOfCurrent();
-    toRoot();
-  };
-  const level0Ref = useRef<HTMLDivElement>(null);
-  const scrollRootToTop = () => {
-    level0Ref.current?.querySelectorAll<HTMLElement>('*').forEach((el) => { if (el.scrollTop > 0) el.scrollTop = 0; });
-  };
-  const onTab = (key: typeof bottomTab) => {
-    if (key === bottomTab) {
-      spots.current[key] = undefined;
-      if (level === 0) { if (key !== 'chat') scrollRootToTop(); return; }
-      if (key === 'projects' && projectsView !== 'threads') history.back();
-      else toRoot();
-      return;
-    }
-    const target = spots.current[key];
-    spots.current[key] = undefined;
-    const wasDeep = level > 0;
-    leaveTab();
-    setBottomTab(key);
-    if (!target) return;
-    // Restore once the walk back to the root has landed (the popstate handler runs it).
-    if (wasDeep) pendingSpot.current = target;
-    else restoreSpot(target);
-  };
-
-  // Navigation is backed by the History API so the browser back button and the
-  // iOS edge-swipe-back gesture move up the stack (projects ← project ← thread).
-  const openProject = (id: string) => {
-    useProjects.getState().setActive(id); setProjectId(id); setLevel(1);
-    setHighlightThreadId(null); // opened fresh → no thread highlighted
-    pushNav({ nav: 1, projectId: id }, '', href(`/p/${id}`));
-  };
-  const openThread = (tabId: string) => {
-    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
-    setHighlightThreadId(tabId); // so backing out of THIS thread highlights its row (then fades)
-    pushNav({ nav: 2, projectId, leaf: 'tab', tabId }, '', href(`/p/${projectId}/t/${tabId}`));
-  };
-  const openAgent = (id: string) => {
-    useAgentUI.getState().selectAgent(id); setLeaf('agent'); setLevel(2);
-    pushNav({ nav: 2, projectId, leaf: 'agent', agentId: id }, '', href(`/p/${projectId}/a/${id}`));
-  };
-  // Opening an agent from the cross-project Agents tab: seed the project context
-  // first (openAgent derives its URL from it), then jump straight to the agent.
-  const openAgentFromList = (pid: string, scheduleId: string) => {
-    useProjects.getState().setActive(pid); setProjectId(pid);
-    useAgentUI.getState().selectAgent(scheduleId); setLeaf('agent'); setLevel(2);
-    pushNav({ nav: 2, projectId: pid, leaf: 'agent', agentId: scheduleId }, '', href(`/p/${pid}/a/${scheduleId}`));
-  };
-  const reopenThread = (p: { projectId: string; tabId: string; viaProject: boolean }) => {
-    useProjects.getState().setActive(p.projectId); setProjectId(p.projectId);
-    if (p.viaProject) pushNav({ nav: 1, projectId: p.projectId }, '', href(`/p/${p.projectId}`));
-    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(p.tabId); setLeafTabId(p.tabId); setLeaf('tab'); setLevel(2);
-    setHighlightThreadId(p.tabId);
-    pushNav({ nav: 2, projectId: p.projectId, leaf: 'tab', tabId: p.tabId }, '', href(`/p/${p.projectId}/t/${p.tabId}`));
-  };
-  // Same pattern from the cross-project Threads view: seed the project, then jump
-  // straight to the thread (back returns to the root, still on the Threads view).
-  const openThreadFromList = (pid: string, tabId: string) => {
-    useProjects.getState().setActive(pid); setProjectId(pid);
-    useAgentUI.getState().blur(); useTabs.getState().setActiveTab(tabId); setLeafTabId(tabId); setLeaf('tab'); setLevel(2);
-    setHighlightThreadId(tabId);
-    pushNav({ nav: 2, projectId: pid, leaf: 'tab', tabId }, '', href(`/p/${pid}/t/${tabId}`));
-  };
-  // Settings sections reuse level 1. No URL change: settings isn't deep-linkable,
-  // so the entry only carries enough state for back/popstate to restore it.
-  const openSettingsSection = (key: string) => {
-    setSettingsKey(key); setLevel(1); useMobileNav.getState().setSub(null);
-    pushNav({ nav: 1, settingsSection: key }, '', location.pathname);
-  };
-  // A plugin screen from the Plugins tab: same idea as a settings section (level 1, no URL change).
-  const openPluginScreen = (key: string) => {
-    setPluginKey(key); setLevel(1);
-    pushNav({ nav: 1, pluginView: key }, '', location.pathname);
-  };
-  const back = () => history.back();
-
-  // View's "open file" button raises a cross-shell intent; navigate to that tab.
-  const pendingOpenTab = useUI((s) => s.pendingOpenTab);
-  useEffect(() => {
-    if (pendingOpenTab) { openThread(pendingOpenTab); useUI.getState().clearOpenTab(); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingOpenTab]);
-
-  // SW notification tap while the app is running: jump straight to that thread,
-  // seeding the project first (openThreadFromList handles cross-project moves).
-  const pendingThread = useUI((s) => s.pendingOpenThread);
-  useEffect(() => {
-    if (!pendingThread) return;
-    useUI.getState().clearOpenThread();
-    openThreadFromList(pendingThread.sessionId, pendingThread.terminalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingThread]);
-
-  // The Chat pane's Docs "+N more": open that project in the Projects tab.
-  const pendingProject = useUI((s) => s.pendingOpenProject);
-  useEffect(() => {
-    if (!pendingProject) return;
-    useUI.getState().clearOpenProject();
-    setBottomTab('projects');
-    openProject(pendingProject);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingProject]);
-
-  // "Open Settings at this section" (the mic's "Set up" link): the Settings tab, then the section.
-  const pendingSettings = useUI((s) => s.pendingSettingsSection);
-  useEffect(() => {
-    if (!pendingSettings) return;
-    useUI.getState().clearSettingsRequest();
-    if (bottomTab !== 'settings') leaveTab(); else toRoot();
-    spots.current.settings = undefined;
-    setBottomTab('settings');
-    // After the walk back to the root lands, push the section (one frame for the popstate).
-    setTimeout(() => openSettingsSection(pendingSettings), 50);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSettings]);
+  const [listFadeKey, setListFadeKey] = useState(0); // bumps when the thread list reappears → re-fades the active row
+  useEffect(() => { if (level === 1) setListFadeKey((k) => k + 1); }, [level]);
 
   // Presence: the thread terminal is "being viewed" only on the level-2 tab leaf.
   useEffect(() => {
     useViewing.getState().set(level === 2 && leaf === 'tab' ? leafTabId : null);
     return () => useViewing.getState().set(null);
   }, [level, leaf, leafTabId]);
-
-  // On a deep-linked reload: restore the stores from the URL and rebuild the
-  // history stack (base → project → leaf) so back/edge-swipe still walks up.
-  useEffect(() => {
-    const init = parsePath(appPath());
-    if (init.projectId) { useProjects.getState().setActive(init.projectId); void useTabs.getState().loadTabs(init.projectId); }
-    if (init.leaf === 'tab' && init.tabId) { useAgentUI.getState().blur(); setLeafTabId(init.tabId); useTabs.getState().setActiveTab(init.tabId); }
-    if (init.leaf === 'agent' && init.agentId) useAgentUI.getState().selectAgent(init.agentId);
-    history.replaceState({ nav: 0, depth: 0 }, '', href('/'));
-    if (init.level >= 1 && init.projectId) pushNav({ nav: 1, projectId: init.projectId }, '', href(`/p/${init.projectId}`));
-    if (init.level === 2 && init.projectId) {
-      const url = init.leaf === 'agent' ? `/p/${init.projectId}/a/${init.agentId}` : `/p/${init.projectId}/t/${init.tabId}`;
-      pushNav({ nav: 2, projectId: init.projectId, leaf: init.leaf, tabId: init.tabId, agentId: init.agentId }, '', href(url));
-    }
-    const onPop = (e: PopStateEvent) => {
-      const s = (e.state || { nav: 0 }) as { nav?: number; projectId?: string; leaf?: 'tab' | 'agent'; tabId?: string; agentId?: string; settingsSection?: string; pluginView?: string };
-      // An item's page in Settings (a plugin, an account, a skill…) shows only on its own entry.
-      useMobileNav.getState().setSub(subPageOfState(s));
-      // Returning to a settings section (edge-swipe forward, or back into one)
-      // re-selects the tab too, so the level-1 slot renders the right screen.
-      if (s.settingsSection) { setSettingsKey(s.settingsSection); setBottomTab('settings'); }
-      if (s.pluginView) { setPluginKey(s.pluginView); setBottomTab('plugins'); }
-      if (s.projectId) { setProjectId(s.projectId); useProjects.getState().setActive(s.projectId); }
-      if (s.leaf) setLeaf(s.leaf);
-      if (s.tabId) { useAgentUI.getState().blur(); setLeafTabId(s.tabId); useTabs.getState().setActiveTab(s.tabId); }
-      if (s.agentId) useAgentUI.getState().selectAgent(s.agentId);
-      setLevel((s.nav ?? 0) as 0 | 1 | 2);
-      // A tab switch walked back to the root: now reopen the new tab where it was left.
-      const spot = pendingSpot.current;
-      if (spot && !s.nav) { pendingSpot.current = null; restoreRef.current(spot); }
-    };
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
 
   const ordered = useStableOrder(projects, projectSort);
   const sortedProjects = ordered.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
@@ -551,6 +309,8 @@ export function MobileApp() {
               <AllThreadsView onOpenThread={openThreadFromList} query={query} />
             ) : (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
+              {/* The attention queue across all projects (W2-F): a list above the projects, hidden when empty. */}
+              {!query && <NeedsYouSection onOpen={openThreadFromList} />}
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}
@@ -618,7 +378,7 @@ export function MobileApp() {
         <div data-testid="bottom-tabs" style={{ flexShrink: 0, display: 'flex', borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
           {/* The first tab follows the Projects ⇄ Threads switch: its label and icon name
               whichever list it opens to. */}
-          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [typeof bottomTab, string, Icon])[]).map(([key, label, Icon]) => {
+          {([['projects', projectsView === 'threads' ? 'Threads' : 'Projects', projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON], ['chat', 'Chat', ChatCircleDots], ['analytics', 'Analytics', ChartBar], ...promotedViews.map((v) => [v.key, v.label, pluginIcon(v.icon)] as const), ...(anyPlugin ? [['plugins', 'Plugins', PuzzlePiece] as const] : []), ['settings', 'Settings', Gear]] as readonly (readonly [BottomTab, string, Icon])[]).map(([key, label, Icon]) => {
             const on = bottomTab === key || (key === 'plugins' && bottomTab.startsWith('plugin:') && !promotedViews.some((v) => v.key === bottomTab));
             return (
               <button key={key} onClick={() => onTab(key)}

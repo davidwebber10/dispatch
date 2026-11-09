@@ -27,6 +27,14 @@ const STARTERS: { id: Starter; label: string }[] = [{ id: 'mine', label: 'Mine' 
 const readStarter = (): Starter => { try { const v = localStorage.getItem(STARTER_KEY); return v === 'agents' || v === 'mine' ? v : 'all'; } catch { return 'all'; } };
 const lastActive = (t: Terminal) => t.lastActivityAt ?? t.createdAt ?? '';
 
+/**
+ * The Status filter (W2-F, 2026-11-09): the attention queue as a filter. Needs you is a thread that
+ * needs input or has an error; Working is a thread at work. Not remembered: a list that opens on
+ * "Needs you" tomorrow hides most threads for no reason the reader can see.
+ */
+type StatusPick = 'needs' | 'working';
+const statusOf = (t: Terminal): StatusPick | null => (t.status === 'needs_input' || t.status === 'error' ? 'needs' : t.status === 'working' ? 'working' : null);
+
 /** The list filters besides Started by. Project is the oldest; the other three came 2026-11-06. */
 type FacetId = 'project' | 'account' | 'harness' | 'model';
 const FACET_IDS: FacetId[] = ['project', 'account', 'harness', 'model'];
@@ -124,6 +132,7 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
     } catch { /* ignore */ }
   }, [facets]);
   const setFacet = (id: FacetId, key: string | null) => setFacets((f) => ({ ...f, [id]: key }));
+  const [statusPick, setStatusPick] = useState<StatusPick | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -162,7 +171,10 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
     harness: facets.harness,
     model: facets.model,
   };
-  const passes = (t: Terminal, skip?: FacetId) => FACET_IDS.every((id) => id === skip || !active[id] || valueOf[id](t) === active[id]);
+  // The Archived tab has no Status filter (an archived thread does not wait or work).
+  const statusOn = tab === 'active' ? statusPick : null;
+  const passes = (t: Terminal, skip?: FacetId | 'status') =>
+    (skip === 'status' || !statusOn || statusOf(t) === statusOn) && FACET_IDS.every((id) => id === skip || !active[id] || valueOf[id](t) === active[id]);
   const q = query.trim().toLowerCase();
   const isMine = (t: Terminal) => !isAgentStarted(t.config);
   // Mine · Agents · All is only worth showing when an agent started something (2026-11-06). Counted
@@ -231,7 +243,16 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   // that is on while the panel is closed, Clear. Started by is a segmented switch; it shows only on
   // the Active tab and once an agent started something.
   const starterOn = tab === 'active' && anyAgents;
+  // Counted like every other choice: over the threads that pass the search and every OTHER filter.
+  const statusCounts = { needs: 0, working: 0, all: 0 };
+  for (const t of pool) if (inStarter(t) && passes(t, 'status')) { statusCounts.all++; const st = statusOf(t); if (st) statusCounts[st]++; }
   const filterFacets: FilterFacet[] = [
+    ...(tab === 'active' ? [{
+      id: 'status', title: 'Status', display: 'segmented' as const, defaultOpen: true, allLabel: 'All', allCount: statusCounts.all,
+      value: statusPick,
+      options: [{ value: 'needs', label: 'Needs you', count: statusCounts.needs }, { value: 'working', label: 'Working', count: statusCounts.working }],
+      onChange: (v: string | null) => setStatusPick(v as StatusPick | null),
+    }] : []),
     ...(starterOn ? [{
       id: 'starter', title: 'Started by', display: 'segmented' as const, defaultOpen: true, allLabel: 'All', allCount: counts.all,
       value: starter === 'all' ? null : starter,
@@ -268,7 +289,7 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
         {!loading && !threads.length && (
           <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5, lineHeight: 1.6 }}>
             <ChatsCircle size={30} style={{ opacity: 0.5 }} />
-            <div style={{ marginTop: 10 }}>{q || onFacets.length || otherCount ? 'No threads match.' : 'No threads yet.'}</div>
+            <div style={{ marginTop: 10 }}>{q || onFacets.length || otherCount || statusOn ? 'No threads match.' : 'No threads yet.'}</div>
             {otherFilter && otherCount > 0 && (
               <button type="button" onClick={() => setStarter(otherFilter)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
                 {otherFilter === 'agents' ? `Show ${otherCount} agent ${otherCount === 1 ? 'thread' : 'threads'}` : `Show ${otherCount} of my threads`}

@@ -34,7 +34,7 @@ beforeAll(() => {
 const msg = (i: number, kind: EndlessMessage['kind'], text: string, over: Partial<EndlessMessage> = {}): EndlessMessage =>
   ({ i, kind, text, size: text.length, project: null, projectName: null, ref: null, media: [], createdAt: 0, ...over });
 
-afterEach(() => { useUI.setState({ view: 'chat', pendingOpenThread: null }); });
+afterEach(() => { useUI.setState({ view: 'chat' }); });
 
 beforeEach(() => {
   localStorage.clear(); // drafts persist in local storage; each case starts with none
@@ -308,7 +308,7 @@ describe('EndlessColumn', () => {
 
   it('a short thread report shows in full, and the card opens its thread', () => {
     useEndless.setState({ messages: [msg(0, 'work', '[Fix login] report: done', { project: 's1', projectName: 'salsify', ref: 't9' })] });
-    useUI.setState({ view: 'chat', pendingOpenThread: null });
+    useUI.setState({ view: 'chat' });
     render(<EndlessColumn />);
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();
     expect(screen.getByText('[Fix login] report: done')).toBeTruthy();
@@ -386,7 +386,7 @@ describe('EndlessColumn', () => {
 
   it('an expanded thread report can open its thread', () => {
     useEndless.setState({ messages: [msg(0, 'work', `[Fix login] report: ${LONG}`, { project: 's1', ref: 't9' })] });
-    useUI.setState({ view: 'chat', pendingOpenThread: null });
+    useUI.setState({ view: 'chat' });
     render(<EndlessColumn />);
     fireEvent.click(screen.getByRole('button', { name: /Fix login/ }));
     const spy = vi.spyOn(open, 'openThreadInPlace').mockResolvedValue();

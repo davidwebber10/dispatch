@@ -6,10 +6,13 @@ import { api } from '../api/client';
 import { useDocViewer } from '../stores/docViewer';
 import { useUI } from '../stores/ui';
 
+// The open-thread request is `navigate` since W2-F; these tests check that it is made, not where it lands.
+let openThread: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.restoreAllMocks();
   useDocViewer.setState({ open: null, back: [] });
-  useUI.setState({ pendingOpenThread: null, view: 'chat' } as never);
+  useUI.setState({ view: 'chat' } as never);
+  openThread = vi.spyOn(useUI.getState(), 'requestOpenThread').mockImplementation(() => {});
 });
 
 describe('openChipFile', () => {
@@ -31,18 +34,18 @@ describe('openChipFile', () => {
     const tab = vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue('ft1');
     await openChipFile({ project: 's1', path: 'a.py', rel: 'a.py', branch: null, nav: 'stay' });
     expect(tab).toHaveBeenCalledWith('s1', 'a.py', { focus: false });
-    expect(useUI.getState().pendingOpenThread).toBeNull();
+    expect(openThread).not.toHaveBeenCalled();
   });
   it('from Chat, a file tab opens in the Threads view (desktop and phone read the same request)', async () => {
     vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue('ft1');
     await openChipFile({ project: 's1', path: 'a.py', rel: 'a.py', branch: null, nav: 'chat' });
-    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 'ft1' });
+    expect(openThread).toHaveBeenCalledWith({ sessionId: 's1', terminalId: 'ft1' });
     expect(useUI.getState().view).toBe('workspace');
   });
   it('from Chat, a tab that could not be made opens nothing', async () => {
     vi.spyOn(openFileTabMod, 'openFileTab').mockResolvedValue(null);
     await openChipFile({ project: 's1', path: 'a.py', rel: 'a.py', branch: null, nav: 'chat' });
-    expect(useUI.getState().pendingOpenThread).toBeNull();
+    expect(openThread).not.toHaveBeenCalled();
     expect(useUI.getState().view).toBe('chat');
   });
   it('a file tab opens the path inside the project, not the absolute path', async () => {

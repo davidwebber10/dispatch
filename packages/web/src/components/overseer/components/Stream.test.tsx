@@ -322,7 +322,7 @@ describe('ConversationStream — machinery file links', () => {
     vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
     vi.spyOn(useTabs.getState(), 'openTab').mockImplementation(() => {});
     useTabs.setState({ byProject: {} } as never);
-    useUI.setState({ pendingOpenTab: null } as never);
+    const openTab = vi.spyOn(useUI.getState(), 'requestOpenTab');
 
     useOverseer.setState({ coordinatorItems: [
       { kind: 'tool', toolId: 'r1', toolName: 'Read', toolInput: JSON.stringify({ file_path: '/repo/notes.md' }), toolFile: '/repo/notes.md' },
@@ -333,7 +333,7 @@ describe('ConversationStream — machinery file links', () => {
     fireEvent.click(screen.getByText('Read'));            // expand the settled tool row
     fireEvent.click(screen.getByText('View file'));
     await vi.waitFor(() => expect(create).toHaveBeenCalledWith('proj-1', { type: 'file', label: 'notes.md', config: { path: '/repo/notes.md' } }));
-    expect(useUI.getState().pendingOpenTab).toBeNull();   // no navigation — stay put
+    expect(openTab).not.toHaveBeenCalled();   // no navigation — stay put
     create.mockRestore();
   });
 });
