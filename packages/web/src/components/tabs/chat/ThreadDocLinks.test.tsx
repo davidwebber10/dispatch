@@ -90,6 +90,7 @@ describe('file chips in a thread reply (any file type)', () => {
     items = say('I wrote `scripts/extract.py` and data/out.xlsx, see also https://example.com/a.html and v3.19.0.');
     const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
     const save = vi.spyOn(saveFiles, 'saveFileAs').mockResolvedValue();
+    const openThread = vi.spyOn(useUI.getState(), 'requestOpenThread');
     mount('claude-code');
     await screen.findByText('I wrote', { exact: false });
     const chips = document.querySelectorAll<HTMLElement>('.doc-chip');
@@ -99,7 +100,7 @@ describe('file chips in a thread reply (any file type)', () => {
     expect(useDocViewer.getState().open).toBeNull();
     fireEvent.click(chips[1]);
     expect(save).toHaveBeenCalledWith('/api/sessions/s1/files/download?path=data%2Fout.xlsx', 'out.xlsx');
-    expect(useUI.getState().pendingOpenThread).toBeNull();
+    expect(openThread).not.toHaveBeenCalled();
   });
   it('an absolute path opens as the path inside the project; a path that leaves it is no chip', async () => {
     items = say(`Wrote ${FOLDER}/scripts/run.py, and ${FOLDER}/../other/x.py, and ../y.py`);

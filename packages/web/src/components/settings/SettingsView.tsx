@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { SETTINGS_SECTIONS, settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
 import { useUI } from '../../stores/ui';
+import { useNavigation } from '../../stores/navigation';
 import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
@@ -14,17 +15,19 @@ import { UpdateBanner } from '../update/UpdateBanner';
  * Settings → Servers and the version in About & updates, where each is said once.
  */
 export function SettingsView() {
-  const [tab, setTab] = useState<string>('appearance');
+  // The section of the address (/settings/secrets, W2-F): a link elsewhere asked for it (the mic's
+  // "Set up"), or the page was opened or reloaded on it. A key that names no section is ignored.
+  const wantedKey = useNavigation((s) => (s.route.view === 'settings' ? s.route.section : undefined));
+  const [tab, setTab] = useState<string>(() => (wantedKey ? settingsSection(wantedKey)?.key : undefined) ?? 'appearance');
   const sections = useAllSettingsSections();
   const groups = useSettingsGroups();
-  // A link elsewhere asked for a section (the mic's "Set up"): open it once.
-  const pendingSection = useUI((s) => s.pendingSettingsSection);
   useEffect(() => {
-    const wanted = pendingSection ? settingsSection(pendingSection) : undefined;
-    if (!wanted) return;
-    setTab(wanted.key);
-    useUI.getState().clearSettingsRequest();
-  }, [pendingSection]);
+    const wanted = wantedKey ? settingsSection(wantedKey) : undefined;
+    if (wanted) setTab(wanted.key);
+  }, [wantedKey]);
+  // A pick in the nav: the address names the section (so a copy or a reload opens it), with no new
+  // history entry, so Back leaves Settings in one step.
+  const pick = (key: string) => { setTab(key); useNavigation.getState().navigate({ view: 'settings', section: key }, { replace: true }); };
 
   const active = settingsSection(tab) ?? SETTINGS_SECTIONS[0];
   const Body = active.Component;
@@ -44,7 +47,7 @@ export function SettingsView() {
                 const on = s.key === tab;
                 const Icon = s.icon;
                 return (
-                  <button key={s.key} onClick={() => setTab(s.key)} aria-current={on ? 'page' : undefined} style={{
+                  <button key={s.key} onClick={() => pick(s.key)} aria-current={on ? 'page' : undefined} style={{
                     display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '6px 8px', marginBottom: 1,
                     borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', textAlign: 'left',
                     background: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',

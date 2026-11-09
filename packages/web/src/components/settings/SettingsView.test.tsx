@@ -3,6 +3,7 @@ import { beforeEach, afterEach, vi, test, expect } from 'vitest';
 import { SettingsView } from './SettingsView';
 import { IconRail } from '../layout/IconRail';
 import { useUI } from '../../stores/ui';
+import { __resetNavigationForTest } from '../../stores/navigation';
 import { useUpdate } from '../../stores/update';
 import { usePluginRegistry } from '../../plugins/registry';
 
@@ -12,6 +13,8 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] }));
   useUpdate.setState({ currentVersion: '2.19.0' });
   useUI.setState({ view: 'workspace' });
+  window.history.pushState({}, '', '/');
+  __resetNavigationForTest();
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -45,7 +48,23 @@ test('opens on Appearance, and a deep link opens its section (old keys still wor
   act(() => { useUI.getState().requestSettings('agents'); });
   act(() => { useUI.getState().requestSettings('transcription'); });
   expect(title()).toHaveTextContent('Dictation');
-  expect(useUI.getState().pendingSettingsSection).toBeNull();
+});
+
+test('the section is in the address: a pick writes it without a new entry, and a load on it opens it (W2-F)', () => {
+  window.history.pushState({}, '', '/settings/secrets');
+  __resetNavigationForTest();
+  const { unmount } = render(<SettingsView />);
+  expect(title()).toHaveTextContent('Secrets');
+  const before = window.history.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Skills' }));
+  expect(title()).toHaveTextContent('Skills');
+  expect(window.location.pathname).toBe('/settings/skills');
+  expect(window.history.length).toBe(before);
+  unmount();
+  window.history.pushState({}, '', '/settings/no-such-section');
+  __resetNavigationForTest();
+  render(<SettingsView />);
+  expect(title()).toHaveTextContent('Appearance');
 });
 
 test('selecting a section swaps the content header: the title alone, no blurb beside it (2026-11-07)', () => {

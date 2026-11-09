@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Archive, ArrowClockwise, ChartBar, ChatCircleDots, Folder, Gear, Network, Plus, PuzzlePiece, Stop } from '@phosphor-icons/react';
+import { Archive, ArrowClockwise, BellRinging, ChartBar, ChatCircleDots, Folder, Gear, Network, Plus, PuzzlePiece, Stop } from '@phosphor-icons/react';
 import { useUI, type View } from '../stores/ui';
+import { useNavigation } from '../stores/navigation';
+import { openNextAttention } from '../lib/attention';
 import { useContributions } from '../plugins/registry';
 import { SETTINGS_SECTIONS } from './settings/sections';
 import { primaryMod } from '../lib/hostkeys';
@@ -23,11 +25,15 @@ import { NewThreadModal } from './sidebar/NewThreadModal';
  *
  * Rows (engineering program 2026-11-09, W1-G): the threads of every project with a status dot,
  * each project, the coordinator of each project, "New thread in <project>", the actions for the
- * active thread (stop, restart, archive), then the views, the settings sections and the plugin
+ * active thread (stop, restart, archive), "Next thread that needs you" (W2-F: the attention queue,
+ * also Alt+N), then the views, the settings sections and the plugin
  * commands (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2; plugins slice 6).
  *
  * With an empty query the threads come first: needs input, error, working, then the most recent
  * activity. Typing ranks every row with `fuzzyScore`. Up and Down move, Enter runs, Escape closes.
+ *
+ * A row that opens something calls `navigate` (stores/navigation.ts, W2-F): the address becomes
+ * `/p/<project>/t/<thread>` and Back returns to the screen before.
  *
  * The palette never creates a thread. "New thread" asks for the thread picker through
  * stores/pickerRequest.ts (owner `new-thread:<projectId>`); the person creates the thread there.
@@ -96,8 +102,7 @@ export function CommandPalette() {
       return {
         key: `thread:${t.id}`, label: t.label, hint: project, match: `${project} ${t.label}`,
         icon: <StatusDot state={dotState(t.status)} size={8} />,
-        // W2-F replaces this intent with `navigate`.
-        run: () => { showThreads(); useUI.getState().requestOpenThread({ sessionId: t.sessionId, terminalId: t.id }); },
+        run: () => useNavigation.getState().navigate({ view: 'workspace', projectId: t.sessionId, threadId: t.id }),
       };
     });
     const active = activeTabId && !isDispatchTab(activeTabId) ? findTerminal(byProject, activeTabId) : undefined;
@@ -110,14 +115,16 @@ export function CommandPalette() {
     ] : [];
     const otherRows: Row[] = [
       ...activeRows,
-      ...sessions.map((s) => ({ key: `project:${s.id}`, label: s.name, hint: 'Project', icon: <Folder size={ICON} />, run: () => useUI.getState().requestOpenProject(s.id) })),
+      // The attention queue: needs input, then errors, then stalled threads; the one after the open thread.
+      { key: 'attention:next', label: 'Next thread that needs you', hint: 'Alt+N', match: 'needs you attention next waiting', icon: <BellRinging size={ICON} />, run: () => { openNextAttention(); } },
+      ...sessions.map((s) => ({ key: `project:${s.id}`, label: s.name, hint: 'Project', icon: <Folder size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'workspace', projectId: s.id }) })),
       ...sessions.map((s) => ({
         key: `coordinator:${s.id}`, label: coordinatorName, hint: s.name, match: `${s.name} ${coordinatorName}`, icon: <Network size={ICON} />,
         run: () => { showThreads(); useProjects.getState().setActive(s.id); useTabs.getState().openDispatch(s.id); },
       })),
       ...sessions.map((s) => ({ key: `new-thread:${s.id}`, label: `New thread in ${s.name}`, hint: 'Project', icon: <Plus size={ICON} />, run: () => usePickerRequest.getState().request(`${NEW_THREAD_OWNER}${s.id}`) })),
-      ...VIEW_ROWS.map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useUI.getState().setView(view) })),
-      ...SETTINGS_SECTIONS.map((s) => ({ key: `settings:${s.key}`, label: s.label, hint: 'Settings', icon: <s.icon size={ICON} />, run: () => useUI.getState().requestSettings(s.key) })),
+      ...VIEW_ROWS.map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useNavigation.getState().navigate({ view }) })),
+      ...SETTINGS_SECTIONS.map((s) => ({ key: `settings:${s.key}`, label: s.label, hint: 'Settings', icon: <s.icon size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'settings', section: s.key }) })),
       ...pluginCommands.map((c) => ({ key: `plugin:${c.plugin}:${c.id}`, label: c.label, hint: c.plugin, icon: <PuzzlePiece size={ICON} />, run: c.run })),
     ];
     return { threadRows, otherRows };
@@ -214,7 +221,7 @@ export function CommandPalette() {
         <NewThreadModal
           sessionId={newThreadProject}
           onClose={() => usePickerRequest.getState().clear()}
-          onCreated={(id) => { showThreads(); useUI.getState().requestOpenThread({ sessionId: newThreadProject, terminalId: id }); }}
+          onCreated={(id) => useNavigation.getState().navigate({ view: 'workspace', projectId: newThreadProject, threadId: id })}
         />
       )}
       <ConfirmModal

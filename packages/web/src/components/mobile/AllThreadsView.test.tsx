@@ -114,7 +114,8 @@ describe('<AllThreadsView>', () => {
       B: [t('b1', 'B', 'Ship v2', '2026-10-28T11:00:00Z'),
         t('b2', 'B', 'Fix round 2', '2026-10-28T07:00:00Z', { config: { role: 'agent', spawnedBy: 'b1' } })],
     }, loading: {} } as any);
-    const seg = (name: RegExp | string) => screen.getByRole('radio', { name });
+    // Scoped to its own group since W2-F: the Status filter is a second segmented switch with an All.
+    const seg = (name: RegExp | string) => within(screen.getByRole('radiogroup', { name: 'Started by' })).getByRole('radio', { name });
     // These tests start from a saved Mine; the default (All) has its own test.
     beforeEach(() => { localStorage.setItem('dispatch:mobileThreadsStarter:v2', 'mine'); });
     const chips = () => within(screen.getByRole('group', { name: 'Project filter' })).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);

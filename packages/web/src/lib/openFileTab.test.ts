@@ -10,12 +10,14 @@ vi.mock('../api/client', () => ({
 
 const fileTab = { id: 'ft-1', sessionId: 's1', type: 'file', label: 'a.ts', config: { path: '/x/a.ts' } };
 
+// The open-tab request is `navigate` since W2-F; these tests check that it is made.
+let openTab: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   useTabs.setState({ byProject: { s1: [fileTab] }, loading: {} } as never);
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
   vi.spyOn(useTabs.getState(), 'openTab').mockImplementation(() => {});
-  useUI.setState({ pendingOpenTab: null } as never);
+  openTab = vi.spyOn(useUI.getState(), 'requestOpenTab').mockImplementation(() => {});
 });
 
 describe('openFileTab', () => {
@@ -33,11 +35,11 @@ describe('openFileTab', () => {
 
   it('focus:true also requests navigation to the tab (the ChatView behavior)', async () => {
     await openFileTab('s1', '/x/a.ts', { focus: true });
-    expect(useUI.getState().pendingOpenTab).toBe('ft-1');
+    expect(openTab).toHaveBeenCalledWith('ft-1');
   });
 
   it('focus:false opens the tab but NEVER navigates — the Control Plane stays put', async () => {
     await openFileTab('s1', '/x/a.ts', { focus: false });
-    expect(useUI.getState().pendingOpenTab).toBeNull();
+    expect(openTab).not.toHaveBeenCalled();
   });
 });

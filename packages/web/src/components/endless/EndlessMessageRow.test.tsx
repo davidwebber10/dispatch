@@ -106,14 +106,14 @@ describe('file chips in a Chat reply (any file type)', () => {
     const reply = { ...m(0, 'unii', text), project: 's1' };
     return render(<MessageScroller.Provider><ChatTimeline messages={[reply]} focus={null} /></MessageScroller.Provider>);
   };
-  beforeEach(() => { useUI.setState({ pendingOpenThread: null } as never); });
   it('a code path draws a chip; a click opens a file tab and switches to Threads', async () => {
     const tab = vi.spyOn(fileTab, 'openFileTab').mockResolvedValue('ft1');
+    const openThread = vi.spyOn(useUI.getState(), 'requestOpenThread').mockImplementation(() => {});
     show('I wrote `scripts/extract.py` for you.');
     fireEvent.click(screen.getByRole('button', { name: 'extract.py' }));
     await act(async () => {});
     expect(tab).toHaveBeenCalledWith('s1', 'scripts/extract.py', { focus: false });
-    expect(useUI.getState().pendingOpenThread).toEqual({ sessionId: 's1', terminalId: 'ft1' });
+    expect(openThread).toHaveBeenCalledWith({ sessionId: 's1', terminalId: 'ft1' });
     expect(useUI.getState().view).toBe('workspace');
     expect(useDocViewer.getState().open).toBeNull();
   });

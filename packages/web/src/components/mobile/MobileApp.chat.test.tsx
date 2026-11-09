@@ -65,12 +65,11 @@ describe('MobileApp Chat tab', () => {
 });
 
 describe('MobileApp open-project intent', () => {
-  it('opens the project from the Projects tab and clears the intent', async () => {
+  it('opens the project from the Projects tab', async () => {
     render(<MobileApp />);
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
     await screen.findByTestId('chat-mode');
     act(() => { useUI.getState().requestOpenProject('s7'); });
-    expect(useUI.getState().pendingOpenProject).toBeNull();
     expect(useProjects.getState().activeId).toBe('s7');
     expect(window.location.pathname).toMatch(/\/p\/s7$/);
     expect(screen.queryByTestId('chat-mode')).not.toBeInTheDocument();
