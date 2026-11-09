@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { LimitSnapshots } from './snapshot.js';
-import { parseClaudeUsage, parseClaudeResets, limitKey, createClaudeUsageReader, readClaudeToken, USAGE_READ_URL as USAGE_URL, PROFILE_URL } from './claude-usage.js';
+import { parseClaudeUsage, parseClaudeResets, limitKey, createClaudeUsageReader, readClaudeToken, nextReadAfter, USAGE_READ_URL as USAGE_URL, PROFILE_URL } from './claude-usage.js';
 
 // The shape api.anthropic.com/api/oauth/usage answered on 2026-11-06 (figures shortened).
 const BODY = {
@@ -56,7 +56,7 @@ describe('createClaudeUsageReader', () => {
     const { snaps, calls, f } = setup({ [USAGE_URL]: { status: 200, body: BODY }, [PROFILE_URL]: { status: 200, body: { organization: { plan_display_name: 'Ultra' } } } });
     let now = 1_000_000;
     const read = createClaudeUsageReader({ snapshots: snaps, accountFor: () => 'acct', token: async () => 'tok', fetch: f, now: () => now, log: () => {} });
-    expect(await read()).toBe(true);
+    expect((await read()).ok).toBe(true);
     const s = snaps.get('claude-code', 'acct')!;
     expect(s.plan).toBe('Ultra');
     expect(s.windows.seven_day_fable.usedPercent).toBe(18);
@@ -71,10 +71,10 @@ describe('createClaudeUsageReader', () => {
     const { snaps, f } = setup({ [USAGE_URL]: { status: 401, body: { error: 'x' } } });
     const log: string[] = [];
     const none = createClaudeUsageReader({ snapshots: snaps, accountFor: () => 'a', token: async () => null, fetch: f, log: (l) => log.push(l) });
-    expect(await none()).toBe(false);
+    expect((await none()).ok).toBe(false);
     const denied = createClaudeUsageReader({ snapshots: snaps, accountFor: () => 'a', token: async () => 'tok', fetch: f, log: (l) => log.push(l) });
-    expect(await denied()).toBe(false);
-    expect(await denied()).toBe(false);
+    expect((await denied()).ok).toBe(false);
+    expect((await denied()).ok).toBe(false);
     expect(log).toEqual(['[usage] Claude usage read failed (cli): HTTP 401']); // said once, not every 2 minutes
     expect(snaps.get('claude-code', 'a')).toBeNull();
   });
@@ -125,10 +125,96 @@ describe('Claude limit resets (2026-11-09: the Fable 5.2 launch resets)', () => 
     }) as unknown as typeof fetch;
     const db = new Database(':memory:'); initSchema(db);
     const read = createClaudeUsageReader({ snapshots: new LimitSnapshots(db), accountFor: () => 'acct', token: async () => 'tok', fetch: f, log: () => {} });
-    expect(await read('work')).toBe(true);
+    expect((await read('work')).ok).toBe(true);
     expect(seen[0].url).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1');
     expect(seen[0].ua).toMatch(/^claude-cli\/\S+ \(external, cli\)$/); // anything else is answered "ineligible: surface"
     expect(read.credits('work')?.available).toBe(3);
     expect(read.credits('cli')).toBeNull();
+  });
+});
+
+// W1-H (2026-11-09): the read says WHY it failed, so the gauge can back off and the card can say what to do.
+// The 403 body is the one Anthropic answered for a `claude setup-token` token on 2026-11-09.
+const SCOPE_403 = { type: 'error', error: { type: 'permission_error', message: 'OAuth token does not meet scope requirement any_of(user:profile, user:office)', details: { required_scopes: ['user:profile', 'user:office'], match: 'any', error_visibility: 'user_facing', error_code: 'oauth_scope_insufficient' } }, request_id: 'req_x' };
+describe('the typed usage read result (W1-H)', () => {
+  const TOKEN = 'sk-ant-oat01-SECRETSECRETSECRET';
+  const reader = (status: number, body: unknown, headers: Record<string, string> = {}, token: string | null = TOKEN) => {
+    const db = new Database(':memory:'); initSchema(db);
+    const snaps = new LimitSnapshots(db);
+    const log: string[] = [];
+    const f = (async (url: string) => {
+      if (status === 0) throw new Error(`connect failed for ${TOKEN}`);
+      const ok = url.startsWith(PROFILE_URL) ? { status: 200, body: {} } : { status, body };
+      return { status: ok.status, headers: { get: (k: string) => headers[k.toLowerCase()] ?? null }, text: async () => JSON.stringify(ok.body) } as any;
+    }) as unknown as typeof fetch;
+    return { snaps, log, read: createClaudeUsageReader({ snapshots: snaps, accountFor: () => 'acct', token: async () => token, fetch: f, now: () => 5_000_000, log: (l) => log.push(l) }) };
+  };
+
+  it('a 403 returns forbidden with the status', async () => {
+    const scope = await reader(403, SCOPE_403).read('w1');
+    expect(scope).toMatchObject({ ok: false, reason: 'forbidden', status: 403, detail: 'scope' });
+    const revoked = await reader(403, { error: { type: 'permission_error', message: 'OAuth token has been revoked.' } }).read('w1');
+    expect(revoked).toMatchObject({ ok: false, reason: 'forbidden', status: 403, detail: 'expired' });
+    const other = await reader(403, { error: { type: 'permission_error', message: 'Not allowed.' } }).read('w1');
+    expect(other).toEqual({ ok: false, reason: 'forbidden', status: 403 });
+  });
+
+  it('a 401 returns unauthorized', async () => {
+    expect(await reader(401, { error: { type: 'authentication_error', message: 'OAuth token has expired.' } }).read()).toEqual({ ok: false, reason: 'unauthorized', status: 401 });
+  });
+
+  it('a 429 with Retry-After returns the wait in milliseconds', async () => {
+    expect(await reader(429, { error: { type: 'rate_limit_error', message: 'Rate limited. Please try again later.' } }, { 'retry-after': '120' }).read()).toEqual({ ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 120_000 });
+    // No header (or one that is not a number of seconds): no wait is named, the back-off steps apply.
+    expect(await reader(429, {}).read()).toEqual({ ok: false, reason: 'rate-limited', status: 429 });
+    expect(await reader(429, {}, { 'retry-after': 'soon' }).read()).toEqual({ ok: false, reason: 'rate-limited', status: 429 });
+  });
+
+  it('a 5xx is server, no answer is network, no token is no-token', async () => {
+    expect(await reader(503, {}).read()).toEqual({ ok: false, reason: 'server', status: 503 });
+    expect(await reader(0, {}).read()).toEqual({ ok: false, reason: 'network' });
+    expect(await reader(200, BODY, {}, null).read()).toEqual({ ok: false, reason: 'no-token' });
+  });
+
+  it('the log line holds the status and the error type and never the token', async () => {
+    const r = reader(403, { error: { type: 'permission_error', message: `Token ${TOKEN} does not meet scope requirement` } });
+    await r.read('w1');
+    await r.read('w1');
+    expect(r.log).toHaveLength(1); // said once, not on every read
+    expect(r.log[0]).toContain('(w1)');
+    expect(r.log[0]).toContain('HTTP 403');
+    expect(r.log[0]).toContain('permission_error');
+    expect(r.log[0]).toContain('does not meet scope requirement');
+    expect(r.log[0]).not.toContain(TOKEN);
+    expect(r.log[0]).not.toContain('SECRET');
+    const net = reader(0, {});
+    await net.read();
+    expect(net.log.join('\n')).not.toContain('SECRET');
+  });
+
+  it('a 200 returns ok and records the windows as before', async () => {
+    const r = reader(200, BODY);
+    expect(await r.read()).toEqual({ ok: true });
+    expect(r.snaps.get('claude-code', 'acct')!.windows.seven_day_fable.usedPercent).toBe(18);
+    expect(r.log).toEqual([]);
+  });
+});
+
+describe('nextReadAfter (W1-H): one wait rule for every failed read', () => {
+  const MIN = 60_000;
+  const now = 1_000_000_000;
+  const after = (r: Parameters<typeof nextReadAfter>[0], n: number) => (nextReadAfter(r, n, now) - now) / MIN;
+  it('a 429 waits for Retry-After when the header is there; else 4, 8, 16, 32 and at most 60 minutes', () => {
+    expect(after({ ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 659_000 }, 1)).toBeCloseTo(659 / 60);
+    expect([1, 2, 3, 4, 5, 6, 30].map((n) => after({ ok: false, reason: 'rate-limited', status: 429 }, n))).toEqual([4, 8, 16, 32, 60, 60, 60]);
+  });
+  it('forbidden and unauthorized wait 6 hours', () => {
+    expect(after({ ok: false, reason: 'forbidden', status: 403 }, 1)).toBe(360);
+    expect(after({ ok: false, reason: 'unauthorized', status: 401 }, 7)).toBe(360);
+  });
+  it('server and network wait 4, 8, 16 and at most 30 minutes; a good read waits for nothing', () => {
+    expect([1, 2, 3, 4, 9].map((n) => after({ ok: false, reason: 'server', status: 500 }, n))).toEqual([4, 8, 16, 30, 30]);
+    expect([1, 4].map((n) => after({ ok: false, reason: 'network' }, n))).toEqual([4, 30]);
+    expect(after({ ok: true }, 0)).toBe(0);
   });
 });

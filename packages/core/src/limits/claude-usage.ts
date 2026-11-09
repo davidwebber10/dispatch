@@ -9,6 +9,11 @@
 // file, then the macOS keychain item the CLI writes. The token is never refreshed here: a refresh
 // would spend the CLI's refresh token; an expired token simply fails the read, and the old probe
 // (claude-probe.ts) runs a turn, which makes the CLI refresh it for next time.
+//
+// A failed read says why (W1-H, 2026-11-09: UsageReadResult), so the gauge backs off by the reason
+// (nextReadAfter) and the account card says what to do. A saved account's token comes from
+// `claude setup-token`: it has the scope to run a model only, and both endpoints answer it 403
+// `permission_error` ("OAuth token does not meet scope requirement any_of(user:profile, user:office)").
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -181,7 +186,8 @@ export interface ClaudeUsageDeps {
   log?: (line: string) => void;
 }
 
-async function getJson(f: typeof fetch, url: string, token: string): Promise<{ status: number; body: any } | null> {
+interface Answer { status: number; body: any; retryAfterMs?: number }
+async function getJson(f: typeof fetch, url: string, token: string): Promise<Answer | null> {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
@@ -189,16 +195,80 @@ async function getJson(f: typeof fetch, url: string, token: string): Promise<{ s
     const text = await res.text();
     let body: any = null;
     try { body = JSON.parse(text); } catch { body = null; }
-    return { status: res.status, body };
+    // Retry-After as a number of seconds (what the endpoint sends); a date form is not used here.
+    const secs = Number(res.headers?.get?.('retry-after') ?? NaN);
+    return { status: res.status, body, ...(Number.isFinite(secs) && secs > 0 ? { retryAfterMs: Math.round(secs * 1000) } : {}) };
   } catch { return null; } finally { clearTimeout(t); }
 }
 
-export type ClaudeUsageReader = ((accountId?: string) => Promise<boolean>) & {
+// --- why a read failed (W1-H, 2026-11-09) ------------------------------------------------------
+
+/**
+ * The result of one usage or profile read. `forbidden` carries `detail` when the body says why:
+ * `scope` (the token may run a model but not read usage: every `claude setup-token` token, which
+ * Anthropic answers `permission_error` / `oauth_scope_insufficient`), or `expired` (the token is
+ * expired or revoked, so a new sign-in repairs it). Never holds the token.
+ */
+export type UsageReadFailure = {
+  ok: false;
+  reason: 'no-token' | 'unauthorized' | 'forbidden' | 'rate-limited' | 'server' | 'network';
+  status?: number;
+  retryAfterMs?: number;
+  detail?: 'scope' | 'expired';
+};
+export type UsageReadResult = { ok: true } | UsageReadFailure;
+
+const errorOf = (body: any): { type: string; message: string; code: string } => {
+  const e = body?.error;
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  return { type: str(e?.type), message: str(e?.message), code: str(e?.details?.error_code) };
+};
+
+/** The typed failure of an answer that is not a good 200 (null: no answer at all). */
+export function failureOf(r: { status: number; body: any; retryAfterMs?: number } | null): UsageReadFailure {
+  if (!r) return { ok: false, reason: 'network' };
+  const { status } = r;
+  if (status === 401) return { ok: false, reason: 'unauthorized', status };
+  if (status === 403) {
+    const e = errorOf(r.body);
+    const detail = e.code === 'oauth_scope_insufficient' || /scope/i.test(e.message) ? 'scope' as const
+      : /expired|revoked|invalid/i.test(`${e.code} ${e.message}`) ? 'expired' as const : undefined;
+    return { ok: false, reason: 'forbidden', status, ...(detail ? { detail } : {}) };
+  }
+  if (status === 429) return { ok: false, reason: 'rate-limited', status, ...(r.retryAfterMs ? { retryAfterMs: r.retryAfterMs } : {}) };
+  return { ok: false, reason: 'server', status };
+}
+
+const MIN = 60_000;
+const AUTH_WAIT_MS = 6 * 60 * MIN;
+/**
+ * When an account may be read again after `result`. `failures` counts the failed reads in a row,
+ * this one included. A 429 waits for Retry-After when the header is there, else 4, 8, 16, 32 and
+ * at most 60 minutes. `forbidden` and `unauthorized` wait 6 hours (the gauge reads at once when
+ * the token changes or the owner asks). Every other failure waits 4, 8, 16 and at most 30 minutes.
+ */
+export function nextReadAfter(result: UsageReadResult, failures: number, now: number): number {
+  if (result.ok) return now;
+  const step = 4 * MIN * 2 ** Math.min(10, Math.max(0, failures - 1));
+  if (result.reason === 'rate-limited') return now + (result.retryAfterMs ?? Math.min(step, 60 * MIN));
+  if (result.reason === 'forbidden' || result.reason === 'unauthorized') return now + AUTH_WAIT_MS;
+  return now + Math.min(step, 30 * MIN);
+}
+
+/** The failure for the log: the status and the body's error type and message. The token is cut out, whatever the body echoes. */
+function failureLine(r: Answer | null, token: string): string {
+  if (!r) return 'no answer';
+  const e = errorOf(r.body);
+  const clean = (t: string) => t.split(token).join('[token]').replace(/sk-ant-[A-Za-z0-9_-]+/g, '[token]').replace(/\s+/g, ' ').slice(0, 200);
+  return [`HTTP ${r.status}`, clean(e.type), clean(e.message)].filter(Boolean).join(' ').replace(/^(HTTP \d+ \S+) (.+)$/, '$1: $2');
+}
+
+export type ClaudeUsageReader = ((accountId?: string) => Promise<UsageReadResult>) & {
   /** The limit resets from the account's last good read, or null. */
   credits: (accountId?: string) => ResetCredits | null;
 };
 
-/** One read for one account: fetch the usage (and, hourly, the plan name), record it. True when figures were recorded. */
+/** One read for one account: fetch the usage (and, hourly, the plan name), record it. `ok` when figures were recorded; else why not. */
 export function createClaudeUsageReader(d: ClaudeUsageDeps): ClaudeUsageReader {
   const now = d.now ?? Date.now;
   const f = d.fetch ?? fetch;
@@ -206,18 +276,18 @@ export function createClaudeUsageReader(d: ClaudeUsageDeps): ClaudeUsageReader {
   const profiles = new Map<string, { at: number; plan?: string }>();
   const lastFailure = new Map<string, string>();
   const resets = new Map<string, ResetCredits | null>();
-  const read = async (accountId = 'cli') => {
+  const read = async (accountId = 'cli'): Promise<UsageReadResult> => {
     const token = await d.token(accountId);
-    if (!token) return false;
+    if (!token) return { ok: false, reason: 'no-token' };
     const r = await getJson(f, USAGE_READ_URL, token);
     if (!r || r.status !== 200 || !r.body) {
-      const why = r ? `HTTP ${r.status}` : 'no answer';
+      const why = failureLine(r, token);
       if (why !== lastFailure.get(accountId)) { log(`[usage] Claude usage read failed (${accountId}): ${why}`); lastFailure.set(accountId, why); }
-      return false;
+      return failureOf(r);
     }
     lastFailure.delete(accountId);
     const { windows, extras } = parseClaudeUsage(r.body);
-    if (!Object.keys(windows).length) return false;
+    if (!Object.keys(windows).length) return { ok: false, reason: 'server', status: 200 };
     resets.set(accountId, parseClaudeResets(r.body));
     const key = createHash('sha256').update(token).digest('hex').slice(0, 12);
     const t = now();
@@ -230,7 +300,7 @@ export function createClaudeUsageReader(d: ClaudeUsageDeps): ClaudeUsageReader {
     }
     // The body lists every window the account has: replace, so a window that went away does not linger.
     d.snapshots.record('claude-code', d.accountFor('claude-code', accountId), windows, t, profile.plan, true, extras, accountId);
-    return true;
+    return { ok: true };
   };
   return Object.assign(read, { credits: (accountId = 'cli') => resets.get(accountId) ?? null });
 }
