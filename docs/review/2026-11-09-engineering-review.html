@@ -1,0 +1,453 @@
+<title>Dispatch Engineering Review</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: an engineering report — a sticky contents column beside one reading column; tables carry the findings. */
+:root {
+  --bg: #f6f7f5; --surface: #ffffff; --fg: #1b211e; --muted: #5a645f; --faint: #8a938e;
+  --line: #dde2de; --accent: #0f7a5c; --accent-soft: #e2f1eb;
+  --crit: #b4232c; --crit-soft: #fbe7e8; --high: #b8590b; --high-soft: #fcefe2; --med: #8a6d00; --med-soft: #f8f1d6; --low: #3c6a96; --low-soft: #e6eef7;
+  --code-bg: #eef1ee;
+  --f-display: 'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif;
+  --f-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111513; --surface: #181d1a; --fg: #e4e9e6; --muted: #a2aca7; --faint: #76807b;
+  --line: #2a312d; --accent: #4fc79e; --accent-soft: #173229;
+  --crit: #f0737a; --crit-soft: #3a1b1e; --high: #f0a160; --high-soft: #3a2614; --med: #e3c45a; --med-soft: #332b10; --low: #8cb7e3; --low-soft: #1a2736;
+  --code-bg: #20272a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111513; --surface: #181d1a; --fg: #e4e9e6; --muted: #a2aca7; --faint: #76807b;
+  --line: #2a312d; --accent: #4fc79e; --accent-soft: #173229;
+  --crit: #f0737a; --crit-soft: #3a1b1e; --high: #f0a160; --high-soft: #3a2614; --med: #e3c45a; --med-soft: #332b10; --low: #8cb7e3; --low-soft: #1a2736;
+  --code-bg: #20272a; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 400 15.5px/1.6 var(--f-body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 13.5px; }
+nav.toc .k { font: 500 11px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-bottom: 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; border-left: 2px solid transparent; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--fg); background: var(--surface); outline: none; border-left-color: var(--accent); }
+main { min-width: 0; display: flex; flex-direction: column; gap: 56px; }
+header.top { display: flex; flex-direction: column; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+.eyebrow { font: 500 12px var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(30px, 4vw, 42px)/1.1 var(--f-display); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font: 600 26px/1.2 var(--f-display); margin: 0 0 6px; text-wrap: balance; }
+h3 { font: 600 18px/1.3 var(--f-display); margin: 26px 0 8px; }
+p { margin: 0 0 12px; max-width: 72ch; }
+.lede { font-size: 17px; color: var(--muted); max-width: 70ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font: 400 12.5px var(--f-mono); color: var(--faint); }
+section { scroll-margin-top: 24px; }
+.sec-intro { color: var(--muted); margin-bottom: 18px; }
+code { font: 400 .86em var(--f-mono); background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+ul.plain { margin: 0 0 12px; padding-left: 20px; max-width: 74ch; }
+ul.plain li { margin: 4px 0; }
+
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.vcard { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
+.vcard .t { font: 600 15px var(--f-display); }
+.vcard .d { font-size: 14px; color: var(--muted); }
+.grade { font: 500 11px var(--f-mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; align-self: flex-start; }
+.g-good { color: var(--accent); background: var(--accent-soft); }
+.g-mixed { color: var(--med); background: var(--med-soft); }
+.g-weak { color: var(--high); background: var(--high-soft); }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin: 8px 0 16px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font: 500 11.5px var(--f-mono); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+td.n { font: 500 13px var(--f-mono); color: var(--faint); width: 36px; font-variant-numeric: tabular-nums; }
+td .what { font-weight: 600; display: block; margin-bottom: 2px; }
+td .why { color: var(--muted); }
+td.files { font: 400 12px var(--f-mono); color: var(--muted); min-width: 180px; overflow-wrap: anywhere; }
+.chip { display: inline-block; font: 500 11px var(--f-mono); letter-spacing: .04em; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+.e-S { color: var(--accent); background: var(--accent-soft); }
+.e-M { color: var(--med); background: var(--med-soft); }
+.e-L { color: var(--high); background: var(--high-soft); }
+.s-crit { color: var(--crit); background: var(--crit-soft); }
+.s-high { color: var(--high); background: var(--high-soft); }
+.s-med { color: var(--med); background: var(--med-soft); }
+.s-low { color: var(--low); background: var(--low-soft); }
+.area { color: var(--muted); background: var(--code-bg); }
+
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 10px 0 16px; }
+.flow ol { margin: 0; padding-left: 20px; }
+.flow li { margin: 5px 0; }
+.flow .ft { font: 600 14.5px var(--f-display); margin-bottom: 8px; }
+
+.twocol { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 8px 0 16px; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+.box h4 { margin: 0 0 8px; font: 600 14.5px var(--f-display); }
+.box ul { margin: 0; padding-left: 18px; font-size: 14px; }
+.box li { margin: 4px 0; }
+.box.good h4 { color: var(--accent); }
+.box.bad h4 { color: var(--high); }
+
+.phase { border-left: 3px solid var(--line); padding: 4px 0 4px 18px; margin: 14px 0 22px; }
+.phase.p1 { border-left-color: var(--accent); }
+.phase.p2 { border-left-color: var(--med); }
+.phase.p3 { border-left-color: var(--high); }
+.phase .ph { font: 600 16px var(--f-display); margin-bottom: 4px; }
+.phase .pd { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+
+.note { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+@media (max-width: 880px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 24px; } nav.toc { position: static; } nav.toc ol { flex-direction: row; flex-wrap: wrap; } }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <div class="k">Contents</div>
+  <ol>
+    <li><a href="#verdict">Verdict</a></li>
+    <li><a href="#top">Top 15 actions</a></li>
+    <li><a href="#architecture">Daemon architecture</a></li>
+    <li><a href="#client">Web client</a></li>
+    <li><a href="#product">Features and product</a></li>
+    <li><a href="#performance">Performance</a></li>
+    <li><a href="#reliability">Reliability</a></li>
+    <li><a href="#security">Security</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#method">Method</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">Dispatch v4.4.1 · Code review · 9 November 2026</div>
+  <h1>Dispatch Engineering Review</h1>
+  <p class="lede">How Dispatch is built, where it is strong, where it is weak, where it is slow, and what to change first. Five independent read-only reviews by Fable 5.2, joined into one plan.</p>
+  <div class="meta"><span>packages/core: 51,000 lines, 420 test files</span><span>packages/web: 47,000 lines</span><span>396 commits and 57 releases since 26 Oct</span></div>
+</header>
+
+<section id="verdict">
+  <h2>Verdict</h2>
+  <p class="sec-intro">Dispatch has a strong core idea and some careful engineering: the access gate, the status transaction, limit parking and the backpressure code are good work. The problems come from speed: features shipped in days, on top of a few very large files, with state kept in untyped JSON and in several places at once. Most recurring bugs trace back to four design causes, and each has a clear fix.</p>
+  <div class="verdict">
+    <div class="vcard"><span class="grade g-mixed">Mixed</span><div class="t">Daemon architecture</div><div class="d">Good status and limits design. One 3,691-line service, an untyped config blob, two composition roots, three copies of the structured transport client.</div></div>
+    <div class="vcard"><span class="grade g-mixed">Mixed</span><div class="t">Web client</div><div class="d">Shared timeline and good tokens for color. 2,375 inline style objects, no root error boundary, no URL routes on desktop, untyped events.</div></div>
+    <div class="vcard"><span class="grade g-weak">Weak spots</span><div class="t">Performance</div><div class="d">Whole-file transcript reads block every thread. The sidebar re-renders on every status event. A 477 KB (gzip) entry bundle. Streaming markdown re-parses at 60 Hz.</div></div>
+    <div class="vcard"><span class="grade g-weak">Weak spots</span><div class="t">Reliability</div><div class="d">No record of message delivery, no stall watchdog, status stored in two tables and computed again in the browser. Restart loses PTY, Grok and OpenCode turns.</div></div>
+    <div class="vcard"><span class="grade g-mixed">Mixed</span><div class="t">Product</div><div class="d">Powerful feature set. Five ways to start a thread, one feature with four names, about 2,900 lines of dead code, and weak navigation for a power user.</div></div>
+    <div class="vcard"><span class="grade g-good">Mostly sound</span><div class="t">Security</div><div class="d">Sound gate, origin and path checks. The risk is in trust boundaries: local callers count as the owner, every thread gets the full Doppler token, plugins are not isolated.</div></div>
+  </div>
+</section>
+
+<section id="top">
+  <h2>Top 15 actions</h2>
+  <p class="sec-intro">Ranked across all five reviews by value for the effort. S = hours to a day, M = days, L = a week or more.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Action</th><th>Area</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Read transcript pages by byte range, asynchronously</span><span class="why">Each page of a long thread reads the full file with <code>readFileSync</code>. A 152 MB transcript blocked the daemon for 316 ms. Every thread and socket stops during that time.</span></td><td><span class="chip area">Performance</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">2</td><td><span class="what">Typed thread config with one safe patch helper</span><span class="why">About 40 keys in one untyped JSON column, written whole at 23 places. Old copies overwrite new keys. This is the largest correctness risk and every refactor depends on it.</span></td><td><span class="chip area">Architecture</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">3</td><td><span class="what">A persisted delivery outbox for notices, wakes and kickstarts</span><span class="why">Delivery is fire-and-forget today. A missed edge is lost for good, and nothing can tell you whether a coordinator got a "Finished" notice. 22 recent fix commits are in this class.</span></td><td><span class="chip area">Reliability</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">4</td><td><span class="what">Stop sidebar and tab-bar re-renders on each status event</span><span class="why">Each <code>terminal:status</code> event rebuilds every project array, and about 15 components subscribe to all of <code>byProject</code>. With dozens of threads the sidebar renders constantly.</span></td><td><span class="chip area">Performance</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">5</td><td><span class="what">A stall watchdog and a health sweep</span><span class="why">No code detects a hung CLI, network loss or Mac sleep. A thread stays "working" until you press Reset status. Flag "no frame for N minutes"; never kill.</span></td><td><span class="chip area">Reliability</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">6</td><td><span class="what">One status authority, sent to the client</span><span class="why">Status lives in two tables and the browser computes "busy" again from frames. This is the direct cause of the "Working forever" bugs.</span></td><td><span class="chip area">Reliability</span></td><td><span class="chip e-M">M–L</span></td></tr>
+      <tr><td class="n">7</td><td><span class="what">Throttle streamed markdown and memoize the chat timeline</span><span class="why">During a reply the full message goes through marked, highlight.js, DOMPurify and four more passes at about 60 Hz. Each key press also rebuilds the full chat tree. Largest CPU and battery cost on a phone.</span></td><td><span class="chip area">Performance</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">8</td><td><span class="what">Split the 1.7 MB entry bundle</span><span class="why">The phone loads the desktop shell and the desktop loads the phone shell, plus Settings, the Control Plane, the setup wizard and the update game. Entry can drop from 477 KB to about 230 KB gzip.</span></td><td><span class="chip area">Performance</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">9</td><td><span class="what">A real command palette and an attention queue</span><span class="why">The palette cannot open a thread or a project. The thread list has no "needs you" filter. For a user with many agents, this is the biggest daily gain.</span></td><td><span class="chip area">Product</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">10</td><td><span class="what">Boot recovery for all durable work</span><span class="why">A restart can leave an <code>agent_runs</code> row open, which stops that schedule for good. Threads on <code>ScheduleWakeup</code> never wake. Pending questions are lost.</span></td><td><span class="chip area">Reliability</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">11</td><td><span class="what">Block secret reads by local callers with no credential</span><span class="why">Any local program can read <code>~/.dispatch/access-token</code> through the file route and reveal Doppler values. Deny those folders and require the strict owner check.</span></td><td><span class="chip area">Security</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">12</td><td><span class="what">A root error boundary and typed server events</span><span class="why">The only boundary is around plugins. One render error or wrong event field blanks the full app.</span></td><td><span class="chip area">Web client</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">13</td><td><span class="what">Compress API JSON and WebSocket replays</span><span class="why">Conversation pages and replays go raw over Tailscale. Text compresses 5–10×; a large gain on cellular.</span></td><td><span class="chip area">Performance</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">14</td><td><span class="what">Fix the build: NodeNext resolution, no tests in dist, a linter</span><span class="why">The compiler cannot find a missing <code>.js</code> extension, test files ship in <code>dist</code>, and nothing flags floating promises or the 232 silent catch blocks.</span></td><td><span class="chip area">Code health</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">15</td><td><span class="what">Delete about 2,900 lines of dead code</span><span class="why">Board mode, mock overseer scenarios, fixtures, <code>DelegateModal</code>, an unused <code>TabBar</code> and four unused dependencies. Tests keep them green, so they cost every refactor.</span></td><td><span class="chip area">Web client</span></td><td><span class="chip e-S">S</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="architecture">
+  <h2>Daemon architecture</h2>
+  <p class="sec-intro">One Node process (<code>packages/core</code>) holds Express, three WebSocket servers, SQLite, the PTY manager, three structured transport managers, the MCP tools, the plugin host and twelve timers.</p>
+
+  <h3>Module map</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Folder</th><th>Source lines</th><th>Owns</th></tr></thead>
+    <tbody>
+      <tr><td><code>sessions</code></td><td>6,331</td><td><code>SessionService</code>: projects, threads, spawn, transport switch, coordinator notices, history, recovery</td></tr>
+      <tr><td><code>overseer</code></td><td>5,379</td><td>Agency MCP server (<code>agency-mcp.ts</code>, 1,379 lines), ledger, prompts</td></tr>
+      <tr><td><code>structured</code></td><td>4,346</td><td>Pretty managers for Claude, Codex and ACP (Grok, OpenCode), and translators</td></tr>
+      <tr><td><code>routes</code></td><td>4,172</td><td>31 Express routers</td></tr>
+      <tr><td><code>auth</code></td><td>4,029</td><td>Keys, devices, access gate, accounts, logins</td></tr>
+      <tr><td><code>endless</code></td><td>3,094</td><td>Chat: store, compactor, turn runner</td></tr>
+      <tr><td><code>db</code></td><td>2,743</td><td>Schema, migrations, table modules</td></tr>
+      <tr><td><code>plugins</code></td><td>2,292</td><td>Registry, hooks, workers, marketplaces</td></tr>
+      <tr><td><code>limits</code></td><td>2,064</td><td>Limit detection, parks, gauge, snapshots (more test lines than source)</td></tr>
+      <tr><td><code>server.ts</code></td><td>1,394</td><td>Composition root: <code>startServer()</code> is one function of about 870 lines</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Main runtime flows</h3>
+  <div class="flow"><div class="ft">A message to a Pretty Claude thread</div><ol>
+    <li><code>POST /api/terminals/:id/message</code> → <code>SessionService.sendThreadMessage</code>. The thread spawns again if its process is gone.</li>
+    <li>The manager writes one JSON line to the CLI's stdin, then parses stdout into a 5,000-event ring.</li>
+    <li>Four consumers listen: the browser socket, the typed <code>HarnessEvent</code> path into <code>StatusService.accept</code> (one transaction, then broadcasts and coordinator notices), raw listeners in <code>SessionService</code>, and the limit snapshots.</li>
+  </ol></div>
+  <div class="flow"><div class="ft">A coordinator starts an agent</div><ol>
+    <li>The coordinator CLI runs <code>agency-mcp.js</code> as a stdio MCP child; <code>spawn_agent</code> calls the daemon's REST API.</li>
+    <li>On <code>turn.completed</code>, <code>noteAgentCompletion</code> messages the starter and starts queued dependents.</li>
+  </ol></div>
+
+  <div class="twocol">
+    <div class="box good"><h4>Strong parts</h4><ul>
+      <li><code>StatusService.accept</code>: one transaction, effects after commit, stale generations and duplicate sequences refused.</li>
+      <li><code>runtime/adapter.ts</code>: one normalized event contract for all harnesses in 87 lines.</li>
+      <li><code>limits/</code>: every dependency and the clock injected; wall-clock parks with an attempt cap.</li>
+      <li>Process guards with a crash-loop breaker; only 7 runtime dependencies.</li>
+    </ul></div>
+    <div class="box bad"><h4>Weak parts</h4><ul>
+      <li><code>SessionService</code>: 3,691 lines, 10+ jobs, 30 optional setters. A missing wire is a silent no-op.</li>
+      <li>Two composition roots. 53 test files use <code>createApp</code>, which has no gate, gauge, parks or PTY wiring.</li>
+      <li>Three copies of the JSON-RPC client, ring trim and turn settle across the structured managers.</li>
+      <li>Harness names compared 38 times in <code>service.ts</code>; 19 folder pairs import each other.</li>
+    </ul></div>
+  </div>
+
+  <h3>Data layer</h3>
+  <ul class="plain">
+    <li>Three migration styles: <code>CREATE IF NOT EXISTS</code>, 23 ordered steps, and hand-checked columns. The schema is not visible in one place.</li>
+    <li>No index on <code>terminals(session_id)</code>, <code>terminals(status)</code>, <code>agent_runs(terminal_id)</code> or <code>agent_runs(schedule_id)</code>. Archived threads are never deleted, so these tables grow.</li>
+    <li>294 inline <code>prepare</code> calls; none are cached. <code>lifecycle_events</code> runs a <code>DELETE … NOT IN (… LIMIT 200)</code> on every event.</li>
+    <li>No retention for <code>usage_turns</code>, <code>usage_facts</code>, <code>coordinator_messages</code>, <code>endless_messages</code>, <code>plugin_assist</code>. No <code>synchronous=NORMAL</code>, <code>busy_timeout</code> or checkpoint tuning.</li>
+  </ul>
+
+  <h3>Refactor roadmap for the daemon</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Change</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Typed <code>TerminalConfig</code> and a <code>ThreadConfigStore</code> with read, patch and transaction</span><span class="why">Removes the lost-update class; everything else builds on it.</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">2</td><td><span class="what">NodeNext resolution, exclude tests from the build, type-check <code>tests/</code>, add ESLint</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">3</td><td><span class="what"><code>structured/shared/</code>: one JSON-RPC client, one event ring with count and byte limits, one <code>settleTurn</code></span><span class="why">About 300 repeated lines go; one fix serves all harnesses. Rename the Grok manager to <code>AcpStructuredSessionManager</code>.</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">4</td><td><span class="what">A typed event map on <code>IStructuredManager</code>; move raw listeners to <code>HarnessEvent</code></span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">5</td><td><span class="what"><code>buildDaemon()</code> shared by tests and production; split <code>startServer</code> into <code>wireLimits</code>, <code>wirePty</code>, <code>wirePlugins</code>, <code>wireAuth</code></span></td><td><span class="chip e-L">L</span></td></tr>
+      <tr><td class="n">6</td><td><span class="what">Split <code>SessionService</code>: <code>ConversationReader</code>, <code>CoordinatorNotifier</code>, <code>ThreadSettings</code>, <code>ThreadSpawner</code>, <code>BootRecovery</code></span><span class="why">Fewer merge conflicts between parallel sessions; unit tests without the full service.</span></td><td><span class="chip e-L">L</span></td></tr>
+      <tr><td class="n">7</td><td><span class="what">Data layer: cached statements, the four indexes, WAL tuning, manual prune for the growth tables</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">8</td><td><span class="what">Move thread state (<code>lastOutcome</code>, <code>dependsOn</code>, <code>kickedAt</code>…) out of config into columns</span></td><td><span class="chip e-M">M</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="client">
+  <h2>Web client</h2>
+  <p class="sec-intro">React, Vite and 38 zustand stores. <code>App.tsx</code> chooses a desktop shell or a phone shell at 768 px. One events socket feeds 12 stores; each open thread has its own socket.</p>
+  <div class="twocol">
+    <div class="box good"><h4>Strong parts</h4><ul>
+      <li>One <code>renderTimeline</code> serves threads, the Control Plane and Chat.</li>
+      <li>Phone-only code is about 3% of the client; leaf views are shared.</li>
+      <li>Good color and radius tokens, 10 themes, only 11 hex literals in components.</li>
+      <li>Shared primitives exist: Modal, Select, FilterBar, SwipeRow, SortableList.</li>
+    </ul></div>
+    <div class="box bad"><h4>Weak parts</h4><ul>
+      <li><code>ChatView.tsx</code>, <code>useStructuredChat.ts</code> and <code>TerminalTab.tsx</code> hold 3,710 lines of the core.</li>
+      <li>2,375 inline style objects, 439 raw buttons, 22 font sizes, 30 z-index values. No Button, Menu or Popover component.</li>
+      <li>No URL routes on desktop; the phone has its own router. Four "pending intent" fields bridge the two shells.</li>
+      <li>No root error boundary. <code>ServerEvent</code> is <code>{ type: string; [k]: unknown }</code>.</li>
+      <li>Modal has no focus trap; only two <code>:focus-visible</code> rules exist.</li>
+      <li>The plugin SDK exposes the raw <code>api</code> object and five stores, so every refactor can break a plugin.</li>
+    </ul></div>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Recommendation</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Root error boundary in <code>main.tsx</code> plus one per view; a discriminated union for server events shared with core</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">2</td><td><span class="what">Delete the dead code and four unused dependencies (<code>lucide-react</code>, <code>clsx</code>, <code>tailwind-merge</code>, <code>class-variance-authority</code>)</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">3</td><td><span class="what">Desktop URL routes on the phone's <code>/p/:project/t/:thread</code> scheme, with one navigation store</span><span class="why">Links and browser history work on desktop; the pending intents go away.</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">4</td><td><span class="what">Split the three core files: a <code>timeline/</code> module, a socket/history/questions split of <code>useStructuredChat</code>, and a navigation hook for <code>MobileApp</code></span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">5</td><td><span class="what">Six primitives with CSS classes: Button, IconButton, Menu, Popover, a focus-trapping Modal, a layer scale; tokens for type and space</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">6</td><td><span class="what">Narrow the plugin SDK before others build on it: bind the plugin id, replace raw <code>api</code> and stores with a small facade</span></td><td><span class="chip e-M">M</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="product">
+  <h2>Features and product</h2>
+  <p class="sec-intro">82 release notes in 25 days. The feature set is wide and mostly mature; the problems are overlap, naming and navigation.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Area</th><th>Maturity</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Threads, CLI and Pretty transports</td><td><span class="chip e-S">High</span></td><td>Much churn in Pretty; model, effort and "/" menus are newer.</td></tr>
+      <tr><td>Projects, thread lists, pane groups</td><td><span class="chip e-S">High</span></td><td>Sort logic exists twice; pane groups are desktop only.</td></tr>
+      <tr><td>Control Plane (coordinator)</td><td><span class="chip e-M">Medium</span></td><td>Mock-era code and 460 lines of scenarios remain.</td></tr>
+      <tr><td>Chat ("endless")</td><td><span class="chip e-M">Medium–high</span></td><td>Overlaps the Control Plane with its own memory and reports.</td></tr>
+      <tr><td>Automations (roles, schedules)</td><td><span class="chip e-M">Medium</span></td><td>Three names for one thing.</td></tr>
+      <tr><td>Usage and accounts</td><td><span class="chip e-M">Medium</span></td><td>The most-changed area; six surfaces show usage.</td></tr>
+      <tr><td>Files and git</td><td><span class="chip e-M">Medium</span></td><td>Git stops at status; no diff review per thread.</td></tr>
+      <tr><td>Plugins, Coach, Previews</td><td><span class="chip e-L">New</span></td><td>Coach was on by default for six days.</td></tr>
+      <tr><td>Board mode</td><td><span class="chip s-crit">Dead</span></td><td>About 1,800 lines; <code>setView('board')</code> silently becomes the workspace.</td></tr>
+      <tr><td>Command palette</td><td><span class="chip s-crit">Stub</span></td><td>67 lines; lists views and settings only.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Coherence problems</h3>
+  <ul class="plain">
+    <li><strong>Five things start threads:</strong> the user, Chat, the Control Plane, another thread over MCP, and scheduled roles. The Control Plane gets no reports from threads that Chat starts, so you must remember which orchestrator owns which thread.</li>
+    <li><strong>One feature, four names:</strong> Control Plane (UI), Overseer (folder and a visible label), coordinator (config), Dispatch tab (code). The name is a setting, but <code>tabs.ts</code> hardcodes "Control Plane".</li>
+    <li><strong>"Agents" means four things:</strong> harness defaults, scheduled runs, threads not started by you, and Control Plane workers.</li>
+    <li><strong>Settings sprawl:</strong> Skills, Integrations, Secrets, Tools and Plugins are five sections for "what a thread can use".</li>
+  </ul>
+  <h3>What matters most for a power user</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Recommendation</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Command palette as a real switcher: projects, threads with status, new thread, thread actions</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">2</td><td><span class="what">Attention queue: a status filter and one cross-project "needs you" list with a "next" shortcut</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">3</td><td><span class="what">Diff review per thread, with approve and discard; a worktree choice when you start a thread</span><span class="why">Many agents in one checkout collide.</span></td><td><span class="chip e-M">M–L</span></td></tr>
+      <tr><td class="n">4</td><td><span class="what">Bulk actions: select threads, then stop, archive or message all</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">5</td><td><span class="what">Decide one orchestrator model (Chat with project scope, or the Control Plane) and one set of names</span><span class="why">Needs your product decision first.</span></td><td><span class="chip e-L">L</span></td></tr>
+      <tr><td class="n">6</td><td><span class="what">One usage surface: the ring and its flyout plus one Settings page</span></td><td><span class="chip e-S">S</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="performance">
+  <h2>Performance</h2>
+  <p class="sec-intro">Estimates come from the code and the existing build, not from a profiler. Each row says how to measure the change.</p>
+  <h3>Where the time goes</h3>
+  <ul class="plain">
+    <li><strong>Daemon:</strong> full-file transcript reads on every page, at every turn end (<code>findNewestUnresolvedUserUuid</code>) and every spawn (16 MB backfill). Each PTY chunk calls every terminal's listener and three scanners. 4 MB of scrollback per terminal, copied three times on attach. A structured ring of 5,000 events that holds every stream delta, so 200 replayed events can be less than one message.</li>
+    <li><strong>Client:</strong> entry bundle 1,744 KB raw / 477 KB gzip, only four lazy chunks, no <code>manualChunks</code>. No chat virtualization. Markdown re-parsed in full at about 60 Hz while streaming. Every tab change re-opens a socket and replays up to 4 MB.</li>
+    <li><strong>Network:</strong> no compression on API JSON or WebSocket frames. One <code>listTerminals</code> request per project on launch and reconnect. <code>session:tabs-changed</code> sends only an id, so every client fetches the full list again.</li>
+    <li><strong>Sound already:</strong> broadcast serializes once, backpressure is careful, assets use brotli and immutable caching, phone resume pings before it reconnects.</li>
+  </ul>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Improvement</th><th>Effort</th><th>Measure with</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Byte-range, async transcript paging with a line-offset index</span><span class="why">Removes 100–300 ms event-loop blocks.</span></td><td><span class="chip e-M">M</span></td><td>Event-loop delay p99 and RSS while paging a 100 MB file</td></tr>
+      <tr><td class="n">2</td><td><span class="what">Narrow store updates and selectors; <code>React.memo</code> on project cards and rows</span></td><td><span class="chip e-S">S</span></td><td>React Profiler commits per minute with 30 working threads</td></tr>
+      <tr><td class="n">3</td><td><span class="what">Composer in its own component; memoize <code>renderTimeline</code></span></td><td><span class="chip e-S">S</span></td><td>Scripting time per key press in a 500-item chat</td></tr>
+      <tr><td class="n">4</td><td><span class="what">Streamed markdown at about 10 updates per second; parse only the last block; one sanitize pass</span></td><td><span class="chip e-M">M</span></td><td>Long tasks and dropped frames at 4× CPU throttle</td></tr>
+      <tr><td class="n">5</td><td><span class="what">Split the entry bundle; load highlight.js languages on demand</span></td><td><span class="chip e-M">M</span></td><td>Asset sizes; time to interactive on a throttled phone</td></tr>
+      <tr><td class="n">6</td><td><span class="what">Compress JSON over 1 KB; <code>perMessageDeflate</code> for replays</span></td><td><span class="chip e-S">S</span></td><td>Transfer size of <code>/conversation</code> and first frames</td></tr>
+      <tr><td class="n">7</td><td><span class="what">Bounded tail reads at turn end, on spawn and for token totals</span></td><td><span class="chip e-S">S</span></td><td>Time on a 16 MB file; delay at turn end</td></tr>
+      <tr><td class="n">8</td><td><span class="what">Compact the structured ring: drop deltas once the full message arrives; add a byte limit</span></td><td><span class="chip e-M">M</span></td><td>Heap with 30 threads; history shown after reconnect</td></tr>
+      <tr><td class="n">9</td><td><span class="what">Coalesce PTY output for 8–16 ms; route by terminal id; scan sign-in URLs only on sign-in threads</span></td><td><span class="chip e-M">M</span></td><td>Daemon CPU with 20 busy terminals</td></tr>
+      <tr><td class="n">10</td><td><span class="what">Keep 2–3 thread views mounted, or replay 1 MB first</span></td><td><span class="chip e-M">M</span></td><td>Click-to-paint on tab change</td></tr>
+      <tr><td class="n">11</td><td><span class="what">Cached statements; one row read in <code>StatusService.apply</code>; trim lifecycle rows every Nth insert</span></td><td><span class="chip e-S">S</span></td><td>CPU profile during many tool calls</td></tr>
+      <tr><td class="n">12</td><td><span class="what">One endpoint for all terminals; put the changed terminal in the event</span></td><td><span class="chip e-M">M</span></td><td>Request count on resume</td></tr>
+      <tr><td class="n">13</td><td><span class="what">Send <code>terminal:activity</code> only on a busy/idle change</span></td><td><span class="chip e-S">S</span></td><td>Frames per minute on the events socket</td></tr>
+      <tr><td class="n">14</td><td><span class="what">Immutable, compressed plugin bundles cached by the service worker</span></td><td><span class="chip e-S">S</span></td><td>Requests under <code>/plugins/</code> on second launch</td></tr>
+      <tr><td class="n">15</td><td><span class="what">Scrollback ring as <code>Buffer</code> chunks; no join-and-copy on attach</span></td><td><span class="chip e-S">S</span></td><td>RSS with 50 live terminals</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="reliability">
+  <h2>Reliability and orchestration</h2>
+  <p class="sec-intro">922 commits since 1 September, grouped by subject: report/notice/wake (57, 22 fixes), token/usage/context (65, 19 fixes), status/stuck (38, 13 fixes), resume/restart (20, 10 fixes), history (16, 6 fixes), duplicates (10, 5 fixes).</p>
+  <h3>Six root causes behind the repeat bugs</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Cause</th><th>What it produces</th></tr></thead>
+    <tbody>
+      <tr><td><span class="what">A. Derived state in many places</span></td><td>Status in two tables, the manager's <code>turnOpen</code> and the browser's own fold. Each fix adds one more correction frame.</td></tr>
+      <tr><td><span class="what">B. Delivery with no record</span></td><td>A missed edge is lost. Chat already solved this with <code>endless_pending_reports</code>; the coordinator and watch paths do not use it.</td></tr>
+      <tr><td><span class="what">C. No stable event id in history</span></td><td>Ring, transcript and REST differ per harness, so the client falls back to content fingerprints. Source of the history-loss bugs.</td></tr>
+      <tr><td><span class="what">D. Heuristics on third-party CLI output</span></td><td><code>looksLikeQuestion</code>, limit banners, transcript tails. The wake-tool list exists twice.</td></tr>
+      <tr><td><span class="what">E. The config blob as a state machine</span></td><td>Nine flags with implied meaning and no transitions, 31 write sites.</td></tr>
+      <tr><td><span class="what">F. Recovery per harness</span></td><td>Claude and Codex get a boot kickstart; Grok, OpenCode and PTY threads do not.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Failure modes today</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Failure</th><th>Today</th><th>Rating</th></tr></thead>
+    <tbody>
+      <tr><td>Restart mid-turn, coordinator or agent</td><td>Marked interrupted; one "continue" on boot, guarded against a second.</td><td><span class="chip e-S">Good</span></td></tr>
+      <tr><td>Rate limit</td><td>Parked, woken after reset plus 90 s, staggered, capped at 5 tries. A stale "working" status can cancel the wake.</td><td><span class="chip e-S">Good</span></td></tr>
+      <tr><td>Lost session id</td><td>Detected; the next message starts a new conversation without context.</td><td><span class="chip e-M">Medium</span></td></tr>
+      <tr><td>Restart, ordinary Pretty thread</td><td>Not resumed; set to error; the next message revives it.</td><td><span class="chip e-M">Medium</span></td></tr>
+      <tr><td>Restart, PTY / Grok / OpenCode thread</td><td>Not resumed.</td><td><span class="chip e-L">Weak</span></td></tr>
+      <tr><td>Restart with a pending question</td><td>Question is in memory only; lost.</td><td><span class="chip e-L">Weak</span></td></tr>
+      <tr><td>Restart during a scheduled run</td><td>The run row stays open; the schedule can stop for good (verify first).</td><td><span class="chip s-crit">Poor</span></td></tr>
+      <tr><td>Restart while on <code>ScheduleWakeup</code></td><td>The wake lives in the killed CLI; the thread goes idle and never wakes.</td><td><span class="chip s-crit">Poor</span></td></tr>
+      <tr><td>CLI hang, network loss, Mac sleep</td><td>No watchdog; "working" until you reset it.</td><td><span class="chip s-crit">Poor</span></td></tr>
+      <tr><td>PTY message delivery</td><td>Pasted with no confirmation; if a prompt was open, the text is lost and status stays "working".</td><td><span class="chip s-crit">Poor</span></td></tr>
+    </tbody>
+  </table></div>
+  <h3>Observability</h3>
+  <p>The data to explain a stuck Pretty thread mostly exists (<code>lifecycle_events</code>, a diagnostics route), but no screen or command reads it. Logs are 115 plain <code>console.*</code> lines with no levels, no thread id and no rotation. Nothing records a delivery.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Recommendation</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="n">1</td><td><span class="what">Delivery outbox: target, kind, body, dedup key, state, attempts; retry when the target is alive</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">2</td><td><span class="what">Stall watchdog on the existing 30 s tick, with <code>lastFrameAt</code> per session</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">3</td><td><span class="what">Boot reconciliation: close orphan runs, flag slept wakes, persist pending questions</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">4</td><td><span class="what">One status authority; send status and <code>turnOpen</code> in the replay header</span></td><td><span class="chip e-M">M–L</span></td></tr>
+      <tr><td class="n">5</td><td><span class="what">Idempotency key on <code>POST /terminals/:id/message</code></span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">6</td><td><span class="what">Confirm PTY delivery through <code>UserPromptSubmit</code>; retry once</span></td><td><span class="chip e-M">M</span></td></tr>
+      <tr><td class="n">7</td><td><span class="what">Fire watches on a change only; mark fired after a successful delivery</span></td><td><span class="chip e-S">S</span></td></tr>
+      <tr><td class="n">8</td><td><span class="what">A daemon-owned message journal with a sequence per thread</span><span class="why">Removes cause C; gives Grok and OpenCode history that survives a restart.</span></td><td><span class="chip e-L">L</span></td></tr>
+      <tr><td class="n">9</td><td><span class="what">"Why is this thread in this state" panel, <code>./bin/dispatch doctor &lt;thread&gt;</code>, JSON logs with thread ids, log rotation</span></td><td><span class="chip e-S">S–M</span></td></tr>
+      <tr><td class="n">10</td><td><span class="what">Contract tests per harness on recorded frames per CLI version</span></td><td><span class="chip e-M">M</span></td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="security">
+  <h2>Security</h2>
+  <p class="sec-intro">The gate, origin checks, DNS-rebinding defence, path confinement and CSP are sound. The findings are about trust boundaries. Two are conditional on your setup, which the review did not read.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Level</th><th>Finding</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><span class="chip s-high">High*</span></td><td><span class="what">Cloudflare Access is the only gate after <code>allow-host</code></span><span class="why">No code checks <code>Cf-Access-Jwt-Assertion</code>. *Only if you used <code>dispatch access allow-host</code>.</span></td><td>Verify the Access JWT, or require the cookie (M)</td></tr>
+      <tr><td><span class="chip s-high">High*</span></td><td><span class="what">Every local caller is the owner</span><span class="why">A second macOS user or a container can read the access token through the file route, reveal Doppler values and mint a pairing code. *Only on a shared Mac.</span></td><td>Deny secret folders; strict owner check on secrets, export and pairing (S); peer uid check (L)</td></tr>
+      <tr><td><span class="chip s-med">Medium</span></td><td><span class="what">Every thread gets the full <code>DOPPLER_TOKEN</code></span><span class="why">One injected thread can download every secret.</span></td><td>Inject only where needed, or a scoped token (M)</td></tr>
+      <tr><td><span class="chip s-med">Medium</span></td><td><span class="what">An injected agent can drop its key and act as a local caller</span></td><td>Same as the local-caller fix</td></tr>
+      <tr><td><span class="chip s-med">Medium</span></td><td><span class="what">Plugins are not isolated; trusted marketplaces auto-update about every 45 minutes with no signature</span></td><td>Pin commits or signed tags; document the trust model (M)</td></tr>
+      <tr><td><span class="chip s-med">Medium</span></td><td><span class="what">A forwarder with no relay header and <code>Host: localhost</code> makes every caller local</span></td><td>Warn in <code>dispatch status</code>; a bind option (S)</td></tr>
+      <tr><td><span class="chip s-low">Low</span></td><td><span class="what">Tailscale devices need no sign-in and have no device row; the sign-in limiter can be cleared; plain HTTP on the LAN</span></td><td>Device rows, evict-oldest limiter, <code>DISPATCH_BIND</code> (S–M)</td></tr>
+    </tbody>
+  </table></div>
+  <p>Also: <code>docs/network-access.md:179</code> contains a merge-conflict marker and contradictory text.</p>
+</section>
+
+<section id="roadmap">
+  <h2>Roadmap</h2>
+  <p class="sec-intro">Ordered so that each phase makes the next one safer. Phase 1 is all small and independent.</p>
+  <div class="phase p1">
+    <div class="ph">Phase 1 · Quick wins (about 1–2 weeks)</div>
+    <div class="pd">Small, independent, low risk. Each one removes a visible pain.</div>
+    <ul class="plain">
+      <li>Narrow store updates and memoized rows; composer split; memoized timeline.</li>
+      <li>Compression for JSON and replays; bounded tail reads at turn end and spawn; quieter <code>terminal:activity</code>.</li>
+      <li>Root error boundary; typed server events; delete dead code and unused dependencies.</li>
+      <li>Stall watchdog; orphan-run cleanup at boot; idempotent message POST; watches fire on change only.</li>
+      <li>Block secret reads for no-credential callers; repair <code>network-access.md</code>; re-read <code>index.html</code> when it changes.</li>
+      <li>NodeNext, tests out of <code>dist</code>, ESLint; command palette that opens threads.</li>
+    </ul>
+  </div>
+  <div class="phase p2">
+    <div class="ph">Phase 2 · Foundations (about 3–5 weeks)</div>
+    <div class="pd">Changes that remove whole bug classes.</div>
+    <ul class="plain">
+      <li>Typed thread config and a safe patch store.</li>
+      <li>Async byte-range transcript reader.</li>
+      <li>Delivery outbox and a "why is this thread here" panel.</li>
+      <li>Shared structured-transport core (client, ring, settle).</li>
+      <li>Split the entry bundle; throttled markdown streaming.</li>
+      <li>Attention queue and desktop URL routes.</li>
+    </ul>
+  </div>
+  <div class="phase p3">
+    <div class="ph">Phase 3 · Restructure (ongoing)</div>
+    <div class="pd">Larger work, best done after Phase 2 lands.</div>
+    <ul class="plain">
+      <li>One status authority; a daemon message journal with sequences.</li>
+      <li><code>buildDaemon()</code> shared by tests; split <code>SessionService</code> into five services.</li>
+      <li>UI primitives and type and space tokens; narrow plugin SDK.</li>
+      <li>One orchestrator model and one set of names (needs your decision); diff review and worktrees per thread.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="method">
+  <h2>Method</h2>
+  <p>Five Fable 5.2 reviewers read the repository on 9 November 2026 at the v4.4.1 line, each with one scope: security, daemon architecture, performance, web client and product, reliability and orchestration. All were read-only: no file edits, no daemon, no profiler, no access to <code>~/.dispatch</code>. Every finding cites a file and line in the source reports. Performance numbers are estimates from code and the existing build, except the 316 ms transcript block, which the repository records itself.</p>
+  <p class="note">Effort: S = hours to a day · M = several days · L = a week or more. "High*" findings depend on configuration that the review did not read.</p>
+</section>
+</main>
+</div>
