@@ -137,7 +137,7 @@ Dispatch ends all keys, and the threads that come back get new ones.
   method and the route (for example, `GET /api/integrations/export`) and says that the refusal
   covers only that route: a thread key may still do other things, such as add or list
   integrations. Your browser, the `dispatch` CLI and your own scripts are not affected.
-- **Calls with no credential: most still work, four kinds do not.** From this computer a call with
+- **Calls with no credential: most still work, five kinds do not.** From this computer a call with
   no credential is allowed and counted, except for these actions, which answer `401 auth_required`:
   1. a message or terminal input as you (a thread message, raw terminal input, a file reference
      typed into a terminal, a Chat message, the Chat instructions), including typing over a terminal
@@ -145,10 +145,14 @@ Dispatch ends all keys, and the threads that come back get new ones.
   2. answering a thread's held tool call, or setting a thread to autonomous (which releases them);
   3. starting a thread (creating a tab, branching a thread, starting a queued thread, creating a project's coordinator) or
      replacing a thread's config, which includes its queued task (a label-only rename stays open);
-  4. changing, deleting or importing integrations.
+  4. changing, deleting or importing integrations;
+  5. reading something secret: one secret value (`GET /api/secrets/NAME/value`), the integration
+     export (`GET /api/integrations/export`, which holds every header and env value) and a new
+     pairing code (`POST /api/access/pair-code`). The lists of names stay open.
 
   These pass when the call comes from the Dispatch web page (a browser always sends an `Origin`
-  header), carries your access token, or carries a thread's own key that the action allows.
+  header on a write; on the two reads of kind 5 it sends `Sec-Fetch-Site`, or a `Referer` that
+  names its own page), carries your access token, or carries a thread's own key that the action allows.
   The browser, the `dispatch` CLI, `dispatch api` and the agent tools need no change. A script or
   `curl` must send `Authorization: Bearer TOKEN` (`dispatch access` shows the token; keep it out of
   the command line, for example with `curl -H @FILE`).
@@ -177,15 +181,58 @@ Dispatch ends all keys, and the threads that come back get new ones.
 - **See the counts** with `dispatch status`. The refusals also log one rate-limited line,
   `[keys] refused keyless caller METHOD ROUTE`.
 
+## The listen address (`DISPATCH_BIND`)
+
+By default Dispatch listens on all interfaces, so a device on your network or tailnet can reach the
+sign-in page. `DISPATCH_BIND` makes it listen on one address only.
+
+```bash
+DISPATCH_BIND=127.0.0.1 dispatch install    # this computer only
+DISPATCH_BIND=100.64.0.9 dispatch install   # one address of this computer, for example its tailnet address
+dispatch install                            # all interfaces again (the variable is not set)
+```
+
+- The value is an IP address of this computer, or `localhost`. Any other value stops the start
+  with one error line, and `dispatch install` refuses it.
+- `dispatch install` writes the variable into the service, as it does `PORT`. Run it again to
+  change the address.
+- Dispatch always holds `127.0.0.1` and `::1` on its port too. The threads, the hooks and the
+  `dispatch` CLI call the daemon there.
+- `dispatch status` prints `Listens on: all interfaces` or the address.
+- `tailscale serve` and a tunnel on this computer reach Dispatch over loopback, so they still work
+  with `DISPATCH_BIND=127.0.0.1`. A direct tailnet address (`http://MACHINE:3456`) does not.
+- `DISPATCH_BIND` does not change who is trusted. A forwarder on this computer that adds no
+  forwarding headers still looks like a local caller (see "Behind a proxy or tunnel").
+
 ## Files
 
 `~/.dispatch` is mode `0700` and the database, `access-token` and `access.json` are `0600`, so
 other accounts on the same computer cannot read them.
 
+**Files that Dispatch never serves.** The file viewer can open a file outside the project by its
+absolute path (an agent that works in one repository and edits another). It never opens a file that
+holds credentials, for any caller, you included. The answer is `403` with the text "This path holds
+credentials. Dispatch does not serve it." The check uses the real location of the file, so a
+symbolic link does not go around it. The list:
+
+- in `~/.dispatch`: `access-token`, `keys/`, `accounts.json`, `codex-accounts/`,
+  `claude-oauth-token`, `doppler.json`, `push.json` and every SQLite file (`*.db`, `*.db-wal`,
+  `*.db-shm`);
+- in your home folder: `.ssh/`, `.aws/`, `.gnupg/`, `.config/gcloud/`, `.cloudflared/`, `.kube/`,
+  `Library/Keychains/`, `.docker/config.json`, `.netrc`, `.npmrc`, `.claude/.credentials.json`,
+  `.codex/auth.json`, `.grok/auth.json`, `.local/share/opencode/auth.json` and
+  `.config/gh/hosts.yml`.
+
+Other files in `~/.dispatch` (role files, plugin files) and files in other repositories still open.
+This covers the file viewer's read route. An agent runs as you and can still read these files with
+its own tools.
+
 ## What this does not cover
 
 - Sign-in tries are counted per client; behind a proxy that hides the client address, one visitor's
-  failed tries can delay another sign-in for a minute.
+  failed tries can delay another sign-in for a minute. Dispatch keeps the count for at most 1,000
+  clients. A flood of failed tries from many addresses drops the oldest clients that are not blocked;
+  a blocked client stays blocked.
 - A proxy on this computer that adds no forwarding headers, or a raw TCP forwarder, is treated as
   local. Give it its own sign-in, or do not use it.
 - Anything running as your own user can read the token file. Agents run as you.
