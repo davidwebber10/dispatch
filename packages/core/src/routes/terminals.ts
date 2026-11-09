@@ -382,8 +382,8 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // POST /api/terminals/:terminalId/effort { effort } — the Pretty effort picker: run `effort` from the
   // thread's next turn (SessionService.setThreadEffort). Claude and Codex; a Codex effort must be one the
   // thread's model takes. 409 while a turn runs, for a live CLI thread, or for Grok and OpenCode; 400 when
-  // the harness refuses it. Answers { effort, terminal }. Owner work, like the model switch.
-  router.post('/terminals/:terminalId/effort', async (req, res) => {
+  // the harness refuses it. Answers { effort, terminal }. Owner work (a higher effort spends more): the web page or a token, never a thread key.
+  router.post('/terminals/:terminalId/effort', requireOwnerProof, async (req, res) => {
     const { effort } = req.body ?? {};
     if (typeof effort !== 'string' || !effort.trim()) return res.status(400).json({ error: 'effort is required' });
     try {
