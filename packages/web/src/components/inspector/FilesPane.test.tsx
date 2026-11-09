@@ -500,3 +500,16 @@ test('a slow index fetch flips to the slow-notice heading, and a late result sti
     vi.useRealTimers();
   }
 });
+
+// W3-G: the one entry to the diff review is in this pane (desktop right column and the phone's Files sheet).
+it('Review opens the diff review of the thread directory, and Back returns to the files', async () => {
+  vi.spyOn(api, 'getThreadDiff').mockResolvedValue({ files: [], truncated: false, shared: false, repo: true, branch: 'main', workDir: '/proj' });
+  vi.spyOn(api, 'listWorktrees').mockResolvedValue({ worktrees: [] });
+  render(<FilesPane projectId="p1" terminalId="t9" onOpenFile={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: /^Review/ }));
+  await waitFor(() => expect(api.getThreadDiff).toHaveBeenCalledWith('p1', 't9'));
+  expect(await screen.findByText('Review changes')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to files' }));
+  expect(await screen.findByRole('button', { name: /^Review/ })).toBeInTheDocument();
+  expect(screen.queryByText('Review changes')).not.toBeInTheDocument();
+});

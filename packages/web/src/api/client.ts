@@ -4,6 +4,7 @@ import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession a
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet, ChatSettings, ThreadDiagnostics } from './types';
+import type { ThreadDiff, DiscardResult, ThreadWorktree, ThreadWorktreeState } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -686,4 +687,19 @@ export const api = {
   analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
   analyticsTracking: () => req<AnalyticsTracking>('/api/analytics/tracking'),
   analyticsControlPlane: (r: AnalyticsRange) => req<ControlPlaneAnalytics>(`/api/analytics/control-plane${qs(r)}`),
+  // Diff review and thread worktrees (W3-G). `terminalId` null reviews the project directory.
+  getThreadDiff: (sessionId: string, terminalId: string | null, path?: string) =>
+    req<ThreadDiff>(`/api/sessions/${sessionId}/git/diff${qs({ terminalId: terminalId ?? undefined, path })}`),
+  // Stages the files (git add). It makes no commit.
+  approveChanges: (sessionId: string, terminalId: string | null, paths: string[]) =>
+    req<{ staged: string[] }>(`/api/sessions/${sessionId}/git/approve`, { method: 'POST', body: body({ terminalId, paths }) }),
+  // Restores the tracked files and removes the new files in `paths`. Only those files.
+  discardChanges: (sessionId: string, terminalId: string | null, paths: string[]) =>
+    req<DiscardResult>(`/api/sessions/${sessionId}/git/discard`, { method: 'POST', body: body({ terminalId, paths }) }),
+  createWorktree: (sessionId: string, input: { name?: string } = {}) =>
+    req<ThreadWorktree>(`/api/sessions/${sessionId}/worktrees`, { method: 'POST', body: body(input) }),
+  listWorktrees: (sessionId: string) => req<{ worktrees: ThreadWorktreeState[] }>(`/api/sessions/${sessionId}/worktrees`),
+  // Refused by the daemon when the worktree has uncommitted work or a live thread. The branch stays.
+  removeWorktree: (sessionId: string, path: string) =>
+    req<{ removed: true; path: string; branch: string }>(`/api/sessions/${sessionId}/worktrees/remove`, { method: 'POST', body: body({ path }) }),
 };
