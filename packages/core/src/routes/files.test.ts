@@ -689,6 +689,27 @@ describe('read refuses a path that holds credentials', () => {
     expect((await read(app, path.join(otherRepo, 'notes.txt'))).body).toEqual(REFUSAL);
   });
 
+  // Wave 1 integration (W1-B finding): /image and /download stay inside the project, but a project whose folder IS the
+  // home folder (or ~/.dispatch) could still download a credential file through them.
+  it('download and image refuse a credential file inside a project rooted at the home folder', async () => {
+    const app = await secretApp(home);
+    fs.writeFileSync(path.join(home, '.ssh', 'shot.png'), 'png bytes');
+    for (const owner of [true, false]) {
+      const auth = (r: request.Test) => (owner ? r.set('Authorization', `Bearer ${OWNER_TOKEN}`) : r);
+      for (const p of ['.dispatch/access-token', '.ssh/id_ed25519', path.join(dataDir, 'dispatch.db')]) {
+        const res = await auth(request(app).get('/api/sessions/s1/files/download').query({ path: p }));
+        expect(res.status, `download ${owner ? 'owner' : 'no credential'} ${p}`).toBe(403);
+        expect(res.body).toEqual(REFUSAL);
+      }
+      const img = await auth(request(app).get('/api/sessions/s1/files/image').query({ path: '.ssh/shot.png' }));
+      expect(img.status).toBe(403);
+      expect(img.body).toEqual(REFUSAL);
+    }
+    // An ordinary file in the same project still downloads.
+    const ok = await request(app).get('/api/sessions/s1/files/download').query({ path: 'Sites/project/ok.txt' });
+    expect(ok.status).toBe(200);
+  });
+
   it('an absolute read of a file in another repository still answers 200', async () => {
     const app = await secretApp();
     for (const owner of [true, false]) {

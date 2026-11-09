@@ -392,6 +392,13 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     '.avif': 'image/avif',
     '.bmp': 'image/bmp',
   };
+  // Credentials are never served by any file route (W1-B for /read; /image and /download since the Wave 1
+  // integration). The path as written and the real path are both checked, so a link cannot go around it.
+  const holdsSecret = async (resolved: string): Promise<boolean> => {
+    if (isSecretPath(resolved, secretRoots)) return true;
+    try { return isSecretPath(await fs.promises.realpath(resolved), secretRoots); } catch { return false; }
+  };
+
   router.get('/image', async (req, res) => {
     const session = (req as any).session;
     const requestedPath = queryPath(req.query.path);
@@ -403,6 +410,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const mime = IMAGE_MIME[path.extname(resolved).toLowerCase()];
     if (!mime) return res.status(415).json({ error: 'Unsupported image type' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (await holdsSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
@@ -437,6 +445,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
+    if (await holdsSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
