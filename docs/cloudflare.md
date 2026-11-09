@@ -10,8 +10,11 @@ Replace `dispatch.example.com` with your own hostname throughout.
 > **Dispatch now has its own sign-in.** The tunnel reaches Dispatch over loopback with your
 > public name in the `Host` header, which Dispatch does not know, so visitors see Dispatch's
 > sign-in page after Cloudflare Access. Run `dispatch access allow-host dispatch.example.com`
-> once to trust that name (Cloudflare Access is then your only gate), or sign in once per
-> browser with the token from `dispatch access`. See [network-access.md](network-access.md).
+> once to trust that name, or sign in once per browser with the token from `dispatch access`.
+> After `allow-host`, Cloudflare Access is your only gate unless you also turn on the daemon's own
+> check of the Access token: `dispatch access cloudflare --team-domain <team>.cloudflareaccess.com --aud <AUD tag>`
+> (v4.5.0). With it on, a request on the allowed name passes only with a valid Access token for your
+> team and application. See [network-access.md](network-access.md#cloudflare-access-verification).
 
 ## Prerequisites
 

@@ -47,6 +47,7 @@ import { useSettings, useDispatchName } from '../../stores/settings';
 import { useGroups } from './store';
 import { leafTabIds, leafCount, MAX_PANES } from './types';
 import { TabActivityIndicator, GroupActivityIndicator } from './TabActivityIndicator';
+import { StallBadge } from '../common/StallBadge';
 import { revealIn, tabChipSelector } from '../../lib/reveal';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
@@ -166,6 +167,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
           >
             {dispatch && <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />}
             {!dispatch && <TabActivityIndicator tabId={id} />}
+            {!dispatch && <StallBadge terminalId={id} size={12} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {dispatch ? dispatchName : (labels[i] ?? 'tab')}
@@ -344,6 +346,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
       {isOver && <MergeOverlay label="Merge" />}
 
       <TabActivityIndicator tabId={slot.tabId} />
+      <StallBadge terminalId={slot.tabId} size={12} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {label ?? 'tab'}

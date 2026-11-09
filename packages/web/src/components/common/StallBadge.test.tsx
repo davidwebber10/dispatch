@@ -57,3 +57,12 @@ test('stallTitle never shows less than 1 minute', () => {
   expect(stallTitle(NOW, NOW)).toBe('No output for 1 min. The thread can still be at work.');
   expect(stallTitle(NOW - 61 * 60_000, NOW)).toBe('No output for 61 min. The thread can still be at work.');
 });
+
+// Wave 1 integration: the badge is mounted in the sidebar thread row and in both tab strips.
+test('the thread row and the tab strip render the badge (Wave 1 integration)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const src = (f: string) => readFileSync(join(__dirname, '..', f), 'utf8');
+  expect(src('sidebar/ProjectCard.tsx')).toMatch(/<StallBadge terminalId=\{tab\.id\}/);
+  expect(src('panes/GroupedTabBar.tsx').match(/<StallBadge terminalId=/g)?.length).toBe(2);
+});

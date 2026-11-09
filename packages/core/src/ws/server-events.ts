@@ -30,6 +30,8 @@ export type TerminalStatusEvent = {
   /** Null clears the activity line; absent leaves it as it is. */
   activity?: string | null;
 };
+/** The stall watchdog (W1-D): a working thread with no output past the threshold; null clears the flag. */
+export type TerminalStallEvent = { type: 'terminal:stall'; terminalId: string; stalledSince: string | null };
 export type TerminalActivityEvent = {
   type: 'terminal:activity';
   terminalId: string;
@@ -96,7 +98,7 @@ export type PluginUpdatesEvent = { type: 'plugin:updates'; updates: unknown[] };
 
 /** Every event type that the app itself reads. */
 export type KnownServerEvent =
-  | TerminalCreatedEvent | TerminalStatusEvent | TerminalActivityEvent | TerminalExitEvent | TerminalRemovedEvent
+  | TerminalCreatedEvent | TerminalStatusEvent | TerminalActivityEvent | TerminalStallEvent | TerminalExitEvent | TerminalRemovedEvent
   | SessionCreatedEvent | SessionStatusEvent | SessionArchivedEvent | SessionUpdatedEvent | SessionTabsChangedEvent
   | AgentScheduleCreatedEvent | AgentScheduleUpdatedEvent | AgentScheduleRemovedEvent
   | AgentRunCreatedEvent | AgentRunUpdatedEvent | AgentRunStepEvent

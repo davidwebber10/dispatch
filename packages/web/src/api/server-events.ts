@@ -24,6 +24,7 @@ const REQUIRED_FIELDS: Record<KnownServerEventType, Record<string, FieldKind>> =
   'terminal:created': { terminal: 'object' },
   'terminal:status': { terminalId: 'string', status: 'string' },
   'terminal:activity': { terminalId: 'string' },
+  'terminal:stall': { terminalId: 'string' },
   'terminal:exit': { terminalId: 'string' },
   'terminal:removed': { terminalId: 'string' },
   'session:created': { session: 'object' },

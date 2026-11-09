@@ -1,3 +1,4 @@
+import { StallBadge } from '../common/StallBadge';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
@@ -150,6 +151,8 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
       {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
         <Bell size={13} weight="fill" color="var(--color-text-tertiary)" style={{ flexShrink: 0, marginLeft: 4 }} />
       )}
+      {/* The stall watchdog (W1-D): working, but no output past the threshold. Information only. */}
+      <span style={{ marginLeft: 4, display: 'inline-flex' }}><StallBadge terminalId={tab.id} /></span>
       <span style={{ flexShrink: 0, marginLeft: 8, minWidth: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
         {isMobile && (
           <span role="button" title="Thread options" aria-label="Thread options"
