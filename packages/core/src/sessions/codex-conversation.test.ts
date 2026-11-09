@@ -70,11 +70,11 @@ function codexThread(externalId: string | null = CODEX_SESSION): { svc: SessionS
 }
 
 describe('getConversation for a Codex thread', () => {
-  it('reads the rollout file instead of refusing as unsupported', () => {
+  it('reads the rollout file instead of refusing as unsupported', async () => {
     writeRollout([userLine('hello'), assistantLine('hi back')]);
     const { svc, terminalId } = codexThread();
 
-    const conv = svc.getConversation(terminalId, { limit: 100 });
+    const conv = await svc.getConversation(terminalId, { limit: 100 });
 
     expect(conv.unsupported).toBeUndefined();
     expect(conv.items.map((i) => [i.kind, i.text])).toEqual([
@@ -83,21 +83,21 @@ describe('getConversation for a Codex thread', () => {
     ]);
   });
 
-  it('never renders the event_msg family, which duplicates response_item', () => {
+  it('never renders the event_msg family, which duplicates response_item', async () => {
     writeRollout([assistantLine('only once'), eventLine('only once')]);
     const { svc, terminalId } = codexThread();
 
-    const conv = svc.getConversation(terminalId, { limit: 100 });
+    const conv = await svc.getConversation(terminalId, { limit: 100 });
 
     expect(conv.items).toHaveLength(1);
     expect(conv.items[0]).toMatchObject({ kind: 'assistant', text: 'only once' });
   });
 
-  it('windows to the newest `limit` lines and reports where the window starts', () => {
+  it('windows to the newest `limit` lines and reports where the window starts', async () => {
     writeRollout(Array.from({ length: 10 }, (_, i) => userLine(`m${i}`)));
     const { svc, terminalId } = codexThread();
 
-    const conv = svc.getConversation(terminalId, { limit: 4 });
+    const conv = await svc.getConversation(terminalId, { limit: 4 });
 
     expect(conv.items.map((i) => i.text)).toEqual(['m6', 'm7', 'm8', 'm9']);
     expect(conv.startLine).toBe(6);
@@ -106,13 +106,13 @@ describe('getConversation for a Codex thread', () => {
 
   // The paging contract the client depends on: page N+1 asks for `before: startLine` of
   // page N, and the two windows must abut exactly — no line repeated, none skipped.
-  it('pages older windows that tile exactly against the previous page', () => {
+  it('pages older windows that tile exactly against the previous page', async () => {
     writeRollout(Array.from({ length: 10 }, (_, i) => userLine(`m${i}`)));
     const { svc, terminalId } = codexThread();
 
-    const first = svc.getConversation(terminalId, { limit: 4 });
-    const second = svc.getConversation(terminalId, { before: first.startLine, limit: 4 });
-    const third = svc.getConversation(terminalId, { before: second.startLine, limit: 4 });
+    const first = await svc.getConversation(terminalId, { limit: 4 });
+    const second = await svc.getConversation(terminalId, { before: first.startLine, limit: 4 });
+    const third = await svc.getConversation(terminalId, { before: second.startLine, limit: 4 });
 
     expect(second.items.map((i) => i.text)).toEqual(['m2', 'm3', 'm4', 'm5']);
     expect(third.items.map((i) => i.text)).toEqual(['m0', 'm1']);
@@ -123,29 +123,29 @@ describe('getConversation for a Codex thread', () => {
     expect(all).toEqual(Array.from({ length: 10 }, (_, i) => `m${i}`));
   });
 
-  it('carries the source line index so the client can anchor its next page', () => {
+  it('carries the source line index so the client can anchor its next page', async () => {
     writeRollout(Array.from({ length: 5 }, (_, i) => userLine(`m${i}`)));
     const { svc, terminalId } = codexThread();
 
-    const conv = svc.getConversation(terminalId, { limit: 2 });
+    const conv = await svc.getConversation(terminalId, { limit: 2 });
 
     expect(conv.items.map((i) => i.line)).toEqual([3, 4]);
   });
 
-  it('returns empty (not unsupported) when the thread never captured a session id', () => {
+  it('returns empty (not unsupported) when the thread never captured a session id', async () => {
     writeRollout([userLine('hello')]);
     const { svc, terminalId } = codexThread(null);
 
-    const conv = svc.getConversation(terminalId, { limit: 100 });
+    const conv = await svc.getConversation(terminalId, { limit: 100 });
 
     expect(conv.items).toEqual([]);
     expect(conv.unsupported).toBeUndefined();
   });
 
-  it('returns empty when no rollout file exists for the session yet', () => {
+  it('returns empty when no rollout file exists for the session yet', async () => {
     const { svc, terminalId } = codexThread();
 
-    const conv = svc.getConversation(terminalId, { limit: 100 });
+    const conv = await svc.getConversation(terminalId, { limit: 100 });
 
     expect(conv.items).toEqual([]);
     expect(conv.hasMore).toBe(false);
@@ -153,12 +153,12 @@ describe('getConversation for a Codex thread', () => {
 });
 
 describe('getConversation still refuses a thread with no transcript', () => {
-  it('reports a shell thread as unsupported', () => {
+  it('reports a shell thread as unsupported', async () => {
     sessionsDb.create(db, { id: 's2', provider: 'claude-code', name: 'acme', workingDir: WORKDIR });
     terminalsDb.create(db, { id: 'sh', sessionId: 's2', type: 'shell', label: 'zsh' });
     const svc = new SessionService(db, fakePty, path.join(tmp, 'mcp.json'));
 
-    expect(svc.getConversation('sh', { limit: 10 })).toMatchObject({ items: [], unsupported: true });
+    expect(await svc.getConversation('sh', { limit: 10 })).toMatchObject({ items: [], unsupported: true });
   });
 });
 

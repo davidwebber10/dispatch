@@ -38,6 +38,7 @@ import type { StatusHooksInjection } from '../providers/types.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
 import { parseClaudeTranscript, type ConvItem } from '../conversation/transcript.js';
 import { parseCodexRollout } from '../conversation/codex-transcript.js';
+import { ConversationReader, type ConvPage, type ConvPageOptions, type SearchMatch, type TranscriptLocation } from '../conversation/reader.js';
 import { findCodexRolloutPath, codexRolloutTailStatus, readCodexSessionModel } from './codex-sessions.js';
 import { platform } from '../platform/index.js';
 import { maxLiveThreadsPerProject } from '../caps.js';
@@ -1058,138 +1059,79 @@ export class SessionService {
     return type === 'claude-code' || type === 'codex';
   }
 
-  getConversation(
-    terminalId: string,
-    opts: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {},
-  ): { items: ConvItem[]; cursor: number; startLine: number; hasMore: boolean; unsupported?: boolean } {
-    const empty = { items: [] as ConvItem[], cursor: 0, startLine: 0, hasMore: false };
+  /** Reads transcript pages by byte range, off the event loop's critical path (conversation/reader.ts). Made on first use. */
+  private conversationReaderInstance: ConversationReader | null = null;
+  private get conversationReader(): ConversationReader {
+    return (this.conversationReaderInstance ??= new ConversationReader({ db: this.db, locate: (id) => this.locateTranscript(id) }));
+  }
+
+  /**
+   * Where a thread's transcript file is, and the parser for one line of its format.
+   * `null`: no transcript (yet). `'unsupported'`: the thread type never has one.
+   */
+  private locateTranscript(terminalId: string): TranscriptLocation | null | 'unsupported' {
     const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) return empty;
+    if (!terminal) return null;
     // Both agent types keep a durable transcript on disk, in their own format and their own
     // place. Anything else (a plain shell) has none, and says so rather than looking empty.
-    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') return { ...empty, unsupported: true };
-
-    let raw: string;
-    // Per-line parser for whichever transcript format this thread writes. Both take one
-    // line and return the items it contains, so the windowing below is format-agnostic.
-    let parseLine: (line: string) => ConvItem[];
+    if (terminal.type !== 'claude-code' && terminal.type !== 'codex') return 'unsupported';
 
     if (terminal.type === 'codex') {
       // Codex has no Claude project dir. It files rollouts by date under ~/.codex/sessions,
       // keyed by the session id we captured at spawn — there is no equivalent of
       // recoverSessionId, so a thread that never recorded one has no history to serve.
       const sessionId = terminal.external_id;
-      if (!sessionId) return empty;
+      if (!sessionId) return null;
       const file = findCodexRolloutPath(sessionId);
-      if (!file) return empty;
-      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
-      parseLine = parseCodexRollout;
-    } else {
-      const session = sessionsDb.getById(this.db, terminal.session_id);
-      const workDir = terminal.working_dir || session?.working_dir;
-      if (!workDir) return empty;
-
-      const dir = platform.claudeProjectDir(workDir);
-      // external_id is normally captured at spawn; when it wasn't, recover it from the
-      // project's transcript files so the thread still renders in View.
-      const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
-      if (!sessionId) return empty;
-
-      // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
-      // but relocates under a different project dir, and `workDir` here is whatever the thread
-      // spawned with. Reading the computed path directly is what made those chats render
-      // empty — see sessions/transcript-path.ts.
-      const file = resolveTranscriptPath(workDir, sessionId);
-      if (!file) return empty;
-      try { raw = fs.readFileSync(file, 'utf8'); } catch { return empty; }
-      parseLine = parseClaudeTranscript;
+      // Per-line parser for whichever transcript format this thread writes. Both take one
+      // line and return the items it contains, so the reader's windowing is format-agnostic.
+      return file ? { file, parseLine: parseCodexRollout } : null;
     }
 
-    // Consume only complete lines (the trailing element is an empty string after a
-    // final newline, or a half-written entry) so we never parse a partial record.
-    const usable = raw.split('\n').slice(0, -1);
-    const total = usable.length;
-    const limit = opts.limit && opts.limit > 0 ? opts.limit : 200;
+    const session = sessionsDb.getById(this.db, terminal.session_id);
+    const workDir = terminal.working_dir || session?.working_dir;
+    if (!workDir) return null;
 
-    // Resolve beforeUuid to a line index by scanning backward from the tail — the anchor
-    // is always a recently-rendered ws item, so it's near the end, not deep in the file.
-    let beforeFromUuid: number | undefined;
-    if (opts.beforeUuid) {
-      for (let i = total - 1; i >= 0; i--) {
-        try { if (JSON.parse(usable[i])?.uuid === opts.beforeUuid) { beforeFromUuid = i; break; } } catch { /* partial/garbled line */ }
-      }
-    }
+    const dir = platform.claudeProjectDir(workDir);
+    // external_id is normally captured at spawn; when it wasn't, recover it from the
+    // project's transcript files so the thread still renders in View.
+    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
+    if (!sessionId) return null;
 
-    let start: number;
-    let end: number;
-    if (beforeFromUuid !== undefined) {                       // precise anchor (scroll up, first page)
-      end = beforeFromUuid;
-      start = Math.max(0, end - limit);
-    } else if (opts.before !== undefined && opts.before > 0) { // older window (scroll up)
-      end = Math.min(opts.before, total);
-      start = Math.max(0, end - limit);
-    } else if (opts.since !== undefined && opts.since > 0) {  // new lines (poll)
-      start = Math.min(opts.since, total);
-      end = total;
-    } else {                                                  // initial: most recent `limit`
-      end = total;
-      start = Math.max(0, total - limit);
-    }
+    // Resolve rather than assume: a session that changed cwd (EnterWorktree) keeps its id
+    // but relocates under a different project dir, and `workDir` here is whatever the thread
+    // spawned with. Reading the computed path directly is what made those chats render
+    // empty — see sessions/transcript-path.ts.
+    const file = resolveTranscriptPath(workDir, sessionId);
+    return file ? { file, parseLine: parseClaudeTranscript } : null;
+  }
 
-    // Parse per line so each item carries its source line index (enables jump-to).
-    const items: ConvItem[] = [];
-    for (let i = start; i < end; i++) {
-      for (const it of parseLine(usable[i])) items.push({ ...it, line: i });
-    }
-    // Merge durably-stored `source` tags onto user turns (see db/message-source.ts) — the
-    // REST transcript parser (conversation/transcript.ts) never sets this itself, matching
-    // backfillEventsFromTranscript's identical on-disk gap (see the seedEvents merge above /
-    // cc-sessions.ts's applyDurableSources). Fixes the archived-thread / loadOlder path,
-    // where a chat is hydrated ENTIRELY from this endpoint (no live ws to fall back on).
-    const userUuids = items.filter((it) => it.kind === 'user' && it.uuid).map((it) => it.uuid as string);
-    if (userUuids.length) {
-      const sourceByUuid = messageSourceDb.getForUuids(this.db, terminalId, userUuids);
-      if (sourceByUuid.size) {
-        for (const it of items) {
-          if (it.kind === 'user' && it.uuid && sourceByUuid.has(it.uuid)) it.source = sourceByUuid.get(it.uuid);
-        }
-      }
-    }
-    return { items, cursor: total, startLine: start, hasMore: start > 0 };
+  /**
+   * A window of the thread's transcript. A thin delegate: ConversationReader.page does the work
+   * (a byte-range read, not a full read), so this returns a Promise.
+   */
+  getConversation(terminalId: string, opts: ConvPageOptions = {}): Promise<ConvPage> {
+    return this.conversationReader.page(terminalId, opts);
+  }
+
+  /**
+   * The items of the thread's newest `limit` transcript lines, synchronously, from a bounded
+   * tail read. For the in-process callers that need the last assistant text inside a
+   * synchronous path (agentOutputText, lastTurnTexts). Routes and tools use getConversation.
+   */
+  private conversationTail(terminalId: string, limit: number): ConvItem[] {
+    return this.conversationReader.tailItems(terminalId, limit);
   }
 
   /**
    * Full-history text search over a terminal's transcript. Returns matches with
    * their source line index (so View can load + scroll to that spot) and a short
    * snippet around the match. Newest matches first, capped for response size.
+   * Claude Code only, as before. A thin delegate to ConversationReader.search.
    */
-  searchConversation(terminalId: string, query: string, limit = 200): { matches: { line: number; kind: string; snippet: string }[] } {
-    const q = query.trim().toLowerCase();
-    if (!q) return { matches: [] };
-    const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal || terminal.type !== 'claude-code') return { matches: [] };
-    const session = sessionsDb.getById(this.db, terminal.session_id);
-    const workDir = terminal.working_dir || session?.working_dir;
-    if (!workDir) return { matches: [] };
-    const dir = platform.claudeProjectDir(workDir);
-    const sessionId = terminal.external_id || this.recoverSessionId(terminalId, dir);
-    if (!sessionId) return { matches: [] };
-    let raw: string;
-    try { raw = fs.readFileSync(path.join(dir, `${sessionId}.jsonl`), 'utf8'); } catch { return { matches: [] }; }
-
-    const usable = raw.split('\n').slice(0, -1);
-    const matches: { line: number; kind: string; snippet: string }[] = [];
-    for (let i = usable.length - 1; i >= 0 && matches.length < limit; i--) { // newest first
-      for (const it of parseClaudeTranscript(usable[i])) {
-        const hay = `${it.text ?? ''} ${it.toolTitle ?? ''} ${it.toolDetail ?? ''}`;
-        const at = hay.toLowerCase().indexOf(q);
-        if (at >= 0) {
-          matches.push({ line: i, kind: it.kind, snippet: snippetAround(hay, at, q.length) });
-          break; // one match per line is enough
-        }
-      }
-    }
-    return { matches };
+  async searchConversation(terminalId: string, query: string, limit = 200): Promise<{ matches: SearchMatch[] }> {
+    if (terminalsDb.getById(this.db, terminalId)?.type !== 'claude-code') return { matches: [] };
+    return this.conversationReader.search(terminalId, query, limit);
   }
 
   /**
@@ -1649,7 +1591,7 @@ export class SessionService {
   private agentOutputText(terminalId: string, max = 600): string {
     const live = this.lastAssistantText(terminalId, max);
     if (live) return live;
-    const text = this.getConversation(terminalId, { limit: 500 }).items
+    const text = this.conversationTail(terminalId, 500)
       .filter((it) => it.kind === 'assistant' && it.text)
       .map((it) => it.text)
       .join('\n\n')
@@ -1756,7 +1698,7 @@ export class SessionService {
   private lastTurnTexts(terminalId: string): string[] {
     const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
     if (live) return [...live].reverse();
-    const items = this.getConversation(terminalId, { limit: 50 }).items.filter((it) => it.kind === 'assistant' && it.text);
+    const items = this.conversationTail(terminalId, 50).filter((it) => it.kind === 'assistant' && it.text);
     return items.length ? [String(items[items.length - 1].text)] : [];
   }
 
@@ -3678,14 +3620,4 @@ export class SessionService {
     return existing.length > 0 ? `${folder} #${existing.length + 1}` : folder;
   }
 
-}
-
-/** A short single-line snippet centered on a match, with ellipses + collapsed whitespace. */
-function snippetAround(text: string, at: number, matchLen: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
-  // Recompute the match position in the collapsed string (approximate is fine).
-  const idx = flat.toLowerCase().indexOf(text.slice(at, at + matchLen).replace(/\s+/g, ' ').trim().toLowerCase());
-  const start = Math.max(0, (idx < 0 ? 0 : idx) - 30);
-  const end = Math.min(flat.length, (idx < 0 ? 0 : idx) + matchLen + 50);
-  return (start > 0 ? '…' : '') + flat.slice(start, end) + (end < flat.length ? '…' : '');
 }

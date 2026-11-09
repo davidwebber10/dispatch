@@ -48,23 +48,23 @@ function coordinator(): { svc: SessionService; terminalId: string } {
 }
 
 describe('getConversation transcript recovery for a coordinator with no external_id', () => {
-  it('does NOT adopt an unrelated session when multiple transcripts exist (ambiguous → empty)', () => {
+  it('does NOT adopt an unrelated session when multiple transcripts exist (ambiguous → empty)', async () => {
     const { svc, terminalId } = coordinator();
     // A busy project dir: the coordinator never ran (no external_id), and two UNRELATED
     // claude sessions live in the dir (e.g. the user's own terminal sessions). Picking the
     // newest would render a conversation the coordinator never owned (issue #7).
     writeJsonl('older-session', userLine('older unrelated turn', 'o1'));
     writeJsonl('newer-unrelated-session', userLine('newest unrelated turn', 'n1'));
-    const conv = svc.getConversation(terminalId, { limit: 10 });
+    const conv = await svc.getConversation(terminalId, { limit: 10 });
     expect(conv.items).toEqual([]); // no misattributed transcript
     // …and it must not claim someone else's session id as this terminal's identity.
     expect(terminalsDb.getById(db, terminalId)?.external_id).toBeNull();
   });
 
-  it('still recovers + persists the session id when exactly one transcript exists (unambiguous)', () => {
+  it('still recovers + persists the session id when exactly one transcript exists (unambiguous)', async () => {
     const { svc, terminalId } = coordinator();
     writeJsonl('the-only-session', userLine('the real turn', 'r1'));
-    const conv = svc.getConversation(terminalId, { limit: 10 });
+    const conv = await svc.getConversation(terminalId, { limit: 10 });
     expect(conv.items.map((i) => i.text)).toEqual(['the real turn']);
     expect(terminalsDb.getById(db, terminalId)?.external_id).toBe('the-only-session');
   });

@@ -130,20 +130,32 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
   // after N (poll); `before`: the `limit` lines before M (older history for infinite
   // scroll); `beforeUuid`: same, but anchored on a transcript-line uuid instead of a line
   // index (see getConversation's doc comment — lets a ws-replayed page anchor precisely).
-  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule , plugin: needs('read:threads') }), (req, res) => {
+  // The handler is async (the reader does a byte-range read). Express 4 does not catch a rejected
+  // promise, so each handler answers 500 itself: a reader error must not leave the request open.
+  router.get('/terminals/:terminalId/conversation', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule , plugin: needs('read:threads') }), async (req, res) => {
     const num = (v: unknown) => (v != null ? Number(v) : undefined);
     const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
-    res.json(redactKeysDeep(sessionService.getConversation(req.params.terminalId, {
-      since: num(req.query.since),
-      before: num(req.query.before),
-      beforeUuid: str(req.query.beforeUuid),
-      limit: num(req.query.limit),
-    })));
+    try {
+      res.json(redactKeysDeep(await sessionService.getConversation(req.params.terminalId, {
+        since: num(req.query.since),
+        before: num(req.query.before),
+        beforeUuid: str(req.query.beforeUuid),
+        limit: num(req.query.limit),
+      })));
+    } catch (err) {
+      console.error(`[conversation] page of ${req.params.terminalId} failed:`, err);
+      res.status(500).json({ error: 'Could not read the conversation' });
+    }
   });
 
   // GET /api/terminals/:terminalId/conversation/search?q=... — full-history search.
-  router.get('/terminals/:terminalId/conversation/search', (req, res) => {
-    res.json(redactKeysDeep(sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? ''))));
+  router.get('/terminals/:terminalId/conversation/search', async (req, res) => {
+    try {
+      res.json(redactKeysDeep(await sessionService.searchConversation(req.params.terminalId, String(req.query.q ?? ''))));
+    } catch (err) {
+      console.error(`[conversation] search of ${req.params.terminalId} failed:`, err);
+      res.status(500).json({ error: 'Could not search the conversation' });
+    }
   });
 
   router.get('/terminals/:terminalId/diagnostics', (req, res) => {
