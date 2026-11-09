@@ -29,6 +29,7 @@ import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type Trans
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { EventRing } from './shared/event-ring.js';
+import type { JournalRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
 import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
@@ -175,6 +176,9 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     this.sandbox = opts.sandbox ?? 'workspace-write';
   }
 
+  /** The message journal's recorder (W3-D). Set by the daemon; a manager with none writes no journal. */
+  journal?: JournalRecorder;
+
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
@@ -215,6 +219,8 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
+    // W3-D: each finished item goes to the message journal. Codex prose has no whole frame: a block is finished at its stop.
+    this.journal?.attach(terminalId, session.ring, { wholeFrames: false });
     this.sessions.set(terminalId, session);
     session.ready = this.beginThread(session, conn);
     return conn.pid;
