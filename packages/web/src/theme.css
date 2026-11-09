@@ -37,6 +37,13 @@
   --term-background:#1E1E1E; --term-foreground:#FFFFFF; --term-cursor:#FFFFFF; --term-selection:rgba(255,255,255,.3);
   --term-black:#2E3436; --term-red:#CC0000; --term-green:#4E9A06; --term-yellow:#C4A000; --term-blue:#3465A4; --term-magenta:#75507B; --term-cyan:#06989A; --term-white:#D3D7CF;
   --term-bright-black:#555753; --term-bright-red:#EF2929; --term-bright-green:#8AE234; --term-bright-yellow:#FCE94F; --term-bright-blue:#729FCF; --term-bright-magenta:#AD7FA8; --term-bright-cyan:#34E2E2; --term-bright-white:#EEEEEC;
+  /* Text scale (Settings > Appearance). Components use fontVar(px) from lib/fontSize.ts, which picks one of these.
+     Each is px / 16 rem, so it follows <html> font-size (16px × the scale). */
+  --fs-7-5:0.46875rem; --fs-8:0.5rem; --fs-8-5:0.53125rem; --fs-9:0.5625rem; --fs-9-5:0.59375rem; --fs-10:0.625rem;
+  --fs-10-5:0.65625rem; --fs-11:0.6875rem; --fs-11-5:0.71875rem; --fs-12:0.75rem; --fs-12-5:0.78125rem; --fs-13:0.8125rem;
+  --fs-13-5:0.84375rem; --fs-14:0.875rem; --fs-14-5:0.90625rem; --fs-15:0.9375rem; --fs-15-5:0.96875rem; --fs-16:1rem;
+  --fs-17:1.0625rem; --fs-18:1.125rem; --fs-19:1.1875rem; --fs-20:1.25rem; --fs-21:1.3125rem; --fs-22:1.375rem;
+  --fs-24:1.5rem; --fs-28:1.75rem; --fs-40:2.5rem;
   color-scheme: dark;
   --font-sans:'IBM Plex Sans',sans-serif; --font-mono:'JetBrains Mono',monospace;
   /* One radius scale for the whole app (audit 2026-11-05). Inline styles and CSS use these,
@@ -62,6 +69,8 @@
    Installed PWA: there's no Safari toolbar and 100dvh mis-reports until the
    device is rotated, so the root is pinned to the viewport instead (below, via the
    .pwa-standalone class on <html>). */
+/* The text scale's base: every --fs-N is in rem. The store sets an inline font-size on <html> when the scale is not 100%. */
+html { font-size: 16px; }
 html, body, #root { margin: 0; padding: 0; height: 100vh; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
 html.pwa-standalone, html.pwa-standalone body { height: 100%; }
 /* Since the status bar went opaque (index.html, "black"), the page starts BELOW it, but 100vh is
