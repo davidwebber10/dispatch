@@ -266,6 +266,7 @@ describe('service worker: a new build (W2-H)', () => {
     const entry = 'const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./TerminalTab-a1.js","./TerminalTab-b2.css","./NotesTab-c3.js"])))=>i.map(i=>d[i]);const A=()=>import("./AnalyticsView-d4.js");import"./vendor-e5.js";';
     await w.seed('/', ok(html('A'), 'text/html'));
     await w.seed('/assets/index-A.js', ok(entry, 'text/javascript'));
+    await w.seed('/assets/index-A.css', ok('css A', 'text/css'));
     await w.seed('/assets/NotesTab-c3.js', ok('notes', 'text/javascript'));
     answers(w, {
       '/assets/TerminalTab-a1.js': ok('import"./xterm-f6.js";', 'text/javascript'),
@@ -284,6 +285,27 @@ describe('service worker: a new build (W2-H)', () => {
     w.fetchMock.mockClear();
     await w.run('message', { data: { type: 'warm-chunks' }, source: w.client }).settled();
     expect(w.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('warm-chunks on the first visit (nothing saved) saves the shell, its files and the lazy chunks', async () => {
+    const w = load();
+    answers(w, {
+      '/': ok(html('A'), 'text/html'),
+      '/assets/index-A.js': ok('const A=()=>import("./Lazy-z9.js");', 'text/javascript'),
+      '/assets/index-A.css': ok('css A', 'text/css'),
+      '/assets/Lazy-z9.js': ok('lazy', 'text/javascript'),
+    });
+    await w.run('message', { data: { type: 'warm-chunks' }, source: w.client }).settled();
+    expect(await (await w.stored('/')).text()).toBe(html('A'));
+    for (const p of ['/assets/index-A.js', '/assets/index-A.css', '/assets/Lazy-z9.js']) expect(await w.stored(p), p).toBeDefined();
+    expect(w.client.messages).toEqual([]);
+  });
+
+  it('warm-chunks with no network and nothing saved does nothing', async () => {
+    const w = load();
+    w.fetchMock.mockRejectedValue(new TypeError('offline'));
+    await w.run('message', { data: { type: 'warm-chunks' }, source: w.client }).settled();
+    expect(await w.stored('/')).toBeUndefined();
   });
 
   it('an unknown message does nothing', async () => {

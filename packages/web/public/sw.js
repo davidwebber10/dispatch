@@ -136,10 +136,19 @@ function chunkRefs(text, base) {
 const WARM_MAX_FILES = 80;
 async function warmChunks() {
   const cache = await caches.open(CACHE);
-  const shell = await cache.match(SHELL_URL);
-  if (!shell) return;
-  const entry = shellFiles(await shell.text()).entry;
+  let shell = await cache.match(SHELL_URL);
+  if (!shell) {
+    // The first visit: the page loaded before this worker controlled it, so nothing is saved yet.
+    // Save the shell now, and the next launch starts from the cache.
+    const res = await fetch(new Request(self.registration.scope, { cache: 'no-store' }));
+    if (!good(res)) return;
+    await cache.put(SHELL_URL, res.clone());
+    shell = res;
+  }
+  const files = shellFiles(await shell.text());
+  const entry = files.entry;
   if (!entry) return;
+  try { await Promise.all(files.all.map((u) => store(cache, u))); } catch { return; }
   const seen = new Set([entry]);
   const queue = [entry];
   while (queue.length && seen.size <= WARM_MAX_FILES) {
