@@ -121,9 +121,10 @@ describe('UsageChip', () => {
     const cards = screen.getAllByRole('region');
     expect(cards).toHaveLength(2);
     expect(cards[0].getAttribute('data-current')).toBe('true');
-    expect(cards[0].textContent).toContain('This account');
+    // A tab on the card's top-right border (2026-11-09), green with dark text.
+    expect(cards[0].querySelector('[data-testid="usage-current-tab"]')).toHaveTextContent('This thread');
     expect(cards[0].textContent).toContain('Team');
-    expect(cards[1].textContent).not.toContain('This account');
+    expect(cards[1].querySelector('[data-testid="usage-current-tab"]')).toBeNull();
   });
 
   it('the per-device setting puts the percent used in the ring instead of the logo (2026-11-07)', () => {
@@ -169,7 +170,10 @@ describe('rail: the open thread\'s account (2026-11-09)', () => {
     useUsageLimits.setState({ summary: two() });
     render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
     fireEvent.click(screen.getByTestId('usage-chip'));
-    expect(screen.getByRole('region', { name: 'Claude · Home' }).getAttribute('data-current')).toBe('true');
+    const card = screen.getByRole('region', { name: 'Claude · Home' });
+    expect(card.getAttribute('data-current')).toBe('true');
+    expect(card.querySelector('[data-testid="usage-current-tab"]')).toHaveTextContent('This thread');
+    expect(card.textContent).not.toMatch(/This account|\bThis\b(?! thread)/);
   });
 
   it('the rail lists the rings in the flyout\'s order: the open thread\'s account first', () => {

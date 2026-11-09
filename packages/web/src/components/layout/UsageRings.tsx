@@ -108,11 +108,14 @@ function ToolCard({ m, warn, current, dense }: { m: RingModel; warn: number; cur
   return (
     // Each card is its own block (2026-11-09: the cards blended together): a header band with the
     // tool's mark, a stronger edge, and room between the cards.
-    <section aria-label={m.name} data-current={current ? 'true' : undefined} style={{ background: 'var(--color-elevated)', border: `1px solid ${current ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text-emphasis) 16%, transparent)'}`, borderRadius: 'var(--radius-lg)', overflow: 'hidden', minWidth: 0, opacity: m.stale ? 0.75 : 1, boxShadow: '0 6px 18px -12px var(--color-shadow-strong)' }}>
-      <div data-testid="usage-card-header" style={{ display: 'flex', alignItems: 'center', gap: dense ? 8 : 9, padding: dense ? '6px 12px' : '10px 14px', background: current ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', borderBottom: '1px solid var(--color-border)' }}>
+    <section aria-label={m.name} data-current={current ? 'true' : undefined} style={{ background: 'var(--color-elevated)', border: `1px solid ${current ? 'var(--color-accent)' : 'color-mix(in srgb, var(--color-text-emphasis) 16%, transparent)'}`, borderRadius: 'var(--radius-lg)', position: 'relative', marginTop: current ? 14 : 0, minWidth: 0, opacity: m.stale ? 0.75 : 1, boxShadow: '0 6px 18px -12px var(--color-shadow-strong)' }}>
+      {/* The open thread's account (2026-11-09): a tab on the top-right of the green border, not a pill in the header. */}
+      {current && (
+        <span data-testid="usage-current-tab" style={{ position: 'absolute', right: 12, bottom: '100%', marginBottom: 0, padding: dense ? '2px 9px' : '3px 10px', borderRadius: 'var(--radius-md) var(--radius-md) 0 0', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${dense ? 10 : 10.5}px var(--font-mono)`, letterSpacing: '.07em', textTransform: 'uppercase', whiteSpace: 'nowrap', lineHeight: 1.4 }}>This thread</span>
+      )}
+      <div data-testid="usage-card-header" style={{ borderRadius: 'calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0', display: 'flex', alignItems: 'center', gap: dense ? 8 : 9, padding: dense ? '6px 12px' : '10px 14px', background: current ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-text-emphasis) 6%, transparent)', borderBottom: '1px solid var(--color-border)' }}>
         {Mark && <span aria-hidden style={{ width: dense ? 22 : 26, height: dense ? 22 : 26, flexShrink: 0, borderRadius: 'var(--radius-md)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Mark size={dense ? 13 : 15} /></span>}
         <span style={{ fontSize: dense ? 14.5 : 16, fontWeight: 600, flexShrink: 0, whiteSpace: 'nowrap' }}>{m.name}</span>
-        {current && <span style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-accent)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-pill)', padding: '1px 7px', whiteSpace: 'nowrap', flexShrink: 0 }}>{dense ? 'This' : 'This account'}</span>}
         {m.plan && <span style={{ font: '400 10.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)', padding: '1px 7px' }}>{m.plan}</span>}
         <span title={m.stale ? 'These figures are old: no thread has reported in a while' : undefined}
           style={{ marginLeft: 'auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', font: '400 11px var(--font-mono)', color: m.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{m.asOf}</span>
@@ -177,7 +180,7 @@ function ToolCard({ m, warn, current, dense }: { m: RingModel; warn: number; cur
   );
 }
 
-/** `current` (opened from a thread, 2026-11-07): that thread's account is marked "This account" and listed first. */
+/** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab and listed first. */
 export function UsageRings({ summary, now, current, dense }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null; dense?: boolean }) {
   const isCurrent = (m: RingModel) => !!current && m.provider === current.provider && m.accountId === current.accountId;
   const rings = [...ringModels(summary, now)].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
