@@ -101,6 +101,8 @@ export function UsageChip({ variant, only, hideAll, current }: {
   const tone = chipTone(rings, summary.warnPercent);
   const color = TONE_COLOR[tone];
   const isCurrent = (r: ChipRing) => !!current && r.provider === current.provider && (r.accountId ?? 'cli') === current.accountId;
+  // The same order as the Usage flyout (2026-11-09): the open thread's account first, then the rest as listed.
+  if (variant === 'rail' && current) rings.sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
   const mine = rings.find(isCurrent);
   const title = `Usage. ${mine ? `This thread uses ${mine.name}. ` : ''}${rings.map((r) => r.title).join('. ')}`;
 
@@ -131,9 +133,10 @@ export function UsageChip({ variant, only, hideAll, current }: {
         ) : <ProviderRing key={`${r.provider}|${r.accountId}`} ring={r} size={30} />)}
       </button>
       {open && (
-        <div role="dialog" aria-label="Usage limits" style={{ position: 'absolute', left: 58, bottom: 0, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', boxSizing: 'border-box', padding: 14, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Usage</div>
-          <UsageRings summary={summary} now={now} current={only ?? current} />
+        // Fixed to the window, not the chip (2026-11-09): with four accounts the flyout grew past the top edge.
+        <div role="dialog" aria-label="Usage limits" style={{ position: 'fixed', left: 70, bottom: 12, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', maxHeight: 'calc(100vh - 24px)', overflowY: 'auto', overscrollBehavior: 'contain', boxSizing: 'border-box', padding: 10, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Usage</div>
+          <UsageRings summary={summary} now={now} current={only ?? current} dense />
         </div>
       )}
     </div>

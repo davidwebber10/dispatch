@@ -172,6 +172,16 @@ describe('rail: the open thread\'s account (2026-11-09)', () => {
     expect(screen.getByRole('region', { name: 'Claude · Home' }).getAttribute('data-current')).toBe('true');
   });
 
+  it('the rail lists the rings in the flyout\'s order: the open thread\'s account first', () => {
+    useUsageLimits.setState({ summary: two() });
+    render(<UsageChip variant="rail" current={{ provider: 'claude-code', accountId: 'home' }} />);
+    const order = () => screen.getAllByTestId('usage-ring').map((r) => r.getAttribute('data-account'));
+    expect(order()).toEqual(['home', 'work']);
+    fireEvent.click(screen.getByTestId('usage-chip'));
+    const cards = screen.getByRole('dialog', { name: 'Usage limits' }).querySelectorAll('section[aria-label]');
+    expect([...cards].map((c) => c.getAttribute('aria-label'))).toEqual(['Claude · Home', 'Claude · Work']);
+  });
+
   it('no open thread: no mark', () => {
     useUsageLimits.setState({ summary: two() });
     render(<UsageChip variant="rail" current={null} />);
