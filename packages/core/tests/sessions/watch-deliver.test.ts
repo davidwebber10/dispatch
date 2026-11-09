@@ -5,12 +5,14 @@ const START = '\x1b[200~';
 const END = '\x1b[201~';
 
 /** A SessionService stand-in with only what the wake delivery touches. */
-function fakeSessions(terminal: { type: string; config?: Record<string, any> } | null, structuredFor = false) {
+function fakeSessions(terminal: { type: string; config?: Record<string, any> } | null, structuredFor = false, opts: { alive?: boolean; revives?: boolean } = {}) {
   const calls: { writes: [string, string][]; alive: string[]; sent: [string, string][] } = { writes: [], alive: [], sent: [] };
   const svc = {
     getTerminal: () => terminal,
     structuredManagerFor: () => (structuredFor ? {} : undefined),
-    ensureStructuredAlive: (id: string) => { calls.alive.push(id); },
+    ensureStructuredAlive: (id: string) => { calls.alive.push(id); return opts.revives ?? true; },
+    // Added with the delivery outbox (W2-C): a wake is no longer typed into a CLI thread that has no process.
+    isThreadProcessAlive: () => opts.alive ?? true,
     sendStructuredMessage: (id: string, text: string) => { calls.sent.push([id, text]); },
     writeToTerminal: (id: string, data: string) => { calls.writes.push([id, data]); },
   };
@@ -56,5 +58,28 @@ describe('buildWatchDeliver — waking a CLI (PTY) parent', () => {
     buildWatchDeliver(gone.svc)('t', 'wake');
     expect(shell.calls.writes).toHaveLength(0);
     expect(gone.calls.writes).toHaveLength(0);
+  });
+
+  // The delivery outbox (W2-C) reads the answer: delivered, wait, or drop.
+  it('answers delivered for a wake that was typed in or sent', () => {
+    expect(buildWatchDeliver(fakeSessions({ type: 'codex' }).svc)('p', 'wake')).toBe('delivered');
+    expect(buildWatchDeliver(fakeSessions({ type: 'claude-code', config: { transport: 'structured' } }, true).svc)('p', 'wake')).toBe('delivered');
+  });
+
+  it('a CLI parent with no process gets nothing typed, and the wake waits', () => {
+    const { svc, calls } = fakeSessions({ type: 'claude-code', config: {} }, false, { alive: false });
+    expect(buildWatchDeliver(svc)('parent', 'wake')).toBe('not-alive');
+    expect(calls.writes).toHaveLength(0);
+  });
+
+  it('a Pretty parent that could not be started gets nothing, and the wake waits', () => {
+    const { svc, calls } = fakeSessions({ type: 'claude-code', config: { transport: 'structured' } }, true, { revives: false });
+    expect(buildWatchDeliver(svc)('parent', 'wake')).toBe('not-alive');
+    expect(calls.sent).toHaveLength(0);
+  });
+
+  it('a shell tab and a vanished thread answer gone', () => {
+    expect(buildWatchDeliver(fakeSessions({ type: 'shell' }).svc)('t', 'wake')).toBe('gone');
+    expect(buildWatchDeliver(fakeSessions(null).svc)('t', 'wake')).toBe('gone');
   });
 });

@@ -125,6 +125,8 @@ import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
+import type { DeliverResult } from './delivery/outbox.js';
+import { createDeliveryOutbox, subscribeDeliveryOutbox, flushOutboxAtBoot } from './delivery/wiring.js';
 import { trackingStartedAt } from './routes/analytics.js';
 import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
 
@@ -372,27 +374,35 @@ function wireHarnesses(sessionService: SessionService, status: StatusService, db
 }
 
 /**
- * Builds the WatchDispatcher's `deliver` function: picks transport per target the SAME way
- * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
- * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
- * (lazily resumes a dead one) + `sendStructuredMessage`; everything else (PTY threads —
- * claude-code/codex still on the CLI transport, or shell) gets the wake typed in and submitted
- * (`ptyMessagePayload`), exactly as `sendThreadMessage` delivers a peer message to a CLI thread.
+ * Builds the deliver function for a watch wake (the delivery outbox calls it for a `watch` row):
+ * picks transport per target the SAME way spawnTerminal/ensureStructuredAlive already do —
+ * `config.transport === 'structured'` AND a structured manager exists for that harness.
+ * Structured threads get `ensureStructuredAlive` (lazily resumes a dead one) +
+ * `sendStructuredMessage`; everything else (PTY threads — claude-code/codex still on the CLI
+ * transport) gets the wake typed in and submitted (`ptyMessagePayload`), exactly as
+ * `sendThreadMessage` delivers a peer message to a CLI thread.
+ *
+ * The answer tells the outbox what to do with the row (W2-C). `gone`: the watcher vanished or is
+ * a shell tab; the wake is dropped. `not-alive`: nothing can take the wake now (a CLI thread with
+ * no process, a Pretty thread that could not be started); the wake waits and the watch stays
+ * live. Before, that wake was typed into nothing and the watch was spent.
  */
-export function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => void {
+export function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => DeliverResult {
   return (terminalId: string, text: string) => {
     const terminal = sessionService.getTerminal(terminalId);
-    if (!terminal) return; // watcher vanished between lookup and delivery — nothing to do
+    if (!terminal) return 'gone'; // watcher vanished between lookup and delivery — nothing to do
     // A shell tab would run the wake text as a command (also covers a watch stored before the route refused it).
-    if (terminal.type === 'shell') return;
+    if (terminal.type === 'shell') return 'gone';
     if (terminal.config?.transport === 'structured' && sessionService.structuredManagerFor(terminal.type)) {
-      sessionService.ensureStructuredAlive(terminalId);
+      if (sessionService.ensureStructuredAlive(terminalId) === false) return 'not-alive';
       sessionService.sendStructuredMessage(terminalId, text);
     } else {
+      if (!sessionService.isThreadProcessAlive(terminalId)) return 'not-alive';
       // Same bytes a peer message to a CLI thread uses: a bare "\n" only types a newline into the
       // input box, so the parent never woke. Bracketed paste, then one CR, submits it.
       sessionService.writeToTerminal(terminalId, ptyMessagePayload(text));
     }
+    return 'delivered';
   };
 }
 
@@ -451,8 +461,11 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as onActivity below.
-  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // A wake and a worker's notice are written to the delivery outbox first, then delivered (W2-C).
+  const outbox = createDeliveryOutbox(db, sessionService, buildWatchDeliver(sessionService));
+  const watchDispatcher = new WatchDispatcher(db, outbox);
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
+  subscribeDeliveryOutbox(outbox, statusService);
   // Plugins observe hook payloads, spawns, declarations and prompts (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
@@ -689,7 +702,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   agentService.setRoleRunner(rolesService);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
-  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // A wake and a worker's notice are written to the delivery outbox first, then delivered (W2-C).
+  const outbox = createDeliveryOutbox(db, sessionService, buildWatchDeliver(sessionService));
+  const watchDispatcher = new WatchDispatcher(db, outbox);
   // Endless Chat hears every status edge here (a thread's error edge reports); its settles
   // come from the settled listener below.
   let onEndlessStatus: ((terminalId: string, status: string) => void) | null = null;
@@ -703,6 +718,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
+  subscribeDeliveryOutbox(outbox, statusService);
   // Plugins observe hook payloads, spawns and declarations; prompts join the auto-namer's listener below.
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
