@@ -16,9 +16,6 @@
 
 import { authRequiredFrame } from '../auth/auth-failure.js';
 import { pauseLabel } from '../limits/detect.js';
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import { EventEmitter } from 'events';
-import * as readline from 'readline';
 import type {
   IStructuredManager,
   StructuredSpawnOpts,
@@ -31,9 +28,11 @@ import type {
 import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type TranslatedAction } from './codex-translate.js';
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
-import { killWithGrace } from '../platform/kill-grace.js';
-
-const MAX_EVENTS = 5000;
+import { EventRing } from './shared/event-ring.js';
+import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
+import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
+import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
+import { StructuredEmitter } from './shared/events.js';
 
 /**
  * The app-server ANSWERED a request with an error: a refusal (an effort or a model it does not take). Distinct from a
@@ -41,134 +40,33 @@ const MAX_EVENTS = 5000;
  */
 export class CodexRpcError extends Error {}
 
-/** A JSON-RPC message id (client requests use our counter; server requests use the server's). */
-type RpcId = string | number;
-
 /**
- * The single shared newline-delimited JSON-RPC channel to a `codex app-server` child. Handles
- * the `initialize` handshake, request/response correlation, and fans inbound server→client
- * requests + notifications out to the manager. Knows nothing about Codex payload shapes.
+ * Open the single shared newline-delimited JSON-RPC channel to a `codex app-server` child and run
+ * its `initialize` handshake (every request awaits `ready`). The channel itself is the shared
+ * JsonRpcStdioClient; only the handshake, the refusal class and the wording are Codex's own.
  */
-class CodexConnection extends EventEmitter {
-  readonly child: ChildProcessWithoutNullStreams;
-  private readonly rl: readline.Interface;
-  private nextId = 1;
-  private readonly pending = new Map<RpcId, { resolve: (v: any) => void; reject: (e: any) => void }>();
-  private resolveReady!: () => void;
-  private rejectReady!: (e: any) => void;
-  /** Resolves once `initialize` completes; every request awaits it. */
-  readonly ready: Promise<void>;
-  private closed = false;
-
-  constructor(command: string, args: string[], cwd: string, env: Record<string, string>) {
-    super();
-    this.setMaxListeners(0);
-    this.child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams;
-    this.child.stdin.on('error', () => {}); // suppress EPIPE if the child closes stdin while alive
-    this.rl = readline.createInterface({ input: this.child.stdout });
-    this.rl.on('line', (line) => this.onLine(line));
-    this.child.on('exit', (code) => {
-      this.closed = true;
-      for (const { reject } of this.pending.values()) reject(new Error('app-server exited'));
-      this.pending.clear();
-      this.emit('exit', code ?? 0);
+function openAppServer(spec: { command: string; args: string[]; cwd: string; env: Record<string, string> }): JsonRpcStdioClient {
+  const conn = JsonRpcStdioClient.spawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env }, {
+    rpcError: (message) => new CodexRpcError(message),
+    messages: { exited: 'app-server exited', notConnected: 'app-server not connected', timeout: (method) => `${method} timed out` },
+  });
+  conn.start(async (c) => {
+    await c.request('initialize', {
+      clientInfo: { name: 'dispatch', title: 'Dispatch', version: '2.0.0' },
+      capabilities: { experimentalApi: true, requestAttestation: false },
     });
-    this.child.on('error', (err) => { this.emit('spawn-error', err); });
-    this.ready = new Promise<void>((res, rej) => { this.resolveReady = res; this.rejectReady = rej; });
-    void this.handshake();
-  }
-
-  get pid(): number { return this.child.pid ?? -1; }
-  get alive(): boolean { return !this.closed; }
-
-  private async handshake(): Promise<void> {
-    try {
-      await this.request('initialize', {
-        clientInfo: { name: 'dispatch', title: 'Dispatch', version: '2.0.0' },
-        capabilities: { experimentalApi: true, requestAttestation: false },
-      });
-      this.notify('initialized', undefined);
-      this.resolveReady();
-    } catch (err) {
-      this.rejectReady(err);
-    }
-  }
-
-  private onLine(line: string): void {
-    const s = line.trim();
-    if (!s) return;
-    let msg: any;
-    try { msg = JSON.parse(s); } catch { return; } // skip non-JSON noise
-    // A response to one of OUR requests: has id + result|error, no method.
-    if (msg.id !== undefined && msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)) {
-      const p = this.pending.get(msg.id);
-      if (!p) return;
-      this.pending.delete(msg.id);
-      if (msg.error) p.reject(new CodexRpcError(msg.error?.message || 'rpc error'));
-      else p.resolve(msg.result);
-      return;
-    }
-    // A server→client request: has id + method (must be answered).
-    if (msg.id !== undefined && typeof msg.method === 'string') {
-      this.emit('server-request', msg.method, msg.id, msg.params ?? {});
-      return;
-    }
-    // A notification: method only.
-    if (typeof msg.method === 'string') this.emit('notification', msg.method, msg.params ?? {});
-  }
-
-  /** `timeoutMs` (optional) rejects AND drops the pending entry, so an unanswered request cannot
-   *  accumulate on a long-lived connection. */
-  request(method: string, params: unknown, timeoutMs?: number): Promise<any> {
-    if (this.closed) return Promise.reject(new Error('app-server not connected'));
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      if (timeoutMs !== undefined) {
-        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} timed out`)); }, timeoutMs);
-        timer.unref?.();
-        this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
-      } else {
-        this.pending.set(id, { resolve, reject });
-      }
-      this.writeRaw({ jsonrpc: '2.0', id, method, params });
-    });
-  }
-
-  notify(method: string, params: unknown): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', method, params });
-  }
-
-  /** Answer a server→client request, echoing its id. */
-  respond(id: RpcId, result: unknown): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', id, result });
-  }
-
-  /** Reject a server→client request we don't handle, so it doesn't leak. */
-  respondError(id: RpcId, message: string): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', id, error: { code: -32601, message } });
-  }
-
-  private writeRaw(obj: unknown): void {
-    if (this.closed || !this.child.stdin.writable) return;
-    this.child.stdin.write(JSON.stringify(obj) + '\n');
-  }
-
-  close(): void {
-    this.closed = true;
-    try { this.rl.close(); } catch { /* noop */ }
-    killWithGrace(this.child); // SIGTERM, then SIGKILL if the CLI ignores it
-  }
+    c.notify('initialized', undefined);
+  });
+  return conn;
 }
 
 interface CodexSession {
   terminalId: string;
-  /** Epoch ms of the last frame that entered the ring (see IStructuredManager.lastFrameAt). */
-  lastFrameAt?: number;
   translator: CodexTranslator;
-  events: unknown[];
+  /** The recent events for replay; its `lastPushAt` is IStructuredManager.lastFrameAt. */
+  ring: EventRing;
+  /** Keeps a closed block's text as one delta in the ring (ring only; see shared/stream-compaction.ts). */
+  coalescer: BlockDeltaCoalescer;
   escalate: boolean;
   pending: PendingPermission | null;
   /** The Codex ServerRequest a surfaced `pending` corresponds to (method + server req id). */
@@ -251,10 +149,10 @@ export interface CodexManagerOptions {
   modelListTimeoutMs?: number;
 }
 
-export class CodexStructuredSessionManager extends EventEmitter implements IStructuredManager {
+export class CodexStructuredSessionManager extends StructuredEmitter implements IStructuredManager {
   private sessions = new Map<string, CodexSession>();
   private threadToTerminal = new Map<string, string>();
-  private conn?: CodexConnection;
+  private conn?: JsonRpcStdioClient;
   private connSpec?: { command: string; args: string[]; cwd: string; env: Record<string, string> };
   private defaultEnv: Record<string, string> = {};
   private readonly approvalPolicy: 'untrusted' | 'on-request' | 'never';
@@ -262,10 +160,15 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   private readonly releaseTimeoutMs: number;
   private readonly modelListTimeoutMs: number;
   private effortCache?: { at: number; map: Record<string, string[]>; defaults: Record<string, string> };
+  /** The declared-status chain of a turn end (shared/settle-turn.ts). `summary` is the completed agentMessage text. */
+  private readonly settleDeps: SettleDeps = {
+    idle: (terminalId, detail) => { this.fire('idle', terminalId, detail); },
+    needsHelp: (terminalId, detail) => { this.fire('needs-help', terminalId, detail); },
+    withSummary: true,
+  };
 
   constructor(opts: CodexManagerOptions = {}) {
     super();
-    this.setMaxListeners(0);
     this.releaseTimeoutMs = opts.releaseTimeoutMs ?? 5000;
     this.modelListTimeoutMs = opts.modelListTimeoutMs ?? 5000;
     this.approvalPolicy = opts.approvalPolicy ?? 'on-request';
@@ -292,7 +195,8 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       terminalId,
       accountId: opts.accountId,
       translator: new CodexTranslator(),
-      events: [],
+      ring: new EventRing(),
+      coalescer: new BlockDeltaCoalescer(),
       escalate: opts.escalate ?? false,
       pending: null,
       pendingApproval: null,
@@ -310,10 +214,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       startGen: 0,
       ready: Promise.resolve(),
     };
-    if (opts.seedEvents?.length) {
-      session.events.push(...opts.seedEvents);
-      if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
-    }
+    if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     this.sessions.set(terminalId, session);
     session.ready = this.beginThread(session, conn);
     return conn.pid;
@@ -322,7 +223,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   /** Lazily create the ONE shared app-server connection (first spawn wins its command/env — which
    *  is why nothing thread-specific may ride them: each thread's own MCP identity travels in its
    *  thread/start + thread/resume `config` instead; see CodexSession.threadConfig). */
-  private ensureConnection(opts: StructuredSpawnOpts): CodexConnection {
+  private ensureConnection(opts: StructuredSpawnOpts): JsonRpcStdioClient {
     if (this.conn?.alive) return this.conn;
     const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
     this.connSpec = { command: opts.command, args: opts.args, cwd: opts.workDir, env };
@@ -330,27 +231,27 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     return this.conn;
   }
 
-  private makeConnection(spec: { command: string; args: string[]; cwd: string; env: Record<string, string> }): CodexConnection {
-    const conn = new CodexConnection(spec.command, spec.args, spec.cwd, spec.env);
-    conn.on('notification', (method: string, params: any) => { if (this.conn === conn) this.onNotification(method, params); });
-    conn.on('server-request', (method: string, id: RpcId, params: any) => this.onServerRequest(method, id, params));
+  private makeConnection(spec: { command: string; args: string[]; cwd: string; env: Record<string, string> }): JsonRpcStdioClient {
+    const conn = openAppServer(spec);
+    conn.on('notification', (method, params) => { if (this.conn === conn) this.onNotification(method, params); });
+    conn.on('request', (method, id, params) => this.onServerRequest(method, id, params));
     conn.on('exit', () => this.onConnExit(conn));
     return conn;
   }
 
   /** Run startThread for a session; its failure is reported unless the attempt was superseded by
    *  crash recovery or the session has ended (kill) in the meantime. */
-  private beginThread(session: CodexSession, conn: CodexConnection): Promise<void> {
+  private beginThread(session: CodexSession, conn: JsonRpcStdioClient): Promise<void> {
     const gen = ++session.startGen;
     return this.startThread(session, conn).catch((err) => {
       if (session.startGen !== gen || this.sessions.get(session.terminalId) !== session) return;
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
-      this.emit('failed', session.terminalId);
+      this.fire('failed', session.terminalId);
     });
   }
 
   /** Start (or resume) the thread for a session, then bind its threadId for routing. */
-  private async startThread(session: CodexSession, conn: CodexConnection): Promise<void> {
+  private async startThread(session: CodexSession, conn: JsonRpcStdioClient): Promise<void> {
     await conn.ready;
     if (session.resumeId) {
       const res = await conn.request('thread/resume', {
@@ -397,7 +298,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   /** A session killed while its thread/start|resume was in flight never got a threadId, so kill()
    *  had nothing to release. The app-server has loaded the thread (and its MCP set) regardless:
    *  release it now, unless another live session has since taken the thread over. */
-  private endedWhileStarting(session: CodexSession, conn: CodexConnection, threadId: string): boolean {
+  private endedWhileStarting(session: CodexSession, conn: JsonRpcStdioClient, threadId: string): boolean {
     if (this.sessions.get(session.terminalId) === session) return false;
     if (!this.ownerOf(threadId)) this.releaseThread(conn, threadId);
     return true;
@@ -410,7 +311,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
    *  argv, see providers/codex.ts). The thread's history stays on disk, so a later
    *  `thread/resume` still works. Fire-and-forget: errors and a silent app-server never block
    *  or throw out of kill(). */
-  private releaseThread(conn: CodexConnection, threadId: string): void {
+  private releaseThread(conn: JsonRpcStdioClient, threadId: string): void {
     if (!conn.alive) return;
     conn.request('thread/unsubscribe', { threadId }, this.releaseTimeoutMs)
       .catch(() => { /* best-effort: the thread is still unloaded when the daemon or app-server exits */ });
@@ -435,7 +336,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     this.threadToTerminal.set(threadId, session.terminalId);
     if (!session.sessionId) {
       session.sessionId = threadId;
-      this.emit('session', session.terminalId, threadId);
+      this.fire('session', session.terminalId, threadId);
     }
     this.applyActions(session, session.translator.init(session.model));
   }
@@ -443,7 +344,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   /** Replay prior turns after a resume so the chat isn't blank (Codex has no Claude transcript
    *  to seed from). Best-effort: whole Claude events, emitted BEFORE any live stream_event so
    *  the reducer renders them in its non-streaming path. */
-  private async backfill(session: CodexSession, conn: CodexConnection, resumeTurns?: unknown): Promise<void> {
+  private async backfill(session: CodexSession, conn: JsonRpcStdioClient, resumeTurns?: unknown): Promise<void> {
     if (!session.threadId) return;
     // The resume response already carries `turns`; only fall back to an explicit thread/read
     // when it didn't (per the Thread doc + spec mapping table).
@@ -459,7 +360,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     }
   }
 
-  private onConnExit(conn: CodexConnection): void {
+  private onConnExit(conn: JsonRpcStdioClient): void {
     if (this.conn !== conn) return; // a newer connection already replaced it
     this.conn = undefined;
     this.threadToTerminal.clear();
@@ -471,7 +372,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     for (const session of live) {
       session.pending = null;
       session.pendingApproval = null;
-      this.emit('failed', session.terminalId);
+      this.fire('failed', session.terminalId);
       // A start/resume still in flight when the server died has no threadId yet; its resumeId
       // (a resumed thread) is the same native thread, so resume that rather than strand the session.
       const resumeId = session.threadId ?? session.resumeId;
@@ -481,7 +382,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       if (resumeId) session.resumeId = resumeId;
       session.ready = this.beginThread(session, conn2);
       // The thread now lives in a new OS process; tell the owner so the stored process number is not stale.
-      this.emit('process-restarted', session.terminalId, conn2.pid);
+      this.fire('process-restarted', session.terminalId, conn2.pid);
     }
   }
 
@@ -493,17 +394,17 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const eventTurnId = params?.turnId ?? params?.turn?.id;
     if (method !== 'turn/started' && eventTurnId && session.currentTurnId && eventTurnId !== session.currentTurnId) return;
     // Track turn liveness for interrupt/steer BEFORE translating (the translator only emits UI).
-    if (method === 'turn/started') { session.turnActive = true; session.currentTurnId = params?.turn?.id; }
+    if (method === 'turn/started') { session.turnActive = true; session.currentTurnId = params?.turn?.id;}
     else if (method === 'turn/completed') { session.turnActive = false; }
     this.applyActions(session, session.translator.translate({ method, params }));
   }
 
   private onServerRequest(method: string, id: RpcId, params: any): void {
     const session = this.routeSession(method, params);
-    if (!session) { this.conn?.respondError(id, 'no session for request'); return; }
+    if (!session) { this.conn?.respondError(id, METHOD_NOT_FOUND, 'no session for request'); return; }
     const actions = session.translator.translate({ method, params, id });
     // A recognized approval yields exactly one approval action; anything else we can't answer.
-    if (!actions.some((a) => a.kind === 'approval')) { this.conn?.respondError(id, 'unhandled server request'); return; }
+    if (!actions.some((a) => a.kind === 'approval')) { this.conn?.respondError(id, METHOD_NOT_FOUND, 'unhandled server request'); return; }
     this.applyActions(session, actions);
   }
 
@@ -524,65 +425,37 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
           this.pushEvent(session, this.withDenyReason(session, action.event));
           break;
         case 'session':
-          if (!session.sessionId) { session.sessionId = action.sessionId; this.emit('session', session.terminalId, action.sessionId); }
+          if (!session.sessionId) { session.sessionId = action.sessionId; this.fire('session', session.terminalId, action.sessionId); }
           break;
         case 'failed':
           session.turnActive = false;
-          this.emit('failed', session.terminalId);
+          this.fire('failed', session.terminalId);
           break;
         case 'usage-limit':
           session.turnActive = false;
-          this.emit('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
-          this.emit('usage-limit', session.terminalId, action.limit);
+          this.fire('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.fire('usage-limit', session.terminalId, action.limit);
           break;
         case 'busy':
-          this.emit('busy', session.terminalId, { turnId: session.currentTurnId });
+          this.fire('busy', session.terminalId, { turnId: session.currentTurnId });
           break;
         case 'idle':
         case 'needs-help':
-          this.settleTurn(session, action);
+          // The Codex turn boundary: the shared declared-status chain (shared/settle-turn.ts), the
+          // same one the Claude manager's `result` handler applies, minus its wake-scheduler branch
+          // (Codex has no WAKE_TOOLS tracking). `action.summary` is the completed agentMessage text
+          // the translator stashed (CodexTranslator.lastAgentText): it rides every 'idle' so a Codex
+          // card keeps a REAL outcome line, where the Claude ring walk
+          // (SessionService.lastAssistantTextPublic) finds nothing, or stale backfilled text.
+          // No turn id is given, so every turn/completed settles, as before: an interrupt that
+          // arrives after the turn ended gets a second turn/completed for the same turn, and the
+          // thread must still settle on it (codex-manager.test.ts, "interrupt asks the server...").
+          settleTurn(session, action, this.settleDeps);
           break;
         case 'approval':
           this.handleApproval(session, action);
           break;
       }
-    }
-  }
-
-  /**
-   * The Codex turn boundary. Applies the SAME declared-status precedence chain the Claude
-   * manager's `result` handler establishes (see manager.ts), minus the wake-scheduler branch —
-   * Codex has no WAKE_TOOLS/lastToolUse tracking at all, so that branch simply doesn't exist
-   * here:
-   *   1. declared `needs_you`      → 'needs-help', inferred: false
-   *   2. any OTHER declaration     → 'idle', declared: true, state: 'done' | 'blocked' (a declared
-   *      `blocked` still settles idle, same as Claude — a thread waiting on another agent isn't a
-   *      needs-help state — but `state` carries WHICH one was declared, and `blocker` the blocker
-   *      text when 'blocked' supplied one, so noteTurnOutcome can persist the distinction instead
-   *      of losing it at this event boundary; see manager.ts's IStructuredManager doc comment)
-   *   3. no declaration + the translator's own text-heuristic fired → 'needs-help', inferred: true
-   *   4. otherwise                 → 'idle', declared: false
-   * `action.summary` is the actual completed agentMessage text stashed by the translator
-   * (CodexTranslator.lastAgentText) — carried through regardless of branch so a Codex card
-   * persists a REAL outcome line instead of the Claude-ring walk (SessionService.lastAssistantTextPublic),
-   * which on Codex returns either nothing or stale text backfilled from a prior resume (see the
-   * translator's doc comment on `lastAgentText` for why).
-   */
-  private settleTurn(session: CodexSession, action: Extract<TranslatedAction, { kind: 'idle' | 'needs-help' }>): void {
-    const declared = session.declared;
-    session.declared = undefined; // a declaration is per-turn — must not leak into the next one
-    const summary = action.summary;
-    if (declared?.state === 'needs_you') {
-      this.emit('needs-help', session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
-    } else if (declared) {
-      const detail: { declared: true; state: 'done' | 'blocked'; blocker?: string; summary?: string } =
-        { declared: true, state: declared.state as 'done' | 'blocked', summary };
-      if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
-      this.emit('idle', session.terminalId, detail);
-    } else if (action.kind === 'needs-help') {
-      this.emit('needs-help', session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
-    } else {
-      this.emit('idle', session.terminalId, { declared: false, summary });
     }
   }
 
@@ -620,7 +493,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     if (session.escalate || action.alwaysSurface) {
       session.pending = action.pending;
       session.pendingApproval = { method: action.method, requestId: action.requestId };
-      this.emit('permission', session.terminalId, action.pending);
+      this.fire('permission', session.terminalId, action.pending);
     } else {
       this.conn?.respond(action.requestId, action.autoApprove);
     }
@@ -669,17 +542,15 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   }
 
   private pushEvent(session: CodexSession, event: unknown): void {
-    session.events.push(event);
-    session.lastFrameAt = Date.now();
-    if (session.events.length > MAX_EVENTS) session.events.shift();
-    this.emit('event', session.terminalId, event);
+    session.ring.push(event);
+    session.coalescer.observe(session.ring, event); // ring only: the live emit below is the event as it came
+    this.fire('event', session.terminalId, event);
     // A signed-out or expired login (a 401, a refresh that failed): a typed event after the error.
     const auth = authRequiredFrame(event, 'codex', session.accountId);
     if (auth) {
-      session.events.push(auth);
-      if (session.events.length > MAX_EVENTS) session.events.shift();
-      this.emit('event', session.terminalId, auth);
-      this.emit('auth-required', session.terminalId, auth);
+      session.ring.push(auth);
+      this.fire('event', session.terminalId, auth);
+      this.fire('auth-required', session.terminalId, auth);
     }
   }
 
@@ -694,12 +565,12 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     const ev: any = { type: 'user', message: { role: 'user', content: echoContent } };
     if (source) ev.meta = { source };
     this.pushEvent(session, ev);
-    this.emit('busy', terminalId);
+    this.fire('busy', terminalId);
     // Deliver once the thread is started (queued via the ready promise if still starting).
     session.ready = session.ready.then(() => this.startTurn(session, content)).catch((err) => {
       if (this.sessions.get(terminalId) !== session) return;
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
-      this.emit('failed', terminalId);
+      this.fire('failed', terminalId);
     });
   }
 
@@ -754,7 +625,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     // The chip shows the newest model frame, which beats the saved config: tell connected clients (and the replay) which model
     // the thread runs again. No `switched`, so no "Model switched" line.
     if (info.restoredModel) this.pushEvent(session, { type: 'system', subtype: 'model', model: info.restoredModel });
-    this.emit('settings-refused', session.terminalId, info);
+    this.fire('settings-refused', session.terminalId, info);
   }
 
   getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
@@ -842,7 +713,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     this.conn?.respond(session.pendingApproval.requestId, response);
     session.pending = null;
     session.pendingApproval = null;
-    this.emit('resolved', terminalId);
+    this.fire('resolved', terminalId);
     return true;
   }
 
@@ -857,7 +728,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       this.conn?.respond(session.pendingApproval.requestId, response);
       session.pending = null;
       session.pendingApproval = null;
-      this.emit('resolved', terminalId);
+      this.fire('resolved', terminalId);
     }
     return true;
   }
@@ -888,14 +759,11 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
-  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
-  getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.ring.lastPushAt; }
+  getEvents(terminalId: string): unknown[] { return this.sessions.get(terminalId)?.ring.snapshot() ?? []; }
   /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the completed agentMessage items, not the ring's deltas. */
   getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }
-  getEventsTail(terminalId: string, n: number): unknown[] {
-    const events = this.sessions.get(terminalId)?.events ?? [];
-    return n >= events.length ? [...events] : events.slice(events.length - n);
-  }
+  getEventsTail(terminalId: string, n: number): unknown[] { return this.sessions.get(terminalId)?.ring.tail(n) ?? []; }
   isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
 
   kill(terminalId: string): void {
@@ -904,7 +772,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
     session.pending = null;
     if (session.threadId) this.threadToTerminal.delete(session.threadId);
     this.sessions.delete(terminalId);
-    this.emit('exit', terminalId, 0);
+    this.fire('exit', terminalId, 0);
     // Tear down the shared server once the last codex thread is gone (closing it ends every
     // thread's MCP set); otherwise release just this thread so its MCP set does not outlive it.
     if (this.sessions.size === 0 && this.conn) { this.conn.close(); this.conn = undefined; }

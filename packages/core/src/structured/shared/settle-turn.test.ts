@@ -4,7 +4,11 @@ import { settleTurn, type SettleSession } from './settle-turn.js';
 
 function harness(withSummary = true) {
   const emitted: unknown[][] = [];
-  const deps = { emit: (name: 'idle' | 'needs-help', terminalId: string, detail: unknown) => { emitted.push([name, terminalId, detail]); }, withSummary };
+  const deps = {
+    idle: (terminalId: string, detail: unknown) => { emitted.push(['idle', terminalId, detail]); },
+    needsHelp: (terminalId: string, detail: unknown) => { emitted.push(['needs-help', terminalId, detail]); },
+    withSummary,
+  };
   return { emitted, deps };
 }
 

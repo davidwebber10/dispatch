@@ -34,6 +34,9 @@ describe('StructuredManagerEvents', () => {
       go() {
         this.fire('exit', 't1', 0, 'stderr tail');
         this.fire('idle', 't1', { declared: true, state: 'done' });
+      }
+      /** Never called: the compiler must refuse these two (tsconfig.test.json checks this file). */
+      wrong() {
         // @ts-expect-error exit takes a number code, not a string
         this.fire('exit', 't1', 'zero');
         // @ts-expect-error an event that is not in the map

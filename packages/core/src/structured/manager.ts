@@ -10,6 +10,10 @@ import { redactKeys } from '../auth/redact-keys.js';
 import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect.js';
 import { killWithGrace } from '../platform/kill-grace.js';
 import { authRequiredFrame } from '../auth/auth-failure.js';
+import { EventRing } from './shared/event-ring.js';
+import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
+import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
+import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
  * A gated tool/permission request the CLI is blocked on, awaiting a human call.
@@ -48,9 +52,11 @@ export interface StatusDeclaration {
 interface Session {
   child: ChildProcessWithoutNullStreams;
   rl: readline.Interface;
-  events: unknown[]; // ring of recent events for replay
-  /** Epoch ms of the last CLI frame that entered the ring (see IStructuredManager.lastFrameAt). */
-  lastFrameAt?: number;
+  /** The recent events for replay. Its `lastPushAt` is the last CLI frame (IStructuredManager.lastFrameAt):
+   *  the events the daemon writes itself (the user echo, a notice) are pushed quiet. */
+  ring: EventRing;
+  /** Drops a finished message's stream frames from the ring once its whole frames are in (ring only). */
+  compactor: ClaudeStreamCompactor;
   /** When true, gated tools are surfaced as a Need instead of auto-allowed. */
   escalate: boolean;
   /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
@@ -223,8 +229,22 @@ export type PermissionDecision =
  *                                       routed to status: it is not a new request (see adapter.ts).
  *   'exit'   (terminalId, code)       — the backing process/connection exited
  *   'message-source'(terminalId, src) — a tagged turn's result landed (persist src)
+ *
+ * The full list, with the argument types of each event, is StructuredManagerEvents
+ * (shared/events.ts). `on`, `once`, `off` and `emit` below give a listener those types; the plain
+ * EventEmitter signature stays as the second overload, so a listener with its own annotation
+ * still compiles.
  */
 export interface IStructuredManager extends EventEmitter {
+  on<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  on(event: string | symbol, listener: AnyStructuredListener): this;
+  once<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  once(event: string | symbol, listener: AnyStructuredListener): this;
+  off<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  off(event: string | symbol, listener: AnyStructuredListener): this;
+  emit<K extends StructuredManagerEventName>(event: K, ...args: StructuredManagerEvents[K]): boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the plain EventEmitter signature
+  emit(event: string | symbol, ...args: any[]): boolean;
   /**
    * True when a deny `message` reaches the model as the question's own tool result, so a chat
    * reply can answer a pending AskUserQuestion (see SessionService.answerPermission's `reply`).
@@ -314,7 +334,6 @@ export function turnTextsFromEvents(events: readonly unknown[]): string[] {
   return texts.reverse();
 }
 
-const MAX_EVENTS = 5000;
 /** How much of a structured CLI's stderr to keep for its exit report. */
 const STDERR_TAIL = 2000;
 /** The longest wait after a CLI's 'exit' for its stdout and stderr to close (see spawn()). */
@@ -356,15 +375,16 @@ function wakeActivity(toolName: string, input: unknown): string {
  * its own consumers (the structured ws + the View adapter) — it does NOT feed the
  * xterm/runner data path. Permissions are auto-allowed (parity with today).
  */
-export class ClaudeStructuredSessionManager extends EventEmitter implements IStructuredManager {
+export class ClaudeStructuredSessionManager extends StructuredEmitter implements IStructuredManager {
   readonly repliesToQuestions = true;
   private sessions = new Map<string, Session>();
   private defaultEnv: Record<string, string> = {};
-
-  constructor() {
-    super();
-    this.setMaxListeners(0); // Fix 4: many ws viewers each add an 'event' listener
-  }
+  /** The declared-status chain of a turn end (shared/settle-turn.ts). Claude's 'idle' has no summary. */
+  private readonly settleDeps: SettleDeps = {
+    idle: (terminalId, detail) => { this.fire('idle', terminalId, detail); },
+    needsHelp: (terminalId, detail) => { this.fire('needs-help', terminalId, detail); },
+    withSummary: false,
+  };
 
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
@@ -379,14 +399,11 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, events: [], escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
-    if (opts.seedEvents?.length) {
-      session.events.push(...opts.seedEvents);
-      if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
-    }
+    if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     this.sessions.set(terminalId, session);
     child.stderr.on('data', (chunk: Buffer) => {
       // Redact the whole joined text, so a key split across two chunks is still found.
@@ -404,7 +421,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       const sid: unknown = event?.session_id;
       if (typeof sid === 'string' && sid && session.sessionId !== sid) {
         session.sessionId = sid;
-        this.emit('session', terminalId, sid);
+        this.fire('session', terminalId, sid);
       }
       // The answer to one of OUR control requests (set_model): settle its promise. Not an
       // event for the chat, so it is not delivered below.
@@ -419,9 +436,10 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
           return;
         }
       }
-      session.events.push(event);
-      session.lastFrameAt = Date.now();
-      if (session.events.length > MAX_EVENTS) session.events.shift();
+      session.ring.push(event, { size: trimmed.length });
+      // Ring only: a message that is in the ring as whole frames loses its stream frames there.
+      // The live 'event' emit below is not changed.
+      session.compactor.observe(session.ring, event);
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
@@ -467,7 +485,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
             questions,
           };
           session.pending = pending;
-          this.emit('permission', terminalId, pending);
+          this.fire('permission', terminalId, pending);
         } else {
           // Auto-allow tool permission requests — parity with --dangerously-skip-permissions.
           this.write(terminalId, {
@@ -489,18 +507,17 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         && (event?.type === 'assistant' || (event?.type === 'stream_event' && event?.event?.type === 'message_start'));
       if (!session.turnOpen && startsTurn) {
         session.turnOpen = true;
-        this.emit('busy', terminalId);
+        this.fire('busy', terminalId);
       }
       // Deliver the final frame before settle listeners close analytics or start another turn.
-      this.emit('event', terminalId, { ...event, telemetry: { counterScope } });
+      this.fire('event', terminalId, { ...event, telemetry: { counterScope } });
       // A signed-out or expired login: say so as a typed event right after the error frame, so the
       // chat shows a sign-in card instead of the raw error (auth/auth-failure.ts).
       const auth = authRequiredFrame(event, 'claude', session.accountId);
       if (auth) {
-        session.events.push(auth);
-        if (session.events.length > MAX_EVENTS) session.events.shift();
-        this.emit('event', terminalId, auth);
-        this.emit('auth-required', terminalId, auth);
+        session.ring.push(auth, { quiet: true });
+        this.fire('event', terminalId, auth);
+        this.fire('auth-required', terminalId, auth);
       }
       // Turn boundary: a `result` event ends the current turn. Three things can have
       // happened: the agent DECLARED how it ended (via report_status — see
@@ -514,7 +531,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       // A usage limit shows in its own frame before the error `result` (the synthetic assistant
       // frame carries the structured reset time); remember it for the boundary below.
       // The account's current limit figures (Details panel); sent on every turn.
-      if (event?.type === 'rate_limit_event') this.emit('rate-limit', terminalId, event.rate_limit_info ?? event.rateLimitInfo);
+      if (event?.type === 'rate_limit_event') this.fire('rate-limit', terminalId, event.rate_limit_info ?? event.rateLimitInfo);
       if (event?.parent_tool_use_id == null && event?.type !== 'result') {
         const hit = detectClaudeLimit(event, Date.now());
         if (hit) session.limit = hit;
@@ -529,61 +546,50 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
         session.lastToolUse = undefined; // reset for the next turn
         session.declared = undefined;    // ditto — a declaration is per-turn
 
-        // needs_you wins over everything — a question blocks the thread regardless of a
-        // pending timer, so it's checked first even ahead of a wake-scheduler call.
         const limit = event.is_error === true ? (session.limit ?? detectClaudeLimit(event, Date.now())) : undefined;
         session.limit = undefined;
         if (limit) {
           // A usage limit is a pause, not a failure: the thread shows as dormant until it resets,
           // and the limit service parks it and wakes it (limits/service.ts).
-          this.emit('scheduled', terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
-          this.emit('usage-limit', terminalId, limit);
+          this.fire('scheduled', terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.fire('usage-limit', terminalId, limit);
         } else if (event.is_error === true) {
           // A resume of a conversation Claude no longer has. Name the id, so the service stops
           // reviving it with the same doomed `-r` (#76).
           const lost = Array.isArray(event.errors)
             ? event.errors.map((e: unknown) => (typeof e === 'string' ? CONVERSATION_LOST.exec(e)?.[1] : undefined)).find(Boolean)
             : undefined;
-          if (lost) this.emit('conversation-lost', terminalId, lost);
-          this.emit('failed', terminalId);
-        } else if (declared?.state === 'needs_you') {
-          this.emit('needs-help', terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
-        } else if (wake) {
-          // A pending timer is an observable FACT; any other declaration (done/blocked) is
-          // only a CLAIM, and it can contradict the fact — e.g. the agent calls
-          // ScheduleWakeup and also declares 'done' in the same turn. When they disagree,
-          // the fact wins: the thread isn't finished, it has a wake pending and will run
-          // again, so this must not settle (or notify a coordinator) as idle.
-          this.emit('scheduled', terminalId, wakeActivity(wake.name, wake.input));
-        } else if (declared) {
-          // `blocked` deliberately falls through to 'idle' — a thread waiting on another
-          // agent still proceeds without the human, so it isn't a needs-help state. `state`
-          // carries WHICH declaration this was (see the IStructuredManager doc comment above)
-          // so a later consumer can still tell "finished" apart from "queued behind something" —
-          // without it, both would collapse into the same bare `{ declared: true }` and the
-          // information would be lost at this exact event boundary.
-          const detail: { declared: true; state: 'done' | 'blocked'; blocker?: string } =
-            { declared: true, state: declared.state as 'done' | 'blocked' };
-          if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
-          this.emit('idle', terminalId, detail);
+          if (lost) this.fire('conversation-lost', terminalId, lost);
+          this.fire('failed', terminalId);
+        } else if (wake && declared?.state !== 'needs_you') {
+          // A pending timer is an observable FACT; a declaration of done or blocked is only a
+          // CLAIM, and it can contradict the fact — e.g. the agent calls ScheduleWakeup and also
+          // declares 'done' in the same turn. When they disagree, the fact wins: the thread isn't
+          // finished, it has a wake pending and will run again, so this must not settle (or
+          // notify a coordinator) as idle. Only a declared needs_you wins over a wake: a
+          // question blocks the thread regardless of a pending timer.
+          this.fire('scheduled', terminalId, wakeActivity(wake.name, wake.input));
         } else {
-          // Nothing declared. Read the closing text ONCE — this walks the event ring,
-          // so calling it in both the condition and the body would scan it twice.
-          const text = this.lastAssistantText(terminalId);
-          if (looksLikeQuestion(text)) {
-            // The case that used to be filed as finished. Marked inferred so it renders
-            // as a guess and so the false-positive rate stays measurable.
-            this.emit('needs-help', terminalId, { ask: text, summary: text, inferred: true });
-          } else {
-            this.emit('idle', terminalId, { declared: false });
-          }
+          // The shared declared-status chain (shared/settle-turn.ts): a declared needs_you →
+          // 'needs-help'; a declared done or blocked → 'idle' with its state (`blocked` settles
+          // idle on purpose: a thread that waits on another agent still proceeds without the
+          // human); nothing declared → the closing text decides. Claude's part of it is that
+          // text: read from the ring ONCE, and only when nothing was declared (the walk is not
+          // free). A question there is marked inferred, so it renders as a guess and the
+          // false-positive rate stays measurable.
+          const text = declared ? '' : this.lastAssistantText(terminalId);
+          settleTurn(
+            { terminalId, declared },
+            !declared && looksLikeQuestion(text) ? { kind: 'needs-help', ask: text, summary: text } : { kind: 'idle' },
+            this.settleDeps,
+          );
         }
 
         // The turn that just ended is now fully flushed to the transcript (result is always
         // the LAST thing the CLI writes for a turn) — so if it was sent with a source tag,
         // this is the earliest safe moment to resolve it to a real disk uuid (see
         // sessions/service.ts's 'message-source' listener, which does the disk read + persist).
-        if (session.pendingSource) this.emit('message-source', terminalId, session.pendingSource);
+        if (session.pendingSource) this.fire('message-source', terminalId, session.pendingSource);
         session.pendingSource = undefined;
       }
     });
@@ -607,7 +613,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       const detail = redactKeys(session.stderrTail?.trim() ?? '') || undefined;
       // The daemon log is the only place this reaches when no browser is watching.
       if (exitCode && detail) console.error(`[structured] thread ${terminalId} exited (${exitCode}): ${detail}`);
-      this.emit('exit', terminalId, exitCode, detail);
+      this.fire('exit', terminalId, exitCode, detail);
     };
     const streamClosed = () => { if (--open === 0) finish(); };
     rl.on('close', streamClosed);
@@ -620,8 +626,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     });
     child.on('error', (err) => {
       if (this.sessions.get(terminalId)?.child !== child) return;
-      this.emit('event', terminalId, { type: 'system', subtype: 'spawn_error', message: redactKeys(String(err)) });
-      this.emit('failed', terminalId);
+      this.fire('event', terminalId, { type: 'system', subtype: 'spawn_error', message: redactKeys(String(err)) });
+      this.fire('failed', terminalId);
     });
 
     return child.pid ?? -1;
@@ -655,16 +661,15 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     if (source) ev.meta = { source };
     const s = this.sessions.get(terminalId);
     if (s) {
-      s.events.push(ev);
-      if (s.events.length > MAX_EVENTS) s.events.shift();
+      s.ring.push(ev, { quiet: true });
       // Always overwritten (even to undefined for an untagged send) so a stale tag from a
       // prior turn can never leak onto this one's `result` resolution.
       s.pendingSource = source;
     }
-    this.emit('event', terminalId, ev);
+    this.fire('event', terminalId, ev);
     // Turn start: delivering a message kicks off work → the thread is busy.
     if (s) s.turnOpen = true;
-    this.emit('busy', terminalId);
+    this.fire('busy', terminalId);
   }
 
   /**
@@ -728,8 +733,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    */
   private clearPending(terminalId: string, s: Session): void {
     s.pending = null;
-    this.emit('resolved', terminalId);
-    this.emit('permission-cleared', terminalId);
+    this.fire('resolved', terminalId);
+    this.fire('permission-cleared', terminalId);
   }
 
   /**
@@ -789,9 +794,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
       if (!s || this.sessions.get(terminalId) !== s) return resolved;
       s.model = resolved;
       const notice = { type: 'system', subtype: 'model', model: resolved, switched: true };
-      s.events.push(notice);
-      if (s.events.length > MAX_EVENTS) s.events.shift();
-      this.emit('event', terminalId, notice);
+      s.ring.push(notice, { quiet: true });
+      this.fire('event', terminalId, notice);
       return resolved;
     });
   }
@@ -811,9 +815,8 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     const s = this.sessions.get(terminalId);
     if (!s) return;
     const ev = { type: 'system', subtype: 'settings_refused', message };
-    s.events.push(ev);
-    if (s.events.length > MAX_EVENTS) s.events.shift();
-    this.emit('event', terminalId, ev);
+    s.ring.push(ev, { quiet: true });
+    this.fire('event', terminalId, ev);
   }
 
   /** One of our own control requests, answered through `controls` (see the control_response branch in spawn()). */
@@ -842,7 +845,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
     killWithGrace(s.child); // SIGTERM, then SIGKILL if the CLI ignores it
     // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
-    this.emit('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? redactKeys(s.stderrTail?.trim() ?? '') || undefined : undefined);
+    this.fire('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? redactKeys(s.stderrTail?.trim() ?? '') || undefined : undefined);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }
@@ -855,14 +858,14 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
   /** The claude session_id captured for a live thread (from its init event), or undefined. */
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
-  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.ring.lastPushAt; }
 
-  getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; } // Fix 4: return copy
+  getEvents(terminalId: string): unknown[] { return this.sessions.get(terminalId)?.ring.snapshot() ?? []; } // a copy
 
   /** The last ended turn's own texts (IStructuredManager.getTurnTexts): Claude writes them whole into the ring. */
   getTurnTexts(terminalId: string): string[] | null {
     const session = this.sessions.get(terminalId);
-    return session ? turnTextsFromEvents(session.events) : null;
+    return session ? turnTextsFromEvents(session.ring.view()) : null;
   }
 
   /**
@@ -870,7 +873,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    * on. Mirrors SessionService.lastAssistantText, which reads the same ring from outside.
    */
   private lastAssistantText(terminalId: string, max = 2000): string {
-    const events = this.sessions.get(terminalId)?.events ?? [];
+    const events = this.sessions.get(terminalId)?.ring.view() ?? [];
     for (let i = events.length - 1; i >= 0; i--) {
       const e: any = events[i];
       if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
@@ -885,8 +888,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
    *  Used to bound ws-connect replay — folding the full ring into a non-virtualized
    *  list is O(N) React reconciles and dominates chat-open latency on long threads. */
   getEventsTail(terminalId: string, n: number): unknown[] {
-    const events = this.sessions.get(terminalId)?.events ?? [];
-    return n >= events.length ? [...events] : events.slice(events.length - n);
+    return this.sessions.get(terminalId)?.ring.tail(n) ?? [];
   }
 }
 

@@ -38,8 +38,12 @@ export interface SettingsRefusedInfo {
 }
 
 export interface StructuredManagerEvents {
-  /** A stream event for the chat (Claude-shaped). */
-  event: [terminalId: string, event: unknown];
+  /**
+   * A stream event for the chat (Claude-shaped JSON). The payload is `any`, as it was before the
+   * map: the listeners written before it read the event's fields with no cast.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- an untyped wire payload; see above
+  event: [terminalId: string, event: any];
   /** The external session or thread id to persist. */
   session: [terminalId: string, sessionId: string];
   /** A gated tool or a question waits for a decision. */
@@ -85,25 +89,14 @@ export const STRUCTURED_MANAGER_EVENT_NAMES: readonly StructuredManagerEventName
   'process-restarted', 'settings-refused',
 ];
 
-type Listener<K extends StructuredManagerEventName> = (...args: StructuredManagerEvents[K]) => void;
+export type StructuredListener<K extends StructuredManagerEventName> = (...args: StructuredManagerEvents[K]) => void;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the plain EventEmitter signature
-type AnyListener = (...args: any[]) => void;
+export type AnyStructuredListener = (...args: any[]) => void;
 
-/** The typed listener methods. IStructuredManager and StructuredEmitter both declare them. */
-export interface StructuredEventMethods {
-  on<K extends StructuredManagerEventName>(event: K, listener: Listener<K>): this;
-  on(event: string | symbol, listener: AnyListener): this;
-  once<K extends StructuredManagerEventName>(event: K, listener: Listener<K>): this;
-  once(event: string | symbol, listener: AnyListener): this;
-  off<K extends StructuredManagerEventName>(event: K, listener: Listener<K>): this;
-  off(event: string | symbol, listener: AnyListener): this;
-  emit<K extends StructuredManagerEventName>(event: K, ...args: StructuredManagerEvents[K]): boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the plain EventEmitter signature
-  emit(event: string | symbol, ...args: any[]): boolean;
-}
-
-/** The base class of the three managers: an EventEmitter whose own emits are checked against the map. */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- the merge adds the typed overloads to the class
+/**
+ * The base class of the three managers: an EventEmitter whose own emits are checked against the map
+ * (`fire`), and whose `on`, `once` and `off` give a listener the argument types of the map.
+ */
 export class StructuredEmitter extends EventEmitter {
   constructor() {
     super();
@@ -114,6 +107,16 @@ export class StructuredEmitter extends EventEmitter {
   protected fire<K extends StructuredManagerEventName>(event: K, ...args: StructuredManagerEvents[K]): boolean {
     return this.emit(event, ...args);
   }
+
+  override on<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  override on(event: string | symbol, listener: AnyStructuredListener): this;
+  override on(event: string | symbol, listener: AnyStructuredListener): this { return super.on(event, listener); }
+
+  override once<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  override once(event: string | symbol, listener: AnyStructuredListener): this;
+  override once(event: string | symbol, listener: AnyStructuredListener): this { return super.once(event, listener); }
+
+  override off<K extends StructuredManagerEventName>(event: K, listener: StructuredListener<K>): this;
+  override off(event: string | symbol, listener: AnyStructuredListener): this;
+  override off(event: string | symbol, listener: AnyStructuredListener): this { return super.off(event, listener); }
 }
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging -- see the class
-export interface StructuredEmitter extends StructuredEventMethods {}

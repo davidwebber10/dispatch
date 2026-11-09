@@ -31,10 +31,7 @@
 // + the escalate/auto-allow permission membrane (identical policy to the other managers).
 
 import { authRequiredFrame } from '../auth/auth-failure.js';
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
-import { EventEmitter } from 'events';
 import { pauseLabel } from '../limits/detect.js';
-import * as readline from 'readline';
 import type {
   IStructuredManager,
   StructuredSpawnOpts,
@@ -46,134 +43,44 @@ import type {
 } from './manager.js';
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
-import { killWithGrace } from '../platform/kill-grace.js';
-
-const MAX_EVENTS = 5000;
-
-type RpcId = string | number;
+import { EventRing } from './shared/event-ring.js';
+import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
+import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
+import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
+import { StructuredEmitter } from './shared/events.js';
 
 /**
- * One newline-delimited JSON-RPC channel to one `grok agent stdio` child. Handles the ACP
- * `initialize` handshake, request/response correlation, and fans server→client requests +
- * notifications out to the manager. Knows nothing about Grok payload shapes.
+ * Open one newline-delimited JSON-RPC channel to one ACP agent child (`grok agent stdio`,
+ * `opencode acp`) and run the ACP `initialize` handshake (every request awaits `ready`). The
+ * channel itself is the shared JsonRpcStdioClient; only the handshake and the wording are ACP's own.
  */
-class GrokConnection extends EventEmitter {
-  readonly child: ChildProcessWithoutNullStreams;
-  private readonly rl: readline.Interface;
-  private nextId = 1;
-  private readonly pending = new Map<RpcId, { resolve: (v: any) => void; reject: (e: any) => void }>();
-  private resolveReady!: () => void;
-  private rejectReady!: (e: any) => void;
-  /** Resolves once `initialize` completes; every request awaits it. */
-  readonly ready: Promise<void>;
-  private closed = false;
-
-  constructor(command: string, args: string[], cwd: string, env: Record<string, string>) {
-    super();
-    this.setMaxListeners(0);
-    this.child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams;
-    this.child.stdin.on('error', () => {}); // suppress EPIPE if the child closes stdin while alive
-    this.rl = readline.createInterface({ input: this.child.stdout });
-    this.rl.on('line', (line) => this.onLine(line));
-    this.child.on('exit', (code) => {
-      this.closed = true;
-      for (const { reject } of this.pending.values()) reject(new Error('grok agent exited'));
-      this.pending.clear();
-      this.emit('exit', code ?? 0);
+function openAgent(command: string, args: string[], cwd: string, env: Record<string, string>): JsonRpcStdioClient {
+  const conn = JsonRpcStdioClient.spawn(command, args, { cwd, env }, {
+    messages: {
+      exited: 'grok agent exited',
+      notConnected: 'grok agent not connected',
+      timeout: (method) => `The agent did not answer ${method} in time. It may still take it: check the model shown.`,
+    },
+  });
+  conn.start(async (c) => {
+    await c.request('initialize', {
+      protocolVersion: 1,
+      // No fs capabilities: the agent must do its own file IO, never through the daemon.
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+      clientInfo: { name: 'dispatch', title: 'Dispatch', version: '2.0.0' },
     });
-    this.child.on('error', (err) => { this.emit('spawn-error', err); });
-    this.ready = new Promise<void>((res, rej) => { this.resolveReady = res; this.rejectReady = rej; });
-    void this.handshake();
-  }
-
-  get pid(): number { return this.child.pid ?? -1; }
-  get alive(): boolean { return !this.closed; }
-
-  private async handshake(): Promise<void> {
-    try {
-      await this.request('initialize', {
-        protocolVersion: 1,
-        // No fs capabilities: the agent must do its own file IO, never through the daemon.
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-        clientInfo: { name: 'dispatch', title: 'Dispatch', version: '2.0.0' },
-      });
-      this.resolveReady();
-    } catch (err) {
-      this.rejectReady(err);
-    }
-  }
-
-  private onLine(line: string): void {
-    const s = line.trim();
-    if (!s) return;
-    let msg: any;
-    try { msg = JSON.parse(s); } catch { return; } // skip non-JSON noise
-    if (msg.id !== undefined && msg.method === undefined && (msg.result !== undefined || msg.error !== undefined)) {
-      const p = this.pending.get(msg.id);
-      if (!p) return;
-      this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error?.message || 'rpc error'));
-      else p.resolve(msg.result);
-      return;
-    }
-    if (msg.id !== undefined && typeof msg.method === 'string') {
-      this.emit('server-request', msg.method, msg.id, msg.params ?? {});
-      return;
-    }
-    if (typeof msg.method === 'string') this.emit('notification', msg.method, msg.params ?? {});
-  }
-
-  /** `timeoutMs` (optional) rejects AND drops the pending entry, so an agent that never answers cannot hold the caller. */
-  request(method: string, params: unknown, timeoutMs?: number): Promise<any> {
-    if (this.closed) return Promise.reject(new Error('grok agent not connected'));
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      if (timeoutMs !== undefined) {
-        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`The agent did not answer ${method} in time. It may still take it: check the model shown.`)); }, timeoutMs);
-        timer.unref?.();
-        this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
-      } else {
-        this.pending.set(id, { resolve, reject });
-      }
-      this.writeRaw({ jsonrpc: '2.0', id, method, params });
-    });
-  }
-
-  notify(method: string, params: unknown): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', method, params });
-  }
-
-  /** Answer a server→client request, echoing its id. */
-  respond(id: RpcId, result: unknown): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', id, result });
-  }
-
-  respondError(id: RpcId, message: string): void {
-    if (this.closed) return;
-    this.writeRaw({ jsonrpc: '2.0', id, error: { code: -32601, message } });
-  }
-
-  private writeRaw(obj: unknown): void {
-    if (this.closed || !this.child.stdin.writable) return;
-    this.child.stdin.write(JSON.stringify(obj) + '\n');
-  }
-
-  close(): void {
-    this.closed = true;
-    try { this.rl.close(); } catch { /* noop */ }
-    killWithGrace(this.child); // SIGTERM, then SIGKILL if the CLI ignores it
-  }
+  });
+  return conn;
 }
 
 interface GrokSession {
   terminalId: string;
-  /** Epoch ms of the last frame that entered the ring (see IStructuredManager.lastFrameAt). */
-  lastFrameAt?: number;
-  conn: GrokConnection;
+  conn: JsonRpcStdioClient;
   translator: GrokTranslator;
-  events: unknown[];
+  /** The recent events for replay; its `lastPushAt` is IStructuredManager.lastFrameAt. */
+  ring: EventRing;
+  /** Keeps a closed block's text as one delta in the ring (ring only; see shared/stream-compaction.ts). */
+  coalescer: BlockDeltaCoalescer;
   escalate: boolean;
   pending: PendingPermission | null;
   /** The ACP request a surfaced `pending` answers (server req id + its options). */
@@ -195,16 +102,21 @@ interface GrokSession {
   declared?: StatusDeclaration;
 }
 
-export class AcpStructuredSessionManager extends EventEmitter implements IStructuredManager {
+export class AcpStructuredSessionManager extends StructuredEmitter implements IStructuredManager {
   private sessions = new Map<string, GrokSession>();
   private defaultEnv: Record<string, string> = {};
 
   /** How long a model switch may wait for the agent (to be ready, and to answer): the settings lock of the thread waits behind it. */
   private readonly switchTimeoutMs: number;
+  /** The declared-status chain of a turn end (shared/settle-turn.ts). `summary` is the translator's completed prose. */
+  private readonly settleDeps: SettleDeps = {
+    idle: (terminalId, detail) => { this.fire('idle', terminalId, detail); },
+    needsHelp: (terminalId, detail) => { this.fire('needs-help', terminalId, detail); },
+    withSummary: true,
+  };
 
   constructor(private readonly dialect: 'grok' | 'opencode' = 'grok', opts: { switchTimeoutMs?: number } = {}) {
     super();
-    this.setMaxListeners(0);
     this.switchTimeoutMs = opts.switchTimeoutMs ?? 15_000;
   }
 
@@ -213,12 +125,13 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const env = { ...inheritedEnv(), ...this.defaultEnv, ...opts.env } as Record<string, string>;
-    const conn = new GrokConnection(opts.command, opts.args, opts.workDir, env);
+    const conn = openAgent(opts.command, opts.args, opts.workDir, env);
     const session: GrokSession = {
       terminalId,
       conn,
       translator: new GrokTranslator(this.dialect),
-      events: [],
+      ring: new EventRing(),
+      coalescer: new BlockDeltaCoalescer(),
       escalate: opts.escalate ?? false,
       pending: null,
       pendingApproval: null,
@@ -228,17 +141,14 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       limitSettled: false,
       ready: Promise.resolve(),
     };
-    if (opts.seedEvents?.length) {
-      session.events.push(...opts.seedEvents);
-      if (session.events.length > MAX_EVENTS) session.events.splice(0, session.events.length - MAX_EVENTS);
-    }
+    if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     this.sessions.set(terminalId, session);
-    conn.on('notification', (method: string, params: any) => this.onFrame(session, { method, params }));
-    conn.on('server-request', (method: string, id: RpcId, params: any) => this.onServerRequest(session, method, id, params));
+    conn.on('notification', (method, params) => this.onFrame(session, { method, params }));
+    conn.on('request', (method, id, params) => this.onServerRequest(session, method, id, params));
     conn.on('spawn-error', (err: unknown) => {
       if (this.sessions.get(terminalId) !== session) return;
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
-      this.emit('failed', terminalId);
+      this.fire('failed', terminalId);
     });
     conn.on('exit', (code: number) => {
       // Only evict if this child is still the current session (a re-spawn may have replaced it).
@@ -246,12 +156,12 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       session.pending = null;
       session.pendingApproval = null;
       this.sessions.delete(terminalId);
-      this.emit('exit', terminalId, code);
+      this.fire('exit', terminalId, code);
     });
     session.ready = this.startSession(session, opts.resumeId, opts.workDir).catch((err) => {
       if (this.sessions.get(terminalId) !== session) return;
       this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
-      this.emit('failed', terminalId);
+      this.fire('failed', terminalId);
     });
     return conn.pid;
   }
@@ -263,7 +173,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       // The id is known up front, so bind + announce it before the load — replay frames and
       // an early ws connect both see a bound session.
       session.sessionId = resumeId;
-      this.emit('session', session.terminalId, resumeId);
+      this.fire('session', session.terminalId, resumeId);
       session.loading = true;
       try {
         const res = await session.conn.request('session/load', { sessionId: resumeId, cwd, mcpServers: [] });
@@ -277,7 +187,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       if (typeof sessionId !== 'string' || !sessionId) throw new Error('session/new returned no sessionId');
       session.sessionId = sessionId;
       this.adoptModel(session, res);
-      this.emit('session', session.terminalId, sessionId);
+      this.fire('session', session.terminalId, sessionId);
     }
     // `resumed` tells the translator its cost baseline may be missing: usage_update's
     // cost is session-cumulative, and a fresh translator on an old session would
@@ -287,7 +197,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
     // busy=true) and — by design — no per-turn result footers. Close the ring with the
     // synthetic settle the client swallows without rendering (same shape cc-sessions.ts
     // appends for Claude), or a revived thread sits on "Working…" forever.
-    if (resumeId && session.events.length) this.pushEvent(session, { type: 'result', subtype: 'backfill', is_error: false });
+    if (resumeId && session.ring.length) this.pushEvent(session, { type: 'result', subtype: 'backfill', is_error: false });
   }
 
   /** The session's REAL model id from the bind response. Grok reports
@@ -358,7 +268,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
 
   private onServerRequest(session: GrokSession, method: string, id: RpcId, params: any): void {
     const actions = session.translator.translate({ method, params, id });
-    if (!actions.some((a) => a.kind === 'approval')) { session.conn.respondError(id, 'unhandled server request'); return; }
+    if (!actions.some((a) => a.kind === 'approval')) { session.conn.respondError(id, METHOD_NOT_FOUND, 'unhandled server request'); return; }
     this.applyActions(session, actions);
   }
 
@@ -370,55 +280,32 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
           break;
         case 'failed':
           session.turnActive = false;
-          this.emit('failed', session.terminalId);
+          this.fire('failed', session.terminalId);
           break;
         case 'usage-limit':
           // A usage limit is a pause, not a failure: the limit service parks the thread and wakes it.
           session.turnActive = false;
           session.limitSettled = true;
-          this.emit('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
-          this.emit('usage-limit', session.terminalId, action.limit);
+          this.fire('scheduled', session.terminalId, pauseLabel(action.limit.kind, action.limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+          this.fire('usage-limit', session.terminalId, action.limit);
           break;
         case 'busy':
-          this.emit('busy', session.terminalId);
+          this.fire('busy', session.terminalId);
           break;
         case 'idle':
         case 'needs-help':
+          // The ACP turn boundary: the shared declared-status chain (shared/settle-turn.ts), the
+          // same one as the Codex manager. `action.summary` is the translator's own completed-prose
+          // stash, carried through so a card keeps a real outcome line (the Claude ring walk finds
+          // only deltas here too). ACP names no turns, so no turn id is given: `turnActive` is
+          // what keeps the prompt-response fallback (runTurn) from a second settle.
           session.turnActive = false;
-          this.settleTurn(session, action);
+          settleTurn(session, action, this.settleDeps);
           break;
         case 'approval':
           this.handleApproval(session, action);
           break;
       }
-    }
-  }
-
-  /**
-   * The Grok turn boundary — the SAME declared-status precedence chain as the Codex manager's
-   * settleTurn (see codex-manager.ts for the full rationale):
-   *   1. declared `needs_you`   → 'needs-help', inferred: false
-   *   2. any other declaration  → 'idle', declared: true (+ state/blocker)
-   *   3. translator said question → 'needs-help', inferred: true
-   *   4. otherwise              → 'idle', declared: false
-   * `action.summary` is the translator's own completed-prose stash, carried through so a Grok
-   * card persists a real outcome line (the Claude ring-walk finds only deltas here too).
-   */
-  private settleTurn(session: GrokSession, action: Extract<GrokAction, { kind: 'idle' | 'needs-help' }>): void {
-    const declared = session.declared;
-    session.declared = undefined; // per-turn — must not leak into the next one
-    const summary = 'summary' in action ? action.summary : undefined;
-    if (declared?.state === 'needs_you') {
-      this.emit('needs-help', session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
-    } else if (declared) {
-      const detail: { declared: true; state: 'done' | 'blocked'; blocker?: string; summary?: string } =
-        { declared: true, state: declared.state as 'done' | 'blocked', summary };
-      if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
-      this.emit('idle', session.terminalId, detail);
-    } else if (action.kind === 'needs-help') {
-      this.emit('needs-help', session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
-    } else {
-      this.emit('idle', session.terminalId, { declared: false, summary });
     }
   }
 
@@ -428,24 +315,22 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
     if (session.escalate || action.alwaysSurface) {
       session.pending = action.pending;
       session.pendingApproval = { requestId: action.requestId, options: action.options };
-      this.emit('permission', session.terminalId, action.pending);
+      this.fire('permission', session.terminalId, action.pending);
     } else {
       session.conn.respond(action.requestId, action.autoApprove);
     }
   }
 
   private pushEvent(session: GrokSession, event: unknown): void {
-    session.events.push(event);
-    session.lastFrameAt = Date.now();
-    if (session.events.length > MAX_EVENTS) session.events.shift();
-    this.emit('event', session.terminalId, event);
+    session.ring.push(event);
+    session.coalescer.observe(session.ring, event); // ring only: the live emit below is the event as it came
+    this.fire('event', session.terminalId, event);
     // A signed-out login (ACP's auth error, OpenCode's missing provider key): a typed event after it.
     const auth = authRequiredFrame(event, this.dialect, undefined);
     if (auth) {
-      session.events.push(auth);
-      if (session.events.length > MAX_EVENTS) session.events.shift();
-      this.emit('event', session.terminalId, auth);
-      this.emit('auth-required', session.terminalId, auth);
+      session.ring.push(auth);
+      this.fire('event', session.terminalId, auth);
+      this.fire('auth-required', session.terminalId, auth);
     }
   }
 
@@ -467,10 +352,10 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
 
   private async runTurn(session: GrokSession, content: string | ContentBlock[]): Promise<void> {
     if (this.sessions.get(session.terminalId) !== session) return;
-    if (!session.conn.alive || !session.sessionId) { this.emit('failed', session.terminalId); return; }
+    if (!session.conn.alive || !session.sessionId) { this.fire('failed', session.terminalId); return; }
     session.turnActive = true;
     session.limitSettled = false;
-    this.emit('busy', session.terminalId);
+    this.fire('busy', session.terminalId);
     let result: unknown;
     try {
       result = await session.conn.request('session/prompt', { sessionId: session.sessionId, prompt: toPrompt(content) });
@@ -482,9 +367,9 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
       session.turnActive = false;
       if (limit) {
-        this.emit('scheduled', session.terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
-        this.emit('usage-limit', session.terminalId, limit);
-      } else this.emit('failed', session.terminalId);
+        this.fire('scheduled', session.terminalId, pauseLabel(limit.kind, limit.resetsAt, Date.now(), undefined, 30 * 60_000));
+        this.fire('usage-limit', session.terminalId, limit);
+      } else this.fire('failed', session.terminalId);
       return;
     }
     // Response-driven boundary: OpenCode sends no turn_completed update — the prompt
@@ -506,7 +391,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
     session.conn.respond(session.pendingApproval.requestId, buildPermissionResponse(decision, session.pendingApproval.options));
     session.pending = null;
     session.pendingApproval = null;
-    this.emit('resolved', terminalId);
+    this.fire('resolved', terminalId);
     return true;
   }
 
@@ -520,7 +405,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
       session.conn.respond(session.pendingApproval.requestId, buildPermissionResponse({ behavior: 'allow' }, session.pendingApproval.options));
       session.pending = null;
       session.pendingApproval = null;
-      this.emit('resolved', terminalId);
+      this.fire('resolved', terminalId);
     }
     return true;
   }
@@ -549,14 +434,11 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
   getPending(terminalId: string): PendingPermission | null { return this.sessions.get(terminalId)?.pending ?? null; }
   getSessionId(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.sessionId; }
 
-  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.lastFrameAt; }
-  getEvents(terminalId: string): unknown[] { return [...(this.sessions.get(terminalId)?.events ?? [])]; }
+  lastFrameAt(terminalId: string): number | undefined { return this.sessions.get(terminalId)?.ring.lastPushAt; }
+  getEvents(terminalId: string): unknown[] { return this.sessions.get(terminalId)?.ring.snapshot() ?? []; }
   /** The last ended turn's own texts (IStructuredManager.getTurnTexts): the closed prose blocks, not the ring's deltas. */
   getTurnTexts(terminalId: string): string[] | null { return this.sessions.get(terminalId)?.translator.lastTurnTexts() ?? null; }
-  getEventsTail(terminalId: string, n: number): unknown[] {
-    const events = this.sessions.get(terminalId)?.events ?? [];
-    return n >= events.length ? [...events] : events.slice(events.length - n);
-  }
+  getEventsTail(terminalId: string, n: number): unknown[] { return this.sessions.get(terminalId)?.ring.tail(n) ?? []; }
   isAlive(terminalId: string): boolean { return this.sessions.has(terminalId); }
 
   kill(terminalId: string): void {
@@ -566,7 +448,7 @@ export class AcpStructuredSessionManager extends EventEmitter implements IStruct
     session.pendingApproval = null;
     this.sessions.delete(terminalId);
     session.conn.close();
-    this.emit('exit', terminalId, 0);
+    this.fire('exit', terminalId, 0);
   }
 
   killAll(): void { for (const id of [...this.sessions.keys()]) this.kill(id); }

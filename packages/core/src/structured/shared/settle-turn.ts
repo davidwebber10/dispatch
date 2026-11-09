@@ -39,8 +39,10 @@ export type SettleAction =
   | { kind: 'needs-help'; ask: string; summary: string; turnId?: string | number };
 
 export interface SettleDeps {
-  emit(event: 'idle', terminalId: string, detail: IdleDetail): void;
-  emit(event: 'needs-help', terminalId: string, detail: NeedsHelpDetail): void;
+  /** Emit the manager's 'idle'. */
+  idle(terminalId: string, detail: IdleDetail): void;
+  /** Emit the manager's 'needs-help'. */
+  needsHelp(terminalId: string, detail: NeedsHelpDetail): void;
   /** True when an 'idle' detail carries the action's `summary` (Codex, ACP). False for Claude. */
   withSummary: boolean;
 }
@@ -58,21 +60,21 @@ export function settleTurn(session: SettleSession, action: SettleAction, deps: S
   const declared = session.declared;
   session.declared = undefined; // a declaration is for one turn: it must not reach the next one
   if (declared?.state === 'needs_you') {
-    deps.emit('needs-help', session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
+    deps.needsHelp(session.terminalId, { ask: declared.ask ?? declared.summary, summary: declared.summary, inferred: false });
     return;
   }
   if (declared) {
     const detail: IdleDetail = { declared: true, state: declared.state as 'done' | 'blocked' };
     if (deps.withSummary) detail.summary = action.summary;
     if (declared.state === 'blocked' && declared.blocker) detail.blocker = declared.blocker;
-    deps.emit('idle', session.terminalId, detail);
+    deps.idle(session.terminalId, detail);
     return;
   }
   if (action.kind === 'needs-help') {
-    deps.emit('needs-help', session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
+    deps.needsHelp(session.terminalId, { ask: action.ask, summary: action.summary, inferred: true });
     return;
   }
   const detail: IdleDetail = { declared: false };
   if (deps.withSummary) detail.summary = action.summary;
-  deps.emit('idle', session.terminalId, detail);
+  deps.idle(session.terminalId, detail);
 }
