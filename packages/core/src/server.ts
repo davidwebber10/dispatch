@@ -1049,7 +1049,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       const me = await tailscaleAccess.self().catch(() => null);
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
-    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
+    usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), refresh: () => usageGauge.refreshNow(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
     watchCatchUp: (id) => watchDispatcher.catchUp(id),
   });
 

@@ -116,6 +116,8 @@ export interface ApiRouteDeps {
   /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
   watchCatchUp?: (watchId: string) => string | null;
   usageLimits?: {
+    /** The Refresh button of the usage window (2026-11-09): read every account now. */
+    refresh?: () => Promise<void>;
     snapshots: LimitSnapshots;
     accountFor: (provider: string) => string;
     /** The gauge's summary and the shared Codex refresher (#127). */
@@ -219,7 +221,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
   app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
-  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, useResetCredit: d.usageLimits.useResetCredit }));
+  if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, refresh: d.usageLimits.refresh, useResetCredit: d.usageLimits.useResetCredit }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
   else app.use('/api/endless', ownerOnly, (_req, res) => { res.status(503).json({ error: 'Chat is unavailable' }); });
 }

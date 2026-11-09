@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowSquareOut, SignIn, Info, ClockCounterClockwise } from '@phosphor-icons/react';
+import { ArrowSquareOut, SignIn, Info, ClockCounterClockwise, ArrowClockwise } from '@phosphor-icons/react';
+import { useUsageLimits } from '../../stores/usageLimits';
+import { whenLabel } from '../inspector/usageLimits';
 import type { Account, UsageSummary } from '../../api/types';
 import { api } from '../../api/client';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
@@ -227,6 +229,35 @@ function ToolCard({ m, warn, current, dense, email, access }: { m: RingModel; wa
   );
 }
 
+/**
+ * The Refresh row (2026-11-09): the figures are read on a clock, not live, so the owner can ask for
+ * a read now. It says when the newest figure was read, shows "Refreshing…" while the daemon reads,
+ * and says so when the daemon could not be asked (the old figures stay).
+ */
+function RefreshRow({ summary, now }: { summary: UsageSummary; now: number }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'error' | 'partial'>('idle');
+  const newest = summary.providers.reduce((m, p) => Math.max(m, p.asOf ?? 0), 0);
+  const run = async () => {
+    if (state === 'loading') return;
+    setState('loading');
+    try { const r = await useUsageLimits.getState().refresh(); setState(r.partial ? 'partial' : 'idle'); }
+    catch { setState('error'); }
+  };
+  const text = state === 'loading' ? 'Refreshing…'
+    : state === 'error' ? 'Could not refresh. Try again.'
+    : newest ? `Updated ${whenLabel(newest, Math.max(now, Date.now()))}${state === 'partial' ? ' · some figures still loading' : ''}` : 'No figures yet';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span data-testid="usage-updated" aria-live="polite" style={{ flex: 1, minWidth: 0, font: '400 11.5px var(--font-mono)', color: state === 'error' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{text}</span>
+      <button type="button" onClick={() => void run()} disabled={state === 'loading'} aria-busy={state === 'loading'} aria-label="Refresh usage" title="Read the usage figures now"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', flexShrink: 0, background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 12.5, fontWeight: 500, cursor: state === 'loading' ? 'default' : 'pointer', opacity: state === 'loading' ? 0.7 : 1 }}>
+        <ArrowClockwise size={13} weight="bold" aria-hidden style={{ animation: state === 'loading' ? 'dispatchSpin 0.9s linear infinite' : undefined }} />
+        {state === 'loading' ? 'Refreshing' : 'Refresh'}
+      </button>
+    </div>
+  );
+}
+
 /** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab and listed first. */
 export function UsageRings({ summary, now, current, dense }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null; dense?: boolean }) {
   const accounts = useAccounts((s) => s.view);
@@ -260,6 +291,7 @@ export function UsageRings({ summary, now, current, dense }: { summary: UsageSum
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: dense ? 10 : 16 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
+      <RefreshRow summary={summary} now={now} />
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
         <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} email={emailOf(m)} access={accessOf(m)} />

@@ -514,6 +514,37 @@ export class UsageGauge {
     try { this.maybeProbeClaude(); } catch (err) { console.warn('[usage-gauge] account read failed:', err); }
   }
 
+  /**
+   * The Refresh button of the usage window (2026-11-09): read every Claude account and ask every Codex
+   * account now, whatever their normal clocks, then broadcast. It resolves when the reads end. A Claude
+   * account that Anthropic asked to wait (429 with its wait still running) is not read: the wait holds.
+   */
+  async refreshNow(): Promise<void> {
+    const now = this.now();
+    const reads: Promise<unknown>[] = [];
+    for (const a of this.accountRefs()) {
+      const id = a.accountId;
+      if (a.provider === 'claude-code' && this.d.readClaudeUsage) {
+        if (this.claudeReading.has(id)) continue;
+        const wait = this.claudeWait.get(id);
+        if (wait && now < wait.until && this.claudeAccess.get(id)?.state === 'rate-limited') continue;
+        const stamp = this.d.claudeTokenStamp?.(id) ?? null;
+        this.lastClaudeRead.set(id, now);
+        this.claudeReading.add(id);
+        reads.push(this.d.readClaudeUsage(id).catch(() => false)
+          .then((r) => this.claudeReadDone(id, r, now, stamp))
+          .finally(() => { this.claudeReading.delete(id); }));
+      } else if (a.provider === 'codex' && this.d.pollCodex) {
+        if (this.codexPolling.has(id)) continue;
+        this.lastCodexPoll.set(id, now);
+        this.codexPolling.add(id);
+        reads.push(this.d.pollCodex(id).catch(() => false).finally(() => { this.codexPolling.delete(id); }));
+      }
+    }
+    await Promise.allSettled(reads);
+    this.flush();
+  }
+
   /** The tiny Claude turn as one account, only when its figures are stale: at most one per `minGapMs` (claudeStaleMs) per account. */
   private fallbackProbe(now: number, accountId = 'cli', minGapMs = this.o.claudeStaleMs): void {
     if (!this.d.probeClaude) return;

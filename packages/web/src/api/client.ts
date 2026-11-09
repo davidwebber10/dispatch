@@ -244,6 +244,8 @@ export const api = {
   getTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}`),
   getUsageLimits: (terminalId: string) => req<ThreadUsageLimits>(`/api/usage-limits?terminalId=${encodeURIComponent(terminalId)}`),
   getUsageSummary: () => req<UsageSummary>('/api/usage-limits/summary'),
+  /** The Refresh button (2026-11-09): the daemon reads every account now and answers the new summary. */
+  refreshUsage: () => req<UsageSummary & { partial?: boolean }>('/api/usage-limits/refresh', { method: 'POST' }),
   getUsageLimitSettings: () => req<UsageLimitSettings>('/api/settings/usage-limits'),
   setUsageLimitSettings: (patch: Partial<UsageLimitSettings>) => req<UsageLimitSettings>('/api/settings/usage-limits', { method: 'PUT', body: body(patch) }),
   getConversation: (id: string, params: { since?: number; before?: number; beforeUuid?: string; limit?: number } = {}) => {

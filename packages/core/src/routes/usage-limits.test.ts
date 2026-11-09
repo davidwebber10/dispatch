@@ -144,3 +144,30 @@ describe('POST /api/usage-limits/reset-credit', () => {
     expect((await request(withReset(async () => null)).post('/api/usage-limits/reset-credit').send({ provider: 'codex' })).status).toBe(502);
   });
 });
+
+// The Refresh button of the usage window (2026-11-09).
+describe('POST /api/usage-limits/refresh', () => {
+  const withRefresh = (refresh?: () => Promise<void>) => {
+    const a = express(); a.use(express.json());
+    a.use('/api', createUsageLimitsRouter(db, snaps, { accountFor: () => account, refresh, summary: () => ({ type: 'usage-limits', at: 1, warnPercent: 80, providers: [], paused: [] }) as never }));
+    return a;
+  };
+
+  it('reads now, waits for the reads, and answers the new summary', async () => {
+    let done = false;
+    const res = await request(withRefresh(async () => { await new Promise((r) => setTimeout(r, 20)); done = true; })).post('/api/usage-limits/refresh').set('Sec-Fetch-Site', 'same-origin');
+    expect(done).toBe(true);
+    expect(res.status).toBe(200);
+    expect(res.body.warnPercent).toBe(80);
+  });
+
+  it('answers 503 without a gauge', async () => {
+    expect((await request(withRefresh()).post('/api/usage-limits/refresh').set('Sec-Fetch-Site', 'same-origin')).status).toBe(503);
+  });
+
+  it('a slow read does not hold the request past the time limit: it answers the summary it has', async () => {
+    const res = await request(withRefresh(() => new Promise(() => {}))).post('/api/usage-limits/refresh?timeoutMs=50').set('Sec-Fetch-Site', 'same-origin');
+    expect(res.status).toBe(200);
+    expect(res.body.partial).toBe(true);
+  });
+});

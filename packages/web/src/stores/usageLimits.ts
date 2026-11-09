@@ -28,6 +28,8 @@ interface UsageLimitsState {
    */
   rev: number;
   load: () => Promise<void>;
+  /** The Refresh button (2026-11-09): read every account now. Resolves with `partial` when a read was still running; throws when the daemon could not be asked. */
+  refresh: () => Promise<{ partial: boolean }>;
   applyEvent: (e: ServerEvent) => void;
 }
 
@@ -116,6 +118,12 @@ export const useUsageLimits = create<UsageLimitsState>((set, get) => {
         if (held !== heldAtStart && p.epoch !== held) return;
         take(p);
       } catch { /* an older daemon has no gauge, or the network dropped: keep what is there */ }
+    },
+    refresh: async () => {
+      const answer = (await api.refreshUsage()) as unknown as Record<string, unknown>;
+      ++loadSeq; // an older load in flight must not replace these figures
+      take(parse(answer));
+      return { partial: answer.partial === true };
     },
     applyEvent: (e) => {
       if (e.type !== 'usage-limits') return;

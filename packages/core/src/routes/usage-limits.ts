@@ -19,6 +19,8 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   refreshCodex?: CodexRefresh;
   /** The usage gauge's summary (#127). Without it `/usage-limits/summary` answers 503. */
   summary?: () => UsageSummary;
+  /** The Refresh button (2026-11-09): read every account now; resolves when the reads end (gauge.refreshNow). */
+  refresh?: () => Promise<void>;
   /** Spend one of the account's banked limit resets (Codex only). The backend's outcome, or null. */
   useResetCredit?: (provider: string, creditId?: string, accountId?: string) => Promise<string | null>;
 } = {}): Router {
@@ -31,6 +33,25 @@ export function createUsageLimitsRouter(db: Database.Database, snapshots: LimitS
   router.get('/usage-limits/summary', keyRoute({ plugin: needs('read:usage') }), (_req, res) => {
     if (!opts.summary) { res.status(503).json({ error: 'usage gauge unavailable' }); return; }
     res.json(opts.summary());
+  });
+
+  /**
+   * POST /api/usage-limits/refresh: the Refresh button of the usage window (2026-11-09). Reads every
+   * account now and answers the new summary. A read that takes longer than the limit (15 s, or
+   * `?timeoutMs` for tests) does not hold the request: the answer is the summary so far, `partial: true`,
+   * and the late figures arrive by the `usage-limits` broadcast. Owner only (strict): it spends requests.
+   */
+  router.post('/usage-limits/refresh', ownerOnlyStrict, async (req, res) => {
+    if (!opts.refresh || !opts.summary) { res.status(503).json({ error: 'usage gauge unavailable' }); return; }
+    const asked = Number(req.query.timeoutMs);
+    const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 15_000) : 15_000;
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = await Promise.race([
+      opts.refresh().then(() => false, () => false),
+      new Promise<boolean>((r) => { timer = setTimeout(() => r(true), limit); }),
+    ]);
+    if (timer) clearTimeout(timer);
+    res.json({ ...opts.summary(), ...(timedOut ? { partial: true } : {}) });
   });
 
   /**

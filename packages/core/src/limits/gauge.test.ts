@@ -1107,6 +1107,46 @@ describe('Claude read back-off and usage access (W1-H)', () => {
     expect(at(reads, 'w1')).toEqual([0, 3]);
   });
 
+  // The Refresh button of the usage window (2026-11-09): read every account now and wait for the answers.
+  it('refreshNow reads every Claude account at once, also inside the normal 2-minute clock, and resolves after the reads', async () => {
+    build();
+    await run(1); // 0: both read
+    let slow!: () => void;
+    const gate = new Promise<void>((r) => { slow = r; });
+    const base = (g as any).d.readClaudeUsage;
+    (g as any).d.readClaudeUsage = async (id = 'cli') => { await gate; return base(id); };
+    let done = false;
+    const p = g.refreshNow().then(() => { done = true; });
+    await flush();
+    expect(done).toBe(false); // it waits for the reads
+    slow(); await p;
+    expect(done).toBe(true);
+    expect(at(reads, 'cli')).toEqual([0, 1]);
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+  });
+
+  it('refreshNow does not read an account that Anthropic asked to wait (429), and reads the others', async () => {
+    build();
+    answer.cli = { ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 30 * MIN };
+    await run(2);
+    expect(at(reads, 'cli')).toEqual([0]);
+    await g.refreshNow();
+    expect(at(reads, 'cli')).toEqual([0]); // the Retry-After wait holds
+    expect(at(reads, 'w1')).toEqual([0, 2]);
+  });
+
+  it('refreshNow asks every Codex account directly, whatever its poll clock', async () => {
+    gauge.stop();
+    const polls: string[] = [];
+    const g2 = new UsageGauge({ db, snapshots: snaps, accountFor: () => account, now: () => clock, broadcast: () => {},
+      accounts: () => [{ provider: 'codex', accountId: 'cli', label: 'CLI' }, { provider: 'codex', accountId: 'b1', label: 'Biz' }],
+      pollCodex: async (id = 'cli') => { polls.push(id); return true; } });
+    await g2.refreshNow();
+    await g2.refreshNow();
+    expect(polls).toEqual(['cli', 'b1', 'cli', 'b1']);
+    g2.stop();
+  });
+
   it('a reader that still answers true or false works as before (false: a failure with no reason)', async () => {
     build(() => [refs()[0]]);
     (answer as Record<string, unknown>).cli = false;

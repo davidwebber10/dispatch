@@ -3,6 +3,7 @@ import { render, screen, within, act, fireEvent, waitFor } from '@testing-librar
 import { UsageRings } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
 import { useAccounts } from '../../stores/accounts';
+import { useUsageLimits } from '../../stores/usageLimits';
 import { api } from '../../api/client';
 
 const now = Date.UTC(2026, 10, 5, 20);
@@ -200,5 +201,34 @@ describe('usage access on the account card (W1-H)', () => {
     const card = screen.getByRole('region', { name: 'Claude · Ultra 1' });
     expect(within(card).getByTestId('usage-access')).toHaveTextContent(/Sign in again on the daemon's computer/);
     expect(within(card).queryByRole('button', { name: /^Sign in again/ })).toBeNull();
+  });
+});
+
+describe('Refresh (2026-11-09: the figures are not live, so Refresh reads them now)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  it('shows when the figures were read, and Refresh shows its loading state, asks the daemon once, then shows the new time', async () => {
+    let finish!: (v: unknown) => void;
+    const spy = vi.spyOn(api, 'refreshUsage').mockImplementation(() => new Promise((r) => { finish = r; }) as never);
+    render(<UsageRings summary={summary()} now={now} dense />);
+    const btn = screen.getByRole('button', { name: 'Refresh usage' });
+    expect(screen.getByTestId('usage-updated')).toHaveTextContent(/^Updated /);
+    fireEvent.click(btn);
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('usage-updated')).toHaveTextContent('Refreshing…');
+    fireEvent.click(btn); // a second click while it loads does nothing
+    expect(spy).toHaveBeenCalledTimes(1);
+    const fresh = { ...(summary() as any), epoch: 'e1', rev: 2, providers: (summary() as any).providers.map((p: any) => ({ ...p, asOf: now + 60_000 })) };
+    await act(async () => { finish(fresh); });
+    expect(btn).not.toBeDisabled();
+    expect(screen.getByTestId('usage-updated')).toHaveTextContent(/^Updated /);
+    expect(useUsageLimits.getState().summary?.providers[0].asOf).toBe(now + 60_000);
+  });
+
+  it('a failed refresh says so and keeps the old figures', async () => {
+    vi.spyOn(api, 'refreshUsage').mockRejectedValue(new Error('offline'));
+    render(<UsageRings summary={summary()} now={now} dense />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh usage' })); });
+    expect(screen.getByTestId('usage-updated')).toHaveTextContent('Could not refresh');
   });
 });
