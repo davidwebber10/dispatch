@@ -94,3 +94,52 @@ describe('integrations routes', () => {
     expect(imp.body).toEqual({ added: ['linear'], skipped: [], reasons: [] });
   });
 });
+
+// W1-B: the export carries every header and env value, so it is strict. A local call with no credential must look like the web page.
+describe('GET /api/integrations/export is strict owner', () => {
+  const TOKEN = 'owner-access-token-for-the-integrations-test-0123456789';
+  async function gated() {
+    const express = (await import('express')).default;
+    const { createIntegrationsRouter } = await import('../../src/routes/integrations.js');
+    const { IntegrationsService } = await import('../../src/integrations/service.js');
+    const { createPrincipalMiddleware } = await import('../../src/auth/request-principal.js');
+    const { createKeyScope } = await import('../../src/auth/key-scope.js');
+    const { KeyRegistry } = await import('../../src/auth/principals.js');
+    const { GATE_VIA } = await import('../../src/auth/access-gate.js');
+    const { configureRefusalLog } = await import('../../src/auth/route-policy.js');
+    const integrationsDb = await import('../../src/db/integrations.js');
+    configureRefusalLog({ log: () => {} });
+    const d = new Database(':memory:'); initSchema(d);
+    integrationsDb.create(d, { id: 'i1', name: 'files', type: 'stdio', command: 'npx', env: { DB_PASSWORD: 'hunter2' } });
+    const g = express();
+    g.use((req: any, _res: any, next: any) => { req[GATE_VIA] = 'local'; next(); });
+    g.use(createPrincipalMiddleware({ registry: new KeyRegistry(), scope: createKeyScope(d), getToken: () => TOKEN, via: 'test' }));
+    g.use(express.json());
+    g.use('/api/integrations', createIntegrationsRouter(new IntegrationsService(d, null, () => false)));
+    return g;
+  }
+
+  it('a call with no credential and no browser headers answers 401 auth_required', async () => {
+    const res = await request(await gated()).get('/api/integrations/export');
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('auth_required');
+    expect(res.text).not.toContain('hunter2');
+  });
+
+  it('the web page (browser headers) gets the value', async () => {
+    const g = await gated();
+    const meta = await request(g).get('/api/integrations/export').set('Sec-Fetch-Site', 'same-origin');
+    expect(meta.status).toBe(200);
+    expect(meta.text).toContain('hunter2');
+    // A page on plain http (a tailnet name) sends no Sec-Fetch-Site and no Origin on a GET; its Referer names the page.
+    const plain = await request(g).get('/api/integrations/export').set('Host', 'mac.tail1.ts.net:3456').set('Referer', 'http://mac.tail1.ts.net:3456/');
+    expect(plain.status).toBe(200);
+    expect(plain.text).toContain('hunter2');
+  });
+
+  it('a bearer token gets the value', async () => {
+    const res = await request(await gated()).get('/api/integrations/export').set('Authorization', `Bearer ${TOKEN}`);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('hunter2');
+  });
+});

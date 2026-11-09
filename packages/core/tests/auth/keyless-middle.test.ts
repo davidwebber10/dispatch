@@ -188,6 +188,60 @@ describe('a call with no credential is refused on the dangerous actions', () => 
   });
 });
 
+// W1-B: three more owner routes are strict. Each gives out a secret (a pairing code, a secret value, every integration value).
+describe('pair-code, secret value and integration export need the owner or the web page', () => {
+  const REFERER = () => ({ Referer: `http://127.0.0.1:${port}/` });
+
+  test('pair-code: a call with no credential and no browser headers answers 401 auth_required', async () => {
+    const r = await call({ method: 'POST', path: '/api/access/pair-code', body: {} });
+    expect(r.status).toBe(401);
+    expect(json(r).error).toBe('auth_required');
+    expect(json(r).message).toContain('POST /api/access/pair-code');
+    expect(r.body).not.toMatch(/"code"/);
+  });
+  test('pair-code: the web page (browser headers) gets the value; a bearer token gets the value', async () => {
+    for (const headers of [WEB_PAGE(), FETCH_META, OWNER()]) {
+      const r = await call({ method: 'POST', path: '/api/access/pair-code', headers, body: {} });
+      expect(r.status, JSON.stringify(Object.keys(headers))).toBe(200);
+      expect(typeof json(r).code).toBe('string');
+      expect(json(r).expiresAt).toBeGreaterThan(Date.now());
+    }
+  });
+  test('pair-code: a thread key still gets 403 owner_only', async () => {
+    const r = await call({ method: 'POST', path: '/api/access/pair-code', headers: { Authorization: `Bearer ${threadKey}` }, body: {} });
+    expect(r.status).toBe(403);
+    expect(json(r).error).toBe('owner_only');
+  });
+
+  test('integration export: no credential answers 401; the web page (Sec-Fetch-Site, or a same-origin Referer on plain http) and the token get the document', async () => {
+    const refused = await call({ path: '/api/integrations/export' });
+    expect(refused.status).toBe(401);
+    expect(json(refused).error).toBe('auth_required');
+    for (const headers of [FETCH_META, REFERER(), OWNER()]) {
+      const r = await call({ path: '/api/integrations/export', headers });
+      expect(r.status, JSON.stringify(Object.keys(headers))).toBe(200);
+      expect(Array.isArray(json(r).integrations)).toBe(true);
+    }
+    // The masked list stays open to a local call with no credential.
+    expect((await call({ path: '/api/integrations' })).status).toBe(200);
+  });
+
+  test('secret value: no credential answers 401; the web page and the token get past the guard (Doppler is not connected here, so 400)', async () => {
+    const reveal = { 'X-Dispatch-Reveal': '1' };
+    const refused = await call({ path: '/api/secrets/ANY_NAME/value', headers: reveal });
+    expect(refused.status).toBe(401);
+    expect(json(refused).error).toBe('auth_required');
+    for (const headers of [FETCH_META, REFERER(), OWNER()]) {
+      const r = await call({ path: '/api/secrets/ANY_NAME/value', headers: { ...reveal, ...headers } });
+      expect(r.status, JSON.stringify(Object.keys(headers))).not.toBe(401);
+      expect(r.status).not.toBe(403);
+      expect(json(r).error).not.toBe('auth_required');
+    }
+    // The status route (no token in it) stays open.
+    expect((await call({ path: '/api/secrets/status' })).status).toBe(200);
+  });
+});
+
 describe('the same actions still work for the web page, the owner token and a script that sends the token', () => {
   test('the web page (Origin) sends a message and input', async () => {
     expect((await call({ method: 'POST', path: `/api/terminals/${shellId}/input`, headers: WEB_PAGE(), body: { data: 'echo from-page\r' } })).status).toBe(204);

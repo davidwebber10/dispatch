@@ -192,3 +192,86 @@ describe('relayed requests', () => {
   });
 });
 
+
+// W1-B: the sign-in failure map. It is bounded by eviction; the old code cleared it, which freed every blocked caller.
+describe('sign-in failure limiter', () => {
+  let t: number;
+  const make = async (cap?: number) => {
+    const { createLoginLimiter } = await import('./access-gate.js');
+    return createLoginLimiter(() => t, cap);
+  };
+  beforeEach(() => { t = 1_000_000; });
+
+  test('ten failures in a minute block the caller; the block ends when the window does', async () => {
+    const lim = await make();
+    for (let i = 0; i < 9; i++) lim.fail('a');
+    expect(lim.blocked('a')).toBe(false);
+    lim.fail('a');
+    expect(lim.blocked('a')).toBe(true);
+    t += 59_999;
+    expect(lim.blocked('a')).toBe(true);
+    t += 1;
+    expect(lim.blocked('a')).toBe(false);
+    expect(lim.size()).toBe(0);
+  });
+
+  test('a good sign-in clears the caller', async () => {
+    const lim = await make();
+    lim.fail('a'); lim.fail('a');
+    lim.clear('a');
+    expect(lim.size()).toBe(0);
+  });
+
+  test('a blocked caller stays blocked after 1,001 other callers fail', async () => {
+    const lim = await make();
+    for (let i = 0; i < 10; i++) lim.fail('victim-of-nothing');
+    expect(lim.blocked('victim-of-nothing')).toBe(true);
+    for (let i = 0; i < 1001; i++) { t += 1; lim.fail(`flood-${i}`); }
+    expect(lim.blocked('victim-of-nothing')).toBe(true);
+  });
+
+  test('the map never holds more than 1,000 entries', async () => {
+    const lim = await make();
+    let max = 0;
+    for (let i = 0; i < 5000; i++) { t += 1; lim.fail(`flood-${i}`); max = Math.max(max, lim.size()); }
+    expect(max).toBe(1000);
+    expect(lim.size()).toBe(1000);
+  });
+
+  test('eviction order: expired entries first, then the oldest unblocked, then the oldest blocked', async () => {
+    const lim = await make(4);
+    for (let i = 0; i < 10; i++) lim.fail('blocked-old');
+    t += 10; lim.fail('open-old');
+    t += 10; for (let i = 0; i < 10; i++) lim.fail('blocked-new');
+    t += 10; lim.fail('open-new');
+    expect(lim.size()).toBe(4);
+    // Full. A new caller evicts the oldest unblocked entry only.
+    t += 10; lim.fail('x1');
+    expect(lim.size()).toBe(4);
+    expect(lim.blocked('blocked-old')).toBe(true);
+    expect(lim.blocked('blocked-new')).toBe(true);
+    expect(lim.has('open-old')).toBe(false);
+    expect(lim.has('open-new')).toBe(true);
+    // Make every entry blocked: the next new caller evicts the oldest blocked entry.
+    for (let i = 0; i < 9; i++) { lim.fail('open-new'); lim.fail('x1'); }
+    t += 10; lim.fail('x2');
+    expect(lim.size()).toBe(4);
+    expect(lim.has('blocked-old')).toBe(false);
+    expect(lim.blocked('blocked-new')).toBe(true);
+    expect(lim.blocked('open-new')).toBe(true);
+    // An expired entry goes before a live unblocked one.
+    t += 60_000;
+    lim.fail('y1'); lim.fail('y2');
+    expect(lim.has('blocked-new')).toBe(false);
+    expect(lim.has('x2')).toBe(false);
+    expect(lim.size()).toBe(2);
+  });
+
+  test('a caller that is already in the map never causes an eviction', async () => {
+    const lim = await make(2);
+    lim.fail('a'); lim.fail('b');
+    lim.fail('a'); lim.fail('a');
+    expect(lim.has('a') && lim.has('b')).toBe(true);
+    expect(lim.size()).toBe(2);
+  });
+});

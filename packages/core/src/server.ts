@@ -103,6 +103,8 @@ import { platform } from './platform/index.js';
 import { startUpdateCheckLoop } from './update/checker.js';
 import { finishRestartedUpdate } from './update/progress.js';
 import { guardLoopback } from './platform/loopback-guard.js';
+import { listenOn, parseBindHost, writeListenInfo } from './platform/bind.js';
+import type { AddressInfo } from 'node:net';
 import { getRunningVersion } from './update/version.js';
 import { PluginRegistry } from './plugins/registry.js';
 import { migratePreviews } from './plugins/previews-migration.js';
@@ -514,6 +516,8 @@ export function createApp(options: CreateAppOptions): import('express').Express 
 
 export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
   const preferredPort = options?.port ?? 3456;
+  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
+  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
 
   // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
   const shellPath = platform.resolveLoginPath();
@@ -1189,7 +1193,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
         if (options?.allowRandomPortFallback) {
-          server.listen(0, () => {
+          listenOn(server, 0, bindHost, () => {
             const addr = server.address();
             resolve(typeof addr === 'object' && addr ? addr.port : preferredPort);
           });
@@ -1201,14 +1205,18 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       }
     });
 
-    server.listen(preferredPort, () => {
+    // DISPATCH_BIND unset: every interface, the same call as before. Set: that address only (platform/bind.ts).
+    listenOn(server, preferredPort, bindHost, () => {
       resolve(preferredPort);
     });
   });
 
   // Hold 127.0.0.1 and ::1 on the port too, so no other process can take localhost from us
-  // (platform/loopback-guard.ts).
-  const loopbackGuards = await guardLoopback(server, port);
+  // (platform/loopback-guard.ts). With DISPATCH_BIND the daemon may hold one of them itself: that one is skipped.
+  // The other is still held, because threads, hooks and the CLI call the daemon on 127.0.0.1.
+  const boundAddress = bindHost === undefined ? null : ((server.address() as AddressInfo | null)?.address ?? bindHost);
+  const loopbackGuards = await guardLoopback(server, port, undefined, boundAddress ? [boundAddress] : []);
+  if (boundAddress) console.log(`[dispatch] DISPATCH_BIND: listens on ${boundAddress} and on the loopback addresses only, not on all interfaces.`);
   sessionService.setDaemonPort(port);
   sessionService.setDaemonApi(`http://127.0.0.1:${port}${BASE_PATH}`);
 
@@ -1216,6 +1224,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // process without an OS service manager. Only now that the port is bound: a duplicate launch
   // that loses the port race exits above and must not overwrite the live daemon's pid (#56).
   writeOwnPid(dataDir);
+  writeListenInfo(dataDir, { port, bind: boundAddress }); // "dispatch status" prints it
 
   if (port !== preferredPort) {
     daemonApi = `http://127.0.0.1:${port}${BASE_PATH}`;

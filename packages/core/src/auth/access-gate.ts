@@ -209,6 +209,59 @@ const LOGIN_PATH = '/api/access/login';
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_FAILURES = 10;
 
+/** Upper bound on the sign-in failure map: a flood of callers cannot grow it without limit. */
+const LOGIN_MAX_BUCKETS = 1000;
+
+/** The sign-in failure count for each caller (a bucket: the peer, or the peer and the proxy's view of the client). */
+export interface LoginLimiter {
+  /** True while the caller has `LOGIN_MAX_FAILURES` failures in the current window. An ended window is forgotten. */
+  blocked(bucket: string): boolean;
+  /** Count one failed try. */
+  fail(bucket: string): void;
+  /** A good sign-in: forget the caller. */
+  clear(bucket: string): void;
+  has(bucket: string): boolean;
+  size(): number;
+}
+
+/**
+ * The map never holds more than `cap` entries. When it is full and a NEW caller fails, room is made in this order:
+ * entries whose window ended, then the oldest entries that are not blocked, then the oldest blocked entries.
+ * It is never cleared as a whole: that let anyone free every blocked caller by failing from 1,000 other addresses.
+ * A blocked caller is evicted only when every entry in the map is blocked.
+ */
+export function createLoginLimiter(now: () => number = Date.now, cap: number = LOGIN_MAX_BUCKETS): LoginLimiter {
+  // Insertion order is age order: `start` is set when the entry is made and kept on every later failure.
+  const failures = new Map<string, { n: number; start: number }>();
+  const live = (bucket: string) => {
+    const rec = failures.get(bucket);
+    if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(bucket); return undefined; }
+    return rec;
+  };
+  const makeRoom = () => {
+    for (const [k, v] of failures) if (now() - v.start >= LOGIN_WINDOW_MS) failures.delete(k);
+    for (const [k, v] of failures) {
+      if (failures.size < cap) return;
+      if (v.n < LOGIN_MAX_FAILURES) failures.delete(k);
+    }
+    for (const k of failures.keys()) {
+      if (failures.size < cap) return;
+      failures.delete(k);
+    }
+  };
+  return {
+    blocked: (bucket) => (live(bucket)?.n ?? 0) >= LOGIN_MAX_FAILURES,
+    fail(bucket) {
+      const rec = live(bucket);
+      if (!rec && failures.size >= cap) makeRoom();
+      failures.set(bucket, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
+    },
+    clear: (bucket) => { failures.delete(bucket); },
+    has: (bucket) => failures.has(bucket),
+    size: () => failures.size,
+  };
+}
+
 export interface AccessGateOptions extends GateDeps {
   /** Mount prefix (already stripped from req.url upstream). Used for the cookie Path and the sign-in page. */
   basePath: string;
@@ -231,7 +284,7 @@ export interface AccessGate {
 export function createAccessGate(opts: AccessGateOptions): AccessGate {
   const now = opts.now ?? Date.now;
   const cookiePath = opts.basePath || '/';
-  const failures = new Map<string, { n: number; start: number }>();
+  const failures = createLoginLimiter(now);
 
   const peerOf = (f: GateRequest): Peer => describePeer(f.remoteAddress, f.nearestForwardedFor, opts.isGatewayPeer);
 
@@ -293,9 +346,7 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     if (!originAllowed(factsFrom(req, true, false), opts.config)) {
       return void res.status(403).json({ error: 'origin_refused' });
     }
-    let rec = failures.get(bucket);
-    if (rec && now() - rec.start >= LOGIN_WINDOW_MS) { failures.delete(bucket); rec = undefined; }
-    if (rec && rec.n >= LOGIN_MAX_FAILURES) return void res.status(429).json({ error: 'too_many_tries' });
+    if (failures.blocked(bucket)) return void res.status(429).json({ error: 'too_many_tries' });
 
     const given = (req.body as { token?: unknown; code?: unknown } | undefined) ?? {};
     const token = opts.getToken();
@@ -304,14 +355,10 @@ export function createAccessGate(opts: AccessGateOptions): AccessGate {
     const codeOk = typeof given.code === 'string' && !!opts.pairCodes && opts.pairCodes.redeem(given.code);
     const tokenOk = typeof given.token === 'string' && tokenMatches(token, given.token);
     if (!codeOk && !tokenOk) {
-      if (failures.size > 1000) {
-        for (const [k, v] of failures) if (now() - v.start >= LOGIN_WINDOW_MS) failures.delete(k);
-        if (failures.size > 1000) failures.clear();
-      }
-      failures.set(bucket, { n: (rec?.n ?? 0) + 1, start: rec?.start ?? now() });
+      failures.fail(bucket);
       return void res.status(401).json({ error: typeof given.code === 'string' ? 'bad_code' : 'bad_token' });
     }
-    failures.delete(bucket);
+    failures.clear(bucket);
     if (opts.devices) {
       // Each sign-in is a device. A browser that signs in again keeps the device it has.
       const facts = factsFrom(req, true, false);
