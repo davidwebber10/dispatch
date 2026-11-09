@@ -4,7 +4,7 @@ Dispatch connects to one Doppler project and config (Settings, Secrets). Threads
 in three ways:
 
 1. **The Doppler tools** (`doppler_list_secrets`, `doppler_get_secret`, and the write tools when
-   read-only is off). Every Claude Code, Codex, Grok and OpenCode thread gets them.
+   read-only is off). Dispatch adds them to a thread when Doppler is connected.
 2. **Integrations** that name a secret as `${NAME}`. The integration launcher reads the value when
    the integration starts.
 3. **`doppler run -- <command>`** in the thread's shell. This needs `DOPPLER_TOKEN` in the
