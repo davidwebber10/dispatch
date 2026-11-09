@@ -33,7 +33,8 @@ describe('ptyStatusTick', () => {
 
     expect(terminalsDb.getById(db, 't1')!.status).toBe('working');
     expect(sessionsDb.getById(db, 's1')!.status).toBe('working');
-    expect(events).toContainEqual({ type: 'terminal:status', terminalId: 't1', status: 'working' });
+    // W3-C: the event also carries the status snapshot (turnOpen, generation, sequence).
+    expect(events).toContainEqual(expect.objectContaining({ type: 'terminal:status', terminalId: 't1', status: 'working', turnOpen: true, sequence: expect.any(Number) }));
     // session:status now carries the session's lastActivityAt so the client can track a
     // project's "last active" live (drives the "most recent" project sort).
     expect(events).toContainEqual(expect.objectContaining({ type: 'session:status', sessionId: 's1', status: 'working', lastActivityAt: expect.any(String) }));

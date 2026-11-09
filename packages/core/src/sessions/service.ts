@@ -1,3 +1,4 @@
+import { StatusService } from '../status/service.js';
 import type { UsageLimitService } from '../limits/service.js';
 import type { PromptSource } from '../plugins/thread-events.js';
 import { PromptInput } from './prompt-input.js';
@@ -150,7 +151,7 @@ export class SessionService {
   setTerminalStatusWriter(writer: (id: string, status: 'queued' | 'waiting' | 'error') => void): void { this.terminalStatusWriter = writer; }
   private setTerminalStatus(id: string, status: 'queued' | 'waiting' | 'error'): void {
     if (this.terminalStatusWriter) this.terminalStatusWriter(id, status);
-    else terminalsDb.updateStatus(this.db, id, status); // isolated service/test compatibility
+    else StatusService.detached(this.db).setTerminalState(id, status); // isolated service/test compatibility; StatusService is the one writer (W3-C)
   }
   private usageLimits?: UsageLimitService;
   /** The thread an auto-resume is being sent to: that send is not the owner taking over. */
@@ -3526,7 +3527,7 @@ export class SessionService {
     stopAll();
     const interruptedAt = new Date().toISOString();
     for (const id of interrupted) {
-      terminalsDb.updateStatus(this.db, id, 'working');
+      StatusService.restoreInterruptedTurn(this.db, id);
       // A patch of the one key: the kill's own exit handling may have written config (e.g. a turn outcome).
       // The stamp tells the kickstart this thread's turn was cut off by the shutdown — Codex
       // records that as `turn_aborted`, which otherwise reads as a deliberate Stop.
