@@ -1,4 +1,5 @@
 import { subscribeHarnessEvents } from './runtime/adapter.js';
+import * as pendingQuestionsDb from './db/pending-questions.js';
 import { listProviders } from './providers/registry.js';
 import fs from 'fs';
 import path from 'path';
@@ -1361,6 +1362,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     lastFrameAt: (id) => sessionService.structuredManagerForTerminal(id)?.lastFrameAt?.(id) ?? ptyManager.lastOutputAt(id),
   });
   app.locals.stallWatchdog = stallWatchdog; // GET /api/terminals/stalls reads it
+  // The "why" panel (W2-G) reads the saved notices and questions of W2-C.
+  app.locals.deliveryOutbox = outbox;
+  app.locals.pendingQuestions = { get: (id: string) => pendingQuestionsDb.get(db, id) };
   const agentSchedulerInterval = setInterval(() => {
     try {
       agentService.processDueRuns();
