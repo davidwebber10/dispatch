@@ -75,7 +75,7 @@ import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
 import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
 import { CodexStructuredSessionManager } from './structured/codex-manager.js';
-import { GrokStructuredSessionManager } from './structured/grok-manager.js';
+import { AcpStructuredSessionManager } from './structured/acp-manager.js';
 import { startPtyTimingLoop } from './sessions/status.js';
 import { startAutoArchiveLoop } from './sessions/auto-archive.js';
 import { startInterimRecapLoop } from './sessions/interim-recap.js';
@@ -362,7 +362,7 @@ function wireHarnesses(sessionService: SessionService, status: StatusService, db
   for (const provider of listProviders()) {
     if (provider.structured.disabledBy && process.env[provider.structured.disabledBy] === '0') continue;
     const manager = provider.structured.protocol === 'claude-json' ? new ClaudeStructuredSessionManager()
-      : provider.structured.protocol === 'acp' ? new GrokStructuredSessionManager(provider.structured.dialect)
+      : provider.structured.protocol === 'acp' ? new AcpStructuredSessionManager(provider.structured.dialect)
       : new CodexStructuredSessionManager();
     sessionService.registerStructuredManager(provider.name, manager);
     wirePermissionMembrane(manager, status, sessionService, db, broadcaster, threadEvents);
