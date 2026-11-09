@@ -1,0 +1,3849 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`a scripted ACP agent through the ACP manager > a resume that replays history: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-acp-1",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "earlier question",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "earlier answer",
+            "type": "text",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "model": "grok-4.6",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "backfill",
+      "type": "result",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "again",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "thinking": "",
+          "type": "thinking",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "thinking ",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "hard",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 1,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "one ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "two ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "three",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 1,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call-1",
+            "input": {
+              "command": "echo hi",
+            },
+            "name": "run_terminal_command",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "",
+            "is_error": false,
+            "tool_use_id": "call-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 2,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "done ",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "now.",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 2,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "grok_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 7,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "done now.",
+    },
+  ],
+]
+`;
+
+exports[`a scripted ACP agent through the ACP manager > two streamed turns, a declared outcome, a model switch and a kill: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-acp-1",
+  ],
+  [
+    "event",
+    {
+      "model": "grok-4.6",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "first",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "thinking": "",
+          "type": "thinking",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "thinking ",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "hard",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 1,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "one ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "two ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "three",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 1,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call-1",
+            "input": {
+              "command": "echo hi",
+            },
+            "name": "run_terminal_command",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "",
+            "is_error": false,
+            "tool_use_id": "call-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 2,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "done ",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "now.",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 2,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "grok_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 7,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "done now.",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "second",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "thinking": "",
+          "type": "thinking",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "thinking ",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "hard",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 1,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "one ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "two ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "three",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 1,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call-2",
+            "input": {
+              "command": "echo hi",
+            },
+            "name": "run_terminal_command",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "",
+            "is_error": false,
+            "tool_use_id": "call-2",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 2,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "done ",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "now. Shall I go on?",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 2,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "grok_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 7,
+      },
+    },
+  ],
+  [
+    "needs-help",
+    {
+      "ask": "done now. Shall I go on?",
+      "inferred": true,
+      "summary": "done now. Shall I go on?",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "third",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "thinking": "",
+          "type": "thinking",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "thinking ",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "hard",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 1,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "one ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "two ",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "three",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 1,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call-3",
+            "input": {
+              "command": "echo hi",
+            },
+            "name": "run_terminal_command",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "",
+            "is_error": false,
+            "tool_use_id": "call-3",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 2,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "done ",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "now.",
+          "type": "text_delta",
+        },
+        "index": 2,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 2,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "grok_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 5,
+        "output_tokens": 7,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": true,
+      "state": "done",
+      "summary": "done now.",
+    },
+  ],
+  [
+    "event",
+    {
+      "model": "grok-4.7",
+      "subtype": "model",
+      "switched": true,
+      "type": "system",
+    },
+  ],
+  [
+    "exit",
+    0,
+  ],
+]
+`;
+
+exports[`codex-frames.fixture replayed through CodexStructuredSessionManager > the emitted HarnessEvents equal the recorded list 1`] = `
+[
+  [
+    "session",
+    "019f6cfa-33af-7480-bed7-948b4d900c94",
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-5.6-sol",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "make hello.txt",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "019f6cfa-3e60-7271-9b23-80c7d1a3a1ef",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "I",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "’ll",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "I’ll check the workspace instructions, then create \`hello.txt\` with \`apply_patch\` exactly as requested.",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "exec-8ad0d935-eb3a-428f-8301-3ed1eacdc662",
+            "input": {
+              "command": "/bin/zsh -lc 'cat /Users/someone/.codex/RTK.md'",
+              "cwd": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz",
+            },
+            "name": "Shell",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "# RTK - Rust Token Killer (Codex CLI)
+
+**Usage**: Token-optimized CLI proxy for shell commands.
+
+## Rule
+
+Always prefix shell commands with \`rtk\`.
+
+Examples:
+
+\`\`\`bash
+rtk git status
+rtk cargo test
+rtk npm run build
+rtk pytest -q
+\`\`\`
+
+## Meta Commands
+
+\`\`\`bash
+rtk gain            # Token savings analytics
+rtk gain --history  # Recent command savings history
+rtk proxy <cmd>     # Run raw command without filtering
+\`\`\`
+
+## Verification
+
+\`\`\`bash
+rtk --version
+rtk gain
+which rtk
+\`\`\`
+",
+            "is_error": false,
+            "tool_use_id": "exec-8ad0d935-eb3a-428f-8301-3ed1eacdc662",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "exec-5686ca9d-290d-4d0c-9c4f-4008cc2c4091",
+            "input": {
+              "changes": [
+                {
+                  "diff": "hi
+",
+                  "kind": "add",
+                  "path": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz/hello.txt",
+                },
+              ],
+              "file_path": "/var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz/hello.txt",
+            },
+            "name": "ApplyPatch",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "add /var/folders/k7/xw2xpq2d4tb_4vxd3mv020800000gn/T/codex-spike-gXBxlz/hello.txt
+hi",
+            "is_error": false,
+            "tool_use_id": "exec-5686ca9d-290d-4d0c-9c4f-4008cc2c4091",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 9984,
+          "input_tokens": 4375,
+          "output_tokens": 230,
+        },
+      },
+      "subtype": "usage_delta",
+      "telemetry": {
+        "displayOnly": true,
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 9984,
+          "input_tokens": 4375,
+          "output_tokens": 230,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 9984,
+            "input": 4375,
+            "output": 230,
+          },
+        },
+        "sessionId": "019f6cfa-33af-7480-bed7-948b4d900c94",
+        "turnId": "019f6cfa-3e60-7271-9b23-80c7d1a3a1ef",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 14359,
+        "output_tokens": 230,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "I’ll check the workspace instructions, then create \`hello.txt\` with \`apply_patch\` exactly as requested.",
+    },
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a closing question: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "Should I go on?",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:Should I go on?",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "needs-help",
+    {
+      "ask": "echo:Should I go on?",
+      "inferred": true,
+      "summary": "echo:Should I go on?",
+    },
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a declared outcome (done, then blocked, then needs_you): the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "one",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:one",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": true,
+      "state": "done",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "two",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:two",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "blocker": "the other agent",
+      "declared": true,
+      "state": "blocked",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "three",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:three",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "needs-help",
+    {
+      "ask": "A or B?",
+      "inferred": false,
+      "summary": "pick",
+    },
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a plain turn: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "hello",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "meta": {
+        "source": "coordinator",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:hello",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+  [
+    "message-source",
+    "coordinator",
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > a supervised tool that is answered, and a question: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_PERMISSION",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "permission",
+    {
+      "input": {
+        "content": "hi",
+        "file_path": "x.txt",
+      },
+      "requestId": "req-1",
+      "toolName": "Write",
+      "toolUseId": "tu-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "request": {
+        "input": {
+          "content": "hi",
+          "file_path": "x.txt",
+        },
+        "subtype": "can_use_tool",
+        "tool_name": "Write",
+        "tool_use_id": "tu-1",
+      },
+      "request_id": "req-1",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "control_request",
+    },
+  ],
+  [
+    "resolved",
+  ],
+  [
+    "permission-cleared",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "WROTE",
+            "tool_use_id": "tu-1",
+            "type": "tool_result",
+            "updatedInput": {
+              "content": "hi",
+              "file_path": "x.txt",
+            },
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_STALE_QUESTION",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "permission",
+    {
+      "input": {
+        "questions": [
+          {
+            "header": "Choice",
+            "multiSelect": false,
+            "options": [
+              "A",
+              "B",
+            ],
+            "question": "Pick one",
+          },
+        ],
+      },
+      "questions": [
+        {
+          "header": "Choice",
+          "multiSelect": false,
+          "options": [
+            "A",
+            "B",
+          ],
+          "question": "Pick one",
+        },
+      ],
+      "requestId": "req-5",
+      "toolName": "AskUserQuestion",
+      "toolUseId": "tu-5",
+    },
+  ],
+  [
+    "event",
+    {
+      "request": {
+        "input": {
+          "questions": [
+            {
+              "header": "Choice",
+              "multiSelect": false,
+              "options": [
+                "A",
+                "B",
+              ],
+              "question": "Pick one",
+            },
+          ],
+        },
+        "subtype": "can_use_tool",
+        "tool_name": "AskUserQuestion",
+        "tool_use_id": "tu-5",
+      },
+      "request_id": "req-5",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "control_request",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "resolved",
+  ],
+  [
+    "permission-cleared",
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an auto-allowed tool, then a wake tool: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_PERMISSION",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "request": {
+        "input": {
+          "content": "hi",
+          "file_path": "x.txt",
+        },
+        "subtype": "can_use_tool",
+        "tool_name": "Write",
+        "tool_use_id": "tu-1",
+      },
+      "request_id": "req-1",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "control_request",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "WROTE",
+            "tool_use_id": "tu-1",
+            "type": "tool_result",
+            "updatedInput": {
+              "content": "hi",
+              "file_path": "x.txt",
+            },
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_SCHEDULE",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "request": {
+        "input": {
+          "delaySeconds": 60,
+          "prompt": "continue",
+          "reason": "watching CI run",
+        },
+        "subtype": "can_use_tool",
+        "tool_name": "ScheduleWakeup",
+        "tool_use_id": "tu-3",
+      },
+      "request_id": "req-3",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "control_request",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "WROTE",
+            "tool_use_id": "tu-1",
+            "type": "tool_result",
+            "updatedInput": {
+              "delaySeconds": 60,
+              "prompt": "continue",
+              "reason": "watching CI run",
+            },
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "scheduled",
+    "Scheduled — watching CI run",
+  ],
+]
+`;
+
+exports[`fake-claude.mjs through ClaudeStructuredSessionManager > an error turn, a self-started turn, and a kill: the recorded list 1`] = `
+[
+  [
+    "session",
+    "sess-fake",
+  ],
+  [
+    "event",
+    {
+      "apiKeySource": "none",
+      "argv": "<argv>",
+      "model": "claude",
+      "session_id": "sess-fake",
+      "subtype": "init",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "testEnv": null,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_ERROR_PLAIN",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "is_error": true,
+      "result": "Tests failed",
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "failed",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "TRIGGER_SELF_TURN",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "echo:first",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "woken",
+            "type": "text",
+          },
+        ],
+      },
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "success",
+      "telemetry": {
+        "counterScope": "<scope>",
+      },
+      "type": "result",
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+    },
+  ],
+  [
+    "exit",
+    0,
+    null,
+  ],
+]
+`;
+
+exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a declared outcome and a turn with no agent message: the recorded list 1`] = `
+[
+  [
+    "session",
+    "thread-fake-1",
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-5.6-sol",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "stream please",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Hello ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "world",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Hello world",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "usage_delta",
+      "telemetry": {
+        "displayOnly": true,
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-fake-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "blocker": "the other agent",
+      "declared": true,
+      "state": "blocked",
+      "summary": "Hello world",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "no agent message",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+    },
+  ],
+  [
+    "needs-help",
+    {
+      "ask": "A or B?",
+      "inferred": false,
+      "summary": "pick",
+    },
+  ],
+]
+`;
+
+exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a resume with a backfill, a model switch and a kill: the recorded list 1`] = `
+[
+  [
+    "session",
+    "thread-old-1",
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-5.6-sol",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": "earlier question",
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "earlier answer",
+            "type": "text",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-6-luna",
+      "subtype": "model",
+      "switched": true,
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "stream please",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Hello ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "world",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Hello world",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-6-luna",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "usage_delta",
+      "telemetry": {
+        "displayOnly": true,
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-6-luna",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-old-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "Hello world",
+    },
+  ],
+  [
+    "exit",
+    0,
+  ],
+]
+`;
+
+exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a streamed turn, then a closing question: the recorded list 1`] = `
+[
+  [
+    "session",
+    "thread-fake-1",
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-5.6-sol",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "stream please",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Hello ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "world",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Hello world",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "usage_delta",
+      "telemetry": {
+        "displayOnly": true,
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-fake-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "Hello world",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "this needs a decision",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Rewired the rail. Does ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "that look right to you?",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Rewired the rail. Does that look right to you?",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-fake-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "needs-help",
+    {
+      "ask": "Rewired the rail. Does that look right to you?",
+      "inferred": true,
+      "summary": "Rewired the rail. Does that look right to you?",
+    },
+  ],
+]
+`;
+
+exports[`fake-codex-app-server.mjs through CodexStructuredSessionManager > a supervised approval that is answered, and an auto-approved one: the recorded list 1`] = `
+[
+  [
+    "session",
+    "thread-fake-1",
+  ],
+  [
+    "event",
+    {
+      "model": "gpt-5.6-sol",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "approve the file",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Hello ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "world",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Hello world",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "usage_delta",
+      "telemetry": {
+        "displayOnly": true,
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-fake-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "fc-1",
+            "input": {
+              "changes": [
+                {
+                  "diff": "hi
+",
+                  "kind": "add",
+                  "path": "/tmp/hello.txt",
+                },
+              ],
+              "file_path": "/tmp/hello.txt",
+            },
+            "name": "ApplyPatch",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "permission",
+    {
+      "input": {
+        "changes": [
+          {
+            "diff": "hi
+",
+            "kind": "add",
+            "path": "/tmp/hello.txt",
+          },
+        ],
+        "file_path": "/tmp/hello.txt",
+      },
+      "requestId": "fc-1",
+      "toolName": "ApplyPatch",
+      "toolUseId": "fc-1",
+    },
+  ],
+  [
+    "resolved",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "add /tmp/hello.txt
+hi",
+            "is_error": false,
+            "tool_use_id": "fc-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "Hello world",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "approve the file",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "busy",
+    {
+      "turnId": "turn-fake-1",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "Hello ",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "world",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "final_text": "Hello world",
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "gpt-5.6-sol",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 20,
+          "input_tokens": 60,
+          "output_tokens": 20,
+        },
+      },
+      "subtype": "context_fill",
+      "telemetry": {
+        "counter": {
+          "baselineOnly": false,
+          "key": "codex-tokens",
+          "totals": {
+            "cacheCreate": 0,
+            "cacheRead": 20,
+            "input": 60,
+            "output": 20,
+          },
+        },
+        "sessionId": "thread-fake-1",
+        "turnId": "turn-fake-1",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "fc-1",
+            "input": {
+              "changes": [
+                {
+                  "diff": "hi
+",
+                  "kind": "add",
+                  "path": "/tmp/hello.txt",
+                },
+              ],
+              "file_path": "/tmp/hello.txt",
+            },
+            "name": "ApplyPatch",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "add /tmp/hello.txt
+hi",
+            "is_error": false,
+            "tool_use_id": "fc-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "codex_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 80,
+        "output_tokens": 20,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "Hello world",
+    },
+  ],
+]
+`;
+
+exports[`grok-frames.fixture replayed through the ACP manager (grok dialect) > the emitted HarnessEvents equal the recorded list 1`] = `
+[
+  [
+    "session",
+    "01a00331-0c34-7c42-92fb-b85a96b13852",
+  ],
+  [
+    "event",
+    {
+      "model": "grok-4.6",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "run the probe",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "thinking": "",
+          "type": "thinking",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "thinking": "The user wants",
+          "type": "thinking_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 1,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "PROBE",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "-OK",
+          "type": "text_delta",
+        },
+        "index": 1,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 1,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call-8c526644-0",
+            "input": {
+              "command": "echo probe-tool-ok",
+              "description": "Run echo probe-tool-ok command",
+            },
+            "name": "run_terminal_command",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "exit: 0
+probe-tool-ok
+",
+            "is_error": false,
+            "tool_use_id": "call-8c526644-0",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "grok-4.6",
+        "role": "assistant",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 3072,
+          "input_tokens": 13880,
+          "output_tokens": 45,
+        },
+      },
+      "telemetry": {
+        "sessionId": "01a00331-0c34-7c42-92fb-b85a96b13852",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "duration_ms": "<ms>",
+      "is_error": false,
+      "subtype": "grok_turn",
+      "type": "result",
+      "usage": {
+        "input_tokens": 40247,
+        "output_tokens": 125,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "PROBE-OK",
+    },
+  ],
+]
+`;
+
+exports[`opencode-frames.fixture replayed through the ACP manager (opencode dialect) > the emitted HarnessEvents equal the recorded list 1`] = `
+[
+  [
+    "session",
+    "ses_oc1",
+  ],
+  [
+    "event",
+    {
+      "model": "openrouter/z-ai/glm-5.2",
+      "subtype": "init",
+      "type": "system",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "text": "run the probe",
+            "type": "text",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "busy",
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call_9cb2dac0",
+            "input": {
+              "cwd": "/tmp/oc-probe",
+            },
+            "name": "bash",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "id": "call_9cb2dac0",
+            "input": {
+              "command": "echo dispatch-probe-ok",
+              "cwd": "/tmp/oc-probe",
+              "description": "Echo probe marker",
+            },
+            "name": "bash",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [
+          {
+            "content": "dispatch-probe-ok
+",
+            "is_error": false,
+            "tool_use_id": "call_9cb2dac0",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+      "type": "user",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "type": "message_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "content_block": {
+          "text": "",
+          "type": "text",
+        },
+        "index": 0,
+        "type": "content_block_start",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "delta": {
+          "text": "PROBE-DONE",
+          "type": "text_delta",
+        },
+        "index": 0,
+        "type": "content_block_delta",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "context_window": 1048576,
+      "message": {
+        "content": [],
+        "model": "openrouter/z-ai/glm-5.2",
+        "role": "assistant",
+        "usage": {
+          "input_tokens": 8736,
+          "output_tokens": 0,
+        },
+      },
+      "subtype": "context_fill",
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "event": {
+        "index": 0,
+        "type": "content_block_stop",
+      },
+      "type": "stream_event",
+    },
+  ],
+  [
+    "event",
+    {
+      "message": {
+        "content": [],
+        "model": "openrouter/z-ai/glm-5.2",
+        "role": "assistant",
+        "usage": {
+          "cache_read_input_tokens": 7425,
+          "input_tokens": 1311,
+          "output_tokens": 6,
+        },
+      },
+      "type": "assistant",
+    },
+  ],
+  [
+    "event",
+    {
+      "is_error": false,
+      "subtype": "acp_turn",
+      "telemetry": {
+        "costTotalUsd": 0.0024469632,
+      },
+      "total_cost_usd": 0.0024469632,
+      "type": "result",
+      "usage": {
+        "input_tokens": 1311,
+        "output_tokens": 6,
+      },
+    },
+  ],
+  [
+    "idle",
+    {
+      "declared": false,
+      "summary": "PROBE-DONE",
+    },
+  ],
+]
+`;
