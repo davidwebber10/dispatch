@@ -312,9 +312,9 @@ export default function activate(d) {
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
     inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
-    // The count of new previews for the thread's project: the row shows it and the ⋯ button gets a dot.
-    threadMenu: [{ id: 'open', label: 'Project previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId),
-      badge: { subscribe: (cb) => usePv.subscribe(cb), get: ({ tab }) => unseenOf(usePv.getState().items, tab.sessionId) } }],
+    // No thread-menu item (2026-11-09): a thread shows its own previews (the Previews tab, a row in the
+    // phone's thread menu), a project shows the project's (its menu and the eye), and the Previews
+    // screen shows all of them with the Project and Thread filters.
     slots: [
       { id: 'project-eye', slot: 'project.header.actions', Component: ProjectEye },
       { id: 'sheet', slot: 'app.overlay', Component: Sheet },

@@ -10,7 +10,7 @@
   "enabledByDefault": true,
   "contributes": {
     "views": [{ "id": "history", "label": "Previews", "icon": "eye" }],
-    "threadMenu": [{ "id": "open", "label": "Previews" }],
+    "inspectorTabs": [{ "id": "thread", "label": "Previews" }],
     "projectMenu": [{ "id": "open", "label": "Previews" }],
     "slots": ["project.header.actions", "thread.header.actions", "app.overlay"]
   },

@@ -25,10 +25,11 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
     activate(d as never);
   });
 
-  // 2026-11-09: on a phone the tab is a thread-menu row too, so two rows both said "Previews".
-  it('the thread-menu item for the project has its own name, not the tab\'s', () => {
-    expect(menu.map((m) => m.label)).toEqual(['Project previews']);
-    expect(tabs.map((t) => t.label)).not.toContain('Project previews');
+  // 2026-11-09: a thread shows its own previews only (the tab, which is also the phone's thread-menu
+  // row); the project's previews belong to the project view. Two "Previews" rows were in the phone menu.
+  it('adds no thread-menu item: the thread tab is the only Previews row in a thread', () => {
+    expect(menu).toEqual([]);
+    expect(tabs.map((t) => t.label)).toEqual(['Previews']);
   });
 
   it('registers a Previews tab', () => {
