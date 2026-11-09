@@ -140,3 +140,65 @@ describe('<AccountsSection>', () => {
     expect(await screen.findByText(/Open the Claude login page/)).toBeInTheDocument();
   });
 });
+
+// W1-H (2026-11-09): what each Claude sign-in can do for the usage figures, and the next step.
+describe('<AccountsSection> usage access (W1-H)', () => {
+  const withAccess = (id: string, usageAccess: { state: 'ok' | 'sign-in-needed' | 'not-available' | 'rate-limited'; lastOkAt: number | null }): AccountsView => {
+    const v = view();
+    v.claude = v.claude.map((a) => (a.id === id ? { ...a, usageAccess } : a));
+    return v;
+  };
+
+  it('an account with sign-in-needed shows the Sign in again button and it starts the login for that account id', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withAccess('w1', { state: 'sign-in-needed', lastOkAt: null }));
+    const login = vi.spyOn(api, 'accountsClaudeLogin').mockResolvedValue({ status: 'awaiting_code', url: 'https://claude.ai/oauth/x', error: null } as never);
+    render(<AccountsSection />);
+    // The list says it on the row.
+    expect(await screen.findByTestId('account-claude-w1')).toHaveTextContent('Sign in again');
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    expect(page).toHaveTextContent('Sign in again to see usage for this account');
+    fireEvent.click(within(page).getByRole('button', { name: 'Sign in again to Work' }));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('Work', 'w1'));
+    // The existing Claude login flow: the link to open and the code to paste.
+    expect(await within(page).findByText(/Open the Claude login page/)).toBeInTheDocument();
+  });
+
+  it('the CLI login with sign-in-needed names the computer to sign in on, and has no button', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withAccess('cli', { state: 'sign-in-needed', lastOkAt: null }));
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: CLI login (this computer)', 'claude', 'cli');
+    expect(page).toHaveTextContent(/Sign in again on the daemon's computer/);
+    expect(within(page).queryByRole('button', { name: /^Sign in again/ })).toBeNull();
+  });
+
+  it('an account with not-available shows the note and no error style', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withAccess('w1', { state: 'not-available', lastOkAt: null }));
+    render(<AccountsSection />);
+    const row = await screen.findByTestId('account-claude-w1');
+    expect(row).not.toHaveTextContent('Sign in again');
+    expect(within(row).queryByTestId('status-mark')).toBeNull(); // no warning mark on the row
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    const note = within(page).getByTestId('usage-access-note');
+    expect(note).toHaveTextContent('This sign-in can run threads. It cannot read usage figures.');
+    expect(note.outerHTML).not.toMatch(/status-red|status-yellow/);
+    expect(within(page).queryByRole('alert')).toBeNull();
+    expect(within(page).queryByRole('button', { name: /^Sign in again/ })).toBeNull();
+  });
+
+  it('a rate-limited account says when usage was last read, and Check again asks the daemon', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withAccess('w1', { state: 'rate-limited', lastOkAt: Date.now() - 12 * 60_000 }));
+    const check = vi.spyOn(api, 'accountsCheckUsage').mockResolvedValue({ ok: true });
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    expect(within(page).getByTestId('usage-access-note')).toHaveTextContent('Updated 12 min ago');
+    fireEvent.click(within(page).getByRole('button', { name: 'Check usage again for Work' }));
+    await waitFor(() => expect(check).toHaveBeenCalledWith('w1'));
+  });
+
+  it('an account whose usage reads work shows no usage note', async () => {
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(withAccess('w1', { state: 'ok', lastOkAt: Date.now() }));
+    render(<AccountsSection />);
+    const page = await openAccount('Claude: Work', 'claude', 'w1');
+    expect(within(page).queryByTestId('usage-access-note')).toBeNull();
+  });
+});

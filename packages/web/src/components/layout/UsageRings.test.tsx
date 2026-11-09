@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, within, act } from '@testing-library/react';
+import { render, screen, within, act, fireEvent, waitFor } from '@testing-library/react';
 import { UsageRings } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
 import { useAccounts } from '../../stores/accounts';
+import { api } from '../../api/client';
 
 const now = Date.UTC(2026, 10, 5, 20);
 const H = 3600_000;
@@ -135,5 +136,69 @@ describe('the account email on each card (2026-11-09)', () => {
     render(<UsageRings summary={summary()} now={now} dense />);
     expect(within(screen.getByRole('region', { name: 'Claude' })).getByTestId('usage-card-email')).toHaveTextContent('owner@example.com');
     expect(within(screen.getByRole('region', { name: 'Codex' })).queryByTestId('usage-card-email')).toBeNull();
+  });
+});
+
+// W1-H (2026-11-09): the card says what the account's sign-in can do for the usage figures.
+describe('usage access on the account card (W1-H)', () => {
+  const two = (over: Record<string, unknown> = {}) => summary({ providers: [
+    { provider: 'claude-code', accountId: 'cli', label: 'Ultra 1', asOf: now, windows: { seven_day: { usedPercent: 21, resetsAt: now + 60 * H } } },
+    { provider: 'claude-code', accountId: 'w1', label: 'Team', asOf: now - 12 * 60_000, windows: { five_hour: { usedPercent: 64, resetsAt: now + 2 * H }, seven_day: { usedPercent: 33, resetsAt: now + 60 * H } } },
+  ], ...over });
+  const accounts = (w1: Record<string, unknown>, cli: Record<string, unknown> = {}) => {
+    const view = { claude: [{ id: 'cli', label: 'Ultra 1', isCli: true, addedAt: null, ...cli }, { id: 'w1', label: 'Team', isCli: false, addedAt: '2026-11-07T00:00:00Z', ...w1 }], codex: [{ id: 'cli', label: 'Pro', isCli: true, addedAt: null }], defaults: { claude: 'cli', codex: 'cli' } };
+    vi.spyOn(api, 'getAccounts').mockResolvedValue(view as never);
+    useAccounts.setState({ view: view as never, loading: false });
+  };
+  afterEach(() => { useAccounts.setState({ view: null }); vi.restoreAllMocks(); });
+
+  it('a rate-limited account shows its last figures', () => {
+    accounts({ usageAccess: { state: 'rate-limited', lastOkAt: now - 12 * 60_000 } });
+    render(<UsageRings summary={two()} now={now} dense />);
+    const card = screen.getByRole('region', { name: 'Claude · Team' });
+    expect(within(card).getAllByRole('meter').map((b) => b.getAttribute('aria-label'))).toEqual(['Claude · Team 5-hour: 64% used', 'Claude · Team weekly: 33% used']);
+    expect(within(card).getByTestId('usage-access')).toHaveTextContent('Updated 12 min ago');
+    // The other account's reads work: its card says nothing more.
+    expect(within(screen.getByRole('region', { name: 'Claude · Ultra 1' })).queryByTestId('usage-access')).toBeNull();
+  });
+
+  it('a not-available account shows the note with no error colour, and the figures from the tiny turn', () => {
+    accounts({ usageAccess: { state: 'not-available', lastOkAt: null } });
+    render(<UsageRings summary={two()} now={now} />);
+    const card = screen.getByRole('region', { name: 'Claude · Team' });
+    expect(within(card).getAllByRole('meter')).toHaveLength(2);
+    const note = within(card).getByTestId('usage-access');
+    expect(note).toHaveTextContent('This sign-in can run threads. It cannot read usage figures.');
+    expect(note.outerHTML).not.toMatch(/status-red|status-yellow/);
+    expect(within(card).queryByRole('button', { name: /^Sign in again/ })).toBeNull();
+  });
+
+  it('a sign-in-needed account shows "Sign in again" on its card, and the button starts the login for that account id', async () => {
+    accounts({ usageAccess: { state: 'sign-in-needed', lastOkAt: null } });
+    const login = vi.spyOn(api, 'accountsClaudeLogin').mockResolvedValue({ status: 'awaiting_code', url: 'https://claude.ai/oauth/x', error: null } as never);
+    render(<UsageRings summary={two()} now={now} dense />);
+    const card = screen.getByRole('region', { name: 'Claude · Team' });
+    expect(within(card).getByTestId('usage-access')).toHaveTextContent('Sign in again to see usage for this account');
+    fireEvent.click(within(card).getByRole('button', { name: 'Sign in again to Team' }));
+    await waitFor(() => expect(login).toHaveBeenCalledWith('Team', 'w1'));
+    expect(await within(card).findByText(/Open the Claude login page/)).toBeInTheDocument();
+  });
+
+  it('a sign-in-needed account with no figures at all still gets a card with the button', () => {
+    accounts({ usageAccess: { state: 'sign-in-needed', lastOkAt: null } });
+    const s = two();
+    (s as any).providers.pop(); // the refused account never reported a figure
+    render(<UsageRings summary={s} now={now} dense />);
+    const card = screen.getByRole('region', { name: 'Claude · Team' });
+    expect(within(card).queryAllByRole('meter')).toHaveLength(0);
+    expect(within(card).getByRole('button', { name: 'Sign in again to Team' })).toBeInTheDocument();
+  });
+
+  it('the CLI login with sign-in-needed names the computer, with no button', () => {
+    accounts({}, { usageAccess: { state: 'sign-in-needed', lastOkAt: null } });
+    render(<UsageRings summary={two()} now={now} dense />);
+    const card = screen.getByRole('region', { name: 'Claude · Ultra 1' });
+    expect(within(card).getByTestId('usage-access')).toHaveTextContent(/Sign in again on the daemon's computer/);
+    expect(within(card).queryByRole('button', { name: /^Sign in again/ })).toBeNull();
   });
 });

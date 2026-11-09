@@ -948,3 +948,170 @@ describe('Claude limit resets in the summary (2026-11-09)', () => {
     g.stop();
   });
 });
+
+// W1-H (2026-11-09): a failed usage read backs off by its reason (nextReadAfter), for the CLI login
+// too, and the gauge keeps what each account's sign-in can do (`usageAccess`).
+describe('Claude read back-off and usage access (W1-H)', () => {
+  type R = import('./claude-usage.js').UsageReadResult;
+  const HOUR = 60 * MIN;
+  const refs = () => [{ provider: 'claude-code', accountId: 'cli', label: 'CLI login' }, { provider: 'claude-code', accountId: 'w1', label: 'Work' }];
+  const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+  const RATE: R = { ok: false, reason: 'rate-limited', status: 429 };
+  const SCOPE: R = { ok: false, reason: 'forbidden', status: 403, detail: 'scope' };
+  const OK: R = { ok: true };
+  let reads: Record<string, number[]>;
+  let probes: Record<string, number[]>;
+  let answer: Record<string, R>;
+  let stamps: Record<string, string>;
+  let g: UsageGauge;
+  /** Minutes after T0 of each read (or tiny turn) of one account. */
+  const at = (log: Record<string, number[]>, id: string) => (log[id] ?? []).map((t) => (t - T0) / MIN);
+  const build = (accounts = refs) => {
+    gauge.stop();
+    reads = {}; probes = {}; answer = { cli: OK, w1: OK }; stamps = { w1: 'tok-1' };
+    g = new UsageGauge({
+      db, snapshots: snaps, accountFor: (_p, id) => `${account}:${id ?? 'cli'}`, now: () => clock, zone: ZONE, broadcast: () => {}, accounts,
+      readClaudeUsage: async (id = 'cli') => { (reads[id] ??= []).push(clock); return answer[id]; },
+      probeClaude: async (id = 'cli') => { (probes[id] ??= []).push(clock); return true; },
+      claudeTokenStamp: (id) => stamps[id] ?? null,
+    });
+    thread('k1');
+  };
+  /** One tick a minute for `minutes`, with a thread active the whole time. */
+  const run = async (minutes: number) => {
+    for (let i = 0; i < minutes; i++) {
+      db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock).toISOString(), 'k1');
+      g.tick(); await flush();
+      clock += MIN;
+    }
+  };
+  afterEach(() => { g?.stop(); });
+
+  it('after a 429 the cli account is not read again before the wait ends', async () => {
+    build(() => [refs()[0]]);
+    answer.cli = { ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 11 * MIN };
+    await run(11);
+    expect(at(reads, 'cli')).toEqual([0]); // not every 2 minutes
+    expect(g.claudeUsageAccess('cli')).toEqual({ state: 'rate-limited', lastOkAt: null });
+    await run(2);
+    expect(at(reads, 'cli')).toEqual([0, 11]);
+  });
+
+  it('the wait doubles on a second 429 and stops at 60 minutes', async () => {
+    build(() => [refs()[0]]);
+    answer.cli = RATE;
+    await run(4 * 60 + 5);
+    expect(at(reads, 'cli')).toEqual([0, 4, 12, 28, 60, 120, 180, 240]);
+  });
+
+  it('a good read clears the wait', async () => {
+    build(() => [refs()[0]]);
+    answer.cli = RATE;
+    await run(13); // 0, 4, 12: the next would be at 28
+    answer.cli = OK;
+    await run(20); // 28 is good; then every 2 minutes again
+    expect(at(reads, 'cli')).toEqual([0, 4, 12, 28, 30, 32]);
+    expect(g.claudeUsageAccess('cli')).toEqual({ state: 'ok', lastOkAt: T0 + 32 * MIN });
+    answer.cli = RATE;
+    await run(7); // 34 fails: the count started again, so 4 minutes, not 32
+    expect(at(reads, 'cli')).toEqual([0, 4, 12, 28, 30, 32, 34, 38]);
+    // The last figures stay marked with the time of the last good read.
+    expect(g.claudeUsageAccess('cli')).toEqual({ state: 'rate-limited', lastOkAt: T0 + 32 * MIN });
+  });
+
+  it('after a 403 a saved account is read again only after 6 hours or a token change', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(6 * 60);
+    expect(at(reads, 'w1')).toEqual([0]);
+    expect(g.claudeUsageAccess('w1')).toEqual({ state: 'not-available', lastOkAt: null });
+    await run(2);
+    expect(at(reads, 'w1')).toEqual([0, 360]);
+    // The owner signed the account in again: its token changed, so it is read at once.
+    stamps.w1 = 'tok-2';
+    answer.w1 = OK;
+    await run(1);
+    expect(at(reads, 'w1')).toEqual([0, 360, 362]);
+    expect(g.claudeUsageAccess('w1')).toEqual({ state: 'ok', lastOkAt: T0 + 362 * MIN });
+  });
+
+  it('the tiny turn still runs for a not-available account', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(65);
+    expect(at(reads, 'w1')).toEqual([0]);
+    expect(at(probes, 'w1')).toEqual([0, 30, 60]); // the same pace as before: one tiny turn per 30 minutes
+    expect(at(probes, 'cli')).toEqual([]); // the CLI login's reads are good
+  });
+
+  it('two accounts back off independently', async () => {
+    build();
+    answer.cli = RATE;
+    answer.w1 = SCOPE;
+    await run(13);
+    expect(at(reads, 'cli')).toEqual([0, 4, 12]);
+    expect(at(reads, 'w1')).toEqual([0]);
+    answer.cli = OK;
+    await run(20);
+    expect(at(reads, 'cli').slice(-2)).toEqual([30, 32]);
+    expect(at(reads, 'w1')).toEqual([0]);
+    expect(g.claudeUsageAccess('cli')!.state).toBe('ok');
+    expect(g.claudeUsageAccess('w1')!.state).toBe('not-available');
+  });
+
+  it('a 401, or a 403 that says expired or revoked, is sign-in-needed; a saved account then runs no tiny turn', async () => {
+    build();
+    answer.w1 = { ok: false, reason: 'unauthorized', status: 401 };
+    await run(65);
+    expect(g.claudeUsageAccess('w1')).toEqual({ state: 'sign-in-needed', lastOkAt: null });
+    expect(at(reads, 'w1')).toEqual([0]);
+    expect(at(probes, 'w1')).toEqual([]); // the token is refused: a turn as it would fail too
+    stamps.w1 = 'tok-2';
+    answer.w1 = { ok: false, reason: 'forbidden', status: 403, detail: 'expired' };
+    await run(1);
+    expect(at(reads, 'w1')).toEqual([0, 65]);
+    expect(g.claudeUsageAccess('w1')!.state).toBe('sign-in-needed');
+  });
+
+  it('a 401 on the CLI login waits, and is read again once the tiny turn made the CLI renew its token', async () => {
+    build(() => [refs()[0]]);
+    answer.cli = { ok: false, reason: 'unauthorized', status: 401 };
+    await run(1);
+    expect(at(reads, 'cli')).toEqual([0]);
+    expect(at(probes, 'cli')).toEqual([0]); // no figures yet: the turn runs at once, as before
+    answer.cli = OK;
+    await run(3);
+    expect(at(reads, 'cli')).toEqual([0, 2]); // not 6 hours later
+    expect(g.claudeUsageAccess('cli')!.state).toBe('ok');
+  });
+
+  it('a 429 or a network failure does not hide what a refused sign-in said', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(1);
+    stamps.w1 = 'tok-2';
+    answer.w1 = RATE;
+    await run(2);
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    expect(g.claudeUsageAccess('w1')!.state).toBe('not-available');
+  });
+
+  it('"Check again" reads the account at once, inside the wait and with nothing active', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(3);
+    expect(at(reads, 'w1')).toEqual([0]);
+    db.prepare('UPDATE terminals SET last_activity_at = ? WHERE id = ?').run(new Date(clock - 2 * HOUR).toISOString(), 'k1');
+    snaps.record('claude-code', `${account}:w1`, { seven_day: { usedPercent: 40, resetsAt: WEEK } }, clock, undefined, true, undefined, 'w1');
+    g.checkClaudeNow('w1'); await flush();
+    expect(at(reads, 'w1')).toEqual([0, 3]);
+  });
+
+  it('a reader that still answers true or false works as before (false: a failure with no reason)', async () => {
+    build(() => [refs()[0]]);
+    (answer as Record<string, unknown>).cli = false;
+    await run(5);
+    expect(at(reads, 'cli')).toEqual([0, 4]);
+    expect(g.claudeUsageAccess('cli')).toBeNull(); // nothing known: no state is claimed
+  });
+});

@@ -498,7 +498,10 @@ export const api = {
   },
   // Accounts per harness (multi-account spec 2026-11-06).
   getAccounts: () => req<AccountsView>('/api/accounts'),
-  accountsClaudeLogin: (label: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label }) }),
+  /** A new Claude account; with `accountId`, "Sign in again" for that saved account (its token is replaced in place). */
+  accountsClaudeLogin: (label: string, accountId?: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}) }) }),
+  /** "Check again": the daemon reads that Claude account's usage and profile now, whatever its wait. */
+  accountsCheckUsage: (id: string) => req<{ ok: boolean }>(`/api/accounts/claude/${encodeURIComponent(id)}/check`, { method: 'POST' }),
   accountsAddCodex: (label: string) => req<{ id: string; label: string }>('/api/accounts/codex', { method: 'POST', body: body({ label }) }),
   accountsCodexLogin: (id: string) => req<CodexLoginSession>(`/api/accounts/codex/${encodeURIComponent(id)}/login`, { method: 'POST' }),
   accountsCodexLoginStatus: (id: string) => req<CodexLoginSession>(`/api/accounts/codex/${encodeURIComponent(id)}/login`),

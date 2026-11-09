@@ -20,6 +20,8 @@ describe('accounts routes', () => {
   let pinned: Record<string, PinnedThread[]>;
   let unpinned: string[];
   let profileCalls: string[];
+  let clock: number | null;
+  let logins: { label: string; accountId?: string }[];
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'accounts-routes-'));
@@ -27,9 +29,12 @@ describe('accounts routes', () => {
     pinned = {};
     unpinned = [];
     profileCalls = [];
+    clock = null;
+    logins = [];
     app = express();
     app.use(express.json());
-    app.use('/api/accounts', createAccountsRouter(store, {} as any, {
+    app.use('/api/accounts', createAccountsRouter(store, { startForAccount: async (label: string, accountId?: string) => { logins.push({ label, ...(accountId ? { accountId } : {}) }); return { status: 'awaiting_code', url: 'https://claude.ai/x', error: null }; } } as any, {
+      now: () => clock ?? Date.now(),
       claudeProfile: async (id) => { profileCalls.push(id); return id === 'cli' ? { email: 'cli@x.y', plan: 'Max' } : null; },
       threads: {
         pinnedTo: (provider, id) => pinned[`${provider}:${id}`] ?? [],
@@ -65,6 +70,80 @@ describe('accounts routes', () => {
     expect(del.body).toEqual({ unpinned: 2 });
     expect(unpinned).toEqual([`claude:${w.id}`]);
     expect(store.has('claude', w.id)).toBe(false);
+  });
+
+  // W1-H (2026-11-09): a `claude setup-token` token is refused by the profile endpoint (403), every time.
+  describe('a refused profile (W1-H)', () => {
+    const MIN = 60_000;
+    const calls = (id: string) => profileCalls.filter((x) => x === id).length;
+
+    it('a refused profile is not asked again within the back-off', async () => {
+      const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+      store.setUsageAccessSource((id) => (id === w.id ? { state: 'not-available', lastOkAt: null } : null));
+      clock = 1_000_000_000;
+      await request(app).get('/api/accounts').expect(200);
+      expect(calls(w.id)).toBe(1);
+      // Before W1-H: asked again every 2 minutes. Now: the wait of a refused sign-in, 6 hours.
+      for (const m of [2, 5, 60, 359]) { clock = 1_000_000_000 + m * MIN; await request(app).get('/api/accounts').expect(200); }
+      expect(calls(w.id)).toBe(1);
+      clock = 1_000_000_000 + 361 * MIN;
+      await request(app).get('/api/accounts').expect(200);
+      expect(calls(w.id)).toBe(2);
+    });
+
+    it('a profile that failed for no known reason is asked again after 4, 8, 16 and at most 30 minutes', async () => {
+      const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+      const asked: number[] = [];
+      for (let m = 0; m <= 100; m++) {
+        clock = 1_000_000_000 + m * MIN;
+        const before = calls(w.id);
+        await request(app).get('/api/accounts').expect(200);
+        if (calls(w.id) > before) asked.push(m);
+      }
+      expect(asked).toEqual([0, 4, 12, 28, 58, 88]);
+    });
+
+    it('a new token for the account, or "Check again", asks at once', async () => {
+      const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+      store.setUsageAccessSource(() => ({ state: 'sign-in-needed', lastOkAt: null }));
+      const checked: string[] = [];
+      store.onCheckUsage((id) => checked.push(id));
+      clock = 1_000_000_000;
+      await request(app).get('/api/accounts').expect(200);
+      clock += MIN;
+      await request(app).get('/api/accounts').expect(200);
+      expect(calls(w.id)).toBe(1);
+      const { adoptClaudeLoginToken } = await import('../../src/auth/accounts.js');
+      await adoptClaudeLoginToken(store, 'tok-w2', '', async () => null, w.id); // signed in again
+      await request(app).get('/api/accounts').expect(200);
+      expect(calls(w.id)).toBe(2);
+      clock += MIN;
+      await request(app).post(`/api/accounts/claude/${w.id}/check`).expect(202);
+      expect(checked).toEqual([w.id]);
+      await request(app).get('/api/accounts').expect(200);
+      expect(calls(w.id)).toBe(3);
+      await request(app).post('/api/accounts/claude/nope/check').expect(404);
+      await request(app).post('/api/accounts/claude/cli/check').expect(202);
+      expect(checked).toEqual([w.id, 'cli']);
+    });
+
+    it('the list carries usageAccess, and never a token', async () => {
+      const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+      store.setUsageAccessSource((id) => (id === w.id ? { state: 'sign-in-needed', lastOkAt: 5 } : null));
+      const r = await request(app).get('/api/accounts').expect(200);
+      expect(r.body.claude.find((a: any) => a.id === w.id).usageAccess).toEqual({ state: 'sign-in-needed', lastOkAt: 5 });
+      expect(JSON.stringify(r.body)).not.toContain('tok-w');
+    });
+
+    it('"Sign in again" starts the login for that account id; an unknown id is refused', async () => {
+      const w = store.addClaude({ token: 'tok-w', label: 'Work' });
+      await request(app).post('/api/accounts/claude/login').send({ label: 'Work', accountId: w.id }).expect(200);
+      await request(app).post('/api/accounts/claude/login').send({ label: 'New one' }).expect(200);
+      expect(logins).toEqual([{ label: 'Work', accountId: w.id }, { label: 'New one' }]);
+      await request(app).post('/api/accounts/claude/login').send({ label: 'x', accountId: 'nope' }).expect(404);
+      await request(app).post('/api/accounts/claude/login').send({ label: 'x', accountId: 'cli' }).expect(400);
+      expect(logins).toHaveLength(2);
+    });
   });
 });
 

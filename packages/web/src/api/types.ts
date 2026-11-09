@@ -563,7 +563,13 @@ export interface UsageLimitSettings { warnPercent: number; pushOnWarn: boolean }
 
 /** Accounts per harness (multi-account spec 2026-11-06). `cli` is the CLI's own login on the daemon's computer. */
 export type AccountProvider = 'claude' | 'codex';
-export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean; threadCount?: number }
+/**
+ * What a Claude account's sign-in can do for the usage figures (W1-H): `sign-in-needed` (a new sign-in
+ * repairs it), `not-available` (it runs threads but may not read usage), `rate-limited` (the last
+ * figures stay), `ok`. `lastOkAt`: when the usage read last worked (ms), or null.
+ */
+export type UsageAccessState = 'ok' | 'sign-in-needed' | 'not-available' | 'rate-limited';
+export interface Account { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; signedIn?: boolean; threadCount?: number; usageAccess?: { state: UsageAccessState; lastOkAt: number | null } }
 /** A thread pinned to an account (the delete notice lists them). */
 export interface AccountThread { id: string; label: string; sessionId: string }
 export interface AccountsView { claude: Account[]; codex: Account[]; defaults: Record<AccountProvider, string> }
