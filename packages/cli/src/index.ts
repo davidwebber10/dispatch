@@ -79,6 +79,7 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       console.log(s.loaded ? `loaded yes${s.pid ? ` (pid ${s.pid})` : ''}` : 'loaded no');
       console.log(probeHttp(ctx.port, ctx.probe));
       console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
+      for (const line of cloudflareAccessStatusLines(ctx.dataDir)) console.log(line);
       // Stage 1 counts need a request. A test that injects a probe and no HTTP client makes none.
       const reachable = probeHttp(ctx.port, ctx.probe).startsWith('HTTP: reachable');
       if (reachable && (ctx.apiFetch !== undefined || ctx.probe === undefined)) return printNoCredentialCounts(ctx);
@@ -260,6 +261,37 @@ async function printNoCredentialCounts(ctx: Ctx): Promise<void> {
   } catch { /* status never fails on a counts problem */ }
 }
 
+const CF_USAGE = 'usage: dispatch access cloudflare [--team-domain <name>.cloudflareaccess.com --aud <tag> | --off]';
+
+/**
+ * The `status` lines for the Cloudflare Access check. `status` is synchronous and must work when
+ * the daemon's code is stale, so it reads `<dataDir>/access.json` itself (the file that
+ * `dispatch access cloudflare` writes through the access module). The aud tag is never printed.
+ */
+export function cloudflareAccessStatusLines(dataDir: string | undefined): string[] {
+  if (!dataDir) return [];
+  let file: { allowedHosts?: unknown; cloudflareAccess?: unknown } = {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(dataDir, 'access.json'), 'utf8'));
+    if (parsed && typeof parsed === 'object') file = parsed as typeof file;
+  } catch { /* no file: nothing allow-listed, check off */ }
+  const cf = file.cloudflareAccess as { teamDomain?: unknown; aud?: unknown } | null | undefined;
+  if (cf !== undefined && cf !== null) {
+    const valid = typeof cf === 'object' && typeof cf.teamDomain === 'string' && /^[a-z0-9-]+\.cloudflareaccess\.com$/.test(cf.teamDomain)
+      && typeof cf.aud === 'string' && cf.aud.length >= 16;
+    return [valid
+      ? `Cloudflare Access check: on (team ${cf.teamDomain})`
+      : 'Cloudflare Access check: on (the saved value is not valid, so every allow-listed host needs a sign-in; run "dispatch access cloudflare" again)'];
+  }
+  const hosts = Array.isArray(file.allowedHosts) ? file.allowedHosts.filter((h) => typeof h === 'string' && h).length : 0;
+  return [
+    'Cloudflare Access check: off',
+    ...(hosts > 0
+      ? [`Advice: ${hosts} allow-listed host${hosts === 1 ? ' is' : 's are'} trusted by name alone. If Cloudflare Access protects ${hosts === 1 ? 'it' : 'them'}, run "dispatch access cloudflare --team-domain <name>.cloudflareaccess.com --aud <tag>".`]
+      : []),
+  ];
+}
+
 const API_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 const API_USAGE = 'usage: dispatch api METHOD PATH [--body FILE | --body -]  (PATH starts with /, for example /api/sessions)';
 
@@ -366,8 +398,39 @@ async function cmdAccess(ctx: Ctx, args: string[]): Promise<void> {
       console.log(hosts.length ? hosts.join('\n') : '(none)');
       return;
     }
+    case 'cloudflare': {
+      // Only the daemon's own check of the Cf-Access-Jwt-Assertion header. Neither value is a secret.
+      const flags = args.slice(1);
+      const config = lib.createAccessConfig(dataDir);
+      const describe = () => {
+        const cur = config.cloudflareAccess();
+        return !cur ? 'Cloudflare Access check: off'
+          : cur.teamDomain ? `Cloudflare Access check: on (team ${cur.teamDomain})`
+            : 'Cloudflare Access check: on (the saved value is not valid, so every allow-listed host needs a sign-in)';
+      };
+      if (flags.length === 0) { console.log(describe()); return; }
+      if (flags.length === 1 && flags[0] === '--off') {
+        config.setCloudflareAccess(null);
+        console.log('Cloudflare Access check: off. An allow-listed host is trusted by its name alone again.');
+        return;
+      }
+      const given: Record<string, string> = {};
+      for (let i = 0; i < flags.length; i += 2) {
+        const value = flags[i + 1];
+        if ((flags[i] !== '--team-domain' && flags[i] !== '--aud') || !value || value.startsWith('--') || flags[i] in given) throw new Error(CF_USAGE);
+        given[flags[i]] = value;
+      }
+      if (!given['--team-domain'] || !given['--aud']) throw new Error(CF_USAGE);
+      // Throws with the reason when a value is not a team domain or an aud tag; nothing is saved then.
+      config.setCloudflareAccess({ teamDomain: given['--team-domain'], aud: given['--aud'] });
+      console.log(describe());
+      console.log('A request through an allow-listed host now needs a valid Cloudflare Access assertion. Without one it gets the sign-in page.');
+      if (config.allowedHosts().length === 0) console.log('No host is allow-listed, so the check guards nothing yet. Run "dispatch access allow-host <name>".');
+      console.log('The daemon reads the change with no restart.');
+      return;
+    }
     default:
-      throw new Error('usage: dispatch access [--link <host> | rotate | allow-host <name> | remove-host <name> | list-hosts]');
+      throw new Error('usage: dispatch access [--link <host> | rotate | allow-host <name> | remove-host <name> | list-hosts | cloudflare ...]');
   }
 }
 
