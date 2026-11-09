@@ -154,7 +154,7 @@ describe('reconcileAtBoot: lost wakes', () => {
 
   it('the starter of a worker gets one lost-wake notice when it runs again; it is not started for it', () => {
     const first = boot();
-    terminalsDb.updateConfig(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'lead', spawnDepth: 1 });
+    terminalsDb.writeConfigRaw(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'lead', spawnDepth: 1 });
     schedule(first);
     const d = boot();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -171,7 +171,7 @@ describe('reconcileAtBoot: lost wakes', () => {
 
   it('a worker the overseer started reports its lost wake to the overseer', () => {
     const first = boot();
-    terminalsDb.updateConfig(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'coord', spawnDepth: 1 });
+    terminalsDb.writeConfigRaw(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'coord', spawnDepth: 1 });
     schedule(first);
     const d = boot();
     d.recover();

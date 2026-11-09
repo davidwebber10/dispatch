@@ -155,7 +155,7 @@ describe('lost delivery', () => {
 
   it('a CLI coordinator that is down gets the notice typed in once, after its next turn settles', () => {
     const first = boot();
-    terminalsDb.updateConfig(first.db, 'w', { transport: 'structured', role: 'agent', spawnedBy: 'cli-lead', spawnDepth: 1 });
+    terminalsDb.writeConfigRaw(first.db, 'w', { transport: 'structured', role: 'agent', spawnedBy: 'cli-lead', spawnDepth: 1 });
     first.turn('w');
     expect(first.pty.writes).toHaveLength(0);
     const second = boot();
