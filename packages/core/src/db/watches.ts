@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3';
 import { v4 as uuid } from 'uuid';
+import * as outboxDb from './outbox.js';
+import * as pendingQuestionsDb from './pending-questions.js';
 
 export interface WatchRow {
   id: string;
@@ -10,6 +12,8 @@ export interface WatchRow {
   once: number;
   created_at: string;
   fired_at: string | null;
+  /** The delivery_outbox row of a wake that is written but not yet delivered (W2-C), or null. */
+  pending_delivery_id: number | null;
 }
 
 interface CreateInput {
@@ -57,13 +61,27 @@ export function listByTarget(db: Database.Database, targetTerminalId: string): W
     .all(targetTerminalId) as WatchRow[];
 }
 
-/** Live watches on this target whose criteria matches `status` exactly, or is 'any'. */
+/**
+ * Live watches on this target whose criteria matches `status` exactly, or is 'any'. A watch whose
+ * wake is written but not yet delivered is left out: one wake waits for the watcher, not one for
+ * each later settle of the target.
+ */
 export function liveForTarget(db: Database.Database, targetTerminalId: string, status: string): WatchRow[] {
   return db.prepare(`
     SELECT * FROM thread_watches
-    WHERE target_terminal_id = ? AND ${LIVE_CLAUSE} AND (criteria = ? OR criteria = 'any')
+    WHERE target_terminal_id = ? AND ${LIVE_CLAUSE} AND pending_delivery_id IS NULL AND (criteria = ? OR criteria = 'any')
     ORDER BY created_at ASC
   `).all(targetTerminalId, status) as WatchRow[];
+}
+
+/** Names (or clears, with null) the outbox row of the watch's undelivered wake. */
+export function setPendingDelivery(db: Database.Database, id: string, deliveryId: number | null): void {
+  db.prepare('UPDATE thread_watches SET pending_delivery_id = ? WHERE id = ?').run(deliveryId, id);
+}
+
+/** The wake reached the watcher: stamps fired_at and clears the pending wake. */
+export function markDelivered(db: Database.Database, id: string): void {
+  db.prepare('UPDATE thread_watches SET fired_at = ?, pending_delivery_id = NULL WHERE id = ?').run(new Date().toISOString(), id);
 }
 
 /** Stamps fired_at. A once=1 row then drops out of every live query above; a once=0 row stays live. */
@@ -76,10 +94,15 @@ export function remove(db: Database.Database, id: string): boolean {
   return r.changes > 0;
 }
 
-/** Deletes every watch where `terminalId` is either the watcher or the target — used when a thread is deleted. */
+/**
+ * Deletes every watch where `terminalId` is either the watcher or the target — used when a thread is deleted.
+ * The messages that wait for the deleted thread go with it (W2-C): its delivery_outbox rows and its saved question.
+ */
 export function removeForTerminal(db: Database.Database, terminalId: string): void {
   db.prepare('DELETE FROM thread_watches WHERE watcher_terminal_id = ? OR target_terminal_id = ?')
     .run(terminalId, terminalId);
+  outboxDb.removeForTarget(db, terminalId);
+  pendingQuestionsDb.remove(db, terminalId);
 }
 
 /** Count of live watches owned by this watcher (used for fan-out caps). */

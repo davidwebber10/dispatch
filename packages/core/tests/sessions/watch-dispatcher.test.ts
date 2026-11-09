@@ -5,6 +5,8 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as watchesDb from '../../src/db/watches.js';
 import { WatchDispatcher, composeWakeMessage } from '../../src/sessions/watch-dispatcher.js';
+import { DeliveryOutbox, type DeliverResult } from '../../src/delivery/outbox.js';
+import { logLifecycle } from '../../src/runtime/diagnostics.js';
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
@@ -159,7 +161,9 @@ describe('WatchDispatcher', () => {
     expect(watchRow(db, watchId)).toBeUndefined();
   });
 
-  it('a throwing deliver does not propagate out of onStatus, and the watch is still marked fired', () => {
+  // Changed for the delivery outbox (W2-C): the watch was marked fired though nothing was delivered,
+  // so the wake was lost. It now stays live until a delivery succeeds.
+  it('a throwing deliver does not propagate out of onStatus, and the watch is NOT marked fired', () => {
     const db = createTestDb();
     makeTerminal(db, 'watcher');
     makeTerminal(db, 'target');
@@ -168,7 +172,7 @@ describe('WatchDispatcher', () => {
     const dispatcher = new WatchDispatcher(db, deliver);
 
     expect(() => dispatcher.onStatus('target', 'idle')).not.toThrow();
-    expect(watchRow(db, watchId).fired_at).toBeTruthy();
+    expect(watchRow(db, watchId).fired_at).toBeNull();
   });
 
   it('multiple matching watches on the same target each deliver once', () => {
@@ -388,5 +392,154 @@ describe('WatchDispatcher.catchUp through StatusService', () => {
     hook('watcher', 'PreToolUse', { tool_name: 'mcp__dispatch__watch_thread', tool_input: {} });
     const id = watchesDb.create(db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
     expect(new WatchDispatcher(db, vi.fn()).catchUp(id)).toContain('finished its turn');
+  });
+});
+
+// The delivery outbox (W2-C): a wake that cannot be delivered waits, and the watch is spent only
+// when the wake reached the watcher.
+describe('WatchDispatcher with the delivery outbox', () => {
+  function setup() {
+    const db = createTestDb();
+    makeTerminal(db, 'watcher');
+    makeTerminal(db, 'target', 'Worker');
+    const alive = new Set<string>();
+    const got: { to: string; text: string }[] = [];
+    let fail = false;
+    const outbox = new DeliveryOutbox({
+      db,
+      deliver: (to, text): DeliverResult => {
+        if (fail) throw new Error('transport exploded');
+        const row = terminalsDb.getById(db, to);
+        if (!row || row.archived_at) return 'gone';
+        if (!alive.has(to)) return 'not-alive';
+        got.push({ to, text });
+        return 'delivered';
+      },
+    });
+    const dispatcher = new WatchDispatcher(db, outbox);
+    /** The target settles: one lifecycle event, then the status edge (the order StatusService uses). */
+    const settle = (status = 'idle') => {
+      logLifecycle(db, { terminalId: 'target', type: `status.${status}`, observedAt: new Date().toISOString() }, 'applied');
+      dispatcher.onStatus('target', status);
+    };
+    return { db, alive, got, outbox, dispatcher, settle, failing: (on: boolean) => { fail = on; } };
+  }
+
+  it('a one-shot watch stays live when delivery fails and fires when the watcher runs again', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle', note: 'review it' });
+    c.settle(); // the watcher is not running
+    expect(c.got).toHaveLength(0);
+    expect(watchRow(c.db, watchId).fired_at).toBeNull();
+    expect(watchesDb.listByWatcher(c.db, 'watcher')).toHaveLength(1); // still listed as live
+    expect(c.outbox.list({ terminalId: 'watcher', state: 'pending' })).toHaveLength(1);
+
+    c.alive.add('watcher');
+    c.outbox.flush('watcher'); // the event: the watcher's process started
+    expect(c.got).toHaveLength(1);
+    expect(c.got[0].text).toContain('review it');
+    expect(watchRow(c.db, watchId).fired_at).toBeTruthy();
+    expect(watchRow(c.db, watchId).pending_delivery_id).toBeNull();
+    expect(watchesDb.listByWatcher(c.db, 'watcher')).toHaveLength(0);
+  });
+
+  it('a watch is marked fired only after the delivery', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    const firedWhenDelivered: unknown[] = [];
+    const outbox = new DeliveryOutbox({
+      db: c.db,
+      deliver: () => { firedWhenDelivered.push(watchRow(c.db, watchId).fired_at); return 'delivered'; },
+    });
+    new WatchDispatcher(c.db, outbox).onStatus('target', 'idle');
+    expect(firedWhenDelivered).toEqual([null]); // not yet fired while the delivery ran
+    expect(watchRow(c.db, watchId).fired_at).toBeTruthy(); // fired after it
+  });
+
+  it('a delivery that throws leaves the watch live, and a later flush fires it', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    c.alive.add('watcher');
+    c.failing(true);
+    c.settle();
+    expect(watchRow(c.db, watchId).fired_at).toBeNull();
+    c.failing(false);
+    c.outbox.flush('watcher');
+    expect(c.got).toHaveLength(1);
+    expect(watchRow(c.db, watchId).fired_at).toBeTruthy();
+  });
+
+  it('the same settle event does not enqueue twice', () => {
+    const c = setup();
+    watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle', once: false });
+    c.alive.add('watcher');
+    c.settle();
+    c.dispatcher.onStatus('target', 'idle'); // the same settle, reported again
+    expect(c.got).toHaveLength(1);
+    expect(c.outbox.list({ terminalId: 'watcher' })).toHaveLength(1);
+    c.settle(); // a new settle event: a repeating watch fires again
+    expect(c.got).toHaveLength(2);
+  });
+
+  it('a watch with a pending wake is not matched again', () => {
+    const c = setup();
+    watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any' });
+    watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'any', once: false });
+    c.settle('idle');
+    c.settle('error');
+    c.settle('idle');
+    expect(c.outbox.list({ terminalId: 'watcher' })).toHaveLength(2); // one wake for each watch, no more
+    c.alive.add('watcher');
+    c.outbox.flush('watcher');
+    expect(c.got).toHaveLength(2);
+    c.settle('idle'); // the repeating watch is live again; the one-shot is spent
+    expect(c.got).toHaveLength(3);
+  });
+
+  it('a pending wake whose watcher is archived is dropped and the watch is removed', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    c.settle();
+    terminalsDb.archive(c.db, 'watcher');
+    c.outbox.flush('watcher');
+    expect(c.outbox.list({ terminalId: 'watcher' })[0]).toMatchObject({ state: 'dropped' });
+    expect(watchRow(c.db, watchId)).toBeUndefined();
+  });
+
+  it('a wake dropped after five failed attempts leaves the watch live for the next settle', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    c.alive.add('watcher');
+    c.failing(true);
+    c.settle();
+    for (let i = 0; i < 4; i++) c.outbox.flush('watcher');
+    expect(c.outbox.list({ terminalId: 'watcher' })[0]).toMatchObject({ state: 'dropped', attempts: 5 });
+    expect(watchRow(c.db, watchId)).toMatchObject({ fired_at: null, pending_delivery_id: null });
+    c.failing(false);
+    c.settle();
+    expect(c.got).toHaveLength(1);
+    expect(watchRow(c.db, watchId).fired_at).toBeTruthy();
+  });
+
+  it('a wake survives a restart: a new outbox and dispatcher on the same database deliver it once', () => {
+    const c = setup();
+    const watchId = watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    c.settle();
+    // The "new daemon": nothing in memory is kept.
+    const got: string[] = [];
+    const outbox = new DeliveryOutbox({ db: c.db, deliver: (_to, text) => { got.push(text); return 'delivered'; } });
+    new WatchDispatcher(c.db, outbox);
+    expect(outbox.flushAll()).toBe(1);
+    expect(outbox.flushAll()).toBe(0);
+    expect(got).toHaveLength(1);
+    expect(watchRow(c.db, watchId).fired_at).toBeTruthy();
+  });
+
+  it('removeForTerminal removes the rows addressed to the deleted thread', () => {
+    const c = setup();
+    watchesDb.create(c.db, { watcherTerminalId: 'watcher', targetTerminalId: 'target', criteria: 'idle' });
+    c.settle();
+    watchesDb.removeForTerminal(c.db, 'watcher');
+    expect(c.outbox.list({ terminalId: 'watcher' })).toHaveLength(0);
   });
 });

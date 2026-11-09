@@ -2,8 +2,11 @@ import { stripControlChars } from './pty-message.js';
 import type Database from 'better-sqlite3';
 import * as watchesDb from '../db/watches.js';
 import * as terminalsDb from '../db/terminals.js';
+import { v4 as uuid } from 'uuid';
+import { DeliveryOutbox, type DeliverResult, type OutboxRow } from '../delivery/outbox.js';
 
-export type DeliverFn = (terminalId: string, text: string) => void;
+/** Delivers a wake. A void return means delivered; a throw is a failed attempt (the wake is kept and tried again). */
+export type DeliverFn = (terminalId: string, text: string) => DeliverResult | void;
 
 /** The only statuses a watch can react to: the peer finished, asked, or failed.
  *  'working'/'scheduled'/'done' edges are not wake-worthy — waking on 'working'
@@ -32,18 +35,33 @@ const OTHER_STATE_SQL = quoted(OTHER_STATE);
  * `deliver` function that picks structured vs PTY transport per target.
  */
 export class WatchDispatcher {
+  private outbox: DeliveryOutbox;
+
+  /**
+   * `delivery` is the daemon's delivery outbox (W2-C). A wake is a row of it: written first,
+   * delivered after, and tried again on an event of the watcher when it could not be delivered.
+   * A plain deliver function is also accepted; the dispatcher then keeps its wakes in an outbox of
+   * its own on the same database.
+   */
   constructor(
     private db: Database.Database,
-    private deliver: DeliverFn,
+    delivery: DeliverFn | DeliveryOutbox,
     private opts: { now?: () => number } = {},
-  ) {}
+  ) {
+    this.outbox = delivery instanceof DeliveryOutbox
+      ? delivery
+      : new DeliveryOutbox({ db, now: opts.now, deliver: (to, text) => delivery(to, text) ?? 'delivered' });
+    this.outbox.onDelivered((row) => this.onWakeDelivered(row));
+    this.outbox.onDropped((row) => this.onWakeDropped(row));
+  }
 
   /**
    * Called on every (non-`starting`) status edge for `targetTerminalId`. Finds live watches
-   * whose criteria matches `status` (or is 'any'), delivers a wake message to each live
-   * watcher, and marks the watch fired (one-shot rows then drop out of future matches;
-   * repeating rows stay live). A watcher whose terminal row is gone or archived has its
-   * watch dropped instead of delivered to. Never throws — a wake failure must never break
+   * whose criteria matches `status` (or is 'any') and writes a wake for each live watcher to
+   * the delivery outbox. The watch is marked fired when the wake is DELIVERED (one-shot rows then
+   * drop out of future matches; repeating rows stay live); a wake that cannot be delivered now
+   * waits in the outbox and its watch stays live. A watcher whose terminal row is gone or archived
+   * has its watch dropped instead of delivered to. Never throws — a wake failure must never break
    * status recording.
    */
   onStatus(targetTerminalId: string, status: string): void {
@@ -135,21 +153,65 @@ export class WatchDispatcher {
   }
 
   private fire(watch: watchesDb.WatchRow, target: terminalsDb.TerminalRow, status: string): void {
-    const watcher = terminalsDb.getById(this.db, watch.watcher_terminal_id);
-    if (!watcher || watcher.archived_at) {
-      // Dead or archived watcher: drop the subscription silently rather than deliver to it.
-      watchesDb.remove(this.db, watch.id);
-      return;
-    }
     try {
+      const watcher = terminalsDb.getById(this.db, watch.watcher_terminal_id);
+      if (!watcher || watcher.archived_at) {
+        // Dead or archived watcher: drop the subscription silently rather than deliver to it.
+        watchesDb.remove(this.db, watch.id);
+        return;
+      }
       const text = composeWakeMessage({ id: target.id, label: target.label }, status, watch.note);
-      this.deliver(watch.watcher_terminal_id, text);
+      // One settle event of the target makes one wake for this watch. A status edge with no
+      // lifecycle event on record (a caller outside StatusService) cannot be told from the next
+      // one, so it gets a key of its own.
+      const settleEvent = this.lastSettleEventId(target.id);
+      const result = this.outbox.enqueue({
+        targetId: watch.watcher_terminal_id,
+        sourceId: target.id,
+        kind: 'watch',
+        body: text,
+        dedupKey: `watch:${watch.id}:${settleEvent ?? `edge-${uuid()}`}`,
+      });
+      // Delivered in the same call: onWakeDelivered marked the watch fired. Still pending: the watch
+      // names the row, so a later settle does not write a second wake.
+      if (!result.duplicate && result.state === 'pending') watchesDb.setPendingDelivery(this.db, watch.id, result.id);
     } catch (err) {
-      // A wake failure (dead transport, network hiccup, whatever) must never break status
-      // recording — swallow and move on. The watch still fires below.
-      console.debug('[watch-dispatcher] delivery failed', watch.id, err);
+      // A wake failure (dead transport, a database error, whatever) must never break status recording.
+      console.debug('[watch-dispatcher] wake failed', watch.id, err);
     }
-    watchesDb.markFired(this.db, watch.id);
+  }
+
+  /** The newest settling lifecycle event of the target: the event that this status edge came from. */
+  private lastSettleEventId(targetId: string): number | null {
+    const row = this.db.prepare(`SELECT MAX(id) AS id FROM lifecycle_events
+      WHERE terminal_id = ? AND disposition IN ('applied','inferred') AND event_type IN (${SETTLING_SQL})`)
+      .get(targetId) as { id: number | null };
+    return row.id;
+  }
+
+  /** The watch id inside a wake's dedup key (`watch:<watchId>:<event>`). */
+  private watchIdOf(row: OutboxRow): string | null {
+    if (row.kind !== 'watch') return null;
+    return row.dedup_key.split(':')[1] || null;
+  }
+
+  /** The wake reached the watcher: now, and only now, the watch has fired. */
+  private onWakeDelivered(row: OutboxRow): void {
+    const watchId = this.watchIdOf(row);
+    if (watchId) watchesDb.markDelivered(this.db, watchId);
+  }
+
+  /**
+   * The wake will never be delivered. A watcher that is gone, archived or a shell tab cannot be
+   * woken: its watch is removed. Otherwise (the attempts ran out) the watch stays live, so the
+   * next settle of the target can wake the watcher.
+   */
+  private onWakeDropped(row: OutboxRow): void {
+    const watchId = this.watchIdOf(row);
+    if (!watchId) return;
+    const watcher = terminalsDb.getById(this.db, row.target_terminal_id);
+    if (!watcher || watcher.archived_at || watcher.type === 'shell') watchesDb.remove(this.db, watchId);
+    else watchesDb.setPendingDelivery(this.db, watchId, null);
   }
 }
 
