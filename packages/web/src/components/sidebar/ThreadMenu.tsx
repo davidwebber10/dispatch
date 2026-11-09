@@ -16,11 +16,12 @@ import { AutoArchiveModal } from './AutoArchiveModal';
 import { AccountSwitchModal } from '../common/AccountSwitchModal';
 import { Modal } from '../common/Modal';
 import { DetailsPane } from '../inspector/DetailsPane';
+import { WhyPanel } from '../inspector/WhyPanel';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key,
+  Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key, Question,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 
@@ -141,6 +142,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const [autoArchiveTarget, setAutoArchiveTarget] = useState<Terminal | null>(null);
   const [detailsTarget, setDetailsTarget] = useState<Terminal | null>(null);
   const [accountTarget, setAccountTarget] = useState<Terminal | null>(null);
+  // The "Why is this thread in this state?" panel (W2-G).
+  const [whyTarget, setWhyTarget] = useState<Terminal | null>(null);
   const isMobile = useIsMobile();
   // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
   const pluginItems = useContributions('threadMenu');
@@ -287,6 +290,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                 {row('copy', Copy, 'Copy thread ID', pick((x) => void copyId(x)), 'Lets another thread read or message this one')}
                 {row('reload', ArrowClockwise, 'Reload thread', pick(reload), 'Reconnect to the thread')}
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
+                {row('why', Question, 'Why is this thread in this state?', pick(setWhyTarget), 'Explains the status and lists the last events')}
                 {row('auto-archive', Timer, 'Auto-archive…', pick(setAutoArchiveTarget), 'Archive the thread on its own after a set time')}
                 {tokenOptIn && canTakeToken(t) && (
                   <button key="secrets-env" type="button" role="switch" aria-checked={secretsEnvOn(t)} aria-label="Doppler token in this thread's shell"
@@ -338,6 +342,10 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
 
       <Modal open={!!detailsTarget} sheet title="Thread details" onClose={() => setDetailsTarget(null)}>
         {detailsTarget && <DetailsPane projectId={detailsTarget.sessionId} terminalId={detailsTarget.id} />}
+      </Modal>
+
+      <Modal open={!!whyTarget} sheet title="Why is this thread in this state?" maxWidth={600} onClose={() => setWhyTarget(null)}>
+        {whyTarget && <WhyPanel terminalId={whyTarget.id} sessionId={whyTarget.sessionId} onClose={() => setWhyTarget(null)} />}
       </Modal>
 
       {autoArchiveTarget && (

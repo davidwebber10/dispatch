@@ -3,7 +3,7 @@ import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
-import type { SpinnerVerbs, SpinnerSet, ChatSettings } from './types';
+import type { SpinnerVerbs, SpinnerSet, ChatSettings, ThreadDiagnostics } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -352,6 +352,8 @@ export const api = {
   useResetCredit: (provider: string, creditId?: string, accountId?: string) => req<{ outcome: string }>('/api/usage-limits/reset-credit', { method: 'POST', body: JSON.stringify({ provider, ...(creditId ? { creditId } : {}), ...(accountId ? { accountId } : {}) }) }),
   relaunchTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/relaunch`, { method: 'POST' }),
   resetTerminalStatus: (id: string) => req<void>(`/api/terminals/${id}/reset-status`, { method: 'POST' }),
+  /** Why the thread is in its state (W2-G): the lifecycle record, the last events and the explanation. Read only. */
+  getThreadDiagnostics: (id: string) => req<ThreadDiagnostics>(`/api/terminals/${encodeURIComponent(id)}/diagnostics`),
   restoreTerminal: (id: string) => req<Terminal>(`/api/terminals/${id}/restore`, { method: 'POST' }),
   // Launch a QUEUED worker (status='queued') now — moves it from the Queued bucket into live work.
   startTerminal: (id: string) => req<void>(`/api/terminals/${id}/start`, { method: 'POST' }),
