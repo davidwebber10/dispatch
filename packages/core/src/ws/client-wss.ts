@@ -41,10 +41,11 @@ export function sendCompressed<T>(ws: WebSocket, send: () => T): T {
 
 /** Makes `compress: false` the default of this socket's `send`; a send inside `sendCompressed` is compressed. */
 function compressOnlyOnRequest(ws: WebSocket): void {
-  const send = ws.send.bind(ws) as (data: unknown, options: object, cb?: (err?: Error) => void) => void;
-  ws.send = ((data: unknown, options?: object | ((err?: Error) => void), cb?: (err?: Error) => void) => {
+  type Done = (err?: Error) => void;
+  const send = ws.send.bind(ws) as (data: unknown, options: object, cb?: Done) => void;
+  ws.send = ((data: unknown, options?: object | Done, cb?: Done) => {
     const compress = compressNext.has(ws);
-    if (typeof options === 'function') send(data, { compress }, options);
+    if (typeof options === 'function') send(data, { compress }, options as Done);
     else send(data, { compress, ...options }, cb);
   }) as WebSocket['send'];
 }
