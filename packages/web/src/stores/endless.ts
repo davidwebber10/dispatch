@@ -46,6 +46,8 @@ interface EndlessStoreState {
   stop: () => Promise<void>;
   refreshState: () => Promise<void>;
   loadSettings: () => Promise<void>;
+  /** Save Chat's model/effort (PUT). Resolves with what the daemon holds; the store takes it unless something newer arrived meanwhile. */
+  saveSettings: (change: { model?: string | null; effort?: string | null }) => Promise<ChatSettings>;
   loadProjects: () => Promise<void>;
   /** Errors are ignored: the old counts stay. */
   loadDocCounts: (ids: string[]) => Promise<void>;
@@ -121,6 +123,10 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
   let countsOnLoad = false;
   /** The newest doc counts request. */
   let countsSeq = 0;
+  // Chat's settings can reach the store three ways: a GET, a PUT's answer and the daemon's `endless:settings` broadcast. They can
+  // arrive in any order, so each carries the generation it was sent in; an answer is taken only if no newer value has been
+  // installed since (a broadcast, or another answer that was sent later). Otherwise an old answer would put an old value back.
+  let settingsGen = 0;
   const onVisible = () => { if (document.visibilityState === 'visible') void reload(); };
 
   return {
@@ -208,7 +214,19 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     stop: async () => { await api.endlessStop(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
     // An older daemon has no setting: the chip then stays off. A failed reload keeps what is shown.
-    loadSettings: async () => { try { set({ settings: await api.endlessSettings() }); } catch { /* keep the old one */ } },
+    loadSettings: async () => {
+      const mine = ++settingsGen;
+      try {
+        const next = await api.endlessSettings();
+        if (mine === settingsGen) set({ settings: next });
+      } catch { /* keep the old one */ }
+    },
+    saveSettings: async (change) => {
+      const mine = ++settingsGen;
+      const next = await api.setEndlessSettings(change);
+      if (mine === settingsGen) set({ settings: next });
+      return next;
+    },
     loadProjects: () => load(() => api.endlessProjects(), (v) => {
       const p = normalizePane(v);
       set({ projects: p.projects, threads: p.threads, truncated: p.truncated });
@@ -241,12 +259,13 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     },
 
     resyncAfterReconnect: () => {
+      // A change made on another device while the socket was down, whether or not the history needs a reload.
+      if (get().settings) void get().loadSettings();
       if (watchers > 0) void reload();
       const { loaded, unavailable, atTail } = get();
       if (!unavailable && !(loaded && atTail)) return;
       void get().loadTail().catch(() => {});
       void get().refreshState().catch(() => {});
-      if (get().settings) void get().loadSettings(); // a change made on another device while the socket was down
     },
 
     applyEvent: (e) => {
@@ -271,6 +290,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         return;
       }
       if (e.type === 'endless:settings') {
+        settingsGen++; // anything sent before this broadcast is older than it
         set({ settings: { model: typeof e.model === 'string' ? e.model : null, effort: typeof e.effort === 'string' ? e.effort : null, defaultModel: String(e.defaultModel ?? 'opus') } });
         return;
       }

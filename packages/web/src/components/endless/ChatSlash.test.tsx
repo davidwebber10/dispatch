@@ -1,6 +1,7 @@
 // The "/" menu and the model/effort chip in Chat: one Chat-wide setting (rebuild of PR #155 on main 4.3.0).
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, renderHook } from '@testing-library/react';
+import { useChatSettings } from './useChatSettings';
 import { EndlessColumn } from './EndlessColumn';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
@@ -140,5 +141,67 @@ describe('a second open device (round 4)', () => {
     const calls = get.mock.calls.length;
     act(() => useEndless.getState().resyncAfterReconnect());
     await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(calls));
+  });
+});
+
+// ---- Round 5: ordering. The earlier tests answer at once and reconnect at the tail, so they could not see these. ----
+describe('Chat settings: the newest answer wins, whatever order they arrive in (round 5)', () => {
+  const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+  const broadcast = (model: string | null, effort: string | null) =>
+    act(() => useEndless.getState().applyEvent({ type: 'endless:settings', model, effort, defaultModel: 'opus' }));
+
+  it('a GET that was sent before a broadcast and answers after it does not overwrite it (item 4)', async () => {
+    const get = deferred<{ model: string | null; effort: string | null; defaultModel: string }>();
+    vi.spyOn(api, 'endlessSettings').mockReturnValue(get.promise);
+    const loading = useEndless.getState().loadSettings();
+    broadcast('haiku', 'high');                                              // another device changed it, and the daemon said so
+    get.resolve({ model: null, effort: null, defaultModel: 'opus' });          // the older answer arrives last
+    await loading;
+    expect(useEndless.getState().settings).toEqual({ model: 'haiku', effort: 'high', defaultModel: 'opus' });
+  });
+
+  it('of two GETs, the later one wins even if it answers first', async () => {
+    const first = deferred<any>(); const second = deferred<any>();
+    vi.spyOn(api, 'endlessSettings').mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const a = useEndless.getState().loadSettings();
+    const b = useEndless.getState().loadSettings();
+    second.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });
+    await b;
+    first.resolve({ model: 'opus', effort: null, defaultModel: 'opus' });
+    await a;
+    expect(useEndless.getState().settings?.model).toBe('sonnet');
+  });
+
+  it('a PUT that answers after a newer broadcast does not overwrite it (item 4)', async () => {
+    const put2 = deferred<any>();
+    vi.spyOn(api, 'setEndlessSettings').mockReturnValue(put2.promise);
+    const { result } = renderHook(() => useChatSettings());
+    const saving = result.current.apply({ model: 'sonnet' });
+    broadcast('haiku', 'high');                                              // a later change from another device
+    put2.resolve({ model: 'sonnet', effort: null, defaultModel: 'opus' });     // this device's older answer arrives last
+    await saving;
+    expect(useEndless.getState().settings).toEqual({ model: 'haiku', effort: 'high', defaultModel: 'opus' });
+  });
+
+  it('a PUT answer is still taken when nothing newer arrived (the socket may be down)', async () => {
+    vi.spyOn(api, 'setEndlessSettings').mockResolvedValue({ model: 'sonnet', effort: 'low', defaultModel: 'opus' });
+    const { result } = renderHook(() => useChatSettings());
+    await result.current.apply({ model: 'sonnet' });
+    expect(useEndless.getState().settings).toEqual({ model: 'sonnet', effort: 'low', defaultModel: 'opus' });
+  });
+
+  it('a reconnect reloads the setting even when the history is not at its end (item 5)', async () => {
+    useEndless.setState({ loaded: true, atTail: false, settings: { model: null, effort: null, defaultModel: 'opus' } } as never);
+    const get = vi.spyOn(api, 'endlessSettings').mockResolvedValue({ model: 'haiku', effort: null, defaultModel: 'opus' });
+    act(() => useEndless.getState().resyncAfterReconnect());
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await waitFor(() => expect(useEndless.getState().settings?.model).toBe('haiku'));
+  });
+
+  it('a reconnect with the history unloaded or unavailable reloads it too', async () => {
+    useEndless.setState({ loaded: false, atTail: true, unavailable: false, settings: { model: null, effort: null, defaultModel: 'opus' } } as never);
+    const get = vi.spyOn(api, 'endlessSettings').mockResolvedValue({ model: 'haiku', effort: null, defaultModel: 'opus' });
+    act(() => useEndless.getState().resyncAfterReconnect());
+    await waitFor(() => expect(get).toHaveBeenCalled());
   });
 });

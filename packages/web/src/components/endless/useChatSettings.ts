@@ -1,5 +1,4 @@
 import { useCallback, useEffect } from 'react';
-import { api } from '../../api/client';
 import { useEndless } from '../../stores/endless';
 
 const NOTE = 'Saved for all of Chat. Applies from the next message.';
@@ -15,7 +14,7 @@ export function useChatSettings() {
   useEffect(() => { void useEndless.getState().loadSettings(); }, []);
   const reload = useCallback(() => useEndless.getState().loadSettings(), []);
   const apply = useCallback(async (change: { model?: string | null; effort?: string | null }): Promise<string> => {
-    useEndless.setState({ settings: await api.setEndlessSettings(change) });
+    await useEndless.getState().saveSettings(change); // the store keeps only the newest answer
     return NOTE;
   }, []);
   return { settings, apply, reload };
