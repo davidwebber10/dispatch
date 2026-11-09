@@ -1,10 +1,8 @@
 // Daily rundown — a spike plugin. Plain ES module, no build step: it uses the app's React
-// through window.dispatch (handed in as `d`). `h` is React.createElement.
+// through the SDK object `d` (version 2: plugin.json says "sdk": 2). `h` is React.createElement.
+// `d` is bound to this plugin, so no call names the plugin id: a copy under another id runs as itself.
 export default function activate(d) {
-  // The id the host gave this copy: a copy under another id runs as itself.
-  const ID = d.id || 'daily-rundown';
-  const { h, hooks: { useState, useEffect, useDoc }, api, ui, storage, hint } = d;
-  const PLUGIN = ID;
+  const { h, hooks: { useState, useEffect, useDoc }, ui, docs, threads, projects } = d;
   // Documents live on the daemon (Settings → Plugins shows them); useDoc keeps them as React state.
 
   function timeAgo(iso) {
@@ -15,18 +13,17 @@ export default function activate(d) {
 
   function Rundown() {
     const [rows, setRows] = useState(null);
-    const [pins, setPins] = useDoc(PLUGIN, 'pinned', []);
-    const [hours, , hoursLoading] = useDoc(PLUGIN, 'hours', 24);
+    const [pins, setPins] = useDoc('pinned', []);
+    const [hours, , hoursLoading] = useDoc('hours', 24);
     useEffect(() => {
       if (hoursLoading) return;
       let on = true;
       (async () => {
         const since = Date.now() - hours * 3600 * 1000;
-        const sessions = await api.listSessions();
+        // Plain data from the app: the projects it has, and each project's threads (read when not loaded yet).
         const out = [];
-        for (const s of sessions) {
-          const threads = await api.listTerminals(s.id);
-          const recent = threads.filter((t) => new Date(t.lastActivityAt ?? t.createdAt).getTime() >= since);
+        for (const s of projects.list()) {
+          const recent = (await threads.load(s.id)).filter((t) => new Date(t.lastActivityAt ?? t.createdAt).getTime() >= since);
           if (recent.length) out.push({ session: s, threads: recent.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1)) });
         }
         if (on) setRows(out);
@@ -53,13 +50,13 @@ export default function activate(d) {
         ...threads.map((t) => h('div', { key: t.id, style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, fontSize: 13 } },
           h('span', { style: { width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: t.status === 'done' ? 'var(--color-accent)' : t.status === 'needs_input' ? 'var(--color-status-yellow)' : '#46464d' } }),
           h('span', { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--color-text-primary)' } }, t.label),
-          h('span', { style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${t.type} · ${t.status} · ${timeAgo(t.lastActivityAt ?? t.createdAt)}`))),
+          h('span', { style: { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' } }, `${t.kind} · ${t.status} · ${timeAgo(t.lastActivityAt ?? t.createdAt)}`))),
       ])),
     );
   }
 
   function Settings() {
-    const [hours, setHours] = useDoc(PLUGIN, 'hours', 24);
+    const [hours, setHours] = useDoc('hours', 24);
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
       h('span', { style: ui.styles.sectionLabel }, 'WINDOW'),
       h('div', { style: ui.styles.row },
@@ -69,13 +66,13 @@ export default function activate(d) {
       h('div', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)' } }, 'A settings section a plugin added. It saves as you edit, like the rest of Settings.'));
   }
 
-  d.register(PLUGIN, {
+  d.register({
     views: [{ id: 'rundown', label: 'Rundown', icon: 'sun', mobileTab: true, Component: Rundown }],
     settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back the rundown looks', icon: 'sun', Component: Settings }],
     threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick: async ({ tab }) => {
-      const pinned = await storage.get(PLUGIN, 'pinned', []);
-      await storage.set(PLUGIN, 'pinned', [...pinned.filter((p) => p.id !== tab.id), { id: tab.id, label: tab.label }]);
-      hint(`Pinned "${tab.label}" to the rundown`);
+      const pinned = await docs.get('pinned', []);
+      await docs.set('pinned', [...pinned.filter((p) => p.id !== tab.id), { id: tab.id, label: tab.label }]);
+      ui.hint(`Pinned "${tab.label}" to the rundown`);
     } }],
   });
 }

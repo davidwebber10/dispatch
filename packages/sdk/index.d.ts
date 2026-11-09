@@ -445,6 +445,8 @@ export interface DispatchSdkV2 {
     list(): ThreadInfo[];
     get(id: string): ThreadInfo | null;
     status(id: string): ThreadStatusInfo | null;
+    /** Asks the app to read the thread list of one project (of every project when no id is given), and resolves with those threads. */
+    load(projectId?: string): Promise<ThreadInfo[]>;
     /** Called when a thread is added, removed or changed, or a status changes. Returns the function that stops it; a reload stops it too. */
     onChange(fn: () => void): () => void;
   };

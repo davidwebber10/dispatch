@@ -98,6 +98,8 @@ export interface DispatchSdkV2 {
     list: () => ThreadInfo[];
     get: (id: string) => ThreadInfo | null;
     status: (id: string) => ThreadStatusInfo | null;
+    /** Ask the app to read the thread list of one project (of every project when no id is given) and give it back. */
+    load: (projectId?: string) => Promise<ThreadInfo[]>;
     /** Called when a thread is added, removed or changed, or a status changes. Returns the function that stops it. */
     onChange: (fn: () => void) => () => void;
   };
@@ -259,6 +261,12 @@ export function createPluginSdk(pluginId: string): DispatchSdkV2 {
       const s = useThreadStatus.getState();
       const live = s.byTerminal[id];
       return { status: live?.status ?? t.status, state: live?.threadStatus ?? null, activity: live?.activity ?? null, stalledSince: s.stalls[id] ?? null };
+    },
+    load: async (projectId?: string) => {
+      const ids = projectId ? [projectId] : useProjects.getState().sessions.map((s) => s.id);
+      await Promise.all(ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* a project that is gone has no threads */ })));
+      const byProject = useTabs.getState().byProject;
+      return ids.flatMap((id) => (byProject[id] ?? []).map(threadInfo));
     },
     onChange: (fn: () => void) => {
       const offTabs = useTabs.subscribe((s, prev) => { if (s.byProject !== prev.byProject) fn(); });

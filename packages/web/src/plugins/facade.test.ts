@@ -207,6 +207,22 @@ describe('createPluginSdk: the app\'s data as plain objects (W3-F)', () => {
     expect((useTabs.getState().byProject.s1[0] as { label: string }).label).toBe('Thread t1');
   });
 
+  it('threads.load asks the app for the thread list of one project, or of every project, and returns plain objects', async () => {
+    const loadTabs = vi.fn(async (id: string) => { useTabs.setState({ byProject: { ...useTabs.getState().byProject, [id]: [terminal(`new-${id}`, id)] } as never }); });
+    const before = useTabs.getState().loadTabs;
+    useTabs.setState({ loadTabs } as never);
+    try {
+      const d = createPluginSdk('p');
+      expect((await d.threads.load('s2')).map((t) => t.id)).toEqual(['new-s2']);
+      expect(loadTabs.mock.calls).toEqual([['s2']]);
+      const all = await d.threads.load();
+      expect(all.map((t) => t.id)).toEqual(['new-s1', 'new-s2']);
+      expect(Object.keys(all[0]).sort()).toEqual(['archived', 'createdAt', 'id', 'kind', 'label', 'lastActivityAt', 'projectId', 'status']);
+      loadTabs.mockRejectedValueOnce(new Error('gone'));
+      await expect(d.threads.load('s1')).resolves.toHaveLength(1); // a failed read keeps what the app has
+    } finally { useTabs.setState({ loadTabs: before } as never); }
+  });
+
   it('threads.status merges the stored status with the live one', () => {
     const d = createPluginSdk('p');
     expect(d.threads.status('t1')).toEqual({ status: 'waiting', state: null, activity: null, stalledSince: null });
