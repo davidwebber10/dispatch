@@ -77,8 +77,9 @@ export function btn(label: string, primary?: boolean): NeedAction {
 // ---------------------------------------------------------------------------
 
 export const CANNED = {
-  emptyGreeting:
-    "I'm Control Plane — the coordinator for this project. Tell me what to move on and I'll open missions, spin up the right agents, and only surface what needs your call. I don't write code myself — so I'm always free to listen.",
+  /** `name` is the coordinator name from Settings (useDispatchName). */
+  emptyGreeting: (name: string) =>
+    "I'm " + name + " — the coordinator for this project. Tell me what to move on and I'll open missions, spin up the right agents, and only surface what needs your call. I don't write code myself — so I'm always free to listen.",
   sendReply: "Captured. I'll fold it in and surface anything that needs you — keep going.",
   needAck: (label: string) => '“' + label + '” — got it. I\'ll pass it down and close this out.',
   delegateAck: (typeLabel: string, text: string) =>

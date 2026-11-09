@@ -17,6 +17,7 @@ import { HARNESSES } from '../../../lib/harnesses';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useProjects } from '../../../stores/projects';
 import { useOverseer } from '../store';
+import { useDispatchName } from '../../../stores/settings';
 
 const ACCENT = 'var(--color-accent)';
 const GLOW = '0 0 6px 1px color-mix(in srgb, var(--color-accent) 40%, transparent)';
@@ -52,6 +53,7 @@ const COORDINATOR_DEFAULT_MODEL: Record<string, string> = { claude: 'sonnet' };
 
 export function ControlPlaneSetupCard(): JSX.Element {
   const isMobile = useIsMobile();
+  const dispatchName = useDispatchName();
   const setupSelection = useOverseer((s) => s.setupSelection);
   const setSetupSelection = useOverseer((s) => s.setSetupSelection);
   const coordinatorProject = useOverseer((s) => s.coordinatorProject);
@@ -128,7 +130,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
     >
       <div>
         <div style={{ fontSize: isMobile ? 16 : 15, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-          I'm Control Plane — the coordinator for this project.
+          I'm {dispatchName} — the coordinator for this project.
         </div>
         <div style={{ marginTop: 4, fontSize: isMobile ? 13 : 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
           Pick the agents I run, then fire the first directive — or just start.

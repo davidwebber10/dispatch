@@ -10,12 +10,14 @@
 import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
+import { useDispatchName } from '../../../stores/settings';
 
 export function ThreadDetail({ mobile }: { mobile?: boolean }) {
   const rv = useRenderVals();
   const closeDrill = useOverseer((s) => s.closeDrill);
   const isMobile = useIsMobile();
   const isMobileView = mobile ?? isMobile;
+  const dispatchName = useDispatchName();
 
   const detail = rv.drillDetail;
   if (!detail) return null;
@@ -118,8 +120,8 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
           </span>
           <span style={{ fontSize: 12, color: 'var(--tp)', lineHeight: 1.5 }}>
             {isMobileView
-              ? "You’re steering this thread — Control Plane holds everything else."
-              : "You’re steering this thread — Control Plane is holding everything else."}
+              ? `You’re steering this thread — ${dispatchName} holds everything else.`
+              : `You’re steering this thread — ${dispatchName} is holding everything else.`}
           </span>
         </div>
 

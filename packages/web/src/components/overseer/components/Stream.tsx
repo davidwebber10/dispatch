@@ -42,6 +42,7 @@ import { CANNED } from '../data';
 import { controlPlaneTimeline } from '../timeline';
 import { ControlPlaneSetupCard } from './SetupCard';
 import { useLedgerChips } from './LedgerChips';
+import { useDispatchName } from '../../../stores/settings';
 
 // ---- Error notice (centered, red) -------------------------------------------
 // A transient "Failed to send message" surfaced when a directive POST is rejected
@@ -75,6 +76,7 @@ function ErrorMsg({ text }: { text: string }) {
 // ---- ConversationStream (exported) ------------------------------------------
 
 export function ConversationStream() {
+  const dispatchName = useDispatchName();
   const { items, showGreeting, sendError, busy, projectMatches } = useRenderVals();
   // No live coordinator for this project yet (ensureForProject peeked and found none) — the
   // inline setup card replaces the (suppressed, see useRenderVals) canned greeting, so the
@@ -167,7 +169,7 @@ export function ConversationStream() {
                   an assistant turn. Not part of the transcript. */}
               {showGreeting && (
                 <MessageScroller.Item messageId="__greeting" style={{ display: 'flex', flexDirection: 'column' }}>
-                  <AssistantText text={CANNED.emptyGreeting} />
+                  <AssistantText text={CANNED.emptyGreeting(dispatchName)} />
                 </MessageScroller.Item>
               )}
               {renderTimeline(items, onViewFile, pageBoundaries, undefined, null, noticeFilter, ext)}

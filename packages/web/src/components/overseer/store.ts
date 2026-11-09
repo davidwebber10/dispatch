@@ -29,6 +29,7 @@ import { appendToDraft, clearStoredDraft } from '../../hooks/useDraft';
 import type { ConvItem, PendingPermission, Terminal } from '../../api/types';
 import { AGENT_TYPES } from '../../lib/harnesses';
 import { CANNED } from './data';
+import { useSettings } from '../../stores/settings';
 import { groupByMission, isManagedWorker, mapStatus, needsFromThreads } from './live';
 import type { AgentType, Ribbon, RenderVals, Scenario } from './types';
 
@@ -311,7 +312,7 @@ export const useOverseer = create<OverseerState>((set, get) => ({
       // so a failed create leaves us here with no coordinatorId and no other signal —
       // without this, the directive (and any staged image) just vanishes silently.
       if (!get().coordinatorId) {
-        set({ sendError: 'Could not start the Control Plane session — try again.' });
+        set({ sendError: `Could not start the ${useSettings.getState().coordinatorName.trim() || 'Control Plane'} session — try again.` });
         return;
       }
     }
