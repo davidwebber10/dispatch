@@ -39,6 +39,9 @@ import { bootDesktopNavigation, stopDesktopSync } from './stores/navigation';
 import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
+import { loadBootstrap } from './lib/bootstrap';
+
+void loadBootstrap(); // W2-H: one launch request. Here, not in the boot effect: the effects of the child components run first.
 
 // The two shells (engineering program 2026-11-09, W2-E). Each is its own chunk: the phone never
 // downloads the desktop shell, and the desktop never downloads the phone's. The import starts here,

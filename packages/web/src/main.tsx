@@ -51,26 +51,63 @@ if ('serviceWorker' in navigator) {
 
 // Auto-update: a standalone PWA can stay open for days, running a stale bundle
 // long after a deploy (the window never re-navigates, so it never picks up the
-// new content-hashed assets). Poll the HTML shell for the entry script's hash and
-// reload when it changes — on focus and a slow interval. reload() re-navigates,
-// which the service worker serves network-first, pulling the fresh shell + assets.
+// new content-hashed assets). Poll the HTML shell for the entry script's name and
+// reload when it changes — on focus and a slow interval.
+//
+// W2-H: the reload no longer waits on the network. Before, the page dropped the saved shell and
+// reloaded: a blank screen for three round trips plus the script download on a slow link. Now the
+// service worker fetches the new shell, saves its script and stylesheet, and then says
+// `shell-updated`; the reload that follows comes from the worker's cache. The worker says the same
+// when it finds a new build by itself (its refresh after each launch). With no worker, or when the
+// worker cannot fetch the build, the page reloads from the network as before.
+// At an idle moment the page also asks the worker to save the lazy chunks of this build
+// (`warm-chunks`), so the first open of the terminal, the editor or analytics needs no download.
 function watchForUpdates() {
-  const current = (document.querySelector('script[type="module"][src*="/assets/index-"]') as HTMLScriptElement | null)?.src;
+  const current = (document.querySelector('script[type="module"][src*="/assets/"]') as HTMLScriptElement | null)?.src;
   if (!current) return;
+  const sw = 'serviceWorker' in navigator ? navigator.serviceWorker : undefined;
   let reloading = false;
+  /** Set while the worker fetches a new build for us. */
+  let waiting: ReturnType<typeof setTimeout> | undefined;
+  const stopWaiting = () => { clearTimeout(waiting); waiting = undefined; };
+  // The new build is saved: this reload needs no network.
+  const reloadSaved = () => { if (reloading) return; reloading = true; stopWaiting(); location.reload(); };
+  const reloadNetwork = () => { if (reloading) return; reloading = true; stopWaiting(); void reloadFresh(); };
+  /** The entry script a shell names, as an absolute address (the same form as `current`). */
+  const entryOf = (html: string): string | null => {
+    const m = html.match(/<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"/);
+    try { return m ? new URL(m[1], document.baseURI).href : null; } catch { return null; }
+  };
+  sw?.addEventListener('message', (e: MessageEvent) => {
+    const d = e.data as { type?: string; entry?: unknown } | null;
+    if (d?.type === 'shell-updated' && typeof d.entry === 'string' && d.entry !== current) reloadSaved();
+    else if (d?.type === 'shell-refresh-failed' && waiting) reloadNetwork();
+  });
   const check = async () => {
-    if (reloading || document.hidden) return;
+    if (reloading || waiting || document.hidden) return;
     try {
-      const shell = await fetch('/', { cache: 'no-store' });
+      const shell = await fetch(document.baseURI, { cache: 'no-store' });
       if (shell.status === 401) { reloadForSignIn(); return; }
-      const html = await shell.text();
-      const m = html.match(/\/assets\/index-[A-Za-z0-9_]+\.js/);
-      if (m && !current.endsWith(m[0])) { reloading = true; void reloadFresh(); }
+      if (!shell.ok || shell.redirected) return;
+      const entry = entryOf(await shell.text());
+      if (!entry || entry === current || reloading || waiting) return;
+      const worker = sw?.controller;
+      if (!worker) { reloadNetwork(); return; }
+      // The worker answers `shell-updated` (handled above) or `shell-refresh-failed`. No answer in
+      // 20 s (a worker from before W2-H, or a very slow link): the old reload.
+      waiting = setTimeout(reloadNetwork, 20_000);
+      worker.postMessage({ type: 'refresh-shell' });
     } catch { /* offline / transient — try again next tick */ }
   };
   window.addEventListener('focus', () => void check());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) void check(); });
   setInterval(() => void check(), 90_000);
+
+  const warm = () => {
+    if ((navigator as unknown as { connection?: { saveData?: boolean } }).connection?.saveData) return; // the user asked the browser to save data
+    void sw?.ready.then((reg) => (sw.controller ?? reg.active)?.postMessage({ type: 'warm-chunks' })).catch(() => {});
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 15_000 }); else setTimeout(warm, 8000);
 }
 watchForUpdates();
 

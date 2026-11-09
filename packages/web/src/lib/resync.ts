@@ -3,6 +3,7 @@ import { useProjects } from '../stores/projects';
 import { useTabs } from '../stores/tabs';
 import { useLedgerCard } from '../stores/ledgerCard';
 import { useUsageLimits } from '../stores/usageLimits';
+import { resyncWithBootstrap } from './bootstrap';
 
 /**
  * Reconcile board/live state after the events socket reconnects.
@@ -27,14 +28,22 @@ import { useUsageLimits } from '../stores/usageLimits';
  * The usage gauge reloads too: a `usage-limits` broadcast missed while down never replays (#127).
  *
  * The stall flags load again too: a `terminal:stall` missed while down never replays (W1-D).
+ *
+ * One request (W2-H): the thread lists of every project, the stall flags and the usage gauge come in
+ * one answer (`GET /api/bootstrap?parts=…`, lib/bootstrap.ts). Before, a reconnect sent one list
+ * request for each project: with 20 projects on a slow link, four rounds of requests each time the
+ * phone woke. Each store still runs its own loader on its part. An older daemon, or a part the answer
+ * lacks, gets the old request.
  */
 export async function resyncAfterReconnect(): Promise<void> {
   useThreadStatus.getState().reset();
-  const ids = useProjects.getState().sessions.map((s) => s.id);
-  await Promise.all([
-    ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
-    useLedgerCard.getState().reloadAll(),
-    useUsageLimits.getState().load(),
-    useThreadStatus.getState().loadStalls(),
-  ]);
+  await resyncWithBootstrap(['terminalsByProject', 'stalls', 'usageSummary'], async () => {
+    const ids = useProjects.getState().sessions.map((s) => s.id);
+    await Promise.all([
+      ...ids.map((id) => useTabs.getState().loadTabs(id).catch(() => { /* project gone — skip it */ })),
+      useLedgerCard.getState().reloadAll(),
+      useUsageLimits.getState().load(),
+      useThreadStatus.getState().loadStalls(),
+    ]);
+  });
 }
