@@ -602,3 +602,111 @@ describe('upload storage engine', () => {
     expect(fs.existsSync(f)).toBe(false);
   });
 });
+
+// W1-B: the read route never serves a file that holds credentials, to any caller.
+describe('read refuses a path that holds credentials', () => {
+  const OWNER_TOKEN = 'owner-access-token-for-the-files-test-0123456789';
+  const REFUSAL = { error: 'This path holds credentials. Dispatch does not serve it.' };
+  let base: string;
+  let home: string;
+  let dataDir: string;
+  let workDir: string;
+  let otherRepo: string;
+
+  beforeEach(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-files-secret-')));
+    home = path.join(base, 'home');
+    dataDir = path.join(home, '.dispatch');
+    workDir = path.join(home, 'Sites', 'project');
+    otherRepo = path.join(home, 'Sites', 'other-repo');
+    for (const d of [path.join(dataDir, 'keys'), path.join(dataDir, 'roles', 'reviewer'), path.join(home, '.ssh'), workDir, otherRepo]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'access-token'), 'the-owner-token\n');
+    fs.writeFileSync(path.join(dataDir, 'dispatch.db'), 'sqlite bytes');
+    fs.writeFileSync(path.join(dataDir, 'keys', 't1.h1'), 'dtk_thread_key');
+    fs.writeFileSync(path.join(dataDir, 'roles', 'reviewer', 'role.md'), 'a role file');
+    fs.writeFileSync(path.join(home, '.ssh', 'id_ed25519'), 'PRIVATE KEY');
+    fs.writeFileSync(path.join(otherRepo, 'readme.md'), 'other repository');
+    fs.writeFileSync(path.join(workDir, 'ok.txt'), 'fine');
+  });
+  afterEach(() => { fs.rmSync(base, { recursive: true, force: true }); });
+
+  /** The full principal chain: `via` is how the access gate let the request in; a Bearer token makes the owner. */
+  async function secretApp(dir: string = workDir) {
+    const { createPrincipalMiddleware } = await import('../auth/request-principal.js');
+    const { createKeyScope } = await import('../auth/key-scope.js');
+    const { KeyRegistry } = await import('../auth/principals.js');
+    const { GATE_VIA } = await import('../auth/access-gate.js');
+    const { defaultSecretRoots } = await import('../files/secret-paths.js');
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'test', workingDir: dir });
+    const app = express();
+    app.use((req, _res, next) => { (req as any)[GATE_VIA] = 'local'; next(); });
+    app.use(createPrincipalMiddleware({ registry: new KeyRegistry(), scope: createKeyScope(db), getToken: () => OWNER_TOKEN, via: 'test' }));
+    app.use(express.json());
+    app.use('/api/sessions/:id/files', createFilesRouter(db, { secretRoots: defaultSecretRoots(dataDir, home) }));
+    return app;
+  }
+  const read = (app: express.Express, p: string, owner = false, extra: Record<string, string> = {}) => {
+    const r = request(app).get('/api/sessions/s1/files/read').query({ path: p, ...extra });
+    return owner ? r.set('Authorization', `Bearer ${OWNER_TOKEN}`) : r;
+  };
+
+  it('an absolute read of the access token answers 403', async () => {
+    const app = await secretApp();
+    for (const owner of [true, false]) {
+      for (const p of [path.join(dataDir, 'access-token'), path.join(dataDir, 'dispatch.db'), path.join(dataDir, 'keys', 't1.h1'), path.join(home, '.ssh', 'id_ed25519')]) {
+        const res = await read(app, p, owner);
+        expect(res.status, `${owner ? 'owner' : 'no credential'} ${p}`).toBe(403);
+        expect(res.body).toEqual(REFUSAL);
+        expect(res.text).not.toContain('the-owner-token');
+      }
+    }
+  });
+
+  it('the binary probe (sniff=1) of a secret answers 403 too, and a missing file in a secret folder gives the same answer', async () => {
+    const app = await secretApp();
+    expect((await read(app, path.join(dataDir, 'access-token'), true, { sniff: '1' })).status).toBe(403);
+    const missing = await read(app, path.join(home, '.ssh', 'no-such-key'));
+    expect(missing.status).toBe(403);
+    expect(missing.body).toEqual(REFUSAL);
+  });
+
+  it('a symbolic link that points at a secret answers 403', async () => {
+    const app = await secretApp();
+    // A link in another repository (the absolute-path escape hatch), a linked folder, and a link inside the project.
+    fs.symlinkSync(path.join(dataDir, 'access-token'), path.join(otherRepo, 'notes.txt'));
+    fs.symlinkSync(path.join(home, '.ssh'), path.join(otherRepo, 'docs'));
+    fs.symlinkSync(path.join(dataDir, 'access-token'), path.join(workDir, 'leaf.txt'));
+    for (const owner of [true, false]) {
+      for (const p of [path.join(otherRepo, 'notes.txt'), path.join(otherRepo, 'docs', 'id_ed25519'), 'leaf.txt', path.join(workDir, 'leaf.txt')]) {
+        const res = await read(app, p, owner);
+        expect(res.status, `${owner ? 'owner' : 'no credential'} ${p}`).toBe(403);
+        expect(res.text).not.toContain('the-owner-token');
+        expect(res.text).not.toContain('PRIVATE KEY');
+      }
+    }
+    expect((await read(app, path.join(otherRepo, 'notes.txt'))).body).toEqual(REFUSAL);
+  });
+
+  it('an absolute read of a file in another repository still answers 200', async () => {
+    const app = await secretApp();
+    for (const owner of [true, false]) {
+      const res = await read(app, path.join(otherRepo, 'readme.md'), owner);
+      expect(res.status).toBe(200);
+      expect(res.body.content).toBe('other repository');
+    }
+    expect((await read(app, 'ok.txt')).body.content).toBe('fine');
+  });
+
+  it('an ordinary file in the data dir still reads; a project that IS the data dir cannot read the token by a relative path', async () => {
+    const role = await read(await secretApp(), path.join(dataDir, 'roles', 'reviewer', 'role.md'));
+    expect(role.status).toBe(200);
+    expect(role.body.content).toBe('a role file');
+    const app = await secretApp(dataDir);
+    expect((await read(app, 'roles/reviewer/role.md')).status).toBe(200);
+    const res = await read(app, 'access-token', true);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(REFUSAL);
+  });
+});

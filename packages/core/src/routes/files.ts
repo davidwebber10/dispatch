@@ -14,6 +14,7 @@ import { insideRealRoot, within } from '../files/confine.js';
 import { openInside } from '../files/confinedOpen.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
+import { defaultSecretRoots, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -155,8 +156,10 @@ export const uploadStorage: multer.StorageEngine = {
   },
 };
 
-export function createFilesRouter(db: Database.Database): Router {
+export function createFilesRouter(db: Database.Database, opts: { secretRoots?: SecretRoots } = {}): Router {
   const router = policyRouter({ mergeParams: true });
+  // The credential deny-list of the read route (files/secret-paths.ts). A test gives its own roots.
+  const secretRoots = opts.secretRoots ?? defaultSecretRoots(platform.dataDir());
   // Recreate the temp dir on EVERY request, not once at startup (multer's `dest`
   // shorthand): macOS purges /tmp entries idle for ~3 days, so on a long-running
   // daemon the dir vanishes mid-uptime and every upload then fails with ENOENT
@@ -315,6 +318,15 @@ export function createFilesRouter(db: Database.Database): Router {
       return res.status(403).json({ error: 'Path traversal not allowed' });
     }
 
+    // Credentials are never served, to any caller (the owner too). The check is on the REAL path, so a symbolic link
+    // cannot go around it; the path as written is checked as well, so a name in a secret folder gets the same answer
+    // whether the file exists or not.
+    let real: string | null = null;
+    try { real = await fs.promises.realpath(resolved); } catch { /* missing or unreadable: the open below reports it */ }
+    if (isSecretPath(resolved, secretRoots) || (real !== null && isSecretPath(real, secretRoots))) {
+      return res.status(403).json({ error: SECRET_PATH_ERROR });
+    }
+
     try {
       // Regular files only: a device or FIFO can fill memory or block forever. Open without blocking,
       // then check the OPEN descriptor (not the path), and read at most the cap plus one byte so a file that
@@ -332,7 +344,11 @@ export function createFilesRouter(db: Database.Database): Router {
         fh = o.fh;
         st = o.st;
       } else {
-        fh = await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        // Open the real path that was just checked, and do not follow a link at its last part: a link put there after
+        // the check is refused (ELOOP), not read.
+        fh = real !== null
+          ? await fs.promises.open(real, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW)
+          : await fs.promises.open(resolved, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
         st = await fh.stat();
       }
       try {
