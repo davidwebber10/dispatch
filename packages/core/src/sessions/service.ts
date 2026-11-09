@@ -1528,6 +1528,10 @@ export class SessionService {
     return this.ptyManager.isAlive(terminalId) || !!this.structuredManagerForTerminal(terminalId)?.isAlive(terminalId);
   }
 
+  /** A question that only the database still holds after a restart (sessions/boot-reconcile.ts, W2-C). */
+  private restoredQuestions?: import('./boot-reconcile.js').RestoredQuestions;
+  setRestoredQuestions(r: import('./boot-reconcile.js').RestoredQuestions): void { this.restoredQuestions = r; }
+
   /** Arm or clear the overseer's interim recap timer after a notice (see sessions/interim-recap.ts). */
   private updateInterimTimer(coordinatorId: string, kind: NoticeKind, busy: boolean): void {
     try {
@@ -1999,7 +2003,8 @@ export class SessionService {
 
   /** The gated tool/question a structured AGENT thread is blocked on, or null. */
   getPendingPermission(terminalId: string): import('../structured/manager.js').PendingPermission | null {
-    return this.structuredManagerForTerminal(terminalId)?.getPending(terminalId) ?? null;
+    // W2-C: a question asked before a daemon restart is not in the new manager's memory; the saved one is shown again.
+    return this.structuredManagerForTerminal(terminalId)?.getPending(terminalId) ?? this.restoredQuestions?.get(terminalId) ?? null;
   }
 
   /** The terminal's current PTY scrollback ring size in bytes (0 if not live). */
@@ -2053,7 +2058,8 @@ export class SessionService {
     const manager = this.structuredManagerForTerminal(terminalId);
     if (!manager) return false;
     const pending = manager.getPending(terminalId);
-    if (!pending) return false;
+    // W2-C: no live question, but one saved before a restart: the answer starts the thread again as a message that quotes it.
+    if (!pending) return this.restoredQuestions?.answer(terminalId, requestId, opts) ?? false;
     if (opts.decision === 'allow') {
       const remappedAnswers = opts.answers ? this.remapAnswersToQuestionText(pending.questions, opts.answers) : undefined;
       const updatedInput = {
@@ -2105,6 +2111,8 @@ export class SessionService {
   answerQuestionInChat(terminalId: string, requestId: string, reply: string, imageCount = 0, from: 'user' | 'chat' = 'user'): 'delivered' | 'not-found' | 'unsupported' {
     const manager = this.structuredManagerForTerminal(terminalId);
     const pending = manager?.getPending(terminalId);
+    // W2-C: a reply to a question saved before a restart goes out as one message that quotes the question.
+    if (manager && !pending && requestId && this.restoredQuestions?.answer(terminalId, requestId, { reply, imageCount, from })) return 'delivered';
     if (!manager || !pending?.questions?.length || !requestId || pending.requestId !== requestId) return 'not-found';
     if (!manager.repliesToQuestions) return 'unsupported';
     const message = questionReplyMessage(reply, imageCount, from);

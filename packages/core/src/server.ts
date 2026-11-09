@@ -127,6 +127,7 @@ import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
 import type { DeliverResult } from './delivery/outbox.js';
 import { createDeliveryOutbox, subscribeDeliveryOutbox, flushOutboxAtBoot } from './delivery/wiring.js';
+import { reconcileAtBoot, wireRestoredQuestions } from './sessions/boot-reconcile.js';
 import { trackingStartedAt } from './routes/analytics.js';
 import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
 
@@ -473,6 +474,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setPluginInjection((harness, sessionId) => { const inj = plugins.modelInjection(harness); return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness)] }; });
   sessionService.setUserPromptListener((id, text, source) => threadEvents.onPrompt(id, text, source));
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
+  wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -737,6 +739,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.locals.installer = installer;
   app.locals.skills = skills;
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
+  wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
   agentService.setLifecycleService(statusService);
@@ -1186,6 +1189,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           // the phantom-"Working…" settle for replays that end mid-turn (see ws/structured.ts).
           (tid) => sessionService.getTerminal(tid)?.status !== 'working',
           (tid) => sessionService.activeModel(tid),
+          (tid) => sessionService.getPendingPermission(tid),
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
@@ -1315,10 +1319,17 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     .finally(() => {
       try {
         const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
-        statusService.reconcileProcesses(alive);
+        // W2-C: a scheduled wake that the restart killed is flagged, and a thread that waits on a saved
+        // question keeps waiting: the process check below must not turn it into an error, nor close its run.
+        const reconciled = reconcileAtBoot({ db, isAlive: alive, markIdle: (id, activity) => statusService.markIdle(id, activity), outbox });
+        if (reconciled.lostWakes.length) console.log(`Flagged ${reconciled.lostWakes.length} scheduled wake(s) that the restart lost`);
+        if (reconciled.restoredQuestions.length) console.log(`Kept ${reconciled.restoredQuestions.length} pending question(s) through the restart`);
+        const waitsOnQuestion = new Set(reconciled.restoredQuestions);
+        const aliveOrWaiting = (id: string) => alive(id) || waitsOnQuestion.has(id);
+        statusService.reconcileProcesses(aliveOrWaiting);
         // Runs that the restart left open: closed here, so their schedules can fire again (W1-D).
         // After the kickstart and the process check, so a thread that runs again keeps its run.
-        const orphaned = agentService.reconcileRunsAtBoot(alive);
+        const orphaned = agentService.reconcileRunsAtBoot(aliveOrWaiting);
         if (orphaned.length) console.log(`Closed ${orphaned.length} run(s) that the restart left open`);
         // Old per-thread MCP files: removed once the threads that will run again have rewritten theirs.
         const swept = sweepThreadMcpConfigs(dataDir, alive);

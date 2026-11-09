@@ -98,6 +98,11 @@ export function handleStructuredConnection(
    * not replayed at all, so without it the Pretty header had no model or a stale one.
    */
   currentModel?: (terminalId: string) => string | undefined,
+  /**
+   * A question the thread asked before a daemon restart (W2-C): the manager's memory lost it, the
+   * database kept it. Sent as the same `permission` frame as a live one, so the same inline card shows.
+   */
+  restoredPending?: (terminalId: string) => unknown,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -148,7 +153,8 @@ export function handleStructuredConnection(
   try { model = currentModel?.(id); } catch { model = undefined; }
   if (model) frames.push({ type: 'system', subtype: 'model', model });
   // Replay a still-pending permission on (re)connect so a refresh re-surfaces it.
-  const initialPending = manager.getPending(id);
+  let initialPending: unknown = manager.getPending(id);
+  if (!initialPending) { try { initialPending = restoredPending?.(id) ?? null; } catch { initialPending = null; } }
   if (initialPending) frames.push({ type: 'permission', pending: initialPending });
   // Live events during the replay are held and sent after it, so the order the client sees is unchanged. The held
   // list is bounded (by 4 times the back-pressure limit, in bytes, the same as the hard ceiling): a client that cannot keep up with the history while the
