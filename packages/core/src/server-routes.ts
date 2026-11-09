@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import type { ClaudeLoginService } from './auth/claude-login.js';
 import { CodexLoginService } from './auth/codex-login.js';
+import { createThreadSecretsRouter } from './routes/thread-secrets.js';
 import type { SecretsService } from './secrets/service.js';
 import type { IntegrationsService } from './integrations/service.js';
 import type { PushService } from './push/service.js';
@@ -156,6 +157,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
 
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
+  app.use('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
   app.use('/api', createLedgerRouter(d.ledgerService));
   const accountsForAssist = d.assistAccounts ?? d.accounts;
   app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {

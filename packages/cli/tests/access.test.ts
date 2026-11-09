@@ -8,6 +8,7 @@ import { runCommand } from '../src/index.js';
 function fakeAccess() {
   let token = 'tok-1';
   const hosts: string[] = [];
+  let cf: { teamDomain: string; aud: string } | null = null;
   return {
     ensureAccessToken: vi.fn(() => token),
     rotateAccessToken: vi.fn(() => (token = 'tok-2')),
@@ -15,6 +16,11 @@ function fakeAccess() {
       allowedHosts: () => hosts, allowedOrigins: () => [],
       addHost: (n: string) => { hosts.push(n.toLowerCase()); },
       removeHost: (n: string) => { hosts.splice(hosts.indexOf(n.toLowerCase()), 1); },
+      cloudflareAccess: () => cf,
+      setCloudflareAccess: (v: { teamDomain: string; aud: string } | null) => {
+        if (v && !v.teamDomain.endsWith('.cloudflareaccess.com')) throw new Error('not a team domain: it has the form <name>.cloudflareaccess.com');
+        cf = v;
+      },
     })),
   };
 }
@@ -88,6 +94,62 @@ describe('dispatch access', () => {
   });
 });
 
+// W1-C: the Cloudflare Access check.
+describe('dispatch access cloudflare', () => {
+  const AUD = 'a'.repeat(64);
+  test('--team-domain and --aud turn the check on and say so', async () => {
+    const a = fakeAccess();
+    await run(['allow-host', 'dispatch.example.com'], a);
+    out.length = 0;
+    await run(['cloudflare', '--team-domain', 'acme.cloudflareaccess.com', '--aud', AUD], a);
+    expect(a.createAccessConfig.mock.results.at(-1)!.value.cloudflareAccess()).toEqual({ teamDomain: 'acme.cloudflareaccess.com', aud: AUD });
+    const text = out.join('\n');
+    expect(text).toContain('Cloudflare Access check: on (team acme.cloudflareaccess.com)');
+    expect(text).toMatch(/sign-in page/);
+    expect(text).not.toMatch(/No host is allow-listed/);
+  });
+  test('the flags can come in either order, and no allow-listed host gives one advice line', async () => {
+    const a = await run(['cloudflare', '--aud', AUD, '--team-domain', 'acme.cloudflareaccess.com']);
+    expect(a.createAccessConfig.mock.results.at(-1)!.value.cloudflareAccess()).toEqual({ teamDomain: 'acme.cloudflareaccess.com', aud: AUD });
+    expect(out.join('\n')).toMatch(/No host is allow-listed/);
+  });
+  test('--off turns the check off', async () => {
+    const a = fakeAccess();
+    await run(['cloudflare', '--team-domain', 'acme.cloudflareaccess.com', '--aud', AUD], a);
+    out.length = 0;
+    await run(['cloudflare', '--off'], a);
+    expect(a.createAccessConfig.mock.results.at(-1)!.value.cloudflareAccess()).toBeNull();
+    expect(out.join('\n')).toContain('Cloudflare Access check: off');
+  });
+  test('with no flag it prints the state and changes nothing', async () => {
+    const a = fakeAccess();
+    await run(['cloudflare'], a);
+    expect(out.join('\n')).toContain('Cloudflare Access check: off');
+    await run(['cloudflare', '--team-domain', 'acme.cloudflareaccess.com', '--aud', AUD], a);
+    out.length = 0;
+    await run(['cloudflare'], a);
+    expect(out.join('\n')).toContain('Cloudflare Access check: on (team acme.cloudflareaccess.com)');
+  });
+  test('one value without the other, an unknown flag and --off with a value are usage errors', async () => {
+    await expect(run(['cloudflare', '--team-domain', 'acme.cloudflareaccess.com'])).rejects.toThrow(/usage: dispatch access cloudflare/);
+    await expect(run(['cloudflare', '--aud', AUD])).rejects.toThrow(/usage/);
+    await expect(run(['cloudflare', '--team-domain', '--aud', AUD])).rejects.toThrow(/usage/);
+    await expect(run(['cloudflare', '--on'])).rejects.toThrow(/usage/);
+    await expect(run(['cloudflare', '--off', '--aud', AUD])).rejects.toThrow(/usage/);
+  });
+  test('a value that is not a team domain is refused with the reason, and nothing is saved', async () => {
+    const a = fakeAccess();
+    await expect(run(['cloudflare', '--team-domain', 'acme.example.com', '--aud', AUD], a)).rejects.toThrow(/team domain/);
+    expect(a.createAccessConfig.mock.results.at(-1)!.value.cloudflareAccess()).toBeNull();
+  });
+  test('refuses inside a Dispatch thread', async () => {
+    vi.stubEnv('DISPATCH_TERMINAL_ID', 't1');
+    vi.stubEnv('DISPATCH_AUTH', 'dtk_thread_key_for_the_test');
+    vi.stubEnv('DISPATCH_API', 'http://localhost:3456');
+    await expect(run(['cloudflare', '--off'])).rejects.toThrow(/not in a Dispatch thread/);
+  });
+});
+
 describe('dispatch status', () => {
   test('prints the network line, never a token', () => {
     const daemon = { status: () => ({ loaded: true, pid: 1 }) } as any;
@@ -95,5 +157,43 @@ describe('dispatch status', () => {
     const text = out.join('\n');
     expect(text).toContain('Network: other devices need the access token');
     expect(text).not.toContain('tok-');
+  });
+
+  // W1-C. `status` reads access.json itself: it is synchronous and never loads the daemon's code.
+  const status = () => {
+    out.length = 0;
+    runCommand(['status'], { daemon: { status: () => ({ loaded: true, pid: 1 }) } as any, port: 3456, probe: () => false, dataDir } as any);
+    return out.join('\n');
+  };
+  const writeAccess = (v: unknown) => fs.writeFileSync(path.join(dataDir, 'access.json'), JSON.stringify(v));
+
+  test('Cloudflare Access check: off, with no advice while no host is allow-listed', () => {
+    expect(status()).toContain('Cloudflare Access check: off');
+    expect(status()).not.toMatch(/Advice/);
+    writeAccess({ allowedHosts: [] });
+    expect(status()).not.toMatch(/Advice/);
+  });
+  test('off with an allow-listed host: one advice line', () => {
+    writeAccess({ allowedHosts: ['dispatch.example.com'] });
+    const text = status();
+    expect(text).toContain('Cloudflare Access check: off');
+    expect(text.split('\n').filter((l) => /^Advice:/.test(l))).toHaveLength(1);
+    expect(text).toMatch(/Advice: .*dispatch access cloudflare --team-domain/);
+  });
+  test('on: the team is named, the aud is not, and there is no advice', () => {
+    writeAccess({ allowedHosts: ['dispatch.example.com'], cloudflareAccess: { teamDomain: 'acme.cloudflareaccess.com', aud: 'a'.repeat(64) } });
+    const text = status();
+    expect(text).toContain('Cloudflare Access check: on (team acme.cloudflareaccess.com)');
+    expect(text).not.toContain('a'.repeat(64));
+    expect(text).not.toMatch(/Advice/);
+  });
+  test('a saved value that is not valid is reported, not hidden', () => {
+    writeAccess({ allowedHosts: ['dispatch.example.com'], cloudflareAccess: { teamDomain: 'typo' } });
+    expect(status()).toMatch(/Cloudflare Access check: on \(the saved value is not valid/);
+  });
+  test('with no data directory the line is left out', () => {
+    out.length = 0;
+    runCommand(['status'], { daemon: { status: () => ({ loaded: true, pid: 1 }) } as any, port: 3456, probe: () => false } as any);
+    expect(out.join('\n')).not.toMatch(/Cloudflare Access/);
   });
 });

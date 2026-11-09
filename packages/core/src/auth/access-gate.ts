@@ -10,6 +10,7 @@ import {
   isLoopbackName, normalizeHostHeader, originHostPort, type AccessConfig,
 } from './known-hosts.js';
 import { isTailscaleAddress, type TailscaleAccess } from './tailscale-access.js';
+import { cfAccessVerifierFor, type CfAccessVerifier, type CloudflareAccessConfig } from './cf-access.js';
 
 /**
  * The Phase 1 request gate (network exposure spec, section 7). `decide` is a pure function of
@@ -35,6 +36,8 @@ export interface GateRequest {
   /** The nearest proxy's view of the client (last X-Forwarded-For entry), for the device list only. */
   nearestForwardedFor?: string;
   userAgent?: string;
+  /** `Cf-Access-Jwt-Assertion`: the JWT that Cloudflare Access adds after its own sign-in. Checked only when the owner turned the check on. */
+  cfAccessJwt?: string;
   isApi: boolean;
   isUpgrade: boolean;
 }
@@ -46,6 +49,8 @@ export interface GateDeps {
   tailscale: TailscaleAccess;
   /** Signed-in devices. Absent on a hosted box and in tests that predate the device list: the cookie is then the old shared one. */
   devices?: DeviceStore;
+  /** The Cloudflare Access verifier for a saved config. Tests pass a fake; the default keeps one per config, with its key cache. */
+  cfAccess?: (config: CloudflareAccessConfig) => CfAccessVerifier;
 }
 
 /** What a request proved. A cookie names a device, or (deviceId null) is the shared cookie from before the device list. */
@@ -97,7 +102,19 @@ async function isKnownLocalHost(req: GateRequest, host: string, deps: GateDeps):
   // A loopback name does not prove the caller is local when a proxy relayed the request: some
   // tunnels rewrite Host to `localhost`. Such a request needs a name the owner vouched for.
   if (!req.proxied && isLoopbackName(host)) return true;
-  if (deps.config.allowedHosts().includes(host)) return true;
+  if (deps.config.allowedHosts().includes(host)) {
+    // No Cloudflare Access check saved: the name alone vouches, as before.
+    const cf = deps.config.cloudflareAccess();
+    if (!cf) return true;
+    // Check on: the name counts only with an assertion that Cloudflare signed for the owner's team
+    // and application. Without one the host is not vouched for here, and the request goes on to the
+    // normal sign-in (cookie or token). This is never a hard refusal.
+    if (cf.teamDomain && cf.aud && req.cfAccessJwt) {
+      try {
+        if ((await (deps.cfAccess ?? cfAccessVerifierFor)(cf).verify(req.cfAccessJwt)).ok) return true;
+      } catch { /* not vouched */ }
+    }
+  }
   // A Tailscale name counts for a loopback peer only when `tailscale serve` vouched for the
   // caller. Funnel traffic (public internet) carries no identity header, so it falls through.
   // The login must be the owner's: a coworker on a shared tailnet reaches `tailscale serve` too (NE-3).
@@ -200,6 +217,7 @@ function factsFrom(
     forwardedFor: soleForwarded(h),
     nearestForwardedFor: lastForwarded(h),
     userAgent: one(h['user-agent']),
+    cfAccessJwt: one(h['cf-access-jwt-assertion']),
     isApi,
     isUpgrade,
   };

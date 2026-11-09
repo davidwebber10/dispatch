@@ -371,7 +371,10 @@ export interface OpencodeCatalogEntry {
 }
 
 // Secrets (Doppler) — mirrors core /api/secrets.
-export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean }
+/** Which threads get DOPPLER_TOKEN in their environment: every thread, or only a thread the owner turned on (config.secretsEnv). */
+export type DopplerTokenScope = 'all' | 'opted-in';
+/** `tokenScope` is absent from a daemon older than v4.5.0; that reads as 'all'. */
+export interface DopplerStatus { connected: boolean; project: string | null; config: string | null; enabled: boolean; readOnly: boolean; tokenScope?: DopplerTokenScope }
 export interface DopplerSecret { name: string }
 export interface DopplerProject { id: string; slug: string; name: string }
 export interface DopplerConfig { name: string; environment: string }

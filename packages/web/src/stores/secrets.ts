@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig } from '../api/types';
+import type { DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, DopplerTokenScope } from '../api/types';
 
 interface SecretsState {
   status: DopplerStatus | null;
@@ -8,6 +8,10 @@ interface SecretsState {
   projects: DopplerProject[];
   configs: DopplerConfig[];
   loadStatus: () => Promise<void>;
+  /** The status alone, with no secret list: what the thread menu needs to know the token scope. A failed read keeps the last status. */
+  loadScope: () => Promise<void>;
+  /** Change which threads get the Doppler token. Nothing else of the connection is sent. */
+  setTokenScope: (scope: DopplerTokenScope) => Promise<void>;
   connect: (input: { token: string; project: string; config: string; enabled: boolean; readOnly: boolean }) => Promise<void>;
   disconnect: () => Promise<void>;
   loadProjects: () => Promise<void>;
@@ -33,6 +37,14 @@ export const useSecrets = create<SecretsState>((set, get) => ({
     } catch {
       set({ status: null });
     }
+  },
+
+  loadScope: async () => {
+    try { set({ status: await api.getSecretsStatus() }); } catch { /* keep the last status */ }
+  },
+
+  setTokenScope: async (scope) => {
+    set({ status: await api.setDopplerConnection({ tokenScope: scope }) });
   },
 
   connect: async (input) => {

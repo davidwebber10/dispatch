@@ -166,3 +166,68 @@ test('a bad token says so', async () => {
   fireEvent.click(within(group).getByRole('button', { name: 'Connect' }));
   expect(await screen.findByText(/Could not connect/)).toBeInTheDocument();
 });
+
+// W1-C (engineering program v4.5.0): which threads get the Doppler token in their environment.
+const connected = (tokenScope: 'all' | 'opted-in') => ({ connected: true, project: 'acme', config: 'dev', enabled: true, readOnly: false, tokenScope });
+
+test('shows the scope select and saves it', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(connected('all'));
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue(connected('opted-in'));
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  const doppler = screen.getByRole('group', { name: 'Doppler' });
+  const select = within(doppler).getByRole('combobox', { name: 'Give the Doppler token to' });
+  expect(select).toHaveTextContent('Every thread');
+
+  fireEvent.click(select);
+  const options = screen.getAllByRole('option').map((o) => o.textContent);
+  expect(options).toEqual(['Every thread', 'Only threads that I turn on']);
+  fireEvent.click(screen.getByRole('option', { name: 'Only threads that I turn on' }));
+  // Only the scope is sent: the token, the project and the config stay as the daemon has them.
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ tokenScope: 'opted-in' }));
+  await waitFor(() => expect(within(doppler).getByRole('combobox', { name: 'Give the Doppler token to' })).toHaveTextContent('Only threads that I turn on'));
+  expect(screen.getByText(/takes effect when a thread next starts/i)).toBeInTheDocument();
+});
+
+test('with scope all: one line of advice with a button that changes the scope', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(connected('all'));
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue(connected('opted-in'));
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  const advice = screen.getByTestId('token-scope-advice');
+  expect(advice).toHaveTextContent(/Every thread can read the Doppler token/);
+  fireEvent.click(within(advice).getByRole('button', { name: 'Limit to threads that I turn on' }));
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ tokenScope: 'opted-in' }));
+  await waitFor(() => expect(screen.queryByTestId('token-scope-advice')).not.toBeInTheDocument());
+});
+
+test('with scope opted-in: no advice, and the select can go back to every thread', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(connected('opted-in'));
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue(connected('all'));
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  expect(screen.queryByTestId('token-scope-advice')).not.toBeInTheDocument();
+  expect(screen.getByText(/thread menu/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('combobox', { name: 'Give the Doppler token to' }));
+  fireEvent.click(screen.getByRole('option', { name: 'Every thread' }));
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ tokenScope: 'all' }));
+});
+
+test('a scope change that fails says so and keeps the old value', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(connected('all'));
+  vi.spyOn(api, 'setDopplerConnection').mockRejectedValue(new Error('nope'));
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: 'Limit to threads that I turn on' }));
+  await waitFor(() => expect(screen.getByText('Could not change the token scope.')).toBeInTheDocument());
+  expect(screen.getByRole('combobox', { name: 'Give the Doppler token to' })).toHaveTextContent('Every thread');
+});
+
+test('the read-only switch does not send or change the scope', async () => {
+  vi.spyOn(api, 'getSecretsStatus').mockResolvedValue(connected('opted-in'));
+  const set = vi.spyOn(api, 'setDopplerConnection').mockResolvedValue({ ...connected('opted-in'), readOnly: true });
+  render(<SecretsSection />);
+  await waitFor(() => expect(screen.getByText('API_KEY')).toBeInTheDocument());
+  fireEvent.click(screen.getByRole('switch', { name: 'Read-only' }));
+  await waitFor(() => expect(set).toHaveBeenCalledWith({ token: '', project: 'acme', config: 'dev', enabled: true, readOnly: true }));
+});

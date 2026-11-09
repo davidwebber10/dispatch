@@ -125,6 +125,62 @@ whose proxy has its own sign-in: Dispatch then trusts it like `localhost`. `tail
 `dispatch access list-hosts` and `dispatch access remove-host NAME` manage the list
 (`~/.dispatch/access.json`).
 
+## Cloudflare Access verification
+
+`allow-host` trusts a name. A name is not proof: any program on this computer can send that
+`Host` header to the daemon, and a tunnel with no Access policy sends it for every visitor. When
+Cloudflare Access protects the name, Dispatch can check the proof that Cloudflare adds.
+
+After its own sign-in, Cloudflare Access adds a header to each request, `Cf-Access-Jwt-Assertion`.
+It is a signed token (a JWT) for your team and for one Access application.
+
+The check is **off** by default. An install that does not turn it on behaves exactly as before.
+
+Turn it on:
+
+```bash
+dispatch access cloudflare --team-domain YOUR-TEAM.cloudflareaccess.com --aud YOUR-AUD-TAG
+```
+
+- The team domain is in the Zero Trust dashboard: Settings, Custom Pages (or the address of your
+  Access sign-in page).
+- The aud tag is on the Access application: Overview, "Application Audience (AUD) Tag".
+- Neither value is a secret. The daemon reads the change with no restart.
+
+With the check on:
+
+- A request to an allow-listed host counts as "this computer" **only** when it carries a valid
+  assertion: signed by your team's key (RS256), for your aud tag, from your team domain, and not
+  expired. The clock tolerance is 60 seconds.
+- A request to an allow-listed host with a missing or invalid assertion gets the normal sign-in
+  (the sign-in page, or `401` on `/api`). It is never a hard refusal. The access token and a
+  signed-in device cookie still work.
+- `localhost` on this computer, Tailscale and the sign-in page do not change.
+- Dispatch reads the team's public keys from
+  `https://YOUR-TEAM.cloudflareaccess.com/cdn-cgi/access/certs` and keeps them in memory. A key
+  that it does not know causes one new read, at most once per 60 seconds. If the keys cannot be
+  read and none is in memory, the request gets the sign-in page and the daemon logs one line per
+  minute.
+
+Other commands:
+
+```bash
+dispatch access cloudflare          # print the state
+dispatch access cloudflare --off    # trust an allow-listed host by its name alone again
+dispatch status                     # prints "Cloudflare Access check: on (team ...)" or "off"
+```
+
+When a host is allow-listed and the check is off, `dispatch status` prints one line of advice.
+
+Limits:
+
+- The check proves that the request passed your Access policy. It does not replace that policy.
+- The values are in `~/.dispatch/access.json` (`cloudflareAccess`). If you edit the file by hand
+  and a value is not valid, the check stays on and no allow-listed host passes it. Run the command
+  again to repair it.
+- A program on this computer that runs as you can read the access token (see "What this does not
+  cover"). The check does not change that.
+
 ## Thread keys
 
 Every agent thread that Dispatch starts gets its own key. The key lives in the environment of

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeSlash, Copy, Check, Trash, Plus } from '@phosphor-icons/react';
+import { Eye, EyeSlash, Copy, Check, Trash, Plus, ShieldWarning } from '@phosphor-icons/react';
+import type { DopplerTokenScope } from '../../api/types';
 import { useSecrets } from '../../stores/secrets';
 import { api } from '../../api/client';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -41,6 +42,8 @@ export function SecretsSection() {
   // The secret a delete is asking about, and whether Disconnect is asking.
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  // Set after a scope change in this visit: the change reaches a thread at its next start.
+  const [scopeChanged, setScopeChanged] = useState(false);
   // Bumped whenever the fetched values are dropped: a reveal or copy that was already in flight
   // belongs to the old generation, and its answer is thrown away.
   const generation = useRef(0);
@@ -58,6 +61,8 @@ export function SecretsSection() {
 
   const connected = !!status?.connected;
   const readOnly = !!status?.readOnly;
+  // A daemon from before the scope existed sends none: every thread gets the token there.
+  const tokenScope: DopplerTokenScope = status?.tokenScope === 'opted-in' ? 'opted-in' : 'all';
   const canAdd = !!newName.trim() && !!newValue.trim() && !readOnly && !busy;
   const filtered = query ? secrets.filter((s) => s.name.toLowerCase().includes(query.toLowerCase())) : secrets;
   const allShown = filtered.length > 0 && filtered.every((s) => reveal[s.name]);
@@ -92,6 +97,15 @@ export function SecretsSection() {
     // token left blank: daemon keeps the stored token, updates only flags.
     try { await useSecrets.getState().connect({ token: '', project: status.project ?? '', config: status.config ?? '', enabled: status.enabled, readOnly: !readOnly }); }
     catch { setErr('Could not update read-only.'); }
+    setBusy(false);
+  }
+
+  /** Which threads get DOPPLER_TOKEN in their environment (W1-C). Only the scope is sent. */
+  async function changeScope(scope: DopplerTokenScope) {
+    if (busy || scope === tokenScope) return;
+    setBusy(true); setErr('');
+    try { await useSecrets.getState().setTokenScope(scope); setScopeChanged(true); }
+    catch { setErr('Could not change the token scope.'); }
     setBusy(false);
   }
 
@@ -221,6 +235,11 @@ export function SecretsSection() {
   );
   const count = `${secrets.length} variable${secrets.length === 1 ? '' : 's'}`;
 
+  const scopeSelect = (
+    <Select ariaLabel="Give the Doppler token to" value={tokenScope} disabled={busy} onChange={(v) => void changeScope(v as DopplerTokenScope)} style={{ width: isMobile ? '100%' : 230 }}
+      options={[{ value: 'all', label: 'Every thread' }, { value: 'opted-in', label: 'Only threads that I turn on' }]} />
+  );
+
   return (
     <SettingsPage intro={INTRO}>
       <SettingsGroup title="Doppler">
@@ -228,6 +247,24 @@ export function SecretsSection() {
           control={<StatusMark tone="accent">Connected</StatusMark>} />
         <SettingsRow label="Read-only" hint={readOnly ? 'Values come from Doppler; nothing on this daemon can change them.' : 'Edits allowed. Changes write to Doppler.'}
           control={<Toggle on={readOnly} label="Read-only" disabled={busy} onClick={() => void toggleReadOnly()} />} />
+        <SettingsRow label="Give the Doppler token to"
+          hint={<>
+            {tokenScope === 'all'
+              ? 'Every thread has DOPPLER_TOKEN in its environment.'
+              : 'A thread has DOPPLER_TOKEN only after you turn it on in the thread menu (More). The Doppler tools and the integrations work in every thread.'}
+            {scopeChanged && <span style={{ display: 'block' }}>The change takes effect when a thread next starts.</span>}
+          </>}
+          control={isMobile ? undefined : scopeSelect}>
+          {/* On a phone the select takes its own line: beside the label it cut its text short. */}
+          {isMobile ? scopeSelect : null}
+        </SettingsRow>
+        {tokenScope === 'all' && (
+          <div key="scope-advice" data-testid="token-scope-advice" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+            <ShieldWarning size={16} style={{ flexShrink: 0, color: 'var(--color-status-amber, var(--color-text-secondary))' }} />
+            <span style={{ flex: '1 1 220px', minWidth: 0 }}>Every thread can read the Doppler token. Most threads need only the Doppler tools.</span>
+            <button type="button" onClick={() => void changeScope('opted-in')} disabled={busy} style={{ ...ghostBtn, height: isMobile ? 36 : 28, flexShrink: 0 }}>Limit to threads that I turn on</button>
+          </div>
+        )}
       </SettingsGroup>
 
       <SettingsGroup title="Variables" action={resyncBtn}

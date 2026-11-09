@@ -32,8 +32,8 @@ const svc = (verify = true) => new SecretsService(dir, () => fakeClient(verify),
 describe('SecretsService', () => {
   it('starts disconnected with no injection', () => {
     const s = svc();
-    expect(s.status()).toEqual({ connected: false, project: null, config: null, enabled: true, readOnly: false });
-    expect(s.getSpawnEnv()).toEqual({});
+    expect(s.status()).toEqual({ connected: false, project: null, config: null, enabled: true, readOnly: false, tokenScope: 'all' });
+    expect(s.getBaseSpawnEnv()).toEqual({});
     expect(s.getInjection()).toEqual({ claudeConfigPath: null, codexArgs: [], systemPrompt: null, codexThreadConfig: {} });
   });
 
@@ -98,18 +98,21 @@ describe('SecretsService', () => {
     await s.setConnection({ token: 'dp.sa.x' });
     await s.setConnection({ token: '', project: 'dispatch', config: 'dev' });
     expect(s.status()).toMatchObject({ connected: true, project: 'dispatch', config: 'dev' });
-    expect(s.getSpawnEnv()).toMatchObject({ DOPPLER_TOKEN: 'dp.sa.x', DOPPLER_PROJECT: 'dispatch', DOPPLER_CONFIG: 'dev', DOPPLER_READ_ONLY: '0' });
+    // W1-C: a new connection is opted-in, so the token is in the thread env only, not in the base env.
+    expect(s.getBaseSpawnEnv()).toEqual({ DOPPLER_PROJECT: 'dispatch', DOPPLER_CONFIG: 'dev', DOPPLER_READ_ONLY: '0' });
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({ DOPPLER_TOKEN: 'dp.sa.x' });
   });
 
-  it('generates a claude mcp config (token by reference) + codex -c args when connected', async () => {
+  it('generates a claude mcp config (no token, --secrets-dir) + codex -c args when connected', async () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
     const inj = s.getInjection();
     expect(inj.claudeConfigPath).toBe(path.join(dir, 'doppler.mcp.json'));
     const cfg = JSON.parse(fs.readFileSync(inj.claudeConfigPath!, 'utf8'));
     expect(cfg.mcpServers.doppler.command).toBe('node');
-    expect(cfg.mcpServers.doppler.args).toEqual([mcpPath]);
-    expect(cfg.mcpServers.doppler.env.DOPPLER_TOKEN).toBe('${DOPPLER_TOKEN}'); // by reference, never literal
+    // W1-C: the server reads the saved connection from --secrets-dir; the file names no token.
+    expect(cfg.mcpServers.doppler.args).toEqual([mcpPath, '--secrets-dir', dir]);
+    expect(cfg.mcpServers.doppler.env).toBeUndefined();
     expect(inj.codexArgs.join(' ')).toContain('mcp_servers.doppler');
   });
 
@@ -117,7 +120,7 @@ describe('SecretsService', () => {
     const s = svc(true);
     await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
     await s.setConnection({ token: '', readOnly: true });
-    expect(s.getSpawnEnv().DOPPLER_READ_ONLY).toBe('1');
+    expect(s.getBaseSpawnEnv().DOPPLER_READ_ONLY).toBe('1');
     await expect(s.setSecret('A', 'b')).rejects.toThrow(/read-only/i);
     await expect(s.deleteSecret('A')).rejects.toThrow(/read-only/i);
   });
@@ -139,5 +142,126 @@ describe('SecretsService', () => {
     s.disconnect();
     expect(s.status().connected).toBe(false);
     expect(fs.existsSync(path.join(dir, 'doppler.json'))).toBe(false);
+  });
+});
+
+// W1-C (engineering program v4.5.0): the token scope. An install made before the scope existed
+// keeps the token in every thread's environment; a new connection gives it only to threads the
+// owner turns on.
+describe('SecretsService token scope', () => {
+  /** A connection file as an earlier version wrote it: no tokenScope field. */
+  const seedLegacy = (extra: Record<string, unknown> = {}) => fs.writeFileSync(
+    path.join(dir, 'doppler.json'),
+    JSON.stringify({ token: 'dp.sa.old', project: 'dispatch', config: 'dev', enabled: true, readOnly: false, ...extra }),
+    { mode: 0o600 },
+  );
+
+  it('a saved connection with no tokenScope reads as all and getBaseSpawnEnv carries the token', () => {
+    seedLegacy();
+    const s = svc();
+    expect(s.status().tokenScope).toBe('all');
+    expect(s.getBaseSpawnEnv()).toEqual({ DOPPLER_TOKEN: 'dp.sa.old', DOPPLER_PROJECT: 'dispatch', DOPPLER_CONFIG: 'dev', DOPPLER_READ_ONLY: '0' });
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({});
+  });
+
+  it('a later settings change keeps the scope of a saved connection that had no field', async () => {
+    seedLegacy();
+    const s = svc();
+    await s.setConnection({ token: '', readOnly: true });
+    expect(s.status().tokenScope).toBe('all');
+    expect(s.getBaseSpawnEnv().DOPPLER_TOKEN).toBe('dp.sa.old');
+  });
+
+  it('a new connection is saved as opted-in', async () => {
+    const s = svc();
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    expect(s.status().tokenScope).toBe('opted-in');
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'doppler.json'), 'utf8')).tokenScope).toBe('opted-in');
+  });
+
+  it('with opted-in, getBaseSpawnEnv has no DOPPLER_TOKEN', async () => {
+    const s = svc();
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    expect(s.getBaseSpawnEnv()).toEqual({ DOPPLER_PROJECT: 'dispatch', DOPPLER_CONFIG: 'dev', DOPPLER_READ_ONLY: '0' });
+  });
+
+  it('getThreadTokenEnv gives the token only for secretsEnv true and scope opted-in', async () => {
+    const s = svc();
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' });
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({ DOPPLER_TOKEN: 'dp.sa.x' });
+    expect(s.getThreadTokenEnv({ secretsEnv: false })).toEqual({});
+    expect(s.getThreadTokenEnv({})).toEqual({});
+    expect(s.getThreadTokenEnv({ secretsEnv: 'true' as unknown as boolean })).toEqual({});
+    s.setTokenScope('all');
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({});
+    expect(s.getBaseSpawnEnv().DOPPLER_TOKEN).toBe('dp.sa.x');
+  });
+
+  it('getThreadTokenEnv gives nothing while Doppler is disabled or not connected', async () => {
+    const s = svc();
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({});
+    await s.setConnection({ token: 'dp.sa.x', project: 'dispatch', config: 'dev', enabled: false });
+    expect(s.getThreadTokenEnv({ secretsEnv: true })).toEqual({});
+  });
+
+  it('setTokenScope saves the scope, tells the listener and refuses an unknown value', () => {
+    seedLegacy();
+    const s = svc();
+    const changed = vi.fn();
+    s.onChange(changed);
+    expect(s.setTokenScope('opted-in').tokenScope).toBe('opted-in');
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(svc().status().tokenScope).toBe('opted-in');
+    expect(() => s.setTokenScope('everything' as never)).toThrow(/invalid/i);
+    expect((fs.statSync(path.join(dir, 'doppler.json')).mode & 0o777)).toBe(0o600);
+  });
+
+  it('setConnection takes a tokenScope and refuses an unknown one', async () => {
+    seedLegacy();
+    const s = svc();
+    expect((await s.setConnection({ tokenScope: 'opted-in' })).tokenScope).toBe('opted-in');
+    expect(s.getBaseSpawnEnv().DOPPLER_TOKEN).toBeUndefined();
+    await expect(s.setConnection({ tokenScope: 'nope' as never })).rejects.toThrow(/invalid/i);
+  });
+
+  it('the Claude and Codex MCP configs hold no ${DOPPLER_TOKEN} reference and pass --secrets-dir', async () => {
+    for (const scope of ['all', 'opted-in'] as const) {
+      seedLegacy({ tokenScope: scope });
+      const s = svc();
+      const inj = s.getInjection();
+      const claudeText = fs.readFileSync(inj.claudeConfigPath!, 'utf8');
+      expect(claudeText).not.toContain('DOPPLER_TOKEN');
+      expect(JSON.parse(claudeText).mcpServers.doppler.args).toEqual([mcpPath, '--secrets-dir', dir]);
+      const codex = inj.codexArgs.join(' ');
+      expect(codex).not.toContain('DOPPLER_TOKEN');
+      expect(codex).toContain('--secrets-dir');
+      expect(codex).toContain(dir);
+      expect(JSON.stringify(inj.codexThreadConfig)).not.toContain('DOPPLER_TOKEN');
+      expect(s.getServerSpec()!.args).toEqual([mcpPath, '--secrets-dir', dir]);
+      // The file from ensureClaudeMcpConfig is the same one.
+      expect(fs.readFileSync(s.ensureClaudeMcpConfig()!, 'utf8')).not.toContain('DOPPLER_TOKEN');
+    }
+  });
+
+  it('a token that only the daemon environment holds still reaches the MCP server by reference', () => {
+    // No token in the file: the server cannot read it from --secrets-dir, so the old shape stays.
+    fs.writeFileSync(path.join(dir, 'doppler.json'), JSON.stringify({ project: 'dispatch', config: 'dev' }));
+    process.env.DOPPLER_TOKEN = 'dp.sa.env';
+    try {
+      const s = svc();
+      expect(s.status().tokenScope).toBe('all');
+      expect(s.getBaseSpawnEnv().DOPPLER_TOKEN).toBe('dp.sa.env');
+      expect(s.getServerSpec()!.envVars).toContain('DOPPLER_TOKEN');
+    } finally { delete process.env.DOPPLER_TOKEN; }
+  });
+
+  it('the system prompt does not claim that the token is set', async () => {
+    for (const scope of ['all', 'opted-in'] as const) {
+      seedLegacy({ tokenScope: scope });
+      const sp = svc().getSystemPrompt()!;
+      expect(sp).not.toMatch(/DOPPLER_TOKEN is already set/);
+      expect(sp).toMatch(/Use the "doppler" MCP tools/);
+      expect(sp).toMatch(/If `\$DOPPLER_TOKEN` is set in the shell, prefer\s+`doppler run --project dispatch --config dev -- <command>`/);
+    }
   });
 });

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 import { decide, type GateDeps, type GateRequest } from './access-gate.js';
+import type { CfAccessResult, CloudflareAccessConfig } from './cf-access.js';
 import { cookieValue, COOKIE_NAME } from './access-token.js';
 
 const TOKEN = 'tok-tok-tok';
@@ -8,6 +9,10 @@ const GATEWAY = '172.20.0.1';
 let allowedHosts: string[];
 let allowedOrigins: string[];
 let ownerPeers: Set<string>;
+let cloudflareAccess: CloudflareAccessConfig | null;
+/** What the fake verifier saw: the config and the assertion of each call. */
+let cfCalls: { config: CloudflareAccessConfig; jwt: string }[];
+let cfAnswer: (jwt: string) => CfAccessResult;
 
 function deps(): GateDeps {
   return {
@@ -16,7 +21,9 @@ function deps(): GateDeps {
     config: {
       allowedHosts: () => allowedHosts, allowedOrigins: () => allowedOrigins,
       addHost() {}, removeHost() {},
+      cloudflareAccess: () => cloudflareAccess, setCloudflareAccess() {},
     },
+    cfAccess: (config) => ({ verify: async (jwt) => { cfCalls.push({ config, jwt }); return cfAnswer(jwt); } }),
     tailscale: {
       self: async () => ({ userId: 1, login: 'me@example.com', names: ['mac.tail1.ts.net', 'mac'], ips: ['100.64.0.9'] }),
       isOwnerPeer: async (a) => ownerPeers.has(a ?? ''),
@@ -31,7 +38,11 @@ const req = (o: Partial<GateRequest>): GateRequest => ({
 const ok = (r: Partial<GateRequest>) => decide(req(r), deps()).then((d) => d.ok);
 const status = (r: Partial<GateRequest>) => decide(req(r), deps()).then((d) => (d.ok ? 200 : `${d.status}:${d.error}`));
 
-beforeEach(() => { allowedHosts = []; allowedOrigins = []; ownerPeers = new Set(['100.64.0.2']); });
+beforeEach(() => {
+  allowedHosts = []; allowedOrigins = []; ownerPeers = new Set(['100.64.0.2']);
+  cloudflareAccess = null; cfCalls = [];
+  cfAnswer = (jwt) => (jwt === 'good.jwt.sig' ? { ok: true, email: 'me@example.com' } : { ok: false, reason: 'signature' });
+});
 
 describe('local peer with a known host', () => {
   test.each([
@@ -273,5 +284,85 @@ describe('sign-in failure limiter', () => {
     lim.fail('a'); lim.fail('a');
     expect(lim.has('a') && lim.has('b')).toBe(true);
     expect(lim.size()).toBe(2);
+  });
+});
+
+// W1-C: with `cloudflareAccess` in access.json, an allow-listed host is "this machine" only when
+// the request carries an assertion that Cloudflare signed for the owner's team and application.
+describe('Cloudflare Access check on an allow-listed host', () => {
+  const CF = { teamDomain: 'acme.cloudflareaccess.com', aud: 'a'.repeat(64) };
+  // What cloudflared sends: a loopback peer, the public Host, and relay headers.
+  const tunnel = { host: 'dispatch.example.com', proxied: true, forwardedFor: '203.0.113.9' };
+  beforeEach(() => { allowedHosts = ['dispatch.example.com']; });
+
+  test('with no cloudflareAccess config an allow-listed host is trusted as before', async () => {
+    expect(await status(tunnel)).toBe(200);
+    expect(await status({ ...tunnel, cfAccessJwt: 'anything' })).toBe(200);
+    expect(await status({ host: 'dispatch.example.com' })).toBe(200);
+    // The verifier is never asked.
+    expect(cfCalls).toEqual([]);
+  });
+
+  test('with the config set, an allow-listed host with no assertion gets the sign-in page', async () => {
+    cloudflareAccess = CF;
+    // 401 auth_required is what the middleware turns into the sign-in page. Never a hard 403.
+    expect(await status(tunnel)).toBe('401:auth_required');
+    expect(await status({ ...tunnel, cfAccessJwt: '' })).toBe('401:auth_required');
+    expect(await status({ ...tunnel, isUpgrade: true })).toBe('401:auth_required');
+    expect(cfCalls).toEqual([]);
+  });
+
+  test('with the config set, an invalid assertion gets the sign-in page, for every failure reason', async () => {
+    cloudflareAccess = CF;
+    for (const reason of ['malformed', 'alg', 'kid', 'signature', 'aud', 'iss', 'expired', 'not-yet-valid', 'jwks-unavailable'] as const) {
+      cfAnswer = () => ({ ok: false, reason });
+      expect(await status({ ...tunnel, cfAccessJwt: 'bad.jwt.sig' })).toBe('401:auth_required');
+    }
+  });
+
+  test('with the config set and a valid assertion, the host is trusted', async () => {
+    cloudflareAccess = CF;
+    expect(await status({ ...tunnel, cfAccessJwt: 'good.jwt.sig' })).toBe(200);
+    expect(cfCalls).toEqual([{ config: CF, jwt: 'good.jwt.sig' }]);
+    // The WebSocket upgrade carries the same header and gets the same answer.
+    expect(await status({ ...tunnel, cfAccessJwt: 'good.jwt.sig', isUpgrade: true })).toBe(200);
+  });
+
+  test('a loopback host is not affected by the config', async () => {
+    cloudflareAccess = CF;
+    expect(await status({ host: 'localhost:3456' })).toBe(200);
+    expect(await status({ host: '127.0.0.1:3456' })).toBe(200);
+    expect(cfCalls).toEqual([]);
+  });
+
+  test('with the config set, a cookie or the token still signs in on the allow-listed host', async () => {
+    cloudflareAccess = CF;
+    expect(await status({ ...tunnel, authorization: `Bearer ${TOKEN}` })).toBe(200);
+    expect(await status({ ...tunnel, cookie: `${COOKIE_NAME}=${cookieValue(TOKEN)}` })).toBe(200);
+    expect(cfCalls).toEqual([]);
+  });
+
+  test('a valid assertion does not vouch for a host that is not allow-listed, or for a remote peer', async () => {
+    cloudflareAccess = CF;
+    expect(await status({ ...tunnel, host: 'other.example.com', cfAccessJwt: 'good.jwt.sig' })).toBe('401:auth_required');
+    expect(await status({ ...tunnel, remoteAddress: '192.168.1.9', cfAccessJwt: 'good.jwt.sig' })).toBe('401:auth_required');
+  });
+
+  test('a saved config that is not valid fails closed: the host is never vouched for', async () => {
+    cloudflareAccess = { teamDomain: '', aud: '' };
+    expect(await status({ ...tunnel, cfAccessJwt: 'good.jwt.sig' })).toBe('401:auth_required');
+    expect(cfCalls).toEqual([]);
+  });
+
+  test('a Tailscale name that is also allow-listed still passes by its own identity', async () => {
+    cloudflareAccess = CF;
+    allowedHosts = ['mac.tail1.ts.net'];
+    expect(await status({ host: 'mac.tail1.ts.net', tailscaleUserLogin: 'me@example.com', proxied: true, forwardedFor: '100.64.0.2' })).toBe(200);
+  });
+
+  test('a verifier that throws counts as not vouched', async () => {
+    cloudflareAccess = CF;
+    cfAnswer = () => { throw new Error('boom'); };
+    expect(await status({ ...tunnel, cfAccessJwt: 'good.jwt.sig' })).toBe('401:auth_required');
   });
 });

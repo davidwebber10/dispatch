@@ -1,28 +1,21 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createDopplerClient, usableToken } from './doppler-client.js';
+import { createDopplerClient } from './doppler-client.js';
+import { resolveConnection } from './connection.js';
 import { registerTools } from './tools.js';
 
-const RAW_TOKEN = process.env.DOPPLER_TOKEN;
-const PROJECT = process.env.DOPPLER_PROJECT;
-const CONFIG = process.env.DOPPLER_CONFIG;
-const READ_ONLY = process.env.DOPPLER_READ_ONLY === '1';
-
-if (!RAW_TOKEN) {
-  console.error('DOPPLER_TOKEN is required');
-  process.exit(1);
-}
-const TOKEN = usableToken(RAW_TOKEN);
-if (!TOKEN) {
-  // Never print the token itself.
-  console.error('DOPPLER_TOKEN is not usable: it is blank, or it contains a CR, LF, or NUL character');
+// `--secrets-dir <dir>`: read the connection Dispatch saved there. No flag: DOPPLER_* variables.
+const conn = resolveConnection(process.argv.slice(2), process.env);
+if (!conn.ok) {
+  // A fixed line. Never the token itself.
+  console.error(conn.error);
   process.exit(1);
 }
 
 const server = new McpServer({ name: 'doppler', version: '0.1.0' });
-registerTools(server, createDopplerClient(TOKEN), { project: PROJECT, config: CONFIG, readOnly: READ_ONLY });
+registerTools(server, createDopplerClient(conn.token), { project: conn.project, config: conn.config, readOnly: conn.readOnly });
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error('doppler mcp server running on stdio (readOnly=' + READ_ONLY + ')');
+console.error('doppler mcp server running on stdio (readOnly=' + conn.readOnly + ')');

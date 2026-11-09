@@ -6,6 +6,7 @@ import type { Terminal } from '../../api/types';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
 import { useHint } from '../../stores/hint';
+import { useSecrets } from '../../stores/secrets';
 import { canReceiveAlerts, ensurePushEnrolled } from '../../lib/push';
 import { copyText } from '../../lib/clipboard';
 import { THREAD_TYPES } from '../../lib/harnesses';
@@ -19,7 +20,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { pluginIcon } from '../../plugins/sdk';
 import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
-  Timer, Archive, PushPinSlash, CaretDown, CaretRight,
+  Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 
@@ -143,6 +144,10 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   const isMobile = useIsMobile();
   // Items plugins added (docs/superpowers/specs/2026-11-07-plugins-design.md, section 2.3).
   const pluginItems = useContributions('threadMenu');
+  // The Doppler token switch exists only when the owner chose "only threads that I turn on" (W1-C).
+  const tokenOptIn = useSecrets((s) => !!s.status?.connected && s.status?.tokenScope === 'opted-in');
+  const menuOpen = !!at;
+  useEffect(() => { if (menuOpen) void useSecrets.getState().loadScope(); }, [menuOpen]);
   // The phone sheet's More disclosure starts closed each time the sheet opens.
   const [moreOpen, setMoreOpen] = useState(false);
   const [openedFor, setOpenedFor] = useState<ThreadMenuAt | null>(at);
@@ -184,10 +189,23 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
     try { await api.resetTerminalStatus(tab.id); await useTabs.getState().loadTabs(tab.sessionId); } catch { /* surfaced via connection state */ }
   }
 
+  /** Turn the Doppler token on or off for this thread's shell. It applies at the thread's next start. */
+  async function toggleSecretsEnv(tab: Terminal) {
+    const on = !secretsEnvOn(tab);
+    try {
+      await api.setThreadSecretsEnv(tab.id, on);
+      await useTabs.getState().loadTabs(tab.sessionId);
+      useHint.getState().show(on ? 'Doppler token on for this thread. Reload the thread to apply it.' : 'Doppler token off for this thread. Reload the thread to apply it.');
+    } catch { useHint.getState().show('Could not change the Doppler token switch'); }
+  }
+
   const pick = (fn: (tab: Terminal) => void) => () => { if (!at) return; const t = at.tab; onClose(); fn(t); };
 
   const isThread = (t: Terminal) => THREAD_TYPES.includes(t.type);
   const hasAccount = (t: Terminal) => t.type === 'claude-code' || t.type === 'codex';
+  const secretsEnvOn = (t: Terminal) => (t.config as { secretsEnv?: boolean })?.secretsEnv === true;
+  // Every Codex Pretty thread shares one app-server process, so no per-thread environment reaches it.
+  const canTakeToken = (t: Terminal) => !(t.type === 'codex' && (t.config as { transport?: string })?.transport === 'structured');
   const alertsOn = (t: Terminal) => !!(t.config as { alertsEnabled?: boolean })?.alertsEnabled;
 
   const density: Density = isMobile ? 'sheet' : 'popover';
@@ -270,6 +288,17 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                 {row('reload', ArrowClockwise, 'Reload thread', pick(reload), 'Reconnect to the thread')}
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
                 {row('auto-archive', Timer, 'Auto-archive…', pick(setAutoArchiveTarget), 'Archive the thread on its own after a set time')}
+                {tokenOptIn && canTakeToken(t) && (
+                  <button key="secrets-env" type="button" role="switch" aria-checked={secretsEnvOn(t)} aria-label="Doppler token in this thread's shell"
+                    onClick={pick((x) => void toggleSecretsEnv(x))} style={{ ...z.row, alignItems: 'flex-start' }}>
+                    <Key size={z.icon} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                      <span>Doppler token in this thread's shell</span>
+                      <span style={{ fontSize: z.hint, color: 'var(--color-text-tertiary)' }}>Lets doppler run work here. Applies at the next start.</span>
+                    </span>
+                    <span style={{ flexShrink: 0, fontSize: z.hint, fontWeight: 600, color: secretsEnvOn(t) ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{secretsEnvOn(t) ? 'On' : 'Off'}</span>
+                  </button>
+                )}
               </div>
             )}
           </>
