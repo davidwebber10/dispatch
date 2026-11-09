@@ -290,9 +290,8 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         return;
       }
       if (name === 'restart') {
-        // Restarting a working thread stops its turn: ask first, like the CLI/Pretty switch does. From the menu and from the phone's Commands sheet alike.
-        if (turnRuns) { setAskRestart(true); return; }
-        await api.relaunchTerminal(terminalId);
+        // Always ask first, idle or working, from the menu and from the phone's Commands sheet alike. The modal's wording follows the live turn state.
+        setAskRestart(true);
         return;
       }
     },
@@ -504,9 +503,11 @@ export function ChatView({ terminalId }: { terminalId: string }) {
       )}
       <ConfirmModal
         open={askRestart}
-        title="Restart this thread now?"
-        message="This thread is working. Restarting stops the current turn and starts the thread again, carrying on the same conversation. What it was in the middle of will not finish."
-        confirmLabel="Stop and restart"
+        title={turnRuns ? 'Restart this thread now?' : 'Restart this thread?'}
+        message={turnRuns
+          ? 'This thread is working. Restarting stops the current turn and starts the thread again, carrying on the same conversation. What it was in the middle of will not finish.'
+          : 'The thread starts again and carries on the same conversation.'}
+        confirmLabel={turnRuns ? 'Stop and restart' : 'Restart'}
         onConfirm={() => { setAskRestart(false); setRestartError(null); api.relaunchTerminal(terminalId).catch((e) => setRestartError(e instanceof Error ? e.message : 'The thread could not be restarted.')); }}
         onCancel={() => setAskRestart(false)}
       />

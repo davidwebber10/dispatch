@@ -106,9 +106,10 @@ describe('the "/" menu in a Pretty thread', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('/restart restarts the thread', async () => {
+  it('/restart restarts the thread once confirmed', async () => {
     const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
     await typeAndEnter('/restart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(relaunch).toHaveBeenCalledWith('t1'));
   });
 
@@ -137,12 +138,34 @@ describe('the "/" menu in a Pretty thread', () => {
   });
 });
 
-describe('/restart asks first when the thread is working (round 4)', () => {
-  it('idle: it restarts at once', async () => {
+describe('/restart always asks first', () => {
+  it('idle: it asks, restarts only on "Restart", and Cancel leaves the thread alone', async () => {
     const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
     await typeAndEnter('/restart');
+    expect(await screen.findByRole('alertdialog', { name: /^Restart this thread\?/ })).toBeInTheDocument();
+    expect(relaunch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(relaunch).not.toHaveBeenCalled();
+    await typeAndEnter('/restart');
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(relaunch).toHaveBeenCalledWith('t1'));
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('a Codex thread asks too', async () => {
+    useTabs.setState({ byProject: { s1: [thread('codex')] } } as never);
+    const relaunch = vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('codex'));
+    await typeAndEnter('/restart');
+    expect(await screen.findByRole('alertdialog', { name: /^Restart this thread\?/ })).toBeInTheDocument();
+    expect(relaunch).not.toHaveBeenCalled();
+  });
+
+  it('a turn that starts while the question is open changes it to the working warning', async () => {
+    vi.spyOn(api, 'relaunchTerminal').mockResolvedValue(thread('claude-code'));
+    await typeAndEnter('/restart');
+    await screen.findByRole('alertdialog', { name: /^Restart this thread\?/ });
+    act(() => { useTabs.setState({ byProject: { s1: [{ ...thread('claude-code', { model: 'sonnet' }), status: 'needs_input' }] } } as never); });
+    expect(await screen.findByRole('alertdialog', { name: /Restart this thread now\?/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop and restart' })).toBeInTheDocument();
   });
 
   it('working: it asks, restarts only on "Stop and restart", and Cancel leaves the thread alone', async () => {
