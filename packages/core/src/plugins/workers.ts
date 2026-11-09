@@ -132,7 +132,7 @@ export class PluginWorkers {
       const w = this.workers.get(row.id);
       if (!w || (w.state === 'stopped' && !w.stopping)) this.start(row);
     }
-    for (const [id, w] of this.workers) if (!wanted.has(id) && w.state !== 'stopped') this.stopOne(w);
+    for (const [id, w] of this.workers) if (!wanted.has(id) && w.state !== 'stopped') void this.stopOne(w);
   }
 
   stats(id: string): WorkerStats | null {
