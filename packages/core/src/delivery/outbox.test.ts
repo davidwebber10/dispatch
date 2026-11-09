@@ -144,7 +144,7 @@ describe('DeliveryOutbox', () => {
       first.outbox.enqueue(notice(2));
       // No close: a kill -9 does not close anything either.
       const second = harness(open());
-      expect(second.outbox.list({ state: 'pending' }).map((r) => r.body)).toEqual(['notice 1', 'notice 2']);
+      expect(second.outbox.list({ state: 'pending' }).map((r) => r.body)).toEqual(['notice 2', 'notice 1']); // list is newest first
       second.alive.add('coord');
       expect(second.outbox.flushAll()).toBe(2);
       expect(second.got.map((g) => g.body)).toEqual(['notice 1', 'notice 2']);
