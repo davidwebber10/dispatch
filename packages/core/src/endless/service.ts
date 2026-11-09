@@ -225,6 +225,10 @@ export class EndlessService {
     }
     if (change.model !== undefined) this.store.setState('chat_model', change.model ?? '');
     if (change.effort !== undefined) this.store.setState('chat_effort', change.effort ?? '');
+    // Another device that has Chat open takes the change without a reload.
+    if (!this.closed) {
+      try { this.o.broadcaster.broadcast({ type: 'endless:settings', ...this.chatSettings() }); } catch { /* a missed broadcast is caught by the chip's reload on open */ }
+    }
   }
   instructions(): string { return this.store.getState('instructions') ?? ''; }
   setInstructions(text: string): void { this.store.setState('instructions', text); }

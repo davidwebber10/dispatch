@@ -1,6 +1,6 @@
 // The "/" menu and the model/effort chip in Chat: one Chat-wide setting (rebuild of PR #155 on main 4.3.0).
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { EndlessColumn } from './EndlessColumn';
 import { useEndless } from '../../stores/endless';
 import { api } from '../../api/client';
@@ -19,7 +19,7 @@ beforeEach(() => {
   send = vi.fn().mockResolvedValue(undefined);
   useEndless.setState({
     messages: [], loaded: true, hasMore: false, atTail: true, focus: null, filter: null, liveText: '', liveThinking: '',
-    turn: { status: 'idle', error: null }, projects: [], pending: [], send, stop: vi.fn().mockResolvedValue(undefined),
+    turn: { status: 'idle', error: null }, settings: null, projects: [], pending: [], send, stop: vi.fn().mockResolvedValue(undefined),
   } as never);
   vi.spyOn(api, 'endlessSettings').mockResolvedValue({ model: null, effort: null, defaultModel: 'opus' });
   put = vi.fn(async (c: { model?: string | null; effort?: string | null }) => ({ model: c.model === undefined ? null : c.model, effort: c.effort ?? null, defaultModel: 'opus' }));
@@ -102,5 +102,43 @@ describe('Chat', () => {
     typeAndEnter('/model haiku');
     await waitFor(() => expect(screen.getAllByRole('alert').map((a) => a.textContent).join(' ')).toMatch(/Model change refused: Chat is unavailable/));
     expect(box().value).toBe('/model haiku');
+  });
+});
+
+describe('a second open device (round 4)', () => {
+  it('takes a change made on another device without a reload: the daemon announces it', async () => {
+    render(<EndlessColumn />);
+    expect(await chip()).toHaveAccessibleName(/Model: Opus/);
+    act(() => useEndless.getState().applyEvent({ type: 'endless:settings', model: 'haiku', effort: 'high', defaultModel: 'opus' }));
+    expect(await screen.findByRole('button', { name: /Model: Haiku, effort high/ })).toBeInTheDocument();
+  });
+
+  it('asks the daemon again when the chip opens, in case an announcement was missed', async () => {
+    const get = vi.spyOn(api, 'endlessSettings');
+    render(<EndlessColumn />);
+    fireEvent.click(await chip());
+    const calls = get.mock.calls.length;
+    get.mockResolvedValue({ model: 'sonnet', effort: null, defaultModel: 'opus' });  // changed elsewhere, event missed
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(await chip());
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(calls));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Sonnet' })).toHaveAttribute('aria-checked', 'true'));
+  });
+
+  it('a stale chip does not decide that a pick is "already selected": the pick is sent', async () => {
+    render(<EndlessColumn />);
+    fireEvent.click(await chip());
+    // The chip shows Opus (the default). Whatever the daemon holds now, picking Opus must reach it.
+    fireEvent.click(screen.getByRole('radio', { name: 'Opus' }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith({ model: 'opus' }));
+  });
+
+  it('a reconnect of the events socket reloads the setting', async () => {
+    const get = vi.spyOn(api, 'endlessSettings');
+    render(<EndlessColumn />);
+    await chip();
+    const calls = get.mock.calls.length;
+    act(() => useEndless.getState().resyncAfterReconnect());
+    await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(calls));
   });
 });

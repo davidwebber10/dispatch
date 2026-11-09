@@ -361,7 +361,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
         {/* The model and effort of all of Chat: the chip opens the card. */}
         {chat.settings && (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <ChatModelSwitcher settings={chat.settings} apply={applyChat} />
+            <ChatModelSwitcher settings={chat.settings} apply={applyChat} reload={chat.reload} />
           </div>
         )}
       </div>

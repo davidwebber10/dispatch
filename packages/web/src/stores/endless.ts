@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
 import type { ServerEvent } from '../api/events-socket';
-import type { EndlessImage, EndlessMessage, EndlessPaneThread, EndlessProject, EndlessProjectsResponse, EndlessTurnStatus, EndlessFile } from '../api/types';
+import type { EndlessImage, EndlessMessage, EndlessPaneThread, EndlessProject, EndlessProjectsResponse, EndlessTurnStatus, EndlessFile, ChatSettings } from '../api/types';
 
 const PAGE = 60;
 
@@ -30,6 +30,8 @@ interface EndlessStoreState {
   liveText: string;
   liveThinking: string;
   turn: { status: EndlessTurnStatus; error: string | null };
+  /** Chat's one model and effort (the chip); null until loaded. Kept live by `endless:settings` and a reload when the chip opens. */
+  settings: ChatSettings | null;
   projects: EndlessProject[];
   threads: EndlessPaneThread[];
   truncated: boolean;
@@ -43,6 +45,7 @@ interface EndlessStoreState {
   retry: () => Promise<void>;
   stop: () => Promise<void>;
   refreshState: () => Promise<void>;
+  loadSettings: () => Promise<void>;
   loadProjects: () => Promise<void>;
   /** Errors are ignored: the old counts stay. */
   loadDocCounts: (ids: string[]) => Promise<void>;
@@ -134,6 +137,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     liveText: '',
     liveThinking: '',
     turn: { status: 'idle', error: null },
+    settings: null,
     projects: [],
     threads: [],
     truncated: false,
@@ -203,6 +207,8 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
     retry: async () => { await api.endlessRetry(); },
     stop: async () => { await api.endlessStop(); },
     refreshState: () => load(() => api.endlessState(), (s) => set({ turn: s.turn })),
+    // An older daemon has no setting: the chip then stays off. A failed reload keeps what is shown.
+    loadSettings: async () => { try { set({ settings: await api.endlessSettings() }); } catch { /* keep the old one */ } },
     loadProjects: () => load(() => api.endlessProjects(), (v) => {
       const p = normalizePane(v);
       set({ projects: p.projects, threads: p.threads, truncated: p.truncated });
@@ -240,6 +246,7 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
       if (!unavailable && !(loaded && atTail)) return;
       void get().loadTail().catch(() => {});
       void get().refreshState().catch(() => {});
+      if (get().settings) void get().loadSettings(); // a change made on another device while the socket was down
     },
 
     applyEvent: (e) => {
@@ -261,6 +268,10 @@ export const useEndless = create<EndlessStoreState>((set, get) => {
         const text = String(e.text ?? '');
         if (e.kind === 'thinking') set({ liveThinking: get().liveThinking + text });
         else set({ liveText: get().liveText + text });
+        return;
+      }
+      if (e.type === 'endless:settings') {
+        set({ settings: { model: typeof e.model === 'string' ? e.model : null, effort: typeof e.effort === 'string' ? e.effort : null, defaultModel: String(e.defaultModel ?? 'opus') } });
         return;
       }
       if (e.type === 'endless:turn') {

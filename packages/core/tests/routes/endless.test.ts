@@ -544,3 +544,16 @@ describe('Chat-wide model and effort (slash menu)', () => {
     expect((await request(app).get('/api/endless/settings')).body).toMatchObject({ model: null, effort: null });
   });
 });
+
+describe('Chat settings reach every open device (round 4)', () => {
+  it('a change is announced on the events socket so a second device takes it without a reload', async () => {
+    events.length = 0;
+    await request(app).put('/api/endless/settings').send({ model: 'haiku', effort: 'low' }).expect(200);
+    expect(events).toContainEqual({ type: 'endless:settings', model: 'haiku', effort: 'low', defaultModel: 'opus' });
+    events.length = 0;
+    await request(app).put('/api/endless/settings').send({ model: 'gpt-6-astra' }).expect(400);
+    expect(events.filter((e) => e.type === 'endless:settings')).toEqual([]); // a refused change announces nothing
+    await request(app).put('/api/endless/settings').send({ model: null, effort: null }).expect(200);
+    expect(events).toContainEqual({ type: 'endless:settings', model: null, effort: null, defaultModel: 'opus' });
+  });
+});

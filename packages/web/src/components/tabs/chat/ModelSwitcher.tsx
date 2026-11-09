@@ -30,11 +30,15 @@ export interface ModelChipProps {
   opencodeModels?: NamedModel[];
   /** Switch the model. May resolve with a note to show (the card then stays open). Throws the daemon's words. */
   pickModel: (value: string) => Promise<string | undefined | void>;
+  /** Called when the card opens (Chat reloads its settings here, in case another device changed them). */
+  onOpen?: () => void;
+  /** Send a pick even when it looks like the current one: a chip that may be stale (Chat, shared by several devices) must not decide that. */
+  alwaysSend?: boolean;
   /** The effort section: absent for a harness without an effort control yet (Grok, OpenCode). */
   effort?: EffortInfo & { pick: (level: string) => Promise<string | undefined | void> };
 }
 
-export function ModelChip({ owner, label, active, options, busy, emptyText = 'This harness has no models to pick.', pickModel, effort }: ModelChipProps) {
+export function ModelChip({ owner, label, active, options, busy, emptyText = 'This harness has no models to pick.', pickModel, effort, onOpen, alwaysSend }: ModelChipProps) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -46,12 +50,12 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
   useEffect(() => {
     if (!requested) return;
     usePickerRequest.getState().clear();
-    if (!busy) { setError(null); setNote(null); setOpen(true); }
-  }, [requested, busy]);
+    if (!busy) { setError(null); setNote(null); setOpen(true); onOpen?.(); }
+  }, [requested, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pick = async (value: string) => {
     if (saving) return;
-    if (isSameModel(value, active)) { setOpen(false); return; }
+    if (!alwaysSend && isSameModel(value, active)) { setOpen(false); return; }
     setSaving(value); setError(null); setNote(null);
     try {
       const said = await pickModel(value);
@@ -85,7 +89,7 @@ export function ModelChip({ owner, label, active, options, busy, emptyText = 'Th
         disabled={busy}
         aria-label={`Model: ${label}${effort?.current ? `, effort ${effort.current}` : ''}`}
         title={busy ? 'You can switch the model when the turn ends' : effort ? 'Switch model or effort' : 'Switch model'}
-        onClick={() => { setError(null); setNote(null); setOpen(true); }}
+        onClick={() => { setError(null); setNote(null); setOpen(true); onOpen?.(); }}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: isMobile ? 190 : 240,
           height: isMobile ? 28 : 22, padding: isMobile ? '0 9px' : '0 7px',
