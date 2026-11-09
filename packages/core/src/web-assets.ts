@@ -78,3 +78,42 @@ export function compressedAssets(dir: string): express.RequestHandler {
     }, () => next());
   };
 }
+
+/**
+ * Serve index.html with `<base href>` rewritten to the mount prefix. That one tag is
+ * the single source of truth: Vite builds assets with `base: './'` so they resolve
+ * against it, and the client reads `document.baseURI` for its API/WebSocket prefix
+ * (web/src/lib/basePath.ts). Rewriting at SERVE time — not build time — is what lets
+ * one image serve every user's prefix.
+ */
+export function indexHtmlWithBase(html: string, basePath: string): string {
+  return html.replace(/<base href="[^"]*"\s*\/?>/, `<base href="${basePath || ''}/">`);
+}
+
+/**
+ * The transformed index.html, kept in memory and read again when the file changes (W1-E).
+ *
+ * The daemon read the file once at boot. After a web rebuild it kept sending the script names of the
+ * old build, so a page that loaded then asked for files the build had removed, until a restart.
+ * Each call does one `statSync`; a new mtime or size means one read and one transform.
+ * A missing file, a read error or an empty file (a build that is writing it) keeps the last good copy.
+ */
+export function createIndexProvider(file: string, basePath: string): () => string {
+  let html = '';
+  let mtimeMs = -1;
+  let size = -1;
+  return () => {
+    try {
+      const stat = fs.statSync(file);
+      if (stat.mtimeMs !== mtimeMs || stat.size !== size) {
+        const raw = fs.readFileSync(file, 'utf8');
+        if (raw.length > 0) {
+          html = indexHtmlWithBase(raw, basePath);
+          mtimeMs = stat.mtimeMs;
+          size = stat.size;
+        }
+      }
+    } catch { /* keep the last good copy */ }
+    return html;
+  };
+}
