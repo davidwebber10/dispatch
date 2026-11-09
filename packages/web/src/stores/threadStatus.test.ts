@@ -76,3 +76,39 @@ test('loadStalls replaces the entries with the daemon list; a failed read keeps 
   expect(useThreadStatus.getState().stalls).toEqual({ t9: 42 });
   listStalls.mockRestore();
 });
+
+// W3-C: one status authority. The event carries the snapshot order (generation, sequence) of the daemon.
+test('terminal:status with a lower sequence does not overwrite a newer one', () => {
+  const s = useThreadStatus.getState();
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'waiting', threadStatus: 'idle', activity: null, turnOpen: false, generation: 5, sequence: 12 });
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working', threadStatus: 'working', activity: 'late', turnOpen: true, generation: 5, sequence: 11 });
+  expect(useThreadStatus.getState().byTerminal['t1']).toEqual({ status: 'waiting', threadStatus: 'idle', activity: null, turnOpen: false, generation: 5, sequence: 12 });
+});
+
+test('terminal:status of a newer daemon wins, whatever its sequence', () => {
+  const s = useThreadStatus.getState();
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working', threadStatus: 'working', activity: 'x', turnOpen: true, generation: 5, sequence: 40 });
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'error', threadStatus: 'error', activity: null, turnOpen: false, generation: 6, sequence: 1 });
+  expect(useThreadStatus.getState().byTerminal['t1']).toMatchObject({ status: 'error', turnOpen: false, generation: 6, sequence: 1 });
+  // And an event of the old daemon that arrives late is dropped.
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working', threadStatus: 'working', activity: 'x', turnOpen: true, generation: 5, sequence: 41 });
+  expect(useThreadStatus.getState().byTerminal['t1']).toMatchObject({ status: 'error', generation: 6, sequence: 1 });
+});
+
+test('terminal:status with no sequence (an older daemon, or a sender that is not the status service) still applies', () => {
+  const s = useThreadStatus.getState();
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'waiting', threadStatus: 'idle', activity: null, turnOpen: false, generation: 5, sequence: 12 });
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working' });
+  expect(useThreadStatus.getState().byTerminal['t1']).toMatchObject({ status: 'working', generation: 5, sequence: 12 });
+  // The same sequence again (a duplicate) applies: it is not lower.
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'waiting', threadStatus: 'idle', activity: null, turnOpen: false, generation: 5, sequence: 12 });
+  expect(useThreadStatus.getState().byTerminal['t1']).toMatchObject({ status: 'waiting' });
+});
+
+test('a stale terminal:status does not clear a stall flag', () => {
+  useThreadStatus.setState({ stalls: { t1: 1 } });
+  const s = useThreadStatus.getState();
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'working', turnOpen: true, generation: 5, sequence: 12 });
+  s.applyEvent({ type: 'terminal:status', terminalId: 't1', status: 'waiting', turnOpen: false, generation: 5, sequence: 3 });
+  expect(useThreadStatus.getState().stalls).toEqual({ t1: 1 });
+});

@@ -1,13 +1,15 @@
 import { useCallback, useRef, useState } from 'react';
 import type { PendingPermission } from '../../../api/types';
 import { api, ApiError, type ContentBlock } from '../../../api/client';
+import type { ChatBusy } from './useChatBusy';
 
 // The pending question of a structured chat and the actions on it. Moved out of
 // useStructuredChat.ts unchanged (W3-C, move-only split).
 
 export function useChatQuestions(
   terminalId: string,
-  setBusy: (busy: boolean) => void,
+  /** Busy until the daemon's status says so (W3-C): see useChatBusy. */
+  busy: Pick<ChatBusy, 'beginSending' | 'sendAccepted' | 'sendFailed'>,
   showSendFailure: (err: unknown) => void,
 ) {
   // The AskUserQuestion the CLI is blocked on (mirrored in a ref so the `answer`
@@ -35,44 +37,47 @@ export function useChatQuestions(
     const text = blocks.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('\n').trim();
     const images = blocks.filter((b) => b.type === 'image');
     if (!text && !images.length) return true;
-    setBusy(true);
+    busy.beginSending();
     questionActionsRef.current++;
     try {
       await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', reply: text, imageCount: images.length });
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 409)) {
-        try { await api.sendStructuredMessage(terminalId, content); } catch (sendErr) { setBusy(false); throw sendErr; }
+        try { await api.sendStructuredMessage(terminalId, content); } catch (sendErr) { busy.sendFailed(); throw sendErr; }
+        busy.sendAccepted();
         // A 404 means the server closed the question. A 409 means this harness never took the reply,
         // so the question is still open and the card must stay usable.
         return err.status !== 409;
       }
-      setBusy(false);
+      busy.sendFailed();
       throw err;
     } finally {
       questionActionsRef.current--;
     }
+    busy.sendAccepted();
     if (permissionRef.current?.requestId === p.requestId) setPending(null);
     if (images.length) await api.sendStructuredMessage(terminalId, images);
     return true;
-  }, [terminalId, setPending]);
+  }, [terminalId, setPending, busy.beginSending, busy.sendAccepted, busy.sendFailed]);
 
   // A card's Discuss with no text, or Dismiss: deny the question with the daemon's fixed text.
   // Same contract as replyToQuestion: no optimistic clear, and a failure keeps the card.
   const denyQuestion = useCallback(async (action: 'discuss' | 'dismiss'): Promise<void> => {
     const p = permissionRef.current;
     if (!terminalId || !p) return;
-    setBusy(true);
+    busy.beginSending();
     questionActionsRef.current++;
     try {
       await api.answerPermission(terminalId, { requestId: p.requestId, decision: 'deny', canned: action });
     } catch (err) {
-      setBusy(false);
+      busy.sendFailed();
       throw err;
     } finally {
       questionActionsRef.current--;
     }
+    busy.sendAccepted();
     if (permissionRef.current?.requestId === p.requestId) setPending(null);
-  }, [terminalId, setPending]);
+  }, [terminalId, setPending, busy.beginSending, busy.sendAccepted, busy.sendFailed]);
 
   // The card's own Discuss (with text) and Dismiss buttons. Errors land in the timeline.
   const replyFromCard = useCallback((text: string): Promise<boolean> =>
@@ -90,15 +95,15 @@ export function useChatQuestions(
     if (questionActionsRef.current > 0) return false;
     questionActionsRef.current++;
     setPending(null);
-    setBusy(true);
-    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).catch((err) => {
+    busy.beginSending();
+    api.answerPermission(terminalId, { requestId: p.requestId, decision: 'allow', answers }).then(busy.sendAccepted).catch((err) => {
       // 404: another answer won, or the question is gone. The server's frames settle the card, so do not
       // put the old one back. Any other failure (e.g. the process died) re-surfaces it so it isn't lost.
       if (err instanceof ApiError && err.status === 404) return;
-      setBusy(false);
+      busy.sendFailed();
       setPending(p);
     }).finally(() => { questionActionsRef.current--; });
-  }, [terminalId, setPending]);
+  }, [terminalId, setPending, busy.beginSending, busy.sendAccepted, busy.sendFailed]);
 
   return { pending, setPending, permissionRef, replyToQuestion, denyQuestion, replyFromCard, denyFromCard, answer };
 }

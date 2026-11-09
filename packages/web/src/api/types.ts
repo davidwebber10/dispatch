@@ -663,3 +663,18 @@ export interface ThreadDiagnostics {
   deliveries?: { id: number; direction: 'to' | 'from'; peerId: string | null; peerLabel: string | null; kind: string; state: 'pending' | 'delivered' | 'dropped'; attempts: number; lastError: string | null; createdAt: string | null; deliveredAt: string | null }[];
   explanation?: { rule: string; headline: string; since: string | null; reasons: string[]; nextSteps: { label: string; action: 'reset-status' | 'restart' | 'open-usage' | 'none' }[] } | null;
 }
+
+/**
+ * The status of one thread as the daemon last committed it (W3-C, one status authority): the
+ * `system/status` frame of the structured socket and the answer of GET /api/terminals/:id/status.
+ * `(generation, sequence)` orders the snapshots; a lower one than the last one seen is ignored.
+ */
+export interface StatusSnapshot {
+  status: 'queued' | 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
+  /** True while a turn is in flight. The chat shows "Working" from this. */
+  turnOpen: boolean;
+  generation: number;
+  sequence: number;
+  at: string;
+  activity: string | null;
+}
