@@ -125,6 +125,9 @@ import { pluginAssetHandler } from './routes/plugins.js';
 import { customIconHandler } from './routes/appearance.js';
 import { LedgerService } from './overseer/ledger-service.js';
 import { WatchDispatcher } from './sessions/watch-dispatcher.js';
+import type { DeliverResult } from './delivery/outbox.js';
+import { createDeliveryOutbox, subscribeDeliveryOutbox, flushOutboxAtBoot } from './delivery/wiring.js';
+import { reconcileAtBoot, wireRestoredQuestions } from './sessions/boot-reconcile.js';
 import { trackingStartedAt } from './routes/analytics.js';
 import { EndlessService, limitsFromEnv, startEndless } from './endless/service.js';
 
@@ -372,27 +375,35 @@ function wireHarnesses(sessionService: SessionService, status: StatusService, db
 }
 
 /**
- * Builds the WatchDispatcher's `deliver` function: picks transport per target the SAME way
- * spawnTerminal/ensureStructuredAlive already do — `config.transport === 'structured'` AND a
- * structured manager exists for that harness. Structured threads get `ensureStructuredAlive`
- * (lazily resumes a dead one) + `sendStructuredMessage`; everything else (PTY threads —
- * claude-code/codex still on the CLI transport, or shell) gets the wake typed in and submitted
- * (`ptyMessagePayload`), exactly as `sendThreadMessage` delivers a peer message to a CLI thread.
+ * Builds the deliver function for a watch wake (the delivery outbox calls it for a `watch` row):
+ * picks transport per target the SAME way spawnTerminal/ensureStructuredAlive already do —
+ * `config.transport === 'structured'` AND a structured manager exists for that harness.
+ * Structured threads get `ensureStructuredAlive` (lazily resumes a dead one) +
+ * `sendStructuredMessage`; everything else (PTY threads — claude-code/codex still on the CLI
+ * transport) gets the wake typed in and submitted (`ptyMessagePayload`), exactly as
+ * `sendThreadMessage` delivers a peer message to a CLI thread.
+ *
+ * The answer tells the outbox what to do with the row (W2-C). `gone`: the watcher vanished or is
+ * a shell tab; the wake is dropped. `not-alive`: nothing can take the wake now (a CLI thread with
+ * no process, a Pretty thread that could not be started); the wake waits and the watch stays
+ * live. Before, that wake was typed into nothing and the watch was spent.
  */
-export function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => void {
+export function buildWatchDeliver(sessionService: SessionService): (terminalId: string, text: string) => DeliverResult {
   return (terminalId: string, text: string) => {
     const terminal = sessionService.getTerminal(terminalId);
-    if (!terminal) return; // watcher vanished between lookup and delivery — nothing to do
+    if (!terminal) return 'gone'; // watcher vanished between lookup and delivery — nothing to do
     // A shell tab would run the wake text as a command (also covers a watch stored before the route refused it).
-    if (terminal.type === 'shell') return;
+    if (terminal.type === 'shell') return 'gone';
     if (terminal.config?.transport === 'structured' && sessionService.structuredManagerFor(terminal.type)) {
-      sessionService.ensureStructuredAlive(terminalId);
+      if (sessionService.ensureStructuredAlive(terminalId) === false) return 'not-alive';
       sessionService.sendStructuredMessage(terminalId, text);
     } else {
+      if (!sessionService.isPtyAlive(terminalId)) return 'not-alive';
       // Same bytes a peer message to a CLI thread uses: a bare "\n" only types a newline into the
       // input box, so the parent never woke. Bracketed paste, then one CR, submits it.
       sessionService.writeToTerminal(terminalId, ptyMessagePayload(text));
     }
+    return 'delivered';
   };
 }
 
@@ -451,8 +462,11 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   if (options.structuredCommand) sessionService.setStructuredCommandOverride(options.structuredCommand);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as onActivity below.
-  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // A wake and a worker's notice are written to the delivery outbox first, then delivered (W2-C).
+  const outbox = createDeliveryOutbox(db, sessionService, buildWatchDeliver(sessionService));
+  const watchDispatcher = new WatchDispatcher(db, outbox);
   const statusService = new StatusService(db, broadcaster, undefined, (terminalId, status) => watchDispatcher.onStatus(terminalId, status));
+  subscribeDeliveryOutbox(outbox, statusService);
   // Plugins observe hook payloads, spawns, declarations and prompts (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3.3).
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
@@ -460,6 +474,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setPluginInjection((harness, sessionId) => { const inj = plugins.modelInjection(harness); return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness)] }; });
   sessionService.setUserPromptListener((id, text, source) => threadEvents.onPrompt(id, text, source));
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
+  wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted(event => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -479,7 +494,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
     broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits, assistAccounts: options.assistAccounts,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id),
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
   });
 
   // Attach internals for server wiring
@@ -689,7 +704,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   agentService.setRoleRunner(rolesService);
   // Wakes watchers on peer status edges (see sessions/watch-dispatcher.ts) — wired as an
   // optional StatusService dependency, same shape as the threadAutoNamer activity callback.
-  const watchDispatcher = new WatchDispatcher(db, buildWatchDeliver(sessionService));
+  // A wake and a worker's notice are written to the delivery outbox first, then delivered (W2-C).
+  const outbox = createDeliveryOutbox(db, sessionService, buildWatchDeliver(sessionService));
+  const watchDispatcher = new WatchDispatcher(db, outbox);
   // Endless Chat hears every status edge here (a thread's error edge reports); its settles
   // come from the settled listener below.
   let onEndlessStatus: ((terminalId: string, status: string) => void) | null = null;
@@ -703,6 +720,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     },
     (id, prompt) => threadAutoNamer.notifyPrompt(id, prompt),
   );
+  subscribeDeliveryOutbox(outbox, statusService);
   // Plugins observe hook payloads, spawns and declarations; prompts join the auto-namer's listener below.
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   sessionService.setSpawnListener((id, tools) => threadEvents.onSpawned(id, tools));
@@ -721,6 +739,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.locals.installer = installer;
   app.locals.skills = skills;
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
+  wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
   agentService.setLifecycleService(statusService);
@@ -1050,7 +1069,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), refresh: () => usageGauge.refreshNow(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
-    watchCatchUp: (id) => watchDispatcher.catchUp(id),
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
   });
 
   // Serve the built web client (single-origin) when a build is present.
@@ -1170,6 +1189,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           // the phantom-"Working…" settle for replays that end mid-turn (see ws/structured.ts).
           (tid) => sessionService.getTerminal(tid)?.status !== 'working',
           (tid) => sessionService.activeModel(tid),
+          (tid) => sessionService.getPendingPermission(tid),
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
@@ -1299,10 +1319,17 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     .finally(() => {
       try {
         const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
-        statusService.reconcileProcesses(alive);
+        // W2-C: a scheduled wake that the restart killed is flagged, and a thread that waits on a saved
+        // question keeps waiting: the process check below must not turn it into an error, nor close its run.
+        const reconciled = reconcileAtBoot({ db, isAlive: alive, markIdle: (id, activity) => statusService.markIdle(id, activity), outbox });
+        if (reconciled.lostWakes.length) console.log(`Flagged ${reconciled.lostWakes.length} scheduled wake(s) that the restart lost`);
+        if (reconciled.restoredQuestions.length) console.log(`Kept ${reconciled.restoredQuestions.length} pending question(s) through the restart`);
+        const waitsOnQuestion = new Set(reconciled.restoredQuestions);
+        const aliveOrWaiting = (id: string) => alive(id) || waitsOnQuestion.has(id);
+        statusService.reconcileProcesses(aliveOrWaiting);
         // Runs that the restart left open: closed here, so their schedules can fire again (W1-D).
         // After the kickstart and the process check, so a thread that runs again keeps its run.
-        const orphaned = agentService.reconcileRunsAtBoot(alive);
+        const orphaned = agentService.reconcileRunsAtBoot(aliveOrWaiting);
         if (orphaned.length) console.log(`Closed ${orphaned.length} run(s) that the restart left open`);
         // Old per-thread MCP files: removed once the threads that will run again have rewritten theirs.
         const swept = sweepThreadMcpConfigs(dataDir, alive);
@@ -1310,6 +1337,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         // Key files and key-related config of threads that are gone (named files only).
         const sweptKeys = sweepThreadKeyFiles(dataDir, alive);
         if (sweptKeys) console.log(`Removed ${sweptKeys} stale thread key file(s)`);
+        // The messages that waited through the restart (W2-C). After the kickstart, so a thread that runs again takes its own.
+        const flushed = flushOutboxAtBoot(outbox);
+        if (flushed.delivered) console.log(`Delivered ${flushed.delivered} message(s) that waited in the outbox`);
       }
       finally { setTimeout(() => endless.endBoot(), 1000).unref(); }
     });

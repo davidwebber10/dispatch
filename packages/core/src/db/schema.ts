@@ -540,4 +540,33 @@ function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_runs_terminal_id ON agent_runs(terminal_id);
     CREATE INDEX IF NOT EXISTS idx_agent_runs_schedule_id ON agent_runs(schedule_id);
   `));
+  // W2-C: the delivery outbox. A message for a thread (a worker notice, a watch wake) is written here
+  // first and delivered after; a row that cannot be delivered waits for an event of its target.
+  // dedup_key is UNIQUE: one event makes one row. A watch that has a pending row names it.
+  migrate(db, 'w2c-delivery-outbox', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS delivery_outbox (
+      id INTEGER PRIMARY KEY,
+      target_terminal_id TEXT NOT NULL,
+      source_terminal_id TEXT,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      dedup_key TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT,
+      delivered_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_delivery_outbox_target_state ON delivery_outbox(target_terminal_id, state);
+    ALTER TABLE thread_watches ADD COLUMN pending_delivery_id INTEGER;
+  `));
+  // W2-C: the question a thread waits on, kept so a restart does not lose it.
+  migrate(db, 'w2c-pending-questions', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS pending_questions (
+      terminal_id TEXT PRIMARY KEY,
+      request_id TEXT,
+      payload TEXT,
+      created_at TEXT
+    );
+  `));
 }

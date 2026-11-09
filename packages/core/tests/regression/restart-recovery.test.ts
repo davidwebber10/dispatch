@@ -11,6 +11,11 @@ import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import * as agentsDb from '../../src/db/agents.js';
 import { AgentService } from '../../src/agents/service.js';
+import { EventEmitter } from 'events';
+import { StatusService } from '../../src/status/service.js';
+import { SessionService } from '../../src/sessions/service.js';
+import { reconcileAtBoot, wireRestoredQuestions } from '../../src/sessions/boot-reconcile.js';
+import type { IStructuredManager } from '../../src/structured/manager.js';
 
 let dir: string;
 let dbPath: string;
@@ -75,6 +80,74 @@ describe('restart recovery: runs', () => {
     // A boot check after that leaves the new, live run open.
     expect(second.service.reconcileRunsAtBoot(second.isAlive)).toEqual([]);
     expect(agentsDb.getRun(second.db, fired[0].id)!.status).toBe('working');
+    second.db.close();
+  });
+});
+
+// Regression (engineering review, top 15 #10; reliability #7, second half): a restart lost a
+// thread's scheduled wake and the question a thread waited on, and said nothing (W2-C).
+describe('restart recovery: wakes and questions', () => {
+  /** One daemon life: real StatusService and SessionService; the manager remembers nothing of the last life. */
+  function daemon() {
+    const db = new Database(dbPath);
+    initSchema(db);
+    if (!sessionsDb.getById(db, 'proj')) {
+      sessionsDb.create(db, { id: 'proj', provider: 'claude-code', name: 'p', workingDir: dir });
+      terminalsDb.create(db, { id: 't', sessionId: 'proj', type: 'claude-code', label: 'Thread', skipPermissions: true, config: { transport: 'structured' } });
+    }
+    const live = new Set<string>();
+    const pending = new Map<string, unknown>();
+    const manager = Object.assign(new EventEmitter(), {
+      isAlive: (id: string) => live.has(id),
+      getPending: (id: string) => pending.get(id) ?? null,
+    });
+    const status = new StatusService(db, { broadcast: vi.fn() });
+    const pty = { isAlive: () => false, on: () => {}, setDefaultEnv: () => {} };
+    const sessions = new SessionService(db, pty as any, path.join(dir, 'mcp.json'));
+    sessions.setStructuredManager(manager as unknown as IStructuredManager);
+    wireRestoredQuestions(db, sessions, [manager as unknown as IStructuredManager], status);
+    const isAlive = (id: string) => live.has(id);
+    const boot = () => {
+      const r = reconcileAtBoot({ db, isAlive, markIdle: (id, activity) => status.markIdle(id, activity) });
+      const waiting = new Set(r.restoredQuestions);
+      status.reconcileProcesses((id) => isAlive(id) || waiting.has(id));
+      return r;
+    };
+    return { db, live, pending, manager, status, sessions, boot };
+  }
+
+  it('a scheduled thread with a dead process is flagged', () => {
+    const first = daemon();
+    first.live.add('t');
+    first.status.markWorking('t');
+    first.status.markScheduled('t', 'Scheduled — check the deploy');
+    expect(terminalsDb.getById(first.db, 't')!.status).toBe('scheduled');
+    first.db.close();
+
+    const second = daemon(); // the process, and the wake inside it, are gone
+    expect(second.boot().lostWakes).toEqual(['t']);
+    const events = second.db.prepare("SELECT event_type FROM lifecycle_events WHERE terminal_id = 't' AND event_type = 'wake.lost'").all();
+    expect(events).toHaveLength(1); // lifecycle event wake.lost
+    expect(terminalsDb.getById(second.db, 't')!.status).toBe('waiting'); // not "scheduled" for ever
+    second.db.close();
+  });
+
+  it('a pending question is shown again after a new daemon on the same database', () => {
+    const question = { requestId: 'req-7', toolName: 'AskUserQuestion', input: {}, questions: [{ header: 'Go', question: 'Deploy now?', options: [{ label: 'yes' }, { label: 'no' }] }] };
+    const first = daemon();
+    first.live.add('t');
+    first.status.markWorking('t');
+    first.pending.set('t', question);
+    first.manager.emit('permission', 't', question); // the manager event the daemon hears when the model asks
+    first.status.markNeedsInput('t', 'Needs your answer');
+    expect(first.sessions.getPendingPermission('t')).toEqual(question);
+    first.db.close();
+
+    const second = daemon();
+    expect(second.manager.getPending('t')).toBeNull(); // the new manager knows nothing
+    expect(second.boot().restoredQuestions).toEqual(['t']);
+    expect(second.sessions.getPendingPermission('t')).toEqual(question); // getPendingPermission returns the payload
+    expect(terminalsDb.getById(second.db, 't')!.status).toBe('needs_input');
     second.db.close();
   });
 });

@@ -105,7 +105,7 @@ describe('a worker reports to the thread that started it', () => {
       expect(c.to('coord')).toHaveLength(1);
     });
 
-    it(`${kind}: a starter that is not running is not revived, and the notice is dropped`, () => {
+    it(`${kind}: a starter that is not running is not revived, and gets nothing now`, () => {
       const c = makeService();
       worker(c, 'u');
       c.live.delete('u');
@@ -205,6 +205,139 @@ describe('a worker reports to the thread that started it', () => {
     c.svc.noteAgentCompletion('w');
     expect(c.pty.writes).toHaveLength(0);
     expect(c.sent).not.toHaveBeenCalled();
+  });
+});
+
+// The delivery outbox (engineering program W2-C): a notice that cannot be delivered now is kept and
+// delivered on an event of its target. Before, it was logged and lost.
+describe('a notice waits in the delivery outbox', () => {
+  const rows = (c: Ctx, id: string) => c.svc.deliveryOutbox.list({ terminalId: id });
+
+  it('a Finished notice for a coordinator that is not running is delivered after its next process start', () => {
+    const c = makeService();
+    worker(c, 'u');
+    c.live.delete('u');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    c.svc.noteAgentCompletion('w');
+    expect(c.to('u')).toHaveLength(0);
+    expect(rows(c, 'u')).toMatchObject([{ state: 'pending', kind: 'notice', source_terminal_id: 'w', attempts: 0 }]);
+
+    c.live.add('u'); // the process started
+    expect(c.svc.deliveryOutbox.flush('u')).toBe(1); // what the process.started event does (delivery/wiring.ts)
+    expect(c.to('u')).toHaveLength(1);
+    expect(c.to('u')[0]).toContain('just finished a turn');
+    expect(rows(c, 'u')).toMatchObject([{ state: 'delivered' }]);
+    c.svc.deliveryOutbox.flush('u'); // a later event of the same thread
+    expect(c.to('u')).toHaveLength(1);
+    expect(c.revived).not.toHaveBeenCalled(); // the outbox never started the starter
+  });
+
+  it('a notice for the overseer that cannot start is kept, and delivered when it can', () => {
+    const c = makeService();
+    worker(c, 'coord');
+    c.live.delete('coord');
+    c.revived.mockReturnValue(false); // the overseer could not be started
+    c.sent.mockImplementationOnce(() => { throw new Error('could not start the thread: spawn ENOENT'); });
+    c.svc.noteAgentCompletion('w');
+    expect(rows(c, 'coord')).toMatchObject([{ state: 'pending', attempts: 0 }]); // it waits; this is not a failed attempt
+    c.live.add('coord');
+    c.svc.deliveryOutbox.flush('coord');
+    expect(rows(c, 'coord')).toMatchObject([{ state: 'delivered' }]);
+    expect(String(c.sent.mock.calls.at(-1)![1])).toContain('Batch:');
+  });
+
+  it('the overseer is still revived for a notice, as before', () => {
+    const c = makeService();
+    worker(c, 'coord');
+    c.live.delete('coord');
+    c.svc.noteAgentCompletion('w');
+    expect(c.revived).toHaveBeenCalledWith('coord');
+    expect(c.to('coord')).toHaveLength(1);
+    expect(rows(c, 'coord')).toMatchObject([{ state: 'delivered' }]);
+  });
+
+  it('a send that throws is kept and tried again on the next event', () => {
+    const c = makeService();
+    worker(c, 'coord');
+    c.sent.mockImplementationOnce(() => { throw new Error('no structured session for terminal'); });
+    c.svc.noteAgentCompletion('w');
+    expect(rows(c, 'coord')).toMatchObject([{ state: 'pending', attempts: 1, last_error: 'no structured session for terminal' }]);
+    c.svc.deliveryOutbox.flush('coord');
+    expect(rows(c, 'coord')).toMatchObject([{ state: 'delivered' }]);
+    expect(c.sent.mock.results.map((r) => r.type)).toEqual(['throw', 'return']); // one failed try, one delivery
+    c.svc.deliveryOutbox.flush('coord');
+    expect(c.sent).toHaveBeenCalledTimes(2);
+  });
+
+  it('a notice for an archived coordinator is dropped with a reason', () => {
+    const c = makeService();
+    worker(c, 'u');
+    terminalsDb.archive(c.db, 'u');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    c.svc.noteAgentCompletion('w');
+    expect(rows(c, 'u')).toMatchObject([{ state: 'dropped', last_error: 'the target is archived or removed' }]);
+    expect(c.sent).not.toHaveBeenCalled();
+  });
+
+  it('a pending notice is dropped when its starter is archived before it runs again', () => {
+    const c = makeService();
+    worker(c, 'u');
+    c.live.delete('u');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    c.svc.noteAgentCompletion('w');
+    terminalsDb.archive(c.db, 'u');
+    c.svc.deliveryOutbox.flush('u');
+    expect(rows(c, 'u')).toMatchObject([{ state: 'dropped', last_error: 'the target is archived or removed' }]);
+  });
+
+  it('a PTY starter that is not running gets the notice typed in after it runs again', () => {
+    const c = makeService();
+    c.mk('cli', 'CLI thread', {});
+    worker(c, 'cli');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    c.svc.noteAgentCompletion('w');
+    expect(c.pty.writes).toHaveLength(0);
+    c.pty.alive.add('cli');
+    c.svc.deliveryOutbox.flush('cli');
+    expect(c.pty.writes).toHaveLength(1);
+    expect(c.pty.writes[0].data).toContain('just finished a turn');
+  });
+
+  it('a question that cannot be delivered now is not kept: the user gets it instead', () => {
+    const c = makeService();
+    worker(c, 'u');
+    c.live.delete('u');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(c.svc.routeAgentQuestionToCoordinator('w', QUESTION)).toBe(false);
+    expect(rows(c, 'u')).toMatchObject([{ state: 'dropped', kind: 'question' }]);
+    c.live.add('u');
+    c.svc.deliveryOutbox.flush('u');
+    expect(c.to('u')).toHaveLength(0); // no stale question later
+  });
+
+  it('two notices of one worker are two rows when no lifecycle record tells them apart', () => {
+    const c = makeService();
+    worker(c, 'u');
+    c.svc.noteUserMessageToAgent('w', 'use b');
+    c.svc.noteUserMessageToAgent('w', 'use b');
+    expect(c.to('u')).toHaveLength(2);
+  });
+
+  it('the same settle event enqueues one row', () => {
+    const c = makeService();
+    worker(c, 'u');
+    // What StatusService.accept records for the turn.completed event of the worker.
+    c.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, status, source, observed_at, generation, sequence) VALUES ('w', 'waiting', 'authoritative', ?, 'gen-1', 7)`)
+      .run(new Date().toISOString());
+    c.svc.noteAgentCompletion('w');
+    c.svc.noteAgentCompletion('w'); // the same event, handled twice
+    expect(c.to('u')).toHaveLength(1);
+    expect(rows(c, 'u')).toHaveLength(1);
+    expect(rows(c, 'u')[0].dedup_key).toBe('notice:w:finished:gen-1:7');
+    // The next turn of the worker has a new sequence: a new notice.
+    c.db.prepare("UPDATE thread_lifecycle SET sequence = 12 WHERE terminal_id = 'w'").run();
+    c.svc.noteAgentCompletion('w');
+    expect(c.to('u')).toHaveLength(2);
   });
 });
 

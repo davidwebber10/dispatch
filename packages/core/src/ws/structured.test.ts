@@ -379,3 +379,23 @@ describe('the active model frame', () => {
   });
 });
 
+
+// W2-C: a question asked before a daemon restart is in the database, not in the manager.
+describe('handleStructuredConnection: a question saved before a restart', () => {
+  const SAVED = { requestId: 'req-1', toolName: 'AskUserQuestion', input: {}, questions: [{ question: 'Deploy now?' }] };
+
+  it('sends the saved question as the same permission frame, after the replay', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, undefined, () => SAVED);
+    expect(sent).toEqual([REAL_TURN, { type: 'permission', pending: SAVED }]);
+  });
+
+  it('sends nothing more when no question is saved, and a throwing lookup never breaks the replay', () => {
+    const a = fakeWs();
+    handleStructuredConnection(a.ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, undefined, () => null);
+    expect(a.sent).toEqual([REAL_TURN]);
+    const b = fakeWs();
+    handleStructuredConnection(b.ws, REQ, ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, undefined, () => { throw new Error('db gone'); });
+    expect(b.sent).toEqual([REAL_TURN]);
+  });
+});
