@@ -18,22 +18,20 @@ describe('checkBundle', () => {
    * thread view, and Settings on demand. `o` changes one thing for a test.
    */
   function build(o = {}) {
-    const sizes = { entry: 100_000, react: 40_000, common: 60_000, phone: 10_000, desktop: 15_000, thread: 30_000, settings: 30_000, css: 5_000, ...o.sizes };
+    const sizes = { entry: 160_000, vendor: 40_000, phone: 10_000, desktop: 15_000, thread: 30_000, settings: 30_000, css: 5_000, ...o.sizes };
     const m = {
-      'index.html': { file: file('assets/index-AAA.js', sizes.entry), isEntry: true, src: 'index.html', imports: ['_react-AAA.js'], dynamicImports: ['src/components/mobile/MobileApp.tsx', 'src/components/layout/DesktopShell.tsx'], css: [file('assets/index-AAA.css', sizes.css)] },
-      '_react-AAA.js': { file: file('assets/react-AAA.js', sizes.react), name: 'react' },
-      '_common-AAA.js': { file: file('assets/common-AAA.js', sizes.common), name: 'common', imports: ['_react-AAA.js', 'index.html'] },
-      'src/components/mobile/MobileApp.tsx': { file: file('assets/MobileApp-AAA.js', sizes.phone), src: 'src/components/mobile/MobileApp.tsx', isDynamicEntry: true, imports: ['index.html', '_common-AAA.js', ...(o.phoneImports ?? [])], dynamicImports: ['_views-AAA.js', 'src/components/settings/allSections.ts'] },
-      'src/components/layout/DesktopShell.tsx': { file: file('assets/DesktopShell-AAA.js', sizes.desktop), src: 'src/components/layout/DesktopShell.tsx', isDynamicEntry: true, imports: ['index.html', '_common-AAA.js'], dynamicImports: ['_views-AAA.js', 'src/components/settings/allSections.ts'] },
-      '_views-AAA.js': { file: file('assets/views-AAA.js', sizes.thread), name: 'views', isDynamicEntry: true, imports: ['index.html', '_common-AAA.js'] },
+      'index.html': { file: file('assets/index-AAA.js', sizes.entry), isEntry: true, src: 'index.html', imports: ['_vendor-AAA.js'], dynamicImports: ['src/components/mobile/MobileApp.tsx', 'src/components/layout/DesktopShell.tsx'], css: [file('assets/index-AAA.css', sizes.css)] },
+      '_vendor-AAA.js': { file: file('assets/vendor-AAA.js', sizes.vendor), name: 'vendor' },
+      'src/components/mobile/MobileApp.tsx': { file: file('assets/MobileApp-AAA.js', sizes.phone), src: 'src/components/mobile/MobileApp.tsx', isDynamicEntry: true, imports: ['index.html', ...(o.phoneImports ?? [])], dynamicImports: ['_views-AAA.js', 'src/components/settings/allSections.ts'] },
+      'src/components/layout/DesktopShell.tsx': { file: file('assets/DesktopShell-AAA.js', sizes.desktop), src: 'src/components/layout/DesktopShell.tsx', isDynamicEntry: true, imports: ['index.html'], dynamicImports: ['_views-AAA.js', 'src/components/settings/allSections.ts'] },
+      '_views-AAA.js': { file: file('assets/views-AAA.js', sizes.thread), name: 'views', isDynamicEntry: true, imports: ['index.html'] },
       'src/components/settings/allSections.ts': { file: file('assets/allSections-AAA.js', sizes.settings), src: 'src/components/settings/allSections.ts', isDynamicEntry: true, imports: ['index.html'] },
       '_terminal-AAA.js': { file: file('assets/terminal-AAA.js', 1000), name: 'terminal' },
     };
     fs.writeFileSync(path.join(dist, '.vite/manifest.json'), JSON.stringify(o.manifest ? o.manifest(m) : m));
     const links = o.links ?? [
-      '<link rel="modulepreload" crossorigin href="./assets/react-AAA.js">',
+      '<link rel="modulepreload" crossorigin href="./assets/vendor-AAA.js">',
       '<link rel="stylesheet" crossorigin href="./assets/index-AAA.css">',
-      '<link rel="modulepreload" crossorigin href="./assets/common-AAA.js">',
       '<link rel="modulepreload" crossorigin href="./assets/MobileApp-AAA.js" media="(max-width: 768px)">',
       '<link rel="modulepreload" crossorigin href="./assets/DesktopShell-AAA.js" media="(min-width: 769px)">',
       '<link rel="modulepreload" crossorigin href="./assets/views-AAA.js" media="(min-width: 769px)">',
@@ -46,8 +44,8 @@ describe('checkBundle', () => {
     const under = checkBundle(dist);
     expect(under.errors).toEqual([]);
     expect(under.ok).toBe(true);
-    expect(under.report.entry.gzip).toBeGreaterThan(100_000);
-    expect(under.report.entry.gzip).toBeLessThan(101_000);
+    expect(under.report.entry.gzip).toBeGreaterThan(160_000);
+    expect(under.report.entry.gzip).toBeLessThan(161_000);
 
     build({ sizes: { entry: BUDGETS.entryGzip + 5_000 } });
     const over = checkBundle(dist);
@@ -58,22 +56,22 @@ describe('checkBundle', () => {
   it('reports the first-paint path of each width: its files, its sizes and the round trips', () => {
     build();
     const { report } = checkBundle(dist);
-    expect(report.paths.phone.js.sort()).toEqual(['assets/MobileApp-AAA.js', 'assets/common-AAA.js', 'assets/index-AAA.js', 'assets/react-AAA.js']);
-    expect(report.paths.desktop.js.sort()).toEqual(['assets/DesktopShell-AAA.js', 'assets/common-AAA.js', 'assets/index-AAA.js', 'assets/react-AAA.js', 'assets/views-AAA.js']);
+    expect(report.paths.phone.js.sort()).toEqual(['assets/MobileApp-AAA.js', 'assets/index-AAA.js', 'assets/vendor-AAA.js']);
+    expect(report.paths.desktop.js.sort()).toEqual(['assets/DesktopShell-AAA.js', 'assets/index-AAA.js', 'assets/vendor-AAA.js', 'assets/views-AAA.js']);
     expect(report.paths.phone.css).toEqual(['assets/index-AAA.css']);
-    expect(report.paths.phone.raw).toBe(100_000 + 40_000 + 60_000 + 10_000 + 5_000);
+    expect(report.paths.phone.raw).toBe(160_000 + 40_000 + 10_000 + 5_000);
     expect(report.paths.phone.brotli).toBeGreaterThanOrEqual(215_000);
     expect(report.paths.phone.roundTrips).toBe(4);
-    expect(report.chunkCount).toBe(8);
+    expect(report.chunkCount).toBe(7);
   });
 
   it('fails when a first-paint path is over its brotli budget or has too many files', () => {
-    build({ sizes: { common: 250_000 } });
+    build({ sizes: { vendor: 250_000 } });
     const r = checkBundle(dist);
     expect(r.errors.join('\n')).toMatch(/phone: the first-paint path is \d+ bytes brotli: over the budget of 285000/);
     build();
-    const few = checkBundle(dist, { budgets: { firstPaintFiles: { phone: 3, desktop: 8 } } });
-    expect(few.errors).toEqual(['phone: the first-paint path has 4 JS files: over the budget of 3']);
+    const few = checkBundle(dist, { budgets: { firstPaintFiles: { phone: 2, desktop: 4 } } });
+    expect(few.errors).toEqual(['phone: the first-paint path has 3 JS files: over the budget of 2']);
   });
 
   it('fails when the phone path holds the desktop shell', () => {
@@ -105,9 +103,8 @@ describe('checkBundle', () => {
 
   it('fails when index.html does not announce a first-paint chunk for that width (a request waterfall)', () => {
     build({ links: [
-      '<link rel="modulepreload" crossorigin href="./assets/react-AAA.js">',
+      '<link rel="modulepreload" crossorigin href="./assets/vendor-AAA.js">',
       '<link rel="stylesheet" crossorigin href="./assets/index-AAA.css">',
-      '<link rel="modulepreload" crossorigin href="./assets/common-AAA.js">',
       '<link rel="modulepreload" crossorigin href="./assets/DesktopShell-AAA.js" media="(min-width: 769px)">',
       '<link rel="modulepreload" crossorigin href="./assets/views-AAA.js" media="(min-width: 769px)">',
     ] });
@@ -116,9 +113,8 @@ describe('checkBundle', () => {
 
   it('fails when index.html announces a chunk that the width does not need', () => {
     build({ links: [
-      '<link rel="modulepreload" crossorigin href="./assets/react-AAA.js">',
+      '<link rel="modulepreload" crossorigin href="./assets/vendor-AAA.js">',
       '<link rel="stylesheet" crossorigin href="./assets/index-AAA.css">',
-      '<link rel="modulepreload" crossorigin href="./assets/common-AAA.js">',
       '<link rel="modulepreload" crossorigin href="./assets/MobileApp-AAA.js" media="(max-width: 768px)">',
       '<link rel="modulepreload" crossorigin href="./assets/DesktopShell-AAA.js">',
       '<link rel="modulepreload" crossorigin href="./assets/views-AAA.js" media="(min-width: 769px)">',

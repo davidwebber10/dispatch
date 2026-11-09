@@ -27,8 +27,11 @@ export const BUDGETS = {
   entryGzip: 260_000,
   /** JS and CSS of a first-paint path, brotli. Set a little over the sizes at W2-E; lower them when the path gets smaller. */
   firstPaintBrotli: { phone: 285_000, desktop: 340_000 },
-  /** JS files of a first-paint path: each one is a request. */
-  firstPaintFiles: { phone: 6, desktop: 8 },
+  /**
+   * JS files of a first-paint path. The daemon serves HTTP/1.1: a browser has six connections, and
+   * theme-boot.js and the stylesheet use two. A fifth JS file waits one round trip for a free connection.
+   */
+  firstPaintFiles: { phone: 3, desktop: 4 },
 };
 
 export const SHELLS = {

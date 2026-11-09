@@ -107,17 +107,25 @@ describe('sharedChunkNames', () => {
     chunk('react.js', ['/node_modules/react/index.js']),
     chunk('Phone.js', ['/Phone', '/phoneList'], ['index.js', 'react.js', 'a.js', 'c.js'], 'dyn'),
     chunk('Desktop.js', ['/Desktop', '/rail'], ['index.js', 'react.js', 'a.js', 'b.js'], 'dyn'),
-    chunk('Thread.js', ['/Thread'], ['index.js', 'd.js', 'a.js'], 'dyn'),
-    chunk('Overseer.js', ['/Overseer'], ['index.js', 'd.js', 'b.js', 'c.js'], 'dyn'),
-    chunk('Settings.js', ['/Settings', '/sections'], ['index.js', 'e.js'], 'dyn'),
+    chunk('Thread.js', ['/Thread'], ['index.js', 'd.js', 'a.js', 'rec.js'], 'dyn'),
+    chunk('Overseer.js', ['/Overseer'], ['index.js', 'd.js', 'b.js', 'c.js', 'f.js'], 'dyn'),
+    chunk('Settings.js', ['/Settings', '/sections'], ['index.js', 'e.js', 'rec.js'], 'dyn'),
     chunk('Wizard.js', ['/Wizard'], ['index.js', 'e.js'], 'dyn'),
+    chunk('rec.js', ['/recordings'], ['g.js', 'f.js'], 'dyn'),  // the entry imports it with import() at launch; two views import it statically
     chunk('a.js', ['/card', '/dnd'], ['react.js']),          // both shells and the thread view
     chunk('b.js', ['/ledger'], ['a.js']),                     // the desktop shell and the Control Plane
     chunk('c.js', ['/phoneMenu']),                            // the phone shell and the Control Plane
     chunk('d.js', ['/chat', '/tool']),                        // two views, no shell
     chunk('e.js', ['/secrets']),                              // two views, no shell
+    chunk('f.js', ['/idb']),                                  // the background root and one view
+    chunk('g.js', ['/recHelper']),                            // the background root only
+    chunk('push.js', ['/push'], ['index.js'], 'dyn'),         // a background root that both shells import statically
+    chunk('h.js', ['/pushHelper']),                           // what it brings
   ];
-  const names = sharedChunkNames(pass1, (id) => id === '/Phone' || id === '/Desktop', (id) => id.includes('/node_modules/react/'));
+  pass1.find((c) => c.fileName === 'Phone.js').imports.push('push.js');
+  pass1.find((c) => c.fileName === 'Desktop.js').imports.push('push.js');
+  pass1.find((c) => c.fileName === 'push.js').imports.push('h.js');
+  const names = sharedChunkNames(pass1, { isShell: (id) => id === '/Phone' || id === '/Desktop', isBackground: (id) => id === '/recordings' || id === '/push', isPinned: (id) => id.includes('/node_modules/react/') });
 
   it('the entry\'s modules are named "index"', () => {
     expect(names.get('/main')).toBe('index');
@@ -128,16 +136,24 @@ describe('sharedChunkNames', () => {
     for (const id of ['/Phone', '/phoneList', '/Desktop', '/rail', '/Thread', '/Overseer', '/Settings', '/sections', '/Wizard']) expect(names.has(id), id).toBe(false);
   });
 
-  it('code that a shell shares goes to "common"; code that only views share goes to "views"', () => {
-    for (const id of ['/card', '/dnd', '/ledger', '/phoneMenu']) expect(names.get(id), id).toBe('common');
+  it('code that a shell shares goes to the entry chunk; code that only views share goes to "views"', () => {
+    for (const id of ['/card', '/dnd', '/ledger', '/phoneMenu']) expect(names.get(id), id).toBe('index');
     for (const id of ['/chat', '/tool', '/secrets']) expect(names.get(id), id).toBe('views');
+  });
+
+  it('a background root and what it brings go to the entry chunk, not to "views"', () => {
+    for (const id of ['/recordings', '/recHelper', '/idb']) expect(names.get(id), id).toBe('index');
+  });
+
+  it('a background root that a shell imports statically goes to the entry chunk: the first screen needs it', () => {
+    for (const id of ['/push', '/pushHelper']) expect(names.get(id), id).toBe('index');
   });
 
   it('a pinned module (a vendor group) gets no name here', () => {
     expect(names.has('/node_modules/react/index.js')).toBe(false);
   });
 
-  it('the result has three chunk names at most, whatever the number of combinations', () => {
-    expect([...new Set(names.values())].sort()).toEqual(['common', 'index', 'views']);
+  it('the result has two chunk names, whatever the number of combinations', () => {
+    expect([...new Set(names.values())].sort()).toEqual(['index', 'views']);
   });
 });

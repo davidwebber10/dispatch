@@ -77,13 +77,12 @@ export default function App() {
     void useUsageLimits.getState().load();
     void useSpinnerWords.getState().load();
     void loadSharedSettings();
-    // Fetch the terminal's code once the app has settled, so the first CLI thread opens without a
-    // spinner; it is split out of the startup script (LazyTerminalTab).
+    // Fetch the code of the views that the first screen did not need once the app has settled, so
+    // each opens without a spinner: the terminal (split out of the startup script, LazyTerminalTab),
+    // the thread view (the phone starts on the list), the Control Plane and Chat (W2-E).
+    // Not at once: the launch's own requests (the lists, the settings) go first on the browser's six connections.
     const idle = (cb: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 2500));
-    idle(preloadTerminalTab);
-    // The same for the views that the first screen did not need (W2-E): the thread view (the phone
-    // starts on the list), then the Control Plane and Chat. They then open with no wait on a slow link.
-    idle(() => { preloadTabHost(); preloadOverseerView(); preloadChatMode(); });
+    const laterViews = setTimeout(() => idle(() => { preloadTerminalTab(); preloadTabHost(); preloadOverseerView(); preloadChatMode(); }), 3000);
     // Keep the launch snapshot current (lib/launchSnapshot.ts): the project and thread lists, saved
     // a moment after they change so a burst of status events writes once.
     let snapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -148,7 +147,7 @@ export default function App() {
       },
     });
     sockRef.current = sock;
-    return () => { unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
+    return () => { clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
 
   useEffect(() => {

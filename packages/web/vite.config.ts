@@ -11,6 +11,8 @@ const SRC = path.resolve(import.meta.dirname, 'src');
 const PHONE_SHELL = '/src/components/mobile/MobileApp.tsx';
 const DESKTOP_SHELL = '/src/components/layout/DesktopShell.tsx';
 const THREAD_VIEW = '/src/components/tabs/TabHost.tsx';
+/** Modules that the entry imports with import() at launch, for work after the first screen (main.tsx, App.tsx). */
+const BACKGROUND = ['/src/lib/recordings.ts', '/src/lib/push.ts'];
 const slashes = (id: string) => id.split(path.sep).join('/');
 
 /** Build only: each icon module keeps the weights the app draws (scripts/build-plugins.mjs). */
@@ -75,14 +77,16 @@ function shellPreload(): Plugin {
 
 /** The large vendor groups. Their names are stable: the bundle check and the reports use them. */
 function vendorChunk(id: string): string | undefined {
-  // Rollup's CommonJS helper: with React, the chunk that imports no other. In the entry chunk it would make React import the entry.
-  if (id === '\0commonjsHelpers.js') return 'react';
+  // Rollup's CommonJS helper: with React, in the chunk that imports no other. In the entry chunk it would make React import the entry.
+  if (id === '\0commonjsHelpers.js') return 'vendor';
   if (!id.includes('/node_modules/')) return undefined;
-  if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'react';
+  // React and the markdown stack (marked, DOMPurify, highlight.js with its first-load languages) are
+  // one chunk: the first screen needs both, and one file is one request less on the six connections.
+  if (/\/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'vendor';
+  if (/\/node_modules\/(marked|marked-highlight|dompurify)\//.test(id)) return 'vendor';
+  // highlight.js: lib/highlightLanguages.ts keeps the other languages in its own chunk.
+  if (/\/node_modules\/highlight\.js\/(?:lib|es)\/(core|languages\/(javascript|typescript|json|bash|diff|xml|plaintext))\.js/.test(id)) return 'vendor';
   if (/\/node_modules\/@xterm\//.test(id)) return 'terminal';
-  if (/\/node_modules\/(marked|marked-highlight|dompurify)\//.test(id)) return 'markdown';
-  // highlight.js: the core and the first-load languages go with markdown; lib/highlightLanguages.ts keeps the rest in its own chunk.
-  if (/\/node_modules\/highlight\.js\/(?:lib|es)\/(core|languages\/(javascript|typescript|json|bash|diff|xml|plaintext))\.js/.test(id)) return 'markdown';
   return undefined;
 }
 
@@ -93,8 +97,9 @@ const FIRST_PASS = 'DISPATCH_WEB_CHUNK_PASS';
 /**
  * Build only: runs the build one time in memory first, and names the app's shared code from where
  * Rollup placed it (scripts/build-plugins.mjs, sharedChunkNames). The result: the first screen loads
- * the entry, the three vendor chunks it needs, "common" and one shell, and not a file for each
- * combination of views that share a module.
+ * the entry, "vendor" and one shell (the desktop also "views"), and not a file for each combination
+ * of views that share a module. With theme-boot.js and the stylesheet that is six requests at most:
+ * the number of connections a browser opens to an HTTP/1.1 server.
  */
 function sharedChunks(): Plugin {
   return {
@@ -109,7 +114,7 @@ function sharedChunks(): Plugin {
         const chunks = output.filter((c): c is Rollup.OutputChunk => c.type === 'chunk')
           .map((c) => ({ fileName: c.fileName, isEntry: c.isEntry, isDynamicEntry: c.isDynamicEntry, imports: c.imports, moduleIds: Object.keys(c.modules) }));
         const isShell = (id: string) => slashes(id).endsWith(PHONE_SHELL) || slashes(id).endsWith(DESKTOP_SHELL);
-        sharedNames = sharedChunkNames(chunks, isShell, (id) => vendorChunk(id) !== undefined);
+        sharedNames = sharedChunkNames(chunks, { isShell, isBackground: (id) => BACKGROUND.some((b) => slashes(id).endsWith(b)), isPinned: (id) => vendorChunk(id) !== undefined });
       } finally { delete process.env[FIRST_PASS]; }
     },
   };
@@ -141,10 +146,10 @@ export default defineConfig({
     cssCodeSplit: false,
     rollupOptions: {
       output: {
-        // Stable names for the large vendor groups (engineering program 2026-11-09, W2-E), so the
-        // bundle check and the reports can name them and a release that does not touch a group keeps its file.
-        // The app's own shared code goes to two chunks (sharedChunks above): "common" for the
-        // first screen of the shells, "views" for what the lazy views share.
+        // Stable names for the vendor groups (engineering program 2026-11-09, W2-E), so the bundle
+        // check and the reports can name them and a release that does not touch a group keeps its file.
+        // The app's own shared code goes to the entry chunk (what a shell's first screen needs) or
+        // to "views" (what the lazy views share); see sharedChunks above.
         manualChunks(id) {
           return vendorChunk(id) ?? sharedNames?.get(id);
         },

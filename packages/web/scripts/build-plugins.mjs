@@ -108,39 +108,50 @@ export function shellPreloadLinks(files) {
 
 /**
  * Which chunk the app's own shared code goes to. Rollup alone makes one shared chunk for each
- * combination of lazy roots that use a module: more than ten small files on the first load, each
- * one a request. The build runs twice. The first pass lets Rollup place each module (it knows what
- * tree-shaking left of each import); this function reads that result and gives each module a name
- * for the second pass, from the roots (the entry, and each chunk that an import() loads) whose
- * load brings the module:
- *   - the entry: "index", the entry chunk
+ * combination of lazy roots that use a module: more than ten small files on the first load. The
+ * daemon serves HTTP/1.1, so a browser has six connections: the seventh file of the first screen
+ * waits one round trip for a free one. The build runs twice. The first pass lets Rollup place each
+ * module (it knows what tree-shaking left of each import); this function reads that result and
+ * gives each module a name for the second pass, from the roots (the entry, and each chunk that an
+ * import() loads) whose load brings the module:
+ *   - the entry, or a shell and one root more: "index", the entry chunk. The first screen of a
+ *     shell needs this code, and in the entry it costs no request.
+ *   - a "background" root (a small module that the entry imports with import() at each launch,
+ *     for work after the first screen), and what it brings: "index" too. Each launch runs this
+ *     code, so a file of its own is only a request more; and without this rule its code lands in
+ *     "views", and each launch would fetch the views' code for it.
  *   - one root only: no name (it stays in that root's chunk)
- *   - a shell and one root more: "common", the code that the first screen of a shell needs
  *   - several views and no shell: "views", loaded with the first view that needs it
  * Each module gets its answer by name, also the entry's: Rollup moves the unnamed static imports
- * of a named module into that module's chunk, and that would pull the entry's code into "common".
+ * of a named module into that module's chunk, and that would pull the entry's code into "views".
  *
  * @param {{ fileName: string, isEntry: boolean, isDynamicEntry: boolean, imports: string[], moduleIds: string[] }[]} chunks the chunks of the first pass
- * @param {(moduleId: string) => boolean} isShellModule true for the module of a shell
- * @param {(moduleId: string) => boolean} [isPinned] true for a module that already has a chunk name (a vendor group): it gets none here
- * @returns {Map<string, 'index' | 'common' | 'views'>}
+ * @param {{ isShell: (moduleId: string) => boolean, isBackground?: (moduleId: string) => boolean, isPinned?: (moduleId: string) => boolean }} rules
+ *   isShell: the module of a shell. isBackground: the module of a background root. isPinned: a module that already has a chunk name (a vendor group); it gets none here.
+ * @returns {Map<string, 'index' | 'views'>}
  */
-export function sharedChunkNames(chunks, isShellModule, isPinned = () => false) {
+export function sharedChunkNames(chunks, rules) {
+  const { isShell, isBackground = () => false, isPinned = () => false } = rules;
   const byFile = Object.fromEntries(chunks.map((c) => [c.fileName, c]));
   const roots = chunks.filter((c) => c.isEntry || c.isDynamicEntry);
+  const backgroundFiles = new Set(roots.filter((c) => !c.isEntry && c.moduleIds.some(isBackground)).map((c) => c.fileName));
   /** @type {Map<string, Set<string>>} chunk file -> the roots whose load brings it */
   const rootsOfChunk = new Map(chunks.map((c) => [c.fileName, new Set()]));
   for (const root of roots) for (const file of staticClosure(byFile, [root.fileName])) rootsOfChunk.get(file)?.add(root.fileName);
   const entryFiles = new Set(roots.filter((c) => c.isEntry).map((c) => c.fileName));
-  const shellFiles = new Set(roots.filter((c) => c.moduleIds.some(isShellModule)).map((c) => c.fileName));
+  const shellFiles = new Set(roots.filter((c) => c.moduleIds.some(isShell)).map((c) => c.fileName));
   const names = new Map();
   for (const c of chunks) {
-    const mine = rootsOfChunk.get(c.fileName);
+    const mine = [...rootsOfChunk.get(c.fileName)];
+    // A background root does not make its code "shared": the other roots decide.
+    const others = mine.filter((r) => !backgroundFiles.has(r));
+    const withBackground = mine.length > others.length; // the launch runs this code
+    const withShell = others.some((r) => shellFiles.has(r));
     let name;
-    if ([...mine].some((r) => entryFiles.has(r))) name = 'index';
-    else if (mine.size <= 1) name = undefined;
-    else if ([...mine].some((r) => shellFiles.has(r))) name = 'common';
-    else name = 'views';
+    if (mine.some((r) => entryFiles.has(r))) name = 'index';
+    else if (withShell && others.length > 1) name = 'index';
+    else if (withBackground) name = 'index';
+    else if (others.length > 1) name = 'views';
     if (!name) continue;
     for (const id of c.moduleIds) if (!isPinned(id)) names.set(id, name);
   }
