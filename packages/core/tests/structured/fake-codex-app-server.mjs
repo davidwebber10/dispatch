@@ -115,6 +115,14 @@ rl.on('line', (line) => {
     // like the real app-server would.
     const tid = msg.params?.threadId ?? THREAD;
     logRequest('turn/start', msg.params);
+    // CODEX_FAKE_TURN_REJECT=effort|model|both: turn/start refuses a changed effort or model, like the real app-server does
+    // for a level or a model it does not take (round 4 test).
+    const rej = process.env.CODEX_FAKE_TURN_REJECT;
+    if (rej && ((rej !== 'model' && msg.params?.effort === 'bad') || (rej !== 'effort' && msg.params?.model === 'bad-model'))) {
+      const what = msg.params?.effort === 'bad' && rej !== 'model' ? 'unsupported reasoning effort: bad' : 'unknown model: bad-model';
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: what } });
+      return;
+    }
     respond(msg.id, { turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });
     const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join(' ');
     notify('turn/started', { threadId: tid, turn: { id: TURN, items: [], itemsView: 'notLoaded', status: 'inProgress' } });

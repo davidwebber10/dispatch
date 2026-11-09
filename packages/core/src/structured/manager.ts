@@ -812,7 +812,7 @@ export class ClaudeStructuredSessionManager extends EventEmitter implements IStr
     const requestId = `ctl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     s.controls ??= new Map();
     const answer = new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => { s.controls?.delete(requestId); reject(new Error(`The CLI did not answer the ${what}`)); }, CONTROL_TIMEOUT_MS);
+      const timer = setTimeout(() => { s.controls?.delete(requestId); reject(new Error(`The CLI did not answer the ${what} in time. It may still take it: check the model and effort shown.`)); }, CONTROL_TIMEOUT_MS);
       s.controls!.set(requestId, { resolve, reject, timer });
     });
     this.write(terminalId, { type: 'control_request', request_id: requestId, request });

@@ -279,7 +279,8 @@ describe('Codex efforts depend on the model (round 1 item 9)', () => {
     const r = await svc.setThreadModel('x1', 'gpt-6-luna');
     // Not left out: a Codex thread keeps the effort of its last turn when the model changes (live check, codex-cli 0.166).
     expect(codex.calls).toEqual([{ kind: 'model', value: 'gpt-6-luna' }, { kind: 'effort', value: 'medium' }]);
-    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna', effort: 'medium' });
+    expect(cfg('x1').model).toBe('gpt-6-luna');
+    expect(cfg('x1').effort).toBeUndefined(); // the dropped pick is gone; the model's default is sent but is not a pick (round 4)
     expect(r.clearedEffort).toBe('ultra');
     expect(r.effortNow).toBe('medium');
   });
@@ -298,7 +299,7 @@ describe('Codex efforts depend on the model (round 1 item 9)', () => {
     codex.models.set('x1', 'gpt-6-astra');
     const r = await svc.setThreadModel('x1', 'gpt-6-luna');
     expect(codex.calls[1]).toEqual({ kind: 'effort', value: 'medium' });
-    expect(cfg('x1').effort).toBe('medium');
+    expect(cfg('x1').effort).toBeUndefined(); // sent, but not saved as if the owner had picked it (round 4)
     expect(r.effortNow).toBe('medium');
     expect(r.clearedEffort).toBeUndefined();
   });
@@ -341,7 +342,8 @@ describe('concurrent Codex changes are checked one after the other (round 2 item
     const b = svc.setThreadEffort('x1', 'ultra');
     await a;
     await expect(b).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/gpt-6-luna does not take that effort/) });
-    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna', effort: 'medium' }); // the switch brought Luna's own default, never ultra
+    expect(cfg('x1').model).toBe('gpt-6-luna');
+    expect(cfg('x1').effort).toBeUndefined(); // the switch sent Luna's own default (never ultra) without saving it as a pick
   });
 
   it('an effort and then a model change that cannot take it: the model switch brings its own default', async () => {
@@ -352,7 +354,8 @@ describe('concurrent Codex changes are checked one after the other (round 2 item
     await a;
     const rb = await b;
     expect(rb.clearedEffort).toBe('ultra');
-    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna', effort: 'medium' });
+    expect(cfg('x1').model).toBe('gpt-6-luna');
+    expect(cfg('x1').effort).toBeUndefined();
   });
 });
 
@@ -415,5 +418,129 @@ describe('a picked effort beats the transcript on a relaunch (round 1 item 1)', 
     const argv = pty.argvs[pty.argvs.length - 1];
     expect(argv).toEqual(expect.arrayContaining(['-c', 'model_reasoning_effort="max"', '--model', 'gpt-6-astra']));
     expect(argv.indexOf('model_reasoning_effort="max"')).toBeLessThan(argv.indexOf('resume'));
+  });
+});
+
+describe('a pick the harness refused late is taken out of the config (round 4)', () => {
+  it('the saved effort and model go back, and the web is told', () => {
+    const changed: string[] = [];
+    svc.setTerminalChangedListener((sid) => changed.push(sid));
+    seed('x1', { type: 'codex', config: { model: 'bad-model', modelSetAt: 5, effort: 'bad', effortSetAt: 6 } });
+    codex.emit('settings-refused', 'x1', { model: 'bad-model', restoredModel: 'gpt-6-luna', effort: 'bad' });
+    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-luna' });
+    expect(cfg('x1').effort).toBeUndefined();
+    expect(cfg('x1').effortSetAt).toBeUndefined();
+    expect(cfg('x1').modelSetAt).toBeUndefined();
+    expect(changed).toEqual(['s1']);
+  });
+
+  it('a model with nothing before it is simply removed', () => {
+    seed('x1', { type: 'codex', config: { model: 'bad-model', modelSetAt: 5 } });
+    codex.emit('settings-refused', 'x1', { model: 'bad-model' });
+    expect(cfg('x1').model).toBeUndefined();
+  });
+
+  it('a newer pick that replaced the refused value is left alone, and nobody is told', () => {
+    const changed: string[] = [];
+    svc.setTerminalChangedListener((sid) => changed.push(sid));
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra', effort: 'high' } });
+    codex.emit('settings-refused', 'x1', { model: 'bad-model', restoredModel: 'gpt-6-luna', effort: 'bad' });
+    expect(cfg('x1')).toMatchObject({ model: 'gpt-6-astra', effort: 'high' });
+    expect(changed).toEqual([]);
+  });
+});
+
+describe('a change that waits for the Codex model list is checked again afterwards (round 4)', () => {
+  beforeEach(() => {
+    codex.efforts = { 'gpt-6-luna': ['low', 'medium', 'high', 'xhigh', 'max'], 'gpt-6-astra': ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
+    codex.loadDelays = [40];
+  });
+
+  it('a turn that starts while the list loads: the effort is refused as busy, nothing is sent or saved', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    const p = svc.setThreadEffort('x1', 'ultra');
+    p.catch(() => {});
+    await tick();
+    terminalsDb.updateStatus(db, 'x1', 'working');     // the owner sent a message meanwhile
+    await expect(p).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/busy/) });
+    expect(codex.calls).toEqual([]);
+    expect(cfg('x1').effort).toBeUndefined();
+  });
+
+  it('a turn that starts while the list loads: the model switch is refused too', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    codex.models.set('x1', 'gpt-6-astra');
+    const p = svc.setThreadModel('x1', 'gpt-6-luna');
+    p.catch(() => {});
+    await tick();
+    terminalsDb.updateStatus(db, 'x1', 'needs_input');
+    await expect(p).rejects.toMatchObject({ status: 409 });
+    expect(codex.calls).toEqual([]);
+    expect(cfg('x1').model).toBe('gpt-6-astra');
+  });
+
+  it('a switch to the CLI while the list loads: refused, the CLI owns the model now', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    const p = svc.setThreadEffort('x1', 'high');
+    p.catch(() => {});
+    await tick();
+    const row = terminalsDb.getById(db, 'x1')!;
+    terminalsDb.updateConfig(db, 'x1', { ...JSON.parse(row.config || '{}'), transport: undefined });
+    pty.alive.add('x1'); pty.aliveOverride = true;
+    await expect(p).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/CLI/) });
+    expect(codex.calls).toEqual([]);
+  });
+});
+
+describe('exit during a change (round 4: the reviewers disagreed)', () => {
+  it('the thread stops and a replacement process is already running when the answer comes back: still a stop, the pick is kept, no notice', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.script = [async () => { claude.kill('t1'); claude.live.add('t1'); throw new Error('The thread stopped'); }]; // exit, then a new spawn
+    await svc.setThreadModel('t1', 'opus');
+    expect(cfg('t1').model).toBe('opus');
+    expect(claude.notices).toEqual([]);
+  });
+
+  it('the same for an effort', async () => {
+    seed('t1', { config: { effort: 'low' } });
+    claude.script = [async () => { claude.kill('t1'); claude.live.add('t1'); throw new Error('The thread stopped'); }];
+    await svc.setThreadEffort('t1', 'max');
+    expect(cfg('t1').effort).toBe('max');
+    expect(claude.notices).toEqual([]);
+  });
+
+  it('a real refusal while the same process lives is still a refusal', async () => {
+    seed('t1', { config: { model: 'sonnet' } });
+    claude.script = [new Error('Model not found')];
+    await expect(svc.setThreadModel('t1', 'opus')).rejects.toMatchObject({ status: 400 });
+    expect(claude.notices).toHaveLength(1);
+    expect(cfg('t1').model).toBe('sonnet');
+  });
+});
+
+describe('a model switch\'s default effort is not a pick (round 4, small item)', () => {
+  it('it is not saved, so a later switch to a model that takes the old default is not held to it', async () => {
+    seed('x1', { type: 'codex', config: { model: 'gpt-6-astra' } });
+    codex.models.set('x1', 'gpt-6-astra');
+    await svc.setThreadModel('x1', 'gpt-6-luna');                 // sends Luna's default, saves none
+    expect(cfg('x1').effort).toBeUndefined();
+    expect(cfg('x1').effortSetAt).toBeUndefined();
+    codex.defaults = { 'gpt-6-astra': 'high' };
+    const r = await svc.setThreadModel('x1', 'gpt-6-astra');       // back: Astra's own default, not Luna's
+    expect(codex.calls[codex.calls.length - 1]).toEqual({ kind: 'effort', value: 'high' });
+    expect(r.effortNow).toBe('high');
+  });
+});
+
+describe('a saved effort with no saved model is kept at spawn (round 4, small item)', () => {
+  it('ultra survives the start of a thread whose model is the app-server default', () => {
+    seed('x1', { type: 'codex', config: { effort: 'ultra' }, live: false });
+    svc.ensureStructuredAlive('x1');
+    expect(codex.opts[0].effort).toBe('ultra');
+  });
+  it('an unknown level is still dropped', () => {
+    seed('x1', { type: 'codex', config: { effort: 'turbo' }, live: false });
+    svc.ensureStructuredAlive('x1');
+    expect(codex.opts[0].effort).toBeUndefined();
   });
 });

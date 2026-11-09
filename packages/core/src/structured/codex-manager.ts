@@ -174,6 +174,8 @@ interface CodexSession {
   accountId?: string;
   /** A model picked with setModel, sent as `model` on the next turn/start (then cleared). */
   nextTurnModel?: string;
+  /** The model before the first pick that is still waiting for a turn: where a refused pick goes back to. */
+  modelBeforePick?: string;
   /** The effort the owner picked (setEffort, or the saved one at spawn). Sent with EVERY turn/start: live-checked on
    *  codex-cli 0.166, a thread keeps the effort of its last turn when the model changes, and forgets it on resume. */
   pickedEffort?: string;
@@ -701,9 +703,42 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
       // A pending model switch rides this turn: Codex applies `model` to "this turn and
       // subsequent turns" (TurnStartParams, codex-cli 0.167.0), so it is sent once.
       const model = session.nextTurnModel;
-      await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}), ...(session.pickedEffort ? { effort: session.pickedEffort } : {}) });
-      if (session.nextTurnModel === model) session.nextTurnModel = undefined;
+      const effort = session.pickedEffort;
+      try {
+        await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      } catch (err) {
+        if (model || effort) this.dropRefusedPick(session, model, effort, err);
+        throw err;
+      }
+      if (session.nextTurnModel === model) { session.nextTurnModel = undefined; session.modelBeforePick = undefined; }
     }
+  }
+
+  /**
+   * The app-server refused a turn/start that carried a changed model or effort. Drop the refused value so that no later
+   * turn sends it again (it would fail every turn), put the model back, tell the thread, and tell the service so the saved
+   * pick goes back too. The error names what it refused ("unsupported reasoning effort", "unknown model"); when it names
+   * neither, both are dropped.
+   */
+  private dropRefusedPick(session: CodexSession, model: string | undefined, effort: string | undefined, err: unknown): void {
+    const msg = err instanceof Error ? err.message : String(err);
+    const effortHit = !!effort && /effort|reasoning/i.test(msg);
+    const modelHit = !!model && /model/i.test(msg);
+    const dropEffort = !!effort && (effortHit || !modelHit);
+    const dropModel = !!model && (modelHit || !effortHit);
+    if (!dropEffort && !dropModel) return;
+    const info: { effort?: string; model?: string; restoredModel?: string } = {};
+    if (dropEffort) { session.pickedEffort = undefined; info.effort = effort; }
+    if (dropModel) {
+      session.nextTurnModel = undefined;
+      info.model = model;
+      info.restoredModel = session.modelBeforePick;
+      if (session.modelBeforePick) { session.model = session.modelBeforePick; session.translator.setModel(session.modelBeforePick); }
+      session.modelBeforePick = undefined;
+    }
+    const what = [dropModel ? `model ${model}` : '', dropEffort ? `effort ${effort}` : ''].filter(Boolean).join(' and ');
+    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message: `Codex refused the ${what}: ${msg}. It will not be sent again.` });
+    this.emit('settings-refused', session.terminalId, info);
   }
 
   getModel(terminalId: string): string | undefined { return this.sessions.get(terminalId)?.model; }
@@ -716,6 +751,7 @@ export class CodexStructuredSessionManager extends EventEmitter implements IStru
   async setModel(terminalId: string, model: string): Promise<string> {
     const session = this.sessions.get(terminalId);
     if (!session) throw new Error('This thread is not running');
+    if (session.nextTurnModel === undefined) session.modelBeforePick = session.model;
     session.model = model;
     session.nextTurnModel = model;
     session.translator.setModel(model);

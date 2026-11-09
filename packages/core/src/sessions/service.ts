@@ -48,7 +48,7 @@ import { claudeMemoryProjectDir, prepareOverseerMemory } from '../overseer/memor
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
 import { adoptTranscriptSettings as adoptTranscriptSettingsInto, effortFor } from './thread-settings.js';
 import { parseSlash, resolveEffortArg, resolveModelArg, catalogModelChoices, validateEffort } from '../providers/slash-commands.js';
-import { codexEffortsFor, codexDefaultEffortFor } from '../providers/codex-efforts.js';
+import { codexEffortsFor, codexDefaultEffortFor, CODEX_ALL_EFFORTS } from '../providers/codex-efforts.js';
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, readSessionSettings, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
@@ -359,6 +359,8 @@ export class SessionService {
       try { this.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
     });
     for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.usageLimits?.onTurnEnded(terminalId));
+    // A model or effort the harness refused LATE (Codex: on the turn that first carries it): the saved pick goes back.
+    manager.on('settings-refused', (terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }) => this.undoRefusedPick(terminalId, info));
     if (type === 'claude-code') {
       this.persistMessageSources(manager);
       this.forgetLostConversations(manager);
@@ -2275,6 +2277,34 @@ export class SessionService {
     return typeof config.model === 'string' && config.model ? config.model : undefined;
   }
 
+  private onTerminalChanged?: (sessionId: string) => void;
+  /** Runs when the daemon changes a thread's saved settings on its own (a late refusal put a pick back); the server tells the web. */
+  setTerminalChangedListener(listener: (sessionId: string) => void): void { this.onTerminalChanged = listener; }
+
+  /**
+   * The harness refused a saved pick when it was first used (Codex turn/start): take it out of the thread's config, but only
+   * if the config still holds that very value (a newer pick has replaced it otherwise). The thread already shows the refusal.
+   */
+  private undoRefusedPick(terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }): void {
+    const row = terminalsDb.getById(this.db, terminalId);
+    if (!row) return;
+    const cfg = this.configOf(terminalId);
+    let changed = false;
+    if (info.effort && cfg.effort === info.effort) { delete cfg.effort; delete cfg.effortSetAt; changed = true; }
+    if (info.model && cfg.model === info.model) {
+      if (info.restoredModel) cfg.model = info.restoredModel; else delete cfg.model;
+      delete cfg.modelSetAt;
+      changed = true;
+    }
+    if (!changed) return;
+    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return; }
+    this.onTerminalChanged?.(row.session_id);
+  }
+
+  private configOf(terminalId: string): Record<string, any> {
+    try { return JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}'); } catch { return {}; }
+  }
+
   /** One thread's model and effort changes run one at a time: the second is judged against what the first left. */
   private readonly settingsLock = new Map<string, Promise<unknown>>();
   private withSettingsLock<T>(terminalId: string, fn: () => Promise<T>): Promise<T> {
@@ -2301,7 +2331,13 @@ export class SessionService {
   /** The saved Codex effort, if the thread's model still takes it. */
   private codexEffortFor(config: Record<string, any>, model?: string): string | undefined {
     const e = config.effort;
-    return typeof e === 'string' && this.codexEffortsFor(model ?? config.model).includes(e) ? e : undefined;
+    if (typeof e !== 'string') return undefined;
+    const m = model ?? config.model;
+    // No model known yet (the thread runs the app-server's default): the effort was checked against the model the thread
+    // ran when it was picked, so keep it; if the default model does not take it, Codex refuses it on the first turn and the
+    // refusal puts it back (CodexStructuredSessionManager.dropRefusedPick).
+    if (typeof m !== 'string' || !m) return CODEX_ALL_EFFORTS.includes(e) ? e : undefined;
+    return this.codexEffortsFor(m).includes(e) ? e : undefined;
   }
 
   /**
@@ -2370,13 +2406,17 @@ export class SessionService {
     model: string,
   ): Promise<{ model: string; terminal: terminalsDb.Terminal; clearedEffort?: string; effortNow?: string }> {
     if (typeof model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]~-]{0,120}$/.test(model)) throw transportError(400, 'model is not a valid model id');
+    // Codex: which efforts the new model takes (the app-server's list, else the table), and what it runs at by default.
+    // The first check is an early, cheap refusal (busy, CLI, agent). Asking the app-server can take a while and the thread can
+    // start a turn or move to the CLI meanwhile, so the checks run again once the answer is in, and everything after uses the
+    // settings as they are THEN.
+    const first = this.settingsTarget(terminalId, 'model');
+    if (first.terminal.type === 'codex') await first.manager?.loadModelEfforts?.().catch(() => null);
     const { terminal, config, structured, manager } = this.settingsTarget(terminalId, 'model');
 
-    // Codex: which efforts the new model takes (the app-server's list, else the table), and what it runs at by default.
     let effortNow: string | undefined;
     let clearedEffort: string | undefined;
     if (terminal.type === 'codex') {
-      await manager?.loadModelEfforts?.().catch(() => null);
       const was = this.activeModel(terminalId);
       const kept = typeof config.effort === 'string' && this.codexEffortsFor(model).includes(config.effort);
       if (!kept && model !== was) {
@@ -2387,22 +2427,36 @@ export class SessionService {
 
     let resolved = model;
     if (structured && manager?.isAlive(terminalId) && manager.setModel) {
+      const exit = this.watchExit(manager, terminalId);
       try {
         resolved = await manager.setModel(terminalId, model);
         if (effortNow) await manager.setEffort?.(terminalId, effortNow);
       } catch (e) {
-        // The thread ended before it answered: nothing was refused, so the pick is kept and the next start uses it.
-        if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'model', (e as Error)?.message || 'The harness refused the model');
-      }
+        // The thread ended before it answered (even if a new process already took its place): nothing was refused, so the
+        // pick is kept and the next start uses it. A refusal is an answer from a process that is still the same one.
+        if (!exit.happened() && manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'model', (e as Error)?.message || 'The harness refused the model');
+      } finally { exit.off(); }
     }
-    this.mergeConfig(terminalId, {
-      model, modelSetAt: Date.now(),
-      ...(effortNow ? { effort: effortNow, effortSetAt: Date.now() } : {}),
-    });
+    // The new model's default effort is sent so the thread is not left on the old model's level, but it is not the owner's
+    // pick: it is not saved (a resume runs at the model default anyway). A saved effort the model cannot take is dropped.
+    this.mergeConfig(terminalId, { model, modelSetAt: Date.now() });
+    if (clearedEffort) {
+      const cfg = this.configOf(terminalId);
+      delete cfg.effort; delete cfg.effortSetAt;
+      terminalsDb.updateConfig(this.db, terminalId, cfg);
+    }
     return {
       model: resolved, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!),
       ...(clearedEffort ? { clearedEffort } : {}), ...(effortNow ? { effortNow } : {}),
     };
+  }
+
+  /** Did this thread's process exit while a change was being sent? Counts an exit followed by a new spawn (a replacement is alive again). */
+  private watchExit(manager: import('../structured/manager.js').IStructuredManager, terminalId: string): { happened: () => boolean; off: () => void } {
+    let exited = false;
+    const on = (id: string) => { if (id === terminalId) exited = true; };
+    manager.on('exit', on);
+    return { happened: () => exited, off: () => { manager.off('exit', on); } };
   }
 
   /**
@@ -2418,11 +2472,15 @@ export class SessionService {
   }
 
   private async setThreadEffortLocked(terminalId: string, effort: string): Promise<{ effort: string; terminal: terminalsDb.Terminal }> {
+    this.settingsTarget(terminalId, 'effort'); // an early, cheap refusal (busy, CLI, agent) before any waiting
+    // Asking the Codex app-server can take a while; a turn can start or the thread can move to the CLI meanwhile,
+    // so the checks run again once the answer is in.
+    const first = this.settingsTarget(terminalId, 'effort');
+    if (first.terminal.type === 'codex') await first.manager?.loadModelEfforts?.().catch(() => null);
     const { terminal, config, structured, manager } = this.settingsTarget(terminalId, 'effort');
     let codexEfforts: readonly string[] | undefined;
     let codexModel: string | undefined;
     if (terminal.type === 'codex') {
-      await manager?.loadModelEfforts?.().catch(() => null);
       codexModel = this.activeModel(terminalId) ?? (typeof config.model === 'string' ? config.model : undefined);
       codexEfforts = this.codexEffortsFor(codexModel);
     }
@@ -2430,11 +2488,12 @@ export class SessionService {
     if (bad) throw transportError(terminal.type === 'claude-code' || terminal.type === 'codex' ? 400 : 409, bad);
     if (structured && manager?.isAlive(terminalId)) {
       if (!manager.setEffort) throw transportError(409, 'Not yet available for this agent.');
+      const exit = this.watchExit(manager, terminalId);
       try {
         await manager.setEffort(terminalId, effort);
       } catch (e) {
-        if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
-      }
+        if (!exit.happened() && manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
+      } finally { exit.off(); }
     }
     this.mergeConfig(terminalId, { effort, effortSetAt: Date.now() });
     return { effort, terminal: terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!) };

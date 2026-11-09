@@ -94,3 +94,46 @@ it('postNotice puts a line in the thread', async () => {
   m.postNotice('t1', 'Could not change the effort: nope');
   expect(m.getEvents('t1').some((e: any) => e.subtype === 'settings_refused' && e.message === 'Could not change the effort: nope')).toBe(true);
 });
+
+// ---- Round 4: a refusal that comes late, on the turn that first carries the pick ----
+const failed = (id: string) => new Promise<void>((res) => { const on = (eid: string) => { if (eid === id) { m.off('failed', on); res(); } }; m.on('failed', on); });
+const refusals = (): any[] => { const out: any[] = []; m.on('settings-refused', (_id: string, info: any) => out.push(info)); return out; };
+
+it('an effort the app-server refuses on turn/start is dropped, not sent again, and the thread says so', async () => {
+  await start({}, { CODEX_FAKE_TURN_REJECT: 'effort' });
+  const seen = refusals();
+  await m.setEffort('t1', 'bad');
+  const f = failed('t1');
+  m.sendMessage('t1', 'first');            // this turn/start carries the bad effort and is refused
+  await f;
+  expect(seen).toEqual([{ effort: 'bad' }]);
+  expect(m.getEvents('t1').some((e: any) => e.subtype === 'settings_refused' && /effort bad/.test(e.message) && /not be sent again/.test(e.message))).toBe(true);
+  await turn('second');                    // the bad value is gone: this one goes through
+  const sent = logged('turn/start');
+  expect(sent[sent.length - 1].params).not.toHaveProperty('effort');
+});
+
+it('a model the app-server refuses on turn/start goes back to the model before it, and is not sent again', async () => {
+  await start({ model: 'gpt-6-luna' }, { CODEX_FAKE_TURN_REJECT: 'model' });
+  const seen = refusals();
+  await m.setModel('t1', 'bad-model');
+  expect(m.getModel('t1')).toBe('bad-model');
+  const f = failed('t1');
+  m.sendMessage('t1', 'first');
+  await f;
+  expect(seen).toEqual([{ model: 'bad-model', restoredModel: 'gpt-6-luna' }]);
+  expect(m.getModel('t1')).toBe('gpt-6-luna');
+  await turn('second');
+  const sent = logged('turn/start');
+  expect(sent[sent.length - 1].params).not.toHaveProperty('model');
+});
+
+it('a refusal that names neither drops both, a good pick is kept, and a turn without picks is untouched', async () => {
+  await start({});
+  const seen = refusals();
+  await m.setEffort('t1', 'high');
+  await turn('one');                       // accepted: nothing is dropped
+  await turn('two');
+  expect(seen).toEqual([]);
+  expect(logged('turn/start')[1].params.effort).toBe('high');
+});

@@ -1,5 +1,5 @@
 // packages/core/src/structured/manager.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,6 +137,18 @@ rl.on('line', (l) => {
       await expect(t.mgr.setEffort('t1', 'die')).rejects.toThrow('The thread stopped');
       expect(Date.now() - t0).toBeLessThan(5000);
     } finally { t.done(); }
+  });
+
+  it('a CLI that does not answer in time is reported honestly: the change may still be taken', async () => {
+    const t = await boot();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const caught = t.mgr.setEffort('t1', 'silent').catch((e) => e.message);
+      await vi.advanceTimersByTimeAsync(15_001);
+      const msg = await caught;
+      expect(msg).toMatch(/did not answer the effort change in time/);
+      expect(msg).toMatch(/may still take it/);
+    } finally { vi.useRealTimers(); t.done(); }
   });
 
   it('fails when the thread is not running', async () => {
