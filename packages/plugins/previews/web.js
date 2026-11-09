@@ -313,7 +313,7 @@ export default function activate(d) {
     inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
     // The count of new previews for the thread's project: the row shows it and the ⋯ button gets a dot.
-    threadMenu: [{ id: 'open', label: 'Previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId),
+    threadMenu: [{ id: 'open', label: 'Project previews', icon: 'eye', onPick: ({ tab }) => usePv.getState().openSheet(tab.sessionId),
       badge: { subscribe: (cb) => usePv.subscribe(cb), get: ({ tab }) => unseenOf(usePv.getState().items, tab.sessionId) } }],
     slots: [
       { id: 'project-eye', slot: 'project.header.actions', Component: ProjectEye },
