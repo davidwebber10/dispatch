@@ -213,7 +213,7 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
 
   // Stable for the memoized rows; onOpenThread is read through a ref, so a new function from the parent is still the one called.
   const archive = useCallback(async (t: Terminal) => {
-    try { await api.archiveTerminal(t.id); await useTabs.getState().loadTabs(t.sessionId); } catch { /* surfaced via connection state */ }
+    await useTabs.getState().archive(t.id); // optimistic (W2-I): the row goes at once; a failure puts it back with a hint
   }, []);
   const openRef = useRef(onOpenThread); openRef.current = onOpenThread;
   const openRow = useCallback((t: Terminal) => openRef.current(t.sessionId, t.id), []);

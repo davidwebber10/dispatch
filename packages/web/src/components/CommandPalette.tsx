@@ -173,7 +173,7 @@ export function CommandPalette() {
     const { kind, thread } = confirm;
     setConfirm(null);
     if (kind === 'archive') {
-      api.archiveTerminal(thread.id).then(() => useTabs.getState().loadTabs(thread.sessionId)).catch(() => useHint.getState().show('The thread could not be archived.'));
+      void useTabs.getState().archive(thread.id); // optimistic (W2-I); the store shows the hint when it fails
     } else {
       api.relaunchTerminal(thread.id).catch((e) => useHint.getState().show(e instanceof Error ? `Could not restart: ${e.message}` : 'The thread could not be restarted.'));
     }

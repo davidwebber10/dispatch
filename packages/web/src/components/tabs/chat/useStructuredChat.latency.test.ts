@@ -191,7 +191,7 @@ test('a user turn from somewhere else (another device, the coordinator) does not
 });
 
 test('a failed POST marks the bubble', async () => {
-  vi.spyOn(api, 'sendStructuredMessage').mockRejectedValue(new ApiError(400, 'process is not running'));
+  vi.spyOn(api, 'sendStructuredMessage').mockRejectedValue(new ApiError('process is not running', 400));
   const { result } = renderHook(() => useStructuredChat('t1'));
   await act(async () => { result.current.send('will fail'); });
   const u = users(result.current.items);
@@ -203,7 +203,7 @@ test('a failed POST marks the bubble', async () => {
 });
 
 test('retry of a failed bubble sends the same content again and shows one bubble', async () => {
-  const post = vi.spyOn(api, 'sendStructuredMessage').mockRejectedValueOnce(new ApiError(502, 'bad gateway')).mockResolvedValue(undefined as any);
+  const post = vi.spyOn(api, 'sendStructuredMessage').mockRejectedValueOnce(new ApiError('bad gateway', 502)).mockResolvedValue(undefined as any);
   const { result } = renderHook(() => useStructuredChat('t1'));
   await act(async () => { result.current.send('try me'); });
   const failed = users(result.current.items)[0];

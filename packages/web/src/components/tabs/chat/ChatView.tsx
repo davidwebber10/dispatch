@@ -39,7 +39,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // older-pages machinery stays off — no phantom "Load earlier messages" on a thread with
   // nothing earlier to load. An unresolved tab keeps the pageable default (claude-code is
   // the common case).
-  const { items, busy, model, authRequired, send, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
+  const { items, busy, model, authRequired, send, retrySend, pending, answer, replyFromCard, denyFromCard, contextTokens, contextWindow, compacting, compactResult, apiRetry, compact, hasMore, loadingOlder, loadOlder } =
     useStructuredChat(terminalId, sessionId, { pageableHistory: tab?.type !== 'grok' && tab?.type !== 'opencode' });
   const loginItem = useMemo(() => loginItemFor(tab?.type, items, !!authRequired), [tab?.type, items, authRequired]);
   // Retry after a sign-in: the last message the owner sent, again (SignedOutCard says why it is a button).
@@ -51,7 +51,9 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   }, [items, send]);
   const authHidden = useMemo(() => (authRequired ? authProseToHide(items, loginItem) : new Set<ConvItem>()), [authRequired, items, loginItem]);
   const shown = useCallback((list: ConvItem[]) => (authHidden.size ? list.filter((it) => !authHidden.has(it)) : list), [authHidden]);
-  const authExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
+  // `retrySend` (W2-I): the Retry button of a bubble whose POST failed.
+  const signedOutExt = useMemo(() => (authRequired && tab ? { authCard: <SignedOutCard tab={tab} auth={authRequired} onRetry={retryLast} /> } : undefined), [authRequired, tab, retryLast]);
+  const authExt = useMemo(() => ({ retrySend, ...signedOutExt }), [retrySend, signedOutExt]);
 
   // Advice is about THIS resume, so "not now" lives in component state rather than
   // storage: a later resume of the same thread (older and larger still) should ask again.

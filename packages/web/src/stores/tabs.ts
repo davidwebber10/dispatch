@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Terminal } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
 import { useProjects } from './projects';
+import { useHint } from './hint';
 import { useSettings } from './settings';
 import { clearDraft } from '../lib/fileDrafts';
 import { readSnapshot } from '../lib/launchSnapshot';
@@ -27,6 +28,16 @@ interface TabsState {
   markLoading: (id: string) => void;
   clearLoading: (id: string) => void;
   loadTabs: (projectId: string) => Promise<void>;
+  /**
+   * Archive a thread (W2-I). The row and its tab go at once; the request follows. When the request
+   * fails the row and the tab come back and a hint says so. Resolves true when the daemon archived it.
+   */
+  archive: (id: string) => Promise<boolean>;
+  /**
+   * Rename a thread (W2-I). The label changes at once; the request follows. When it fails the old
+   * label comes back and a hint says so. Of two renames in flight, the one asked for last wins.
+   */
+  rename: (id: string, label: string) => Promise<boolean>;
   consumeAutoName: (id: string) => { from: string; to: string } | null;
   reorder: (projectId: string, orderedIds: string[]) => Promise<boolean>;
   setAlertsEnabled: (id: string, enabled: boolean) => Promise<void>; // per-thread push alerts (config.alertsEnabled)
@@ -106,6 +117,20 @@ const loadEpoch: Record<string, number> = {};
 // on it — see loadTabs() below for why this can never deadlock.
 const inflight: Record<string, Promise<void>> = {};
 
+// W2-I: the optimistic changes whose request is still open. A list that the daemon built before it
+// handled the request must not undo what the owner already sees: loadTabs passes each list through
+// `withPending`. An entry is removed when its request ends, so the next list is the plain truth.
+const archiving = new Set<string>();
+const renaming = new Map<string, { label: string; seq: number }>();
+let renameSeq = 0;
+function withPending(tabs: Terminal[]): Terminal[] {
+  if (!archiving.size && !renaming.size) return tabs;
+  return tabs.filter((t) => !archiving.has(t.id)).map((t) => {
+    const r = renaming.get(t.id);
+    return r && t.label !== r.label ? { ...t, label: r.label, labelSource: 'user' as const } : t;
+  });
+}
+
 function persist(s: Pick<TabsState, 'openTabIds' | 'activeTabId' | 'tabSession'>) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ openTabIds: s.openTabIds, activeTabId: s.activeTabId, tabSession: s.tabSession }));
@@ -154,7 +179,7 @@ export const useTabs = create<TabsState>((set, get) => ({
     // loadTabs() means state has been applied" guarantee ~20 call sites depend on.
     const epoch = (loadEpoch[projectId] = (loadEpoch[projectId] ?? 0) + 1);
     const run = (async () => {
-      const tabs = await api.listTerminals(projectId);
+      const listed = await api.listTerminals(projectId);
       if (loadEpoch[projectId] !== epoch) {
         // Superseded — don't apply a stale response (it would regress byProject to an older
         // label, which a later ordinary refresh could then misread as a fresh default->auto
@@ -164,6 +189,7 @@ export const useTabs = create<TabsState>((set, get) => ({
         await inflight[projectId];
         return;
       }
+      const tabs = withPending(listed);
       const now = Date.now();
       const prev = get().byProject[projectId];
       const tabSession = { ...get().tabSession };
@@ -195,6 +221,79 @@ export const useTabs = create<TabsState>((set, get) => ({
     catch (e) {
       console.error('useTabs.reorder: reorderTerminals failed, reverting', e);
       await get().loadTabs(projectId);  // restore server truth on failure
+      return false;
+    }
+  },
+  archive: async (id) => {
+    const t = findTerminal(get().byProject, id);
+    const pid = t?.sessionId ?? get().tabSession[id];
+    const rowIndex = t ? (get().byProject[t.sessionId] ?? []).findIndex((x) => x.id === id) : -1;
+    const openBefore = get().openTabIds;
+    const tabIndex = openBefore.indexOf(id);
+    const wasActive = get().activeTabId === id;
+    archiving.add(id);
+    if (t) set({ byProject: { ...get().byProject, [t.sessionId]: (get().byProject[t.sessionId] ?? []).filter((x) => x.id !== id) } });
+    // The tab goes too, and its neighbour takes its place. Not through closeTab: that also drops the
+    // tab's unsaved draft, which a failed archive must be able to bring back.
+    let neighbour: string | null = null;
+    if (tabIndex >= 0) {
+      const next = openBefore.filter((x) => x !== id);
+      neighbour = next[Math.min(tabIndex, next.length - 1)] ?? null;
+      set({ openTabIds: next, activeTabId: wasActive ? neighbour : get().activeTabId });
+      persist(get());
+    }
+    try {
+      await api.archiveTerminal(id);
+    } catch (e) {
+      console.error('useTabs.archive: archiveTerminal failed, putting the row back', e);
+      archiving.delete(id);
+      if (t && rowIndex >= 0) {
+        const list = (get().byProject[t.sessionId] ?? []).slice();
+        if (!list.some((x) => x.id === id)) { list.splice(Math.min(rowIndex, list.length), 0, t); set({ byProject: { ...get().byProject, [t.sessionId]: list } }); }
+      }
+      if (tabIndex >= 0 && !get().openTabIds.includes(id)) {
+        const open = get().openTabIds.slice();
+        open.splice(Math.min(tabIndex, open.length), 0, id);
+        // Active again only when the owner is still on the tab that took its place.
+        set({ openTabIds: open, activeTabId: wasActive && get().activeTabId === neighbour ? id : get().activeTabId });
+        persist(get());
+      }
+      if (pid) await get().loadTabs(pid).catch(() => { /* offline: the row put back above stays */ });
+      useHint.getState().show('The thread could not be archived.');
+      return false;
+    }
+    archiving.delete(id);
+    get().closeTab(id, { force: true }); // the tab's draft, dirty flag and session mapping go now
+    if (pid) await get().loadTabs(pid).catch(() => { /* the terminal:removed event reloads the list too */ });
+    return true;
+  },
+  rename: async (id, label) => {
+    const v = label.trim();
+    if (!v) return false;
+    const before = findTerminal(get().byProject, id);
+    if (before && before.label === v && !renaming.has(id)) return true;
+    const patch = (fields: Partial<Terminal>) => {
+      const t = findTerminal(get().byProject, id);
+      if (!t) return;
+      set({ byProject: { ...get().byProject, [t.sessionId]: (get().byProject[t.sessionId] ?? []).map((x) => (x.id === id ? { ...x, ...fields } : x)) } });
+    };
+    const seq = ++renameSeq;
+    renaming.set(id, { label: v, seq });
+    patch({ label: v, labelSource: 'user' });
+    try {
+      const saved = await api.updateTerminal(id, { label: v });
+      if (renaming.get(id)?.seq !== seq) return true; // a later rename owns the label now
+      renaming.delete(id);
+      if (saved && typeof saved.label === 'string' && saved.label !== v) patch({ label: saved.label }); // the daemon's spelling wins
+      return true;
+    } catch (e) {
+      if (renaming.get(id)?.seq !== seq) return false; // a later rename is open: its label stays, and it reports for itself
+      console.error('useTabs.rename: updateTerminal failed, putting the label back', e);
+      renaming.delete(id);
+      if (before) patch({ label: before.label, labelSource: before.labelSource });
+      const pid = before?.sessionId ?? get().tabSession[id];
+      if (pid) await get().loadTabs(pid).catch(() => { /* offline: the label put back above stays */ });
+      useHint.getState().show('The thread could not be renamed.');
       return false;
     }
   },
