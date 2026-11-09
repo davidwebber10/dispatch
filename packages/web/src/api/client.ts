@@ -2,7 +2,7 @@ import type { harnessCapabilities } from '../../../core/src/providers/capabiliti
 import { apiPath } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
-import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
+import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet, ChatSettings } from './types';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
@@ -449,8 +449,12 @@ export const api = {
 
   // Secrets (Doppler)
   getSecretsStatus: () => req<DopplerStatus>('/api/secrets/status'),
-  setDopplerConnection: (input: { token: string; project: string; config: string; enabled: boolean; readOnly: boolean }) =>
+  /** A field that is left out keeps its saved value; `{ tokenScope }` alone changes only the scope. */
+  setDopplerConnection: (input: Partial<{ token: string; project: string; config: string; enabled: boolean; readOnly: boolean; tokenScope: DopplerTokenScope }>) =>
     req<DopplerStatus>('/api/secrets/connection', { method: 'PUT', body: body(input) }),
+  /** The Doppler token in one thread's shell (token scope 'opted-in'). It applies at the thread's next start. */
+  setThreadSecretsEnv: (id: string, enabled: boolean) =>
+    req<{ id: string; secretsEnv: boolean; appliesAt: 'next-spawn'; message: string }>(`/api/terminals/${encodeURIComponent(id)}/secrets-env`, { method: 'PUT', body: body({ enabled }) }),
   disconnectDoppler: () => req<void>('/api/secrets/connection', { method: 'DELETE' }),
   listDopplerProjects: () => req<DopplerProject[]>('/api/secrets/projects'),
   listDopplerConfigs: (project: string) => req<DopplerConfig[]>(`/api/secrets/configs?project=${encodeURIComponent(project)}`),
