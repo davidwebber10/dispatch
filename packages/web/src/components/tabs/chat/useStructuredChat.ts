@@ -1,3 +1,4 @@
+import { textToSend } from '../../../lib/slashEscape';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { modelFromFrame } from '../../../lib/modelName';
 import { useActiveModel } from '../../../stores/activeModel';
@@ -577,6 +578,14 @@ export function useStructuredChat(
         // "Working…" spinner reads as a dead session. Cleared on any turn progress below.
         // The thread's process could not start (its manager could not spawn it). Say why, and stop
         // the spinner: no turn is coming (#76).
+        // A model/effort change the harness refused: the daemon says so in the thread, so it is not mistaken for one
+        // that took hold (the card also shows the reason where it was asked).
+        if (type === 'system' && event.subtype === 'settings_refused') {
+          const why = typeof event.message === 'string' && event.message ? event.message : 'The model or effort change was refused.';
+          setItems((p) => [...p, { kind: 'result', isError: true, text: why }]);
+          return;
+        }
+
         if (type === 'system' && event.subtype === 'spawn_error') {
           setBusy(false);
           const why = typeof event.message === 'string' && event.message ? event.message : 'unknown error';
@@ -964,7 +973,7 @@ export function useStructuredChat(
   const send = useCallback((content: string | ContentBlock[]) => {
     // A string turn is trimmed + empty-guarded as before; a block turn (e.g. an image)
     // just needs at least one block. Both flow through the SAME widened API.
-    const payload = typeof content === 'string' ? content.trim() : content;
+    const payload = typeof content === 'string' ? textToSend(content) : content;
     const empty = typeof payload === 'string' ? !payload : payload.length === 0;
     if (empty || !terminalId) return;
     // A pending question takes the reply. A plain gated tool does not: that stays a normal send.

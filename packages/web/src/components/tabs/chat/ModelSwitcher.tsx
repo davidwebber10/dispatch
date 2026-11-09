@@ -1,75 +1,91 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowsLeftRight, CaretDown, Check, Cpu } from '@phosphor-icons/react';
 import type { Terminal } from '../../../api/types';
-import { api } from '../../../api/client';
-import { useActiveModel, useActiveModelFor } from '../../../stores/activeModel';
-import { useTabs } from '../../../stores/tabs';
 import { useIsMobile } from '../../../hooks/useIsMobile';
-import { friendlyModelName, isSameModel, modelOptionsFor, type NamedModel } from '../../../lib/modelName';
+import { friendlyModelName, isSameModel, type ModelOption, type NamedModel } from '../../../lib/modelName';
+import { usePickerRequest } from '../../../stores/pickerRequest';
+import { useThreadModelControls, type EffortInfo } from './modelControls';
 import { Spinner } from '../../common/Spinner';
 import { Modal } from '../../common/Modal';
 
-/** The user's OpenCode model list, loaded once per page (it arrives with the harness settings). */
-let opencodeCache: NamedModel[] | null = null;
-function useOpencodeModels(enabled: boolean): NamedModel[] {
-  const [list, setList] = useState<NamedModel[]>(opencodeCache ?? []);
-  useEffect(() => {
-    if (!enabled || opencodeCache) return;
-    let live = true;
-    api.getHarnessSettings()
-      .then((hs) => { opencodeCache = hs?.opencodeModels ?? []; if (live) setList(opencodeCache); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, [enabled]);
-  return list;
+/**
+ * The model chip of a Pretty composer, and the one place a model or an effort is chosen: the model the thread runs NOW
+ * and, on a tap, the harness's models to switch to and (Claude and Codex) the effort levels. A model pick switches from
+ * the next turn and keeps the conversation (POST /terminals/:id/model); an effort pick likewise (POST /terminals/:id/effort).
+ * The "/" menu's /model and /effort use the same lists and the same calls (modelControls.ts), and open this card for a
+ * bare command (stores/pickerRequest).
+ *
+ * Disabled while a turn runs: a switch mid-turn would change the model under a running tool loop (Claude) or apply
+ * only to the next turn anyway (Codex), so it waits, and says so, instead of queueing a change the owner cannot see
+ * take effect. The list opens as a sheet on the phone and as the centered card on the desktop (Modal's `sheet` rule).
+ */
+export interface ModelChipProps {
+  /** Names this chip for the "/" menu to open: `thread:<id>` or `chat`. */
+  owner: string;
+  label: string;
+  active: string | undefined;
+  options: ModelOption[];
+  busy: boolean;
+  emptyText?: string;
+  opencodeModels?: NamedModel[];
+  /** Switch the model. May resolve with a note to show (the card then stays open). Throws the daemon's words. */
+  pickModel: (value: string) => Promise<string | undefined | void>;
+  /** The effort section: absent for a harness without an effort control yet (Grok, OpenCode). */
+  effort?: EffortInfo & { pick: (level: string) => Promise<string | undefined | void> };
 }
 
-/**
- * The Pretty composer's model chip: the model the thread runs NOW (useActiveModelFor — the
- * harness's newest report, else the saved model) and, on a tap, the harness's models to switch
- * to. A pick switches from the next turn and keeps the conversation (POST /terminals/:id/model).
- *
- * Disabled while a turn runs: a switch mid-turn would change the model under a running tool loop
- * (Claude) or apply only to the next turn anyway (Codex), so it waits, and says so, instead of
- * queueing a change the owner cannot see take effect. The list opens as a sheet on the phone and
- * as the centered card on the desktop (Modal's `sheet` rule).
- */
-export function ModelSwitcher({ tab, busy }: { tab: Terminal; busy: boolean }) {
+export function ModelChip({ owner, label, active, options, busy, emptyText = 'This harness has no models to pick.', pickModel, effort }: ModelChipProps) {
   const isMobile = useIsMobile();
-  const active = useActiveModelFor(tab);
-  const opencodeModels = useOpencodeModels(tab.type === 'opencode');
-  const label = friendlyModelName(active, opencodeModels) ?? 'Default model';
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const options = useMemo(() => modelOptionsFor(tab.type, opencodeModels, active), [tab.type, opencodeModels, active]);
+  const [note, setNote] = useState<string | null>(null);
+
+  // The "/" menu asks for this card by owner (a bare /model or /effort). Not while a turn runs, like the chip.
+  const requested = usePickerRequest((s) => s.owner === owner);
+  useEffect(() => {
+    if (!requested) return;
+    usePickerRequest.getState().clear();
+    if (!busy) { setError(null); setNote(null); setOpen(true); }
+  }, [requested, busy]);
 
   const pick = async (value: string) => {
     if (saving) return;
     if (isSameModel(value, active)) { setOpen(false); return; }
-    setSaving(value); setError(null);
+    setSaving(value); setError(null); setNote(null);
     try {
-      const out = await api.setThreadModel(tab.id, value);
-      useActiveModel.getState().set(tab.id, out.model || value);
-      void useTabs.getState().loadTabs(tab.sessionId);
-      setOpen(false);
+      const said = await pickModel(value);
+      if (said) setNote(said); else setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not switch the model.');
     } finally {
       setSaving(null);
     }
   };
+  const pickLevel = async (level: string) => {
+    if (saving || !effort) return;
+    setSaving(`effort:${level}`); setError(null); setNote(null);
+    try {
+      const said = await effort.pick(level);
+      if (said) setNote(said);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the effort.');
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', padding: isMobile ? '12px 12px' : '9px 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', cursor: 'pointer', font: 'inherit' };
+  const shownEffort = effort ? effort.current ?? effort.defaultEffort ?? null : null;
 
   return (
     <>
       <button
         type="button"
         disabled={busy}
-        aria-label={`Model: ${label}`}
-        title={busy ? 'You can switch the model when the turn ends' : 'Switch model'}
-        onClick={() => { setError(null); setOpen(true); }}
+        aria-label={`Model: ${label}${effort?.current ? `, effort ${effort.current}` : ''}`}
+        title={busy ? 'You can switch the model when the turn ends' : effort ? 'Switch model or effort' : 'Switch model'}
+        onClick={() => { setError(null); setNote(null); setOpen(true); }}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0, maxWidth: isMobile ? 190 : 240,
           height: isMobile ? 28 : 22, padding: isMobile ? '0 9px' : '0 7px',
@@ -79,19 +95,17 @@ export function ModelSwitcher({ tab, busy }: { tab: Terminal; busy: boolean }) {
         }}
       >
         <Cpu size={isMobile ? 13 : 12} weight="bold" style={{ flexShrink: 0 }} />
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}{effort?.current ? ` · ${effort.current}` : ''}</span>
         <CaretDown size={10} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
       </button>
       {open && (
-        <Modal open sheet={isMobile} title="Switch model" onClose={() => setOpen(false)} maxWidth={400}>
+        <Modal open sheet={isMobile} title={effort ? 'Model and effort' : 'Switch model'} onClose={() => setOpen(false)} maxWidth={400}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
-              The next message runs on the model you pick. The conversation stays.
+              The next message runs on what you pick. The conversation stays.
             </span>
             {options.length === 0 ? (
-              <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
-                {tab.type === 'opencode' ? 'Add models in Settings → Agents → OpenCode.' : 'This harness has no models to pick.'}
-              </span>
+              <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>{emptyText}</span>
             ) : (
               <div role="radiogroup" aria-label="Model" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {options.map((o) => {
@@ -116,11 +130,52 @@ export function ModelSwitcher({ tab, busy }: { tab: Terminal; busy: boolean }) {
                 })}
               </div>
             )}
+            {effort && (
+              <>
+                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginTop: 4 }}>Effort for this thread</span>
+                <div role="radiogroup" aria-label="Effort" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {effort.levels.map((l) => {
+                    const on = shownEffort === l;
+                    const isDefault = on && effort.current === null;
+                    return (
+                      <button key={l} type="button" role="radio" aria-checked={on} aria-label={l} disabled={!!saving}
+                        onClick={() => void pickLevel(l)}
+                        style={{ ...row, width: 'auto', gap: 6, padding: isMobile ? '10px 14px' : '6px 12px', borderColor: on ? 'var(--color-accent)' : 'var(--color-border)', cursor: saving ? 'default' : 'pointer' }}>
+                        {saving === `effort:${l}` ? <Spinner size={12} /> : on && <Check size={13} weight="bold" color="var(--color-accent)" />}
+                        <span style={{ fontSize: isMobile ? 14 : 13 }}>{l}</span>
+                        {isDefault && <span style={{ font: '400 11px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>model default</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {effort.current === null && !effort.defaultEffort && (
+                  <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No effort set: the model's own default.</span>
+                )}
+              </>
+            )}
+            {note && <div role="status" style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{note}</div>}
             {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
           </div>
         </Modal>
       )}
     </>
+  );
+}
+
+/** The Pretty composer's model chip for a thread (or an overseer): David's chip fed by modelControls.ts. */
+export function ModelSwitcher({ tab, busy }: { tab: Terminal; busy: boolean }) {
+  const c = useThreadModelControls(tab);
+  return (
+    <ModelChip
+      owner={`thread:${tab.id}`}
+      label={c.label}
+      active={c.active}
+      options={c.options}
+      busy={busy}
+      emptyText={tab.type === 'opencode' ? 'Add models in Settings → Agents → OpenCode.' : 'This harness has no models to pick.'}
+      pickModel={c.pickModel}
+      effort={c.effort ? { ...c.effort, pick: c.pickEffort } : undefined}
+    />
   );
 }
 

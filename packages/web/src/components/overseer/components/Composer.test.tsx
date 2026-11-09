@@ -82,3 +82,65 @@ describe('Composer — Send/Stop key parity', () => {
     expect(screen.queryByTitle('Stop')).not.toBeInTheDocument();
   });
 });
+
+// ---- the "/" menu and the model chip for the overseer (rebuild of PR #155 on main 4.3.0) ----
+import { waitFor } from '@testing-library/react';
+import { useTabs } from '../../../stores/tabs';
+
+describe('Composer — the "/" menu and the model chip', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    useOverseer.setState({ coordinatorId: 'coord-1', coordinatorProject: 'proj-a', coordinatorModel: 'claude-sonnet-5-5', coordinatorBusy: false, coordinatorCompacting: false, sendDirective: vi.fn() } as never);
+    useProjects.setState({ activeId: 'proj-a' } as never);
+    vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
+    useTabs.setState({ byProject: { 'proj-a': [{ id: 'coord-1', sessionId: 'proj-a', type: 'claude-code', label: 'CP', pid: 1, externalId: 'e', workingDir: '/w', status: 'waiting', createdAt: '', config: { role: 'coordinator', transport: 'structured', model: 'sonnet' }, archivedAt: null, sortOrder: 0 }] } } as never);
+  });
+  const box = () => screen.getByPlaceholderText(/Fire a directive/) as HTMLTextAreaElement;
+
+  it('/model opus switches the overseer\'s model through the chip\'s call and is not sent as a directive (PS-2)', async () => {
+    const setModel = vi.spyOn(api, 'setThreadModel').mockResolvedValue({ model: 'claude-opus-5-5', terminal: {} as never });
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/model opus' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(setModel).toHaveBeenCalledWith('coord-1', 'opus'));
+    expect(useOverseer.getState().sendDirective).not.toHaveBeenCalled();
+  });
+
+  it('/effort max changes the overseer\'s effort', async () => {
+    const setEffort = vi.spyOn(api, 'setThreadEffort').mockResolvedValue({ effort: 'max', terminal: {} as never });
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/effort max' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(setEffort).toHaveBeenCalledWith('coord-1', 'max'));
+  });
+
+  it('the status row has the same model chip as a thread, with the effort section', () => {
+    render(<Composer />);
+    fireEvent.click(screen.getByRole('button', { name: /^Model:/ }));
+    expect(screen.getByRole('radiogroup', { name: 'Model' })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Effort' })).toBeInTheDocument();
+  });
+
+  it('lists /model, /effort, /compact and /stop (no /cli: an overseer has no CLI mode)', () => {
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/' } });
+    expect(screen.getAllByRole('option').map((o) => o.firstElementChild?.textContent)).toEqual(['/model', '/effort', '/compact', '/stop']);
+  });
+
+  it('while the overseer works, a bare /model says so instead of opening the card', async () => {
+    useOverseer.setState({ coordinatorBusy: true } as never);
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: '/model' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/busy — change the model when the turn ends/));
+    expect(box().value).toBe('/model');
+  });
+
+  it('a normal directive still goes out', () => {
+    render(<Composer />);
+    fireEvent.change(box(), { target: { value: 'status please' } });
+    fireEvent.keyDown(box(), { key: 'Enter' });
+    expect(useOverseer.getState().sendDirective).toHaveBeenCalledWith('status please');
+  });
+});
