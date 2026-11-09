@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowSquareOut } from '@phosphor-icons/react';
-import type { UsageSummary } from '../../api/types';
+import { ArrowSquareOut, SignIn, Info, ClockCounterClockwise } from '@phosphor-icons/react';
+import type { Account, UsageSummary } from '../../api/types';
+import { api } from '../../api/client';
+import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion';
 import { HARNESS_MARK } from '../common/HarnessStrip';
-import { useAccounts, accountProviderOf } from '../../stores/accounts';
+import { useAccounts, accountProviderOf, usageAccessOf, updatedAgo, USAGE_ACCESS_TEXT } from '../../stores/accounts';
 import { ringModels, RING_COLOR, yellowFrom, bannerText, COUNTED, type RingModel, type RingRow } from './usageGauge';
 
 /**
@@ -12,6 +14,10 @@ import { ringModels, RING_COLOR, yellowFrom, bannerText, COUNTED, type RingModel
  * fills as you use it (green, then yellow, then red), marks on the bar where yellow and red start,
  * and the reset time and run-out estimate underneath. Banked Codex resets sit below the limits.
  * The bars and numbers sweep into place when the sheet opens.
+ *
+ * Usage access (W1-H, 2026-11-09): a Claude account whose usage read is refused or limited says so at
+ * the foot of its card (UsageAccessLine), from the accounts view. A refused account with no figure
+ * at all still gets a card, so "Sign in again" has a place.
  */
 const ANIM_MS = 700;
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
@@ -101,7 +107,42 @@ function LimitRow({ toolName, row, warn, first, dense }: { toolName: string; row
 /** The brand mark for a provider id (`claude-code` → the Claude mark). */
 const MARK_KEY: Record<string, string> = { 'claude-code': 'claude', codex: 'codex', grok: 'grok', opencode: 'opencode' };
 
-function ToolCard({ m, warn, current, dense, email }: { m: RingModel; warn: number; current?: boolean; dense?: boolean; email?: string | null }) {
+/** What the card says about the account's sign-in, and the next step. `figuresAt`: when the shown figures were taken. */
+interface CardAccess { state: 'sign-in-needed' | 'not-available' | 'rate-limited'; accountId: string; label: string; isCli: boolean; figuresAt: number | null; now: number }
+
+function UsageAccessLine({ access: a, dense, first }: { access: CardAccess; dense?: boolean; first: boolean }) {
+  const [signing, setSigning] = useState(false);
+  const size = dense ? 12.5 : 13.5;
+  const line = (Icon: typeof Info, text: string) => (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: size, lineHeight: 1.4, color: 'var(--color-text-secondary)' }}>
+      <Icon size={dense ? 14 : 15} style={{ flexShrink: 0, marginTop: 1.5 }} /><span style={{ minWidth: 0 }}>{text}</span>
+    </div>
+  );
+  return (
+    <div data-testid="usage-access" data-state={a.state} style={{ borderTop: first ? 'none' : '1px solid var(--color-border)', padding: dense ? '7px 0' : '11px 0', display: 'flex', flexDirection: 'column', gap: dense ? 6 : 8 }}>
+      {a.state === 'not-available' && line(Info, USAGE_ACCESS_TEXT.notAvailable)}
+      {a.state === 'rate-limited' && line(ClockCounterClockwise, a.figuresAt === null ? 'Claude limits how often usage is read. Dispatch reads again after a wait.' : updatedAgo(a.figuresAt, a.now))}
+      {a.state === 'sign-in-needed' && (
+        <>
+          {line(SignIn, a.isCli ? USAGE_ACCESS_TEXT.signInCli : USAGE_ACCESS_TEXT.signIn)}
+          {!a.isCli && !signing && (
+            <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => setSigning(true)}
+              style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, height: dense ? 26 : 30, padding: '0 12px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontSize: dense ? 12 : 13, fontWeight: 600, cursor: 'pointer' }}>
+              <SignIn size={dense ? 13 : 14} weight="bold" />Sign in again
+            </button>
+          )}
+          {/* The existing Claude login (open the page, paste the code), for THIS account: its token is replaced in place. */}
+          {!a.isCli && signing && (
+            <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.accountId)}
+              onDone={() => { setSigning(false); void api.accountsCheckUsage(a.accountId).catch(() => {}).then(() => useAccounts.getState().reload()); }} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ToolCard({ m, warn, current, dense, email, access }: { m: RingModel; warn: number; current?: boolean; dense?: boolean; email?: string | null; access?: CardAccess | null }) {
   // A steady order (5-hour, then weekly, …), not closest-to-the-limit first, so rows never swap.
   const order = (t: string) => { const i = (COUNTED as readonly string[]).indexOf(t); return i < 0 ? 99 : i; };
   const rows = [...m.rows].sort((a, b) => order(a.type) - order(b.type));
@@ -180,6 +221,7 @@ function ToolCard({ m, warn, current, dense, email }: { m: RingModel; warn: numb
           )}
         </div>
       )}
+      {access && <UsageAccessLine access={access} dense={dense} first={rows.length === 0 && !m.spend && !m.creditBalance && m.credits === 0} />}
       </div>
     </section>
   );
@@ -188,20 +230,39 @@ function ToolCard({ m, warn, current, dense, email }: { m: RingModel; warn: numb
 /** `current` (opened from a thread, 2026-11-07): that thread's account is marked with a "This thread" tab and listed first. */
 export function UsageRings({ summary, now, current, dense }: { summary: UsageSummary | null; now: number; current?: { provider: string; accountId: string } | null; dense?: boolean }) {
   const accounts = useAccounts((s) => s.view);
-  useEffect(() => { void useAccounts.getState().load(); }, []);
-  const emailOf = (m: RingModel): string | null => {
+  // Each time the sheet opens: the accounts, with what each Claude sign-in can do for the figures (W1-H).
+  useEffect(() => { void useAccounts.getState().reload(); }, []);
+  const accountOf = (m: Pick<RingModel, 'provider' | 'accountId'>): Account | null => {
     const harness = accountProviderOf(m.provider);
-    return (harness && accounts?.[harness]?.find((a) => a.id === m.accountId)?.email) || null;
+    return (harness && accounts?.[harness]?.find((a) => a.id === m.accountId)) || null;
+  };
+  const emailOf = (m: RingModel): string | null => accountOf(m)?.email || null;
+  const accessOf = (m: RingModel): CardAccess | null => {
+    if (m.provider !== 'claude-code') return null;
+    const a = accountOf(m);
+    const u = usageAccessOf(a);
+    if (!a || !u) return null;
+    const figuresAt = summary?.providers.find((p) => p.provider === m.provider && (p.accountId ?? 'cli') === m.accountId)?.asOf ?? null;
+    return { state: u.state, accountId: a.id, label: a.label, isCli: a.isCli, figuresAt, now };
   };
   const isCurrent = (m: RingModel) => !!current && m.provider === current.provider && m.accountId === current.accountId;
-  const rings = [...ringModels(summary, now)].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
+  const models = ringModels(summary, now);
+  // A refused Claude account that never reported a figure has no ring: it still gets a card, for the note and the next step.
+  const missing: RingModel[] = (accounts?.claude ?? [])
+    .filter((a) => { const u = usageAccessOf(a); return !!u && u.state !== 'rate-limited' && !models.some((m) => m.provider === 'claude-code' && m.accountId === a.id); })
+    .map((a) => ({
+      provider: 'claude-code', accountId: a.id, name: (accounts?.claude.length ?? 0) > 1 ? `Claude · ${a.label}` : 'Claude', plan: a.plan,
+      main: { type: 'none', label: 'no limit', left: 100, tone: 'green', reset: null, estimate: null, estimateTitle: null },
+      rows: [], asOf: '', stale: false, paused: false, credits: 0, creditList: [], useUrl: null, spend: null, creditBalance: null,
+    } as RingModel));
+  const rings = [...models, ...missing].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)));
   if (!summary || (rings.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-rings" style={{ display: 'flex', flexDirection: 'column', gap: dense ? 10 : 16 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
       {rings.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {rings.map((m) => (
-        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} email={emailOf(m)} />
+        <ToolCard key={`${m.provider}|${m.accountId}`} m={m} warn={summary.warnPercent} current={isCurrent(m)} dense={dense} email={emailOf(m)} access={accessOf(m)} />
       ))}
       {summary.paused.map((g) => (
         <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>

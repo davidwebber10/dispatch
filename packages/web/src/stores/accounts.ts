@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
-import type { AccountsView, AccountProvider, Terminal } from '../api/types';
+import type { Account, AccountsView, AccountProvider, Terminal, UsageAccessState } from '../api/types';
 
 /**
  * The signed-in accounts per harness (multi-account, 2026-11-06), loaded once on first use and
@@ -47,4 +47,29 @@ export function threadAccount(view: AccountsView | null, tab: Pick<Terminal, 'ty
 /** The short name shown beside a thread: "Work", or "CLI login" for the CLI's own login. */
 export function shortAccountLabel(label: string): string {
   return label.replace(/\s*\(this computer\)$/, '');
+}
+
+// --- usage access (W1-H, 2026-11-09) -----------------------------------------------------------
+
+/** The words for each state, the same on the usage card and in Settings → Accounts. */
+export const USAGE_ACCESS_TEXT = {
+  signIn: 'Sign in again to see usage for this account',
+  signInCli: "Sign in again on the daemon's computer to see usage for this account: run claude there.",
+  notAvailable: 'This sign-in can run threads. It cannot read usage figures.',
+} as const;
+
+/** "Updated 12 min ago" for a time in the past; hours from two hours on. */
+export function updatedAgo(at: number, now: number): string {
+  const min = Math.max(0, Math.round((now - at) / 60_000));
+  if (min < 1) return 'Updated just now';
+  if (min < 120) return `Updated ${min} min ago`;
+  return `Updated ${Math.round(min / 60)} h ago`;
+}
+
+/** An account's usage access when it needs a word on the card: null for `ok`, not known, or an older daemon. */
+export function usageAccessOf(a: Pick<Account, 'usageAccess'> | null | undefined): { state: Exclude<UsageAccessState, 'ok'>; lastOkAt: number | null } | null {
+  const u = a?.usageAccess;
+  if (!u || u.state === 'ok') return null;
+  if (u.state !== 'sign-in-needed' && u.state !== 'not-available' && u.state !== 'rate-limited') return null;
+  return { state: u.state, lastOkAt: typeof u.lastOkAt === 'number' ? u.lastOkAt : null };
 }

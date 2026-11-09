@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, type Icon as PhosphorIcon } from '@phosphor-icons/react';
+import { Plus, SignIn, Info, ClockCounterClockwise, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { Account, AccountProvider, AccountsView, AccountThread } from '../../api/types';
 import { ConfirmModal } from '../common/ConfirmModal';
@@ -9,6 +9,7 @@ import { CodexLogin } from './CodexLogin';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, Sheet, fieldFor, solidBtn, ghostBtn, noteText } from './ui';
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -21,6 +22,11 @@ import { useIsMobile } from '../../hooks/useIsMobile';
  * Layout (2026-11-07, docs/design/settings-layout.md): one group per harness, one row per account
  * (name, one line of detail, "Default" as the value). A row opens the account's own page: rename,
  * default, sign in, remove. "Add account" sits on the group's label and opens a sheet.
+ *
+ * Usage figures (W1-H, 2026-11-09): a Claude account whose usage read is refused says so on its page,
+ * with the next step. `sign-in-needed`: "Sign in again" runs the Claude login for THAT account (its
+ * token is replaced in place). `not-available`: a plain note (the sign-in runs threads but may not
+ * read usage; nothing is wrong). `rate-limited`: when usage was last read. "Check again" reads now.
  */
 const PROVIDER_TITLE: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' };
 const MARK: Record<AccountProvider, PhosphorIcon> = {
@@ -44,6 +50,14 @@ export function AccountsSection() {
   const [removing, setRemoving] = useState<{ provider: AccountProvider; account: Account; threads: AccountThread[] } | null>(null);
   // The Codex account whose device-code sign-in shows now (a new one, or "Sign in again").
   const [codexSignIn, setCodexSignIn] = useState<string | null>(null);
+  // The Claude account whose "Sign in again" login shows now (W1-H).
+  const [claudeSignIn, setClaudeSignIn] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const checkUsage = async (id: string) => {
+    setChecking(true);
+    try { await api.accountsCheckUsage(id); await new Promise((r) => setTimeout(r, 1500)); await load(); } catch { setError('Could not check the account.'); }
+    finally { setChecking(false); }
+  };
 
   const load = async () => {
     try { setView(await api.getAccounts()); setError(null); } catch { setError('Could not load the accounts. Is the daemon up to date?'); }
@@ -108,6 +122,15 @@ export function AccountsSection() {
     const provider = openProvider;
     const a = opened;
     const isDefault = view.defaults[provider] === a.id;
+    const access = provider === 'claude' ? usageAccessOf(a) : null;
+    const checkAgain = (
+      <button type="button" aria-label={`Check usage again for ${a.label}`} disabled={checking} onClick={() => void checkUsage(a.id)} style={{ ...ghostBtn, opacity: checking ? 0.5 : 1 }}>{checking ? 'Checking…' : 'Check again'}</button>
+    );
+    const accessNote = (Icon: PhosphorIcon, text: string) => (
+      <span data-testid="usage-access-note" style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 6 }}>
+        <Icon size={14} style={{ flexShrink: 0, marginTop: 1 }} /><span>{text}</span>
+      </span>
+    );
     return (
       <div ref={nav.top}>
         <SettingsSubPage testId={`account-detail-${provider}-${a.id}`} icon={MARK[provider]} title={a.label}
@@ -134,6 +157,28 @@ export function AccountsSection() {
                   : undefined}>
                 {codexSignIn === a.id && adding === null && <CodexLogin accountId={a.id} onDone={codexSignInEnded} onCancel={codexSignInEnded} />}
               </SettingsRow>
+            </SettingsGroup>
+          )}
+
+          {access && (
+            <SettingsGroup title="Usage figures">
+              {access.state === 'sign-in-needed' && (
+                <SettingsRow label="Sign in again" hint={accessNote(SignIn, a.isCli ? USAGE_ACCESS_TEXT.signInCli : USAGE_ACCESS_TEXT.signIn)}
+                  control={!a.isCli && claudeSignIn !== a.id
+                    ? <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => setClaudeSignIn(a.id)} style={{ ...solidBtn(true), display: 'inline-flex', alignItems: 'center', gap: 6 }}><SignIn size={14} weight="bold" />Sign in again</button>
+                    : undefined}>
+                  {!a.isCli && claudeSignIn === a.id && (
+                    <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.id)} onDone={() => { setClaudeSignIn(null); void checkUsage(a.id); }} />
+                  )}
+                </SettingsRow>
+              )}
+              {access.state === 'not-available' && (
+                <SettingsRow label="Not available for this sign-in" hint={accessNote(Info, USAGE_ACCESS_TEXT.notAvailable)} />
+              )}
+              {access.state === 'rate-limited' && (
+                <SettingsRow label="Claude limits how often usage is read" hint={accessNote(ClockCounterClockwise, access.lastOkAt === null ? 'No figures read yet. Dispatch waits, then reads again.' : `${updatedAgo(access.lastOkAt, Date.now())}. Dispatch waits, then reads again.`)} />
+              )}
+              <SettingsRow label="Check again" hint="Read this account's usage now." control={checkAgain} />
             </SettingsGroup>
           )}
 
@@ -174,7 +219,9 @@ export function AccountsSection() {
             return (
               <div key={a.id} data-testid={`account-${provider}-${a.id}`}>
                 <SettingsRow icon={MARK[provider]} label={a.label} ariaLabel={`${PROVIDER_TITLE[provider]}: ${a.label}`}
-                  hint={a.signedIn === false ? <StatusMark tone="yellow">Not signed in</StatusMark> : detail ? <span style={oneLine}>{detail}</span> : undefined}
+                  hint={a.signedIn === false ? <StatusMark tone="yellow">Not signed in</StatusMark>
+                    : provider === 'claude' && usageAccessOf(a)?.state === 'sign-in-needed' ? <StatusMark tone="yellow">Sign in again</StatusMark>
+                    : detail ? <span style={oneLine}>{detail}</span> : undefined}
                   value={def === a.id ? 'Default' : undefined}
                   onClick={() => nav.open(`${provider}:${a.id}`, a.label)} />
               </div>
