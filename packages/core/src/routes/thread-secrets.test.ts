@@ -52,7 +52,7 @@ describe('PUT /api/terminals/:id/secrets-env', () => {
 
   it('reads the config fresh: a key written by another writer just before the call is kept', async () => {
     const { app, db, config } = appWith('test');
-    terminalsDb.updateConfig(db, 't1', { ...CONFIG, scheduledWake: '2026-11-10T00:00:00Z' });
+    terminalsDb.writeConfigRaw(db, 't1', { ...CONFIG, scheduledWake: '2026-11-10T00:00:00Z' });
     await request(app).put('/api/terminals/t1/secrets-env').send({ enabled: true }).expect(200);
     expect(config()).toEqual({ ...CONFIG, scheduledWake: '2026-11-10T00:00:00Z', secretsEnv: true });
   });

@@ -22,7 +22,7 @@ import { QUESTION_CANNED_MESSAGES, questionReplyMessage, type QuestionCannedActi
 import { LedgerService } from '../overseer/ledger-service.js';
 import { untrustedBlock } from '../security/untrusted-text.js';
 import { formatOwnerDecisionsNotice, parseOwnerDecisionsBlock, type BlockParse } from '../overseer/owner-decisions.js';
-import { formatInterimNotice, nextInterimConfig } from './interim-recap.js';
+import { formatInterimNotice, nextInterimPatch } from './interim-recap.js';
 import { resolveReportTarget } from './report-target.js';
 import { getProvider } from '../providers/registry.js';
 import { PTYManager } from '../pty/manager.js';
@@ -62,7 +62,8 @@ import { OPENCODE_DEFAULT_MODEL } from '../providers/opencode.js';
 import { readHarnessSettings, claudeSpinnerVerbs } from '../settings/harness-settings.js';
 import { TERMINAL_ID_ENV_VAR } from '../auth/shim.js';
 import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
-import { withAutoArchive, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
+import { autoArchivePatch, DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
+import { ThreadConfigStore, pickClientSettable, type ConfigPatch } from './thread-config.js';
 import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
 import { senderLine } from '../auth/key-rules.js';
 
@@ -227,7 +228,16 @@ export class SessionService {
      * beside it. Defaults to ~/.dispatch/mcp.json.
      */
     private readonly mcpConfigPath: string = path.join(os.homedir(), '.dispatch', 'mcp.json'),
-  ) {}
+    opts: { configStore?: ThreadConfigStore } = {},
+  ) {
+    this.configStore = opts.configStore ?? new ThreadConfigStore(db);
+  }
+
+  /**
+   * The one writer of a thread's config (W2-A). Every config write in this class is a patch of
+   * the keys it changes; a copy of the config read earlier is for decisions only, never written.
+   */
+  private readonly configStore: ThreadConfigStore;
 
   /**
    * The port the daemon actually bound. The agency helper sends its calls here, so it must not
@@ -332,10 +342,7 @@ export class SessionService {
     specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
     prompts.push(...inj.prompts);
     const toolsAvailable = specs.map((s) => s.name);
-    try {
-      const t = this.getTerminal(terminalId);
-      if (t) terminalsDb.updateConfig(this.db, terminalId, { ...((t.config ?? {}) as Record<string, unknown>), toolsAvailable });
-    } catch { /* the record is informational */ }
+    try { this.configStore.patch(terminalId, { toolsAvailable }); } catch { /* the record is informational */ }
     try { this.onSpawned?.(terminalId, toolsAvailable); } catch { /* observers never block a spawn */ }
   }
 
@@ -383,10 +390,7 @@ export class SessionService {
       try {
         const t = terminalsDb.getById(this.db, terminalId);
         if (!t || t.external_id !== lostId) return;
-        let config: Record<string, any> = {};
-        try { config = JSON.parse(t.config || '{}'); } catch { /* default {} */ }
-        config.lostConversation = { externalId: lostId, at: new Date().toISOString() };
-        terminalsDb.updateConfig(this.db, terminalId, config);
+        this.configStore.patch(terminalId, { lostConversation: { externalId: lostId, at: new Date().toISOString() } });
         terminalsDb.updateExternalId(this.db, terminalId, null);
         console.warn(`[structured] thread ${terminalId}: conversation ${lostId} is gone; the next message starts a new one`);
       } catch { /* best effort — the worst case is the old retry */ }
@@ -830,8 +834,7 @@ export class SessionService {
     // thread (and the ensureStructuredAlive guard no longer bails on it). dependsOn
     // is stripped too — once started, whether early (override) or auto (dependency
     // met), it's no longer meaningfully "waiting" on anything.
-    const { queued, queuedTask, dependsOn, ...rest } = config;
-    terminalsDb.updateConfig(this.db, terminalId, rest);
+    this.configStore.patch(terminalId, { queued: null, queuedTask: null, dependsOn: null });
     this.setTerminalStatus(terminalId, 'waiting');
 
     this.spawnTerminal(terminalId);
@@ -952,40 +955,55 @@ export class SessionService {
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
   }
 
-  // Update any tab (rename, update config)
+  /**
+   * Update any tab: rename it, or set the config keys a client may set (CLIENT_SETTABLE_KEYS: a
+   * notes tab's `html`, a browser tab's `url`). The client's config is a PATCH, not a replacement
+   * (W2-A): a key it does not send stays, a key sent as `null` is removed, and a key outside the
+   * allow-list is ignored. Every other setting has its own route (model, effort, transport,
+   * account, autonomy, auto-archive, alerts, secrets-env).
+   */
   updateTab(tabId: string, fields: { label?: string; config?: Record<string, any> }): terminalsDb.Terminal | null {
     const row = terminalsDb.getById(this.db, tabId);
     if (!row) return null;
     if (fields.label) terminalsDb.updateLabel(this.db, tabId, fields.label);
-    if (fields.config) terminalsDb.updateConfig(this.db, tabId, fields.config);
+    if (fields.config !== undefined && fields.config !== null) {
+      if (typeof fields.config !== 'object' || Array.isArray(fields.config)) {
+        console.warn(`[thread-config] thread ${tabId}: a client config that is not an object was ignored`);
+      } else {
+        const { patch, ignored } = pickClientSettable(fields.config);
+        const sent = fields.config;
+        this.configStore.patch(tabId, (current) => {
+          // A client that sends its whole copy back (the notes tab does) repeats keys it did not
+          // change: only a key whose value differs from the saved one is worth a log line.
+          const refused = ignored.filter((k) => JSON.stringify(sent[k]) !== JSON.stringify(current[k]));
+          if (refused.length) {
+            console.warn(`[thread-config] thread ${tabId}: ignored config keys from a client (not client-settable): ${refused.map((k) => JSON.stringify(k.slice(0, 60))).join(', ')}`);
+          }
+          return Object.keys(patch).length ? patch : null;
+        });
+      }
+    }
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, tabId)!);
   }
 
   /**
-   * Turn a thread's auto-archive policy on or off. Merges server-side: the
-   * generic PATCH /terminals/:id replaces the config blob wholesale (and must
-   * keep doing so — unpin relies on it), so a partial config from the client
-   * would silently drop `transport`, `role`, `agentType`, etc.
+   * Turn a thread's auto-archive policy on or off: a patch of its two keys.
    */
   setAutoArchive(terminalId: string, enabled: boolean, ms: number = DEFAULT_AUTO_ARCHIVE_MS): terminalsDb.Terminal | null {
     const row = terminalsDb.getById(this.db, terminalId);
     if (!row) return null;
-    const current = terminalsDb.rowToTerminal(row).config;   // malformed blob parses to {}
-    terminalsDb.updateConfig(this.db, terminalId, withAutoArchive(current, enabled, ms));
+    this.configStore.patch(terminalId, autoArchivePatch(enabled, ms));
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
   /**
-   * Toggle per-thread push alerts (the bell). Merges server-side for the same
-   * reason as setAutoArchive: the generic PATCH replaces the config blob wholesale.
+   * Toggle per-thread push alerts (the bell): a patch of the one key.
    * Disable deletes the key so configs don't accumulate `alertsEnabled: false`.
    */
   setAlertsEnabled(terminalId: string, enabled: boolean): terminalsDb.Terminal | null {
     const row = terminalsDb.getById(this.db, terminalId);
     if (!row) return null;
-    const config = { ...terminalsDb.rowToTerminal(row).config } as Record<string, any>;
-    if (enabled) config.alertsEnabled = true; else delete config.alertsEnabled;
-    terminalsDb.updateConfig(this.db, terminalId, config);
+    this.configStore.patch(terminalId, { alertsEnabled: enabled ? true : null });
     return terminalsDb.rowToTerminal(terminalsDb.getById(this.db, terminalId)!);
   }
 
@@ -1464,12 +1482,7 @@ export class SessionService {
   /** Arm or clear the overseer's interim recap timer after a notice (see sessions/interim-recap.ts). */
   private updateInterimTimer(coordinatorId: string, kind: NoticeKind, busy: boolean): void {
     try {
-      const row = terminalsDb.getById(this.db, coordinatorId);
-      if (!row) return;
-      let cfg: Record<string, any> = {};
-      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
-      const next = nextInterimConfig(cfg, { kind, busy, now: this.clock() });
-      if (next) terminalsDb.updateConfig(this.db, coordinatorId, next);
+      this.configStore.patch(coordinatorId, (current) => nextInterimPatch(current, { kind, busy, now: this.clock() }));
     } catch (err) {
       console.error(`interim recap: timer update failed for ${coordinatorId}`, err);
     }
@@ -1718,7 +1731,7 @@ export class SessionService {
     let cfg: Record<string, any> = {};
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     if (cfg.role !== 'agent') return;
-    this.persistAgentTokenUsage(agentTerminalId, agent, cfg);
+    this.persistAgentTokenUsage(agentTerminalId, agent);
     const mission = typeof cfg.mission === 'string' && cfg.mission.trim() ? cfg.mission.trim() : null;
     const summary = this.lastAssistantText(agentTerminalId);
     // Decision cards, Unit 3: the agent's owner-decisions block becomes proposed ledger items. A
@@ -1855,7 +1868,7 @@ export class SessionService {
     // movement). config.roleRun (set at spawn — see roles/service.ts#handleTerminalExit,
     // which reads the same field) is how a role-run terminal is identified here.
     const cap = typeof cfg.roleRun === 'string' && cfg.roleRun ? 4000 : 400;
-    cfg.lastOutcome = {
+    const lastOutcome = {
       summary: redactKeys(detail.summary).slice(0, cap),
       needsHelp: detail.needsHelp,
       inferred: detail.inferred,
@@ -1863,7 +1876,7 @@ export class SessionService {
       ...(detail.state === 'blocked' && detail.blocker ? { blocker: redactKeys(detail.blocker) } : {}),
       at: new Date().toISOString(),
     };
-    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { /* best effort */ }
+    try { this.configStore.patch(terminalId, { lastOutcome }); } catch { /* best effort */ }
   }
 
   /**
@@ -1878,15 +1891,17 @@ export class SessionService {
   setBoardState(terminalId: string, patch: { acknowledged?: boolean; override?: string | null }): boolean {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return false;
-    let cfg: Record<string, any> = {};
-    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-    const board = { ...(cfg.boardState ?? {}) };
-    if (patch.acknowledged !== undefined) {
-      board.acknowledgedAt = patch.acknowledged ? new Date().toISOString() : undefined;
-    }
-    if (patch.override !== undefined) board.override = patch.override;
-    cfg.boardState = board;
-    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return false; }
+    try {
+      // The board state is one key with two fields: merge onto the value as it is at the write.
+      this.configStore.patch(terminalId, (current) => {
+        const board = { ...(current.boardState ?? {}) };
+        if (patch.acknowledged !== undefined) {
+          board.acknowledgedAt = patch.acknowledged ? new Date().toISOString() : undefined;
+        }
+        if (patch.override !== undefined) board.override = patch.override;
+        return { boardState: board };
+      });
+    } catch { return false; }
     return true;
   }
 
@@ -1904,16 +1919,14 @@ export class SessionService {
    * "how much work this agent did" than the cache-dominated cumulative figure.
    * Best-effort: no-ops when there's no external_id yet or the transcript can't be read.
    */
-  private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow, cfg: Record<string, any>): void {
+  private persistAgentTokenUsage(terminalId: string, agent: terminalsDb.TerminalRow): void {
     if (!agent.external_id) return;
     const session = sessionsDb.getById(this.db, agent.session_id);
     const workDir = agent.working_dir || session?.working_dir;
     if (!workDir) return;
     const stats = readTerminalTokenUsage(workDir, agent.external_id);
     if (!stats || !stats.totalTokens) return;
-    cfg.totalTokens = stats.totalTokens;
-    cfg.outputTokens = stats.outputTokens;
-    terminalsDb.updateConfig(this.db, terminalId, cfg);
+    this.configStore.patch(terminalId, { totalTokens: stats.totalTokens, outputTokens: stats.outputTokens });
   }
 
   /**
@@ -2081,10 +2094,7 @@ export class SessionService {
   setAutonomy(terminalId: string, mode: 'supervised' | 'autonomous'): boolean {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return false;
-    let config: Record<string, any> = {};
-    try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-    config.autonomy = mode;
-    terminalsDb.updateConfig(this.db, terminalId, config);
+    this.configStore.patch(terminalId, { autonomy: mode });
     this.structuredManagerFor(terminal.type)?.setEscalate(terminalId, mode !== 'autonomous');
     return true;
   }
@@ -2123,10 +2133,7 @@ export class SessionService {
     }
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return false;
-    let cfg: Record<string, any> = {};
-    try { cfg = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
-    cfg.pendingDeclaration = decl;
-    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return false; }
+    try { this.configStore.patch(terminalId, { pendingDeclaration: decl }); } catch { return false; }
     return true;
   }
 
@@ -2191,14 +2198,9 @@ export class SessionService {
     // Revoking first made the old CLI's last status call fail with 401 while it shut down.
     this.revokeAllKeys(terminalId);
 
-    // Merge `config.transport` via read-merge-write — NEVER clobber unrelated keys
-    // (model, role, pinned, autoArchive, …), exactly like setAutoArchive.
-    const fresh = terminalsDb.getById(this.db, terminalId);
-    let merged: Record<string, any> = {};
-    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
-    if (target === 'structured') merged.transport = 'structured';
-    else delete merged.transport;
-    terminalsDb.updateConfig(this.db, terminalId, merged);
+    // Only `transport` is written: the config read at the top is older than the awaits above
+    // (a turn outcome, a model pick), so it is never written back.
+    this.configStore.patch(terminalId, { transport: target === 'structured' ? 'structured' : null });
     terminalsDb.updatePid(this.db, terminalId, null);
 
     // Re-spawn: spawnTerminal reads the freshly-merged config and dispatches to the right
@@ -2246,12 +2248,8 @@ export class SessionService {
       this.revokeAllKeys(terminalId);
     }
 
-    // Read-merge-write, like setAutoArchive: never clobber the other keys.
-    const fresh = terminalsDb.getById(this.db, terminalId);
-    let merged: Record<string, any> = {};
-    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
-    merged.accountId = accountId;
-    terminalsDb.updateConfig(this.db, terminalId, merged);
+    // Only `accountId` is written (the config read at the top is older than the awaits above).
+    this.configStore.patch(terminalId, { accountId });
     if (terminal.type === 'codex' && previous !== accountId && terminal.external_id) terminalsDb.updateExternalId(this.db, terminalId, null);
 
     if (alive) {
@@ -2288,21 +2286,22 @@ export class SessionService {
   private undoRefusedPick(terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }): void {
     const row = terminalsDb.getById(this.db, terminalId);
     if (!row) return;
-    const cfg = this.configOf(terminalId);
     let changed = false;
-    if (info.effort && cfg.effort === info.effort) { delete cfg.effort; delete cfg.effortSetAt; changed = true; }
-    if (info.model && cfg.model === info.model) {
-      if (info.restoredModel) cfg.model = info.restoredModel; else delete cfg.model;
-      delete cfg.modelSetAt;
-      changed = true;
-    }
+    try {
+      // The compare and the write are one unit: a newer pick that lands first is seen and kept.
+      this.configStore.patch(terminalId, (cfg) => {
+        const undo: ConfigPatch = {};
+        if (info.effort && cfg.effort === info.effort) { undo.effort = null; undo.effortSetAt = null; changed = true; }
+        if (info.model && cfg.model === info.model) {
+          undo.model = info.restoredModel ? info.restoredModel : null;
+          undo.modelSetAt = null;
+          changed = true;
+        }
+        return changed ? undo : null;
+      });
+    } catch { return; }
     if (!changed) return;
-    try { terminalsDb.updateConfig(this.db, terminalId, cfg); } catch { return; }
     this.onTerminalChanged?.(row.session_id);
-  }
-
-  private configOf(terminalId: string): Record<string, any> {
-    try { return JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}'); } catch { return {}; }
   }
 
   /** One thread's model and effort changes run one at a time: the second is judged against what the first left. */
@@ -2358,14 +2357,6 @@ export class SessionService {
     const structured = config.transport === 'structured' || terminal.type === 'grok' || terminal.type === 'opencode';
     if (!structured && this.ptyManager.isAlive(terminalId)) throw transportError(409, `This thread runs in the CLI — use /${what} there`);
     return { terminal, config, structured, manager: this.structuredManagerFor(terminal.type) };
-  }
-
-  /** Read-merge-write one or more config keys: never clobber the others. */
-  private mergeConfig(terminalId: string, patch: Record<string, unknown>): void {
-    const fresh = terminalsDb.getById(this.db, terminalId);
-    let merged: Record<string, any> = {};
-    try { merged = JSON.parse(fresh?.config || '{}'); } catch { /* default {} */ }
-    terminalsDb.updateConfig(this.db, terminalId, { ...merged, ...patch });
   }
 
   /** A change the harness refused: say so in the thread (visible on every Pretty surface), then fail with its words. */
@@ -2444,12 +2435,7 @@ export class SessionService {
     }
     // The new model's default effort is sent so the thread is not left on the old model's level, but it is not the owner's
     // pick: it is not saved (a resume runs at the model default anyway). A saved effort the model cannot take is dropped.
-    this.mergeConfig(terminalId, { model, modelSetAt: Date.now() });
-    if (clearedEffort) {
-      const cfg = this.configOf(terminalId);
-      delete cfg.effort; delete cfg.effortSetAt;
-      terminalsDb.updateConfig(this.db, terminalId, cfg);
-    }
+    this.configStore.patch(terminalId, { model, modelSetAt: Date.now(), ...(clearedEffort ? { effort: null, effortSetAt: null } : {}) });
     // A replacement process may already be running, started from the config as it was before this pick: it runs the old value
     // and nothing else would tell it. Apply the saved pick to it now (and take the save back if it refuses).
     if (replaced && manager?.isAlive(terminalId) && manager.setModel) {
@@ -2512,7 +2498,7 @@ export class SessionService {
         else if (manager.isAlive(terminalId)) this.refuse(manager, terminalId, 'effort', (e as Error)?.message || 'The harness refused the effort');
       } finally { exit.off(); }
     }
-    this.mergeConfig(terminalId, { effort, effortSetAt: Date.now() });
+    this.configStore.patch(terminalId, { effort, effortSetAt: Date.now() });
     // A replacement started from the config before this pick runs the old effort: apply the saved pick to it (see setThreadModelLocked).
     if (replaced && manager?.isAlive(terminalId) && manager.setEffort) {
       const target = manager;
@@ -2531,14 +2517,15 @@ export class SessionService {
     terminalId: string,
     what: 'model' | 'effort',
     apply: () => Promise<unknown>,
-    restore: Record<string, unknown>,
+    restore: ConfigPatch,
   ): Promise<void> {
     const exit = this.watchExit(manager, terminalId);
     try {
       await apply();
     } catch (e) {
       if (exit.happened() || !manager.isAlive(terminalId)) return;
-      this.mergeConfig(terminalId, restore);
+      // The values from before the pick; one that was absent then is `undefined` here, which removes the key again.
+      this.configStore.patch(terminalId, restore);
       this.refuse(manager, terminalId, what, (e as Error)?.message || `The harness refused the ${what}`);
     } finally { exit.off(); }
   }
@@ -3089,8 +3076,13 @@ export class SessionService {
     const seen = terminal.type === 'claude-code'
       ? readSessionSettings(workDir, terminal.external_id)
       : terminal.type === 'codex' ? readCodexSessionModel(terminal.external_id) : null;
+    const before = { model: config.model, effort: config.effort };
     if (!adoptTranscriptSettingsInto(config, seen)) return;
-    try { terminalsDb.updateConfig(this.db, terminal.id, config); } catch { /* best effort */ }
+    // `config` is the spawn's working copy: only the keys that adoption changed are written.
+    const adopted: ConfigPatch = {};
+    if (config.model !== before.model) adopted.model = config.model;
+    if (config.effort !== before.effort) adopted.effort = config.effort;
+    try { this.configStore.patch(terminal.id, adopted); } catch { /* best effort */ }
   }
 
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
@@ -3193,7 +3185,7 @@ export class SessionService {
     });
     if (resolvedModel && !config.model) {
       config.model = resolvedModel;
-      terminalsDb.updateConfig(this.db, terminal.id, config);
+      this.configStore.patch(terminal.id, { model: resolvedModel });
     }
 
     let sc: { command: string; args: string[] };
@@ -3287,7 +3279,7 @@ export class SessionService {
           if (supports !== null) {
             toolsDisabled = !supports;
             config.toolsDisabled = toolsDisabled;
-            terminalsDb.updateConfig(this.db, terminal.id, config);
+            this.configStore.patch(terminal.id, { toolsDisabled });
           }
         }
         const cfgPath = writeOpencodeConfig({
@@ -3459,7 +3451,7 @@ export class SessionService {
       const interruptedByShutdown = typeof config.interruptedAt === 'string';
       if (config.interruptedAt !== undefined) {
         delete config.interruptedAt;
-        terminalsDb.updateConfig(this.db, row.id, config);
+        this.configStore.patch(row.id, { interruptedAt: null });
       }
 
       // (c) Idempotency. Compare against the thread's own record of the turn, which advances as
@@ -3486,8 +3478,9 @@ export class SessionService {
       // (d) Kick (revive + re-prompt) and stamp so a later restart won't double-kick.
       try {
         this.sendStructuredMessage(row.id, KICKSTART_CONTINUE_PROMPT);
-        config.kickedAt = new Date().toISOString();
-        terminalsDb.updateConfig(this.db, row.id, config);
+        // Only the stamp: the send above started the thread, and the start saved keys (the
+        // resolved model, the tools list) that the copy read before the loop does not have.
+        this.configStore.patch(row.id, { kickedAt: new Date().toISOString() });
         kicked.push(row.id);
       } catch {
         skipped.push(row.id);
@@ -3517,12 +3510,11 @@ export class SessionService {
     const interruptedAt = new Date().toISOString();
     for (const id of interrupted) {
       terminalsDb.updateStatus(this.db, id, 'working');
-      // Re-read: the kill's own exit handling may have written config (e.g. a turn outcome).
+      // A patch of the one key: the kill's own exit handling may have written config (e.g. a turn outcome).
       // The stamp tells the kickstart this thread's turn was cut off by the shutdown — Codex
       // records that as `turn_aborted`, which otherwise reads as a deliberate Stop.
       try {
-        const config = JSON.parse(terminalsDb.getById(this.db, id)?.config || '{}');
-        terminalsDb.updateConfig(this.db, id, { ...config, interruptedAt });
+        this.configStore.patch(id, { interruptedAt });
       } catch { /* best effort: the row stays `working`, which alone kicks a task_started tail */ }
     }
     return interrupted;

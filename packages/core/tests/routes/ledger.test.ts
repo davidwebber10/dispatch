@@ -183,7 +183,7 @@ describe('ledger routes', () => {
 
     it('only reads: lastRecapAt and the interim timer stay as they are', async () => {
       const cfg = { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z', interimDueAt: '2026-10-08T10:20:00.000Z' };
-      terminalsDb.updateConfig(db, 'coord', cfg);
+      terminalsDb.writeConfigRaw(db, 'coord', cfg);
       await request(app).post(`/api/sessions/${sid}/ledger`).send({ caller: 'coord', kind: 'do', text: 'Check staging.', title: 'Check staging' }).expect(201);
       const before = ledgerDb.listBySession(db, sid);
       const res = await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200);
@@ -193,7 +193,7 @@ describe('ledger routes', () => {
     });
 
     it('takes lastRecapAt from the live overseer, not an archived one', async () => {
-      terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z' });
+      terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-08T10:00:00.000Z' });
       terminalsDb.archive(db, 'coord');
       terminalsDb.create(db, { id: 'coord2', sessionId: sid, type: 'claude-code', label: 'Control Plane', config: { role: 'coordinator' } });
       expect((await request(app).get(`/api/sessions/${sid}/ledger/card`).expect(200)).body.lastRecapAt).toBeNull();

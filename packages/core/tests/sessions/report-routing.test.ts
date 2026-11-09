@@ -138,7 +138,7 @@ describe('a worker reports to the thread that started it', () => {
       c.mk('chat', 'Chat thread', { role: 'agent', origin: 'endless', spawnDepth: 1 });
       c.mk('kid', 'Kid', { role: 'agent', origin: 'endless', spawnedBy: 'chat', spawnDepth: 2 });
       worker(c, 'kid');
-      terminalsDb.updateConfig(c.db, 'w', { role: 'agent', origin: 'endless', spawnedBy: 'kid', spawnDepth: 3 });
+      terminalsDb.writeConfigRaw(c.db, 'w', { role: 'agent', origin: 'endless', spawnedBy: 'kid', spawnDepth: 3 });
       run(c.svc);
       expect(c.sent).not.toHaveBeenCalled();
     });
@@ -268,7 +268,7 @@ describe('batch line and interim recap count only overseer workers', () => {
 describe('interim recap', () => {
   it('does not fire for a batch made only of workers other threads started', () => {
     const c = makeService();
-    terminalsDb.updateConfig(c.db, 'coord', { role: 'coordinator', interimDueAt: new Date(0).toISOString() });
+    terminalsDb.writeConfigRaw(c.db, 'coord', { role: 'coordinator', interimDueAt: new Date(0).toISOString() });
     c.mk('theirs', 'Theirs', { role: 'agent', spawnedBy: 'u', spawnDepth: 1 });
     terminalsDb.updateStatus(c.db, 'theirs', 'working');
     ledgerDb.create(c.db, { sessionId: 's1', kind: 'decide', text: 'Which?', author: 'overseer' });

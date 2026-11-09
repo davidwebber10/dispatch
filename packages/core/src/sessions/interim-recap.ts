@@ -21,6 +21,7 @@ import { INTERIM_DUE_KEY, LAST_RECAP_KEY } from '../overseer/ledger-service.js';
 import { isNewForUser } from '../overseer/ledger-render.js';
 import { isBusy, type BatchState, type NoticeKind } from './batch-state.js';
 import type { SessionService } from './service.js';
+import { ThreadConfigStore, type ConfigPatch } from './thread-config.js';
 
 export const INTERIM_RECAP_MS = 20 * 60_000;
 const DEFAULT_INTERVAL_MS = 60_000;
@@ -51,15 +52,9 @@ export function formatInterimNotice(newCount: number, workingCount: number, queu
   );
 }
 
-/** Remove the due time from a coordinator's CURRENT config (re-read, so nothing else is lost). */
+/** Remove the due time from a coordinator's config. Only that key is written. */
 function clearDue(db: Database.Database, terminalId: string): void {
-  const row = terminalsDb.getById(db, terminalId);
-  if (!row) return;
-  const cfg = terminalsDb.rowToTerminal(row).config;
-  if (!(INTERIM_DUE_KEY in cfg)) return;
-  const next = { ...cfg };
-  delete next[INTERIM_DUE_KEY];
-  terminalsDb.updateConfig(db, terminalId, next);
+  new ThreadConfigStore(db).patch(terminalId, (current) => (INTERIM_DUE_KEY in current ? { [INTERIM_DUE_KEY]: null } : null));
 }
 
 /**
@@ -72,15 +67,26 @@ export function nextInterimConfig(
   config: Record<string, any>,
   notice: { kind: NoticeKind; busy: boolean; now: number },
 ): Record<string, any> | null {
+  const patch = nextInterimPatch(config, notice);
+  if (!patch) return null;
+  const next = { ...config };
+  if (patch[INTERIM_DUE_KEY] == null) delete next[INTERIM_DUE_KEY];
+  else next[INTERIM_DUE_KEY] = patch[INTERIM_DUE_KEY];
+  return next;
+}
+
+/**
+ * The same decision as a patch of the one key it changes (for ThreadConfigStore.patch), or null
+ * when the config does not change. Pure.
+ */
+export function nextInterimPatch(
+  config: Readonly<Record<string, unknown>>,
+  notice: { kind: NoticeKind; busy: boolean; now: number },
+): ConfigPatch | null {
   const armed = typeof config[INTERIM_DUE_KEY] === 'string';
-  if (!notice.busy) {
-    if (!armed) return null;
-    const next = { ...config };
-    delete next[INTERIM_DUE_KEY];
-    return next;
-  }
+  if (!notice.busy) return armed ? { [INTERIM_DUE_KEY]: null } : null;
   if (notice.kind === 'finished' && !armed) {
-    return { ...config, [INTERIM_DUE_KEY]: new Date(notice.now + INTERIM_RECAP_MS).toISOString() };
+    return { [INTERIM_DUE_KEY]: new Date(notice.now + INTERIM_RECAP_MS).toISOString() };
   }
   return null;
 }

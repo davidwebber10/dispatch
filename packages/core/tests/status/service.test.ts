@@ -4,6 +4,7 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { StatusService } from '../../src/status/service.js';
+import { ThreadConfigStore } from '../../src/sessions/thread-config.js';
 
 // Ghost heal: the live process's self-reported session id is authoritative when the STORED
 // id has no transcript anywhere (a captured id from a boot that never ran a turn — the
@@ -129,7 +130,7 @@ describe('StatusService', () => {
   });
 
   it('markScheduled stamps config.scheduledWake (best effort, for a future "resumes when…" tooltip) without clobbering existing config', () => {
-    terminalsDb.updateConfig(db, 'term', { transport: 'structured', agentType: 'implementer' });
+    terminalsDb.writeConfigRaw(db, 'term', { transport: 'structured', agentType: 'implementer' });
     new StatusService(db, broadcaster).markScheduled('term', 'Scheduled — watching CI run');
     const config = terminalsDb.getById(db, 'term')?.config;
     expect(JSON.parse(config || '{}')).toMatchObject({ transport: 'structured', agentType: 'implementer', scheduledWake: 'Scheduled — watching CI run' });
@@ -146,19 +147,19 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   const stop = { hook_event_name: 'Stop', session_id: 'sid-1' };
 
   it("a Stop with pendingDeclaration.state==='needs_you' settles to needs_input, not waiting", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('needs_input');
   });
 
   it("a Stop with pendingDeclaration.state==='done' settles to waiting", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
   });
 
   it("a Stop with pendingDeclaration.state==='blocked' falls through to waiting — parity with the structured path", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
   });
@@ -169,7 +170,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it('the declaration is CLEARED after the Stop: a second Stop with no new declaration settles to waiting (does not leak into the next turn)', () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'blocked', ask: 'pick one' } });
     const s = new StatusService(db, broadcaster);
 
     s.ingest('claude', 'term', stop);
@@ -180,7 +181,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it('persists config.lastOutcome the same shape the structured path writes (declared ⇒ inferred:false)', () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped the thing' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped the thing' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
     expect(cfg.pendingDeclaration).toBeUndefined();
@@ -189,7 +190,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it('lastOutcome.needsHelp is true for a needs_you declaration', () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
     expect(cfg.lastOutcome).toMatchObject({ needsHelp: true, inferred: false });
@@ -200,14 +201,14 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   // board reading `declaredState` off `lastOutcome` doesn't have to care which transport wrote
   // the row.
   it("a declared 'blocked' outcome persists declaredState:'blocked' and the blocker text", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting on another agent', blocker: 'agent X' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
     expect(cfg.lastOutcome).toMatchObject({ declaredState: 'blocked', blocker: 'agent X', inferred: false });
   });
 
   it("a declared 'done' outcome persists declaredState:'done' and no blocker key", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'done', summary: 'shipped it' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
     expect(cfg.lastOutcome).toMatchObject({ declaredState: 'done', inferred: false });
@@ -215,7 +216,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it("a declared 'needs_you' outcome persists NO declaredState (still settles needs_input, unchanged)", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'need input', ask: 'which?' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('needs_input');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -232,7 +233,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it("an empty or whitespace-only blocker string omits the key rather than persisting ''", () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting', blocker: '   ' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'blocked', summary: 'waiting', blocker: '   ' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', stop);
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
     expect(cfg.lastOutcome.declaredState).toBe('blocked');
@@ -241,7 +242,7 @@ describe('StatusService Stop-hook pendingDeclaration fallback (PTY report_status
   });
 
   it('does not consult pendingDeclaration on a non-Stop event', () => {
-    terminalsDb.updateConfig(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'x' } });
+    terminalsDb.writeConfigRaw(db, 'term', { pendingDeclaration: { state: 'needs_you', summary: 'x' } });
     new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'PreToolUse', session_id: 'sid-1', tool_name: 'Bash' });
     expect(terminalsDb.getById(db, 'term')?.status).toBe('working');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -326,7 +327,7 @@ describe('StatusService onWatchStatus callback (feeds WatchDispatcher)', () => {
 
 describe('StatusService manual-override clearing (board state)', () => {
   it('clears a manual override when the thread shows real activity', () => {
-    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'complete' } });
+    terminalsDb.writeConfigRaw(db, 'term', { boardState: { override: 'complete' } });
     const s = new StatusService(db, broadcaster);
     s.markWorking('term');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -334,7 +335,7 @@ describe('StatusService manual-override clearing (board state)', () => {
   });
 
   it('clears a manual override on the needs_input edge too', () => {
-    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'resting' } });
+    terminalsDb.writeConfigRaw(db, 'term', { boardState: { override: 'resting' } });
     const s = new StatusService(db, broadcaster);
     s.markNeedsInput('term');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -346,7 +347,7 @@ describe('StatusService manual-override clearing (board state)', () => {
   // normally kept a stale override forever, frozen on the board despite a fresh lastOutcome.
   // `apply()` clears on every call now; this proves the settle edge specifically.
   it('clears a manual override on the settle edge too (markIdle) — a thread that finishes normally must not stay frozen', () => {
-    terminalsDb.updateConfig(db, 'term', { boardState: { override: 'complete' } });
+    terminalsDb.writeConfigRaw(db, 'term', { boardState: { override: 'complete' } });
     const s = new StatusService(db, broadcaster);
     s.markIdle('term');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -354,7 +355,7 @@ describe('StatusService manual-override clearing (board state)', () => {
   });
 
   it('preserves acknowledgedAt while clearing the override', () => {
-    terminalsDb.updateConfig(db, 'term', { boardState: { acknowledgedAt: '2020-01-01T00:00:00.000Z', override: 'needs_help' } });
+    terminalsDb.writeConfigRaw(db, 'term', { boardState: { acknowledgedAt: '2020-01-01T00:00:00.000Z', override: 'needs_help' } });
     const s = new StatusService(db, broadcaster);
     s.markWorking('term');
     const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
@@ -503,5 +504,56 @@ describe('StatusService watch hook fires on a change only', () => {
     service.markIdle('term');
     expect(statusEvents().length).toBe(before + 1);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+});
+
+// W2-A: the status service's config writes go through ThreadConfigStore.
+describe('StatusService config writes (W2-A)', () => {
+  it('clearing the board override keeps a key written between the read and the write', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { override: 'complete' } });
+    // A listener that writes at the last moment before the status service's own write: after any
+    // read the service made, before its write. A write built from a copy would drop these keys.
+    const side = new ThreadConfigStore(db);
+    let fired = 0;
+    const listener = (id: string) => {
+      if (fired++) return;
+      side.patch(id, (c) => ({ alertsEnabled: true, boardState: { ...(c.boardState ?? {}), acknowledgedAt: '2026-11-09T00:00:00.000Z' } }));
+    };
+    class ListeningStore extends ThreadConfigStore {
+      override patch(id: string, p: Parameters<ThreadConfigStore['patch']>[1]) { listener(id); return super.patch(id, p); }
+    }
+    const s = new StatusService(db, broadcaster, undefined, undefined, undefined, undefined, { configStore: new ListeningStore(db) });
+    s.markWorking('term');
+    expect(fired).toBeGreaterThan(0);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', alertsEnabled: true, boardState: { override: null, acknowledgedAt: '2026-11-09T00:00:00.000Z' } });
+  });
+
+  it('clearing the board override keeps a key that a status listener wrote in the same event', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { acknowledgedAt: 'a', override: 'complete' } });
+    const store = new ThreadConfigStore(db);
+    // The watch listener runs after the status write; it patches, then a second status event follows.
+    const s = new StatusService(db, broadcaster, undefined, () => { store.patch('term', { alertsEnabled: true }); });
+    s.markWorking('term');
+    store.patch('term', (c) => ({ boardState: { ...(c.boardState ?? {}), override: 'resting' } }));
+    s.markIdle('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', alertsEnabled: true, boardState: { acknowledgedAt: 'a', override: null } });
+  });
+
+  it('markScheduled stamps the wake and keeps the override clear made by the same status write', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { override: 'complete' } });
+    new StatusService(db, broadcaster).markScheduled('term', 'Wakes at 09:00');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', boardState: { override: null }, scheduledWake: 'Wakes at 09:00' });
+  });
+
+  it('a consumed declaration removes only pendingDeclaration and writes only lastOutcome', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', scheduledWake: 'kept', pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.pendingDeclaration).toBeUndefined();
+    expect(cfg.lastOutcome).toMatchObject({ summary: 'shipped it', needsHelp: false, declaredState: 'done' });
+    expect(cfg).toMatchObject({ model: 'opus', scheduledWake: 'kept' });
   });
 });

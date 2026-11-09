@@ -359,7 +359,7 @@ describe('note', () => {
 
 describe('list', () => {
   it('renders the sections; forRecap stamps lastRecapAt and clears interimDueAt', () => {
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
     ledger.add('s1', 'coord', { kind: 'go', text: 'Merge PR #12.', ...GO_CARD, title: 'Merge PR #12' });
     const plain = ledger.list('s1', 'coord');
     expect(plain.text).toContain('Needs you now:\n\n**N1 · Go · Merge PR #12**\n\nMerge PR #12.\n\nHolds up: nothing · Open 0 minutes · Source: overseer');
@@ -378,7 +378,7 @@ describe('list', () => {
   // that have no title answers only "Titles first" and does not mark the recap; the next call does,
   // with or without the titles, so a recap is never blocked and its New lines are never lost.
   it('forRecap with items that have no title: "Titles first" once per recap, then the normal recap', () => {
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', transport: 'structured', interimDueAt: min(20) });
     ledgerDb.create(db, { sessionId: 's1', kind: 'do', text: 'Check the old banner.', author: 'overseer', now: min(0) });
     now = T0 + 5 * 60_000;
     const first = ledger.list('s1', 'coord', { forRecap: true });

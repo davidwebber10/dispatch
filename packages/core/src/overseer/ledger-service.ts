@@ -18,6 +18,7 @@
  */
 import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
+import { ThreadConfigStore } from '../sessions/thread-config.js';
 import * as sessionsDb from '../db/sessions.js';
 import * as ledgerDb from '../db/ledger.js';
 import * as messagesDb from '../db/coordinator-messages.js';
@@ -132,14 +133,19 @@ export class LedgerService {
     opts: {
       clock?: () => number; timeZone?: string; listWorktrees?: (dir: string) => string[]; onChange?: (sessionId: string) => void;
       githubRepo?: (dir: string) => string | null;
+      configStore?: ThreadConfigStore;
     } = {},
   ) {
+    this.configStore = opts.configStore ?? new ThreadConfigStore(db);
     this.clock = opts.clock ?? (() => Date.now());
     this.timeZone = opts.timeZone;
     this.listWorktrees = opts.listWorktrees ?? gitWorktrees;
     this.onChange = opts.onChange;
     this.githubRepo = opts.githubRepo ?? createRemoteReader({ clock: this.clock });
   }
+
+  /** The one writer of a thread's config (W2-A). */
+  private readonly configStore: ThreadConfigStore;
 
   private nowIso(): string {
     return new Date(this.clock()).toISOString();
@@ -514,8 +520,7 @@ export class LedgerService {
     if (opts.forRecap && untitled) {
       const asked = typeof cfg[TITLES_ASKED_KEY] === 'string' ? (cfg[TITLES_ASKED_KEY] as string) : null;
       if (asked === null || (lastRecapAt !== null && asked <= lastRecapAt)) {
-        cfg[TITLES_ASKED_KEY] = this.nowIso();
-        terminalsDb.updateConfig(this.db, overseer.id, cfg);
+        this.configStore.patch(overseer.id, { [TITLES_ASKED_KEY]: this.nowIso() });
         const openIds = items.filter((i) => i.status === 'open').map((i) => `N${i.seq}`);
         return { paste: '', text: '', openIds, rules: [], titlesFirst: `${TITLES_FIRST_TEXT}\n\n${untitled}` };
       }
@@ -525,9 +530,7 @@ export class LedgerService {
     const text = [renderLedgerSections(items, { now: this.clock(), lastRecapAt, timeZone: this.timeZone }), untitled]
       .filter(Boolean).join('\n\n');
     if (opts.forRecap) {
-      cfg[LAST_RECAP_KEY] = this.nowIso();
-      delete cfg[INTERIM_DUE_KEY];
-      terminalsDb.updateConfig(this.db, overseer.id, cfg);
+      this.configStore.patch(overseer.id, { [LAST_RECAP_KEY]: this.nowIso(), [INTERIM_DUE_KEY]: null });
       this.changed(sessionId); // a recap changes which items are new
     }
     const ctx = this.ctx(sessionId);

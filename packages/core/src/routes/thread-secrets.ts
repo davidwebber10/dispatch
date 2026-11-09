@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import type Database from 'better-sqlite3';
 import { ownerOnlyStrict, policyRouter } from '../auth/route-policy.js';
 import * as terminalsDb from '../db/terminals.js';
+import { ThreadConfigStore } from '../sessions/thread-config.js';
 
 export interface ThreadSecretsOptions {
   /** Tells the open pages that the thread's config changed. */
@@ -17,22 +18,19 @@ const NEXT_SPAWN = 'The change takes effect at the next start of the thread. Rel
  * with the token scope `opted-in` (SecretsService.getThreadTokenEnv). Owner only, and a caller
  * with no credential must be the web page: a thread must not give itself the token.
  *
- * The config is one JSON column that many writers replace whole. This route reads it fresh,
- * changes one key and writes, inside one SQLite transaction, so it cannot drop another writer's
- * key. (W2-A moves this write to the config store.)
+ * The write is a patch of the one key through ThreadConfigStore, so it cannot drop another
+ * writer's key.
  */
 export function createThreadSecretsRouter(db: Database.Database, opts: ThreadSecretsOptions = {}): Router {
   const router = policyRouter();
 
-  const setKey = db.transaction((id: string, enabled: boolean): { sessionId: string } | null => {
+  const store = new ThreadConfigStore(db);
+  const setKey = (id: string, enabled: boolean): { sessionId: string } | null => {
     const row = terminalsDb.getById(db, id);
     if (!row) return null;
-    const config = terminalsDb.rowToTerminal(row).config as Record<string, unknown>;
-    if (enabled) config.secretsEnv = true;
-    else delete config.secretsEnv;
-    terminalsDb.updateConfig(db, id, config);
+    store.patch(id, { secretsEnv: enabled ? true : null });
     return { sessionId: row.session_id };
-  });
+  };
 
   router.put('/terminals/:id/secrets-env', ownerOnlyStrict, (req, res) => {
     const enabled = req.body?.enabled;

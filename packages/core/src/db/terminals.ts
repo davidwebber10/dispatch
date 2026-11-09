@@ -1,6 +1,10 @@
 import type Database from 'better-sqlite3';
 
 import { THREAD_TYPES, type TerminalType as HarnessTerminalType } from '../providers/agent-types.js';
+import type { TerminalConfig } from '../sessions/thread-config.js';
+
+/** A parsed config: the known keys typed (TerminalConfig), every other key of the row kept. */
+export type ParsedConfig = TerminalConfig & Record<string, any>;
 
 // Terminal types that have PTY processes — every harness plus the plain shell.
 export type TerminalType = HarnessTerminalType;
@@ -43,15 +47,19 @@ export interface Terminal {
   status: string;
   createdAt: string;
   lastActivityAt: string;
-  config: Record<string, any>;
+  config: ParsedConfig;
   archivedAt: string | null;
   sortOrder: number;
   labelSource: 'user' | 'default' | 'auto';
 }
 
 export function rowToTerminal(row: TerminalRow): Terminal {
-  let config: Record<string, any> = {};
-  try { config = JSON.parse(row.config || '{}'); } catch {}
+  // A copy for reading. A write goes through ThreadConfigStore.patch, never from this object.
+  let config: ParsedConfig = {};
+  try {
+    const parsed: unknown = JSON.parse(row.config || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) config = parsed as ParsedConfig;
+  } catch { /* bad JSON reads as an empty config */ }
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -175,7 +183,12 @@ export function upgradeAutoLabel(db: Database.Database, id: string, from: string
   return r.changes > 0;
 }
 
-export function updateConfig(db: Database.Database, id: string, config: Record<string, any>): void {
+/**
+ * The raw write of the whole config column. For `ThreadConfigStore` (sessions/thread-config.ts) only:
+ * every other writer names the keys it changes with `store.patch`, so it cannot drop another writer's
+ * key (engineering program W2-A). tests/sessions/no-raw-config-write.test.ts guards this.
+ */
+export function writeConfigRaw(db: Database.Database, id: string, config: Record<string, unknown>): void {
   db.prepare('UPDATE terminals SET config = ? WHERE id = ?').run(JSON.stringify(config), id);
 }
 

@@ -216,7 +216,7 @@ describe('the title in the tools', () => {
   });
 
   it('a new title on an answered item that a recap already showed does not bring it back into "Decided"', () => {
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-09T10:30:00.000Z' });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', lastRecapAt: '2026-10-09T10:30:00.000Z' });
     ledgerDb.create(db, { sessionId: 's1', kind: 'go', text: 'Merge PR #12?', title: 'Merge PR #12', author: 'overseer', status: 'answered', now: T });
     clockAt = '2026-10-09T11:00:00.000Z';
     ledger.setTitle('s1', 'coord', { id: 'N1', title: 'Merge the fix PR #12' });
