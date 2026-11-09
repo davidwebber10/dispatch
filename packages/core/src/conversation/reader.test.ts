@@ -648,7 +648,9 @@ describe(`a large generated file (${LARGE_BYTES / 1024 / 1024} MB)`, () => {
     let usable: string[] = [];
     const old = await bestLoopDelay(async () => { usable = oldUsable(file); oldPage(usable, parseClaudeTranscript, { limit: 200 }); });
     console.log(`[W2-B large file, OLD synchronous page] ${describeDelay(old)}`);
-    expect(old.blockMs).toBeGreaterThan(BLOCK_LIMIT_MS);
+    // 100 MB: the old read is a block of 150 ms or more. 20 MB (CI=1): about 30 ms on a fast machine,
+    // still several times the largest slice of the new reader.
+    expect(old.blockMs).toBeGreaterThan(LARGE_BYTES >= 100 * 1024 * 1024 ? BLOCK_LIMIT_MS : 15);
     expect(usable.length).toBe(lines);
     const same = async (opts: PageOpts) => expectSame(await reader.page('t', opts), oldPage(usable, parseClaudeTranscript, opts));
 
