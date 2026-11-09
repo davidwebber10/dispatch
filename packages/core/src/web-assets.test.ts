@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import zlib from 'zlib';
 import http from 'http';
 import express from 'express';
-import { compressedAssets, pickEncoding, IMMUTABLE } from './web-assets.js';
+import { compressedAssets, pickEncoding, IMMUTABLE, createIndexProvider } from './web-assets.js';
 
 describe('pickEncoding', () => {
   it('prefers br, then gzip, else none', () => {
@@ -64,5 +64,61 @@ describe('compressedAssets', () => {
     expect((await get('/assets/font.woff2', 'br')).status).toBe(299);
     expect((await get('/assets/missing.js', 'br')).status).toBe(299);
     expect((await get('/assets/..%2Fsecret.js', 'br')).status).toBe(299);
+  });
+});
+
+// W1-E: index.html is read again when the file changes, so a web rebuild needs no daemon restart.
+describe('createIndexProvider', () => {
+  let dir: string; let file: string;
+  const page = (script: string) => `<!doctype html><html><head><base href="/" /><script type="module" src="./assets/${script}"></script></head><body></body></html>`;
+  beforeAll(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-index-')); file = path.join(dir, 'index.html'); });
+  afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  /** Writes the file with an mtime that differs from the last one, even on a filesystem with coarse times. */
+  let tick = 0;
+  const write = (text: string) => { fs.writeFileSync(file, text); tick += 2; const t = new Date(Date.now() + tick * 1000); fs.utimesSync(file, t, t); };
+
+  it('the provider returns new content after the file changes', () => {
+    write(page('index-AAAA.js'));
+    const index = createIndexProvider(file, '');
+    expect(index()).toContain('index-AAAA.js');
+    write(page('index-BBBB.js')); // the same size, a new mtime
+    expect(index()).toContain('index-BBBB.js');
+    expect(index()).not.toContain('index-AAAA.js');
+    // The same mtime and a new size is a change too.
+    const st = fs.statSync(file);
+    fs.writeFileSync(file, page('index-CCCCCC.js'));
+    fs.utimesSync(file, st.atime, st.mtime);
+    expect(index()).toContain('index-CCCCCC.js');
+  });
+
+  it('it keeps the last copy when the file is missing', () => {
+    write(page('index-KEEP.js'));
+    const index = createIndexProvider(file, '');
+    expect(index()).toContain('index-KEEP.js');
+    fs.rmSync(file);
+    expect(index()).toContain('index-KEEP.js');
+    write(''); // a build that has opened the file and not written it yet
+    expect(index()).toContain('index-KEEP.js');
+    write(page('index-BACK.js'));
+    expect(index()).toContain('index-BACK.js');
+  });
+
+  it('rewrites <base href> to the mount prefix on every read', () => {
+    write(page('index-AAAA.js'));
+    const index = createIndexProvider(file, '/u/x/dispatch');
+    expect(index()).toContain('<base href="/u/x/dispatch/">');
+    write(page('index-BBBB.js'));
+    expect(index()).toContain('<base href="/u/x/dispatch/">');
+    expect(index()).toContain('index-BBBB.js');
+  });
+
+  it('does not read the file again when it did not change', () => {
+    write(page('index-AAAA.js'));
+    const index = createIndexProvider(file, '');
+    index();
+    const read = vi.spyOn(fs, 'readFileSync');
+    for (let i = 0; i < 20; i++) index();
+    expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
   });
 });

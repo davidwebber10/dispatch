@@ -95,3 +95,67 @@ describe('TerminalMonitor onThreadActivity callback (feeds ThreadAutoNamer)', ()
     expect(onThreadActivity).not.toHaveBeenCalled();
   });
 });
+
+// W1-E: `terminal:activity` goes out only when the payload differs from the last one sent for that terminal.
+describe('TerminalMonitor activity events', () => {
+  let broadcast: ReturnType<typeof vi.fn>;
+  let onActivity: ReturnType<typeof vi.fn>;
+  let monitor: TerminalMonitor;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    broadcast = vi.fn();
+    onActivity = vi.fn();
+    monitor = new TerminalMonitor({ broadcast } as any, undefined, onActivity);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const events = (id = 't1') => broadcast.mock.calls.map((c) => c[0]).filter((e: any) => e.type === 'terminal:activity' && e.terminalId === id);
+
+  it('two equal updates send one event', () => {
+    // A terminal that prints a short line now and then: each idle timer found it idle, with the same HUD values.
+    for (let i = 0; i < 5; i++) {
+      monitor.onOutput('t1', 'tick');
+      vi.advanceTimersByTime(4000); // the 3 s idle timer fires
+    }
+    expect(events()).toHaveLength(1);
+    expect(events()[0]).toMatchObject({ activity: 'idle', model: null });
+    // The in-process listener still hears every update (agent runs read it).
+    expect(onActivity).toHaveBeenCalledTimes(5);
+  });
+
+  it('a model change sends an event', () => {
+    monitor.onOutput('t1', 'Opus 4.6 (1M context)');
+    expect(events()).toHaveLength(1);
+    expect(events()[0]).toMatchObject({ model: 'Opus 4.6', context: '1M' });
+    monitor.onOutput('t1', 'Opus 4.6 (1M context)');   // the same status bar again: nothing new
+    expect(events()).toHaveLength(1);
+    monitor.onOutput('t1', 'Sonnet 4.5 (200k context)');
+    expect(events()).toHaveLength(2);
+    expect(events()[1]).toMatchObject({ model: 'Sonnet 4.5', context: '200k' });
+  });
+
+  it('busy and idle each send one event, and a second terminal has its own last payload', () => {
+    monitor.onOutput('t1', 'boot');
+    monitor.onOutput('t2', 'boot');
+    vi.advanceTimersByTime(6000);                      // past the grace window; both sent one idle event
+    expect(events('t1')).toHaveLength(1);
+    expect(events('t2')).toHaveLength(1);
+    monitor.onOutput('t1', 'y'.repeat(600));           // busy
+    monitor.onOutput('t1', 'y'.repeat(600));           // still busy: no second event
+    expect(events('t1').map((e: any) => e.activity)).toEqual(['idle', 'busy']);
+    vi.advanceTimersByTime(4000);                      // idle again
+    expect(events('t1').map((e: any) => e.activity)).toEqual(['idle', 'busy', 'idle']);
+    expect(events('t2')).toHaveLength(1);
+  });
+
+  it('remove() forgets the last payload, so a new terminal with the same id sends again', () => {
+    monitor.onOutput('t1', 'tick');
+    vi.advanceTimersByTime(4000);
+    expect(events()).toHaveLength(1);
+    monitor.remove('t1');
+    monitor.onOutput('t1', 'tick');
+    vi.advanceTimersByTime(4000);
+    expect(events()).toHaveLength(2);
+  });
+});

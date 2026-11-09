@@ -66,6 +66,8 @@ export class TerminalMonitor {
   private statuses = new Map<string, TerminalStatus>();
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private burstBytes = new Map<string, number>();
+  /** The last `terminal:activity` payload sent per terminal (serialized), to send only a change. */
+  private lastSent = new Map<string, string>();
   private broadcaster: EventBroadcaster;
   private db: Database.Database | null = null;
   private onActivity?: (terminalId: string, activity: 'busy' | 'idle') => void;
@@ -201,6 +203,7 @@ export class TerminalMonitor {
     this.authUrls.forget(terminalId);
     this.statuses.delete(terminalId);
     this.burstBytes.delete(terminalId);
+    this.lastSent.delete(terminalId);
     const timer = this.idleTimers.get(terminalId);
     if (timer) clearTimeout(timer);
     this.idleTimers.delete(terminalId);
@@ -208,7 +211,7 @@ export class TerminalMonitor {
 
   private broadcast(terminalId: string, status: TerminalStatus) {
     this.onActivity?.(terminalId, status.activity);
-    this.broadcaster.broadcast({
+    const event = {
       type: 'terminal:activity',
       terminalId,
       activity: status.activity,
@@ -219,6 +222,13 @@ export class TerminalMonitor {
       percentage: status.percentage || null,
       version: status.version || null,
       sessionId: status.sessionId || null,
-    });
+    };
+    // Send only a change (W1-E). The idle timer fires after every pause in the output, and a terminal
+    // that prints a short line now and then sent the same idle payload each time: a frame to every
+    // open page, and a store write and a render there, for nothing new.
+    const key = JSON.stringify(event);
+    if (this.lastSent.get(terminalId) === key) return;
+    this.lastSent.set(terminalId, key);
+    this.broadcaster.broadcast(event);
   }
 }

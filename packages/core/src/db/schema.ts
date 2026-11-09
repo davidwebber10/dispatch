@@ -532,4 +532,12 @@ function initializeSchema(db: Database.Database): void {
   migrate(db, '023-plugin-assist-estimate', () => db.exec(`
     ALTER TABLE plugin_assist ADD COLUMN cost_estimated INTEGER DEFAULT 0;
   `));
+  // W1-E: the four lookups that scanned the whole table (threads of a project, threads by status,
+  // the run of a thread, the runs of a schedule).
+  migrate(db, 'w1e-indexes', () => db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_terminals_session_id ON terminals(session_id);
+    CREATE INDEX IF NOT EXISTS idx_terminals_status ON terminals(status);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_terminal_id ON agent_runs(terminal_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_schedule_id ON agent_runs(schedule_id);
+  `));
 }

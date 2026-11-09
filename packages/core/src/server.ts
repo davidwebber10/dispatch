@@ -43,7 +43,8 @@ import type { ApiRouteDeps } from './server-routes.js';
 import { createAccessConfig } from './auth/known-hosts.js';
 import { createTailscaleAccess } from './auth/tailscale-access.js';
 import { securityHeaders } from './auth/security-headers.js';
-import { compressedAssets, IMMUTABLE } from './web-assets.js';
+import { compressedAssets, createIndexProvider, IMMUTABLE } from './web-assets.js';
+import { jsonCompression } from './http/compress.js';
 import { lockDownDataDir } from './auth/private-dir.js';
 import { OsConnectionsProvider } from './integrations/os-provider.js';
 import { HeartbeatService } from './platform/heartbeat.js';
@@ -233,16 +234,8 @@ const BASE_PATH = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
 /** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
 const BOX_TOKEN = process.env.DISPATCH_BOX_TOKEN?.trim() || undefined;
 
-/**
- * Serve index.html with `<base href>` rewritten to the mount prefix. That one tag is
- * the single source of truth: Vite builds assets with `base: './'` so they resolve
- * against it, and the client reads `document.baseURI` for its API/WebSocket prefix
- * (web/src/lib/basePath.ts). Rewriting at SERVE time — not build time — is what lets
- * one image serve every user's prefix.
- */
-export function indexHtmlWithBase(html: string, basePath: string): string {
-  return html.replace(/<base href="[^"]*"\s*\/?>/, `<base href="${basePath || ''}/">`);
-}
+// Lives in web-assets.ts with the index.html provider (W1-E); exported from here as before.
+export { indexHtmlWithBase } from './web-assets.js';
 
 /**
  * Remove the mount prefix from a URL path, or null when it doesn't carry the prefix.
@@ -412,6 +405,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   const noCredentialStats = createNoCredentialStats({});
   app.use(createPrincipalMiddleware({ registry: keys, scope: createKeyScope(db), via: 'test' }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
+  app.use(jsonCompression()); // API JSON over 1 KB goes out as br or gzip (http/compress.ts)
 
   const ptyManager = skipPty ? new NoopPTYManager() : new PTYManager();
   const serverUrl = 'http://localhost:3456'; // Updated at runtime in startServer
@@ -597,14 +591,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     registry: keys, scope: createKeyScope(db), getToken: getAccessToken, boxToken: BOX_TOKEN, stats: noCredentialStats, devices,
   }));
   app.use(createJsonBody()); // 1 MiB; the few routes with big payloads get the large cap (http/json-body.ts)
+  app.use(jsonCompression()); // API JSON over 1 KB goes out as br or gzip (http/compress.ts)
   // Create HTTP server
   const server = http.createServer(app);
 
   // Create WebSocket servers (noServer mode)
   // maxPayload: one client message over the cap closes that socket (the default of ws is 100 MiB).
-  const eventsWss = createClientWss(wsMaxPayload());
+  const eventsWss = createClientWss(wsMaxPayload(), { deflate: true }); // JSON text: permessage-deflate (ws/client-wss.ts)
   const terminalWss = createClientWss(wsTerminalMaxPayload()); // typed and pasted input comes through this one
-  const structuredWss = createClientWss(wsMaxPayload());
+  const structuredWss = createClientWss(wsMaxPayload(), { deflate: true });
 
   // Keepalive: Cloudflare drops idle proxied WebSockets at ~100s. Ping clients
   // every 30s so terminal/events sockets survive quiet periods through the tunnel.
@@ -1062,13 +1057,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.get('/plugins/:id/*', ...pluginAssetHandler(plugins));
   if (fs.existsSync(path.join(webDist, 'index.html'))) {
     // index.html is transformed (not sent as a file) so <base href> matches the mount
-    // prefix. Read once at boot: the bundle is immutable for the life of the process.
-    const indexHtml = indexHtmlWithBase(
-      fs.readFileSync(path.join(webDist, 'index.html'), 'utf8'),
-      BASE_PATH,
-    );
+    // prefix. It is read again when the file changes (one stat per request): a web rebuild
+    // gives new script names, and a page must not get the names of a build that is gone.
+    const indexHtml = createIndexProvider(path.join(webDist, 'index.html'), BASE_PATH);
     const sendIndex = (_req: express.Request, res: express.Response) => {
-      res.type('html').send(indexHtml);
+      res.type('html').send(indexHtml());
     };
     app.get('/icons/:name', publicRoute, customIconHandler(dataDir));
     // Build files: content-hashed, so compressed once and cached forever (web-assets.ts).

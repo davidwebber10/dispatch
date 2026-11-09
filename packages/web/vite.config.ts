@@ -17,5 +17,12 @@ export default defineConfig({
     },
   },
   base: './',
-  build: { outDir: 'dist' },
+  build: {
+    outDir: 'dist',
+    // Keep the files of the last build: an open tab still asks for its lazy chunks after a rebuild.
+    // scripts/prune-assets.mjs (run by `pnpm build`) then removes the builds older than that; it reads
+    // the manifest to know which files belong to which build.
+    emptyOutDir: false,
+    manifest: true,
+  },
 });
