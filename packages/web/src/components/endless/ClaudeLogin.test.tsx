@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { ClaudeLogin, isClaudeAuthError } from './ClaudeLogin';
 import { api } from '../../api/client';
 import type { ClaudeLoginSession } from '../../api/types';
@@ -55,5 +55,52 @@ describe('ClaudeLogin', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
     expect(await screen.findByText(/claude not found/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeEnabled();
+  });
+});
+
+describe('ClaudeLogin notices how the login ended', () => {
+  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const open = async () => {
+    vi.spyOn(api, 'claudeLoginStart').mockResolvedValue(session());
+    const onDone = vi.fn();
+    render(<ClaudeLogin onDone={onDone} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Log in to Claude' }));
+    await screen.findByRole('textbox', { name: 'Login code' });
+    return onDone;
+  };
+  const tick = () => act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+  it('finishes by itself when the daemon reports the login complete', async () => {
+    const status = vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: true, session: session({ status: 'complete', url: null }) });
+    const onDone = await open();
+    await tick();
+    expect(status).toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the code box while the login still waits for a code', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session() });
+    const onDone = await open();
+    await tick();
+    expect(screen.getByRole('textbox', { name: 'Login code' })).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('says so and offers a new start when the login has ended', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: null });
+    const onDone = await open();
+    await tick();
+    expect(await screen.findByText(/This login ended/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log in to Claude' })).toBeEnabled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('keeps the code box when the status check fails', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockRejectedValue(new Error('network'));
+    await open();
+    await tick();
+    expect(screen.getByRole('textbox', { name: 'Login code' })).toBeInTheDocument();
   });
 });

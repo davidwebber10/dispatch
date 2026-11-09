@@ -21,6 +21,12 @@ import { v4 as uuid } from 'uuid';
  *     /etc/claude-code/managed-settings.json, goes straight to the OAuth URL with
  *     ZERO keystrokes and asks only for a short code to be pasted back.
  *
+ * `setup-token` makes two links. It opens one in a browser by itself: that one redirects to
+ * localhost, so Claude shows no code, and the user is left with nothing to paste. It prints the
+ * other, which shows the code. `BROWSER=true` (spawn env below) stops the first, so the printed
+ * link is the only one. Should a CLI ever finish without a code anyway, the watch in
+ * startLogin keeps the token it prints.
+ *
  * The resulting token is written 0600 into the daemon's own data dir and injected
  * as CLAUDE_CODE_OAUTH_TOKEN at spawn. It never leaves the box, which is what makes
  * it equivalent in risk to the `.credentials.json` a normal login would write.
@@ -44,6 +50,8 @@ const START_TIMEOUT_MS = 45_000;
 const EXCHANGE_TIMEOUT_MS = 45_000;
 /** Gap between typing the code and pressing Enter, so the two aren't one paste burst. */
 const SUBMIT_KEYPRESS_DELAY_MS = 250;
+/** How often a login waiting for a code looks for a token the CLI printed by itself. */
+const TOKEN_WATCH_MS = 250;
 
 /** Strip ANSI/OSC so regexes see plain text — setup-token emits hyperlink escapes. */
 export function stripAnsi(s: string): string {
@@ -117,10 +125,16 @@ interface Live {
   session: LoginSession;
   proc: pty.IPty;
   buf: string;
+  /** Where a token printed with no code can start: after the login link. */
+  scanFrom: number;
+  /** The token the last watch saw; one seen twice is complete, not half of a chunk. */
+  lastSeen: string | null;
 }
 
 export class ClaudeLoginService {
   private live: Live | null = null;
+  /** The last attempt that ended with a token, for a screen that polls status(). Holds no token. */
+  private finished: LoginSession | null = null;
   private onChangeCb: (() => void) | null = null;
   private readonly tokenPath: string;
 
@@ -168,7 +182,8 @@ export class ClaudeLoginService {
 
   // --- login flow ---------------------------------------------------------
   status(): LoginSession | null {
-    return this.live ? { ...this.live.session } : null;
+    const session = this.live?.session ?? this.finished;
+    return session ? { ...session } : null;
   }
 
   /**
@@ -211,16 +226,22 @@ export class ClaudeLoginService {
       cwd: this.dataDir,
       // Deliberately NOT inheriting an existing CLAUDE_CODE_OAUTH_TOKEN: re-authenticating
       // while a stale token is present makes the CLI skip the flow we're trying to run.
-      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: '' } as Record<string, string>,
+      // BROWSER=true: the CLI's own browser tab gives no code (see the top of this file).
+      env: { ...process.env, CLAUDE_CODE_OAUTH_TOKEN: '', BROWSER: 'true' } as Record<string, string>,
     });
-    const live: Live = { session, proc, buf: '' };
+    const live: Live = { session, proc, buf: '', scanFrom: 0, lastSeen: null };
     this.live = live;
 
     proc.onData((d) => { live.buf += d; });
+    const watch = setInterval(() => this.adoptPrintedToken(live), TOKEN_WATCH_MS);
+    watch.unref?.();
     proc.onExit(() => {
-      if (this.live === live && live.session.status !== 'complete') {
-        this.fail(live, 'claude setup-token exited before completing');
-      }
+      clearInterval(watch);
+      if (this.live !== live || live.session.status === 'complete') return;
+      // The token and the exit can arrive together, before the watch has looked.
+      const token = live.session.status === 'awaiting_code' ? extractToken(live.buf.slice(live.scanFrom)) : null;
+      if (token) this.finish(live, token);
+      else this.fail(live, 'claude setup-token exited before completing');
     });
 
     const deadline = Date.now() + START_TIMEOUT_MS;
@@ -229,6 +250,7 @@ export class ClaudeLoginService {
       if (url) {
         live.session.url = url;
         live.session.status = 'awaiting_code';
+        live.scanFrom = live.buf.length;
         return { ...live.session };
       }
       // Cast: the onExit handler can flip this to 'error' while we wait, which TS's
@@ -290,13 +312,7 @@ export class ClaudeLoginService {
       }
       const token = extractToken(live.buf.slice(from));
       if (token) {
-        if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel);
-        else this.saveToken(token);
-        this.accountLabel = null;
-        live.session.status = 'complete';
-        live.session.url = null;
-        try { live.proc.kill(); } catch { /* already gone */ }
-        this.live = null;
+        this.finish(live, token);
         return { ...live.session };
       }
       // Cast: see start() — onExit can set 'error' asynchronously.
@@ -317,9 +333,30 @@ export class ClaudeLoginService {
 
   /** Abandon any in-flight attempt. Safe to call when nothing is running. */
   cancel(): void {
+    this.finished = null;
     if (!this.live) return;
     try { this.live.proc.kill(); } catch { /* already gone */ }
     this.live = null;
+  }
+
+  /** A token the CLI printed while the login still waited for a code. */
+  private adoptPrintedToken(live: Live): void {
+    if (this.live !== live || live.session.status !== 'awaiting_code') return;
+    const token = extractToken(live.buf.slice(live.scanFrom));
+    if (token && token === live.lastSeen) this.finish(live, token);
+    live.lastSeen = token;
+  }
+
+  /** Keep the token: a new account for an account login, else the single saved login. */
+  private finish(live: Live, token: string): void {
+    if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel);
+    else this.saveToken(token);
+    this.accountLabel = null;
+    live.session.status = 'complete';
+    live.session.url = null;
+    this.finished = live.session;
+    try { live.proc.kill(); } catch { /* already gone */ }
+    if (this.live === live) this.live = null;
   }
 
   private fail(live: Live, message: string): void {
