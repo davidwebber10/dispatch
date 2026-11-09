@@ -5,7 +5,7 @@
 // MESSAGES assistant messages of DELTAS deltas in one turn, and reports for each harness:
 //   - the events and the JSON bytes that the rings hold (what a full replay sends),
 //   - how many whole assistant messages the last 200 ring events carry (what a `tail=200` replay shows),
-//   - the heap that the rings hold (heapUsed after a GC, less the heapUsed after the sessions end).
+//   - the heap that the rings hold (heapUsed after a GC with the sessions live, less heapUsed after a GC before they start).
 //
 // Run it the same way on the wave base and on the branch:
 //   pnpm -C packages/core build && node --expose-gc packages/core/scripts/perf/structured-ring.mjs
@@ -60,6 +60,8 @@ const mb = (n) => (n / 1024 / 1024).toFixed(1);
 
 async function measure(name, manager, command, args) {
   const ids = Array.from({ length: THREADS }, (_, i) => `${name}-${i}`);
+  gc();
+  const heapBefore = process.memoryUsage().heapUsed;
   let settled = 0;
   const onSettle = () => { settled += 1; };
   for (const ev of ['idle', 'needs-help', 'failed']) manager.on(ev, onSettle);
@@ -93,14 +95,12 @@ async function measure(name, manager, command, args) {
   }
   manager.killAll();
   await sleep(300);
-  gc();
-  const heapWithout = process.memoryUsage().heapUsed;
   return {
     harness: name,
     'ring events (all threads)': events,
     'ring events per thread': Math.round(events / THREADS),
     'replay JSON MB (all threads)': mb(bytes),
-    'heap held by the rings MB': mb(heapWith - heapWithout),
+    'heap held by the rings MB': mb(heapWith - heapBefore),
     'reply text a full replay shows, % of the turn': Math.round((100 * kept) / (THREADS * sentChars)),
     'whole text messages in a tail=200 replay (per thread)': Math.round(tailMessages / THREADS),
     'streamed text chars in a tail=200 replay (per thread)': Math.round(tailText / THREADS),
