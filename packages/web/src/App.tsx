@@ -24,6 +24,7 @@ import { ChatMode } from './components/endless/ChatMode';
 import { useEndless } from './stores/endless';
 import { HintToast } from './components/common/HintToast';
 import { Spinner } from './components/common/Spinner';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
@@ -250,7 +251,8 @@ export default function App() {
   }, []);
 
   if (isMobile) {
-    return (<><SetupWizard /><AuthBanner /><UpdateModal /><HighScoreCelebration /><MobileApp /><HintToast /></>);
+    // The boundary keeps the banners and the update prompt on screen when the phone UI throws.
+    return (<><SetupWizard /><AuthBanner /><UpdateModal /><HighScoreCelebration /><ErrorBoundary scope="phone app"><MobileApp /></ErrorBoundary><HintToast /></>);
   }
 
   const showAgent = agentFocused && !!agentSelected;
@@ -264,6 +266,9 @@ export default function App() {
       <Slot name="app.overlay" />
       <CommandPalette />
       <AppShell>
+        {/* One boundary per view: a render error leaves the shell (the icon rail) on screen, and
+            a change of view starts clean (the key). */}
+        <ErrorBoundary key={view} scope={`${view} view`}>
         {view === 'settings'
           ? <SettingsView />
           : isPluginView(view)
@@ -312,6 +317,7 @@ export default function App() {
               inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
             />
           )}
+        </ErrorBoundary>
       </AppShell>
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
       <PluginDialogs />
