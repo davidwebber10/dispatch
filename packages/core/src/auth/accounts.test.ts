@@ -135,3 +135,54 @@ describe('adoptClaudeLoginToken — signing an existing Claude account in again 
     expect(a.claudeToken(got.id)).toBe('tok-3');
   });
 });
+
+// W1-H (2026-11-09): what each Claude sign-in can do for the usage figures rides on the public view.
+describe('usageAccess in the public view (W1-H)', () => {
+  it('the public view carries usageAccess and no token', () => {
+    const a = new AccountsStore(dir);
+    const w = a.addClaude({ token: 'sk-ant-oat01-SECRET', label: 'Work' });
+    expect(a.view().claude.every((x) => !('usageAccess' in x))).toBe(true); // no source yet: no field
+    a.setUsageAccessSource((id) => (id === w.id ? { state: 'not-available', lastOkAt: null } : id === 'cli' ? { state: 'rate-limited', lastOkAt: 1_700_000_000_000 } : null));
+    const v = a.view();
+    expect(v.claude.find((x) => x.id === w.id)!.usageAccess).toEqual({ state: 'not-available', lastOkAt: null });
+    expect(v.claude.find((x) => x.id === 'cli')!.usageAccess).toEqual({ state: 'rate-limited', lastOkAt: 1_700_000_000_000 });
+    expect(v.codex.every((x) => !('usageAccess' in x))).toBe(true); // Claude only
+    const wire = JSON.stringify(v);
+    expect(wire).not.toContain('SECRET');
+    expect(wire).not.toContain('token');
+    // The stamp names a token without holding it, and changes when the token does.
+    const stamp = a.claudeTokenStamp(w.id)!;
+    expect(stamp).toMatch(/^[0-9a-f]{12}$/);
+    expect('sk-ant-oat01-SECRET').not.toContain(stamp);
+    a.addClaude({ token: 'sk-ant-oat01-SECRET', label: 'Work' }); // the same token: the same stamp
+    expect(a.claudeTokenStamp(w.id)).toBe(stamp);
+    expect(a.claudeTokenStamp('cli')).toBeNull();
+    expect(a.claudeTokenStamp('nope')).toBeNull();
+  });
+
+  it('"Sign in again" for an account id replaces that account\'s token in place, also when no profile can be read', async () => {
+    const { adoptClaudeLoginToken } = await import('./accounts.js');
+    const a = new AccountsStore(dir);
+    // A `claude setup-token` token cannot read the profile, so the account holds no Claude account id to match by.
+    const w = a.addClaude({ token: 'old-tok', label: 'Work' });
+    const before = a.claudeTokenStamp(w.id);
+    const got = await adoptClaudeLoginToken(a, 'new-tok', 'ignored', async () => null, w.id);
+    expect(got.id).toBe(w.id);
+    expect(a.view().claude.map((x) => [x.id, x.label])).toEqual([['cli', 'CLI login (this computer)'], [w.id, 'Work']]); // no duplicate, the name stays
+    expect(a.claudeToken(w.id)).toBe('new-tok');
+    expect(a.claudeTokenStamp(w.id)).not.toBe(before);
+    // An id that is gone (removed meanwhile) or the CLI login: the token is added as an account, as before.
+    const other = await adoptClaudeLoginToken(a, 'tok-9', 'Side', async () => null, 'gone');
+    expect(other.id).not.toBe(w.id);
+    expect(a.view().claude).toHaveLength(3);
+  });
+
+  it('"Check again" reaches whoever listens (the gauge)', () => {
+    const a = new AccountsStore(dir);
+    const asked: string[] = [];
+    a.checkUsage('w1'); // no listener: nothing happens
+    a.onCheckUsage((id) => asked.push(id));
+    a.checkUsage('w1');
+    expect(asked).toEqual(['w1']);
+  });
+});

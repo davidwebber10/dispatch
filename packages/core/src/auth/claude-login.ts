@@ -133,9 +133,11 @@ export class ClaudeLoginService {
 
   onChange(cb: () => void): void { this.onChangeCb = cb; }
   /** A login started with `startForAccount` hands its token here instead of the single saved file (multi-account). */
-  onAccountToken: ((token: string, label: string) => void) | null = null;
+  onAccountToken: ((token: string, label: string, accountId?: string) => void) | null = null;
   /** The label of the account the live attempt is for, or null for the single saved login. */
   private accountLabel: string | null = null;
+  /** "Sign in again" (W1-H): the saved account whose token the live attempt replaces, or null for a new account. */
+  private accountId: string | null = null;
 
   // --- token storage ------------------------------------------------------
   getToken(): string | null {
@@ -182,12 +184,17 @@ export class ClaudeLoginService {
    */
   async start(): Promise<LoginSession> {
     this.accountLabel = null;
+    this.accountId = null;
     return this.startLogin();
   }
 
-  /** The same flow, but the captured token becomes a NEW account with this label (onAccountToken). */
-  async startForAccount(label: string): Promise<LoginSession> {
+  /**
+   * The same flow, but the captured token becomes a NEW account with this label (onAccountToken),
+   * or, with `accountId`, replaces the token of that saved account ("Sign in again").
+   */
+  async startForAccount(label: string, accountId?: string): Promise<LoginSession> {
     this.accountLabel = label.trim() || 'Claude account';
+    this.accountId = accountId || null;
     return this.startLogin();
   }
 
@@ -290,9 +297,10 @@ export class ClaudeLoginService {
       }
       const token = extractToken(live.buf.slice(from));
       if (token) {
-        if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel);
+        if (this.accountLabel && this.onAccountToken) this.onAccountToken(token, this.accountLabel, this.accountId ?? undefined);
         else this.saveToken(token);
         this.accountLabel = null;
+        this.accountId = null;
         live.session.status = 'complete';
         live.session.url = null;
         try { live.proc.kill(); } catch { /* already gone */ }

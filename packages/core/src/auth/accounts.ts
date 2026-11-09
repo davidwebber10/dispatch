@@ -9,7 +9,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import type { UsageAccess } from '../limits/gauge.js';
 
 export const CLI_ACCOUNT_ID = 'cli';
 export const ACCOUNT_PROVIDERS = ['claude', 'codex'] as const;
@@ -17,8 +18,11 @@ export type AccountProvider = (typeof ACCOUNT_PROVIDERS)[number];
 
 export interface ClaudeAccount { id: string; label: string; email?: string; accountUuid?: string; plan?: string; token: string; addedAt: string }
 export interface CodexAccount { id: string; label: string; email?: string; dir: string; addedAt: string }
-/** The wire shape: never the token. */
-export interface PublicAccount { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null }
+/**
+ * The wire shape: never the token. `usageAccess` (W1-H, Claude only): what the sign-in can do for the
+ * usage figures, from the gauge's last read; absent until a read has said.
+ */
+export interface PublicAccount { id: string; label: string; email?: string; plan?: string; isCli: boolean; addedAt: string | null; usageAccess?: UsageAccess }
 export interface AccountsView { claude: PublicAccount[]; codex: PublicAccount[]; defaults: Record<AccountProvider, string> }
 
 interface FileShape { claude: ClaudeAccount[]; codex: CodexAccount[]; defaults: Partial<Record<AccountProvider, string>>; cliLabels?: Partial<Record<AccountProvider, string>> }
@@ -57,6 +61,8 @@ export class AccountsStore {
   private readonly file: string;
   private data: FileShape;
   private listeners: (() => void)[] = [];
+  private usageAccessOf: ((accountId: string) => UsageAccess | null) | null = null;
+  private checkListeners: ((accountId: string) => void)[] = [];
 
   constructor(private readonly dataDir: string) {
     this.file = path.join(dataDir, 'accounts.json');
@@ -64,6 +70,15 @@ export class AccountsStore {
   }
 
   onChange(fn: () => void): void { this.listeners.push(fn); }
+  /** Where the view learns what each Claude sign-in can do for the usage figures (the gauge). */
+  setUsageAccessSource(fn: (accountId: string) => UsageAccess | null): void { this.usageAccessOf = fn; }
+  /** What one Claude account's sign-in can do for the usage figures, or null when not known. */
+  claudeUsageAccess(accountId: string): UsageAccess | null {
+    try { return this.usageAccessOf?.(accountId) ?? null; } catch { return null; }
+  }
+  /** "Check again" (W1-H): the owner asks for a Claude account's usage read now. The gauge listens. */
+  onCheckUsage(fn: (accountId: string) => void): void { this.checkListeners.push(fn); }
+  checkUsage(accountId: string): void { for (const fn of this.checkListeners) { try { fn(accountId); } catch { /* a listener's own problem */ } } }
   private changed(): void { for (const fn of this.listeners) { try { fn(); } catch { /* a listener's own problem */ } } }
 
   private load(): FileShape {
@@ -103,8 +118,9 @@ export class AccountsStore {
     const pub = (a: { id: string; label: string; email?: string; plan?: string; addedAt: string }): PublicAccount =>
       ({ id: a.id, label: a.label, ...(a.email ? { email: a.email } : {}), ...(a.plan ? { plan: a.plan } : {}), isCli: false, addedAt: a.addedAt });
     const cli = (p: AccountProvider): PublicAccount => ({ id: CLI_ACCOUNT_ID, label: this.data.cliLabels?.[p] || CLI_LABEL[p], isCli: true, addedAt: null });
+    const withAccess = (a: PublicAccount): PublicAccount => { const u = this.claudeUsageAccess(a.id); return u ? { ...a, usageAccess: { state: u.state, lastOkAt: u.lastOkAt } } : a; };
     return {
-      claude: [cli('claude'), ...this.data.claude.map(pub)],
+      claude: [cli('claude'), ...this.data.claude.map(pub)].map(withAccess),
       codex: [cli('codex'), ...this.data.codex.map(pub)],
       defaults: { claude: this.defaultId('claude'), codex: this.defaultId('codex') },
     };
@@ -140,6 +156,18 @@ export class AccountsStore {
     }
     const a: ClaudeAccount = { id: randomUUID().slice(0, 8), label: input.label?.trim() || input.email || 'Claude account', token: input.token, addedAt: new Date().toISOString(), ...(input.email ? { email: input.email } : {}), ...(input.accountUuid ? { accountUuid: input.accountUuid } : {}), ...(input.plan ? { plan: input.plan } : {}) };
     this.data.claude.push(a);
+    this.save();
+    return a;
+  }
+
+  /**
+   * "Sign in again" for one saved account (W1-H): the new token replaces the old one in place, so
+   * the account keeps its id, its name and its pinned threads. False when the id is not a saved account.
+   */
+  replaceClaudeToken(id: string, token: string, profile: { email?: string; accountUuid?: string; plan?: string } = {}): ClaudeAccount | null {
+    const a = this.data.claude.find((x) => x.id === id);
+    if (!a || !token) return null;
+    Object.assign(a, { token }, Object.fromEntries(Object.entries(profile).filter(([, v]) => typeof v === 'string' && v)));
     this.save();
     return a;
   }
@@ -214,6 +242,12 @@ export class AccountsStore {
     return this.data.claude.find((a) => a.id === id)?.token ?? null;
   }
 
+  /** A short stamp of a saved account's token (a hash, never the token): it changes when the token does. Null for `cli` and unknown ids. */
+  claudeTokenStamp(id: string): string | null {
+    const token = this.claudeToken(id);
+    return token ? createHash('sha256').update(token).digest('hex').slice(0, 12) : null;
+  }
+
   codexHome(id: string): string | null {
     return this.data.codex.find((a) => a.id === id)?.dir ?? null;
   }
@@ -251,13 +285,21 @@ export class AccountsStore {
  * already has (signing a signed-out account in again from a thread's "Sign in") replaces that
  * account's token — addClaude matches it by its account id — instead of adding a duplicate the
  * thread is not pinned to. Without a profile (offline) the token is added under the label.
+ *
+ * `accountId` (W1-H, "Sign in again" on one account): that saved account's token is replaced in
+ * place, whatever the profile says. A `claude setup-token` token cannot read the profile (403 for
+ * scope), so such an account holds no Claude account id to match by. An id that is gone, or `cli`,
+ * falls back to the match above.
  */
 export async function adoptClaudeLoginToken(
   accounts: AccountsStore,
   token: string,
   label: string,
   fetchProfile: (token: string) => Promise<{ email?: string; accountUuid?: string; plan?: string } | null>,
+  accountId?: string,
 ): Promise<ClaudeAccount> {
   const p = await fetchProfile(token).catch(() => null);
+  const replaced = accountId ? accounts.replaceClaudeToken(accountId, token, p ?? {}) : null;
+  if (replaced) return replaced;
   return accounts.addClaude({ token, label: label.trim() || p?.email || '', ...(p?.email ? { email: p.email } : {}), ...(p?.accountUuid ? { accountUuid: p.accountUuid } : {}), ...(p?.plan ? { plan: p.plan } : {}) });
 }

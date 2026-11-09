@@ -218,3 +218,26 @@ describe('nextReadAfter (W1-H): one wait rule for every failed read', () => {
     expect(after({ ok: true }, 0)).toBe(0);
   });
 });
+
+// W1-H guard: Dispatch reads with the tokens it is given. It never renews one and never writes a
+// credential: a refresh would spend the CLI's own refresh token (a saved account has none at all).
+describe('no code path refreshes or rewrites a Claude credential (W1-H)', () => {
+  it('the usage reader and the gauge hold no refresh call and no credential write', async () => {
+    const fs = await import('node:fs'); const path = await import('node:path'); const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    for (const file of ['claude-usage.ts', 'gauge.ts']) {
+      const src = fs.readFileSync(path.join(here, file), 'utf8');
+      expect(src, file).not.toMatch(/refresh_token|refreshToken|grant_type|oauth\/token|writeFile|renameSync|add-generic-password/);
+    }
+  });
+  it('a failed read of the CLI login asks for the token and the usage only: one GET, no other request', async () => {
+    const seen: { url: string; method: string }[] = [];
+    const f = (async (url: string, init: any) => { seen.push({ url, method: init?.method ?? 'GET' }); return { status: 401, text: async () => '{}' } as any; }) as unknown as typeof fetch;
+    const db = new Database(':memory:'); initSchema(db);
+    const tokenSource = vi.fn(async () => 'cli-token');
+    const read = createClaudeUsageReader({ snapshots: new LimitSnapshots(db), accountFor: () => 'a', token: tokenSource, fetch: f, log: () => {} });
+    expect(await read('cli')).toEqual({ ok: false, reason: 'unauthorized', status: 401 });
+    expect(seen).toEqual([{ url: USAGE_URL, method: 'GET' }]);
+    expect(tokenSource).toHaveBeenCalledTimes(1);
+  });
+});

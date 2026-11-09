@@ -4,6 +4,7 @@ import type { ClaudeLoginService } from '../auth/claude-login.js';
 import type { CodexLoginService } from '../auth/codex-login.js';
 import { ACCOUNT_PROVIDERS, type AccountProvider, type AccountsStore } from '../auth/accounts.js';
 import { clientMessage } from '../http/client-message.js';
+import { nextReadAfter, type UsageReadResult } from '../limits/claude-usage.js';
 
 /** A thread pinned to an account, as the delete notice lists it. */
 export interface PinnedThread { id: string; label: string; sessionId: string }
@@ -17,9 +18,10 @@ export interface AccountsRouteExtras {
   };
   /** The device-code sign-in for an added Codex account (2026-11-07). Absent: those routes answer 501. */
   codexLogin?: Pick<CodexLoginService, 'start' | 'status' | 'cancel'>;
+  /** The clock (tests). */
+  now?: () => number;
 }
 const PROFILE_TTL_MS = 10 * 60_000;
-const PROFILE_RETRY_MS = 2 * 60_000;
 const PROFILE_WAIT_MS = 3_000;
 
 const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' && (ACCOUNT_PROVIDERS as readonly string[]).includes(v);
@@ -29,8 +31,11 @@ const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' &
  * (policyRouter's default): a thread key may not list or change logins.
  *
  *   GET    /api/accounts                      every account, no tokens
- *   POST   /api/accounts/claude/login { label } start the headless login for a NEW Claude account
+ *   POST   /api/accounts/claude/login { label, accountId? } start the headless login for a NEW Claude
+ *                                             account, or with `accountId` "Sign in again" for that saved
+ *                                             account: its token is replaced in place
  *                                             (finish with POST /api/claude-auth/login/code)
+ *   POST   /api/accounts/claude/:id/check     "Check again": read that account's usage and profile now
  *   POST   /api/accounts/codex { label }      a new Codex account folder (not signed in yet)
  *   POST   /api/accounts/codex/:id/login      sign it in (or again): `codex login --device-auth`
  *                                             in its folder; answers the link and one-time code
@@ -42,13 +47,26 @@ const isProvider = (v: unknown): v is AccountProvider => typeof v === 'string' &
 export function createAccountsRouter(accounts: AccountsStore, claudeLogin: ClaudeLoginService, extras: AccountsRouteExtras = {}): Router {
   const router = policyRouter();
   // Claude profiles (email, plan) learned for the list, by account id: the CLI login's is never
-  // stored, an added account's is written back. A miss is retried after a short while.
-  const profiles = new Map<string, { at: number; p: { email?: string; plan?: string } | null }>();
+  // stored, an added account's is written back. A miss waits before it is asked again (W1-H): the
+  // same rule as the usage read (nextReadAfter), by what the gauge learned about the sign-in. A
+  // refused sign-in (a `claude setup-token` token: 403 for scope) waits 6 hours, not 2 minutes;
+  // any other miss 4, 8, 16 and at most 30 minutes. A new token or "Check again" asks at once.
+  const now = extras.now ?? Date.now;
+  const profiles = new Map<string, { at: number; p: { email?: string; plan?: string } | null; failures: number; retryAt: number; stamp: string | null }>();
+  const missOf = (id: string): UsageReadResult => {
+    const state = accounts.claudeUsageAccess(id)?.state;
+    return state === 'sign-in-needed' || state === 'not-available' ? { ok: false, reason: 'forbidden' }
+      : state === 'rate-limited' ? { ok: false, reason: 'rate-limited' } : { ok: false, reason: 'network' };
+  };
   const claudeProfileOf = async (id: string) => {
     const hit = profiles.get(id);
-    if (hit && Date.now() - hit.at < (hit.p ? PROFILE_TTL_MS : PROFILE_RETRY_MS)) return hit.p;
+    const stamp = accounts.claudeTokenStamp(id);
+    const sameToken = !!hit && hit.stamp === stamp;
+    if (hit && sameToken && (hit.p ? now() - hit.at < PROFILE_TTL_MS : now() < hit.retryAt)) return hit.p;
     const p = extras.claudeProfile ? await extras.claudeProfile(id).catch(() => null) : null;
-    profiles.set(id, { at: Date.now(), p });
+    const at = now();
+    const failures = p ? 0 : (hit && sameToken && !hit.p ? hit.failures : 0) + 1;
+    profiles.set(id, { at, p, failures, retryAt: p ? at : nextReadAfter(missOf(id), failures, at), stamp });
     return p;
   };
 
@@ -88,7 +106,20 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
 
   router.post('/claude/login', async (req, res) => {
     const label = typeof req.body?.label === 'string' ? req.body.label : '';
-    try { res.json(await claudeLogin.startForAccount(label)); } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
+    // "Sign in again" (W1-H): the login is for one saved account, whose token it replaces.
+    const accountId = typeof req.body?.accountId === 'string' && req.body.accountId ? req.body.accountId : undefined;
+    if (accountId === 'cli') return void res.status(400).json({ error: 'the CLI login is signed in on its own computer (claude)' });
+    if (accountId && accounts.claudeToken(accountId) === null) return void res.status(404).json({ error: 'unknown account' });
+    try { res.json(await (accountId ? claudeLogin.startForAccount(label, accountId) : claudeLogin.startForAccount(label))); } catch (err) { res.status(500).json({ error: clientMessage(err) }); }
+  });
+
+  // "Check again" (W1-H): forget the profile wait and ask the gauge for a usage read now.
+  router.post('/claude/:id/check', (req, res) => {
+    const { id } = req.params;
+    if (!accounts.has('claude', id)) return void res.status(404).json({ error: 'unknown account' });
+    profiles.delete(id);
+    accounts.checkUsage(id);
+    res.status(202).json({ ok: true });
   });
 
   router.post('/codex', (req, res) => {

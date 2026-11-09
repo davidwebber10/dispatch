@@ -817,8 +817,11 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
     ...accounts.list('claude').map((a) => ({ provider: 'claude-code', accountId: a.id, label: a.label })),
     ...accounts.list('codex').map((a) => ({ provider: 'codex', accountId: a.id, label: a.label })),
   ];
-  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, accounts: accountRefs, refreshCodex, pollCodex, codexCredits: (accountId) => pollCodex.credits(accountId), claudeCredits: (accountId) => readClaudeUsage.credits(accountId), probeClaude, readClaudeUsage });
+  const usageGauge = new UsageGauge({ db, snapshots: limitSnapshots, broadcast: (e) => broadcaster.broadcast(e), push: pushService, accountFor: limitAccount, accounts: accountRefs, refreshCodex, pollCodex, codexCredits: (accountId) => pollCodex.credits(accountId), claudeCredits: (accountId) => readClaudeUsage.credits(accountId), probeClaude, readClaudeUsage, claudeTokenStamp: (accountId) => accounts.claudeTokenStamp(accountId) });
   accounts.onChange(() => usageGauge.accountsChanged());
+  // W1-H: what each Claude sign-in can do for the usage figures rides on the accounts view; "Check again" reads now.
+  accounts.setUsageAccessSource((accountId) => usageGauge.claudeUsageAccess(accountId));
+  accounts.onCheckUsage((accountId) => usageGauge.checkClaudeNow(accountId));
   limitSnapshots.addRecordListener((provider, accountId) => usageGauge.onRecord(provider, accountId));
   usageLimits.addChangeListener(() => usageGauge.pausesChanged());
   // A finished turn ends a resumed thread's retry chain: CLI threads through the status settle,
@@ -857,9 +860,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // versions becomes the account `saved`; a login started for a new account lands here, and the
   // profile call fills in its email, account id and plan.
   accounts.migrateSavedClaudeToken(claudeLogin.getToken());
-  claudeLogin.onAccountToken = (token, label) => {
+  claudeLogin.onAccountToken = (token, label, accountId) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
-    void adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile).catch(() => {});
+    // With an account id ("Sign in again", W1-H) that account's token is replaced in place.
+    void adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile, accountId).catch(() => {});
   };
   sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
