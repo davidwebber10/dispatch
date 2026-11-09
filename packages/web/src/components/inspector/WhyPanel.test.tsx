@@ -1,7 +1,7 @@
 // W2-G: the "Why is this thread in this state?" panel. The daemon decides the explanation
 // (core status/explain.ts); the panel shows it and runs the next steps through routes that exist.
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
-import { vi, beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { vi, beforeEach, afterEach, describe, it, expect, type MockInstance } from 'vitest';
 import { WhyPanel } from './WhyPanel';
 import { api } from '../../api/client';
 import { useTabs } from '../../stores/tabs';
@@ -28,7 +28,7 @@ const dead = () => diag({
   explanation: { rule: 'working-dead-process', headline: 'Working, but the process ended', since: null, reasons: ['The status is "working", and no process runs for this thread.', 'No event closed the turn, so the status did not change.'], nextSteps: [RESET, RESTART] },
 });
 
-let load: ReturnType<typeof vi.spyOn>;
+let load: MockInstance<typeof api.getThreadDiagnostics>;
 beforeEach(() => {
   load = vi.spyOn(api, 'getThreadDiagnostics');
   vi.spyOn(useTabs.getState(), 'loadTabs').mockResolvedValue(undefined as never);
