@@ -48,6 +48,8 @@ describe('the Previews screen with many previews', () => {
     const imgs = Array.from(document.querySelectorAll('img'));
     expect(imgs.length).toBe(20);
     for (const img of imgs) expect(img.getAttribute('loading')).toBeNull();
+    // A card shows a small copy; the full image opens only in the viewer.
+    for (const img of imgs) expect(img.getAttribute('src')).toMatch(/\?thumb=480$/);
   });
 });
 

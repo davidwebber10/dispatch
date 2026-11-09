@@ -63,6 +63,7 @@ export default function activate(d) {
   const ID = d.id || 'previews';
   const VIEW = `plugin:${ID}:history`;
   const KEEP = 1000; // previews kept; the oldest seen ones are removed past this
+  // A card's picture asks for a small copy (`?thumb=480`, 2026-11-09): 185 full-size images closed the page on an iPhone.
   const fileUrl = (f) => apiPath(`/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`);
   const newestFirst = (a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
   const isPreview = (v) => !!v && typeof v === 'object' && typeof v.id === 'string' && Array.isArray(v.files);
@@ -182,7 +183,7 @@ export default function activate(d) {
         h('div', null, h(CopyButton, { text: preview.text, label: 'Copy text' }))),
       hasImage && h('div', { 'data-testid': 'preview-thumbs', style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 } },
         ...preview.files.map((f, k) => (kindOf(f) !== 'image' ? null : h('button', { key: k, type: 'button', onClick: () => setViewing(k), 'aria-label': `Open ${f.name}`, title: `${f.name} · ${fmtSize(f.size)}`, style: { display: 'flex', flexDirection: 'column', gap: 4, padding: 0, border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', textAlign: 'left', minWidth: 0 } },
-          h('img', { src: fileUrl(f), alt: '', decoding: 'async', style: { width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' } }),
+          h('img', { src: `${fileUrl(f)}?thumb=480`, alt: '', decoding: 'async', style: { width: '100%', aspectRatio: '1 / 1', objectFit: 'contain', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', display: 'block' } }),
           h('span', { style: { fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, f.name))))),
       hasOther && h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
         ...preview.files.map((f, k) => { const kind = kindOf(f); if (kind === 'image') return null; const I = KIND_ICON[kind];

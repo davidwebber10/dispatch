@@ -56,6 +56,34 @@ describe('plugin file routes (2026-11-07)', () => {
   });
   afterEach(() => { for (const d of [tmp, proj, outside]) fs.rmSync(d, { recursive: true, force: true }); });
 
+  // 2026-11-09: lists ask for a small copy; 185 full-size images closed the Previews page on an iPhone.
+  it.runIf(process.platform === 'darwin' && fs.existsSync('/usr/bin/sips'))('?thumb=480 answers a small JPEG of an image; the plain URL still answers the original', async () => {
+    const { execFileSync } = await import('node:child_process');
+    fs.writeFileSync(path.join(proj, 'tiny.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+    execFileSync('/usr/bin/sips', ['-z', '1200', '2000', path.join(proj, 'tiny.png'), '--out', path.join(proj, 'big.png')], { stdio: 'ignore' });
+    const reg = await register(asThread(), 'previews', { path: 'big.png' });
+    const full = await request(app).get(`/api/plugins/previews/files/${reg.body.fileId}`).buffer(true);
+    const thumb = await request(app).get(`/api/plugins/previews/files/${reg.body.fileId}?thumb=480`).buffer(true);
+    expect(full.headers['content-type']).toMatch(/^image\/png/);
+    expect(thumb.status).toBe(200);
+    expect(thumb.headers['content-type']).toMatch(/^image\/jpeg/);
+    expect(Number(thumb.headers['content-length'])).toBeLessThan(Number(full.headers['content-length']));
+    expect(thumb.headers['x-content-type-options']).toBe('nosniff');
+  });
+
+  it('?thumb on a file that cannot be made small (not an image, a bad width, a broken image) answers the original', async () => {
+    const md = await register(asThread(), 'previews', { path: 'notes.md' });
+    const a = await request(app).get(`/api/plugins/previews/files/${md.body.fileId}?thumb=480`);
+    expect(a.status).toBe(200);
+    expect(a.headers['content-type']).toMatch(/^text\/markdown/);
+    const png = await register(asThread(), 'previews', { path: 'shot.png' }); // 4 bytes: not a real image
+    for (const q of ['?thumb=480', '?thumb=999', '?thumb=abc']) {
+      const r = await request(app).get(`/api/plugins/previews/files/${png.body.fileId}${q}`);
+      expect(r.status, q).toBe(200);
+      expect(r.headers['content-type'], q).toMatch(/^image\/png/);
+    }
+  });
+
   it('a thread registers a file of its project and the owner opens it with the right type and sandbox header', async () => {
     const png = await register(asThread(), 'previews', { path: 'shot.png' });
     expect(png.status).toBe(201);

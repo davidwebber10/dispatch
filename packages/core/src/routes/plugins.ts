@@ -11,6 +11,8 @@ import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
 import { IMMUTABLE, pickEncoding } from '../web-assets.js';
 import { insideRealRoot } from '../files/confine.js';
+import { createThumbnailer, type Thumbnailer } from '../files/thumbnail.js';
+import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import type { PluginRegistry } from '../plugins/registry.js';
@@ -226,12 +228,17 @@ export interface AssistLimitsDeps {
   tokensPerPercent?: number;
   /** Whether an account id exists for a harness (accounts.json). Absent: only the default account is known. */
   hasAccount?: (harness: 'claude' | 'codex', id: string) => boolean;
+  /** Small copies of images for `?thumb=` (2026-11-09). Default: a cache in the data folder. */
+  thumbs?: Thumbnailer;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
   push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
 
 export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
+  // Created on first use, so a test app that never asks for a thumbnail never touches the data folder.
+  let thumbs: Thumbnailer | null = limits.thumbs ?? null;
+  const thumbnailer = (): Thumbnailer => (thumbs ??= createThumbnailer({ cacheDir: path.join(platform.dataDir(), 'cache', 'thumbs') }));
   const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -362,7 +369,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   // The bytes, for the owner only. Re-checked against the project's CURRENT folder: a project moved
   // since the post, or a file replaced by a symlink, must not turn this into a read outside it.
-  router.get('/plugins/:id/files/:fileId', (req, res) => {
+  router.get('/plugins/:id/files/:fileId', async (req, res) => {
     if (!known(req, res)) return;
     const file = pluginData.getFile(db, req.params.id, req.params.fileId);
     const session = file ? sessionsDb.getById(db, file.sessionId) : null;
@@ -370,6 +377,18 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
       return void res.status(404).json({ error: 'file not found' });
     }
     const mime = PROJECT_FILE_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
+    // `?thumb=<width>` (2026-11-09): a list's small copy of an image. Anything that cannot be made small
+    // (not an image, a width that is not offered, a broken file, no resizer) gets the original below.
+    const width = Number(req.query.thumb);
+    if (req.query.thumb !== undefined && mime.startsWith('image/') && mime !== 'image/svg+xml' && Number.isInteger(width)) {
+      const small = await thumbnailer().thumbnail(file.path, width).catch(() => null);
+      if (small) {
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+        setFileHeaders(res, 'image/jpeg', 'sandbox');
+        res.type('image/jpeg');
+        return void res.sendFile(small);
+      }
+    }
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.setHeader('Content-Disposition', `inline; filename="${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}"`);
     // HTML runs scripts in an opaque origin; SVG and other markup get the plain sandbox (no scripts at all).
