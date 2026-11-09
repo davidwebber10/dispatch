@@ -12,6 +12,7 @@ import type {
   AgentSeriesKey, ControlPlaneAnalytics as Payload, ControlPlaneProjectRow, MissionStatus,
 } from '../../api/types';
 import { useDispatchName } from '../../stores/settings';
+import { fontVar } from '../../lib/fontSize';
 
 /*
  * The Control Plane view of the Analytics screen
@@ -127,7 +128,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
   const axisTick = { fill: theme.muted, fontSize: 11 };
   const legend = (
     <Legend
-      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: 11 }}>{v}</span>}
+      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: fontVar(11) }}>{v}</span>}
       wrapperStyle={{ paddingTop: 4 }}
     />
   );
@@ -318,7 +319,7 @@ function ProjectTable({ rows }: { rows: ControlPlaneProjectRow[] }) {
 function Table({ head, align, rows, footer }: {
   head: string[]; align: ('left' | 'right')[]; rows: React.ReactNode[][]; footer?: string;
 }) {
-  const cell: React.CSSProperties = { padding: '7px 10px', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap', fontSize: 12.5 };
+  const cell: React.CSSProperties = { padding: '7px 10px', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap', fontSize: fontVar(12.5) };
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-primary)' }}>
@@ -350,7 +351,7 @@ function StatusChip({ status }: { status: MissionStatus }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--color-border)', borderRadius: 'var(--radius-pill)',
-      padding: '1px 8px', fontSize: 11, color: done ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
+      padding: '1px 8px', fontSize: fontVar(11), color: done ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
     }}>
       <span aria-hidden="true">{done ? '✓' : '○'}</span>
       <span>{done ? 'Completed' : 'Active'}</span>

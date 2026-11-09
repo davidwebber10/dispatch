@@ -11,6 +11,7 @@ import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -35,7 +36,7 @@ const MARK: Record<AccountProvider, PhosphorIcon> = {
   claude: HARNESS_MARK.claude as unknown as PhosphorIcon,
   codex: HARNESS_MARK.codex as unknown as PhosphorIcon,
 };
-const errText: React.CSSProperties = { fontSize: 12.5, color: 'var(--color-status-red)' };
+const errText: React.CSSProperties = { fontSize: fontVar(12.5), color: 'var(--color-status-red)' };
 const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const threadsLabel = (n: number) => `${n} thread${n === 1 ? '' : 's'}`;
 

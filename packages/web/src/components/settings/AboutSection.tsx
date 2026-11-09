@@ -3,6 +3,7 @@ import { useSetup } from '../../stores/setup';
 import { UpdatesSection } from './UpdatesSection';
 import { TelemetrySetting } from './TelemetrySetting';
 import { SettingsPage, SettingsGroup, SettingsRow, IconTile } from './ui';
+import { fontVar } from '../../lib/fontSize';
 
 const REPO = 'https://github.com/davidwebber10/dispatch';
 
@@ -47,8 +48,8 @@ function LinkRow({ icon, label, hint, href }: { icon: Icon; label: string; hint?
       style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 12px', minWidth: 0, color: 'inherit', textDecoration: 'none' }}>
       <IconTile icon={icon} size={32} />
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: 'block', fontSize: 13.5, color: 'var(--color-text-primary)' }}>{label}</span>
-        {hint && <span style={{ display: 'block', marginTop: 2, fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+        <span style={{ display: 'block', fontSize: fontVar(13.5), color: 'var(--color-text-primary)' }}>{label}</span>
+        {hint && <span style={{ display: 'block', marginTop: 2, fontSize: fontVar(12), lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
       </span>
       <ArrowUpRight aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
     </a>

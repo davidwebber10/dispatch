@@ -21,6 +21,7 @@ import { useState } from 'react';
 import { Lightbulb } from '@phosphor-icons/react';
 import { Markdown, type DocChips } from './Markdown';
 import type { LedgerChips } from '../lib/ledgerRefs';
+import { fontVar } from '../lib/fontSize';
 
 // Opener: "★ Insight" + trailing dashes (box-drawing, em/en dash, hyphen), optionally wrapped
 // in backticks (Claude fences the delimiter lines as inline code, e.g. `★ Insight ───`).
@@ -86,7 +87,7 @@ function InsightCallout({ content, tokens, ledger, docs, streaming }: { content:
         <Lightbulb size={13} weight="fill" color={tokens.accent} style={{ flex: 'none' }} />
         <span
           style={{
-            fontSize: 10,
+            fontSize: fontVar(10),
             fontWeight: 700,
             letterSpacing: 0.5,
             textTransform: 'uppercase',
@@ -122,12 +123,12 @@ function InsightRail({ content, ledger, docs, streaming }: { content: string; le
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Lightbulb size={12} weight="fill" color="var(--color-accent)" style={{ flex: 'none' }} />
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>INSIGHT</span>
-        <span aria-hidden style={{ font: '400 9px var(--font-mono)', color: 'var(--color-text-tertiary)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
+        <span style={{ font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-accent)' }}>INSIGHT</span>
+        <span aria-hidden style={{ font: `400 ${fontVar(9)} var(--font-mono)`, color: 'var(--color-text-tertiary)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
       </div>
       <div
         style={{
-          fontSize: 13,
+          fontSize: fontVar(13),
           lineHeight: 1.7,
           fontStyle: 'italic',
           color: 'var(--color-text-secondary)',

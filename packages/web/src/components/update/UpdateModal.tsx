@@ -5,13 +5,14 @@ import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
 import { blasterActivity } from './blaster/activity';
+import { fontVar } from '../../lib/fontSize';
 
 // The waiting game is only drawn while an update runs, so its code loads then (W2-E). The update's
 // card does not wait for it: the arena appears behind the card when the chunk is in.
 const Blaster = lazy(() => import('./blaster/Blaster').then((m) => ({ default: m.Blaster })));
 
-const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
-const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13.5, cursor: 'pointer' };
+const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(13.5), cursor: 'pointer' };
+const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: fontVar(13.5), cursor: 'pointer' };
 
 /**
  * Update prompt as a CENTERED, dismissable modal. The old top-anchored banner
@@ -98,22 +99,22 @@ export function UpdateModal() {
         ) : (
           <>
             <ArrowCircleUp size={34} weight="fill" color="var(--color-accent)" />
-            <div style={{ marginTop: 8, fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Update available</div>
-            <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+            <div style={{ marginTop: 8, fontWeight: 600, fontSize: fontVar(16), color: 'var(--color-text-primary)' }}>Update available</div>
+            <div style={{ marginTop: 6, fontSize: fontVar(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
               Dispatch {available!.version} is ready to install{currentVersion ? <> — you're on v{currentVersion}</> : null}.
             </div>
             <ReleaseNotes notes={notes} onToggle={setNotesOpen} />
             {failReason && (
-              <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
+              <div style={{ marginTop: 12, fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
                 Couldn't update automatically: {failReason}
                 <br />
                 {/* A hosted workspace has no checkout and no shell, so the manual
                     command is advice the reader cannot follow. */}
                 {hosted
                   ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
-                  : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code></>}
+                  : <>Run it manually instead: <code style={{ font: `400 ${fontVar(11)} var(--font-mono)` }}>dispatch update</code></>}
                 {failDirty && failDirty.length > 0 && (
-                  <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
+                  <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>
                     {/* `pre` on the status only: porcelain codes carry a meaningful leading
                         space (' M' vs '??') that HTML would collapse, misaligning the list. */}
                     {failDirty.map((d, i) => (

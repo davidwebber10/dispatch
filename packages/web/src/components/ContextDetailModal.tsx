@@ -4,6 +4,7 @@ import { Modal } from './common/Modal';
 import { Spinner } from './common/Spinner';
 import { useUsageLimits, UsageLimitsRows } from './inspector/UsageLimitsSection';
 import { contextWindowFor, type CompactResult } from './tabs/chat/useStructuredChat';
+import { fontVar } from '../lib/fontSize';
 
 export interface ContextDetailModalProps {
   contextTokens?: number;
@@ -18,7 +19,7 @@ export interface ContextDetailModalProps {
   onClose: () => void;
 }
 
-const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--color-border)', fontSize: 13 };
+const row: CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--color-border)', fontSize: fontVar(13) };
 
 /** Utility modal for the <ContextIndicator> pill: tokens/window/model detail + a Compact button. */
 export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, model, terminalId, compacting, compactResult, compact, onClose }: ContextDetailModalProps) {
@@ -48,7 +49,7 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
 
       {limits && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', marginBottom: 4 }}>USAGE LIMITS</div>
+          <div style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', marginBottom: 4 }}>USAGE LIMITS</div>
           <UsageLimitsRows
             lim={limits}
             row={(label, value) => (
@@ -66,7 +67,7 @@ export function ContextDetailModal({ contextTokens, contextWindow: wireWindow, m
           style={{
             display: 'flex', alignItems: 'center', gap: 6, marginTop: 14, padding: '8px 10px', borderRadius: 'var(--radius-md)',
             background: compactResult.success ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'color-mix(in srgb, var(--color-status-red) 12%, transparent)',
-            fontSize: 12.5,
+            fontSize: fontVar(12.5),
           }}
         >
           {compactResult.success ? (

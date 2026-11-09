@@ -8,35 +8,36 @@ import { Modal } from '../common/Modal';
 import { UsageRings } from './UsageRings';
 import { chipRings, chipTone, usageTables, bannerText, TONE_COLOR, RING_COLOR, CLI_NOTE, type ChipRing } from './usageGauge';
 import { HARNESS_MARK } from '../common/HarnessStrip';
+import { fontVar } from '../../lib/fontSize';
 
 /** Every provider's windows, resets and "As of", plus any pause. The popover, the phone sheet and Settings share it. */
 export function UsageTable({ summary, now }: { summary: UsageSummary | null; now: number }) {
   const tables = usageTables(summary, now);
-  if (!summary || (tables.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>;
+  if (!summary || (tables.length === 0 && summary.paused.length === 0)) return <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>;
   return (
     <div data-testid="usage-table" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* A pause can come before any figure (a paused Codex with no snapshot): its line still shows. */}
-      {tables.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
+      {tables.length === 0 && <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No figures reported yet</div>}
       {tables.map((t) => (
         <div key={`${t.provider}|${t.accountId}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--color-text-primary)' }}>{t.name}</span>
-            {t.plan && <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{t.plan}</span>}
+            <span style={{ fontWeight: 600, fontSize: fontVar(13), color: 'var(--color-text-primary)' }}>{t.name}</span>
+            {t.plan && <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{t.plan}</span>}
           </div>
-          {t.rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>No limits reported</div>}
+          {t.rows.length === 0 && <div style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>No limits reported</div>}
           {t.rows.map((r) => (
-            <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, minWidth: 0 }}>
+            <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: fontVar(12), minWidth: 0 }}>
               <span style={{ color: 'var(--color-text-secondary)', flexShrink: 0 }}>{r.label}</span>
               <span style={{ color: r.tone === 'normal' ? 'var(--color-text-primary)' : TONE_COLOR[r.tone], textAlign: 'right', overflowWrap: 'anywhere' }}>{r.value}</span>
             </div>
           ))}
-          <div style={{ font: '400 11px var(--font-mono)', color: t.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>{t.asOf}</div>
+          <div style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: t.stale ? 'var(--color-status-yellow)' : 'var(--color-text-tertiary)' }}>{t.asOf}</div>
         </div>
       ))}
       {summary.paused.map((g) => (
-        <div key={g.provider} style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
+        <div key={g.provider} style={{ fontSize: fontVar(12), color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{bannerText(g, now)}</div>
       ))}
-      <div style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Warning at {summary.warnPercent}%. {CLI_NOTE}</div>
+      <div style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>Warning at {summary.warnPercent}%. {CLI_NOTE}</div>
     </div>
   );
 }
@@ -64,8 +65,8 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
         {used > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR[ring.tone]} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${(Math.min(100, used) / 100) * c} ${c}`} />}
         {ring.paused && used === 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR.red} strokeWidth={stroke} strokeDasharray={`${c / 8} ${c / 8}`} />}
       </svg>
-      {percent ? <span style={{ font: `600 ${Math.round(size * (String(ring.used ?? '–').length > 2 ? 0.3 : 0.38))}px var(--font-mono)`, color: 'var(--color-text-primary)', letterSpacing: '-0.03em' }}>{ring.used ?? '–'}</span>
-        : Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${Math.round(size * 0.38)}px var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
+      {percent ? <span style={{ font: `600 ${fontVar(Math.round(size * (String(ring.used ?? '–').length > 2 ? 0.3 : 0.38)))} var(--font-mono)`, color: 'var(--color-text-primary)', letterSpacing: '-0.03em' }}>{ring.used ?? '–'}</span>
+        : Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${fontVar(Math.round(size * 0.38))} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
     </span>
   );
 }
@@ -135,7 +136,7 @@ export function UsageChip({ variant, only, hideAll, current }: {
       {open && (
         // Fixed to the window, not the chip (2026-11-09): with four accounts the flyout grew past the top edge.
         <div role="dialog" aria-label="Usage limits" style={{ position: 'fixed', left: 70, bottom: 12, zIndex: 300, width: 380, maxWidth: 'calc(100vw - 80px)', maxHeight: 'calc(100vh - 24px)', overflowY: 'auto', overscrollBehavior: 'contain', boxSizing: 'border-box', padding: 10, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: '0 20px 60px -20px var(--color-shadow-strong)' }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Usage</div>
+          <div style={{ fontSize: fontVar(14), fontWeight: 600, marginBottom: 8 }}>Usage</div>
           <UsageRings summary={summary} now={now} current={only ?? current} dense />
         </div>
       )}

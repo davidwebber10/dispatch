@@ -1,4 +1,5 @@
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { fontVar } from '../../lib/fontSize';
 
 export interface SegmentedOption {
   value: string;
@@ -34,7 +35,7 @@ export function Segmented({ value, options, onChange, ariaLabel, size, style }: 
             <button key={o.value} type="button" role="radio" aria-checked={on} onClick={() => { if (!on) onChange(o.value); }}
               style={{
                 flex: 1, minWidth: 0, height: lg ? 34 : 28, padding: '0 6px', border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)',
-                fontSize: lg ? 13.5 : 12.5, fontWeight: on ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                fontSize: fontVar(lg ? 13.5 : 12.5), fontWeight: on ? 600 : 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 background: on ? 'var(--color-elevated)' : 'transparent', color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
                 boxShadow: on ? '0 1px 2px var(--color-shadow-strong)' : 'none',
               }}>
@@ -43,7 +44,7 @@ export function Segmented({ value, options, onChange, ariaLabel, size, style }: 
           );
         })}
       </div>
-      {hint && <div aria-live="polite" style={{ fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</div>}
+      {hint && <div aria-live="polite" style={{ fontSize: fontVar(12), lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</div>}
     </div>
   );
 }

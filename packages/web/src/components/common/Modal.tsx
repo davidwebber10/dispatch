@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { IconButton } from '../ui/IconButton';
 import { useDialogFocus } from '../ui/useDialogFocus';
+import { fontVar } from '../../lib/fontSize';
 
 // A release past this share of the sheet's height closes it; so does a quick downward flick.
 const CLOSE_FRACTION = 0.25;
@@ -232,19 +233,19 @@ export function Modal({ open, onClose, title, sheet: sheetProp = false, closeBut
             }}>
             <div data-testid="sheet-handle" aria-hidden="true" style={{ width: 36, height: 4, borderRadius: 'var(--radius-xs)', background: 'var(--color-border-hover)', margin: '0 auto 2px' }} />
             {(title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 44 }}>
-              {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+              {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: fontVar(19), fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
               {closeButton && <IconButton label="Close" icon="×" onClick={onClose} style={{
                 width: 'auto', height: 'auto', minWidth: 44, minHeight: 44, marginRight: -10,
-                color: 'var(--color-text-muted)', fontSize: 22, lineHeight: 1, borderRadius: 'var(--radius-2xl)',
+                color: 'var(--color-text-muted)', fontSize: fontVar(22), lineHeight: 1, borderRadius: 'var(--radius-2xl)',
               }} />}
             </div>}
           </div>
         ) : desktopCard ? (
           (title || closeButton) && <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '-6px -8px 12px 0' }}>
-            {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 19, fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
-            {closeButton && <IconButton label="Close" icon="×" size="md" onClick={onClose} style={{ color: 'var(--color-text-muted)', fontSize: 20, lineHeight: 1 }} />}
+            {title ? <h2 id={titleId} style={{ margin: 0, flex: 1, minWidth: 0, fontSize: fontVar(19), fontWeight: 600 }}>{title}</h2> : <span style={{ flex: 1 }} />}
+            {closeButton && <IconButton label="Close" icon="×" size="md" onClick={onClose} style={{ color: 'var(--color-text-muted)', fontSize: fontVar(20), lineHeight: 1 }} />}
           </div>
-        ) : title && <h2 id={titleId} style={{ margin: '0 0 16px', fontSize: 19, fontWeight: 600 }}>{title}</h2>}
+        ) : title && <h2 id={titleId} style={{ margin: '0 0 16px', fontSize: fontVar(19), fontWeight: 600 }}>{title}</h2>}
         {children}
       </div>
     </div>,

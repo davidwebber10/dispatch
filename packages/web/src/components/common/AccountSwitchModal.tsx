@@ -7,6 +7,7 @@ import { useThreadStatus } from '../../stores/threadStatus';
 import { useAccounts, accountProviderOf, threadAccount } from '../../stores/accounts';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Modal } from './Modal';
+import { fontVar } from '../../lib/fontSize';
 
 const HARNESS_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
 
@@ -59,12 +60,12 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
     <Modal open sheet={isMobile} title="Switch account" onClose={onClose} maxWidth={420}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {!view ? (
-          <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>The daemon has no accounts yet. Update it to use more than one login.</span>
+          <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>The daemon has no accounts yet. Update it to use more than one login.</span>
         ) : !provider ? (
-          <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>Only a Claude Code or Codex thread runs on an account.</span>
+          <span style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)' }}>Only a Claude Code or Codex thread runs on an account.</span>
         ) : (
           <>
-            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+            <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
               The {HARNESS_NAME[tab.type] ?? tab.type} account this thread runs on. Pick another to restart the thread under it.
             </span>
             <div role="radiogroup" aria-label="Account" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -78,8 +79,8 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
                     style={{ ...row, opacity: off ? 0.45 : 1, cursor: off ? 'not-allowed' : 'pointer', borderColor: on ? 'var(--color-accent)' : 'var(--color-border)' }}>
                     <span style={{ width: 16, display: 'inline-flex', justifyContent: 'center', color: 'var(--color-accent)' }}>{on && <Check size={14} weight="bold" />}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                      <span style={{ fontSize: isMobile ? 15 : 13.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
-                      <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
+                      <span style={{ fontSize: fontVar(isMobile ? 15 : 13.5), fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.label}</span>
+                      <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>
                         {[a.email, a.plan, current?.id === a.id ? (current.pinned ? 'current' : 'current (the default)') : null].filter(Boolean).join(' · ') || ' '}
                       </span>
                     </span>
@@ -88,15 +89,15 @@ export function AccountSwitchModal({ tab, onClose }: { tab: Terminal; onClose: (
               })}
             </div>
             {note && (
-              <div role="note" style={{ fontSize: 12.5, lineHeight: 1.5, color: midTurn ? 'var(--color-status-yellow)' : 'var(--color-text-secondary)' }}>
+              <div role="note" style={{ fontSize: fontVar(12.5), lineHeight: 1.5, color: midTurn ? 'var(--color-status-yellow)' : 'var(--color-text-secondary)' }}>
                 {midTurn ? 'This thread is working: the switch stops its turn. ' : ''}{note}
               </div>
             )}
-            {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
+            {error && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button type="button" onClick={onClose} style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+              <button type="button" onClick={onClose} style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: fontVar(13), cursor: 'pointer' }}>Cancel</button>
               <button type="button" disabled={!target || busy} onClick={() => void confirm()}
-                style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', font: 'inherit', fontSize: 13, fontWeight: 600, cursor: !target || busy ? 'default' : 'pointer', opacity: !target || busy ? 0.6 : 1 }}>
+                style={{ height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', font: 'inherit', fontSize: fontVar(13), fontWeight: 600, cursor: !target || busy ? 'default' : 'pointer', opacity: !target || busy ? 0.6 : 1 }}>
                 {busy ? 'Switching…' : 'Switch and restart'}
               </button>
             </div>

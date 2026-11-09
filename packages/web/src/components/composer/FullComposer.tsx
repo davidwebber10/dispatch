@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUp, ArrowsInSimple } from '@phosphor-icons/react';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The phone's full-screen message editor (owner, 2026-11-07: "for longer prompts"). The composer's
@@ -50,7 +51,7 @@ export function FullComposer({ value, onChange, onSend, canSend, onClose, placeh
           style={{
             flex: 1, minHeight: 0, width: '100%', boxSizing: 'border-box', margin: 0, resize: 'none', overflowY: 'auto',
             border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)',
-            font: '400 17px var(--font-sans)', lineHeight: 1.55, padding: '22px 56px 88px 20px',
+            font: `400 ${fontVar(17)} var(--font-sans)`, lineHeight: 1.55, padding: '22px 56px 88px 20px',
           }}
         />
         <button type="button" aria-label={sendLabel} title={sendLabel} disabled={!canSend}

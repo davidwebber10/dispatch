@@ -11,6 +11,7 @@ import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useDispatchName } from '../../../stores/settings';
+import { fontVar } from '../../../lib/fontSize';
 
 export function ThreadDetail({ mobile }: { mobile?: boolean }) {
   const rv = useRenderVals();
@@ -71,7 +72,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             gap: 2,
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)', lineHeight: 1.2 }}>
+          <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--tp)', lineHeight: 1.2 }}>
             {detail.typeLabel} · #{detail.id}
           </span>
           <MonoLabel size={10}>{detail.mission}</MonoLabel>
@@ -87,7 +88,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
           }}
         >
           <StatusDot color={detail.dotColor} anim={detail.dotAnim} size={6} />
-          <span style={{ fontSize: 10.5, color: 'var(--ts)', whiteSpace: 'nowrap' }}>
+          <span style={{ fontSize: fontVar(10.5), color: 'var(--ts)', whiteSpace: 'nowrap' }}>
             {detail.statusLabel} · {detail.elapsed}
           </span>
         </div>
@@ -118,7 +119,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
           <span style={{ flex: 'none', display: 'flex', marginTop: 1 }}>
             <Icon name="ph-steering-wheel" weight="fill" size={15} color="var(--acc)" />
           </span>
-          <span style={{ fontSize: 12, color: 'var(--tp)', lineHeight: 1.5 }}>
+          <span style={{ fontSize: fontVar(12), color: 'var(--tp)', lineHeight: 1.5 }}>
             {isMobileView
               ? `You’re steering this thread — ${dispatchName} holds everything else.`
               : `You’re steering this thread — ${dispatchName} is holding everything else.`}
@@ -176,7 +177,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
                 {/* Step text */}
                 <span
                   style={{
-                    fontSize: 12.5,
+                    fontSize: fontVar(12.5),
                     color: step.textColor,
                     lineHeight: 1.4,
                     paddingBottom: 12,
@@ -196,7 +197,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
             alignItems: 'center',
             gap: 8,
             fontFamily: 'var(--mono)',
-            fontSize: 11,
+            fontSize: fontVar(11),
             color: 'var(--ts)',
             background: 'var(--elev)',
             border: '1px solid var(--border)',
@@ -213,7 +214,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
 
         {/* Surface note */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <span style={{ fontSize: 12, color: 'var(--ts)', lineHeight: 1.5 }}>
+          <span style={{ fontSize: fontVar(12), color: 'var(--ts)', lineHeight: 1.5 }}>
             {detail.surface}
           </span>
         </div>
@@ -250,7 +251,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
               background: 'transparent',
               border: 'none',
               outline: 'none',
-              fontSize: 12.5,
+              fontSize: fontVar(12.5),
               color: 'var(--tp)',
               fontFamily: 'inherit',
               minWidth: 0,
@@ -264,7 +265,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
               background: 'var(--acc)',
               color: 'var(--color-on-accent)',
               border: 'none',
-              fontSize: 11.5,
+              fontSize: fontVar(11.5),
               fontWeight: 600,
               cursor: 'pointer',
               fontFamily: 'inherit',
@@ -293,7 +294,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
                 background: 'transparent',
                 padding: '5px 10px',
                 borderRadius: 'var(--radius-sm)',
-                fontSize: 11.5,
+                fontSize: fontVar(11.5),
                 fontWeight: 500,
                 cursor: 'pointer',
                 fontFamily: 'inherit',
@@ -310,7 +311,7 @@ export function ThreadDetail({ mobile }: { mobile?: boolean }) {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,
-                fontSize: 11,
+                fontSize: fontVar(11),
                 color: 'var(--tt)',
                 textDecoration: 'none',
                 cursor: 'pointer',

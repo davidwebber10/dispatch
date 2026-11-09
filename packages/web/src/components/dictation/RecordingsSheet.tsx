@@ -4,6 +4,7 @@ import { useSettings } from '../../stores/settings';
 import { listRecordings, deleteRecording, type Recording } from '../../lib/recordings';
 import { runTranscription } from '../../lib/transcribeJob';
 import { copyText } from '../../lib/clipboard';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The dictations kept on this device (owner request 2026-11-07: "a history of recordings … run that
@@ -13,7 +14,7 @@ import { copyText } from '../../lib/clipboard';
  */
 const mmss = (ms: number): string => { const s = Math.round(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 const when = (iso: string): string => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
-const btn: React.CSSProperties = { height: 28, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer' };
+const btn: React.CSSProperties = { height: 28, padding: '0 10px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: fontVar(12), cursor: 'pointer' };
 
 export function RecordingsSheet({ open, onClose, onInsert }: { open: boolean; onClose: () => void; onInsert?: (text: string) => void }) {
   const [rows, setRows] = useState<Recording[] | null>(null);
@@ -40,17 +41,17 @@ export function RecordingsSheet({ open, onClose, onInsert }: { open: boolean; on
   return (
     <Modal open={open} sheet title="Recordings" onClose={onClose}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingBottom: 6 }}>
-        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>Your last dictations, kept on this device. A failed one can be sent again.</div>
-        {rows && rows.length === 0 && <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No recordings yet.</div>}
+        <div style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>Your last dictations, kept on this device. A failed one can be sent again.</div>
+        {rows && rows.length === 0 && <div style={{ fontSize: fontVar(13), color: 'var(--color-text-tertiary)', padding: '8px 0' }}>No recordings yet.</div>}
         {(rows ?? []).map((r) => (
           <div key={r.id} data-testid="recording-row" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', background: 'var(--color-elevated)' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-              <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{mmss(r.durationMs)}</span>
-              <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{when(r.createdAt)}</span>
-              <span style={{ marginLeft: 'auto', font: '500 10px var(--font-mono)', textTransform: 'uppercase', color: r.status === 'done' ? 'var(--color-accent)' : r.status === 'failed' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{busy[r.id] ?? (r.status === 'done' ? 'Transcribed' : r.status === 'failed' ? 'Not transcribed' : r.status)}</span>
+              <span style={{ font: `500 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{mmss(r.durationMs)}</span>
+              <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{when(r.createdAt)}</span>
+              <span style={{ marginLeft: 'auto', font: `500 ${fontVar(10)} var(--font-mono)`, textTransform: 'uppercase', color: r.status === 'done' ? 'var(--color-accent)' : r.status === 'failed' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)' }}>{busy[r.id] ?? (r.status === 'done' ? 'Transcribed' : r.status === 'failed' ? 'Not transcribed' : r.status)}</span>
             </div>
-            {r.text && <div style={{ fontSize: 13, lineHeight: 1.45, color: 'var(--color-text-primary)', overflowWrap: 'anywhere', maxHeight: 120, overflow: 'auto' }}>{r.text}</div>}
-            {r.status === 'failed' && r.error && <div style={{ fontSize: 12, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{r.error}</div>}
+            {r.text && <div style={{ fontSize: fontVar(13), lineHeight: 1.45, color: 'var(--color-text-primary)', overflowWrap: 'anywhere', maxHeight: 120, overflow: 'auto' }}>{r.text}</div>}
+            {r.status === 'failed' && r.error && <div style={{ fontSize: fontVar(12), color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{r.error}</div>}
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {r.text && onInsert && <button type="button" style={btn} onClick={() => { onInsert(r.text!); onClose(); }}>Insert</button>}
               {r.text && <button type="button" style={btn} onClick={() => void copyText(r.text!)}>Copy</button>}

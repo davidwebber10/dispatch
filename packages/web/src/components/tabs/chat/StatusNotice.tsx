@@ -19,6 +19,7 @@
 import type { ReactNode } from 'react';
 import { parseReportStatus, reportStatusKey } from './reportStatus';
 import { useDismissedNotices } from '../../../stores/dismissedNotices';
+import { fontVar } from '../../../lib/fontSize';
 
 interface StateStyle {
   label: string;
@@ -106,9 +107,9 @@ export function StatusNotice({ input, renderText, onDismiss, radius = 'var(--rad
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
         <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', background: style.dot, flexShrink: 0 }} />
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: style.accent }}>{style.label}</span>
+        <span style={{ font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '1.3px', color: style.accent }}>{style.label}</span>
         <span style={{ flex: 1 }} />
-        {style.meta && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{style.meta}</span>}
+        {style.meta && <span style={{ font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{style.meta}</span>}
         {onDismiss && (
           // 28px square hit area for a thumb, but margin pulls it back so the header row
           // keeps its height; padding:0 because the UA button padding + global border-box
@@ -133,10 +134,10 @@ export function StatusNotice({ input, renderText, onDismiss, radius = 'var(--rad
         )}
       </div>
       {showSummary && (
-        <div style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(rs.summary!) : rs.summary}</div>
+        <div style={{ fontSize: fontVar(13.5), lineHeight: 1.6, color: 'var(--color-text-secondary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(rs.summary!) : rs.summary}</div>
       )}
       {primary && (
-        <div style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(primary) : primary}</div>
+        <div style={{ fontSize: fontVar(14), lineHeight: 1.6, color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word' }}>{renderText ? renderText(primary) : primary}</div>
       )}
     </div>
   );

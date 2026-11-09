@@ -4,6 +4,7 @@ import { useTabs } from '../../stores/tabs';
 import { useUI } from '../../stores/ui';
 import { api } from '../../api/client';
 import { modLabel } from '../../lib/hostkeys';
+import { fontVar } from '../../lib/fontSize';
 
 function homeAbbrev(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -28,11 +29,11 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, background: 'var(--color-base)' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 22, padding: 40, textAlign: 'center' }}>
         <div style={{ width: 60, height: 60, borderRadius: 'var(--radius-xl)', background: 'var(--color-pane)', border: '1px solid var(--color-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 10px 30px -14px var(--color-shadow)' }}>
-          <span style={{ font: '600 24px var(--font-mono)', color: 'var(--color-accent)' }}>&gt;_</span>
+          <span style={{ font: `600 ${fontVar(24)} var(--font-mono)`, color: 'var(--color-accent)' }}>&gt;_</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 7, alignItems: 'center' }}>
-          <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--color-text-primary)' }}>No thread selected</span>
-          <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', maxWidth: 340, lineHeight: 1.55 }}>
+          <span style={{ fontSize: fontVar(17), fontWeight: 600, color: 'var(--color-text-primary)' }}>No thread selected</span>
+          <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)', maxWidth: 340, lineHeight: 1.55 }}>
             {project ? (
               <>Pick a thread, note, file, or web tab from <span style={{ color: 'var(--color-text-body)', fontWeight: 500 }}>{project.name}</span> in the sidebar — or start a new session below.</>
             ) : (
@@ -44,12 +45,12 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={() => void newThread()} style={{ height: 36, padding: '0 16px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
               <Plus size={15} weight="bold" color="var(--color-on-accent)" />
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-on-accent)' }}>New Thread</span>
+              <span style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--color-on-accent)' }}>New Thread</span>
             </button>
-            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, cursor: 'pointer' }}>Open a File</button>
+            <button onClick={() => useUI.getState().setInspectorTab('files')} style={{ height: 36, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13), cursor: 'pointer' }}>Open a File</button>
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: '400 11px var(--font-mono)', color: 'var(--color-text-faint)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, marginTop: 6, font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-faint)' }}>
           <span><span style={{ color: 'var(--color-text-dim)' }}>{modLabel('N')}</span> new thread</span>
           <span style={{ color: 'var(--color-border-strong)' }}>·</span>
           <span><span style={{ color: 'var(--color-text-dim)' }}>{modLabel('P')}</span> quick open</span>
@@ -58,7 +59,7 @@ export function EmptyWorkspace({ onSelectTab }: { onSelectTab: (id: string) => v
         </div>
       </div>
       {project && (
-        <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)' }}>
+        <div style={{ height: 26, flexShrink: 0, background: 'var(--color-pane)', borderTop: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-dim)' }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{homeAbbrev(project.workingDir)}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--color-border-hover)', border: '1px solid var(--color-text-faint)', boxSizing: 'border-box' }} />

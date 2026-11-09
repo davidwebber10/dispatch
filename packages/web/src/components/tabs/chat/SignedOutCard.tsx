@@ -11,6 +11,7 @@ import { AccountSwitchModal } from '../../common/AccountSwitchModal';
 import { startCliSignIn } from '../../../lib/cliSignIn';
 import { HARNESSES } from '../../../lib/harnesses';
 import type { AuthRequired } from './useStructuredChat';
+import { fontVar } from '../../../lib/fontSize';
 
 type Phase = 'idle' | 'signing-in' | 'cli-thread' | 'signed-in';
 
@@ -64,29 +65,29 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
     }
   };
 
-  const solid: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', font: 'inherit', fontSize: 13, fontWeight: 600, cursor: 'pointer' };
-  const ghost: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: isMobile ? 40 : 32, padding: '0 14px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: 13, cursor: 'pointer' };
+  const solid: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: isMobile ? 40 : 32, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', font: 'inherit', fontSize: fontVar(13), fontWeight: 600, cursor: 'pointer' };
+  const ghost: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: isMobile ? 40 : 32, padding: '0 14px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', font: 'inherit', fontSize: fontVar(13), cursor: 'pointer' };
   const retryBtn = <button type="button" onClick={onRetry} style={solid}><ArrowClockwise size={14} weight="bold" />Retry</button>;
 
   let body: React.ReactNode;
   if (moved) {
     body = (
       <>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>This thread now runs on {current!.label}. Retry sends your last message again.</span>
+        <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>This thread now runs on {current!.label}. Retry sends your last message again.</span>
         <div>{retryBtn}</div>
       </>
     );
   } else if (phase === 'signed-in') {
     body = (
       <>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>Signed in. Retry sends your last message again.</span>
+        <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>Signed in. Retry sends your last message again.</span>
         <div>{retryBtn}</div>
       </>
     );
   } else if (phase === 'cli-thread') {
     body = (
       <>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>
+        <span style={{ fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>
           Finish the sign-in in the “Sign in — {harnessLabel}” thread, then come back and retry.
         </span>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{retryBtn}<button type="button" onClick={() => setPhase('idle')} style={ghost}>Back</button></div>
@@ -113,14 +114,14 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <WarningCircle size={18} weight="fill" color="var(--color-status-yellow)" style={{ flexShrink: 0, marginTop: 1 }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: isMobile ? 15 : 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{`${who} is signed out`}</span>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{auth.reason}</span>
+          <span style={{ fontSize: fontVar(isMobile ? 15 : 14), fontWeight: 600, color: 'var(--color-text-primary)' }}>{`${who} is signed out`}</span>
+          <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>{auth.reason}</span>
         </div>
       </div>
       {body}
-      {error && <span role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</span>}
+      {error && <span role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</span>}
       {auth.detail && (
-        <details style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+        <details style={{ fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>
           <summary style={{ cursor: 'pointer' }}>What the CLI said</summary>
           <span style={{ fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{auth.detail}</span>
         </details>

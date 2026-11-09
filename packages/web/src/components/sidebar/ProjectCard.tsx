@@ -31,6 +31,7 @@ import { canReceiveAlerts } from '../../lib/push';
 import { AGENT_TYPES, THREAD_TYPES } from '../../lib/harnesses';
 import { SectionHeader, ShowMoreRow } from './sectionParts';
 import { ArchivedSection } from './ArchivedSection';
+import { fontVar } from '../../lib/fontSize';
 
 /* The sidebar's search header is sticky (~52px). A row revealed by scrollIntoView would sit
    underneath it without this margin. */
@@ -64,7 +65,7 @@ const SECTIONS: { key: string; label: string; types: Terminal['type'][]; add: 'm
 // glyph overflowed it invisibly, but a Phosphor <svg> is a flex item that shrinks to
 // the 4px box → a 4px-wide sliver (the "+"/sort icons "not displaying" on desktop).
 // Zeroing the padding gives the 13px icon its full 16px box back.
-const plusBtn: React.CSSProperties = { width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: '600 14px/1 var(--font-sans)', borderRadius: 'var(--radius-xs)' };
+const plusBtn: React.CSSProperties = { width: 16, height: 16, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', font: `600 ${fontVar(14)}/1 var(--font-sans)`, borderRadius: 'var(--radius-xs)' };
 
 function homePath(p: string): string {
   return (p || '').replace(/^\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
@@ -145,7 +146,7 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
       {subtitle ? (
         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           <ThreadLabel tab={tab} />
-          <span style={{ font: '400 11.5px var(--font-mono)', fontWeight: 400, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
+          <span style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, fontWeight: 400, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</span>
         </span>
       ) : <ThreadLabel tab={tab} />}
       {AGENT_TYPES.includes(tab.type) && (tab.config as { alertsEnabled?: boolean })?.alertsEnabled && canReceiveAlerts() && (
@@ -157,11 +158,11 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         {isMobile && (
           <span role="button" title="Thread options" aria-label="Thread options"
             onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); onContext(r.left, r.bottom); }}
-            style={{ width: 28, height: 28, marginRight: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-secondary)', fontSize: 18, lineHeight: 1 }}>⋯</span>
+            style={{ width: 28, height: 28, marginRight: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'var(--color-text-secondary)', fontSize: fontVar(18), lineHeight: 1 }}>⋯</span>
         )}
         {hover && !isMobile ? (
           <span role="button" title="Archive thread" onClick={(e) => { e.stopPropagation(); onArchive(); }}
-            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-secondary)', fontSize: 14, lineHeight: 1, cursor: 'pointer' }}>×</span>
+            style={{ width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-secondary)', fontSize: fontVar(14), lineHeight: 1, cursor: 'pointer' }}>×</span>
         ) : working ? (
           <Spinner size={isMobile ? 13 : 11} />
         ) : needsAttn ? (
@@ -169,13 +170,13 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         ) : left !== null && autoArchiveMs !== null ? (
           <span
             title={`Archives after ${toDuration(autoArchiveMs).value} ${toDuration(autoArchiveMs).unit} of inactivity`}
-            style={{ display: 'flex', alignItems: 'center', gap: 3, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 3, font: `400 ${fontVar(isMobile ? 12 : 10.5)} var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}
           >
             <Timer size={isMobile ? 12 : 10} weight="fill" />
             {formatRemaining(left)}
           </span>
         ) : (
-          <span style={{ font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
+          <span style={{ font: `400 ${fontVar(isMobile ? 12 : 10.5)} var(--font-mono)`, color: showActive ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>{timeAgo(tab.lastActivityAt ?? tab.createdAt)}</span>
         )}
       </span>
     </button>
@@ -228,7 +229,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
     >
       <span style={{ width: dot, height: dot, borderRadius: '50%', background: providerColor(agent.provider), flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</span>
-      <span style={{ flexShrink: 0, marginLeft: 8, font: `400 ${isMobile ? 12 : 10.5}px var(--font-mono)`, color: active ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
+      <span style={{ flexShrink: 0, marginLeft: 8, font: `400 ${fontVar(isMobile ? 12 : 10.5)} var(--font-mono)`, color: active ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)' }}>{timeAgo(agent.createdAt)}</span>
     </button>
   );
 }
@@ -381,7 +382,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
         </SectionHeader>
         {items.map(row)}
         {capped && !collapsed && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
-        {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
+        {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
     );
   };
@@ -421,15 +422,15 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
               {indicator === 'working' ? <Spinner size={11} />
                 : indicator === 'needs_input' ? <StatusDot state="needs_input" size={8} />
                 : indicator === 'error' ? <StatusDot state="error" size={8} />
-                : <span style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>}
+                : <span style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{timeAgo(session.lastActivityAt)}</span>}
             </span>
           )}
           {(hover || projMenu) && (
             <button title="Project options" onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setProjMenu({ x: r.right, y: r.bottom + 4 }); }}
-              style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 15, lineHeight: 1, borderRadius: 'var(--radius-xs)' }}>⋯</button>
+              style={{ width: 18, height: 18, flexShrink: 0, marginLeft: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(15), lineHeight: 1, borderRadius: 'var(--radius-xs)' }}>⋯</button>
           )}
         </div>
-        <div title={session.workingDir} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
+        <div title={session.workingDir} style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{homePath(session.workingDir)}</div>
       </div>
       <div style={{ display: 'grid', gridTemplateRows: isOpen ? '1fr' : '0fr', transition: 'grid-template-rows 0.12s ease' }}>
         <div style={{ overflow: 'hidden', minHeight: 0 }}>
@@ -445,7 +446,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
                 background: 'var(--color-elevated)',
                 border: '1px solid var(--color-border)',
                 borderRadius: isMobile ? 'var(--radius-lg)' : 'var(--radius-sm)',
-                color: 'var(--color-text-secondary)', font: `600 ${isMobile ? 16 : 12.5}px var(--font-sans)`,
+                color: 'var(--color-text-secondary)', font: `600 ${fontVar(isMobile ? 16 : 12.5)} var(--font-sans)`,
                 textAlign: 'left', cursor: 'pointer',
               }}
             >
@@ -498,7 +499,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
                 renderItem={row}
               />
               {threadsCapped && <ShowMoreRow count={threadItems.length - visibleThreads.length} onClick={() => setShowAllThreads(true)} />}
-              {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
+              {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : DENSITY[density].rowGap }}>
@@ -507,14 +508,14 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
                   <AgentRow agent={a} active={agentFocused && a.id === agentSel} onClick={() => onSelectAgent?.(a.id)} />
                 </SwipeRow>
               ))}
-              {!agents.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No automations yet</div>}
+              {!agents.length && <div style={{ padding: '3px 7px', fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>No automations yet</div>}
             </div>
           )}
           {SECTIONS.slice(1).map(renderSection)}
           <ArchivedSection sessionId={session.id} open={isOpen} onSelectTab={onSelectTab} />
           {isMobile && onBrowseFiles && (
             <button onClick={(e) => { e.stopPropagation(); onBrowseFiles(session.id); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', marginTop: 18, padding: '14px 12px', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-primary)', fontSize: fontVar(16), fontWeight: 500, textAlign: 'left', cursor: 'pointer' }}>
               <FolderOpen size={20} weight="fill" color="var(--color-accent)" style={{ flexShrink: 0 }} />
               <span style={{ flex: 1 }}>Browse Files</span>
               <CaretRight size={16} color="var(--color-text-tertiary)" />
@@ -529,8 +530,8 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
         <>
           <div onClick={() => setProjMenu(null)} onContextMenu={(e) => { e.preventDefault(); setProjMenu(null); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div style={{ position: 'fixed', top: projMenu.y, left: Math.min(projMenu.x, window.innerWidth - 184), zIndex: 301, minWidth: 168, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-            <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: 13 }}>Rename project</button>
-            <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-status-red)', cursor: 'pointer', fontSize: 13 }}>Archive project</button>
+            <button onClick={() => { setRenameProj(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: fontVar(13) }}>Rename project</button>
+            <button onClick={() => { setProjArchive(true); setProjMenu(null); }} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', padding: '7px 9px', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-status-red)', cursor: 'pointer', fontSize: fontVar(13) }}>Archive project</button>
           </div>
         </>,
         document.body,
@@ -598,10 +599,10 @@ function TabPill({ label, count, active, mobile, onClick, automationsOf }: { lab
       display: 'inline-flex', alignItems: 'center', gap: 6, padding: mobile ? '9px 4px 8px' : '6px 3px 7px', background: 'transparent', border: 'none', cursor: 'pointer',
       borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent', marginBottom: -1,
       color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-      font: `700 ${mobile ? 13 : 11}px var(--font-mono)`, letterSpacing: '1.1px', transition: 'color .12s ease, border-color .12s ease',
+      font: `700 ${fontVar(mobile ? 13 : 11)} var(--font-mono)`, letterSpacing: '1.1px', transition: 'color .12s ease, border-color .12s ease',
     }}>
       {label.toUpperCase()}
-      <span style={{ font: `600 ${mobile ? 11 : 9.5}px var(--font-mono)`, color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
+      <span style={{ font: `600 ${fontVar(mobile ? 11 : 9.5)} var(--font-mono)`, color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', background: active ? 'color-mix(in srgb, var(--color-accent) 22%, transparent)' : 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: mobile ? '17px' : '15px' }}>{count}</span>
     </button>
   );
 }

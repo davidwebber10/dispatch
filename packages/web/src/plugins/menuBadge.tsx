@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import type { Terminal } from '../api/types';
 import { useContributions, type InspectorTabCtx, type MenuBadge, type ThreadMenuCtx } from './registry';
+import { fontVar } from '../lib/fontSize';
 
 const NONE = () => () => {};
 const ZERO = () => 0;
@@ -50,7 +51,7 @@ export function MenuBadgeCount<C>({ badge, ctx }: { badge?: MenuBadge<C>; ctx: C
   const n = useMenuBadge(badge, ctx);
   if (!n) return null;
   return (
-    <span aria-label={`${n} new`} style={{ marginLeft: 'auto', minWidth: 18, height: 18, padding: '0 6px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 11px var(--font-sans)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+    <span aria-label={`${n} new`} style={{ marginLeft: 'auto', minWidth: 18, height: 18, padding: '0 6px', borderRadius: 'var(--radius-pill)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${fontVar(11)} var(--font-sans)`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
       {n > 99 ? '99+' : n}
     </span>
   );

@@ -1,4 +1,5 @@
 import { fileMeta } from '../../lib/fileType';
+import { fontVar } from '../../lib/fontSize';
 
 export function FileIcon({ name, isDir, size = 16 }: { name: string; isDir: boolean; size?: number }) {
   if (isDir) {
@@ -12,7 +13,7 @@ export function FileIcon({ name, isDir, size = 16 }: { name: string; isDir: bool
   return (
     <span style={{
       width: size, height: size, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      font: '600 8px/1 var(--font-mono)', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)',
+      font: `600 ${fontVar(8)}/1 var(--font-mono)`, color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)',
     }}>{glyph}</span>
   );
 }

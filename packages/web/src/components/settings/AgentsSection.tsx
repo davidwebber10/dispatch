@@ -17,6 +17,7 @@ import { HARNESS_MARK } from '../common/HarnessStrip';
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Button, IconButton } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → Agents (formerly Harnesses), redesigned 2026-11-07 (docs/design/settings-layout.md):
@@ -35,8 +36,8 @@ import { Button, IconButton } from '../ui';
 const shortId = (id: string) => (id.startsWith('openrouter/') ? id.slice('openrouter/'.length) : id);
 const formatContext = (n: number | null) => (n ? `${Math.round(n / 1000)}k context` : '');
 const MODE_LABEL = { cli: 'CLI', pretty: 'Pretty' } as const;
-const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
-const errText: React.CSSProperties = { fontSize: 12, color: 'var(--color-status-red)' };
+const mono: React.CSSProperties = { font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const errText: React.CSSProperties = { fontSize: fontVar(12), color: 'var(--color-status-red)' };
 /** The brand mark in the settings icon tile (IconTile draws any component that takes a `size`). */
 const markOf = (h: Harness) => HARNESS_MARK[h.id] as unknown as PhosphorIcon;
 
@@ -232,14 +233,14 @@ function AutoArchiveRow({ ms, isMobile, onChange }: { ms: number | undefined; is
       control={<Toggle on={enabled} label="Auto-archive thread" onClick={() => onChange(!enabled, ms || DEFAULT_AUTO_ARCHIVE_MS)} />}>
       {enabled && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>After</span>
+          <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>After</span>
           <input type="number" min={1} step={1} aria-label="Inactivity before archiving" value={value}
             onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n) && n > 0) onChange(true, fromDuration(n, unit)); }}
             style={{ ...fieldFor(isMobile), width: 70, boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }} />
           <Select ariaLabel="Inactivity unit" value={unit} style={{ width: 110 }}
             options={UNITS.map((u) => ({ value: u, label: u }))}
             onChange={(v) => onChange(true, fromDuration(value, v as DurationUnit))} />
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>of no activity</span>
+          <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>of no activity</span>
         </div>
       )}
     </SettingsRow>
@@ -375,7 +376,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
           spellCheck={false}
           style={{ ...fieldFor(isMobile), width: '100%', boxSizing: 'border-box' }}
         />
-        {searchErr && <div style={{ fontSize: 12, color: 'var(--color-status-yellow)' }}>{searchErr}</div>}
+        {searchErr && <div style={{ fontSize: fontVar(12), color: 'var(--color-status-yellow)' }}>{searchErr}</div>}
         {typed && !searchErr && (
           <ul aria-label="Catalog results" style={{ ...listReset, display: 'flex', flexDirection: 'column', maxHeight: 300, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}>
             {searching && results === null && <li style={{ ...noteText, padding: '8px 10px' }}>Searching…</li>}
@@ -384,7 +385,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
               return (
                 <li key={r.id} style={{ ...hairline(i), display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px 7px 10px' }}>
                   <span style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1, minWidth: 0 }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 13, color: 'var(--color-text-primary)' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: fontVar(13), color: 'var(--color-text-primary)' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
                       {r.alias && <span style={{ ...miniChip, color: 'var(--color-accent)', borderColor: 'var(--color-accent)' }}>Latest</span>}
                       {r.tools === false && (
@@ -397,7 +398,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
                     <span style={mono}>{shortId(r.id)}{r.aliasTarget ? ` → ${r.aliasTarget}` : ''}{r.contextLength ? ` · ${formatContext(r.contextLength)}` : ''}</span>
                   </span>
                   {added
-                    ? <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', flex: 'none' }}>Added</span>
+                    ? <span style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)', flex: 'none' }}>Added</span>
                     : <Button aria-label={`Add ${r.label}`} onClick={() => add({ label: r.label, model: r.id })} variant="ghost" size="sm" style={{ height: 28 }}>Add</Button>}
                 </li>
               );
@@ -405,7 +406,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
             {results && results.length === 0 && !typedIsId && <li style={{ ...noteText, padding: '8px 10px' }}>No catalog match.</li>}
             {results && typedIsId && !typedMatched && (
               <li style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px 7px 10px', borderTop: results.length ? '1px solid var(--color-border)' : 'none' }}>
-                <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', flex: 1, minWidth: 0 }}>Not in the catalog. Add it anyway?</span>
+                <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)', flex: 1, minWidth: 0 }}>Not in the catalog. Add it anyway?</span>
                 <Button aria-label={`Add ${typed} as typed`} onClick={() => add({ label: shortId(typed), model: typed })} variant="ghost" size="sm" style={{ height: 28 }}>Add as typed</Button>
               </li>
             )}

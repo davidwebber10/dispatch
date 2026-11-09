@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CaretDown, CaretRight } from '@phosphor-icons/react';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * A section's label row. Pass `onToggleCollapse` to make the label itself a disclosure
@@ -19,15 +20,15 @@ export function SectionHeader({ label, count, prominent, collapsed, onToggleColl
   // On mobile all section labels share one bigger, brighter style so FILES
   // matches THREADS / AGENTS; on desktop the prominent/quiet tiers are kept.
   const labelStyle: React.CSSProperties = isMobile
-    ? { font: '700 13px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+    ? { font: `700 ${fontVar(13)} var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
     : prominent
-      ? { font: '700 11px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
-      : { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
+      ? { font: `700 ${fontVar(11)} var(--font-mono)`, letterSpacing: '1.3px', color: 'var(--color-text-secondary)' }
+      : { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
   // A collapsed shelf must still report its size: its rows are exactly what you can no
   // longer count for yourself. Open, a quiet section stays badge-free as before.
   const showCount = count > 0 && (prominent || collapsed);
   const badge = showCount && (
-    <span style={{ font: `600 ${isMobile ? 11 : 9.5}px var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: isMobile ? '17px' : '15px' }}>{count}</span>
+    <span style={{ font: `600 ${fontVar(isMobile ? 11 : 9.5)} var(--font-mono)`, color: 'var(--color-text-secondary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: isMobile ? '17px' : '15px' }}>{count}</span>
   );
   const chevron = collapsed
     ? <CaretRight size={isMobile ? 13 : 11} weight="bold" style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
@@ -72,7 +73,7 @@ export function ShowMoreRow({ count, onClick }: { count: number; onClick: () => 
         padding: isMobile ? '12px' : '4px 9px', background: hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         border: 'none', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', textAlign: 'left', cursor: 'pointer',
         color: hover ? 'var(--color-text-secondary)' : 'var(--color-text-tertiary)',
-        fontSize: isMobile ? 14 : 11.5,
+        fontSize: fontVar(isMobile ? 14 : 11.5),
       }}
     >
       <CaretDown size={isMobile ? 13 : 11} style={{ flexShrink: 0 }} />

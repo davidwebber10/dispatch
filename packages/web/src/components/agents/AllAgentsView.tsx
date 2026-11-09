@@ -5,6 +5,7 @@ import type { AgentOverview, AgentOverviewAgent, TerminalType } from '../../api/
 import { providerColor } from '../common/typeIcons';
 import { timeAgo } from '../../lib/time';
 import { Spinner } from '../common/Spinner';
+import { fontVar } from '../../lib/fontSize';
 
 const money = (n: number) => '$' + (n > 0 && n < 1 ? n.toFixed(3) : n.toFixed(2));
 
@@ -50,8 +51,8 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
         {data && !loading && !error && data.projects.map((proj) => (
           <div key={proj.projectId} style={{ marginTop: 8 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '12px 12px 6px' }}>
-              <span style={{ font: '700 13px var(--font-mono)', letterSpacing: '1.1px', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(proj.projectName ?? 'Unknown').toUpperCase()}</span>
-              <span style={{ marginLeft: 'auto', flexShrink: 0, font: '600 12px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{money(proj.spendUsd)}</span>
+              <span style={{ font: `700 ${fontVar(13)} var(--font-mono)`, letterSpacing: '1.1px', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(proj.projectName ?? 'Unknown').toUpperCase()}</span>
+              <span style={{ marginLeft: 'auto', flexShrink: 0, font: `600 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-tertiary)' }}>{money(proj.spendUsd)}</span>
             </div>
             {proj.agents.map((a) => {
               const st = statusOf(a);
@@ -61,10 +62,10 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
                   style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '13px 12px', background: 'transparent', border: 'none', borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}>
                   <span style={{ width: 11, height: 11, borderRadius: '50%', flexShrink: 0, background: st.pulse ? st.color : providerColor(a.provider as TerminalType), animation: st.pulse ? 'dispatchPulse 1.6s ease-in-out infinite' : undefined }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 500, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
-                    <div style={{ marginTop: 2, fontSize: 12.5, color: st.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta}</div>
+                    <div style={{ fontSize: fontVar(16), fontWeight: 500, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+                    <div style={{ marginTop: 2, fontSize: fontVar(12.5), color: st.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta}</div>
                   </div>
-                  <span style={{ flexShrink: 0, font: '600 14px var(--font-mono)', color: a.spendUsd > 0 ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>{money(a.spendUsd)}</span>
+                  <span style={{ flexShrink: 0, font: `600 ${fontVar(14)} var(--font-mono)`, color: a.spendUsd > 0 ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)' }}>{money(a.spendUsd)}</span>
                   <CaretRight size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
                 </button>
               );
@@ -79,19 +80,19 @@ export function AllAgentsView({ onOpenAgent }: { onOpenAgent: (projectId: string
 function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div style={{ flex: 1, minWidth: 0, background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '8px 10px' }}>
-      <div style={{ font: '600 9.5px var(--font-mono)', letterSpacing: '0.8px', color: 'var(--color-text-tertiary)' }}>{label}</div>
-      <div style={{ marginTop: 3, fontSize: 18, fontWeight: 600, color: accent ? 'var(--color-accent)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+      <div style={{ font: `600 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '0.8px', color: 'var(--color-text-tertiary)' }}>{label}</div>
+      <div style={{ marginTop: 3, fontSize: fontVar(18), fontWeight: 600, color: accent ? 'var(--color-accent)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
 }
 
 function Empty({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
-    <div style={{ padding: 36, textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5 }}>
+    <div style={{ padding: 36, textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: fontVar(13.5) }}>
       {text}
       {onRetry && (
         <div style={{ marginTop: 12 }}>
-          <button onClick={onRetry} style={{ padding: '8px 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
+          <button onClick={onRetry} style={{ padding: '8px 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(13) }}>Retry</button>
         </div>
       )}
     </div>

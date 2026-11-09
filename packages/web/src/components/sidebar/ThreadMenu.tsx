@@ -24,6 +24,7 @@ import {
   Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key, Question,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
+import { fontVar } from '../../lib/fontSize';
 
 /** Harnesses whose CLI can fork a session (core providers' buildBranchCommand). OpenCode
  *  runs only over ACP, which has no fork, so it is left out. */
@@ -39,16 +40,16 @@ type Density = 'sheet' | 'popover';
 const baseRow: React.CSSProperties = { display: 'flex', alignItems: 'center', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', color: 'var(--color-text-primary)', cursor: 'pointer' };
 const SIZES: Record<Density, { row: React.CSSProperties; icon: number; tileIcon: number; tile: React.CSSProperties; caption: React.CSSProperties; hint: number; gap: number; pad: string }> = {
   sheet: {
-    row: { ...baseRow, gap: 12, padding: '11px 12px', fontSize: 15, borderRadius: 'var(--radius-md)' },
+    row: { ...baseRow, gap: 12, padding: '11px 12px', fontSize: fontVar(15), borderRadius: 'var(--radius-md)' },
     icon: 20, tileIcon: 22, hint: 12.5, gap: 8, pad: '2px 4px 6px',
-    tile: { height: 72, fontSize: 12, borderRadius: 'var(--radius-lg)' },
-    caption: { padding: '10px 12px 2px', fontSize: 11.5 },
+    tile: { height: 72, fontSize: fontVar(12), borderRadius: 'var(--radius-lg)' },
+    caption: { padding: '10px 12px 2px', fontSize: fontVar(11.5) },
   },
   popover: {
-    row: { ...baseRow, gap: 10, padding: '7px 10px', fontSize: 13, borderRadius: 'var(--radius-sm)' },
+    row: { ...baseRow, gap: 10, padding: '7px 10px', fontSize: fontVar(13), borderRadius: 'var(--radius-sm)' },
     icon: 16, tileIcon: 18, hint: 11.5, gap: 6, pad: '2px 2px 4px',
-    tile: { height: 58, fontSize: 11.5, borderRadius: 'var(--radius-md)' },
-    caption: { padding: '8px 10px 2px', fontSize: 10.5 },
+    tile: { height: 58, fontSize: fontVar(11.5), borderRadius: 'var(--radius-md)' },
+    caption: { padding: '8px 10px 2px', fontSize: fontVar(10.5) },
   },
 };
 /** A quick-action tile at the top of the menu: icon above a short label. */
@@ -223,7 +224,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         {hint ? (
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
             <span>{label}</span>
-            <span id={hintId} style={{ fontSize: z.hint, color: 'var(--color-text-tertiary)' }}>{hint}</span>
+            <span id={hintId} style={{ fontSize: fontVar(z.hint), color: 'var(--color-text-tertiary)' }}>{hint}</span>
           </span>
         ) : label}
         {trailing}
@@ -298,9 +299,9 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                     <Key size={z.icon} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
                       <span>Doppler token in this thread's shell</span>
-                      <span style={{ fontSize: z.hint, color: 'var(--color-text-tertiary)' }}>Lets doppler run work here. Applies at the next start.</span>
+                      <span style={{ fontSize: fontVar(z.hint), color: 'var(--color-text-tertiary)' }}>Lets doppler run work here. Applies at the next start.</span>
                     </span>
-                    <span style={{ flexShrink: 0, fontSize: z.hint, fontWeight: 600, color: secretsEnvOn(t) ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{secretsEnvOn(t) ? 'On' : 'Off'}</span>
+                    <span style={{ flexShrink: 0, fontSize: fontVar(z.hint), fontWeight: 600, color: secretsEnvOn(t) ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }}>{secretsEnvOn(t) ? 'On' : 'Off'}</span>
                   </button>
                 )}
               </div>

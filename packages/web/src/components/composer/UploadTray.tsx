@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, X, WarningCircle } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { InboxUpload } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Uploads in flight above a composer (2026-11-05): a tile per file with a progress ring and its
@@ -101,7 +102,7 @@ export function UploadTray({ uploads, onCancel }: { uploads: Upload[]; onCancel:
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: u.state === 'failed' ? 'color-mix(in srgb, color-mix(in srgb, var(--color-status-red) 25%, var(--color-media-bg)) 55%, transparent)' : 'color-mix(in srgb, var(--color-media-bg) 50%, transparent)', color: 'var(--color-on-media)' }}>
               {u.state === 'failed'
                 ? <WarningCircle size={22} weight="fill" color="var(--color-status-red)" />
-                : <><Ring fraction={u.state === 'finishing' ? 1 : u.fraction} /><span style={{ position: 'relative', font: '600 10.5px var(--font-mono)' }}>{u.state === 'finishing' ? '✓' : `${pct}%`}</span></>}
+                : <><Ring fraction={u.state === 'finishing' ? 1 : u.fraction} /><span style={{ position: 'relative', font: `600 ${fontVar(10.5)} var(--font-mono)` }}>{u.state === 'finishing' ? '✓' : `${pct}%`}</span></>}
             </div>
             <button type="button" aria-label={u.state === 'failed' ? `Remove ${u.name}` : `Cancel upload of ${u.name}`} onClick={() => onCancel(u.id)}
               style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, padding: 0, borderRadius: '50%', border: 'none', background: 'color-mix(in srgb, var(--color-media-bg) 70%, transparent)', color: 'var(--color-on-media)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>

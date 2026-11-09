@@ -54,8 +54,8 @@
   --shadow-glow:0 0 6px 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
   /* Scales for the UI primitives (components/ui, engineering program W3-E). New code uses these;
      the rest of the app still holds literal sizes and moves over one area at a time.
-     Type: six steps for text. */
-  --text-xs:11px; --text-sm:12px; --text-base:13px; --text-md:14px; --text-lg:16px; --text-xl:19px;
+     Type: six steps for text. Each is a --fs-N variable (N px at 100%), so it follows the text scale. */
+  --text-xs:var(--fs-11); --text-sm:var(--fs-12); --text-base:var(--fs-13); --text-md:var(--fs-14); --text-lg:var(--fs-16); --text-xl:var(--fs-19);
   /* Space: eight steps for padding and gaps. */
   --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-7:32px; --space-8:40px;
   /* Layers, lowest first. `overlay` is a dialog and its scrim; a dropdown opens above the dialog
@@ -122,7 +122,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 @keyframes dispatchWiggle { 0%,100% { transform: scale(1.2) rotate(-7deg) } 50% { transform: scale(1.2) rotate(7deg) } }
 
 /* Rendered markdown (File editor → View) */
-.md-view { color: var(--color-text-primary); font-size: 14px; line-height: 1.65; }
+.md-view { color: var(--color-text-primary); font-size: var(--fs-14); line-height: 1.65; }
 .md-view h1, .md-view h2, .md-view h3, .md-view h4 { font-weight: 600; line-height: 1.3; margin: 1em 0 .45em; }
 .md-view h1 { font-size: 1.7em; } .md-view h2 { font-size: 1.4em; } .md-view h3 { font-size: 1.18em; }
 .md-view p { margin: .55em 0; }
@@ -147,15 +147,15 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view tbody tr:nth-child(even) { background: color-mix(in srgb, var(--color-text-emphasis) 2.5%, transparent); }
 .md-view img { max-width: 100%; border-radius: var(--radius-sm); }
 /* A remote image held back until the reader clicks it (Markdown.tsx holdRemoteImages). */
-.md-remote-image { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); font: 400 12px/18px var(--font-mono); overflow-wrap: anywhere; cursor: pointer; }
+.md-remote-image { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); font: 400 var(--fs-12)/18px var(--font-mono); overflow-wrap: anywhere; cursor: pointer; }
 .md-remote-image:hover { background: var(--color-hover); color: var(--color-text-primary); }
 .md-remote-image:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 /* The place of a chat image that cannot be shown (the journal did not keep it, or its bytes are gone). Not a control. */
-.chat-image-note { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); font: 400 12px/18px var(--font-mono); overflow-wrap: anywhere; }
+.chat-image-note { display: inline-flex; align-items: center; max-width: 100%; min-height: 24px; padding: 2px 10px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-elevated); color: var(--color-text-secondary); font: 400 var(--fs-12)/18px var(--font-mono); overflow-wrap: anywhere; }
 
 /* Doc chip (Chat: replies, report cards, Started cards; board ChatStates S6): a file glyph and the
    file name; the full path is the title. Not scoped to .md-view: report and Started cards are plain text. */
-.doc-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 20px; max-width: 100%; padding: 0 6px; margin: 0; border-radius: var(--radius-sm); background: var(--color-elevated); border: 1px solid var(--color-border); font: 400 11.5px/18px var(--font-mono); color: var(--color-text-primary); text-align: left; overflow-wrap: anywhere; vertical-align: -4px; cursor: pointer; }
+.doc-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 20px; max-width: 100%; padding: 0 6px; margin: 0; border-radius: var(--radius-sm); background: var(--color-elevated); border: 1px solid var(--color-border); font: 400 var(--fs-11-5)/18px var(--font-mono); color: var(--color-text-primary); text-align: left; overflow-wrap: anywhere; vertical-align: -4px; cursor: pointer; }
 .doc-chip::before { content: ''; flex: none; width: 12px; height: 12px; background: var(--color-text-secondary);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H6v18h12V7zM14 3v4h4'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H6v18h12V7zM14 3v4h4'/%3E%3C/svg%3E") center / contain no-repeat; }
@@ -164,7 +164,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 
 /* Release notes reuse the shared markdown surface inside a small scrolling panel
    (update modal + Settings → UPDATES). Tighten the scale so a full note fits. */
-.release-notes .md-view { font-size: 12.5px; line-height: 1.55; color: var(--color-text-secondary); }
+.release-notes .md-view { font-size: var(--fs-12-5); line-height: 1.55; color: var(--color-text-secondary); }
 .release-notes .md-view h1, .release-notes .md-view h2, .release-notes .md-view h3, .release-notes .md-view h4 {
   font-size: 1.05em; margin: .95em 0 .3em; color: var(--color-text-primary);
 }

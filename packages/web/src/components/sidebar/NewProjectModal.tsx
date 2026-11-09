@@ -3,6 +3,7 @@ import { Modal } from '../common/Modal';
 import { DirectoryPicker } from '../common/DirectoryPicker';
 import { api } from '../../api/client';
 import { useProjects } from '../../stores/projects';
+import { fontVar } from '../../lib/fontSize';
 
 export function NewProjectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [name, setName] = useState('');
@@ -20,7 +21,7 @@ export function NewProjectModal({ open, onClose }: { open: boolean; onClose: () 
     } finally { setBusy(false); }
   }
 
-  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13 };
+  const input: React.CSSProperties = { height: 34, width: '100%', padding: '0 12px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13) };
   return (
     <Modal open={open} onClose={onClose} title="New Project">
       <input style={{ ...input, marginBottom: 10 }} placeholder="Project name" value={name} onChange={(e) => setName(e.target.value)} />

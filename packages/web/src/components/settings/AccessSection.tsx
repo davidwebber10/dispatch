@@ -6,6 +6,7 @@ import { DevicesList } from './DevicesList';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsDisclosure, fieldFor, codeChip } from './ui';
 import { useSubPage } from './subPageNav';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Settings → Devices & access: sign in another device (network exposure spec, 8.1, first slice).
@@ -156,7 +157,7 @@ export function AccessSection() {
   const isMobile = useIsMobile();
   const page = useSubPage('devices');
   const subPage = page.openId !== null;
-  const note: React.CSSProperties = { fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
+  const note: React.CSSProperties = { fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 
   const tokenDisclosure = (
     <SettingsDisclosure label="Access token" hint="The key behind every sign-in. It is never shown here.">
@@ -195,7 +196,7 @@ export function AccessSection() {
                 {live ? 'New code' : 'Make a code'}
               </Button>
             )}>
-            {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
+            {error && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{error}</div>}
             {live && (
               <div
                 data-testid="pair-code-card"
@@ -204,11 +205,11 @@ export function AccessSection() {
                   background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)',
                 }}
               >
-                <div data-testid="pair-code" style={{ font: '600 28px var(--font-mono)', letterSpacing: '3px', color: 'var(--color-text-primary)', userSelect: 'all', whiteSpace: 'nowrap' }}>{live.code}</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: -6 }}>Expires in {mm}:{ss}. One use.</div>
+                <div data-testid="pair-code" style={{ font: `600 ${fontVar(28)} var(--font-mono)`, letterSpacing: '3px', color: 'var(--color-text-primary)', userSelect: 'all', whiteSpace: 'nowrap' }}>{live.code}</div>
+                <div style={{ fontSize: fontVar(12), color: 'var(--color-text-tertiary)', marginTop: -6 }}>Expires in {mm}:{ss}. One use.</div>
                 {/* literal color: a QR code needs a white quiet zone to scan, in every theme */}
                 {qr && <img src={qr} alt="QR code: scan with the phone's camera to sign in" width={180} height={180} style={{ borderRadius: 'var(--radius-md)', background: '#fff', padding: 6, flexShrink: 0 }} />}
-                <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6, color: 'var(--color-text-secondary)', alignSelf: 'stretch', overflowWrap: 'anywhere' }}>
+                <ol style={{ margin: 0, paddingLeft: 18, fontSize: fontVar(12.5), lineHeight: 1.6, color: 'var(--color-text-secondary)', alignSelf: 'stretch', overflowWrap: 'anywhere' }}>
                   <li>Scan the QR code with the phone's camera and open the link.</li>
                   <li>Or open <span style={{ fontFamily: 'var(--font-mono)' }}>{address.trim() || 'the address'}</span> on the phone, tap <b>Enter a code</b>, and type the code.</li>
                 </ol>

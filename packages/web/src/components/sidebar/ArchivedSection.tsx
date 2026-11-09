@@ -7,6 +7,7 @@ import { THREAD_TYPES } from '../../lib/harnesses';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ThreadLabel } from './ThreadLabel';
 import { SectionHeader, ShowMoreRow } from './sectionParts';
+import { fontVar } from '../../lib/fontSize';
 
 const CAP = 10;
 
@@ -100,7 +101,7 @@ export function ArchivedSection({ sessionId, open, onSelectTab }: { sessionId: s
         {/* This section always renders quiet (non-prominent), so SectionHeader's own count badge
             never shows; the badge below is what's actually visible. count is required, so pass 0. */}
         <SectionHeader label="ARCHIVED" count={0}>
-          <span style={{ font: '600 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: '15px' }}>{items.length}</span>
+          <span style={{ font: `600 ${fontVar(9.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', borderRadius: 'var(--radius-md)', padding: '0 6px', lineHeight: '15px' }}>{items.length}</span>
           {expanded
             ? <CaretDown size={11} color="var(--color-text-tertiary)" />
             : <CaretRight size={11} color="var(--color-text-tertiary)" />}
@@ -108,7 +109,7 @@ export function ArchivedSection({ sessionId, open, onSelectTab }: { sessionId: s
       </div>
       {expanded && failed && (
         <button onClick={(e) => { e.stopPropagation(); void load(); }}
-          style={{ display: 'block', width: '100%', padding: '3px 7px', background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
+          style={{ display: 'block', width: '100%', padding: '3px 7px', background: 'transparent', border: 'none', textAlign: 'left', cursor: 'pointer', fontSize: fontVar(11.5), color: 'var(--color-text-tertiary)' }}>
           Couldn't load archived threads. Retry.
         </button>
       )}
@@ -130,12 +131,12 @@ function ArchivedRow({ tab, failed, restoring, onRestore }: { tab: Terminal; fai
       data-archived-id={tab.id}
       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: isMobile ? '10px 12px' : '3px 7px', borderRadius: isMobile ? 'var(--radius-xs)' : 'var(--radius-sm)', background: hover ? 'color-mix(in srgb, var(--color-text-emphasis) 4%, transparent)' : 'transparent' }}
     >
-      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: isMobile ? 15 : 12, color: 'var(--color-text-tertiary)' }}>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: fontVar(isMobile ? 15 : 12), color: 'var(--color-text-tertiary)' }}>
         <ThreadLabel tab={tab} />
       </span>
       {failed
-        ? <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-status-red)', flexShrink: 0 }}>Restore failed</span>
-        : <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{shortDate(tab.archivedAt)}</span>}
+        ? <span style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-status-red)', flexShrink: 0 }}>Restore failed</span>
+        : <span style={{ font: `400 ${fontVar(10)} var(--font-mono)`, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{shortDate(tab.archivedAt)}</span>}
       {(hover || isMobile) && (
         <button title="Restore thread" aria-label={`Restore ${tab.label}`}
           disabled={restoring}

@@ -49,6 +49,7 @@ import { leafTabIds, leafCount, MAX_PANES } from './types';
 import { TabActivityIndicator, GroupActivityIndicator } from './TabActivityIndicator';
 import { StallBadge } from '../common/StallBadge';
 import { revealIn, tabChipSelector } from '../../lib/reveal';
+import { fontVar } from '../../lib/fontSize';
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 const BAR_H      = 44;
@@ -70,7 +71,7 @@ const iconBtn: React.CSSProperties = {
   padding: '2px 4px', borderRadius: 'var(--radius-xs)',
   flexShrink: 0, display: 'flex', alignItems: 'center',
   position: 'relative', zIndex: 2,
-  fontSize: 15, lineHeight: 1,
+  fontSize: fontVar(15), lineHeight: 1,
 };
 
 /* ── Persist helper (mirrors useTabs internal persist) ───────────────── */
@@ -169,10 +170,10 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
             {!dispatch && <TabActivityIndicator tabId={id} />}
             {!dispatch && <StallBadge terminalId={id} size={12} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-              <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: fontVar(12.5), fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {dispatch ? dispatchName : (labels[i] ?? 'tab')}
               </span>
-              <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {proj?.name ?? ''}
               </span>
             </div>
@@ -219,8 +220,8 @@ function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => voi
     >
       <Network size={14} weight="fill" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
+        <span style={{ fontSize: fontVar(12.5), fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dispatchName}</span>
+        <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj?.name ?? ''}</span>
       </div>
       <button
         onClick={(e) => { e.stopPropagation(); useTabs.getState().closeTab(tabId); }}
@@ -247,7 +248,7 @@ function MergeOverlay({ label }: { label: string }) {
         padding: '2px 6px', display: 'flex', alignItems: 'center', gap: 4,
       }}>
         <SquaresFour size={11} weight="bold" color="var(--color-on-accent)" />
-        <span style={{ fontSize: 10, color: 'var(--color-on-accent)', fontWeight: 700 }}>{label}</span>
+        <span style={{ fontSize: fontVar(10), color: 'var(--color-on-accent)', fontWeight: 700 }}>{label}</span>
       </div>
     </div>
   );
@@ -348,10 +349,10 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
       <TabActivityIndicator tabId={slot.tabId} />
       <StallBadge terminalId={slot.tabId} size={12} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(12.5), fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {label ?? 'tab'}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {proj?.name ?? ''}
         </span>
       </div>
@@ -389,10 +390,10 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
       userSelect: 'none',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(12.5), fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {label ?? 'tab'}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {proj?.name ?? ''}
         </span>
       </div>
@@ -495,18 +496,18 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
               else if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
             }}
             placeholder={`${count} Tabs`}
-            style={{ font: '500 12.5px var(--font-sans)', color: 'var(--color-text-emphasis)', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
+            style={{ font: `500 ${fontVar(12.5)} var(--font-sans)`, color: 'var(--color-text-emphasis)', background: 'var(--color-elevated)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', padding: '1px 4px', width: '100%', minWidth: 0, outline: 'none' }}
           />
         ) : (
           <>
             <span
               onDoubleClick={(e) => { e.stopPropagation(); startRename(); }}
               title="Double-click to rename group"
-              style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{ fontSize: fontVar(12.5), fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             >
               {title}
             </span>
-            <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {members}
             </span>
           </>
@@ -561,10 +562,10 @@ function GroupChipGhost({ slot }: { slot: GroupSlot }) {
     }}>
       <SquaresFour size={14} weight="bold" style={{ flexShrink: 0, color: 'var(--color-accent)' }} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(12.5), fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {title}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: fontVar(10), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {members}
         </span>
       </div>

@@ -9,6 +9,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { api } from '../../api/client';
 import { statusColor, formatDuration, formatCost, formatTokens, runDurationMs } from '../../lib/agentStats';
 import type { RunStep, AgentRun } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 const ACTIVE = ['queued', 'starting', 'working', 'needs_input'];
 
@@ -51,20 +52,20 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
       <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '13px 18px', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
         <button onClick={onBack} title="Back" style={iconBtn}><CaretLeft size={16} weight="bold" /></button>
         <span style={{ width: 9, height: 9, borderRadius: '50%', background: color, flexShrink: 0, animation: active ? 'dispatchPulse 1.6s ease-in-out infinite' : undefined }} />
-        <span style={{ fontSize: 16, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schedule?.name ?? 'Run'}</span>
-        <span style={{ font: '500 11px var(--font-mono)', color, flexShrink: 0 }}>{run.status}{active ? ' · live' : ''}</span>
+        <span style={{ fontSize: fontVar(16), fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{schedule?.name ?? 'Run'}</span>
+        <span style={{ font: `500 ${fontVar(11)} var(--font-mono)`, color, flexShrink: 0 }}>{run.status}{active ? ' · live' : ''}</span>
         <button onClick={() => setShowRaw((v) => !v)} title="Toggle raw output"
           style={{ ...ghostChip, marginLeft: 'auto', color: showRaw ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
           <TerminalIcon size={13} /> Raw
         </button>
         {active && (
           <button onClick={() => void api.cancelRun(run.id)}
-            style={{ height: 28, padding: '0 12px', background: 'color-mix(in srgb, var(--color-status-red) 10%, var(--color-elevated))', border: '1px solid color-mix(in srgb, var(--color-status-red) 45%, var(--color-border))', borderRadius: 'var(--radius-md)', color: 'var(--color-status-red)', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
+            style={{ height: 28, padding: '0 12px', background: 'color-mix(in srgb, var(--color-status-red) 10%, var(--color-elevated))', border: '1px solid color-mix(in srgb, var(--color-status-red) 45%, var(--color-border))', borderRadius: 'var(--radius-md)', color: 'var(--color-status-red)', fontSize: fontVar(12), cursor: 'pointer', flexShrink: 0 }}>Stop run</button>
         )}
       </div>
 
       {/* HUD strip */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, padding: '9px 18px', borderBottom: '1px solid var(--color-border)', flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, padding: '9px 18px', borderBottom: '1px solid var(--color-border)', flexShrink: 0, font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>
         <Hud label="model" value={run.model ?? schedule?.provider ?? '—'} />
         <Hud label="tokens" value={formatTokens(run.totalTokens)} />
         <Hud label="cost" value={formatCost(run.costUsd)} />
@@ -72,7 +73,7 @@ export function RunnerView({ runId, onBack }: { runId: string; onBack: () => voi
         <Hud label="elapsed" value={formatDuration(elapsed)} />
       </div>
 
-      {run.error && <div style={{ padding: '8px 18px', color: 'var(--color-status-red)', fontSize: 12.5, fontFamily: 'var(--font-mono)', flexShrink: 0, whiteSpace: 'pre-wrap' }}>{run.error}</div>}
+      {run.error && <div style={{ padding: '8px 18px', color: 'var(--color-status-red)', fontSize: fontVar(12.5), fontFamily: 'var(--font-mono)', flexShrink: 0, whiteSpace: 'pre-wrap' }}>{run.error}</div>}
 
       {/* Body */}
       {showRaw ? (
@@ -111,10 +112,10 @@ function StepRow({ step, timeline }: { step: RunStep; timeline?: boolean }) {
       <div style={{ padding: '8px 10px', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', margin: '4px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <ListChecks size={15} color="var(--color-accent)" weight="bold" />
-          <span style={{ font: '500 10px var(--font-mono)', letterSpacing: '1px', color: 'var(--color-text-tertiary)' }}>PLAN</span>
+          <span style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1px', color: 'var(--color-text-tertiary)' }}>PLAN</span>
         </div>
         {step.todos.map((t, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0', fontSize: 12.5 }}>
+          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '2px 0', fontSize: fontVar(12.5) }}>
             <span style={{ flexShrink: 0, marginTop: 1, color: todoColor(t.status) }}>{todoGlyph(t.status)}</span>
             <span style={{ color: t.status === 'completed' ? 'var(--color-text-tertiary)' : 'var(--color-text-primary)', textDecoration: t.status === 'completed' ? 'line-through' : undefined }}>{t.content}</span>
           </div>
@@ -132,10 +133,10 @@ function StepRow({ step, timeline }: { step: RunStep; timeline?: boolean }) {
     }}>
       <Icon size={15} color={color} weight={isResult ? 'fill' : 'regular'} style={{ flexShrink: 0, marginTop: 1 }} />
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 12.5, fontWeight: isResult ? 600 : 500, color: isResult ? color : 'var(--color-text-primary)' }}>{step.title}</div>
+        <div style={{ fontSize: fontVar(12.5), fontWeight: isResult ? 600 : 500, color: isResult ? color : 'var(--color-text-primary)' }}>{step.title}</div>
         {step.detail && (
           <div style={{
-            font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)', marginTop: 2,
+            font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)', marginTop: 2,
             whiteSpace: timeline ? 'nowrap' : 'pre-wrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.5,
           }}>{step.detail}</div>
         )}
@@ -175,10 +176,10 @@ const Hud = ({ label, value }: { label: string; value: string }) => (
   </span>
 );
 const SectionLabel = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{children}</div>
+  <div style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' }}>{children}</div>
 );
 const Empty = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '10px 0' }}>{children}</div>
+  <div style={{ color: 'var(--color-text-tertiary)', fontSize: fontVar(12.5), padding: '10px 0' }}>{children}</div>
 );
 const LiveCursor = () => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '5px 6px' }}>
@@ -187,4 +188,4 @@ const LiveCursor = () => (
 );
 
 const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 0, flexShrink: 0 };
-const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', fontSize: 11.5, cursor: 'pointer', flexShrink: 0 };
+const ghostChip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 5, height: 26, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', fontSize: fontVar(11.5), cursor: 'pointer', flexShrink: 0 };

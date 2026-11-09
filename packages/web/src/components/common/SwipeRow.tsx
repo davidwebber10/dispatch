@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { fontVar } from '../../lib/fontSize';
 
 // Mobile-only iOS-style swipe row: drag the content left to reveal a single
 // action button (Delete / Unpin) behind its right edge. Disabled on desktop,
@@ -76,7 +77,7 @@ export function SwipeRow({ actionLabel, actionColor, onAction, disabled, childre
   return (
     <div style={{ position: 'relative', overflow: 'hidden' }}>
       <button onClick={() => { set(0); openRef.current = false; onAction(); }}
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: Math.max(REVEAL, -dx), display: 'flex', alignItems: 'center', justifyContent: 'center', background: actionColor, color: 'var(--color-text-emphasis)', border: 'none', font: '600 13px var(--font-sans)', cursor: 'pointer' }}>
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: Math.max(REVEAL, -dx), display: 'flex', alignItems: 'center', justifyContent: 'center', background: actionColor, color: 'var(--color-text-emphasis)', border: 'none', font: `600 ${fontVar(13)} var(--font-sans)`, cursor: 'pointer' }}>
         {actionLabel}
       </button>
       <div onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd} onClickCapture={onClickCapture}

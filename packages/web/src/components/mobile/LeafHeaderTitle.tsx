@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { CaretLeft } from '@phosphor-icons/react';
 import { Marquee } from '../common/Marquee';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * The left half of the phone header on a leaf screen (an open thread, an open plugin screen):
@@ -20,7 +21,7 @@ export function LeafHeaderTitle({ title, onBack, backLabel, testId, subtitle }: 
         <CaretLeft size={22} weight="bold" />
       </button>
       <div data-leaf-title data-testid={testId} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-        <Marquee text={title} style={{ fontWeight: 600, fontSize: 15.5, color: 'var(--color-text-primary)' }} />
+        <Marquee text={title} style={{ fontWeight: 600, fontSize: fontVar(15.5), color: 'var(--color-text-primary)' }} />
         {subtitle}
       </div>
     </>

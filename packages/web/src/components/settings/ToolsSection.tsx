@@ -6,6 +6,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
 import { codeChip, fieldFor, SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, type Tone } from './ui';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
 type Bucket = 'needs-auth' | 'unchecked' | 'ready' | 'missing';
 const bucketOf = (t: ToolStatus): Bucket => {
@@ -109,11 +110,11 @@ export function ToolsSection() {
             );
           })}
           {q && sorted.length === 0 && (
-            <div key="none" style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--color-text-tertiary)' }}>No tools match “{query}”.</div>
+            <div key="none" style={{ padding: '14px 12px', fontSize: fontVar(12.5), color: 'var(--color-text-tertiary)' }}>No tools match “{query}”.</div>
           )}
         </SettingsGroup>
       )}
-      {err && <div style={{ color: 'var(--color-status-red)', fontSize: 12, padding: '0 4px' }}>{err}</div>}
+      {err && <div style={{ color: 'var(--color-status-red)', fontSize: fontVar(12), padding: '0 4px' }}>{err}</div>}
     </SettingsPage>
   );
 }

@@ -35,6 +35,7 @@ import { useLedgerCard, useLedgerCardEntry, useLedgerFolds, type LedgerFold } fr
 import { timeAgo } from '../../../lib/time';
 import { answerText, formatCardSource, formatUpdated, ledgerSectionOf, openDecisionCount, outcomeText, sourceTarget } from '../ledger';
 import type { CardItem, CardOption, CardSource, LedgerCard as Card } from '../../../api/types';
+import { fontVar } from '../../../lib/fontSize';
 
 const KIND: Record<CardItem['kind'], string> = { go: 'Go', decide: 'Decide', do: 'Do', statement: 'Statement' };
 /** About three lines of the pane's width: a longer context is cut, with "more". */
@@ -44,12 +45,12 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const isImported = (item: CardItem) => item.origin === 'imported' && item.quote === null;
 
 const smallButton: CSSProperties = {
-  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 11.5, color: 'var(--acc)', cursor: 'pointer',
+  background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: fontVar(11.5), color: 'var(--acc)', cursor: 'pointer',
 };
 
 function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?: string }) {
   return (
-    <span style={{ fontFamily: 'var(--mono)', fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)', padding: '0 4px', lineHeight: 1.5 }}>
+    <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(9.5), fontWeight: 700, letterSpacing: '.06em', color, border: `1px solid ${color}`, borderRadius: 'var(--radius-xs)', padding: '0 4px', lineHeight: 1.5 }}>
       {children}
     </span>
   );
@@ -58,7 +59,7 @@ function Badge({ children, color = 'var(--acc)' }: { children: ReactNode; color?
 /** A labelled paragraph of a full card: "Why A. 5 nights:", "If you do not answer:", "Holds up:", … */
 function Field({ label, title, testId, children }: { label: string; title?: string; testId?: string; children: ReactNode }) {
   return (
-    <div title={title} data-testid={testId} style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)' }}>
+    <div title={title} data-testid={testId} style={{ fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--ts)' }}>
       <span style={{ fontWeight: 600, color: 'var(--tp)' }}>{label}</span> <span>{children}</span>
     </div>
   );
@@ -88,10 +89,10 @@ function OptionRow({ item, option, onAnswer }: { item: CardItem; option: CardOpt
   const body = (
     <>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--tp)' }}>{option.label}</span>
-        {recommended && <span style={{ fontSize: 10.5, color: 'var(--acc)' }}>Recommended</span>}
+        <span style={{ fontSize: fontVar(12.5), fontWeight: 600, color: 'var(--tp)' }}>{option.label}</span>
+        {recommended && <span style={{ fontSize: fontVar(10.5), color: 'var(--acc)' }}>Recommended</span>}
       </span>
-      {option.effect && <span style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--ts)' }}>{option.effect}</span>}
+      {option.effect && <span style={{ fontSize: fontVar(12), lineHeight: 1.45, color: 'var(--ts)' }}>{option.effect}</span>}
     </>
   );
   if (!live) return <div data-recommended={recommended} style={style}>{body}</div>;
@@ -116,17 +117,17 @@ function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnsw
       data-full="true"
       style={{ display: 'flex', flexDirection: 'column', gap: 7, padding: '10px 12px', borderRadius: 'var(--radius-md)', background: 'var(--elev)', border: '1px solid var(--border)' }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--ts)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: fontVar(11), color: 'var(--ts)' }}>
         <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--tp)' }}>N{item.seq}</span>
         <span>{KIND[item.kind]}</span>
         {item.isNew && <Badge>NEW</Badge>}
-        {age && <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--tt)' }}>{age}</span>}
+        {age && <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--tt)' }}>{age}</span>}
         {isImported(item) && <span style={{ color: 'var(--tt)' }}>imported</span>}
         <span style={{ flex: 1 }} />
         {onFold && <button type="button" onClick={onFold} style={{ ...smallButton, color: 'var(--tt)' }}>fold</button>}
       </div>
-      <div data-testid="ledger-headline" style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.title || item.text}</div>
-      {item.title && <div data-testid="ledger-question" style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--tp)' }}>{item.text}</div>}
+      <div data-testid="ledger-headline" style={{ fontSize: fontVar(13.5), fontWeight: 600, lineHeight: 1.45, color: 'var(--tp)' }}>{item.title || item.text}</div>
+      {item.title && <div data-testid="ledger-question" style={{ fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--tp)' }}>{item.text}</div>}
       {item.original && <Field label={`Original question (N${item.original.seq}):`}>"{item.original.text}"</Field>}
       {item.context && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
@@ -134,7 +135,7 @@ function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnsw
             data-testid="ledger-context"
             data-clamped={clamped}
             style={{
-              fontSize: 12.5, lineHeight: 1.5, color: 'var(--ts)',
+              fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--ts)',
               ...(clamped ? { display: '-webkit-box', WebkitBoxOrient: 'vertical' as const, WebkitLineClamp: 3, overflow: 'hidden' } : {}),
             }}
           >
@@ -154,7 +155,7 @@ function FullCard({ item, onAnswer, onFold, onSource }: { item: CardItem; onAnsw
           type="button"
           title={`Add "${answerText(item)}" to the message box`}
           onClick={() => onAnswer?.(answerText(item))}
-          style={{ textAlign: 'left', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: 'var(--tp)', padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--accDim)', border: '1px solid var(--accLine)', cursor: 'pointer' }}
+          style={{ textAlign: 'left', fontFamily: 'inherit', fontSize: fontVar(12.5), fontWeight: 600, color: 'var(--tp)', padding: '6px 9px', borderRadius: 'var(--radius-sm)', background: 'var(--accDim)', border: '1px solid var(--accLine)', cursor: 'pointer' }}
         >
           {item.kind === 'go' ? 'Approve' : 'Done'}
         </button>
@@ -185,10 +186,10 @@ function ItemLine({ item, detail, onOpen, action }: { item: CardItem; detail?: s
         title={item.title ? item.text : undefined}
         style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 7px', textAlign: 'left', fontFamily: 'inherit', background: 'none', border: 'none', padding: '3px 0', cursor: 'pointer' }}
       >
-        <span style={{ fontSize: 12.5, lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.title || item.text}`}</span>
+        <span style={{ fontSize: fontVar(12.5), lineHeight: 1.45, color: 'var(--tp)' }}>{`N${item.seq} · ${item.title || item.text}`}</span>
         {item.isNew && <Badge>NEW</Badge>}
-        {isImported(item) && <span style={{ fontSize: 11, color: 'var(--tt)' }}>imported</span>}
-        {detail && <span style={{ fontSize: 11.5, color: 'var(--ts)' }}>{detail}</span>}
+        {isImported(item) && <span style={{ fontSize: fontVar(11), color: 'var(--tt)' }}>imported</span>}
+        {detail && <span style={{ fontSize: fontVar(11.5), color: 'var(--ts)' }}>{detail}</span>}
       </button>
       {action}
     </div>
@@ -206,11 +207,11 @@ function FoldSection({ fold, title, items, children }: { fold: LedgerFold; title
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(fold, !open)}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', color: 'var(--ts)', fontSize: 12 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', color: 'var(--ts)', fontSize: fontVar(12) }}
       >
-        <span aria-hidden style={{ fontSize: 9, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
+        <span aria-hidden style={{ fontSize: fontVar(9), transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
         <span style={{ fontWeight: 600 }}>{title}</span>{' '}
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--tt)' }}>{items.length}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10.5), color: 'var(--tt)' }}>{items.length}</span>
       </button>
       {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 15 }}>{items.map(children)}</div>}
     </div>
@@ -227,13 +228,13 @@ function RulesLine({ card }: { card: Card }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen('rules', !open)}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--ts)', fontSize: 11.5 }}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--ts)', fontSize: fontVar(11.5) }}
       >
-        <span aria-hidden style={{ fontSize: 9, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
+        <span aria-hidden style={{ fontSize: fontVar(9), transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}>▸</span>
         Project rules: {card.sections.rulesCount} in force
       </button>
       {open && (
-        <ul style={{ margin: 0, paddingLeft: 30, display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: 'var(--ts)' }}>
+        <ul style={{ margin: 0, paddingLeft: 30, display: 'flex', flexDirection: 'column', gap: 3, fontSize: fontVar(12), color: 'var(--ts)' }}>
           {card.rules.map((r) => (
             <li key={r.seq}>{`N${r.seq} · "${r.quote}"${r.reading ? ` — I read this as: ${r.reading}` : ''}`}</li>
           ))}
@@ -303,28 +304,28 @@ function ProjectLedgerCard({ projectId, onAnswer: onAnswerProp }: { projectId: s
     >
       <div data-testid="ledger-card-header" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <MonoLabel color="var(--yellow)">Needs you</MonoLabel>
-        {s && <span style={{ fontSize: 12, color: 'var(--ts)' }}>{plural(decisions, 'decision')} · {plural(s.actions.length, 'action')}</span>}
+        {s && <span style={{ fontSize: fontVar(12), color: 'var(--ts)' }}>{plural(decisions, 'decision')} · {plural(s.actions.length, 'action')}</span>}
         <span style={{ flex: 1 }} />
         {/* The time of the last change to any ledger item, not a load time: the card is live. */}
         {card?.updatedAt && (
-          <span title="The card is live. This is the time of the last change to the ledger." style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--tt)' }}>
+          <span title="The card is live. This is the time of the last change to the ledger." style={{ fontFamily: 'var(--mono)', fontSize: fontVar(10), color: 'var(--tt)' }}>
             last change {formatUpdated(card.updatedAt)}
           </span>
         )}
       </div>
 
       {error && (
-        <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--red)' }}>
+        <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: fontVar(12), color: 'var(--red)' }}>
           <span>Could not load the decisions</span>
           <button type="button" onClick={() => void useLedgerCard.getState().load(projectId)} style={smallButton}>Retry</button>
         </div>
       )}
-      {!card && !error && <div style={{ fontSize: 12, color: 'var(--tt)' }}>Loading the decisions…</div>}
+      {!card && !error && <div style={{ fontSize: fontVar(12), color: 'var(--tt)' }}>Loading the decisions…</div>}
 
       {card && s && (
         <>
           <RulesLine card={card} />
-          {decisions === 0 && s.actions.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--ts)' }}>Nothing needs you.</div>}
+          {decisions === 0 && s.actions.length === 0 && <div style={{ fontSize: fontVar(12.5), color: 'var(--ts)' }}>Nothing needs you.</div>}
           {s.needsYou.cards.map((item) => <FullCard key={item.seq} item={item} onAnswer={onAnswer} onSource={openSource(item.seq)} />)}
           {s.needsYou.lines.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -13,6 +13,7 @@ import { useAccounts, threadAccount } from '../../stores/accounts';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
+import { fontVar } from '../../lib/fontSize';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
@@ -41,9 +42,9 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
         <I size={18} weight={active ? 'fill' : 'regular'} />
         {dot && <UpdateDot style={{ top: -3, right: -5 }} />}
       </span>
-      <span style={{ font: '400 8.5px var(--font-sans)', letterSpacing: '0.01em' }}>{label}</span>
+      <span style={{ font: `400 ${fontVar(8.5)} var(--font-sans)`, letterSpacing: '0.01em' }}>{label}</span>
       {badge > 0 && (
-        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: '700 10px var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <span aria-label={`${badge} new`} style={{ position: 'absolute', top: 4, right: 7, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', font: `700 ${fontVar(10)} var(--font-sans)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -122,7 +123,7 @@ export function IconRail() {
           boxShadow: status === 'open' ? 'var(--shadow-glow)' : undefined,
           animation: status !== 'closed' ? 'dispatchConnPulse 2s ease-in-out infinite' : undefined,
         }} />
-        <span style={{ font: '500 7.5px var(--font-mono)', letterSpacing: '0.04em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
+        <span style={{ font: `500 ${fontVar(7.5)} var(--font-mono)`, letterSpacing: '0.04em', color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
           {serverLabel}
         </span>
       </div>

@@ -20,6 +20,7 @@ import { Icon } from '../atoms';
 import { AgentDetailHeader } from './AgentDetailHeader';
 import { InterruptButton, StopButton, ArchiveButton } from './AutonomyControls';
 import { useOverseer } from '../store';
+import { fontVar } from '../../../lib/fontSize';
 
 export function WorkerLightbox({ onOpenFull }: { onOpenFull?: (terminalId: string) => void } = {}) {
   const workerLightboxId = useOverseer((s) => s.workerLightboxId);
@@ -61,7 +62,7 @@ export function WorkerLightbox({ onOpenFull }: { onOpenFull?: (terminalId: strin
     <>
       {onOpenFull && (
         <button type="button" onClick={() => onOpenFull(workerLightboxId)}
-          style={{ height: 26, padding: '0 9px', borderRadius: 'var(--radius-sm)', background: 'transparent', border: '1px solid var(--border)', color: 'var(--ts)', font: '500 11.5px var(--font-sans)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+          style={{ height: 26, padding: '0 9px', borderRadius: 'var(--radius-sm)', background: 'transparent', border: '1px solid var(--border)', color: 'var(--ts)', font: `500 ${fontVar(11.5)} var(--font-sans)`, cursor: 'pointer', whiteSpace: 'nowrap' }}>
           Open in Threads
         </button>
       )}

@@ -13,6 +13,7 @@ import { Icon } from '../atoms';
 import { useRenderVals } from '../store';
 import { useIsMobile } from '../../../hooks/useIsMobile';
 import { NeedsZone } from './NeedsZone';
+import { fontVar } from '../../../lib/fontSize';
 
 // Calm empty state shown in the popover when nothing is held.
 function AllClear() {
@@ -28,8 +29,8 @@ function AllClear() {
       }}
     >
       <Icon name="ph-check-circle" weight="fill" size={26} color="var(--acc)" />
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)' }}>All clear</div>
-      <div style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--ts)', maxWidth: 240 }}>
+      <div style={{ fontSize: fontVar(13), fontWeight: 600, color: 'var(--tp)' }}>All clear</div>
+      <div style={{ fontSize: fontVar(12), lineHeight: 1.55, color: 'var(--ts)', maxWidth: 240 }}>
         Nothing needs you right now — everything else is handled.
       </div>
     </div>
@@ -100,7 +101,7 @@ export function NeedsAlert() {
         }}
       >
         <Icon name="ph-warning" weight="fill" size={13} color={hasNeeds ? 'var(--yellow)' : 'var(--tt)'} />
-        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 700 }}>{count}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: fontVar(11), fontWeight: 700 }}>{count}</span>
       </button>
 
       {open && (

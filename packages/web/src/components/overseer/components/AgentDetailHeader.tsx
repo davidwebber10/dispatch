@@ -16,6 +16,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../../../api/client';
 import type { SessionStats } from '../../../api/types';
 import { findTerminal, useTabs } from '../../../stores/tabs';
+import { fontVar } from '../../../lib/fontSize';
 
 // Light enough to feel live without hammering the disk-reading stats route.
 const STATS_POLL_MS = 15_000;
@@ -153,7 +154,7 @@ export function AgentDetailHeader({ terminalId, nameSize = 13 }: { terminalId: s
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.2 }}>
       <span
         style={{
-          fontSize: nameSize,
+          fontSize: fontVar(nameSize),
           fontWeight: 600,
           color: 'var(--tp)',
           whiteSpace: 'nowrap',
@@ -168,7 +169,7 @@ export function AgentDetailHeader({ terminalId, nameSize = 13 }: { terminalId: s
           title={summary}
           style={{
             fontFamily: 'var(--mono)',
-            fontSize: 10,
+            fontSize: fontVar(10),
             color: 'var(--tt)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
@@ -182,7 +183,7 @@ export function AgentDetailHeader({ terminalId, nameSize = 13 }: { terminalId: s
         <span
           style={{
             fontFamily: 'var(--mono)',
-            fontSize: 10,
+            fontSize: fontVar(10),
             color: 'var(--ts)',
             display: 'flex',
             alignItems: 'center',

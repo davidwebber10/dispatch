@@ -18,6 +18,7 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { useProjects } from '../../../stores/projects';
 import { useOverseer } from '../store';
 import { useDispatchName } from '../../../stores/settings';
+import { fontVar } from '../../../lib/fontSize';
 
 const ACCENT = 'var(--color-accent)';
 const GLOW = '0 0 6px 1px color-mix(in srgb, var(--color-accent) 40%, transparent)';
@@ -129,10 +130,10 @@ export function ControlPlaneSetupCard(): JSX.Element {
       }}
     >
       <div>
-        <div style={{ fontSize: isMobile ? 16 : 15, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+        <div style={{ fontSize: fontVar(isMobile ? 16 : 15), fontWeight: 600, color: 'var(--color-text-primary)' }}>
           I'm {dispatchName} — the coordinator for this project.
         </div>
-        <div style={{ marginTop: 4, fontSize: isMobile ? 13 : 12.5, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+        <div style={{ marginTop: 4, fontSize: fontVar(isMobile ? 13 : 12.5), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
           Pick the agents I run, then fire the first directive — or just start.
         </div>
       </div>
@@ -140,7 +141,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
       <div data-testid="workers-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span
           style={{
-            fontSize: isMobile ? 12.5 : 11,
+            fontSize: fontVar(isMobile ? 12.5 : 11),
             fontWeight: 600,
             letterSpacing: '.04em',
             textTransform: 'uppercase',
@@ -161,7 +162,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
       <div data-testid="coordinator-strip" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <span
           style={{
-            fontSize: isMobile ? 12.5 : 11,
+            fontSize: fontVar(isMobile ? 12.5 : 11),
             fontWeight: 600,
             letterSpacing: '.04em',
             textTransform: 'uppercase',
@@ -183,7 +184,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <span style={{ fontSize: isMobile ? 14 : 13, color: 'var(--color-text-secondary)' }}>Coordinator model</span>
+        <span style={{ fontSize: fontVar(isMobile ? 14 : 13), color: 'var(--color-text-secondary)' }}>Coordinator model</span>
         <div style={{ width: isMobile ? 180 : 160 }}>
           <SearchSelect
             ariaLabel="Coordinator model"
@@ -206,7 +207,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
           background: ACCENT,
           color: 'var(--color-on-accent)',
           fontWeight: 600,
-          fontSize: isMobile ? 14.5 : 13.5,
+          fontSize: fontVar(isMobile ? 14.5 : 13.5),
           cursor: ensuring || !sessionId ? 'default' : 'pointer',
           opacity: ensuring || !sessionId ? 0.7 : 1,
           boxShadow: GLOW,
@@ -219,7 +220,7 @@ export function ControlPlaneSetupCard(): JSX.Element {
         {ensuring ? (<><Spinner size={13} /> Starting…</>) : 'Start'}
       </button>
       {setupError && (
-        <div role="alert" style={{ fontSize: isMobile ? 13 : 12, color: 'var(--color-status-red)' }}>
+        <div role="alert" style={{ fontSize: fontVar(isMobile ? 13 : 12), color: 'var(--color-status-red)' }}>
           {setupError}
         </div>
       )}

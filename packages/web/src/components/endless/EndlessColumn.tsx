@@ -25,6 +25,7 @@ import { useDictation } from '../../hooks/useDictation';
 import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
 import { MODEL_IMAGE_MIME, fileToBase64, chatDocType, CHAT_ACCEPT, CHAT_DOC_MAX_BYTES } from '../../lib/image-attach';
+import { fontVar } from '../../lib/fontSize';
 
 /** Pages older history in while the first page is too short to scroll (see useBootstrapOlderPages). */
 function BootstrapOlder() {
@@ -98,7 +99,7 @@ function TurnError({ text, mobile = false }: { text: string; mobile?: boolean })
     useEndless.getState().retry().catch((err: unknown) => setRetryError(`Retry failed: ${errorText(err)}`));
   };
   return (
-    <div role="alert" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13.5 }}>
+    <div role="alert" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: mobile ? '10px 16px' : '10px 12px', border: '1px solid var(--color-status-red)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: fontVar(13.5) }}>
       <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{text}{retryError && <><br />{retryError}</>}</span>
       <button type="button" onClick={retry} style={{ flexShrink: 0, padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', cursor: 'pointer' }}>Retry</button>
       {/* A login problem: log the daemon in from here, then send the message again. */}
@@ -303,11 +304,11 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     <div onDragOver={onDragOver} onDragEnter={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}
       style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: dragActive ? 'color-mix(in srgb, var(--color-accent) 10%, var(--color-pane))' : 'var(--color-pane)', outline: dragActive ? '1px solid var(--color-accent)' : 'none', outlineOffset: -1, padding: mobile ? '10px 16px' : '10px 12px calc(10px + env(safe-area-inset-bottom))' }}>
       <div style={{ maxWidth: 768, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {dragActive && <div style={{ fontSize: 12, color: 'var(--color-accent)' }}>Drop to attach</div>}
+        {dragActive && <div style={{ fontSize: fontVar(12), color: 'var(--color-accent)' }}>Drop to attach</div>}
         {(project !== null || images.length > 0 || files.length > 0) && (
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
             {project !== null && (
-              <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13 }}>
+              <div data-testid="project-pill" style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', height: 28, padding: '0 6px 0 9px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: fontVar(13) }}>
                 <Rows size={14} />
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectName ?? project}</span>
                 <button type="button" aria-label="Remove project" onClick={() => setProject(null)}
@@ -336,8 +337,8 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
             ))}
           </div>
         )}
-        {sendError && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
-        {attachNotice && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
+        {sendError && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{sendError}</div>}
+        {attachNotice && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)', wordBreak: 'break-word' }}>{attachNotice}</div>}
         {/* The shared composer (composer/PillComposer.tsx). The + holds Project and Add file. */}
         <input ref={fileRef} type="file" accept={CHAT_ACCEPT} multiple hidden onChange={(e) => void onFiles(e)} />
         <PillComposer
@@ -396,7 +397,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
             <MessageScroller.Content style={{ maxWidth: 768, margin: '0 auto', padding: mobile ? '24px 16px' : '24px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <LoadEarlierButton show={hasMore && !loadingOlder} onClick={() => void loadOlder()} />
               {loaded && messages.length === 0 && !busy && (
-                <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: 14 }}>One chat that never ends. Say something.</div>
+                <div style={{ margin: '20vh auto 0', color: 'var(--color-text-tertiary)', fontSize: fontVar(14) }}>One chat that never ends. Say something.</div>
               )}
               <ChatTimeline messages={messages} focus={focus} />
               {atTail && pending.map((p) => (
@@ -407,7 +408,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               {liveThinking && <MessageScroller.Item messageId="__thinking"><Thinking text={liveThinking} /></MessageScroller.Item>}
               {liveText && (
                 <MessageScroller.Item messageId="__live">
-                  <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}><InsightText source={liveText} scheme="global" variant="rail" /></div>
+                  <div style={{ fontSize: fontVar(14.5), lineHeight: 1.75, minWidth: 0 }}><InsightText source={liveText} scheme="global" variant="rail" /></div>
                 </MessageScroller.Item>
               )}
               {busy && <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}><WorkingIndicator /></MessageScroller.Item>}
@@ -421,7 +422,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
       </MessageScroller.Provider>
       {!atTail && (
         <button type="button" onClick={() => void useEndless.getState().loadTail()}
-          style={{ alignSelf: 'center', margin: '6px 0', padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 12 }}>
+          style={{ alignSelf: 'center', margin: '6px 0', padding: '5px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(12) }}>
           Back to latest
         </button>
       )}

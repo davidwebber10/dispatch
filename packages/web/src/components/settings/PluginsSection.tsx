@@ -14,18 +14,19 @@ import { useSubPage } from './subPageNav';
 import { sectionLabel, fieldInput, fieldFor, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
 import { Select } from '../common/Select';
 import { Button } from '../ui';
+import { fontVar } from '../../lib/fontSize';
 
-const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
+const note: React.CSSProperties = { fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const radioLabel: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 8, color: 'var(--color-text-primary)', cursor: 'pointer' };
 /** The grouped card every list on this page sits in: the same shape as the phone's Settings list. */
 const group: React.CSSProperties = { background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' };
 const groupRow = (i: number): React.CSSProperties => ({ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 12px', minWidth: 0, borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' });
 const stack: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 };
-const title: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
-const oneLine: React.CSSProperties = { display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
-const body: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)' };
-const mono: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' };
+const title: React.CSSProperties = { fontSize: fontVar(14), fontWeight: 600, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const oneLine: React.CSSProperties = { display: 'block', marginTop: 2, fontSize: fontVar(12), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const body: React.CSSProperties = { fontSize: fontVar(13), color: 'var(--color-text-body)' };
+const mono: React.CSSProperties = { font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflowWrap: 'anywhere' };
 const buttons: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' };
 
 /** Plain words for each permission id (docs/plugins.md lists the same ids). An unknown id shows as it is. */
@@ -333,7 +334,7 @@ export function PluginsSection() {
               </div>
               {notesOpen === r.id && r.update?.changelog && (
                 <div style={{ ...groupRow(1), display: 'block' }}>
-                  <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-secondary)' }}>{r.update.changelog}</pre>
+                  <pre style={{ margin: 0, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: `${fontVar(12)}/1.5 var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{r.update.changelog}</pre>
                 </div>
               )}
               <div style={groupRow(1)}>
@@ -381,7 +382,7 @@ export function PluginsSection() {
             <GroupLabel>STATUS</GroupLabel>
             <div style={group}>
               {loadErr && (
-                <div role="note" style={{ ...groupRow(0), alignItems: 'flex-start', fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
+                <div role="note" style={{ ...groupRow(0), alignItems: 'flex-start', fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>
                   <Dot tone="red" /><span style={{ marginTop: -4 }}>{loadErr}</span>
                 </div>
               )}
@@ -399,12 +400,12 @@ export function PluginsSection() {
               )}
               {r.assist && r.assist.calls > 0 && (
                 <div style={groupRow(loadErr || r.worker ? 1 : 0)}>
-                  <span data-testid={`plugin-assist-${r.id}`} style={{ ...note, fontSize: 12 }}>{assistLine(r.assist)}</span>
+                  <span data-testid={`plugin-assist-${r.id}`} style={{ ...note, fontSize: fontVar(12) }}>{assistLine(r.assist)}</span>
                 </div>
               )}
               {r.hooks && (
                 <div style={groupRow(loadErr || r.worker || (r.assist?.calls ?? 0) > 0 ? 1 : 0)}>
-                  <span style={{ ...note, fontSize: 12 }}>Hooks: {r.hooks.runs} runs{r.hooks.failures ? `, ${r.hooks.failures} failed` : ''}{r.hooks.dropped ? `, ${r.hooks.dropped} dropped` : ''}</span>
+                  <span style={{ ...note, fontSize: fontVar(12) }}>Hooks: {r.hooks.runs} runs{r.hooks.failures ? `, ${r.hooks.failures} failed` : ''}{r.hooks.dropped ? `, ${r.hooks.dropped} dropped` : ''}</span>
                 </div>
               )}
             </div>
@@ -432,14 +433,14 @@ export function PluginsSection() {
               </div>
             )}
             {dataMsg?.id === r.id && (
-              <div role={dataMsg.error ? 'alert' : 'status'} style={{ fontSize: 12.5, lineHeight: 1.5, overflowWrap: 'anywhere', color: dataMsg.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{dataMsg.text}</div>
+              <div role={dataMsg.error ? 'alert' : 'status'} style={{ fontSize: fontVar(12.5), lineHeight: 1.5, overflowWrap: 'anywhere', color: dataMsg.error ? 'var(--color-status-red)' : 'var(--color-text-secondary)' }}>{dataMsg.text}</div>
             )}
-            {err && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
+            {err && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{err}</div>}
           </div>
         </section>
 
         <details data-testid="plugin-developer" style={{ ...group }}>
-          <summary style={{ padding: '11px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>Developer</summary>
+          <summary style={{ padding: '11px 12px', cursor: 'pointer', fontSize: fontVar(13), color: 'var(--color-text-secondary)' }}>Developer</summary>
           {dev.map(([label, value, extra], i) => devRow(label, value, i + 1, extra))}
         </details>
       </SettingsSubPage>
@@ -450,7 +451,7 @@ export function PluginsSection() {
 
   const list = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>Plugins add screens and tools to Dispatch. Bundled ones update with the app.</div>
+      <div style={{ fontSize: fontVar(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>Plugins add screens and tools to Dispatch. Bundled ones update with the app.</div>
 
       {bundled.length > 0 && (
         <section aria-label="Bundled plugins" style={stack}>
@@ -470,11 +471,11 @@ export function PluginsSection() {
         <GroupLabel action={<Button variant="ghost" size="sm" onClick={() => { setCreating((c) => !c); setErr(''); }}>New plugin…</Button>}>LOCAL</GroupLabel>
         {creating && (
           <div style={{ ...group, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
               Plugin id
               <input aria-label="Plugin id" value={newId} onChange={(e) => setNewId(e.target.value)} placeholder="daily-rundown" style={fieldInput} />
             </label>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>
               Plugin name
               <input aria-label="Plugin name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Daily rundown" style={fieldInput} />
             </label>
@@ -484,10 +485,10 @@ export function PluginsSection() {
             </div>
           </div>
         )}
-        {err && !opened && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>}
+        {err && !opened && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{err}</div>}
         {local.length > 0 && <div style={group}>{local.map(renderRow)}</div>}
         {loaded && local.length === 0 && !creating && (
-          <div style={{ ...note, fontSize: 12.5, padding: '0 4px' }}>
+          <div style={{ ...note, fontSize: fontVar(12.5), padding: '0 4px' }}>
             {manifests.length === 0 ? 'No plugins yet. ' : 'No local plugins. '}New plugin… writes a starter folder under ~/.dispatch/plugins that you or a thread can edit. It reloads as you save.
           </div>
         )}
@@ -502,13 +503,13 @@ export function PluginsSection() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ ...title, display: 'block' }}>{m.name ?? m.slug}</span>
-                    <span style={{ ...oneLine, fontFamily: 'var(--font-mono)', fontSize: 11 }} title={m.url}>{m.url}</span>
+                    <span style={{ ...oneLine, fontFamily: 'var(--font-mono)', fontSize: fontVar(11) }} title={m.url}>{m.url}</span>
                   </span>
-                  <span style={{ ...note, fontSize: 12 }} title="Plugins from a trusted marketplace update on their own">Trusted</span>
+                  <span style={{ ...note, fontSize: fontVar(12) }} title="Plugins from a trusted marketplace update on their own">Trusted</span>
                   <Toggle on={m.trusted} label="Trusted" onClick={() => void marketRun(m.slug, () => api.setMarketplaceTrusted(m.slug, !m.trusted))} />
                 </div>
-                {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
-                {m.error && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</div>}
+                {m.description && <div style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>{m.description}</div>}
+                {m.error && <div style={{ fontSize: fontVar(12), lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</div>}
                 <div style={buttons}>
                   <Button variant="ghost" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</Button>
                   <Button variant="danger" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</Button>
@@ -518,8 +519,8 @@ export function PluginsSection() {
             ))}
             <div data-testid="marketplace-add-row" style={{ ...groupRow(markets.length), flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
               <span style={{ minWidth: 0 }}>
-                <span style={{ ...title, display: 'block', fontSize: 13.5, fontWeight: 400 }}>Add a marketplace</span>
-                <span style={{ ...note, display: 'block', fontSize: 12, marginTop: 2 }}>A git repository: an https or ssh URL, or a path.</span>
+                <span style={{ ...title, display: 'block', fontSize: fontVar(13.5), fontWeight: 400 }}>Add a marketplace</span>
+                <span style={{ ...note, display: 'block', fontSize: fontVar(12), marginTop: 2 }}>A git repository: an https or ssh URL, or a path.</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input aria-label="Marketplace URL" value={marketUrl} onChange={(e) => setMarketUrl(e.target.value)}
@@ -528,7 +529,7 @@ export function PluginsSection() {
                   style={{ ...fieldFor(isMobile), flex: 1, fontFamily: 'var(--font-mono)' }} />
                 <Button aria-label="Add marketplace" variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>{isMobile ? 'Add' : 'Add marketplace'}</Button>
               </div>
-              {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
+              {marketErr && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{marketErr}</div>}
             </div>
         </div>
         <div style={{ ...note, padding: '0 4px' }}>The daemon clones it with your own git login, so a private repository is a private marketplace.</div>
@@ -543,7 +544,7 @@ export function PluginsSection() {
             const entries = (['plugin', 'skill'] as const).flatMap((kind) => mine.filter((e) => e.kind === kind));
             return (
               <div key={m.slug} style={stack}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)', padding: '0 4px' }}>{m.name ?? m.slug}</div>
+                <div style={{ fontSize: fontVar(12), fontWeight: 600, color: 'var(--color-text-secondary)', padding: '0 4px' }}>{m.name ?? m.slug}</div>
                 <div style={group}>
                   {entries.map((e, i) => (
                     <div key={`${e.kind}:${e.id}`} data-testid={`catalog-${e.kind}-${e.id}`} style={groupRow(i)}>
@@ -552,7 +553,7 @@ export function PluginsSection() {
                         <span style={oneLine}>{e.kind === 'skill' ? 'Skill' : 'Plugin'} · v{e.version}{e.description ? ` · ${e.description}` : ''}</span>
                       </span>
                       {e.installed
-                        ? <span style={{ ...note, fontSize: 12, flexShrink: 0 }}>Installed v{e.installed.version}</span>
+                        ? <span style={{ ...note, fontSize: fontVar(12), flexShrink: 0 }}>Installed v{e.installed.version}</span>
                         : <Button variant="primary" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(`${e.kind}:${e.id}`, () => (e.kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</Button>}
                     </div>
                   ))}
@@ -583,7 +584,7 @@ export function PluginsSection() {
       {opened ? renderDetail(opened) : list}
 
       <Modal open={logsOf !== null} onClose={() => setLogsOf(null)} title={logsOf ? `Worker log · ${logsOf}` : 'Worker log'} maxWidth={760}>
-        <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.5 var(--font-mono)', color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
+        <pre style={{ margin: 0, maxHeight: '60vh', overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: `${fontVar(12)}/1.5 var(--font-mono)`, color: 'var(--color-text-primary)', background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 12px' }}>{logText || 'Loading…'}</pre>
         <div style={{ ...note, marginTop: 8 }}>The last 200 lines of plugins/{logsOf}.log in the daemon's log folder, refreshed every two seconds.</div>
       </Modal>
       <ConfirmModal open={removing !== null} title="Remove this plugin?" danger confirmLabel="Remove plugin"

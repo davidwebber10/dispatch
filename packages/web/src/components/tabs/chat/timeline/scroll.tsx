@@ -3,6 +3,7 @@ import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } fro
 import { CaretDoubleDown } from '@phosphor-icons/react';
 import { useBootstrapOlderPages } from '../../../../hooks/useBootstrapOlderPages';
 import { Spinner } from '../../../common/Spinner';
+import { fontVar } from '../../../../lib/fontSize';
 
 /**
  * Render-nothing helper: keep a freshly-opened (or freshly-switched) thread pinned to
@@ -103,7 +104,7 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
       onClick={onClick}
       style={{
         alignSelf: 'center',
-        font: '500 12px var(--font-sans)',
+        font: `500 ${fontVar(12)} var(--font-sans)`,
         color: 'var(--color-text-secondary)',
         background: 'var(--color-elevated)',
         border: '1px solid var(--color-border)',
@@ -128,7 +129,7 @@ export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: (
 export function LoadingOlderPill({ show }: { show: boolean }) {
   if (!show) return null;
   return (
-    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
+    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: fontVar(11.5), zIndex: 5, pointerEvents: 'none' }}>
       <Spinner size={11} /> Loading earlier…
     </div>
   );

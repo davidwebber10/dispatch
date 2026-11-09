@@ -8,6 +8,7 @@ import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { useUI } from '../../stores/ui';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /**
  * The one message composer (2026-11-05, modeled on ChatGPT's): a rounded box holding
@@ -169,24 +170,24 @@ export function PillComposer({
       <div data-testid="composer-plugin-actions" style={{ display: 'flex', gap: 6, padding: '0 2px 6px', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {shownActions.map((a) => (
           <button key={`${a.plugin}:${a.id}`} type="button" onClick={() => a.onClick(composerCtx)}
-            style={{ flexShrink: 0, height: 28, padding: '0 11px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 12.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>{a.label}</button>
+            style={{ flexShrink: 0, height: 28, padding: '0 11px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: fontVar(12.5), cursor: 'pointer', whiteSpace: 'nowrap' }}>{a.label}</button>
         ))}
       </div>
     )}
     {micHint && !sttConfigured && (
-      <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 6px 8px', fontSize: 13 }}>
+      <div role="note" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 6px 8px', fontSize: fontVar(13) }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-text-secondary)' }}>Dictation isn't set up yet.</span>
-        <button type="button" onClick={() => { setMicHint(false); useUI.getState().requestSettings('dictation'); }} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Set up</button>
-        <button type="button" onClick={() => setMicHint(false)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+        <button type="button" onClick={() => { setMicHint(false); useUI.getState().requestSettings('dictation'); }} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: fontVar(13) }}>Set up</button>
+        <button type="button" onClick={() => setMicHint(false)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(13) }}>Dismiss</button>
       </div>
     )}
     {failed && (
-      <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0 6px 8px', fontSize: 13, lineHeight: 1.4 }}>
+      <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '0 6px 8px', fontSize: fontVar(13), lineHeight: 1.4 }}>
         <span style={{ flex: 1, minWidth: 0, color: 'var(--color-status-red)' }}>{dictation.error}</span>
         {/* Retry sends the SAME saved recording when there is one (2026-11-07); it records anew only when there is none. */}
-        <button type="button" onClick={() => void dictation.retry()} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13 }}>Retry</button>
-        {dictation.recordingId && <button type="button" onClick={() => setRecordingsOpen(true)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Recordings</button>}
-        <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: 13 }}>Dismiss</button>
+        <button type="button" onClick={() => void dictation.retry()} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: fontVar(13) }}>Retry</button>
+        {dictation.recordingId && <button type="button" onClick={() => setRecordingsOpen(true)} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(13) }}>Recordings</button>}
+        <button type="button" onClick={dictation.reset} style={{ flex: 'none', padding: 0, background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: fontVar(13) }}>Dismiss</button>
       </div>
     )}
     <RecordingsSheet open={recordingsOpen} onClose={() => setRecordingsOpen(false)} onInsert={(t) => { dictation.insert(t); dictation.reset(); }} />
@@ -229,7 +230,7 @@ export function PillComposer({
           style={{
             gridArea: 'text', width: '100%', minWidth: 0, minHeight: minH, height: minH, margin: 0, resize: 'none', overflowY: 'auto',
             border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text-primary)',
-            font: `400 ${mobile ? 16 : 14.5}px var(--font-sans)`, lineHeight: `${lineH}px`,
+            font: `400 ${mobile ? fontVarInput(16) : fontVar(14.5)} var(--font-sans)`, lineHeight: `${lineH}px`,
             padding: stacked ? `${(minH - lineH) / 2}px ${expandable ? 34 : 8}px 2px 8px` : `${(minH - lineH) / 2}px ${expandable ? 34 : 4}px ${(minH - lineH) / 2}px 4px`, boxSizing: 'border-box',
           }}
         />

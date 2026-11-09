@@ -7,6 +7,7 @@ import { useEndless } from '../../stores/endless';
 import { harnessShort } from './harness';
 import { DocChip, docLinks } from './DocText';
 import type { EndlessMessage, EndlessPaneState } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 const WORD_COLOR: Record<EndlessPaneState, string> = {
   working: 'var(--color-accent)',
@@ -22,8 +23,8 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
   const s = parseSpawn(tool, echo);
   const view = useThreadView(s.kind === 'started' ? s.agentId : null);
   const projects = useEndless((st) => st.projects);
-  const line: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', minHeight: 32, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', font: '400 12.5px var(--font-sans)', color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' };
-  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 20, padding: '0 7px', borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', font: '400 11px var(--font-mono)', flexShrink: 0 };
+  const line: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, overflow: 'hidden', minHeight: 32, padding: '6px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-pane)', font: `400 ${fontVar(12.5)} var(--font-sans)`, color: 'var(--color-text-secondary)', textAlign: 'left', width: '100%' };
+  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, height: 20, padding: '0 7px', borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', font: `400 ${fontVar(11)} var(--font-mono)`, flexShrink: 0 };
   if (s.kind === 'starting') return <div aria-busy="true" style={{ ...line, opacity: 0.6 }}><StateMark state="queued" decorative /><span>Starting</span><span style={{ color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span></div>;
   if (s.kind === 'failed') return <div role="alert" style={{ ...line, borderColor: 'var(--color-status-red)' }}><Warning size={13} color="var(--color-status-red)" aria-hidden="true" /><span style={{ color: 'var(--color-status-red)' }}>Could not start</span><span style={{ color: 'var(--color-text-primary)' }}>{s.name}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.error}</span></div>;
   const projectId = s.projectId ?? projects.find((p) => p.name === s.projectName)?.id ?? null;
@@ -35,7 +36,7 @@ export function StartedItem({ tool, echo }: { tool: EndlessMessage; echo?: Endle
       <ArrowRight size={13} color="var(--color-text-tertiary)" aria-hidden="true" style={{ flexShrink: 0 }} />
       <span style={{ flexShrink: 0 }}>Started</span>
       <span style={{ color: 'var(--color-text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{s.label}</span>
-      <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>{[s.projectName, harness].filter(Boolean).join(' · ')}</span>
+      <span style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>{[s.projectName, harness].filter(Boolean).join(' · ')}</span>
       <span style={{ flex: 1 }} />
       {view.state && <span style={chip}><StateMark state={view.state} decorative /><span style={{ color: WORD_COLOR[view.state] }}>{STATE_WORD[view.state]}</span></span>}
     </button>

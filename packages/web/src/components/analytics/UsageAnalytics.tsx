@@ -16,6 +16,7 @@ import {
 import type {
   AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
 } from '../../api/types';
+import { fontVar } from '../../lib/fontSize';
 
 /* ------------------------------------------------------------------- data */
 
@@ -288,7 +289,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   const tokenTooltip = chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)]);
   const legend = (
     <Legend
-      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: 11 }}>{v}</span>}
+      formatter={(v: string) => <span style={{ color: theme.muted, fontSize: fontVar(11) }}>{v}</span>}
       wrapperStyle={{ paddingTop: 4 }}
     />
   );
@@ -299,7 +300,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
 
       {isEmpty ? (
         <div style={{ ...panel, padding: 24 }}>
-          <div style={{ fontSize: 15, color: 'var(--color-text-primary)' }}>
+          <div style={{ fontSize: fontVar(15), color: 'var(--color-text-primary)' }}>
             {filtered
               ? `No turns match these filters — analytics started ${trackingDate}.`
               : `No turns recorded yet — analytics started ${trackingDate}.`}
@@ -467,9 +468,9 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, ...muted }}>
-                <span style={{ font: '400 10px var(--font-mono)' }}>less</span>
+                <span style={{ font: `400 ${fontVar(10)} var(--font-mono)` }}>less</span>
                 {HEAT.map((c) => <span key={c} style={{ width: 11, height: 11, borderRadius: 'var(--radius-xs)', background: c }} />)}
-                <span style={{ font: '400 10px var(--font-mono)' }}>more</span>
+                <span style={{ font: `400 ${fontVar(10)} var(--font-mono)` }}>more</span>
               </div>
             </Block>
           </div>
@@ -519,7 +520,7 @@ function Record({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, borderBottom: '1px solid var(--color-border)', padding: '6px 0' }}>
       <span style={{ ...muted }}>{label}</span>
-      <span style={{ font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{value}</span>
+      <span style={{ font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{value}</span>
     </div>
   );
 }

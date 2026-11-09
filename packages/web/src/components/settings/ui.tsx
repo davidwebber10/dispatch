@@ -8,26 +8,27 @@ import { Modal } from '../common/Modal';
 import { IconButton } from '../ui/IconButton';
 import { Children, useState } from 'react';
 import { CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
+import { fontVar, fontVarInput } from '../../lib/fontSize';
 
-export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
-export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
+export const sectionLabel: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
+export const summaryLine: React.CSSProperties = { font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)' };
 // Buttons (W3-E): a section uses `Button` and `IconButton` from components/ui. `ghostBtn`,
 // `solidBtn` and `dangerBtn` stay for plugins (`d.ui.styles`) and for code not yet converted;
 // components/ui/ui.css holds the same shapes as classes.
-export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' };
-export const miniChip: React.CSSProperties = { flexShrink: 0, font: '500 9.5px var(--font-mono)', letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-xs)', padding: '1px 5px' };
-export const codeChip: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '1px 5px', whiteSpace: 'nowrap' };
-export const fieldInput: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: '400 12px var(--font-sans)' };
-export const solidBtn = (on: boolean): React.CSSProperties => ({ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 12.5, cursor: on ? 'pointer' : 'default', opacity: on ? 1 : 0.5 });
+export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: fontVar(12), cursor: 'pointer', whiteSpace: 'nowrap' };
+export const miniChip: React.CSSProperties = { flexShrink: 0, font: `500 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-xs)', padding: '1px 5px' };
+export const codeChip: React.CSSProperties = { font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '1px 5px', whiteSpace: 'nowrap' };
+export const fieldInput: React.CSSProperties = { minWidth: 0, height: 30, padding: '0 9px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', font: `400 ${fontVar(12)} var(--font-sans)` };
+export const solidBtn = (on: boolean): React.CSSProperties => ({ flexShrink: 0, height: 30, padding: '0 14px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: fontVar(12.5), cursor: on ? 'pointer' : 'default', opacity: on ? 1 : 0.5 });
 export const row: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 };
-export const item: React.CSSProperties = { fontSize: 13, color: 'var(--color-text-body)' };
-export const chip: React.CSSProperties = { font: '400 11.5px var(--font-mono)', color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '5px 10px' };
+export const item: React.CSSProperties = { fontSize: fontVar(13), color: 'var(--color-text-body)' };
+export const chip: React.CSSProperties = { font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '5px 10px' };
 /** A destructive button: the ghost button in red. It always opens a ConfirmModal first. */
 export const dangerBtn: React.CSSProperties = { ...ghostBtn, color: 'var(--color-status-red)' };
 /** The quiet note under a group or a field (one line, plain words). */
-export const noteText: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
+export const noteText: React.CSSProperties = { fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 /** A text field's look: the phone gets 16px text (iOS does not zoom) and a 36px box. */
-export const fieldFor = (phone: boolean): React.CSSProperties => ({ ...fieldInput, height: phone ? 36 : 30, fontSize: phone ? 16 : 12.5 });
+export const fieldFor = (phone: boolean): React.CSSProperties => ({ ...fieldInput, height: phone ? 36 : 30, fontSize: phone ? fontVarInput(16) : fontVar(12.5) });
 export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer' };
 
 /** This browser's link to the daemon, worded the same in the desktop nav and in Settings → Servers. */
@@ -66,7 +67,7 @@ export function SettingsGroup({ title, footer, action, children, style }: { titl
       <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)' }}>
         {rows.map((c, i) => <div key={(c as { key?: string }).key ?? i} style={{ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>{c as React.ReactNode}</div>)}
       </div>
-      {footer && <div style={{ padding: '0 4px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{footer}</div>}
+      {footer && <div style={{ padding: '0 4px', fontSize: fontVar(11.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{footer}</div>}
     </section>
   );
 }
@@ -96,11 +97,11 @@ export function SettingsRow({ label, hint, control, children, style, value, onCl
     <>
       {icon && <IconTile icon={icon} size={32} />}
       <span style={{ flex: 1, minWidth: 0, display: 'block' }}>
-        <span style={{ display: 'block', fontSize: 13.5, color: danger ? 'var(--color-status-red)' : 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{label}</span>
-        {hint && <span style={{ display: 'block', marginTop: 2, fontSize: 12, lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+        <span style={{ display: 'block', fontSize: fontVar(13.5), color: danger ? 'var(--color-status-red)' : 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{label}</span>
+        {hint && <span style={{ display: 'block', marginTop: 2, fontSize: fontVar(12), lineHeight: 1.4, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
       </span>
       {value !== undefined && value !== null && value !== false && (
-        <span style={{ flexShrink: 1, minWidth: 0, maxWidth: '50%', fontSize: 13, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+        <span style={{ flexShrink: 1, minWidth: 0, maxWidth: '50%', fontSize: fontVar(13), color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
       )}
     </>
   );
@@ -125,7 +126,7 @@ export function SettingsRow({ label, hint, control, children, style, value, onCl
 export function SettingsPage({ intro, children, style }: { intro?: React.ReactNode; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div data-testid="settings-page" style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0, ...style }}>
-      {intro && <div data-testid="settings-intro" style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{intro}</div>}
+      {intro && <div data-testid="settings-intro" style={{ fontSize: fontVar(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{intro}</div>}
       {children}
     </div>
   );
@@ -143,7 +144,7 @@ export function ToneDot({ tone, size = 7 }: { tone: Tone; size?: number }) {
 /** A status: the dot and one word or a short phrase, in the same tone ("Connected", "Worker crashed"). */
 export function StatusMark({ tone, children, style }: { tone: Tone; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <span data-testid="status-mark" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 12, color: TONE_VAR[tone], ...style }}>
+    <span data-testid="status-mark" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: fontVar(12), color: TONE_VAR[tone], ...style }}>
       <ToneDot tone={tone} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{children}</span>
     </span>
   );
@@ -171,16 +172,16 @@ export function SettingsSubPage({ title, subtitle, description, icon, backLabel,
   return (
     <div data-testid={testId ?? 'settings-subpage'} style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 640, width: '100%' }}>
       {onBack && (
-        <button type="button" aria-label={`Back to ${(backLabel ?? 'settings').toLowerCase()}`} onClick={onBack} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 2, padding: '2px 0', background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>
+        <button type="button" aria-label={`Back to ${(backLabel ?? 'settings').toLowerCase()}`} onClick={onBack} style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 2, padding: '2px 0', background: 'none', border: 'none', color: 'var(--color-accent)', cursor: 'pointer', fontSize: fontVar(13), fontWeight: 600 }}>
           <CaretLeft size={15} weight="bold" />{backLabel ?? 'Settings'}
         </button>
       )}
       <div data-testid={headerTestId ?? 'subpage-header'} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
         {icon && <IconTile icon={icon} size={48} />}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{title}</div>
-          {subtitle && <div style={{ marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{subtitle}</div>}
-          {description && <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{description}</div>}
+          <div style={{ fontSize: fontVar(18), fontWeight: 600, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{title}</div>
+          {subtitle && <div style={{ marginTop: 2, fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>{subtitle}</div>}
+          {description && <div style={{ marginTop: 8, fontSize: fontVar(13), lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>{description}</div>}
         </div>
       </div>
       {children}
@@ -200,8 +201,8 @@ export function SettingsDisclosure({ label, hint, defaultOpen = false, children,
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
         style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '11px 12px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', color: 'inherit', font: 'inherit' }}>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontSize: 13.5, color: 'var(--color-text-primary)' }}>{label}</span>
-          {hint && <span style={{ display: 'block', marginTop: 2, fontSize: 12, color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+          <span style={{ display: 'block', fontSize: fontVar(13.5), color: 'var(--color-text-primary)' }}>{label}</span>
+          {hint && <span style={{ display: 'block', marginTop: 2, fontSize: fontVar(12), color: 'var(--color-text-tertiary)' }}>{hint}</span>}
         </span>
         <CaretDown aria-hidden size={16} color="var(--color-text-tertiary)" style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 120ms' }} />
       </button>
@@ -217,7 +218,7 @@ export function SettingsDisclosure({ label, hint, defaultOpen = false, children,
 export function EmptyState({ children, action }: { children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div data-testid="empty-state" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '0 4px' }}>
-      <span style={{ flex: 1, minWidth: 180, fontSize: 12.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{children}</span>
+      <span style={{ flex: 1, minWidth: 180, fontSize: fontVar(12.5), lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>{children}</span>
       {action}
     </div>
   );
@@ -227,10 +228,10 @@ export function GroupHeader({ label, count, tone = 'neutral', hint }: { label: s
   const color = tone === 'accent' ? 'var(--color-accent)' : tone === 'red' ? 'var(--color-status-red)' : 'var(--color-text-tertiary)';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-      <span style={{ font: '600 9.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color, flexShrink: 0 }}>{label}</span>
-      {count !== undefined && <span style={{ font: '400 9.5px var(--font-mono)', color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{count}</span>}
+      <span style={{ font: `600 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color, flexShrink: 0 }}>{label}</span>
+      {count !== undefined && <span style={{ font: `400 ${fontVar(9.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{count}</span>}
       <span style={{ flex: 1, height: 1, background: 'var(--color-hover)' }} />
-      {hint && <span style={{ fontSize: 10.5, color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{hint}</span>}
+      {hint && <span style={{ fontSize: fontVar(10.5), color: 'var(--color-text-tertiary)', flexShrink: 0 }}>{hint}</span>}
     </div>
   );
 }
@@ -238,7 +239,7 @@ export function GroupHeader({ label, count, tone = 'neutral', hint }: { label: s
 export function SearchInput({ value, onChange, placeholder, style }: { value: string; onChange: (v: string) => void; placeholder: string; style?: React.CSSProperties }) {
   return (
     <span style={{ position: 'relative', display: 'flex', flex: 1, minWidth: 0, ...style }}>
-      <span aria-hidden style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>/</span>
+      <span aria-hidden style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>/</span>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={{ ...fieldInput, flex: 1, paddingLeft: 24 }} />
     </span>
   );
@@ -251,7 +252,7 @@ export function FilterSegments({ options, active, onSelect }: { options: { key: 
         const on = o.key === active;
         return (
           <button key={o.key} onClick={() => onSelect(o.key)}
-            style={{ height: 28, padding: '0 10px', background: on ? 'var(--color-hover)' : 'transparent', border: 'none', borderLeft: idx > 0 ? '1px solid var(--color-border-strong)' : 'none', color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: '500 11px var(--font-mono)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            style={{ height: 28, padding: '0 10px', background: on ? 'var(--color-hover)' : 'transparent', border: 'none', borderLeft: idx > 0 ? '1px solid var(--color-border-strong)' : 'none', color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)', font: `500 ${fontVar(11)} var(--font-mono)`, cursor: 'pointer', whiteSpace: 'nowrap' }}>
             {o.label}{o.count !== undefined ? ` ${o.count}` : ''}
           </button>
         );
@@ -288,11 +289,11 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
 }
 
 export function Stepper({ value, unit, onDec, onInc }: { value: string; unit?: string; onDec: () => void; onInc: () => void }) {
-  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '500 14px var(--font-sans)' });
+  const btn = (side: 'l' | 'r'): React.CSSProperties => ({ width: 28, height: 28, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: side === 'l' ? 'var(--radius-sm) 0 0 var(--radius-sm)' : '0 var(--radius-sm) var(--radius-sm) 0', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', font: `500 ${fontVar(14)} var(--font-sans)` });
   return (
     <div style={{ display: 'flex', alignItems: 'center' }}>
       <button onClick={onDec} style={btn('l')}>−</button>
-      <div style={{ height: 28, minWidth: 64, background: 'var(--color-elevated)', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 10px', font: '400 11.5px var(--font-mono)', color: 'var(--color-text-body)' }}>{value}{unit ?? ''}</div>
+      <div style={{ height: 28, minWidth: 64, background: 'var(--color-elevated)', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 10px', font: `400 ${fontVar(11.5)} var(--font-mono)`, color: 'var(--color-text-body)' }}>{value}{unit ?? ''}</div>
       <button onClick={onInc} style={btn('r')}>+</button>
     </div>
   );

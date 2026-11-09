@@ -9,6 +9,7 @@ import { Select } from '../common/Select';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Hunk } from '../tabs/toolviews/DiffView';
 import type { DiffLine } from '../tabs/toolviews/diff';
+import { fontVar } from '../../lib/fontSize';
 
 /**
  * Diff review (engineering program W3-G): the uncommitted changes of one thread's working directory.
@@ -67,12 +68,12 @@ const ICON_BTN_BASE: React.CSSProperties = {
 const TEXT_BTN_BASE: React.CSSProperties = {
   height: 28, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
   background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
-  font: '500 12px var(--font-sans)', color: 'var(--color-text-primary)', cursor: 'pointer', whiteSpace: 'nowrap',
+  font: `500 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-text-primary)', cursor: 'pointer', whiteSpace: 'nowrap',
 };
 const NOTE: React.CSSProperties = {
   display: 'flex', gap: 8, alignItems: 'flex-start', padding: '8px 10px', margin: '8px 10px 0',
   border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-elevated)',
-  font: '400 12px/1.45 var(--font-sans)', color: 'var(--color-text-secondary)',
+  font: `400 ${fontVar(12)}/1.45 var(--font-sans)`, color: 'var(--color-text-secondary)',
 };
 
 type Confirm = { kind: 'discard'; files: DiffFile[] } | { kind: 'worktree'; worktree: ThreadWorktreeState };
@@ -81,7 +82,7 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
   // A phone gets finger-sized controls (36px); the desktop column keeps 28px.
   const phone = useIsMobile();
   const ICON_BTN: React.CSSProperties = phone ? { ...ICON_BTN_BASE, width: 36, height: 36 } : ICON_BTN_BASE;
-  const TEXT_BTN: React.CSSProperties = phone ? { ...TEXT_BTN_BASE, height: 38, fontSize: 14, padding: '0 14px' } : TEXT_BTN_BASE;
+  const TEXT_BTN: React.CSSProperties = phone ? { ...TEXT_BTN_BASE, height: 38, fontSize: fontVar(14), padding: '0 14px' } : TEXT_BTN_BASE;
   const DANGER_BTN: React.CSSProperties = { ...TEXT_BTN, background: 'var(--color-status-red)', borderColor: 'var(--color-status-red)', color: 'var(--color-on-accent)', fontWeight: 600 };
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
   const tabs = useTabs((s) => (projectId ? s.byProject[projectId] : undefined));
@@ -200,11 +201,11 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
             <CaretLeft size={16} weight="bold" />
           </button>
         )}
-        <span style={{ flex: 1, minWidth: 0, font: '600 13px var(--font-sans)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Review changes</span>
+        <span style={{ flex: 1, minWidth: 0, font: `600 ${fontVar(13)} var(--font-sans)`, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Review changes</span>
         {diff?.branch && (
           <span title="Branch of this directory" style={{
             display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 1, minWidth: 0,
-            font: '500 10.5px var(--font-mono)', color: 'var(--color-accent)',
+            font: `500 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-accent)',
             background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)',
             borderRadius: 'var(--radius-sm)', padding: '1px 6px', maxWidth: 170,
           }}>
@@ -224,7 +225,7 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
           </div>
         )}
         {diff && (
-          <div title={diff.workDir} style={{ padding: '6px 10px 0', font: '400 11px var(--font-mono)', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}>
+          <div title={diff.workDir} style={{ padding: '6px 10px 0', font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}>
             <bdi>{diff.workDir}</bdi>
           </div>
         )}
@@ -260,7 +261,7 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
               <button type="button" aria-label="Dismiss the message" onClick={() => setDone(null)} style={{ ...ICON_BTN, width: 20, height: 20, border: 'none' }}><X size={12} /></button>
             </div>
             {done.discarded.filter((d) => d.backup).map((d) => (
-              <code key={d.path} style={{ font: '400 11px var(--font-mono)', color: 'var(--color-text-primary)', overflowWrap: 'anywhere', paddingLeft: 23 }}>
+              <code key={d.path} style={{ font: `400 ${fontVar(11)} var(--font-mono)`, color: 'var(--color-text-primary)', overflowWrap: 'anywhere', paddingLeft: 23 }}>
                 git cat-file -p {d.backup} &gt; {d.path}
               </code>
             ))}
@@ -272,17 +273,17 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
             style={{ margin: '8px 10px 0', padding: 10, border: '1px solid var(--color-status-red)', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-status-red) 8%, var(--color-elevated))', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {confirm.kind === 'discard' ? (
               <>
-                <div style={{ font: '600 13px var(--font-sans)', color: 'var(--color-text-primary)' }}>
+                <div style={{ font: `600 ${fontVar(13)} var(--font-sans)`, color: 'var(--color-text-primary)' }}>
                   Discard the changes in {plural(confirm.files.length, 'file')}?
                 </div>
-                <div style={{ font: '400 12px/1.45 var(--font-sans)', color: 'var(--color-text-secondary)' }}>
+                <div style={{ font: `400 ${fontVar(12)}/1.45 var(--font-sans)`, color: 'var(--color-text-secondary)' }}>
                   Dispatch changes only the files in this list. Other files keep their changes.
                 </div>
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 220, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {confirm.files.map((f) => (
                     <li key={f.path} style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                      <span style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{f.path}</span>
-                      <span style={{ font: '400 11.5px var(--font-sans)', color: 'var(--color-text-secondary)' }}>{discardEffect(f)}</span>
+                      <span style={{ font: `500 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{f.path}</span>
+                      <span style={{ font: `400 ${fontVar(11.5)} var(--font-sans)`, color: 'var(--color-text-secondary)' }}>{discardEffect(f)}</span>
                     </li>
                   ))}
                 </ul>
@@ -295,9 +296,9 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
               </>
             ) : (
               <>
-                <div style={{ font: '600 13px var(--font-sans)', color: 'var(--color-text-primary)' }}>Remove this worktree?</div>
-                <div style={{ font: '500 12px var(--font-mono)', color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{confirm.worktree.path}</div>
-                <div style={{ font: '400 12px/1.45 var(--font-sans)', color: 'var(--color-text-secondary)' }}>
+                <div style={{ font: `600 ${fontVar(13)} var(--font-sans)`, color: 'var(--color-text-primary)' }}>Remove this worktree?</div>
+                <div style={{ font: `500 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-primary)', overflowWrap: 'anywhere' }}>{confirm.worktree.path}</div>
+                <div style={{ font: `400 ${fontVar(12)}/1.45 var(--font-sans)`, color: 'var(--color-text-secondary)' }}>
                   It has no uncommitted changes. The folder is removed. The branch {confirm.worktree.branch} stays, with its commits.
                 </div>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -312,18 +313,18 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
         )}
 
         {diff && !diff.repo && (
-          <div style={{ padding: '16px 12px', font: '400 13px/1.5 var(--font-sans)', color: 'var(--color-text-tertiary)' }}>This directory is not a git repository. There is nothing to review.</div>
+          <div style={{ padding: '16px 12px', font: `400 ${fontVar(13)}/1.5 var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>This directory is not a git repository. There is nothing to review.</div>
         )}
         {diff && diff.repo && files.length === 0 && (
-          <div style={{ padding: '16px 12px', font: '400 13px/1.5 var(--font-sans)', color: 'var(--color-text-tertiary)' }}>No uncommitted changes.</div>
+          <div style={{ padding: '16px 12px', font: `400 ${fontVar(13)}/1.5 var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>No uncommitted changes.</div>
         )}
         {!diff && loading && (
-          <div style={{ padding: '16px 12px', font: '400 13px var(--font-sans)', color: 'var(--color-text-tertiary)' }}>Loading…</div>
+          <div style={{ padding: '16px 12px', font: `400 ${fontVar(13)} var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>Loading…</div>
         )}
 
         {files.length > 0 && (
           <>
-            <div style={{ padding: '10px 10px 0', font: '500 12px var(--font-sans)', color: 'var(--color-text-secondary)' }}>
+            <div style={{ padding: '10px 10px 0', font: `500 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-text-secondary)' }}>
               {plural(files.length, 'file')}
               <span style={{ color: 'var(--color-status-green)', marginLeft: 8, fontFamily: 'var(--font-mono)' }}>+{totals.add}</span>
               <span style={{ color: 'var(--color-status-red)', marginLeft: 6, fontFamily: 'var(--font-mono)' }}>-{totals.del}</span>
@@ -336,7 +337,7 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
                 <Trash size={14} />Discard all
               </button>
             </div>
-            <div style={{ padding: '0 10px 6px', font: '400 11.5px/1.4 var(--font-sans)', color: 'var(--color-text-tertiary)' }}>
+            <div style={{ padding: '0 10px 6px', font: `400 ${fontVar(11.5)}/1.4 var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>
               Approve stages a file in git. It does not make a commit.
             </div>
             {diff?.truncated && (
@@ -356,14 +357,14 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
                       <button type="button" aria-expanded={isOpen} aria-label={`${isOpen ? 'Hide' : 'Show'} the diff of ${f.path}`} onClick={() => toggle(f.path)}
                         style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: '4px 0 4px 4px', cursor: 'pointer', textAlign: 'left', color: 'var(--color-text-primary)' }}>
                         {isOpen ? <CaretDown size={12} style={{ flexShrink: 0 }} /> : <CaretRight size={12} style={{ flexShrink: 0 }} />}
-                        <span title={st.word} aria-label={st.word} style={{ flexShrink: 0, width: 16, textAlign: 'center', font: '700 11px var(--font-mono)', color: st.color }}>{st.letter}</span>
+                        <span title={st.word} aria-label={st.word} style={{ flexShrink: 0, width: 16, textAlign: 'center', font: `700 ${fontVar(11)} var(--font-mono)`, color: st.color }}>{st.letter}</span>
                         <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                          <span style={{ font: '400 12px var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{f.path}</bdi></span>
-                          {f.oldPath && <span style={{ font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>from {f.oldPath}</span>}
+                          <span style={{ font: `400 ${fontVar(12)} var(--font-mono)`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', direction: 'rtl', textAlign: 'left' }}><bdi>{f.path}</bdi></span>
+                          {f.oldPath && <span style={{ font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>from {f.oldPath}</span>}
                         </span>
                       </button>
-                      {f.staged && <span title="Staged in git. Not committed." style={{ flexShrink: 0, font: '600 10px var(--font-sans)', color: 'var(--color-status-green)', border: '1px solid color-mix(in srgb, var(--color-status-green) 45%, transparent)', borderRadius: 'var(--radius-sm)', padding: '0 5px', lineHeight: '16px' }}>Staged</span>}
-                      <span style={{ flexShrink: 0, font: '500 11px var(--font-mono)', display: 'inline-flex', gap: 5 }}>
+                      {f.staged && <span title="Staged in git. Not committed." style={{ flexShrink: 0, font: `600 ${fontVar(10)} var(--font-sans)`, color: 'var(--color-status-green)', border: '1px solid color-mix(in srgb, var(--color-status-green) 45%, transparent)', borderRadius: 'var(--radius-sm)', padding: '0 5px', lineHeight: '16px' }}>Staged</span>}
+                      <span style={{ flexShrink: 0, font: `500 ${fontVar(11)} var(--font-mono)`, display: 'inline-flex', gap: 5 }}>
                         {f.binary ? <span style={{ color: 'var(--color-text-tertiary)' }}>binary</span> : (
                           <>
                             {f.additions > 0 && <span style={{ color: 'var(--color-status-green)' }}>+{f.additions}</span>}
@@ -395,7 +396,7 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
                             <>
                               {parsePatch(f.patch).map((h, i) => (
                                 <div key={i} style={{ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' }}>
-                                  {h.header && <div style={{ padding: '2px 11px', font: '400 10.5px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.header}</div>}
+                                  {h.header && <div style={{ padding: '2px 11px', font: `400 ${fontVar(10.5)} var(--font-mono)`, color: 'var(--color-text-tertiary)', background: 'var(--color-elevated)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.header}</div>}
                                   <Hunk lines={h.lines} />
                                 </div>
                               ))}
@@ -418,16 +419,16 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
 
         {idle.length > 0 && (
           <div style={{ marginTop: 14, borderTop: '1px solid var(--color-border)' }}>
-            <div style={{ padding: '10px 10px 2px', font: '600 12px var(--font-sans)', color: 'var(--color-text-secondary)' }}>Worktrees with no thread</div>
-            <div style={{ padding: '0 10px 6px', font: '400 11.5px/1.4 var(--font-sans)', color: 'var(--color-text-tertiary)' }}>
+            <div style={{ padding: '10px 10px 2px', font: `600 ${fontVar(12)} var(--font-sans)`, color: 'var(--color-text-secondary)' }}>Worktrees with no thread</div>
+            <div style={{ padding: '0 10px 6px', font: `400 ${fontVar(11.5)}/1.4 var(--font-sans)`, color: 'var(--color-text-tertiary)' }}>
               Dispatch made these for threads that are archived now. You can remove one when it has no uncommitted changes.
             </div>
             {idle.map((w) => (
               <div key={w.path} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderTop: '1px solid var(--color-border)', minWidth: 0 }}>
                 <GitBranch size={13} style={{ flexShrink: 0, color: 'var(--color-text-tertiary)' }} />
                 <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ font: '400 12px var(--font-mono)', color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.branch}</span>
-                  <span style={{ font: '400 11px var(--font-sans)', color: w.dirty ? 'var(--color-status-amber)' : 'var(--color-text-tertiary)' }}>
+                  <span style={{ font: `400 ${fontVar(12)} var(--font-mono)`, color: 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.branch}</span>
+                  <span style={{ font: `400 ${fontVar(11)} var(--font-sans)`, color: w.dirty ? 'var(--color-status-amber)' : 'var(--color-text-tertiary)' }}>
                     {w.dirty ? 'Has uncommitted changes. Dispatch does not remove it.' : 'No uncommitted changes.'}
                   </span>
                 </span>
@@ -444,4 +445,4 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
   );
 }
 
-const EMPTY_PATCH: React.CSSProperties = { padding: '8px 11px', font: '400 12px/1.45 var(--font-sans)', color: 'var(--color-text-tertiary)' };
+const EMPTY_PATCH: React.CSSProperties = { padding: '8px 11px', font: `400 ${fontVar(12)}/1.45 var(--font-sans)`, color: 'var(--color-text-tertiary)' };

@@ -1,4 +1,5 @@
 import { TerminalWindow } from '@phosphor-icons/react';
+import { fontVar } from '../../lib/fontSize';
 
 const ACCENT = 'var(--color-accent)';
 /** Hairline for the control border. */
@@ -89,7 +90,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
               onClick={() => onSelect(h.id)}
               style={{
                 flex: 'none', display: 'flex', alignItems: 'center', gap: 7, height: 40, padding: '0 12px 0 10px',
-                borderRadius: 'var(--radius-2xl)', cursor: 'pointer', font: '600 12.5px var(--font-sans)',
+                borderRadius: 'var(--radius-2xl)', cursor: 'pointer', font: `600 ${fontVar(12.5)} var(--font-sans)`,
                 background: on ? ON_BG : 'var(--color-elevated)',
                 border: `1px solid ${on ? 'color-mix(in srgb, var(--color-accent) 50%, transparent)' : BORDER}`,
                 color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
@@ -98,7 +99,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
               }}>
               <span style={{ display: 'flex', opacity: on ? 1 : 0.7 }}><Mark size={size.mobile} /></span>
               <div style={{ whiteSpace: 'nowrap' }}>{h.label}</div>
-              {!canRun && <div style={{ font: '600 9.5px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>}
+              {!canRun && <div style={{ font: `600 ${fontVar(9.5)} var(--font-mono)`, letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>}
             </button>
           );
         })}
@@ -118,7 +119,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
             onClick={() => onSelect(h.id)}
             style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '10px 4px 9px',
-              borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', font: '600 11px var(--font-sans)',
+              borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', font: `600 ${fontVar(11)} var(--font-sans)`,
               background: on ? ON_BG : 'transparent',
               color: on ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
               boxShadow: on ? ON_RING : 'none',
@@ -129,7 +130,7 @@ export function HarnessStrip({ harnesses, value, onSelect, isAvailable, mobile, 
             }}>
             <span style={{ display: 'flex', opacity: on ? 1 : 0.7 }}><Mark size={size.desktop} /></span>
             <div style={{ whiteSpace: 'nowrap' }}>{h.label}</div>
-            {!canRun && <div style={{ font: '600 9px var(--font-mono)', letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>}
+            {!canRun && <div style={{ font: `600 ${fontVar(9)} var(--font-mono)`, letterSpacing: '.06em', textTransform: 'uppercase', color: ACCENT }}>Install</div>}
           </button>
         );
       })}

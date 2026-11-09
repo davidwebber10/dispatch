@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Plus, TrashSimple } from '@phosphor-icons/react';
 import { parseCsv, serializeCsv, editCell, insertRow, deleteRow, columnCount, toTsv, type CsvDoc } from '../../lib/csv';
 import { copyText } from '../../lib/clipboard';
+import { fontVar } from '../../lib/fontSize';
 
 const ROW_H = 28;                // fixed row height — what makes windowing arithmetic possible
 const OVERSCAN = 10;
@@ -109,7 +110,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
   // would silently corrupt the user's data. Raw mode is still right there.
   if (!parsed.doc) {
     return (
-      <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: '400 12px var(--font-mono)' }}>
+      <div style={{ padding: 16, color: 'var(--color-text-secondary)', font: `400 ${fontVar(12)} var(--font-mono)` }}>
         This file could not be parsed as CSV ({parsed.error}). Switch to <strong>Raw</strong> to edit it as text.
       </div>
     );
@@ -260,7 +261,7 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
         onScroll={(e) => { setScrollTop(e.currentTarget.scrollTop); setViewportH(e.currentTarget.clientHeight); }}
         style={{ flex: 1, minHeight: 0, overflow: 'auto', outline: 'none' }}
       >
-        <table style={{ borderCollapse: 'collapse', font: '400 11.5px var(--font-mono)', minWidth: '100%' }}>
+        <table style={{ borderCollapse: 'collapse', font: `400 ${fontVar(11.5)} var(--font-mono)`, minWidth: '100%' }}>
           <thead>
             <tr>
               <th style={{ ...TH, ...GUTTER, position: 'sticky', top: 0, left: 0, zIndex: 2 }} />
@@ -319,11 +320,11 @@ export function CsvGrid({ content, path, onChange }: { content: string; path: st
           </tbody>
         </table>
       </div>
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderTop: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11 }}>
+      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderTop: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: fontVar(11) }}>
         <button
           title="Add row"
           onClick={() => commit(insertRow(doc, doc.rows.length))}
-          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: 11 }}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', cursor: 'pointer', padding: '3px 8px', fontSize: fontVar(11) }}
         >
           <Plus size={12} /> Add row
         </button>
@@ -366,7 +367,7 @@ function CellInput({ draft, setDraft, onCommit, onCancel }: {
         else if (e.key === 'Tab') { e.preventDefault(); onCommit('right'); }
         else if (e.key === 'Escape') { e.preventDefault(); cancelledRef.current = true; onCancel(); }
       }}
-      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-primary)', font: '400 11.5px var(--font-mono)', padding: '1px 3px', outline: 'none' }}
+      style={{ width: '100%', background: 'var(--color-terminal)', border: '1px solid var(--color-accent)', borderRadius: 'var(--radius-xs)', color: 'var(--color-text-primary)', font: `400 ${fontVar(11.5)} var(--font-mono)`, padding: '1px 3px', outline: 'none' }}
     />
   );
 }

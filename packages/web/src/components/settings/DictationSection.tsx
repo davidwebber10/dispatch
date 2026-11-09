@@ -7,10 +7,11 @@ import { api } from '../../api/client';
 import { SettingsPage, SettingsGroup, SettingsRow, StatusMark } from './ui';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { Select } from '../common/Select';
+import { fontVar } from '../../lib/fontSize';
 
 /** One width for the three pickers, so their edges line up down the card. */
 const pick: React.CSSProperties = { width: 220, maxWidth: '58vw' };
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 12 };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: fontVar(12) };
 
 /**
  * Settings → Dictation: the speech-to-text provider, model and the Doppler secret holding its key,

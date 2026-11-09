@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowsDownUp } from '@phosphor-icons/react';
+import { fontVar } from '../../lib/fontSize';
 
 interface SortMenuProps {
   value: string;
@@ -63,10 +64,10 @@ export function SortMenu({ value, options, onChange, isMobile, buttonStyle, icon
         <>
           <div data-testid="sort-menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 300 }} />
           <div data-testid="sort-menu-panel" role="menu" aria-label="Sort by" style={{ position: 'fixed', top: pos.top, right: pos.right, zIndex: 301, minWidth: isMobile ? 200 : 168, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: 4, boxShadow: '0 20px 50px -20px var(--color-shadow-strong)' }}>
-            <div style={{ font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>SORT BY</div>
+            <div style={{ font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', color: 'var(--color-text-tertiary)', padding: '4px 8px' }}>SORT BY</div>
             {options.map(([v, label]) => (
               <button key={v} role="menuitem" onClick={(e) => { e.stopPropagation(); onChange(v); setOpen(false); }}
-                style={{ display: 'block', width: '100%', textAlign: 'left', padding: isMobile ? '10px 8px' : '6px 8px', background: value === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: isMobile ? 15 : 13 }}>
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: isMobile ? '10px 8px' : '6px 8px', background: value === v ? 'var(--color-hover)' : 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-primary)', cursor: 'pointer', fontSize: fontVar(isMobile ? 15 : 13) }}>
                 {label}{value === v ? '  ·' : ''}
               </button>
             ))}

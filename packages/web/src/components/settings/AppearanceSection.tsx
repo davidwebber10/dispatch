@@ -6,12 +6,13 @@ import { useActiveTheme } from '../../themes/apply';
 import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet } from './ui';
 import { Select } from '../common/Select';
 import { Segmented } from '../common/Segmented';
+import { fontVar } from '../../lib/fontSize';
 
 const DOC_EDITORS = [{ value: '', label: 'None' }, { value: 'vscode', label: 'VS Code' }, { value: 'cursor', label: 'Cursor' }, { value: 'zed', label: 'Zed' }];
 const DENSITIES: { value: Density; label: string }[] = [{ value: 'compact', label: 'Compact' }, { value: 'cozy', label: 'Cozy' }, { value: 'roomy', label: 'Roomy' }];
 
 const tileGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: 8 };
-const subLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '4px 0 -2px' };
+const subLabel: React.CSSProperties = { font: `500 ${fontVar(10)} var(--font-mono)`, letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', margin: '4px 0 -2px' };
 
 /** A theme in miniature: its canvas, a pane, two lines of text and the accent. Colors are the theme's own values. */
 function Swatch({ theme, height = 44 }: { theme: Theme; height?: number }) {
@@ -43,7 +44,7 @@ function ThemeTile({ label, on, onPick, children }: { label: string; on: boolean
     <button type="button" role="radio" aria-checked={on} aria-label={label} onClick={onPick}
       style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 6, minWidth: 0, background: on ? 'var(--color-hover)' : 'transparent', border: `1px solid ${on ? 'var(--color-accent)' : 'var(--color-border-strong)'}`, borderRadius: 'var(--radius-md)', cursor: 'pointer', textAlign: 'left' }}>
       {children}
-      <span style={{ fontSize: 12, fontWeight: on ? 600 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ fontSize: fontVar(12), fontWeight: on ? 600 : 400, color: on ? 'var(--color-text-primary)' : 'var(--color-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   );
 }
@@ -95,7 +96,7 @@ function AccentPicker() {
         <span aria-hidden style={{ width: 20, height: 20, borderRadius: '50%', background: themeAccent, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {accent === '' ? <Check size={12} weight="bold" color={onAccent(themeAccent)} /> : <Palette size={12} weight="bold" color={onAccent(themeAccent)} />}
         </span>
-        <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Theme</span>
+        <span style={{ fontSize: fontVar(12.5), color: 'var(--color-text-secondary)' }}>Theme</span>
       </button>
       {ACCENTS.map((c) => {
         const on = accent.toLowerCase() === c.toLowerCase();
@@ -152,7 +153,7 @@ export function AppearanceSection() {
   const set = useSettings.getState;
   const [themesOpen, setThemesOpen] = useState(false);
   // The swatches show the pick; only a custom color, which has no swatch of its own, says it in words.
-  const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{accent.toUpperCase()}</span> : null;
+  const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: fontVar(12) }}>{accent.toUpperCase()}</span> : null;
 
   return (
     <SettingsPage intro="These settings apply to this device only, so a phone and a computer can differ.">

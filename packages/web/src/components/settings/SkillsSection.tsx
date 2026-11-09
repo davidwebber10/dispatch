@@ -7,8 +7,9 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import { Select } from '../common/Select';
 import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, SettingsDisclosure, EmptyState, StatusMark, Toggle, codeChip } from './ui';
 import { useSubPage } from './subPageNav';
+import { fontVar } from '../../lib/fontSize';
 
-const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5 };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: fontVar(11.5) };
 
 /**
  * Settings → Skills (docs/superpowers/specs/2026-11-07-plugins-design.md, section 8): every skill
@@ -38,7 +39,7 @@ export function SkillsSection() {
   const flipHere = (s: SkillRow) => void run(() => (s.enabledHere ? api.disableSkill(s.id, project) : api.enableSkill(s.id, project)));
   const remove = (s: SkillRow) => { setRemoving(null); page.close(); void run(() => api.removeSkill(s.id)); };
 
-  const errLine = err && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{err}</div>;
+  const errLine = err && <div role="alert" style={{ fontSize: fontVar(12.5), color: 'var(--color-status-red)' }}>{err}</div>;
   const confirm = (
     <ConfirmModal open={removing !== null} danger title={`Remove ${removing?.name ?? 'this skill'}?`} confirmLabel="Remove skill"
       message="Dispatch deletes its folder under ~/.dispatch/skills, so no new thread gets its text. A skill from a marketplace can be installed again from Plugins."
@@ -61,7 +62,7 @@ export function SkillsSection() {
             {project && <SettingsRow label={`Enabled for ${projectName}`} hint="Only this project's threads." control={<Toggle on={s.enabledHere === true} label={`Enabled for ${projectName}`} onClick={() => flipHere(s)} />} />}
           </SettingsGroup>
           <SettingsGroup title="Text" footer="Threads get this text under the skill's name, with the folder's path so the model can read the rest.">
-            <pre data-testid="skill-text" style={{ margin: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: '12px/1.55 var(--font-mono)', color: 'var(--color-text-secondary)', padding: '11px 12px' }}>{s.text}</pre>
+            <pre data-testid="skill-text" style={{ margin: 0, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', font: `${fontVar(12)}/1.55 var(--font-mono)`, color: 'var(--color-text-secondary)', padding: '11px 12px' }}>{s.text}</pre>
           </SettingsGroup>
           <SettingsDisclosure label="Developer" hint="The folder and where it came from.">
             <SettingsRow label="Folder" hint={<span style={{ ...mono, overflowWrap: 'anywhere' }}>{s.folder}</span>} />
