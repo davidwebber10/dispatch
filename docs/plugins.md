@@ -500,7 +500,7 @@ capTokens }`, and at the cap assist answers 429 `{ error: 'budget', window: 'unk
   `/api/plugins/<id>/worker/<path>`: the owner, the plugin's own key, and thread keys when the
   plugin grants `threads:call-worker`. The daemon forwards the method, path, query, headers and
   body, drops the caller's credential, and adds `X-Dispatch-Principal` (`owner`, `thread:<id>`,
-  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialized (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch(d.id, 'jobs/run', { method: 'POST' })`.
+  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialized (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch('jobs/run', { method: 'POST' })`.
 
 ## Bundled plugins
 
