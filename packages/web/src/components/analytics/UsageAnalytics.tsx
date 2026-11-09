@@ -17,6 +17,7 @@ import type {
   AnalyticsPoint, AnalyticsRecords, AnalyticsSummary, AnalyticsTopRow,
 } from '../../api/types';
 import { fontVar } from '../../lib/fontSize';
+import { useSettings } from '../../stores/settings';
 
 /* ------------------------------------------------------------------- data */
 
@@ -116,6 +117,8 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
   const themeId = useActiveTheme((s) => s.theme.id);
   const theme = useMemo(() => resolveChartTheme(), [themeId]);
+  // Chart text is SVG that Recharts sizes and measures itself, so it gets a number: the pixel size times the text scale.
+  const textScale = useSettings((s) => s.textScale);
 
   const [data, setData] = useState<Loaded | null>(null);
   const [domain, setDomain] = useState<Domain | null>(null);
@@ -285,7 +288,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
   const noUsageTitle = 'No usage was ever reported for these turns, so there is nothing to count. This is not a measured zero.';
 
   const chartH = isMobile ? 200 : 240;
-  const axisTick = { fill: theme.muted, fontSize: 11 };
+  const axisTick = { fill: theme.muted, fontSize: 11 * textScale };
   const tokenTooltip = chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)]);
   const legend = (
     <Legend
@@ -536,13 +539,14 @@ function RankedBars({ rows, color, theme, height }: {
   theme: ChartTheme;
   height: number;
 }) {
+  const textScale = useSettings((s) => s.textScale);
   if (rows.length === 0) return <NoData height={height} />;
   return (
     <ResponsiveContainer width="100%" height={Math.max(height, rows.length * 26)} minHeight={height}>
       <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid stroke={theme.grid} horizontal={false} />
-        <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey="label" width={116} tick={{ fill: theme.muted, fontSize: 11 }} tickLine={false} axisLine={false} />
+        <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
+        <YAxis type="category" dataKey="label" width={116} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
         {chartTooltip(theme, (v) => [fmtTokens(Number(v)), 'tokens'])}
         <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false}>
           {rows.map((r) => <Cell key={r.key} fill={color(r.key)} />)}

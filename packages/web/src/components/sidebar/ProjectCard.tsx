@@ -127,7 +127,7 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
         transition: dimmed ? 'background .8s ease, color .8s ease' : 'none',
         background: showActive ? 'var(--color-selected)' : hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         borderRadius: isMobile ? 0 : (showActive ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: showActive ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs, fontWeight: showActive ? 600 : isMobile ? 450 : 400,
+        color: showActive ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: fontVar(isMobile ? 16 : fs), fontWeight: showActive ? 600 : isMobile ? 450 : 400,
         textAlign: 'left', cursor: 'pointer',
         // Long-press opens the options menu — stop iOS from selecting the label
         // text / showing the callout, and kill the tap-flash.
@@ -223,7 +223,7 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
         display: 'flex', alignItems: 'center', gap: isMobile ? 12 : 9, width: '100%', padding: isMobile ? '15px 12px' : `${padY}px 9px`,
         background: active ? 'var(--color-selected)' : hover ? 'color-mix(in srgb, var(--color-text-emphasis) 5%, transparent)' : 'transparent',
         borderRadius: isMobile ? 0 : (active ? 0 : 'var(--radius-sm)'), border: 'none', borderBottom: isMobile ? '1px solid var(--color-border)' : 'none',
-        color: active ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: isMobile ? 16 : fs,
+        color: active ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', fontSize: fontVar(isMobile ? 16 : fs),
         fontWeight: active ? 600 : isMobile ? 450 : 400, textAlign: 'left', cursor: 'pointer', opacity: agent.enabled ? 1 : 0.55,
       }}
     >
@@ -416,7 +416,7 @@ export const ProjectCard = memo(function ProjectCard({ session, active, open, on
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontWeight: 600, fontSize: isMobile ? 19 : pfs, color: (!isMobile && active) ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
+          <span style={{ fontWeight: 600, fontSize: fontVar(isMobile ? 19 : pfs), color: (!isMobile && active) ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{session.name}</span>
           {!isMobile && (
             <span title={session.lastActivityAt ?? ''} style={{ marginLeft: 'auto', flexShrink: 0, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', lineHeight: 1 }}>
               {indicator === 'working' ? <Spinner size={11} />

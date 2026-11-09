@@ -5,6 +5,7 @@ import { readBest, recordBest } from '../popScore';
 // In its own small module, so UpdateModal can read it without the game's code (W2-E).
 import { blasterActivity } from './activity';
 import { fontVar } from '../../../lib/fontSize';
+import { useSettings } from '../../../stores/settings';
 export { blasterActivity };
 
 // literal color: the blaster is a self-contained game scene drawn on a dark canvas in every theme, so its palette and the canvas fills below stay literal.
@@ -110,7 +111,8 @@ function draw(ctx: CanvasRenderingContext2D, g: Game, wall: Rect | null, joy: { 
   }
   if (g.banner && g.time < g.banner.until) {
     ctx.fillStyle = 'rgba(62,207,106,.85)';
-    ctx.font = '600 22px ui-monospace, SFMono-Regular, Menlo, monospace';
+    // A canvas cannot read CSS variables: the banner's pixel size times the text scale.
+    ctx.font = `600 ${22 * useSettings.getState().textScale}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(g.banner.text, w / 2, Math.max(60, (wall ? wall.y : h / 2) - 30));
   }

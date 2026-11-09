@@ -13,6 +13,7 @@ import type {
 } from '../../api/types';
 import { useDispatchName } from '../../stores/settings';
 import { fontVar } from '../../lib/fontSize';
+import { useSettings } from '../../stores/settings';
 
 /*
  * The Control Plane view of the Analytics screen
@@ -84,6 +85,8 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
   // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
   const themeId = useActiveTheme((s) => s.theme.id);
   const theme = useMemo(() => resolveChartTheme(), [themeId]);
+  // Chart text is SVG that Recharts sizes and measures itself, so it gets a number: the pixel size times the text scale.
+  const textScale = useSettings((s) => s.textScale);
   // The same live signal as Usage: the daemon bumps it every time a turn closes.
   const rev = useAnalyticsFeed((s) => s.rev);
   const [data, setData] = useState<Payload | null>(null);
@@ -125,7 +128,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
   const settling = data.weeks.filter((week) => weekEnd(week) > data.settlingSince);
 
   const chartH = isMobile ? 200 : 240;
-  const axisTick = { fill: theme.muted, fontSize: 11 };
+  const axisTick = { fill: theme.muted, fontSize: 11 * textScale };
   const legend = (
     <Legend
       formatter={(v: string) => <span style={{ color: theme.muted, fontSize: fontVar(11) }}>{v}</span>}
@@ -238,7 +241,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
                 {settling.length > 0 && (
                   <ReferenceArea
                     x1={settling[0]} x2={settling[settling.length - 1]} fill="url(#cp-settling)" fillOpacity={1} stroke="none"
-                    label={{ value: 'still settling · 7-day idle rule', position: 'insideTop', fill: theme.muted, fontSize: 10 }}
+                    label={{ value: 'still settling · 7-day idle rule', position: 'insideTop', fill: theme.muted, fontSize: 10 * textScale }}
                   />
                 )}
                 {/* One series, named by the title. Pink: a mission is the Control Plane's unit of work. */}
