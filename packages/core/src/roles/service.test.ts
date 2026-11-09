@@ -330,7 +330,7 @@ describe('RolesService — role run lifecycle (Task 6)', () => {
    *  so simulate the daemon's own read-merge-write instead of clobbering transport/roleRun/etc. */
   function setLastOutcome(terminalId: string, lastOutcome: Record<string, unknown>): void {
     const existing = JSON.parse(terminalsDb.getById(db, terminalId)!.config || '{}');
-    terminalsDb.updateConfig(db, terminalId, { ...existing, lastOutcome });
+    terminalsDb.writeConfigRaw(db, terminalId, { ...existing, lastOutcome });
   }
 
   it('runNow on a role schedule spawns a structured terminal with the exact config shape and sends the seed as coordinator', () => {
@@ -611,7 +611,7 @@ describe('RolesService — supervision: retry-once, 2-night auto-disable, wall c
 
   function setLastOutcome(terminalId: string, lastOutcome: Record<string, unknown>): void {
     const existing = JSON.parse(terminalsDb.getById(db, terminalId)!.config || '{}');
-    terminalsDb.updateConfig(db, terminalId, { ...existing, lastOutcome });
+    terminalsDb.writeConfigRaw(db, terminalId, { ...existing, lastOutcome });
   }
 
   async function settleFailed(terminalId: string): Promise<void> {
@@ -980,7 +980,7 @@ Read every role's log and write the digest.`;
 
   function setLastOutcome(terminalId: string, lastOutcome: Record<string, unknown>): void {
     const existing = JSON.parse(terminalsDb.getById(db, terminalId)!.config || '{}');
-    terminalsDb.updateConfig(db, terminalId, { ...existing, lastOutcome });
+    terminalsDb.writeConfigRaw(db, terminalId, { ...existing, lastOutcome });
   }
 
   function fire(roleName: string, raw: string): { runId: string; terminalId: string; sessionId: string } {

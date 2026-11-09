@@ -175,7 +175,12 @@ export function upgradeAutoLabel(db: Database.Database, id: string, from: string
   return r.changes > 0;
 }
 
-export function updateConfig(db: Database.Database, id: string, config: Record<string, any>): void {
+/**
+ * The raw write of the whole config column. For `ThreadConfigStore` (sessions/thread-config.ts) only:
+ * every other writer names the keys it changes with `store.patch`, so it cannot drop another writer's
+ * key (engineering program W2-A). tests/sessions/no-raw-config-write.test.ts guards this.
+ */
+export function writeConfigRaw(db: Database.Database, id: string, config: Record<string, unknown>): void {
   db.prepare('UPDATE terminals SET config = ? WHERE id = ?').run(JSON.stringify(config), id);
 }
 

@@ -35,7 +35,7 @@ describe('usage recorder', () => {
     sessionsDb.create(d, { id: projectId, provider: 'claude-code', name: 'P', workingDir: '/tmp/p' });
     termId = randomUUID();
     terminalsDb.create(d, { id: termId, sessionId: projectId, type: 'claude-code', label: 'chat' });
-    terminalsDb.updateConfig(d, termId, { role: 'coordinator' });
+    terminalsDb.writeConfigRaw(d, termId, { role: 'coordinator' });
     mgr = new EventEmitter();
     attachUsageRecorder(mgr, { db: d });
   });
@@ -125,7 +125,7 @@ describe('usage recorder', () => {
    * single model across two series. The frame knows the real id, so it wins.
    */
   it('replaces the config tier alias with the model the frame names', () => {
-    terminalsDb.updateConfig(d, termId, { role: 'coordinator', model: 'sonnet' });
+    terminalsDb.writeConfigRaw(d, termId, { role: 'coordinator', model: 'sonnet' });
     mgr.emit('busy', termId);
     // The row really did open with the alias — otherwise this test would pass for
     // the wrong reason.
@@ -147,7 +147,7 @@ describe('usage recorder', () => {
    * So the guard never fires and the Codex slug from config survives.
    */
   it('keeps a Codex slug when the frame names no model', () => {
-    terminalsDb.updateConfig(d, termId, { role: 'coordinator', model: 'gpt-5.6-sol' });
+    terminalsDb.writeConfigRaw(d, termId, { role: 'coordinator', model: 'gpt-5.6-sol' });
     mgr.emit('busy', termId);
     mgr.emit('event', termId, {
       type: 'assistant',

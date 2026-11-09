@@ -204,7 +204,7 @@ describe('interim recap timer', () => {
 
   it('only an item sent after the last recap counts; an imported, closed, older or on-default one does not', () => {
     const { db, svc, sent } = open();
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: new Date(T0 + 60_000).toISOString() });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', lastRecapAt: new Date(T0 + 60_000).toISOString() });
     svc.noteAgentCompletion('a');
     sent.mockClear();
     sendItem(db, {}, T0); // before the last recap
@@ -220,7 +220,7 @@ describe('interim recap timer', () => {
 
   it.each(['go', 'decide', 'do'] as const)('a new %s item counts: a new manual step also waits on the user', (kind) => {
     const { db, svc, sent } = open();
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', lastRecapAt: new Date(T0 - 60_000).toISOString() });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', lastRecapAt: new Date(T0 - 60_000).toISOString() });
     svc.noteAgentCompletion('a');
     sendItem(db, { kind, text: 'Check the banner on staging.' }, T0 + 60_000);
     sendItem(db, { kind, text: 'Rotate the test key.' }, T0 + 120_000);
@@ -231,7 +231,7 @@ describe('interim recap timer', () => {
 
   it('ignores a non-coordinator row that carries interimDueAt', () => {
     const { db, svc, sent } = open();
-    terminalsDb.updateConfig(db, 'a', { role: 'agent', interimDueAt: DUE });
+    terminalsDb.writeConfigRaw(db, 'a', { role: 'agent', interimDueAt: DUE });
     expect(interimRecapTick(db, svc, T0 + INTERIM_RECAP_MS)).toEqual([]);
     expect(sent).not.toHaveBeenCalled();
     expect(JSON.parse(terminalsDb.getById(db, 'a')!.config!).interimDueAt).toBe(DUE);
@@ -273,7 +273,7 @@ describe('startInterimRecapLoop — the production sweep', () => {
     vi.advanceTimersByTime(60_000);
     expect(sent.mock.calls).toEqual([['coord', formatInterimNotice(1, 1)]]);
     clearInterval(loop);
-    terminalsDb.updateConfig(db, 'coord', { role: 'coordinator', interimDueAt: new Date(Date.now()).toISOString() });
+    terminalsDb.writeConfigRaw(db, 'coord', { role: 'coordinator', interimDueAt: new Date(Date.now()).toISOString() });
     vi.advanceTimersByTime(5 * 60_000);
     expect(sent).toHaveBeenCalledTimes(1);
     db.close();

@@ -489,7 +489,7 @@ describe('a change that waits for the Codex model list is checked again afterwar
     p.catch(() => {});
     await tick();
     const row = terminalsDb.getById(db, 'x1')!;
-    terminalsDb.updateConfig(db, 'x1', { ...JSON.parse(row.config || '{}'), transport: undefined });
+    terminalsDb.writeConfigRaw(db, 'x1', { ...JSON.parse(row.config || '{}'), transport: undefined });
     pty.alive.add('x1'); pty.aliveOverride = true;
     await expect(p).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/CLI/) });
     expect(codex.calls).toEqual([]);
