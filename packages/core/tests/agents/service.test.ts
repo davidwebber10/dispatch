@@ -549,3 +549,101 @@ describe('AgentService', () => {
   });
 
 });
+
+// W1-D item 2: a daemon restart kills every runner process. A run row left open then blocked its
+// schedule for ever, because listDueSchedules skips a schedule that has an open run.
+describe('AgentService.reconcileRunsAtBoot', () => {
+  const recurring = (service: AgentService, name = 'Nightly') => {
+    const s = service.createSchedule({
+      projectId: 'proj-1', name, provider: 'codex', workingDir: '/srv/tenex', prompt: 'Fix CI',
+      scheduleKind: 'recurring', runAt: null, recurrenceRule: 'FREQ=DAILY;BYHOUR=12;BYMINUTE=0', timezone: 'UTC',
+      enabled: true, nextRunAt: null, defaultTerminalLabel: name,
+    });
+    agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-08T12:00:00.000Z' });
+    return s;
+  };
+
+  it('a working run whose terminal is gone is closed at boot and the schedule is due again', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const s = recurring(service);
+    const [run] = service.processDueRuns('2026-05-08T12:01:00.000Z');
+    expect(run.status).toBe('working');
+    // The next day the run is still open (the daemon restarted during it): the schedule is not due.
+    agentsDb.updateSchedule(db, s.id, { enabled: true, nextRunAt: '2026-05-09T12:00:00.000Z' });
+    expect(agentsDb.listDueSchedules(db, '2026-05-09T12:01:00.000Z')).toHaveLength(0);
+
+    // A new daemon: no process is alive.
+    const rebooted = new AgentService(db, sessionService, broadcaster);
+    broadcaster.broadcast.mockClear();
+    const closed = rebooted.reconcileRunsAtBoot(() => false);
+
+    expect(closed.map((r) => r.id)).toEqual([run.id]);
+    const row = agentsDb.getRun(db, run.id)!;
+    expect(row.status).toBe('failed');
+    expect(row.error).toBe('The daemon restarted during this run.');
+    expect(row.completed_at).toBeTruthy();
+    expect(row.unread_since).toBeTruthy();
+    expect(broadcaster.broadcast).toHaveBeenCalledWith({ type: 'agent:run-updated', run: expect.objectContaining({ id: run.id, status: 'failed' }) });
+    expect(agentsDb.listDueSchedules(db, '2026-05-09T12:01:00.000Z').map((d) => d.id)).toEqual([s.id]);
+    // A second call finds nothing to close.
+    expect(rebooted.reconcileRunsAtBoot(() => false)).toEqual([]);
+  });
+
+  it('a run whose terminal is alive stays open', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    recurring(service);
+    const [run] = service.processDueRuns('2026-05-08T12:01:00.000Z');
+    broadcaster.broadcast.mockClear();
+    const isAlive = vi.fn((id: string) => id === 'term-1');
+
+    expect(service.reconcileRunsAtBoot(isAlive)).toEqual([]);
+
+    expect(isAlive).toHaveBeenCalledWith('term-1');
+    expect(agentsDb.getRun(db, run.id)!.status).toBe('working');
+    expect(broadcaster.broadcast).not.toHaveBeenCalled();
+  });
+
+  it('closes every open status and a run with no terminal; a finished run is not touched', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const s = recurring(service);
+    const mk = (id: string, status: agentsDb.AgentRunStatus) => agentsDb.createRun(db, {
+      id, scheduleId: s.id, projectId: 'proj-1', terminalId: null, provider: 'codex', promptSnapshot: 'p', status, error: null, externalSessionId: null,
+    });
+    for (const st of ['queued', 'starting', 'working', 'needs_input', 'succeeded', 'cancelled', 'idle'] as const) mk(`run-${st}`, st);
+    const isAlive = vi.fn(() => true);
+
+    const closed = service.reconcileRunsAtBoot(isAlive);
+
+    expect(closed.map((r) => r.id).sort()).toEqual(['run-needs_input', 'run-queued', 'run-starting', 'run-working']);
+    expect(isAlive).not.toHaveBeenCalled(); // no terminal id to ask about
+    for (const st of ['succeeded', 'cancelled', 'idle']) expect(agentsDb.getRun(db, `run-${st}`)!.status).toBe(st);
+  });
+
+  it('a role run is closed with no retry run', () => {
+    const service = new AgentService(db, sessionService, broadcaster);
+    const roleRunner = { spawnRoleRun: vi.fn(), sweepWallCap: vi.fn(), superviseFinalizedRun: vi.fn() };
+    service.setRoleRunner(roleRunner as any);
+    const schedule = agentsDb.createSchedule(db, {
+      id: 'role-sched', projectId: 'proj-1', name: 'night-shift', provider: 'claude-code', workingDir: '/srv/tenex', prompt: '',
+      scheduleKind: 'recurring', runAt: null, recurrenceRule: 'FREQ=DAILY;BYHOUR=2;BYMINUTE=0', timezone: 'UTC',
+      enabled: true, nextRunAt: '2026-05-09T02:00:00.000Z', defaultTerminalLabel: null, roleName: 'night-shift',
+    });
+    agentsDb.setConsecutiveFailures(db, schedule.id, 1);
+    agentsDb.createRun(db, {
+      id: 'role-run', scheduleId: schedule.id, projectId: 'proj-1', terminalId: null, provider: 'claude-code',
+      promptSnapshot: '', status: 'working', error: null, externalSessionId: null,
+    });
+
+    const closed = service.reconcileRunsAtBoot(() => false);
+
+    expect(closed.map((r) => r.id)).toEqual(['role-run']);
+    expect(agentsDb.getRun(db, 'role-run')!.status).toBe('failed');
+    expect(agentsDb.getRun(db, 'role-run')!.error).toBe('The daemon restarted during this run.');
+    // No retry (attempt 2), no supervision, and the failure count of the role is as it was.
+    expect(agentsDb.listRuns(db, { scheduleId: schedule.id })).toHaveLength(1);
+    expect(roleRunner.spawnRoleRun).not.toHaveBeenCalled();
+    expect(roleRunner.superviseFinalizedRun).not.toHaveBeenCalled();
+    expect(agentsDb.getSchedule(db, schedule.id)!.consecutive_failures).toBe(1);
+    expect(agentsDb.getSchedule(db, schedule.id)!.enabled).toBe(1);
+  });
+});

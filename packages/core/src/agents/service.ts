@@ -208,6 +208,9 @@ interface RunStreamState {
   finalized: boolean;
 }
 
+/** The error text of a run that a daemon restart ended (see reconcileRunsAtBoot). */
+export const RESTART_ERROR = 'The daemon restarted during this run.';
+
 export class AgentService {
   /** Live stream parsers keyed by the runner terminalId. */
   private readonly telemetry = new EventEmitter();
@@ -473,6 +476,30 @@ export class AgentService {
       }
       return run;
     });
+  }
+
+  /**
+   * Boot check for runs that a daemon restart left open (engineering program W1-D). A run in
+   * queued/starting/working/needs_input whose terminal is missing or not alive can never end by
+   * itself, and listDueSchedules skips its schedule while the row stays open. Each such run is
+   * closed as 'failed' and the update is broadcast.
+   *
+   * Call it after the boot kickstart and `reconcileProcesses`, so a thread that was started again
+   * is alive and keeps its run. A role run is closed here directly: no retry run, no change to
+   * `consecutive_failures` (the restart is not the role's failure), no supervision.
+   */
+  reconcileRunsAtBoot(isAlive: (terminalId: string) => boolean): AgentRun[] {
+    if (!this.db.open) return [];
+    const closed: AgentRun[] = [];
+    for (const row of agentsDb.listOpenRuns(this.db)) {
+      if (row.terminal_id && isAlive(row.terminal_id)) continue;
+      const done = agentsDb.finalizeRun(this.db, row.id, { status: 'failed', error: RESTART_ERROR, unread: true });
+      if (!done) continue;
+      const run = toRun(done);
+      this.broadcaster.broadcast({ type: 'agent:run-updated', run });
+      closed.push(run);
+    }
+    return closed;
   }
 
   cancelRun(id: string): AgentRun {
