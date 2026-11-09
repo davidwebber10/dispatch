@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { vi } from 'vitest';
 import { test, expect, describe, it, beforeEach, afterEach } from 'vitest';
@@ -341,5 +342,167 @@ describe('a sheet is a phone thing: the desktop gets a centered modal (2026-11-0
     setWidth(390);
     render(<Modal open sheet title="Choose a theme" onClose={() => {}}><div>body</div></Modal>);
     expect(screen.getByTestId('sheet-panel')).toBeInTheDocument();
+  });
+});
+
+// Keyboard and screen-reader behaviour (engineering program 2026-11-09, W3-E).
+describe('Modal — focus and keyboard', () => {
+  function Opener({ sheet = false, title = 'Rename thread' as string | undefined }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>Open it</button>
+        <button>Other page control</button>
+        <Modal open={open} onClose={() => setOpen(false)} title={title} sheet={sheet}>
+          <input aria-label="Name" />
+          <button>Cancel</button>
+          <button>Save</button>
+        </Modal>
+      </>
+    );
+  }
+  const open = () => { const b = screen.getByText('Open it'); b.focus(); fireEvent.click(b); return b; };
+
+  beforeEach(() => phoneWidth(false));
+
+  it('has role dialog and aria-modal', () => {
+    render(<Opener />);
+    open();
+    const dialog = screen.getByRole('dialog', { name: 'Rename thread' });
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // A labelled title: the dialog's name is the visible heading.
+    const heading = screen.getByRole('heading', { name: 'Rename thread' });
+    expect(dialog.getAttribute('aria-labelledby')).toBe(heading.id);
+    expect(heading.id).not.toBe('');
+  });
+
+  it('moves focus into the dialog when it opens', () => {
+    render(<Opener />);
+    open();
+    expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+  });
+
+  it('keeps a field that takes focus itself', () => {
+    render(<Modal open onClose={() => {}} title="T"><input aria-label="Name" autoFocus /><button>Save</button></Modal>);
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+
+  it('Tab from the last control goes to the first', () => {
+    render(<Opener />);
+    open();
+    const first = screen.getByLabelText('Name');
+    const last = screen.getByText('Save');
+    last.focus();
+    const ev = fireEvent.keyDown(last, { key: 'Tab' });
+    expect(ev).toBe(false); // the browser's own move is stopped
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('Shift+Tab from the first control goes to the last', () => {
+    render(<Opener />);
+    open();
+    const first = screen.getByLabelText('Name');
+    first.focus();
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(screen.getByText('Save'));
+  });
+
+  it('Tab from the dialog itself, or from outside it, goes to the first control', () => {
+    render(<Opener />);
+    open();
+    fireEvent.keyDown(document.activeElement!, { key: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+    const outside = screen.getByText('Other page control');
+    outside.focus();
+    fireEvent.keyDown(outside, { key: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByLabelText('Name'));
+  });
+
+  it('a Tab in the middle is left to the browser', () => {
+    render(<Opener />);
+    open();
+    const mid = screen.getByText('Cancel');
+    mid.focus();
+    expect(fireEvent.keyDown(mid, { key: 'Tab' })).toBe(true);
+    expect(document.activeElement).toBe(mid);
+  });
+
+  it('focus returns to the opener', () => {
+    render(<Opener />);
+    const opener = open();
+    screen.getByText('Save').focus();
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does not take focus back from a control the app focused on close', () => {
+    function Picker() {
+      const [open, setOpen] = useState(false);
+      const field = useRef<HTMLInputElement>(null);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Open it</button>
+          <input aria-label="Composer" ref={field} />
+          <Modal open={open} onClose={() => setOpen(false)} title="Commands">
+            <button onClick={() => { field.current?.focus(); setOpen(false); }}>Pick</button>
+          </Modal>
+        </>
+      );
+    }
+    render(<Picker />);
+    open();
+    fireEvent.click(screen.getByText('Pick'));
+    expect(document.activeElement).toBe(screen.getByLabelText('Composer'));
+  });
+
+  it('Escape closes a card, not only a sheet', () => {
+    const onClose = vi.fn();
+    render(<Modal open onClose={onClose} title="T"><button>Save</button></Modal>);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape closes only the dialog on top', () => {
+    const outer = vi.fn();
+    const inner = vi.fn();
+    function Two() {
+      const [confirm, setConfirm] = useState(true);
+      return (
+        <Modal open onClose={outer} title="Outer">
+          <button>Outer control</button>
+          <Modal open={confirm} onClose={() => { inner(); setConfirm(false); }} title="Inner"><button>Inner control</button></Modal>
+        </Modal>
+      );
+    }
+    render(<Two />);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(outer).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves Escape to a menu that already handled it', () => {
+    const onClose = vi.fn();
+    render(<Modal open onClose={onClose} title="T"><input aria-label="Search" onKeyDown={(e) => { if (e.key === 'Escape') e.preventDefault(); }} /></Modal>);
+    fireEvent.keyDown(screen.getByLabelText('Search'), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('an untitled dialog is still a dialog, and the Close control is a labelled button', () => {
+    render(<Opener sheet title={undefined} />);
+    open();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).not.toHaveAttribute('aria-labelledby');
+    expect(screen.getByRole('button', { name: 'Close' })).toHaveClass('ui-icon-btn');
+  });
+
+  it('takes its layer from the layer token, not a literal', () => {
+    render(<Opener />);
+    open();
+    const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;
+    expect(backdrop.style.zIndex).toBe('var(--z-overlay)');
   });
 });
