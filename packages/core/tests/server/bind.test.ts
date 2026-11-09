@@ -101,7 +101,9 @@ describe('the daemon', () => {
 
   function start(bind: string | undefined): { port: number; out: () => string; exited: Promise<number | null> } {
     home = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-bind-'));
-    const port = 40000 + Math.floor(Math.random() * 20000);
+    // Below the OS ephemeral range (49152 and up on macOS): with DISPATCH_BIND the daemon holds no wildcard socket, and
+    // the kernel could hand the same port number to another test's `listen(0)` server.
+    const port = 20000 + Math.floor(Math.random() * 19000);
     let output = '';
     // The same catch as the direct run at the end of server.ts.
     child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
