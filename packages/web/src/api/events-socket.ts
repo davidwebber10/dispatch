@@ -1,5 +1,7 @@
 import { wsUrl } from '../lib/basePath';
-export type ServerEvent = { type: string; [k: string]: unknown };
+import { parseServerEvent, type ServerEvent } from './server-events';
+// The union lives in ./server-events (shared with core). Re-exported so older imports keep their path.
+export type { ServerEvent } from './server-events';
 
 export interface WebSocketLike {
   onopen: (() => void) | null;
@@ -50,7 +52,9 @@ export function createEventsSocket(opts: Opts): EventsSocket {
     ws.onopen = () => { backoff = 500; opts.onStatus('open'); };
     ws.onmessage = (ev) => {
       if (ev.data === PONG) { const w = pongWaiters; pongWaiters = []; w.forEach((f) => f()); return; }
-      try { opts.onEvent(JSON.parse(ev.data) as ServerEvent); } catch { /* ignore malformed */ }
+      // A frame that is not an object with a string `type`, or a known type with a bad field, is dropped.
+      const e = parseServerEvent(ev.data);
+      if (e) opts.onEvent(e);
     };
     ws.onclose = () => {
       opts.onStatus('closed');
