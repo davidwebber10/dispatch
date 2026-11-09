@@ -75,3 +75,21 @@ proof like `/effort`; other agent threads stay blocked.
   spawn; the 15 s CLI timeout message says the change may still apply. Not fixed: the CLI can still take a change after the 15 s
   limit while Dispatch has reported it as not answered (the chip may then show a model the config does not have until the next frame).
 - Real-turn effort check: not run. A scratch daemon has no Claude sign-in and the daemon has no data-directory setting.
+
+## Review round 5 (the last fix round)
+
+- A Codex `turn/start` rejection is a refusal only when the app-server ANSWERED with an error (`CodexRpcError`) and the session is
+  still the current one. A dead app-server, a timeout, or a late answer that reaches an old session no longer drops a saved effort
+  or removes a replacement's identical pick.
+- A refused model sends the restored model to connected clients (a `system/model` frame without "switched", also kept in the replay
+  ring), so the chip shows the model the thread runs again.
+- Exit during a change: when a replacement process is already running, the saved pick is now applied to it (and taken back, with a
+  notice, if the replacement refuses it). The tests assert the replacement's live value, not only the saved one.
+- Chat settings: a generation counter keeps the newest value. An older GET or PUT answer cannot overwrite a newer broadcast, and a
+  reconnect reloads the setting even when the history is not at its end.
+- Grok and OpenCode: one 15 s deadline covers readiness and the answer, and the timeout says the change may still apply.
+- Test gaps closed: the Codex "names neither" test now triggers a real refusal; the Chat tests use delayed answers.
+
+Known gaps (not closed, by design): a refused Codex model with no earlier model on record cannot be restored (the chip keeps the
+rejected model until the next frame); the reconcile on a replacement is one attempt; the CLI can still take a change after the 15 s
+limit while Dispatch has reported it as not answered.
