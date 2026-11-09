@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import http from 'node:http';
 import { WebSocket, type WebSocketServer } from 'ws';
-import { createClientWss } from './client-wss.js';
+import { createClientWss, sendCompressed } from './client-wss.js';
 
 describe('createClientWss: permessage-deflate', () => {
   const servers: http.Server[] = [];
@@ -12,11 +12,11 @@ describe('createClientWss: permessage-deflate', () => {
   });
 
   /** Connects one client, receives one 4 KB text frame, and reports the extension and the bytes on the wire. */
-  async function probe(wss: WebSocketServer): Promise<{ extensions: string; text: string; wireBytes: number }> {
+  async function probe(wss: WebSocketServer, compressed = false): Promise<{ extensions: string; text: string; wireBytes: number }> {
     const payload = JSON.stringify({ type: 'assistant', text: 'the same words again and again. '.repeat(128) });
     const server = http.createServer();
     servers.push(server);
-    server.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (ws) => { ws.send(payload); ws.close(); }));
+    server.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (ws) => { if (compressed) sendCompressed(ws, () => ws.send(payload)); else ws.send(payload); ws.close(); }));
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
     const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}/`);
     let text = '';
@@ -39,13 +39,20 @@ describe('createClientWss: permessage-deflate', () => {
     expect(r.wireBytes).toBeLessThan(r.text.length / 2);
   });
 
-  it('the terminal server does not', async () => {
+  it('the terminal server negotiates it but does not compress an ordinary frame', async () => {
     delete process.env.DISPATCH_WS_DEFLATE;
     const plain = await probe(createClientWss());
-    expect(plain.extensions).toBe('');
-    expect(plain.wireBytes).toBeGreaterThan(plain.text.length);
+    expect(plain.extensions).toContain('permessage-deflate');
+    expect(plain.extensions).toContain('server_no_context_takeover');
+    expect(plain.wireBytes).toBeGreaterThan(plain.text.length); // live output: sent as it is
     const explicit = await probe(createClientWss(undefined, { deflate: false }));
     expect(explicit.extensions).toBe('');
+  });
+
+  it('sendCompressed compresses that one frame on the terminal server', async () => {
+    delete process.env.DISPATCH_WS_DEFLATE;
+    const r = await probe(createClientWss(), true);
+    expect(r.wireBytes).toBeLessThan(r.text.length / 2);
   });
 
   it('DISPATCH_WS_DEFLATE=0 turns it off', async () => {

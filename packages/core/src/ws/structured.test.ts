@@ -379,3 +379,107 @@ describe('the active model frame', () => {
   });
 });
 
+
+
+// ---- W2-I: batched replay (`?batch=1`) ----
+describe('batched replay', () => {
+  afterEach(() => { vi.useRealTimers(); delete process.env.DISPATCH_WS_MAX_BUFFERED_BYTES; delete process.env.DISPATCH_WS_BUFFER_GRACE_MS; vi.restoreAllMocks(); });
+  const ring = Array.from({ length: 12 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `turn ${i}` }] } }));
+  const BATCH_REQ = { url: '/api/terminals/t1/structured-ws?tail=200&batch=1' } as any;
+
+  it('batch=1 sends one frame with the same events in order', () => {
+    const plain = fakeWs();
+    handleStructuredConnection(plain.ws, REQ, { ...ringManager(ring), getPending: () => ({ requestId: 'r1' }) }, undefined, undefined, undefined, undefined, () => 'model-x');
+    const batched = fakeWs();
+    handleStructuredConnection(batched.ws, BATCH_REQ, { ...ringManager(ring), getPending: () => ({ requestId: 'r1' }) }, undefined, undefined, undefined, undefined, () => 'model-x');
+    expect(batched.sent).toHaveLength(1);
+    expect(batched.sent[0].type).toBe('replay');
+    expect(batched.sent[0].done).toBe(true);
+    // The same frames an older client gets one by one: the ring, the model frame, the pending permission.
+    expect(batched.sent[0].events).toEqual(plain.sent);
+    expect(plain.sent).toHaveLength(14);
+  });
+
+  it('no batch parameter keeps the old frames', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, REQ, ringManager(ring));
+    expect(sent).toEqual(ring);
+    expect(sent.some((f) => f.type === 'replay')).toBe(false);
+  });
+
+  it('batch=1 carries the inactive sentinel inside the frame when nothing is renderable', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, BATCH_REQ, ringManager([]));
+    expect(sent).toEqual([{ type: 'replay', done: true, events: [{ type: 'system', subtype: 'inactive' }] }]);
+  });
+
+  it('a live event during the replay arrives after it', async () => {
+    vi.useFakeTimers();
+    process.env.DISPATCH_WS_MAX_BUFFERED_BYTES = '1000';
+    process.env.DISPATCH_WS_BUFFER_GRACE_MS = '5000';
+    const events = Array.from({ length: 20 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `${i}`.padEnd(200, 'x') }] } }));
+    const manager = Object.assign(new EventEmitter(), { getEvents: () => events, getEventsTail: () => events, getPending: () => null }) as any;
+    const sent: string[] = [];
+    let peak = 0;
+    const ws = Object.assign(new EventEmitter(), {
+      readyState: 1, bufferedAmount: 0, terminate: vi.fn(), close: vi.fn(),
+      send: vi.fn(function (this: any, d: string) { sent.push(d); this.bufferedAmount += d.length; peak = Math.max(peak, this.bufferedAmount); }),
+    }) as any;
+    handleStructuredConnection(ws as WebSocket, { url: '/api/terminals/t1/structured-ws?batch=1' } as any, manager);
+    manager.emit('event', 't1', { type: 'assistant', message: { content: [{ type: 'text', text: 'LIVE-1' }] } });
+    manager.emit('event', 't1', { type: 'assistant', message: { content: [{ type: 'text', text: 'LIVE-2' }] } });
+    for (let i = 0; i < 400 && !sent.some((m) => m.includes('LIVE-2')); i++) {
+      await vi.advanceTimersByTimeAsync(25);
+      ws.bufferedAmount = Math.max(0, ws.bufferedAmount - 150);
+    }
+    const frames = sent.map((m) => JSON.parse(m));
+    const replays = frames.filter((f) => f.type === 'replay');
+    // A history over half the back-pressure limit goes out as several replay frames, in step with the free space.
+    expect(replays.length).toBeGreaterThan(1);
+    expect(replays.flatMap((f) => f.events)).toEqual(events);
+    expect(replays.map((f) => f.done)).toEqual([...replays.slice(1).map(() => false), true]);
+    // Then the live events, in the order they happened, as ordinary frames.
+    const tail = frames.slice(replays.length);
+    expect(frames.slice(0, replays.length).every((f) => f.type === 'replay')).toBe(true);
+    expect(tail.map((f) => f.message.content[0].text)).toEqual(['LIVE-1', 'LIVE-2']);
+    expect(peak).toBeLessThanOrEqual(500 + 600);
+    expect(ws.terminate).not.toHaveBeenCalled();
+    // After the replay a live event goes straight out.
+    manager.emit('event', 't1', { type: 'assistant', message: { content: [{ type: 'text', text: 'LIVE-3' }] } });
+    expect(sent[sent.length - 1]).toContain('LIVE-3');
+  });
+
+  it('batch=1 with a real socket: the frame is compressed on the wire', async () => {
+    const http = await import('node:http');
+    const { WebSocket: Client } = await import('ws');
+    const { createClientWss } = await import('./client-wss.js');
+    const big = Array.from({ length: 200 }, (_, i) => ({ type: 'assistant', message: { content: [{ type: 'text', text: `message ${i} says the same words again and again` }] } }));
+    const wss = createClientWss(undefined, { deflate: true });
+    const server = http.createServer();
+    server.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (sock) => handleStructuredConnection(sock, req, ringManager(big))));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    async function open(query: string): Promise<{ frames: any[]; wire: number }> {
+      const c = new Client(`ws://127.0.0.1:${port}/api/terminals/t1/structured-ws?tail=200${query}`);
+      const frames: any[] = [];
+      let socket: import('node:net').Socket | undefined;
+      c.on('upgrade', (res) => { socket = res.socket; });
+      c.on('message', (d) => frames.push(JSON.parse(d.toString())));
+      await new Promise((r) => c.on('open', r));
+      await new Promise((r) => setTimeout(r, 150));
+      const wire = socket?.bytesRead ?? -1;
+      c.close();
+      return { frames, wire };
+    }
+    try {
+      const old = await open('');
+      const now = await open('&batch=1');
+      expect(old.frames).toEqual(big);
+      expect(now.frames).toHaveLength(1);
+      expect(now.frames[0].events).toEqual(big);
+      // 200 frames under 1 KB each are sent as they are; one frame is compressed.
+      expect(now.wire).toBeLessThan(old.wire / 4);
+      console.log(`[w2-i] 200-event replay on the wire: ${old.wire} bytes as 200 frames, ${now.wire} bytes as one batch frame`);
+    } finally { server.close(); }
+  });
+});

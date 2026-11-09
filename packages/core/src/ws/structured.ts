@@ -199,9 +199,32 @@ export function handleStructuredConnection(
   // Send the frames, then the live events held meanwhile, one at a time. Each waits until the client has room (half
   // the back-pressure limit), so neither a big history nor a backlog of held events is queued all at once. There is
   // no await when there is room, so a replay to a client that keeps up runs synchronously.
+  //
+  // `batch=1` (W2-I): the frames go as ONE message, `{ type: 'replay', done, events: [...] }`. 200 small frames are
+  // each under the 1 KB compression threshold and each costs a frame header and a client task; one message is
+  // compressed as a whole and the client folds it in one render. A history over half the back-pressure limit is cut
+  // into several such messages (`done` is true on the last), sent in step with the free space as before. A client that
+  // does not ask (an older web build) gets the frames one by one, unchanged. Live events are never batched.
+  const batch = wantsBatch(req.url);
   void (async () => {
     let i = 0;
     try {
+      if (batch) {
+        const cap = wsMaxBufferedBytes();
+        const limit = cap > 0 ? Math.floor(cap / 2) : Number.POSITIVE_INFINITY;
+        while (i < frames.length) {
+          const parts: string[] = [JSON.stringify(frames[i++])];
+          let bytes = Buffer.byteLength(parts[0]);
+          while (i < frames.length) {
+            const next = JSON.stringify(frames[i]);
+            const size = Buffer.byteLength(next) + 1;
+            if (bytes + size > limit) break;
+            parts.push(next); bytes += size; i++;
+          }
+          if (!hasRoom(ws) && !(await waitForRoom(ws, 'chat'))) return;
+          sendOrDrop(ws, `{"type":"replay","done":${i >= frames.length},"events":[${parts.join(',')}]}`, 'chat');
+        }
+      }
       for (;;) {
         let json: string;
         if (i < frames.length) json = JSON.stringify(frames[i++]);
@@ -215,4 +238,9 @@ export function handleStructuredConnection(
       held.length = 0; heldBytes = 0;
     }
   })();
+}
+
+/** `batch=1` on the URL: this client folds a `{ type: 'replay', events }` message (W2-I). */
+function wantsBatch(url: string | undefined): boolean {
+  try { return new URL(url ?? '', 'http://internal').searchParams.get('batch') === '1'; } catch { return false; }
 }
