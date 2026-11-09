@@ -356,7 +356,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={tokensChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {tokenTooltip}
                     {tokensChart.keys.length > 1 && legend}
                     {tokensChart.keys.map((k) => (
@@ -381,7 +381,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <LineChart data={outputChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {tokenTooltip}
                     {/* One series, so the title names it and no legend is needed. */}
                     <Line type="monotone" dataKey="output" name="output tokens" stroke={SERIES[0]} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -397,7 +397,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={outcomeChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                    <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                     {chartTooltip(theme)}
                     {outcomeChart.keys.length > 1 && legend}
                     {outcomeChart.keys.map((k) => (
@@ -426,7 +426,7 @@ export function UsageAnalytics({ from, projectId, provider, filtered }: {
                   <BarChart data={durationChart.rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid stroke={theme.grid} vertical={false} />
                     <XAxis dataKey="day" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                    <YAxis tickFormatter={(v: number) => fmtSeconds(v)} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                    <YAxis tickFormatter={(v: number) => fmtSeconds(v)} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                     {chartTooltip(theme, (v) => [fmtSeconds(Number(v)), 'avg turn'])}
                     {/* One series, so the title names it and no legend is needed. */}
                     <Bar dataKey="seconds" name="avg turn duration" fill={SERIES[0]} radius={[4, 4, 0, 0]} isAnimationActive={false} />
@@ -546,7 +546,7 @@ function RankedBars({ rows, color, theme, height }: {
       <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid stroke={theme.grid} horizontal={false} />
         <XAxis type="number" tickFormatter={fmtTokens} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey="label" width={116} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
+        <YAxis type="category" dataKey="label" width={Math.round(116 * textScale)} tick={{ fill: theme.muted, fontSize: 11 * textScale }} tickLine={false} axisLine={false} />
         {chartTooltip(theme, (v) => [fmtTokens(Number(v)), 'tokens'])}
         <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14} isAnimationActive={false}>
           {rows.map((r) => <Cell key={r.key} fill={color(r.key)} />)}

@@ -327,7 +327,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
   useEffect(() => {
     let disposed = false;
     const s0 = useSettings.getState();
-    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: s0.fontSize * s0.textScale, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
+    const term = new XTerm({ fontFamily: 'JetBrains Mono, monospace', fontSize: Math.round(s0.fontSize * s0.textScale * 2) / 2, theme: { ...useActiveTheme.getState().theme.terminal }, scrollback: s0.scrollback, convertEol: true, cursorBlink: true,
       // xterm's own handler asks confirm() and ignores every non-http link; a doc opens in the doc viewer, a web link in a new tab, the rest nothing.
       linkHandler: { allowNonHttpProtocols: true, activate: (_e, uri) => {
         const chips = docChipsRef.current;
@@ -1014,7 +1014,7 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     const term = termRef.current;
     if (!term) return;
     try {
-      term.options.fontSize = termFontSize * termTextScale;
+      term.options.fontSize = Math.round(termFontSize * termTextScale * 2) / 2;
       term.options.scrollback = termScrollback;
       forceFitRef.current();
     } catch { /* terminal not fully initialised (e.g. jsdom) */ }

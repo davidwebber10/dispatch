@@ -65,8 +65,8 @@ export function ProviderRing({ ring, size }: { ring: ChipRing; size: number }) {
         {used > 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR[ring.tone]} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${(Math.min(100, used) / 100) * c} ${c}`} />}
         {ring.paused && used === 0 && <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={RING_COLOR.red} strokeWidth={stroke} strokeDasharray={`${c / 8} ${c / 8}`} />}
       </svg>
-      {percent ? <span style={{ font: `600 ${fontVar(Math.round(size * (String(ring.used ?? '–').length > 2 ? 0.3 : 0.38)))} var(--font-mono)`, color: 'var(--color-text-primary)', letterSpacing: '-0.03em' }}>{ring.used ?? '–'}</span>
-        : Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${fontVar(Math.round(size * 0.38))} var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
+      {percent ? <span style={{ font: `600 ${Math.round(size * (String(ring.used ?? '–').length > 2 ? 0.3 : 0.38))}px var(--font-mono)`, color: 'var(--color-text-primary)', letterSpacing: '-0.03em' }}>{ring.used ?? '–'}</span>
+        : Mark ? <Mark size={Math.round(size * 0.46)} /> : <span style={{ font: `600 ${Math.round(size * 0.38)}px var(--font-mono)`, color: 'var(--color-text-secondary)' }}>{ring.name.slice(0, 1)}</span>}
     </span>
   );
 }

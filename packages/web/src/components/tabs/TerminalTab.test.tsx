@@ -1576,12 +1576,12 @@ test('a tap outside the key panel closes it; a tap on a key or the keyboard butt
 
 // ---- text scale reaches the running terminal ----
 
-test('xterm font size is the terminal size times the text scale, live, without a remount', async () => {
+test('xterm font size is the terminal size times the text scale, rounded to 0.5, live, without a remount', async () => {
   useSettings.setState({ textScale: 1, fontSize: 13 });
   const term = await mountTerm();
   expect(term.options.fontSize).toBe(13);
   act(() => useSettings.setState({ textScale: 1.2 }));
-  await waitFor(() => expect(term.options.fontSize).toBeCloseTo(13 * 1.2));
+  await waitFor(() => expect(term.options.fontSize).toBe(15.5)); // 13 × 1.2 = 15.6
   expect(instances).toHaveLength(1);
   act(() => useSettings.setState({ textScale: 1 }));
   await waitFor(() => expect(term.options.fontSize).toBe(13));

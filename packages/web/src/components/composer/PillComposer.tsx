@@ -8,6 +8,7 @@ import { DictationControl } from '../dictation/DictationControl';
 import { InputActionsMenu } from '../dictation/InputActionsMenu';
 import { RecordingsSheet } from '../dictation/RecordingsSheet';
 import { useUI } from '../../stores/ui';
+import { useSettings } from '../../stores/settings';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
 
 /**
@@ -75,8 +76,10 @@ export function PillComposer({
   const own = useRef<HTMLTextAreaElement | null>(null);
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
   const key = mobile ? 42 : 32;
-  const lineH = mobile ? 22 : 21;
-  const minH = key;
+  // The line height follows the text scale; the box grows if a scaled line no longer fits in it.
+  const textScale = useSettings((s) => s.textScale);
+  const lineH = Math.round((mobile ? 22 : 21) * textScale);
+  const minH = Math.max(key, lineH + 2);
 
   // Grow with the text, then scroll past half the window. Runs on every change, so a paste, a
   // draft restore, dictation and the clear after a send all resize it.

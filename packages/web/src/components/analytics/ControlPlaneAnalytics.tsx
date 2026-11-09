@@ -168,7 +168,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <BarChart data={rows.agents} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme, (v, name, item) => [
                   name === 'review' ? `${Number(v)} (${Number(item?.payload?.reviewGates ?? 0)} gates)` : String(v),
                   String(name),
@@ -194,7 +194,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <BarChart data={rows.tokens} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={48} />
+                <YAxis tickFormatter={fmtTokens} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(48 * textScale)} />
                 {chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)])}
                 {legend}
                 <Bar dataKey="agents" name="Agents" stackId="tokens" fill={OTHER} stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]} isAnimationActive={false} />
@@ -212,7 +212,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
               <LineChart data={rows.messages} margin={margin}>
                 {grid}
                 {xDays}
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme)}
                 {legend}
                 <Line type="monotone" dataKey="you" name={`You → ${dispatchName}`} stroke={OTHER} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -236,7 +236,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
                 </defs>
                 {grid}
                 <XAxis dataKey="week" tickFormatter={fmtDay} tick={axisTick} tickLine={false} axisLine={{ stroke: theme.grid }} />
-                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
+                <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={Math.round(36 * textScale)} />
                 {chartTooltip(theme, (v) => [String(v), 'missions completed'])}
                 {settling.length > 0 && (
                   <ReferenceArea
