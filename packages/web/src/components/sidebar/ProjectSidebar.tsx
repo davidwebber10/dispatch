@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
+import { useTerminalProjectId } from '../../stores/tabsSelectors';
 import { ProjectCard } from './ProjectCard';
 import { NewProjectModal } from './NewProjectModal';
 import { ArrowsDownUp, Plus } from '@phosphor-icons/react';
@@ -36,7 +37,16 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
 
   useEffect(() => { try { localStorage.setItem('dispatch:sort', sort); } catch { /* ignore */ } }, [sort]);
   useEffect(() => { if (activeId) setExpanded((e) => (e.has(activeId) ? e : new Set(e).add(activeId))); }, [activeId]);
-  const toggleExpand = (id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // Stable, so a memoized ProjectCard does not render because this component did.
+  const toggleExpand = useCallback((id: string) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
+  // The callbacks of the parent, behind stable functions: a new closure from the parent on each
+  // of its renders must not render every ProjectCard (they are memoized, W1-F).
+  const handlers = useRef({ onSelectTab, onSelectAgent, onNewAgent, onDispatch });
+  handlers.current = { onSelectTab, onSelectAgent, onNewAgent, onDispatch };
+  const selectTab = useCallback((terminalId: string) => handlers.current.onSelectTab(terminalId), []);
+  const selectAgent = useCallback((id: string) => handlers.current.onSelectAgent?.(id), []);
+  const newAgent = useCallback((projectId: string) => handlers.current.onNewAgent?.(projectId), []);
+  const dispatch = useCallback((projectId: string) => handlers.current.onDispatch?.(projectId), []);
   const isMobile = useIsMobile();
   const view = useProjectsView((s) => s.view);
   const threads = view === 'threads';
@@ -52,22 +62,25 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
      Aim at the thread row first: it is the precise thing that got highlighted, and revealing it
      brings its project card along with it. Fall back to the card when the row isn't in the DOM —
      a project fetches its threads asynchronously when it expands, so right after activation the
-     row genuinely may not exist yet. `byProject` is in the deps so we re-run once it lands.
+     row genuinely may not exist yet. `rowLanded` is in the deps so we re-run once it lands.
 
-     But reveal each selection exactly ONCE. `byProject` is replaced with a new object on every
-     terminal:status event, which fires constantly as agents flip working<->idle. Without the guard,
+     But reveal each selection exactly ONCE. This component used to select all of `byProject`,
+     which changes on every terminal:status event as agents flip working<->idle. Without the guard,
      a user who deliberately scrolled the sidebar elsewhere would get yanked back to the active row
      every few seconds. Scroll when the SELECTION moves; never merely because the store churned. */
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeTabId = useTabs((s) => s.activeTabId);
-  const byProject = useTabs((s) => s.byProject);
+  // Narrow read (W1-F): only "the active thread is in the store now" matters here, not every
+  // thread of every project. A status event does not change it, so this component (and with it
+  // every ProjectCard) no longer renders on each one.
+  const rowLanded = useTerminalProjectId(activeTabId);
   // What we last revealed, and whether it was the PRECISE target (the thread row) or merely the
   // project card. A card-only reveal is provisional: the row was not a valid target yet, so we
   // still want to upgrade to it. A precise reveal is final — after that, churn changes nothing.
   const shown = useRef<{ selection: string; precise: boolean } | null>(null);
   /* The settle timer deliberately lives in a ref, NOT in the effect's cleanup.
-     Expanding a card makes ProjectCard call loadTabs(), which lands a new `byProject` object within
-     a few ms — well inside the settle window. `byProject` is in this effect's deps, so returning a
+     Expanding a card makes ProjectCard call loadTabs(), which can land the active row within
+     a few ms — well inside the settle window. `rowLanded` is in this effect's deps, so returning a
      clearTimeout cleanup would have React cancel the timer on that re-run, and the `precise` guard
      would then stop it being rescheduled. The corrective pass would silently never fire, leaving the
      row wherever the mid-animation scroll dropped it. (Measured in Chromium: scheduled at +22ms,
@@ -113,7 +126,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
     if (activeId && revealIn(c, `[data-project-id="${activeId}"]`)) {
       shown.current = { selection, precise: false };
     }
-  }, [activeTabId, activeId, byProject, expanded]);
+  }, [activeTabId, activeId, rowLanded, expanded]);
 
   const ordered = useStableOrder(sessions, sort);
   const filtered = ordered.filter((s) => s.name.toLowerCase().includes(query.toLowerCase()));
@@ -162,7 +175,7 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
         disabled={!!query || isMobile}
         onReorder={(orderedIds) => { if (sort !== 'custom') setSort('custom'); useProjects.getState().reorder(orderedIds); }}
         renderItem={(s) => (
-          <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={() => toggleExpand(s.id)} onSelectTab={onSelectTab} onSelectAgent={onSelectAgent} onNewAgent={onNewAgent} onDispatch={onDispatch} />
+          <ProjectCard session={s} active={s.id === activeId} open={expanded.has(s.id)} onToggle={toggleExpand} onSelectTab={selectTab} onSelectAgent={onSelectAgent ? selectAgent : undefined} onNewAgent={onNewAgent ? newAgent : undefined} onDispatch={onDispatch ? dispatch : undefined} />
         )}
       />
       {!filtered.length && <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12.5, padding: '4px 6px' }}>No projects</div>}
