@@ -518,6 +518,10 @@ async function loopDelayDuring(work: () => Promise<void>): Promise<{ maxMs: numb
   const histogram = monitorEventLoopDelay({ resolution: 2 });
   await new Promise((resolve) => setTimeout(resolve, 20)); // let earlier synchronous work drain
   histogram.enable();
+  // The monitor records the time between two of its own ticks, so it needs one tick before the work
+  // starts: without this wait, a block that starts at once is never seen. (Do not call reset()
+  // after the wait: it makes the monitor blind in the same way.)
+  await new Promise((resolve) => setTimeout(resolve, 12));
   const t0 = performance.now();
   await work();
   const wallMs = performance.now() - t0;
