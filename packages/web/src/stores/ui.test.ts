@@ -15,3 +15,10 @@ it('a saved plugin view key is accepted by loadView; an unknown key falls back (
   expect(loadView()).toBe('workspace');
   localStorage.removeItem('dispatch:view');
 });
+
+it('a saved board view loads as workspace', () => {
+  // The board view was removed (W1-G, 2026-11-09). A browser that saved it must still open.
+  localStorage.setItem('dispatch:view', 'board');
+  expect(loadView()).toBe('workspace');
+  localStorage.removeItem('dispatch:view');
+});

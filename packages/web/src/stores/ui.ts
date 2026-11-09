@@ -1,11 +1,9 @@
 import { create } from 'zustand';
 
-// 'agents' was a dead union member (nothing read `view`) — repurposed for the desktop thread
-// board (docs/superpowers/specs/2026-07-20-thread-board-design.md's "Placement" section):
-// 'workspace' is the normal project/thread layout, 'board' is the full-bleed cross-project board
-// that bypasses Workspace entirely (see App.tsx).
+// 'workspace' is the normal project/thread layout (the "Threads" view). The desktop thread board
+// ('board') was removed on 2026-11-09 (W1-G); a saved 'board' value loads as 'workspace' (loadView).
 // `plugin:<id>:<view>` is a plugin's screen (docs/superpowers/specs/2026-11-07-plugins-design.md).
-export type View = 'workspace' | 'board' | 'analytics' | 'settings' | 'chat' | `plugin:${string}`;
+export type View = 'workspace' | 'analytics' | 'settings' | 'chat' | `plugin:${string}`;
 // `plugin:<id>:<tab>` is a plugin's right-column tab (the `inspectorTabs` contribution).
 export type InspectorTab = 'details' | 'files' | `plugin:${string}`;
 
@@ -14,7 +12,7 @@ const RKEY = 'dispatch:right-collapsed';
 const VKEY = 'dispatch:view';
 const loadBool = (k: string): boolean => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
 const saveBool = (k: string, v: boolean): void => { try { localStorage.setItem(k, v ? '1' : '0'); } catch { /* ignore */ } };
-// Board is temporarily hidden; restore saved Board selections to Threads.
+// Any other saved value (the removed 'board' view included) loads as 'workspace'.
 const VIEWS: readonly View[] = ['workspace', 'analytics', 'settings', 'chat'];
 // Exported so mount.test.tsx can exercise the read-back path directly (pre-seed
 // localStorage, call this) rather than only the write path — the read-back is
@@ -61,7 +59,8 @@ export const useUI = create<{
   clearSettingsRequest: () => void;
 }>((set, get) => ({
   view: loadView(),
-  setView: (requested) => { const view = requested === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
+  // 'board' left the View type; an untyped caller (a plugin, an old link) that still asks for it gets Threads.
+  setView: (requested) => { const view = (requested as string) === 'board' ? 'workspace' : requested; saveView(view); set({ view }); },
   inspectorTab: 'details',
   setInspectorTab: (inspectorTab) => set({ inspectorTab }),
   leftCollapsed: loadBool(LKEY),
