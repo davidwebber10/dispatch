@@ -112,10 +112,23 @@ export function storeRoute(): Route {
   return activeId ? { view: 'workspace', projectId: activeId } : ROOT;
 }
 
+const projectKnown = (id: string): boolean => useProjects.getState().sessions.some((s) => s.id === id);
+/**
+ * Whether a project id names a project. The list in the store answers when it has the id; when it
+ * does not (the list is still loading, or the id is wrong) the list is read again. The daemon answers
+ * an empty thread list for an id it does not know, so the thread list cannot tell. A failed read
+ * (offline) counts as "exists": nothing is thrown away on a guess.
+ */
+async function projectExists(id: string): Promise<boolean> {
+  if (projectKnown(id)) return true;
+  try { await useProjects.getState().load(); } catch { return true; }
+  return projectKnown(id);
+}
+
 /**
  * Puts a route on screen (desktop) and returns the route that really shows. A thread that does not
- * exist gives its project; a thread of a project that does not exist gives the root. Everything up to
- * a project that must load first happens at once, in the caller's own turn.
+ * exist gives its project; a project that does not exist gives the root. Everything up to a list
+ * that must load first happens at once, in the caller's own turn.
  */
 async function applyDesktop(route: Route, current: () => boolean): Promise<Route> {
   const ui = useUI.getState();
@@ -133,7 +146,14 @@ async function applyDesktop(route: Route, current: () => boolean): Promise<Route
   }
   if (!threadId) {
     useAgentUI.getState().blur();
-    useProjects.getState().setActive(projectId);
+    useProjects.getState().setActive(projectId); // at once, as before W2-F; checked below when the id is not in the list
+    if (!projectKnown(projectId)) {
+      if (!(await projectExists(projectId))) {
+        if (current() && useProjects.getState().activeId === projectId) useProjects.setState({ activeId: useProjects.getState().sessions[0]?.id ?? null });
+        return current() ? ROOT : route;
+      }
+      if (!current()) return route;
+    }
     // On the desktop a project with no thread is its coordinator tab, when that tab is open.
     const coordinator = dispatchTabId(projectId);
     const tabs = useTabs.getState();
@@ -145,7 +165,9 @@ async function applyDesktop(route: Route, current: () => boolean): Promise<Route
     try { await useTabs.getState().loadTabs(projectId); } catch { return ROOT; } // the project is gone
     if (!current()) return route;
     terminal = findTerminal(useTabs.getState().byProject, threadId);
-    if (!terminal) { // the thread is gone: its project
+    if (!terminal) { // the thread is gone: its project, when the project exists
+      if (!(await projectExists(projectId))) return ROOT;
+      if (!current()) return route;
       useAgentUI.getState().blur();
       useProjects.getState().setActive(projectId);
       return { view: 'workspace', projectId };

@@ -90,6 +90,41 @@ describe('navigate (desktop)', () => {
     expect(useProjects.getState().activeId).toBeNull();
   });
 
+  // The daemon answers an empty thread list (200) for a project id it does not know, so the project list decides.
+  it('an unknown project id falls back to the root, for a thread route and for a project route', async () => {
+    const sessions = useProjects.getState().sessions;
+    vi.spyOn(api, 'listSessions').mockResolvedValue(sessions as never);
+    vi.spyOn(api, 'listTerminals').mockResolvedValue([] as never);
+    useNavigation.getState().navigate(thread('nope', 'T9'));
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(useNavigation.getState().route).toEqual({ view: 'workspace' });
+    expect(useProjects.getState().activeId).not.toBe('nope');
+    useNavigation.getState().navigate({ view: 'workspace', projectId: 'nope' });
+    expect(window.location.pathname).toBe('/p/nope');
+    await waitFor(() => expect(window.location.pathname).toBe('/'));
+    expect(useProjects.getState().activeId).toBe('A'); // the first project, not the id that names nothing
+    // With the address sync on (the running app), the root then gets the address of what shows.
+    await bootDesktopNavigation();
+    expect(window.location.pathname).toBe('/p/A');
+  });
+
+  it('a project that arrives with the list (the list was not loaded yet) is kept', async () => {
+    useProjects.setState({ sessions: [], activeId: null });
+    vi.spyOn(api, 'listSessions').mockResolvedValue([{ id: 'B', name: 'Beta' }] as never);
+    useNavigation.getState().navigate({ view: 'workspace', projectId: 'B' });
+    await tick(); await tick();
+    expect(window.location.pathname).toBe('/p/B');
+    expect(useProjects.getState().activeId).toBe('B');
+  });
+
+  it('offline (the project list cannot be read), an unknown project id is kept', async () => {
+    vi.spyOn(api, 'listSessions').mockRejectedValue(new Error('offline'));
+    useNavigation.getState().navigate({ view: 'workspace', projectId: 'later' });
+    await tick(); await tick();
+    expect(window.location.pathname).toBe('/p/later');
+    expect(useProjects.getState().activeId).toBe('later');
+  });
+
   it('a thread that this client has not loaded yet opens after its project loads', async () => {
     useTabs.setState({ byProject: {} });
     vi.spyOn(api, 'listTerminals').mockResolvedValue([term('T7', 'B')] as never);

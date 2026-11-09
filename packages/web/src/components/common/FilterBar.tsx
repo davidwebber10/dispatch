@@ -187,7 +187,7 @@ function Section({ facet: f, few, lg }: { facet: FilterFacet; few: boolean; lg: 
             const checked = f.value === o.value;
             return (
               <button key={o.value ?? '__all__'} type="button" role="radio" aria-checked={checked} onClick={() => f.onChange(o.value)}
-                style={{ flex: 1, height: 30, border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: 13.5, background: checked ? 'var(--color-hover)' : 'transparent', color: checked ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
+                style={{ flex: '1 1 auto', height: 30, padding: '0 4px', whiteSpace: 'nowrap', border: 'none', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: 13.5, background: checked ? 'var(--color-hover)' : 'transparent', color: checked ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}>
                 {o.label}{o.count !== undefined && <> <span style={{ color: 'var(--color-text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>{o.count}</span></>}
               </button>
             );

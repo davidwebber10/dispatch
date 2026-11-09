@@ -273,13 +273,20 @@ export function useMobileNavigation() {
     if (init.projectId) {
       useProjects.getState().setActive(init.projectId);
       const { projectId: pid, tabId } = init;
-      void useTabs.getState().loadTabs(pid).then(() => {
+      void useTabs.getState().loadTabs(pid).then(async () => {
         // A thread link whose thread is gone (deleted since the link was made): its project's list.
-        // Only when the load answered, and only while that thread's screen still shows.
-        if (!tabId || findTerminal(useTabs.getState().byProject, tabId)) return;
-        const here = history.state as { nav?: number; tabId?: string } | null;
-        if (here?.nav === 2 && here.tabId === tabId) history.back();
-      }).catch(() => { /* offline, or the project is gone: the screen says so */ });
+        // A link whose project is gone: the root. Only when the reads answered, and only while the
+        // screen of the link still shows. (The daemon answers an empty thread list for a project it
+        // does not know, so the project list decides that.)
+        const known = () => useProjects.getState().sessions.some((p) => p.id === pid);
+        const threadGone = !!tabId && !findTerminal(useTabs.getState().byProject, tabId);
+        if (!threadGone && known()) return;
+        if (!known()) await useProjects.getState().load();
+        const here = history.state as { nav?: number; projectId?: string; tabId?: string; depth?: number } | null;
+        if (here?.projectId !== pid || (here.nav === 2 && here.tabId !== tabId)) return; // the reader moved on
+        if (!known()) { if (here.depth) history.go(-here.depth); }
+        else if (threadGone && here.nav === 2) history.back();
+      }).catch(() => { /* offline: the screen says so */ });
     }
     if (init.leaf === 'tab' && init.tabId) { useAgentUI.getState().blur(); setLeafTabId(init.tabId); useTabs.getState().setActiveTab(init.tabId); }
     if (init.leaf === 'agent' && init.agentId) useAgentUI.getState().selectAgent(init.agentId);

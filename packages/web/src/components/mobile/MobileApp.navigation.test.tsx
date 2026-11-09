@@ -97,6 +97,20 @@ describe('a thread link on the phone (/p/:project/t/:thread)', () => {
     expect(screen.queryByTestId('thread-title')).toBeNull();
   });
 
+  it('a link to a project that does not exist lands on the list', async () => {
+    lists.nope = []; // the daemon answers an empty list for an id it does not know
+    vi.spyOn(api, 'listSessions').mockResolvedValue(useProjects.getState().sessions as any);
+    window.history.pushState({}, '', '/p/nope/t/t9');
+    const a = render(<MobileApp />);
+    await waitFor(() => expect(path()).toBe('/'));
+    await waitFor(() => expect(level()).toBe(0));
+    a.unmount();
+    window.history.pushState({}, '', '/p/nope');
+    render(<MobileApp />);
+    await waitFor(() => expect(path()).toBe('/'));
+    await waitFor(() => expect(level()).toBe(0));
+  });
+
   it('a link whose project cannot be read stays where it is (offline is not "gone")', async () => {
     window.history.pushState({}, '', '/p/nope/t/t9');
     render(<MobileApp />);
