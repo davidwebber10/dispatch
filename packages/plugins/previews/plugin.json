@@ -5,7 +5,7 @@
   "description": "A thread hands you files to look at and text to copy: a badge, a sheet on the phone, a history on the desktop.",
   "author": "dispatch",
   "dispatch": ">=3.27",
-  "sdk": 1,
+  "sdk": 2,
   "web": "web.js",
   "enabledByDefault": true,
   "contributes": {

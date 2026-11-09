@@ -19,7 +19,7 @@ const MEASURES = { at: NOW.toISOString(), weakest: 'reuse', history: [], scores:
 
 async function boot(over: { docs?: Record<string, unknown> } = {}) {
   const d: FakeD = fakeD({ docs: { cadence: SEASONED, measures: MEASURES, ...(over.docs ?? {}) } });
-  const coach = createCoach(d, { now: () => NOW });
+  const coach = createCoach(d.sdk, { now: () => NOW });
   await coach.ready;
   const reg = d.registered.coach as Record<string, { Component: Comp }[]>;
   return { d, View: reg.views[0].Component, Tab: reg.inspectorTabs[0].Component, Card: reg.slots[0].Component };

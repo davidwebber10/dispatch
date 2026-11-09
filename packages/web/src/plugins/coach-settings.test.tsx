@@ -10,9 +10,9 @@ const NOW = new Date(2026, 10, 23, 11, 0);
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
 type Saved = Record<string, unknown> & { advanced?: { thresholds?: Record<string, Record<string, number>>; minConfidence?: number } };
 
-async function boot(over: { settings?: unknown; api?: Record<string, unknown> } = {}) {
-  const d: FakeD = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)) }, settings: over.settings, api: over.api });
-  const coach = createCoach(d, { now: () => NOW });
+async function boot(over: { settings?: unknown; model?: Record<string, unknown> } = {}) {
+  const d: FakeD = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)) }, settings: over.settings, model: over.model });
+  const coach = createCoach(d.sdk, { now: () => NOW });
   await coach.ready;
   const Settings = (d.registered.coach as Record<string, { Component: Comp }[]>).settings[0].Component;
   render(<Settings />);
@@ -120,12 +120,12 @@ describe('Coach settings (coach plan Task 13; laid out again 2026-11-07)', () =>
     const { d, saved } = await boot();
     const pct = screen.getByRole('spinbutton', { name: 'Budget, percent of the weekly limit' });
     fireEvent.change(pct, { target: { value: '5' } }); fireEvent.blur(pct);
-    await waitFor(() => expect(d.api.setPluginBudget).toHaveBeenCalledWith('coach', { percentWeekly: 5, usdWeekly: 5 }));
+    await waitFor(() => expect(d.model.setBudget).toHaveBeenCalledWith({ percentWeekly: 5, usdWeekly: 5 }));
     expect(saved().budgetPercentWeekly).toBe(5);
     fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     const usd = screen.getByRole('spinbutton', { name: 'OpenRouter budget, dollars a week' });
     fireEvent.change(usd, { target: { value: '12' } }); fireEvent.blur(usd);
-    await waitFor(() => expect(d.api.setPluginBudget).toHaveBeenLastCalledWith('coach', { percentWeekly: 5, usdWeekly: 12 }));
+    await waitFor(() => expect(d.model.setBudget).toHaveBeenLastCalledWith({ percentWeekly: 5, usdWeekly: 12 }));
     // Out of range is clamped to what the daemon takes (0.1 to 100).
     fireEvent.change(pct, { target: { value: '400' } }); fireEvent.blur(pct);
     await waitFor(() => expect(saved().budgetPercentWeekly).toBe(100));
@@ -138,10 +138,10 @@ describe('Coach settings (coach plan Task 13; laid out again 2026-11-07)', () =>
   });
 
   it('loading the Coach never writes the budget: the default is the daemon\'s (plugin.json), and an owner\'s "no cap" stays', async () => {
-    const setPluginBudget = vi.fn(async () => ({ percentWeekly: null, usdWeekly: null }));
-    await boot({ api: { pluginBudget: vi.fn(async () => ({ percentWeekly: null, usdWeekly: null })), setPluginBudget } });
+    const setBudget = vi.fn(async () => ({ percentWeekly: null, usdWeekly: null }));
+    await boot({ model: { budget: vi.fn(async () => ({ percentWeekly: null, usdWeekly: null })), setBudget } });
     await new Promise((r) => setTimeout(r, 20));
-    expect(setPluginBudget).not.toHaveBeenCalled();
+    expect(setBudget).not.toHaveBeenCalled();
   });
 
   it('Advanced shows every threshold with its default, and a change writes it', async () => {

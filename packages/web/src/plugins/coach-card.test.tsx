@@ -17,7 +17,7 @@ type Slot = (p: Record<string, unknown>) => JSX.Element | null;
 async function mount(opts: { cards?: unknown[]; cadence?: unknown; actions?: Record<string, unknown>; value?: string; terminalId?: string; settings?: unknown; mobile?: boolean } = {}) {
   const d: FakeD = fakeD({ docs: { cadence: opts.cadence ?? SEASONED, cards: { items: opts.cards ?? [CARD] } }, actions: opts.actions, settings: opts.settings, mobile: opts.mobile });
   const requestMore = vi.fn(async () => ({ wrote: CARD.excerpt, better: 'Run the suite in a new thread, and in this one draft the release note.', bullets: ['Two things move at once.', 'Check: read the test summary before you merge.'] }));
-  const coach = createCoach(d, { requestMore, now: () => NOW });
+  const coach = createCoach(d.sdk, { requestMore, now: () => NOW });
   await coach.ready;
   const Card = (d.registered.coach.slots[0] as { Component: Slot }).Component;
   const set = vi.fn();
@@ -141,7 +141,7 @@ describe('Coach card (coach plan Task 10)', () => {
     expect(screen.queryByTestId('coach-card')).toBeNull();
     cleanup();
     const d = fakeD({ docs: { cadence: SEASONED, cards: { items: [CARD] } } });
-    const coach = createCoach(d, { now: () => NOW });
+    const coach = createCoach(d.sdk, { now: () => NOW });
     await coach.ready;
     const C = (d.registered.coach.slots[0] as { Component: Slot }).Component;
     render(<C surface="chat" terminalId="t1" value="" set={vi.fn()} />);
@@ -192,7 +192,7 @@ describe('Coach card (coach plan Task 10)', () => {
     expect(card).toHaveTextContent('Get one small tip at a time');
     expect(card).toHaveTextContent('looks at the prompts you send');
     fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
-    await waitFor(() => expect(d.api.disablePlugin).toHaveBeenCalledWith('coach'));
+    await waitFor(() => expect(d.plugin.disable).toHaveBeenCalledTimes(1));
   });
 
   it('the card and the muted banner show icons, never emoji; the feedback buttons are named Helpful and Not helpful', async () => {
@@ -324,7 +324,7 @@ describe('Coach feedback on the card (coach plan Task 11)', () => {
 describe('What the Coach knows (coach plan Task 11)', () => {
   async function screenWith(memory: unknown) {
     const d = fakeD({ docs: { cadence: SEASONED, memory, signals: { v: 1 }, cards: { items: [CARD] }, candidates: { items: [{ id: 'c', evidence: { excerpt: 'my words' } }], seen: ['c'] } } });
-    const coach = createCoach(d, { now: () => NOW });
+    const coach = createCoach(d.sdk, { now: () => NOW });
     await coach.ready;
     const View = (d.registered.coach.views[0] as unknown as { Component: () => JSX.Element }).Component;
     render(<View />);
@@ -380,7 +380,7 @@ describe('What the Coach knows (coach plan Task 11)', () => {
 describe('Coach card: More through the judge plan (coach plan Task 9)', () => {
   async function mountReal(over: { docs?: Record<string, unknown>; settings?: unknown } = {}) {
     const d: FakeD = fakeD({ docs: { cadence: SEASONED, cards: { items: [CARD] }, ...(over.docs ?? {}) }, settings: over.settings });
-    const coach = createCoach(d, { now: () => NOW });
+    const coach = createCoach(d.sdk, { now: () => NOW });
     await coach.ready;
     const Card = (d.registered.coach.slots[0] as { Component: Slot }).Component;
     render(<Card surface="thread" terminalId="t1" sessionId="s1" value="" set={vi.fn()} insert={vi.fn()} />);
@@ -393,7 +393,7 @@ describe('Coach card: More through the judge plan (coach plan Task 9)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'More' }));
     expect(await screen.findByText('Plan it, then run it in two threads.')).toBeInTheDocument();
     expect(d.assist).toHaveBeenCalledTimes(1);
-    const req = d.assist.mock.calls[0][1];
+    const req = d.assist.mock.calls[0][0];
     expect(req).toMatchObject({ harness: 'codex', model: 'gpt-6.1-sol' });
     expect(JSON.stringify(req.messages)).toContain('Works in finance');
   });

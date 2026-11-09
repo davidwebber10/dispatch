@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { buildSdk } from './sdk';
+import { createPluginSdk } from './facade';
 import { useProjects } from '../stores/projects';
 // The bundled Previews plugin is plain JS.
 import activate from '../../../plugins/previews/web.js';
@@ -20,13 +20,13 @@ describe('the Previews screen with many previews', () => {
   let History: React.ComponentType;
   beforeEach(() => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }] as never });
-    const base = buildSdk();
+    const base = createPluginSdk('previews');
     const views: { Component: React.ComponentType }[] = [];
     const d = {
-      ...base, id: 'previews',
-      storage: { ...base.storage, all: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
+      ...base,
+      docs: { ...base.docs, entries: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
       events: { on: () => () => {} },
-      register: (_id: string, c: { views: { Component: React.ComponentType }[] }) => { views.push(...c.views); },
+      register: (c: { views: { Component: React.ComponentType }[] }) => { views.push(...c.views); },
     };
     activate(d as never);
     History = views[0].Component;
@@ -55,14 +55,14 @@ describe('the project sheet with many previews', () => {
   it('opens, closes and opens again with no hook-order error, and pages by 20', async () => {
     const { act } = await import('@testing-library/react');
     useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }] as never });
-    const base = buildSdk();
+    const base = createPluginSdk('previews');
     const slots: { slot: string; Component: React.ComponentType }[] = [];
     let api: { openSheet: (id: string) => void; closeSheet: () => void } | null = null;
     const d = {
-      ...base, id: 'previews',
-      storage: { ...base.storage, all: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
+      ...base,
+      docs: { ...base.docs, entries: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
       events: { on: () => () => {} },
-      register: (_id: string, c: { slots: { slot: string; Component: React.ComponentType }[]; projectMenu: { onPick: (a: unknown) => void }[] }) => {
+      register: (c: { slots: { slot: string; Component: React.ComponentType }[]; projectMenu: { onPick: (a: unknown) => void }[] }) => {
         slots.push(...c.slots);
         api = { openSheet: (id) => c.projectMenu[0].onPick({ session: { id } }), closeSheet: () => {} };
       },

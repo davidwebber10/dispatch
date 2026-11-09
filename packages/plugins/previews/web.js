@@ -59,11 +59,12 @@ export function threadsWithPreviews(items, project) {
 const PAGE = 20;
 
 export default function activate(d) {
-  const { h, hooks: { useState, useEffect, useMemo }, ui, storage, events, icons, actions, apiPath } = d;
+  // SDK version 2 (plugin.json "sdk": 2): `d` is bound to this plugin, so no call names the plugin id.
+  const { h, hooks: { useState, useEffect, useMemo, useProjects }, ui, docs, files, events, icons, actions } = d;
   const ID = d.id || 'previews';
   const VIEW = `plugin:${ID}:history`;
   const KEEP = 1000; // previews kept; the oldest seen ones are removed past this
-  const fileUrl = (f) => apiPath(`/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`);
+  const fileUrl = (f) => files.url(f.fileId);
   const newestFirst = (a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
   const isPreview = (v) => !!v && typeof v === 'object' && typeof v.id === 'string' && Array.isArray(v.files);
 
@@ -74,8 +75,8 @@ export default function activate(d) {
       if (get().loading) return;
       set({ loading: true });
       try {
-        const docs = await storage.all(ID);
-        set({ items: docs.filter((x) => x.key.startsWith('preview:')).map((x) => x.value).filter(isPreview).sort(newestFirst), loaded: true });
+        const all = await docs.entries();
+        set({ items: all.filter((x) => x.key.startsWith('preview:')).map((x) => x.value).filter(isPreview).sort(newestFirst), loaded: true });
         void get().prune();
       } catch { /* the next event or open tries again */ }
       finally { set({ loading: false }); }
@@ -87,7 +88,7 @@ export default function activate(d) {
       if (!p || p.seenAt) return;
       const next = { ...p, seenAt: new Date().toISOString() };
       get().upsert(next); // the badge drops at once
-      try { await storage.set(ID, `preview:${id}`, next); } catch { /* the next load corrects it */ }
+      try { await docs.set(`preview:${id}`, next); } catch { /* the next load corrects it */ }
     },
     markAllSeen: async (sessionId) => {
       for (const x of get().items.filter((x) => !x.seenAt && (!sessionId || x.sessionId === sessionId))) await get().markSeen(x.id);
@@ -95,8 +96,8 @@ export default function activate(d) {
     remove: async (id) => {
       const p = get().items.find((x) => x.id === id);
       get().drop(id);
-      try { await storage.remove(ID, `preview:${id}`); } catch { /* gone */ }
-      for (const f of (p && p.files) || []) { try { await d.fetch(ID, `/api/plugins/${encodeURIComponent(ID)}/files/${encodeURIComponent(f.fileId)}`, { method: 'DELETE' }); } catch { /* never there */ } }
+      try { await docs.delete(`preview:${id}`); } catch { /* gone */ }
+      for (const f of (p && p.files) || []) { try { await files.remove(f.fileId); } catch { /* never there */ } }
     },
     // The store stays under the plugin's document cap: past KEEP previews, the oldest seen ones go.
     prune: async () => {
@@ -113,7 +114,7 @@ export default function activate(d) {
   events.on('plugin:data', async (e) => {
     if (e.id !== ID || typeof e.key !== 'string' || !e.key.startsWith('preview:')) return;
     if (e.deleted) { usePv.getState().drop(e.key.slice('preview:'.length)); return; }
-    const v = await storage.get(ID, e.key, null);
+    const v = await docs.get(e.key, null);
     if (isPreview(v)) usePv.getState().upsert(v);
   });
   void usePv.getState().load();
@@ -137,7 +138,7 @@ export default function activate(d) {
     const [state, setState] = useState('idle');
     useEffect(() => { if (state === 'idle') return; const t = setTimeout(() => setState('idle'), 1600); return () => clearTimeout(t); }, [state]);
     const I = state === 'copied' ? icons.check : icons.copy;
-    return h('button', { type: 'button', 'aria-label': label, title: label, onClick: () => d.copyText(text).then(() => setState('copied'), () => setState('error')),
+    return h('button', { type: 'button', 'aria-label': label, title: label, onClick: () => ui.copyText(text).then(() => setState('copied'), () => setState('error')),
       style: { ...chip, height: 30, padding: '0 10px', background: state === 'copied' ? 'var(--color-accent)' : 'var(--color-elevated)', color: state === 'copied' ? 'var(--color-on-accent)' : 'var(--color-text-primary)', fontWeight: 600, fontSize: 12.5 } },
       h(I, { size: 14, weight: state === 'copied' ? 'bold' : 'regular' }),
       state === 'copied' ? 'Copied' : state === 'error' ? 'Could not copy' : label);
@@ -151,7 +152,8 @@ export default function activate(d) {
     const isDoc = !!preview.text && looksLikeMarkdown(preview.text, preview.title);
     const docName = /\.(md|markdown)$/i.test(preview.title) ? preview.title : `${preview.title}`;
     const unseen = !preview.seenAt;
-    const projectName = d.stores.useProjects((s) => { const p = s.sessions.find((x) => x.id === preview.sessionId); return p ? p.name : preview.sessionName; });
+    const project = useProjects().find((x) => x.id === preview.sessionId);
+    const projectName = project ? project.name : preview.sessionName;
     // The viewer fetches `src` itself for markdown and text (one app-root path; no second base prefix).
     const viewerFiles = preview.files.map((f) => ({ src: fileUrl(f), name: f.name, mime: f.mime, size: f.size }));
     const context = [showProject !== false ? projectName : null, preview.terminalLabel].filter(Boolean).join(' · ');
@@ -200,7 +202,8 @@ export default function activate(d) {
     const sessionId = usePv((s) => s.sheet);
     const items = usePv((s) => s.items);
     const loaded = usePv((s) => s.loaded);
-    const projectName = d.stores.useProjects((s) => { const p = s.sessions.find((x) => x.id === sessionId); return p ? p.name : null; });
+    const project = useProjects().find((x) => x.id === sessionId);
+    const projectName = project ? project.name : null;
     useEffect(() => {
       if (!sessionId) return;
       void usePv.getState().load();
@@ -225,7 +228,7 @@ export default function activate(d) {
   function History() {
     const all = usePv((s) => s.items);
     const loaded = usePv((s) => s.loaded);
-    const sessions = d.stores.useProjects((s) => s.sessions);
+    const sessions = useProjects();
     const [project, setProject] = useState('');
     const [thread, setThread] = useState('');
     const [query, setQuery] = useState('');
@@ -308,7 +311,7 @@ export default function activate(d) {
   const ProjectEye = ({ session }) => h(Eye, { sessionId: session ? session.id : null });
   // No thread header button (2026-11-07): a thread reaches its previews from the shelf and the thread menu.
 
-  d.register(ID, {
+  d.register({
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
     inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],

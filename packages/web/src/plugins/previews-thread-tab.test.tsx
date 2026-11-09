@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { buildSdk } from './sdk';
+import { createPluginSdk } from './facade';
 import { useProjects } from '../stores/projects';
 // The bundled Previews plugin is plain JS.
 import activate from '../../../plugins/previews/web.js';
@@ -12,14 +12,14 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
   let tabs: { id: string; label: string; icon?: string; Component: React.ComponentType<{ terminalId: string | null; sessionId: string | null }> }[];
   beforeEach(() => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }] as never });
-    const base = buildSdk();
+    const base = createPluginSdk('previews');
     tabs = [];
     const DOCS = [doc('a', 't1', 'Perf report'), doc('bb', 't2', 'Other report'), doc('ccc', 't1', 'Perf screenshot')];
     const d = {
-      ...base, id: 'previews',
-      storage: { ...base.storage, all: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
+      ...base,
+      docs: { ...base.docs, entries: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
       events: { on: () => () => {} },
-      register: (_id: string, c: { inspectorTabs?: typeof tabs }) => { tabs.push(...(c.inspectorTabs ?? [])); },
+      register: (c: { inspectorTabs?: typeof tabs }) => { tabs.push(...(c.inspectorTabs ?? [])); },
     };
     activate(d as never);
   });

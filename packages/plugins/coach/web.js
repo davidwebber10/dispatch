@@ -72,7 +72,11 @@ function typing(ctx) {
 }
 
 export function createCoach(d, deps = {}) {
-  const { h, hooks: { useState, useEffect }, storage, settings, events } = d;
+  // SDK version 2 (plugin.json "sdk": 2): `d` is bound to this plugin, so no call names the plugin id.
+  // `storage` is this plugin's documents (d.docs). A test may leave a feature out: each use checks.
+  const { h, hooks: { useState, useEffect }, docs: storage, settings, events } = d;
+  const hint = (text) => { if (d.ui && typeof d.ui.hint === 'function') d.ui.hint(text); };
+  const copyText = d.ui && typeof d.ui.copyText === 'function' ? d.ui.copyText : null;
   // The id the host gave this copy: a copy to local runs under its own id.
   const PLUGIN = d.id || 'coach';
   const VIEW_KEY = `plugin:${PLUGIN}:coach`;
@@ -88,7 +92,7 @@ export function createCoach(d, deps = {}) {
     const st = store.getState();
     const plan = planCall('more', st.settings, liveBudget(st.status.budget, now()), { harness: st.status.harness });
     if (plan.tier === 'none') return { budget: true };
-    const r = await d.assist(PLUGIN, { ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
+    const r = await d.assist({ ...morePrompt(card, st.memory), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) });
     const j = parseAnswer(r && r.text);
     if (!j || typeof j.better !== 'string' || !j.better.trim()) return null;
     return { wrote: contentExcerpt(card.excerpt), better: j.better.trim(), bullets: Array.isArray(j.bullets) ? j.bullets.filter((b) => typeof b === 'string').slice(0, 4) : [] };
@@ -120,22 +124,22 @@ export function createCoach(d, deps = {}) {
 
   async function load() {
     const [s, cadence, cards, cardState, memory, status, measuresDoc, recap, chat] = await Promise.all([
-      settings.get(PLUGIN, null).catch(() => null),
-      storage.get(PLUGIN, 'cadence', null).catch(() => null),
-      storage.get(PLUGIN, 'cards', null).catch(() => null),
-      storage.get(PLUGIN, 'cardState', null).catch(() => null),
-      storage.get(PLUGIN, 'memory', null).catch(() => null),
-      storage.get(PLUGIN, 'status', null).catch(() => null),
-      storage.get(PLUGIN, 'measures', null).catch(() => null),
-      storage.get(PLUGIN, 'recap', null).catch(() => null),
-      storage.get(PLUGIN, 'chat', null).catch(() => null),
+      settings.get(null).catch(() => null),
+      storage.get('cadence', null).catch(() => null),
+      storage.get('cards', null).catch(() => null),
+      storage.get('cardState', null).catch(() => null),
+      storage.get('memory', null).catch(() => null),
+      storage.get('status', null).catch(() => null),
+      storage.get('measures', null).catch(() => null),
+      storage.get('recap', null).catch(() => null),
+      storage.get('chat', null).catch(() => null),
     ]);
     const firstRun = !cadence || !cadence.firstSeenAt;
     const cad = firstRun ? { ...emptyCadence(now()), ...(cadence || {}), firstSeenAt: now().toISOString() } : cadence;
     store.setState({ loaded: true, settings: withDefaults(s), cadence: cad, cards: (cards && Array.isArray(cards.items)) ? cards.items : [], cardState: cardState || {}, memory: normalizeMemory(memory), status: { ...store.getState().status, ...(status || {}) }, measures: measuresDoc, recap, chat: chat && Array.isArray(chat.turns) ? chat : { turns: [] } });
     if (store.getState().signalsLoaded) void ensureSignals(true);
     void loadReviews();
-    if (firstRun) await storage.set(PLUGIN, 'cadence', cad).catch(() => {});
+    if (firstRun) await storage.set('cadence', cad).catch(() => {});
     // A new recap the worker may announce (not written in a mute or quiet hours) dots the Coach view until seen.
     const unseen = !!(recap && recap.announce && recap.at && cad.recapSeen !== recap.at);
     if (d.actions && typeof d.actions.setBadge === 'function') d.actions.setBadge(VIEW_KEY, unseen ? 1 : 0);
@@ -154,13 +158,13 @@ export function createCoach(d, deps = {}) {
   events.on('thread:prompt', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: true } }); });
   events.on('thread:turn', (e) => { if (e.terminalId) store.setState({ busy: { ...store.getState().busy, [e.terminalId]: false } }); });
 
-  async function saveCadence(next) { store.setState({ cadence: next }); await storage.set(PLUGIN, 'cadence', next); }
+  async function saveCadence(next) { store.setState({ cadence: next }); await storage.set('cadence', next); }
   async function setCardState(id, state) {
     const next = { ...store.getState().cardState, [id]: { state, at: now().toISOString() } };
     store.setState({ cardState: next });
-    await storage.set(PLUGIN, 'cardState', next);
+    await storage.set('cardState', next);
   }
-  async function saveMemory(next) { store.setState({ memory: next }); await storage.set(PLUGIN, 'memory', next); }
+  async function saveMemory(next) { store.setState({ memory: next }); await storage.set('memory', next); }
   const muteAs = (how) => saveCadence(mute(store.getState().cadence, how, now()));
   const doUnmute = () => saveCadence(unmute(store.getState().cadence));
 
@@ -196,7 +200,7 @@ export function createCoach(d, deps = {}) {
       void acts.createSkill({ name: card.skill.name, description: card.skill.description, body: card.skill.body, projectId }).then((r) => {
         if (!r) return;
         void setCardState(card.id, 'used');
-        if (typeof d.hint === 'function') d.hint('Skill created. Every thread gets it now.');
+        hint('Skill created. Every thread gets it now.');
       }).catch(() => {});
       return;
     }
@@ -219,8 +223,8 @@ export function createCoach(d, deps = {}) {
   /** Turn the Coach off (the welcome card): the plugin is disabled, as on the Plugins page. */
   async function turnOff() {
     await saveCadence({ ...store.getState().cadence, welcomeDone: true }).catch(() => {});
-    const api = d.api || {};
-    if (typeof api.disablePlugin === 'function') await api.disablePlugin(PLUGIN).catch(() => {});
+    const self = d.plugin || {};
+    if (typeof self.disable === 'function') await self.disable().catch(() => {});
     else if (d.actions && typeof d.actions.openSettings === 'function') d.actions.openSettings('plugins');
   }
 
@@ -389,13 +393,13 @@ export function createCoach(d, deps = {}) {
   async function resetAll() {
     await saveMemory(resetMemory());
     for (const key of ['cards', 'candidates']) {
-      const doc = await storage.get(PLUGIN, key, null).catch(() => null);
-      if (doc) await storage.set(PLUGIN, key, stripExcerpts(doc));
+      const doc = await storage.get(key, null).catch(() => null);
+      if (doc) await storage.set(key, stripExcerpts(doc));
     }
-    await storage.remove(PLUGIN, 'signals').catch(() => {});
+    await storage.delete('signals').catch(() => {});
     // The chat and every review (their quotes are the person's words) go too.
-    await storage.remove(PLUGIN, 'chat').catch(() => {});
-    for (const key of await reviewKeys()) await storage.remove(PLUGIN, key).catch(() => {});
+    await storage.delete('chat').catch(() => {});
+    for (const key of await reviewKeys()) await storage.delete(key).catch(() => {});
     store.setState({ chat: { turns: [] }, reviews: {}, reviewOpen: null, signals: null, cards: stripExcerpts({ items: store.getState().cards }).items, toast: null, offer: null });
   }
 
@@ -481,12 +485,12 @@ export function createCoach(d, deps = {}) {
     return h('button', { type: 'button', style: S.btn, onClick: () => { void requestReview(scope); } }, label);
   }
   async function reviewKeys() {
-    const list = await storage.list(PLUGIN).catch(() => []);
+    const list = await storage.keys().catch(() => []);
     return (Array.isArray(list) ? list : []).map((x) => (typeof x === 'string' ? x : x && x.key)).filter((k) => typeof k === 'string' && k.startsWith('reviews:'));
   }
   async function loadReviews() {
     const keys = await reviewKeys();
-    const docs = await Promise.all(keys.map((k) => storage.get(PLUGIN, k, null).catch(() => null)));
+    const docs = await Promise.all(keys.map((k) => storage.get(k, null).catch(() => null)));
     const reviews = {};
     keys.forEach((k, i) => { if (docs[i]) reviews[k] = docs[i]; });
     store.setState({ reviews });
@@ -497,7 +501,7 @@ export function createCoach(d, deps = {}) {
     const key = `reviews:${id}`;
     const doc = { id, scope, state: 'planning', at: now().toISOString(), ...(opts.backfill ? { backfill: true } : {}) };
     store.setState({ reviews: { ...store.getState().reviews, [key]: doc }, reviewOpen: key });
-    await storage.set(PLUGIN, key, doc);
+    await storage.set(key, doc);
     await pruneReviews(key);
     return key;
   }
@@ -505,19 +509,19 @@ export function createCoach(d, deps = {}) {
   async function pruneReviews(keep) {
     const keys = await reviewKeys();
     if (keys.length <= MAX_REVIEWS) return;
-    const docs = await Promise.all(keys.map(async (k) => ({ k, doc: store.getState().reviews[k] || (await storage.get(PLUGIN, k, null).catch(() => null)) })));
+    const docs = await Promise.all(keys.map(async (k) => ({ k, doc: store.getState().reviews[k] || (await storage.get(k, null).catch(() => null)) })));
     const busy = new Set(['planning', 'queued', 'reading', 'writing']);
     const old = docs.filter((x) => x.k !== keep && !(x.doc && busy.has(x.doc.state)))
       .sort((a, b) => String((a.doc && a.doc.at) || '').localeCompare(String((b.doc && b.doc.at) || '')));
     const drop = old.slice(0, keys.length - MAX_REVIEWS).map((x) => x.k);
-    for (const k of drop) await storage.remove(PLUGIN, k).catch(() => {});
+    for (const k of drop) await storage.delete(k).catch(() => {});
     if (drop.length) { const next = { ...store.getState().reviews }; for (const k of drop) delete next[k]; store.setState({ reviews: next }); }
   }
   async function patchReview(key, patch) {
-    const cur = store.getState().reviews[key] || (await storage.get(PLUGIN, key, null)) || {};
+    const cur = store.getState().reviews[key] || (await storage.get(key, null)) || {};
     const next = { ...cur, ...patch };
     store.setState({ reviews: { ...store.getState().reviews, [key]: next } });
-    await storage.set(PLUGIN, key, next);
+    await storage.set(key, next);
   }
   const lastDays = (n) => ({ kind: 'range', from: new Date(now().getTime() - n * 86400_000).toISOString(), to: now().toISOString() });
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -695,7 +699,7 @@ export function createCoach(d, deps = {}) {
     const mine = [...st.cards].reverse().filter((c) => c.terminalId === terminalId && !(st.cardState[c.id] && CLOSED.has(st.cardState[c.id].state)) && allows(st.memory, c, t)).slice(0, 3);
     // The tab has no message box: a prompt is copied for the person to paste. The tab works during a
     // mute and never counts toward the daily cap (mockup part 7).
-    const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (typeof d.copyText === 'function') void d.copyText(text); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }, insert: () => {} };
+    const ctx = { surface: 'inspector', terminalId, sessionId, value: '', set: (text) => { if (copyText) void copyText(text); hint('Copied. Paste it into the message box.'); }, insert: () => {} };
     let cardsBlock;
     if (st.toast && st.toast.terminalId === terminalId) cardsBlock = h(Toast, { toast: st.toast });
     else cardsBlock = mine.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 0 } }, ...mine.map((c) => h(CardView, { key: c.id, card: c, ctx, fresh: false }))) : h('div', { style: { ...S.note, fontSize: 13 } }, 'The Coach has nothing for this thread yet.');
@@ -716,10 +720,10 @@ export function createCoach(d, deps = {}) {
   // ── talk with the Coach (spec section 4.9) ─────────────────────────────────────────────────
   async function ensureSignals(force = false) {
     if (store.getState().signalsLoaded && !force) return;
-    const sig = await storage.get(PLUGIN, 'signals', null).catch(() => null);
+    const sig = await storage.get('signals', null).catch(() => null);
     store.setState({ signals: sig, signalsLoaded: true });
   }
-  async function saveChat(next) { store.setState({ chat: next }); await storage.set(PLUGIN, 'chat', next); }
+  async function saveChat(next) { store.setState({ chat: next }); await storage.set('chat', next); }
   const CHAT_CAP = 'The Coach has used its budget for this week. The chat comes back when the week resets.';
   function actionLabel(a) {
     const p = a.payload || {};
@@ -773,7 +777,7 @@ export function createCoach(d, deps = {}) {
         const s2 = store.getState();
         const cards = tid ? s2.cards.filter((c) => c.terminalId === tid) : s2.cards;
         const ctx = chatContext(s2.signals, s2.measures && s2.measures.scores, s2.memory, cards, { now: now(), terminalId: tid });
-        const r = await d.assist(PLUGIN, { ...chatPrompt(ctx, turns, q), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
+        const r = await d.assist({ ...chatPrompt(ctx, turns, q), harness: plan.harness, ...(plan.model ? { model: plan.model } : {}) }).catch(() => null);
         const ans = parseChat(r && r.text);
         if (!ans) { setNote('The Coach could not answer just now.'); return; }
         const at = now().toISOString();
@@ -809,9 +813,9 @@ export function createCoach(d, deps = {}) {
     const [data, setData] = useState(null);
     useEffect(() => {
       let live = true;
-      const api = d.api || {};
-      const call = (fn, ...a) => (typeof fn === 'function' ? fn(PLUGIN, ...a).catch(() => null) : Promise.resolve(null));
-      Promise.all([call(api.pluginAssistUsage), call(api.pluginAssistShare, { harness }), call(api.pluginBudget)])
+      const model = d.model || {};
+      const call = (fn, ...a) => (typeof fn === 'function' ? fn(...a).catch(() => null) : Promise.resolve(null));
+      Promise.all([call(model.usage), call(model.share, { harness }), call(model.budget)])
         .then(([usage, share, budget]) => { if (live) setData({ usage, share, budget }); });
       return () => { live = false; };
     }, [harness]);
@@ -872,7 +876,7 @@ export function createCoach(d, deps = {}) {
       if (a.kind === 'schedule' && typeof acts.openSchedule === 'function') acts.openSchedule({ prompt: a.prompt, cron: a.cron, label: a.label });
       else if (a.kind === 'threads' && typeof acts.openNewThreads === 'function') acts.openNewThreads({ prompts: a.prompts || [] });
       else if (typeof acts.openNewThreads === 'function') acts.openNewThreads({ prompts: [a.text || a.prompt || ''] });
-      else if (typeof d.copyText === 'function') { void d.copyText(a.text || a.prompt || ''); if (typeof d.hint === 'function') d.hint('Copied. Paste it into the message box.'); }
+      else if (copyText) { void copyText(a.text || a.prompt || ''); hint('Copied. Paste it into the message box.'); }
     };
     return h('div', { 'data-testid': 'coach-recap', style: S.section },
       h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
@@ -920,7 +924,7 @@ export function createCoach(d, deps = {}) {
   // ── your goals (spec section 4.6): up to 3, in your own words or from a suggestion ─────────
   const mapText = (text) => {
     const st = store.getState();
-    const assist = typeof d.assist === 'function' ? (req) => d.assist(PLUGIN, req) : null;
+    const assist = typeof d.assist === 'function' ? (req) => d.assist(req) : null;
     return mapGoal(text, { assist, settings: st.settings, budget: liveBudget(st.status.budget, now()) }).catch(() => mapGoal(text, { assist: null, settings: st.settings, budget: null }));
   };
   async function newGoal(text, mapped, source) {
@@ -994,14 +998,14 @@ export function createCoach(d, deps = {}) {
   async function saveSettings(next) {
     const s = withDefaults(next);
     store.setState({ settings: s });
-    await settings.set(PLUGIN, s);
+    await settings.set(s);
     return s;
   }
   async function saveBudget(patch) {
     // The daemon's budget first: the settings event that follows makes the worker read it at once.
     const s = withDefaults({ ...store.getState().settings, ...patch });
-    const api = d.api || {};
-    if (typeof api.setPluginBudget === 'function') await api.setPluginBudget(PLUGIN, { percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch((err) => { if (typeof d.hint === 'function') d.hint(`The budget was not saved: ${err && err.message ? err.message : err}`); });
+    const model = d.model || {};
+    if (typeof model.setBudget === 'function') await model.setBudget({ percentWeekly: s.budgetPercentWeekly, usdWeekly: s.budgetUsdWeekly }).catch((err) => { hint(`The budget was not saved: ${err && err.message ? err.message : err}`); });
     await saveSettings(s);
   }
 
@@ -1107,7 +1111,7 @@ export function createCoach(d, deps = {}) {
   function Settings() {
     const s = store((st) => st.settings);
     const loaded = store((st) => st.loaded);
-    const projects = d.stores && d.stores.useProjects ? d.stores.useProjects((p) => p.sessions) : [];
+    const projects = d.hooks && typeof d.hooks.useProjects === 'function' ? d.hooks.useProjects() : [];
     const phone = isMobile();
     const [adv, setAdv] = useState(false);
     if (!loaded) return null;
@@ -1152,7 +1156,7 @@ export function createCoach(d, deps = {}) {
       adv && h(Advanced, { s }));
   }
 
-  d.register(PLUGIN, {
+  d.register({
     views: [{ id: 'coach', label: 'Coach', icon: 'sparkle', Component: CoachView }],
     settings: [{ id: 'coach', label: 'Coach', blurb: 'How often, what it may spend, what it remembers', icon: 'sparkle', Component: Settings }],
     slots: [{ id: 'card', slot: 'composer.before', Component: Card }],

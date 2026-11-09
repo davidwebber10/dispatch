@@ -24,9 +24,9 @@ const MEASURES = {
 };
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
 
-async function boot(over: { docs?: Record<string, unknown>; api?: Record<string, unknown>; actions?: Record<string, unknown> } = {}) {
-  const d: FakeD = fakeD({ docs: { cadence: SEASONED, cards: { items: [OLD, CARD] }, measures: MEASURES, ...(over.docs ?? {}) }, api: over.api, actions: over.actions });
-  const coach = createCoach(d, { now: () => NOW });
+async function boot(over: { docs?: Record<string, unknown>; model?: Record<string, unknown>; actions?: Record<string, unknown> } = {}) {
+  const d: FakeD = fakeD({ docs: { cadence: SEASONED, cards: { items: [OLD, CARD] }, measures: MEASURES, ...(over.docs ?? {}) }, model: over.model, actions: over.actions });
+  const coach = createCoach(d.sdk, { now: () => NOW });
   await coach.ready;
   const reg = d.registered.coach as Record<string, { Component: Comp }[]>;
   return { d, Tab: reg.inspectorTabs[0].Component, View: reg.views[0].Component };
@@ -36,7 +36,7 @@ afterEach(() => { cleanup(); });
 
 describe('Coach right-column tab (coach plan Task 12)', () => {
   it('shows the open thread\'s card; the five measures are on the Coach screen: the weakest is the focus, trends have names', async () => {
-    const { Tab, View } = await boot({ api: {} });
+    const { Tab, View } = await boot({ model: {} });
     const v = render(<Tab terminalId="t1" sessionId="s1" />);
     const card = await screen.findByTestId('coach-card');
     expect(card).toHaveTextContent('Ask for a plan first');
@@ -81,14 +81,14 @@ describe('Coach right-column tab (coach plan Task 12)', () => {
 });
 
 describe('Coach screen (coach plan Task 12)', () => {
-  const api = {
-    pluginAssistUsage: vi.fn(async () => ({ calls: 212, failed: 1, inputTokens: 318_000, outputTokens: 41_000, costUsd: 1.2, byModel: [{ model: 'claude-haiku-5-5', harness: 'claude', calls: 205, inputTokens: 300_000, outputTokens: 30_000 }, { model: 'opus', harness: 'claude', calls: 7, inputTokens: 18_000, outputTokens: 11_000 }] })),
-    pluginAssistShare: vi.fn(async () => ({ fiveHour: { usedPercent: 40, pluginPercent: 0.8, pluginTokens: 1, accountTokens: 2, resetsAt: null }, sevenDay: { usedPercent: 30, pluginPercent: 1.6, pluginTokens: 1, accountTokens: 2, resetsAt: null } })),
-    pluginBudget: vi.fn(async () => ({ percentWeekly: 3, usdWeekly: 5 })),
+  const model = {
+    usage: vi.fn(async () => ({ calls: 212, failed: 1, inputTokens: 318_000, outputTokens: 41_000, costUsd: 1.2, byModel: [{ model: 'claude-haiku-5-5', harness: 'claude', calls: 205, inputTokens: 300_000, outputTokens: 30_000 }, { model: 'opus', harness: 'claude', calls: 7, inputTokens: 18_000, outputTokens: 11_000 }] })),
+    share: vi.fn(async () => ({ fiveHour: { usedPercent: 40, pluginPercent: 0.8, pluginTokens: 1, accountTokens: 2, resetsAt: null }, sevenDay: { usedPercent: 30, pluginPercent: 1.6, pluginTokens: 1, accountTokens: 2, resetsAt: null } })),
+    budget: vi.fn(async () => ({ percentWeekly: 3, usdWeekly: 5 })),
   };
 
   it('shows the cost block: calls by model, tokens, the share labeled an estimate, and the budget meter', async () => {
-    const { View } = await boot({ api, docs: { status: { budget: { usedPercent: 1.6, capPercent: 3 }, level: 'balanced', stepped: false, harness: 'claude' } } });
+    const { View } = await boot({ model, docs: { status: { budget: { usedPercent: 1.6, capPercent: 3 }, level: 'balanced', stepped: false, harness: 'claude' } } });
     render(<View />);
     const cost = await screen.findByTestId('coach-cost');
     await waitFor(() => expect(cost).toHaveTextContent('212'));
@@ -104,13 +104,13 @@ describe('Coach screen (coach plan Task 12)', () => {
   });
 
   it('says when the Coach stepped down near the budget', async () => {
-    const { View } = await boot({ api, docs: { status: { budget: { usedPercent: 2.5, capPercent: 3 }, level: 'economy', stepped: true } } });
+    const { View } = await boot({ model, docs: { status: { budget: { usedPercent: 2.5, capPercent: 3 }, level: 'economy', stepped: true } } });
     render(<View />);
     expect(await screen.findByText('Near the budget, the Coach stepped down to Economy.')).toBeInTheDocument();
   });
 
   it('lists the card history, newest first, with what happened to each', async () => {
-    const { View } = await boot({ api, docs: { cardState: { [OLD.id]: { state: 'dismissed', at: '2026-11-20T11:00:00Z' } } } });
+    const { View } = await boot({ model, docs: { cardState: { [OLD.id]: { state: 'dismissed', at: '2026-11-20T11:00:00Z' } } } });
     render(<View />);
     const hist = await screen.findByTestId('coach-history');
     const rows = within(hist).getAllByRole('listitem');
@@ -123,7 +123,7 @@ describe('Coach screen (coach plan Task 12)', () => {
   it('shows the weekly recap with its stretch; Set it up opens the dialog and starts nothing; seeing it clears the badge', async () => {
     const openSchedule = vi.fn();
     const recap = { at: '2026-11-23T08:00:00Z', announce: true, week: '2026-11-23', stats: { threads: 38, days: 6, parallel: 4 }, patterns: ['You typed the same prompt 5 times.', 'Your longest hands-off run was 22 minutes.', 'You ran up to 4 threads at a time.'], stretch: { measure: 'reuse', headline: 'Turn your repeated prompt into a schedule', why: 'You sent the same prompt 5 times this week.', action: { kind: 'schedule', label: 'Set it up', prompt: 'summarize yesterday', cron: '0 8 * * 1-5' }, check: 'Stop it any time.' }, learned: 'The Coach learned: "Not a developer."' };
-    const { View, d } = await boot({ api, docs: { recap }, actions: { openSchedule } });
+    const { View, d } = await boot({ model, docs: { recap }, actions: { openSchedule } });
     expect(d.actions.setBadge).toHaveBeenCalledWith('plugin:coach:coach', 1);
     render(<View />);
     const r = await screen.findByTestId('coach-recap');
@@ -138,7 +138,7 @@ describe('Coach screen (coach plan Task 12)', () => {
   });
 
   it('a recap written during a mute does not set the badge', async () => {
-    const { d } = await boot({ api, docs: { recap: { at: '2026-11-23T08:00:00Z', announce: false, stats: { threads: 1, days: 5, parallel: 1 }, patterns: ['x'], stretch: null, learned: null } } });
+    const { d } = await boot({ model, docs: { recap: { at: '2026-11-23T08:00:00Z', announce: false, stats: { threads: 1, days: 5, parallel: 1 }, patterns: ['x'], stretch: null, learned: null } } });
     expect(d.actions.setBadge).not.toHaveBeenCalledWith('plugin:coach:coach', 1);
   });
 });

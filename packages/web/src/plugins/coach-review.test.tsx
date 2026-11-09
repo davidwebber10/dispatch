@@ -334,7 +334,7 @@ afterEach(() => { cleanup(); });
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
 async function boot(docs: Record<string, unknown> = {}) {
   const d: FakeD = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 9, 1)), ...docs } });
-  const coach = createCoach(d, { now: () => NOW });
+  const coach = createCoach(d.sdk, { now: () => NOW });
   await coach.ready;
   const reg = d.registered.coach as Record<string, { Component: Comp }[]>;
   return { d, View: reg.views[0].Component, Tab: reg.inspectorTabs[0].Component };
