@@ -4,6 +4,12 @@ import request from 'supertest';
 import { createTerminalsRouter } from './terminals.js';
 import type { SessionService } from '../sessions/service.js';
 import { modelSupportsTools } from '../settings/model-capabilities.js';
+import Database from 'better-sqlite3';
+import { initSchema } from '../db/schema.js';
+import * as sessionsDb from '../db/sessions.js';
+import * as terminalsDb from '../db/terminals.js';
+import * as parksDb from '../db/usage-limits.js';
+import { StatusService } from '../status/service.js';
 
 // The create route consults the model catalogs; stubbed so no test reaches the network.
 vi.mock('../settings/model-capabilities.js', () => ({
@@ -247,5 +253,195 @@ describe('GET /api/terminals/stalls', () => {
     const res = await request(app({})).get('/api/terminals/stalls');
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
+  });
+});
+
+// W2-G: the diagnostics route explains why a thread is in its state. Real database and real
+// StatusService; the process, the watchdog, the outbox and the saved questions are stand-ins.
+describe('GET /api/terminals/:id/diagnostics', () => {
+  const NOW = Date.now();
+  function world(opts: { transport?: 'structured' | 'pty'; alive?: boolean; pending?: unknown } = {}) {
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 'proj', provider: 'claude-code', name: 'p', workingDir: '/x' });
+    const transport = opts.transport ?? 'structured';
+    terminalsDb.create(db, { id: 't1', sessionId: 'proj', type: 'claude-code', label: 'Worker', skipPermissions: true, config: { transport } });
+    terminalsDb.create(db, { id: 'coord', sessionId: 'proj', type: 'claude-code', label: 'Control Plane', skipPermissions: true });
+    const status = new StatusService(db, { broadcast: vi.fn() });
+    const state = { alive: opts.alive ?? true, pending: opts.pending ?? null };
+    const manager = { isAlive: () => state.alive, getPending: () => state.pending };
+    const session = {
+      getTerminal: (id: string) => { const row = terminalsDb.getById(db, id); return row ? terminalsDb.rowToTerminal(row) : null; },
+      structuredManagerFor: () => (transport === 'structured' ? manager : undefined),
+      getPendingPermission: () => (transport === 'structured' ? state.pending : null),
+      ptyManager: { isAlive: () => state.alive },
+    };
+    const a = express();
+    a.use(express.json());
+    a.use('/api', createTerminalsRouter(session as unknown as SessionService, undefined, status));
+    const get = async () => (await request(a).get('/api/terminals/t1/diagnostics')).body;
+    return { db, status, state, a, get };
+  }
+
+  it('answers 404 for a thread that is not known', async () => {
+    const res = await request(app({ getTerminal: () => null as never })).get('/api/terminals/nope/diagnostics');
+    expect(res.status).toBe(404);
+  });
+
+  it('diagnostics answers with empty deliveries when no outbox is wired', async () => {
+    const { get } = world();
+    const body = await get();
+    expect(body.deliveries).toEqual([]);
+    expect(body.stall).toBeNull();
+    expect(body.park).toBeNull();
+    expect(body.pendingQuestion).toBeNull();
+    // The fields of the route before W2-G are still there.
+    expect(body).toHaveProperty('lifecycle');
+    expect(body).toHaveProperty('captureFailure');
+    expect(Array.isArray(body.events)).toBe(true);
+  });
+
+  it('it includes the explanation', async () => {
+    const { get } = world();
+    const body = await get();
+    expect(body.status).toBe('idle');
+    expect(body.process).toEqual({ alive: true, transport: 'structured' });
+    expect(body.explanation).toMatchObject({ rule: 'idle', headline: 'Waiting for your next message', nextSteps: [] });
+    expect(Array.isArray(body.explanation.reasons)).toBe(true);
+  });
+
+  it('it still answers, with a plain explanation, when no status service and no process source exist', async () => {
+    const res = await request(app({ getTerminal: () => ({ id: 't1', type: 'claude-code', status: 'working', config: {} }) as never })).get('/api/terminals/t1/diagnostics');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ lifecycle: null, captureFailure: null, events: [], process: null, deliveries: [], status: 'working' });
+    expect(res.body.explanation.rule).toBe('working');
+  });
+
+  it('working with a live process: a turn is in progress', async () => {
+    const { status, get } = world();
+    status.markWorking('t1');
+    const body = await get();
+    expect(body.status).toBe('working');
+    expect(body.explanation.rule).toBe('working');
+    expect(body.explanation.since).toBe(body.events.at(-1).observed_at);
+  });
+
+  // Regression (1A.2, stale working status): the explanation names the dead process, and the reset works.
+  it('a working thread whose process is dead is explained and can be reset', async () => {
+    const { status, state, a, get, db } = world();
+    status.markWorking('t1');
+    state.alive = false;
+    const body = await get();
+    expect(body.process).toEqual({ alive: false, transport: 'structured' });
+    expect(body.explanation.rule).toBe('working-dead-process');
+    expect(body.explanation.headline).toBe('Working, but the process ended');
+    expect(body.explanation.nextSteps.map((s: { action: string }) => s.action)).toEqual(['reset-status', 'restart']);
+    // The route only reads: the status did not change.
+    expect(terminalsDb.getById(db, 't1')?.status).toBe('working');
+    expect((await request(a).post('/api/terminals/t1/reset-status')).status).toBe(204);
+    const after = await get();
+    expect(after.status).toBe('idle');
+    expect(after.explanation.rule).toBe('idle');
+    expect(after.events[0].event_type).toBe('status.reset');
+  });
+
+  it('a CLI thread reads its process from the PTY manager', async () => {
+    const { status, get } = world({ transport: 'pty', alive: false });
+    status.markWorking('t1');
+    const body = await get();
+    expect(body.process).toEqual({ alive: false, transport: 'pty' });
+    expect(body.explanation.rule).toBe('working-dead-process');
+  });
+
+  it('stalled: the flag of the watchdog is in the answer and in the explanation', async () => {
+    const { status, a, get } = world();
+    status.markWorking('t1');
+    const since = NOW - 14 * 60_000;
+    a.locals.stallWatchdog = { all: () => [], get: (id: string) => (id === 't1' ? { terminalId: 't1', stalledSince: since, lastFrameAt: since } : null) };
+    const body = await get();
+    expect(body.stall).toEqual({ stalledSince: new Date(since).toISOString(), lastFrameAt: new Date(since).toISOString() });
+    expect(body.explanation.rule).toBe('working-stalled');
+    expect(body.explanation.reasons.join(' ')).toContain('The watchdog only flags the thread');
+  });
+
+  it('needs input with a live question', async () => {
+    const { status, get } = world({ pending: { requestId: 'r1', toolName: 'AskUserQuestion', input: { secret: 'question body' }, questions: [{ question: 'Which one?' }] } });
+    status.markNeedsInput('t1', 'Needs your answer');
+    const body = await get();
+    expect(body.status).toBe('needs_input');
+    expect(body.pendingQuestion).toEqual({ source: 'live', toolName: 'AskUserQuestion', question: true, createdAt: null });
+    expect(body.explanation.rule).toBe('needs-input-question');
+    expect(JSON.stringify(body)).not.toContain('question body');
+    expect(JSON.stringify(body)).not.toContain('Which one?');
+  });
+
+  it('needs input with a question that the saved-question table restored (W2-C source)', async () => {
+    const { status, state, a, get } = world();
+    status.markNeedsInput('t1', 'Needs your answer');
+    state.alive = false;
+    a.locals.pendingQuestions = { get: (id: string) => (id === 't1' ? { terminal_id: 't1', request_id: 'r1', payload: '{"q":"saved body"}', created_at: '2026-11-09T10:00:00.000Z' } : null) };
+    const body = await get();
+    expect(body.pendingQuestion).toEqual({ source: 'saved', toolName: null, question: true, createdAt: '2026-11-09T10:00:00.000Z' });
+    expect(body.explanation.rule).toBe('needs-input-restored-question');
+    expect(JSON.stringify(body)).not.toContain('saved body');
+  });
+
+  it('error with a dead process', async () => {
+    const { status, state, get } = world();
+    status.markWorking('t1');
+    state.alive = false;
+    status.markExited('t1', 1);
+    const body = await get();
+    expect(body.status).toBe('error');
+    expect(body.explanation.rule).toBe('error-dead-process');
+  });
+
+  it('parked on a limit: the park row is in the answer without its banner text', async () => {
+    const { db, get } = world();
+    const resets = NOW + 2 * 3600_000;
+    parksDb.upsert(db, { terminal_id: 't1', provider: 'claude-code', kind: 'session', resets_at: resets, wake_at: resets + 60_000, message: 'limit banner words', parsed: 1, attempts: 0, state: 'parked', parked_at: NOW - 60_000 }, NOW);
+    const body = await get();
+    expect(body.park).toEqual({ state: 'parked', provider: 'claude-code', kind: 'session', resetsAt: resets, wakeAt: resets + 60_000, attempts: 0, parkedAt: NOW - 60_000 });
+    expect(body.explanation.rule).toBe('parked-limit');
+    expect(body.explanation.nextSteps).toEqual([{ label: 'Open usage limits', action: 'open-usage' }]);
+    expect(JSON.stringify(body)).not.toContain('limit banner words');
+  });
+
+  it('queued', async () => {
+    const { db, state, get } = world();
+    state.alive = false;
+    terminalsDb.updateStatus(db, 't1', 'queued');
+    const body = await get();
+    expect(body.status).toBe('queued');
+    expect(body.explanation.rule).toBe('queued');
+  });
+
+  it('deliveries: the last 20 of the outbox, to and from the thread, with the peer label and no body', async () => {
+    const { a, get } = world();
+    const list = vi.fn(() => [
+      { id: 2, target_terminal_id: 'coord', source_terminal_id: 't1', kind: 'notice', body: 'worker output words', dedup_key: 'k2', state: 'pending', attempts: 1, last_error: 'not-alive', created_at: '2026-11-09T10:00:00.000Z', delivered_at: null },
+      { id: 1, target_terminal_id: 't1', source_terminal_id: 'coord', kind: 'watch', body: 'x', dedup_key: 'k1', state: 'delivered', attempts: 1, last_error: null, created_at: '2026-11-09T09:00:00.000Z', delivered_at: '2026-11-09T09:00:01.000Z' },
+      ...Array.from({ length: 30 }, (_, n) => ({ id: 100 + n, target_terminal_id: 't1', source_terminal_id: null, kind: 'notice', body: 'x', dedup_key: `d${n}`, state: 'delivered', attempts: 1, last_error: null, created_at: null, delivered_at: null })),
+    ]);
+    a.locals.deliveryOutbox = { list };
+    const body = await get();
+    expect(list).toHaveBeenCalledWith({ terminalId: 't1', limit: 20 });
+    expect(body.deliveries).toHaveLength(20);
+    expect(body.deliveries[0]).toEqual({ id: 2, direction: 'from', peerId: 'coord', peerLabel: 'Control Plane', kind: 'notice', state: 'pending', attempts: 1, lastError: 'not-alive', createdAt: '2026-11-09T10:00:00.000Z', deliveredAt: null });
+    expect(body.deliveries[1]).toMatchObject({ id: 1, direction: 'to', peerId: 'coord', state: 'delivered' });
+    expect(body.explanation.rule).toBe('idle-pending-delivery');
+    expect(body.explanation.reasons.join(' ')).toContain('A notice for the thread "Control Plane" (coord) waits');
+    expect(JSON.stringify(body)).not.toContain('worker output words');
+  });
+
+  it('a source that throws does not break the answer', async () => {
+    const { a, get } = world();
+    a.locals.deliveryOutbox = { list: () => { throw new Error('outbox closed'); } };
+    a.locals.stallWatchdog = { all: () => [], get: () => { throw new Error('boom'); } };
+    a.locals.pendingQuestions = { get: () => { throw new Error('boom'); } };
+    const body = await get();
+    expect(body.deliveries).toEqual([]);
+    expect(body.stall).toBeNull();
+    expect(body.explanation.rule).toBe('idle');
   });
 });
