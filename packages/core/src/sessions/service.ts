@@ -52,6 +52,7 @@ import { codexEffortsFor, codexDefaultEffortFor, CODEX_ALL_EFFORTS } from '../pr
 import { readSessionBackfill, readTerminalTokenUsage, transcriptTailStatus, readSessionSettings, findNewestUnresolvedUserUuid, applyDurableSources, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { resolveTranscriptPath } from './transcript-path.js';
 import { randomUUID } from 'crypto';
+import { DeliveryOutbox, type DeliverResult, type OutboxKind, type OutboxState } from '../delivery/outbox.js';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { effectiveSpawnDepth, findLiveCoordinator } from '../auth/key-scope.js';
 import { COORDINATOR_CAPABLE_HARNESSES } from '../providers/capabilities.js';
@@ -1401,7 +1402,7 @@ export class SessionService {
     try { cfg = JSON.parse(agent.config || '{}'); } catch { /* default {} */ }
     const target = resolveReportTarget(this.db, cfg);
     if (target.to === 'none' || target.to === 'chat') return false;
-    if (target.to === 'starter') return this.deliverToStarter(agentTerminalId, target.starterId, note);
+    if (target.to === 'starter') return this.deliverToStarter(agentTerminalId, target.starterId, note, opts.kind);
     const coordinator = terminalsDb.listBySession(this.db, agent.session_id)
       .map(terminalsDb.rowToTerminal)
       .find((t) => isAgentType(t.type) && !t.archivedAt && t.id !== agentTerminalId && t.config?.role === 'coordinator');
@@ -1424,41 +1425,107 @@ export class SessionService {
     } catch (err) {
       console.error(`batch line: failed for agent ${agentTerminalId}; the notice goes out without it`, err);
     }
-    try {
-      this.ensureStructuredAlive(coordinator.id); // a daemon restart may have killed it
-      this.sendStructuredMessage(coordinator.id, message);
-    } catch { return false; }
+    // Through the delivery outbox (W2-C): the overseer is revived as before (deliverOutboxRow); a
+    // send that fails is kept and tried again on the overseer's next event.
+    if (this.enqueueNotice(agentTerminalId, coordinator.id, message, opts.kind) !== 'delivered') return false;
     if (batch) this.updateInterimTimer(coordinator.id, opts.kind, isBusy(batch));
     return true;
   }
 
   /**
-   * Deliver a worker's notice to the non-overseer thread that started it. Never revives: a starter
-   * that is archived, gone, or not running gets nothing, and the notice is logged and dropped (the
-   * overseer is not a fallback). A Pretty starter gets a structured message; a CLI starter gets
-   * the text typed in and submitted, as a watch wake does.
+   * Deliver a worker's notice to the non-overseer thread that started it, through the delivery
+   * outbox (W2-C). Never revives: a starter that is not running gets the notice when it runs again
+   * (the row waits in `delivery_outbox`; before, the notice was logged and lost). A starter that is
+   * archived, gone or a shell tab gets nothing and the row is dropped (the overseer is not a
+   * fallback). A Pretty starter gets a structured message; a CLI starter gets the text typed in and
+   * submitted, as a watch wake does. Returns true only when the notice reached the starter now.
    */
-  private deliverToStarter(workerId: string, starterId: string, note: string): boolean {
-    const drop = (why: string): false => {
-      console.warn(`report routing: notice from ${workerId} dropped, its starter ${starterId} ${why}`);
-      return false;
-    };
-    const starter = terminalsDb.getById(this.db, starterId);
-    if (!starter) return drop('no longer exists');
-    if (starter.archived_at) return drop('is archived');
-    if (starter.type === 'shell') return drop('is a shell tab');
+  private deliverToStarter(workerId: string, starterId: string, note: string, kind: NoticeKind): boolean {
+    const state = this.enqueueNotice(workerId, starterId, note, kind);
+    if (state === 'pending') console.warn(`report routing: notice from ${workerId} waits, its starter ${starterId} is not running`);
+    else if (state === 'dropped') console.warn(`report routing: notice from ${workerId} dropped, its starter ${starterId} is archived, gone, or could not take it`);
+    return state === 'delivered';
+  }
+
+  private outbox?: DeliveryOutbox;
+  /** The daemon's delivery outbox (server wiring: delivery/wiring.ts). */
+  setDeliveryOutbox(outbox: DeliveryOutbox): void { this.outbox = outbox; }
+  /** The delivery outbox. A service that got none (a unit test) makes one on its own database, with no event wired. */
+  get deliveryOutbox(): DeliveryOutbox {
+    return (this.outbox ??= new DeliveryOutbox({ db: this.db, now: () => this.clock(), deliver: (id, body, kind) => this.deliverOutboxRow(id, body, kind) }));
+  }
+
+  /**
+   * Write a worker's notice to the outbox and try it at once. A question is only useful now (the
+   * caller gives it to the user when this does not deliver it), so it is not kept.
+   */
+  private enqueueNotice(workerId: string, targetId: string, body: string, kind: NoticeKind): OutboxState {
     try {
-      if (this.isStructuredTerminal(starter)) {
-        if (!this.structuredManagerForTerminal(starterId)?.isAlive(starterId)) return drop('is not running');
-        this.sendStructuredMessage(starterId, note);
-      } else {
-        if (!this.ptyManager.isAlive(starterId)) return drop('is not running');
-        this.ptyManager.write(starterId, ptyMessagePayload(note));
-      }
-      return true;
+      return this.deliveryOutbox.enqueue({
+        targetId, sourceId: workerId, body,
+        kind: kind === 'question' ? 'question' : 'notice',
+        dedupKey: this.noticeDedupKey(workerId, kind),
+        ...(kind === 'question' ? { immediateOnly: 'not delivered at once; the question goes to the user' } : {}),
+      }).state;
     } catch (err) {
-      return drop(`could not be reached (${err instanceof Error ? err.message : String(err)})`);
+      // The outbox itself failed (a database error). Do not lose the notice for that: one direct try.
+      console.error(`report routing: the outbox refused a notice from ${workerId}; one direct delivery`, err);
+      try { return this.deliverOutboxRow(targetId, body, 'notice') === 'delivered' ? 'delivered' : 'dropped'; } catch { return 'dropped'; }
     }
+  }
+
+  /**
+   * One event makes one row. A notice that a harness event of the worker caused (a finished turn,
+   * a blocked turn, a question) is keyed by the lifecycle position StatusService.accept recorded
+   * for that event: `notice:<worker>:<kind>:<generation>:<sequence>`. A notice the user caused (a
+   * stop, a direct message, an answer), or one from a worker with no lifecycle generation (a CLI
+   * thread), has no such position, so each call is its own row.
+   */
+  private noticeDedupKey(workerId: string, kind: NoticeKind): string {
+    if (kind === 'finished' || kind === 'blocked' || kind === 'question') {
+      try {
+        const at = this.db.prepare('SELECT generation, sequence FROM thread_lifecycle WHERE terminal_id = ?').get(workerId) as
+          { generation: string | null; sequence: number | null } | undefined;
+        if (at?.generation) return `notice:${workerId}:${kind}:${at.generation}:${at.sequence ?? 0}`;
+      } catch { /* no lifecycle record: fall through */ }
+    }
+    return `notice:${workerId}:${kind}:${randomUUID()}`;
+  }
+
+  /**
+   * The outbox's deliver function for a notice (a watch wake has its own: buildWatchDeliver).
+   * It keeps who is revived as it was before the outbox: the overseer is started when a restart
+   * killed it; any other thread is never started for a notice. A throw is a failed attempt.
+   */
+  deliverOutboxRow(targetId: string, body: string, _kind: OutboxKind): DeliverResult {
+    const target = terminalsDb.getById(this.db, targetId);
+    if (!target || target.archived_at || target.type === 'shell') return 'gone';
+    let cfg: Record<string, any> = {};
+    try { cfg = JSON.parse(target.config || '{}'); } catch { /* default {} */ }
+    if (cfg.role === 'coordinator') {
+      this.ensureStructuredAlive(targetId); // a daemon restart may have killed it
+      try {
+        this.sendStructuredMessage(targetId, body);
+        return 'delivered';
+      } catch (err) {
+        // It could not be started: the row waits for its next start. A live overseer that refused the send is a failed attempt.
+        if (!this.structuredManagerForTerminal(targetId)?.isAlive(targetId)) return 'not-alive';
+        throw err;
+      }
+    }
+    if (this.isStructuredTerminal(target)) {
+      if (!this.structuredManagerForTerminal(targetId)?.isAlive(targetId)) return 'not-alive';
+      this.sendStructuredMessage(targetId, body);
+      return 'delivered';
+    }
+    if (!this.ptyManager.isAlive(targetId)) return 'not-alive';
+    this.ptyManager.write(targetId, ptyMessagePayload(body));
+    return 'delivered';
+  }
+
+  /** True when a process backs the thread now (a PTY or a structured session). */
+  isThreadProcessAlive(terminalId: string): boolean {
+    return this.ptyManager.isAlive(terminalId) || !!this.structuredManagerForTerminal(terminalId)?.isAlive(terminalId);
   }
 
   /** Arm or clear the overseer's interim recap timer after a notice (see sessions/interim-recap.ts). */
