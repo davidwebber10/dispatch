@@ -4,6 +4,7 @@ import { initSchema } from '../../src/db/schema.js';
 import * as sessionsDb from '../../src/db/sessions.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 import { StatusService } from '../../src/status/service.js';
+import { ThreadConfigStore } from '../../src/sessions/thread-config.js';
 
 // Ghost heal: the live process's self-reported session id is authoritative when the STORED
 // id has no transcript anywhere (a captured id from a boot that never ran a turn — the
@@ -503,5 +504,56 @@ describe('StatusService watch hook fires on a change only', () => {
     service.markIdle('term');
     expect(statusEvents().length).toBe(before + 1);
     expect(terminalsDb.getById(db, 'term')?.status).toBe('waiting');
+  });
+});
+
+// W2-A: the status service's config writes go through ThreadConfigStore.
+describe('StatusService config writes (W2-A)', () => {
+  it('clearing the board override keeps a key written between the read and the write', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { override: 'complete' } });
+    // A listener that writes at the last moment before the status service's own write: after any
+    // read the service made, before its write. A write built from a copy would drop these keys.
+    const side = new ThreadConfigStore(db);
+    let fired = 0;
+    const listener = (id: string) => {
+      if (fired++) return;
+      side.patch(id, (c) => ({ alertsEnabled: true, boardState: { ...(c.boardState ?? {}), acknowledgedAt: '2026-11-09T00:00:00.000Z' } }));
+    };
+    class ListeningStore extends ThreadConfigStore {
+      override patch(id: string, p: Parameters<ThreadConfigStore['patch']>[1]) { listener(id); return super.patch(id, p); }
+    }
+    const s = new StatusService(db, broadcaster, undefined, undefined, undefined, undefined, { configStore: new ListeningStore(db) });
+    s.markWorking('term');
+    expect(fired).toBeGreaterThan(0);
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', alertsEnabled: true, boardState: { override: null, acknowledgedAt: '2026-11-09T00:00:00.000Z' } });
+  });
+
+  it('clearing the board override keeps a key that a status listener wrote in the same event', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { acknowledgedAt: 'a', override: 'complete' } });
+    const store = new ThreadConfigStore(db);
+    // The watch listener runs after the status write; it patches, then a second status event follows.
+    const s = new StatusService(db, broadcaster, undefined, () => { store.patch('term', { alertsEnabled: true }); });
+    s.markWorking('term');
+    store.patch('term', (c) => ({ boardState: { ...(c.boardState ?? {}), override: 'resting' } }));
+    s.markIdle('term');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', alertsEnabled: true, boardState: { acknowledgedAt: 'a', override: null } });
+  });
+
+  it('markScheduled stamps the wake and keeps the override clear made by the same status write', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', boardState: { override: 'complete' } });
+    new StatusService(db, broadcaster).markScheduled('term', 'Wakes at 09:00');
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg).toEqual({ model: 'opus', boardState: { override: null }, scheduledWake: 'Wakes at 09:00' });
+  });
+
+  it('a consumed declaration removes only pendingDeclaration and writes only lastOutcome', () => {
+    terminalsDb.writeConfigRaw(db, 'term', { model: 'opus', scheduledWake: 'kept', pendingDeclaration: { state: 'done', summary: 'shipped it' } });
+    new StatusService(db, broadcaster).ingest('claude', 'term', { hook_event_name: 'Stop', session_id: 'sid-1' });
+    const cfg = JSON.parse(terminalsDb.getById(db, 'term')?.config || '{}');
+    expect(cfg.pendingDeclaration).toBeUndefined();
+    expect(cfg.lastOutcome).toMatchObject({ summary: 'shipped it', needsHelp: false, declaredState: 'done' });
+    expect(cfg).toMatchObject({ model: 'opus', scheduledWake: 'kept' });
   });
 });
