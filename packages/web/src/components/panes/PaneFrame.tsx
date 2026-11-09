@@ -1,6 +1,6 @@
 import { DotsSixVertical, X } from '@phosphor-icons/react';
 import { useTerminalLabel } from '../../stores/tabsSelectors';
-import { TabHost } from '../tabs/TabHost';
+import { TabHost } from '../tabs/LazyTabHost';
 
 /** One pane inside a grouped view: a 30px title bar (label + grip + close) over
  *  the tab's content (<TabHost/>). The grip's pointerdown fires onMoveStart so a

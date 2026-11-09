@@ -1,0 +1,130 @@
+import { lazy, Suspense } from 'react';
+import { AppShell } from './AppShell';
+import { Workspace } from './Workspace';
+import { GroupedTabBar } from '../panes/GroupedTabBar';
+import { GroupedPaneView } from '../panes/GroupedPaneView';
+import { ProjectSidebar } from '../sidebar/ProjectSidebar';
+import { TabHost } from '../tabs/LazyTabHost';
+import { OverseerView } from '../overseer/LazyOverseerView';
+import { EmptyWorkspace } from './EmptyWorkspace';
+import { Inspector } from '../inspector/Inspector';
+import { PanelToggle } from './PanelToggle';
+import { DispatchWorkPane } from '../overseer/components/DispatchWorkPane';
+import { AgentPane } from '../agents/AgentPane';
+import { closeAgentPane } from '../agents/closeAgentPane';
+import { EditAgentModal } from '../agents/EditAgentModal';
+import { PluginDialogs } from '../../plugins/PluginDialogs';
+import { ChatMode } from '../endless/LazyChatMode';
+import { Spinner } from '../common/Spinner';
+import { ErrorBoundary } from '../common/ErrorBoundary';
+import { PluginView, Slot } from '../../plugins/PluginView';
+import { CommandPalette } from '../CommandPalette';
+import { isPluginView } from '../../plugins/registry';
+import { useProjects } from '../../stores/projects';
+import { useTabs, isDispatchTab } from '../../stores/tabs';
+import { useAgents } from '../../stores/agents';
+import { useLedgerCard } from '../../stores/ledgerCard';
+import { openDecisionCount } from '../overseer/ledger';
+import { useAgentUI } from '../../stores/agentUI';
+import { useReconnect } from '../../stores/reconnect';
+import { useSettings } from '../../stores/settings';
+import { useGroups } from '../panes/store';
+import { useUI } from '../../stores/ui';
+
+// The desktop shell: the icon rail and the view it shows (engineering program 2026-11-09, W2-E).
+// App.tsx loads this module only at a desktop width, and the phone shell (mobile/MobileApp) only
+// at a phone width, so neither downloads the other's code. The JSX below moved here from App.tsx
+// unchanged, but for the views that are now loaded on demand (Settings, Analytics, the Control Plane).
+
+const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+const SettingsView = lazy(() => import('../settings/SettingsView').then((m) => ({ default: m.SettingsView })));
+
+// Centred in the pane at the same footprint the loaded view will occupy, so
+// nothing jumps when the chunk (Recharts is ~120kB gzipped) finishes downloading.
+const viewFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
+    <Spinner size={24} />
+  </div>
+);
+
+export function DesktopShell() {
+  const activeTerminalId = useTabs((s) => s.activeTabId);
+  const selectTab = (id: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(id); };
+  const dispatchProject = (projectId: string) => { useAgentUI.getState().blur(); useTabs.getState().openDispatch(projectId); };
+  const activeId = useProjects((s) => s.activeId);
+  // The Control Plane's open decisions, for the collapsed details toggle (pinned card spec, Unit 7).
+  const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
+  const view = useUI((s) => s.view);
+  const agentFocused = useAgentUI((s) => s.focused);
+  const agentSelected = useAgents((s) => s.selectedId);
+  const editing = useAgentUI((s) => s.editing);
+  const multiPane = useSettings((s) => s.multiPane);
+  // The group the active tab belongs to (if any). Subscribing keeps the operator
+  // main reactive: merging/unmerging the active tab swaps single ⇄ grouped view.
+  const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
+  const reconnectGen = useReconnect((s) => s.gen);
+  const showAgent = agentFocused && !!agentSelected;
+
+  return (
+    <>
+      <Slot name="app.overlay" />
+      <CommandPalette />
+      <AppShell>
+        {/* One boundary per view: a render error leaves the shell (the icon rail) on screen, and
+            a change of view starts clean (the key). */}
+        <ErrorBoundary key={view} scope={`${view} view`}>
+        {view === 'settings'
+          ? <Suspense fallback={viewFallback}><SettingsView /></Suspense>
+          : isPluginView(view)
+          ? <PluginView viewKey={view} />
+          : view === 'chat'
+          ? <ChatMode />
+          : view === 'analytics'
+          ? <Suspense fallback={viewFallback}><AnalyticsView /></Suspense>
+          : (
+            <Workspace
+              sidebar={
+                <ProjectSidebar
+                  onSelectTab={selectTab}
+                  onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
+                  onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
+                  onDispatch={dispatchProject}
+                />}
+              main={
+                showAgent
+                  ? <AgentPane onClose={closeAgentPane} />
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                      {/* The panel toggles flank the tab strip — the old TopBar's
+                          top-left / top-right positions, one row down. */}
+                      <div style={{ display: 'flex', flexShrink: 0 }}>
+                        <PanelToggle side="left" />
+                        {/* Own bar styling too: GroupedTabBar returns null with no tabs,
+                            and the strip must stay a continuous 44px bar even then. */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
+                          <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
+                        </div>
+                        <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
+                      </div>
+                      {activeTerminalId
+                        ? (isDispatchTab(activeTerminalId)
+                            // Dispatch coordinator opens as a tab — wrap it so its height:100%
+                            // root flexes within the space left below the tab strip.
+                            ? <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><OverseerView key={activeTerminalId} /></div>
+                            : (multiPane && activeGroupId
+                                ? <GroupedPaneView key={`${activeGroupId}:${reconnectGen}`} groupId={activeGroupId} />
+                                : <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />))
+                        : <EmptyWorkspace onSelectTab={selectTab} />}
+                    </div>
+                  )
+              }
+              inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
+            />
+          )}
+        </ErrorBoundary>
+      </AppShell>
+      {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
+      <PluginDialogs />
+    </>
+  );
+}

@@ -1,55 +1,11 @@
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
-import hljs from 'highlight.js/lib/core';
-// Syntax colors come from the theme tokens (theme.css, "Syntax highlighting"), not a fixed highlight.js stylesheet.
+import { hljs, allLanguagesReady, isLanguagePending, loadAllLanguages, loadLanguage } from './highlight';
+// The highlight.js instance and its languages live in lib/highlight.ts: a curated set, of which the
+// less common ones load on demand (W2-E).
 
-// Curated language set (keeps the bundle lean vs. the full highlight.js build).
-import javascript from 'highlight.js/lib/languages/javascript';
-import typescript from 'highlight.js/lib/languages/typescript';
-import json from 'highlight.js/lib/languages/json';
-import python from 'highlight.js/lib/languages/python';
-import bash from 'highlight.js/lib/languages/bash';
-import css from 'highlight.js/lib/languages/css';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
-import markdown from 'highlight.js/lib/languages/markdown';
-import sql from 'highlight.js/lib/languages/sql';
-import go from 'highlight.js/lib/languages/go';
-import rust from 'highlight.js/lib/languages/rust';
-import diff from 'highlight.js/lib/languages/diff';
-import ini from 'highlight.js/lib/languages/ini';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import plaintext from 'highlight.js/lib/languages/plaintext';
-
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('yaml', yaml);
-hljs.registerLanguage('markdown', markdown);
-hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('go', go);
-hljs.registerLanguage('rust', rust);
-hljs.registerLanguage('diff', diff);
-hljs.registerLanguage('ini', ini);
-hljs.registerLanguage('dockerfile', dockerfile);
-hljs.registerLanguage('plaintext', plaintext);
-
-hljs.registerAliases(['js', 'jsx', 'mjs', 'cjs'], { languageName: 'javascript' });
-hljs.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
-hljs.registerAliases(['sh', 'zsh', 'shell', 'console'], { languageName: 'bash' });
-hljs.registerAliases(['html', 'htm', 'svg', 'vue'], { languageName: 'xml' });
-hljs.registerAliases(['yml'], { languageName: 'yaml' });
-hljs.registerAliases(['py'], { languageName: 'python' });
-hljs.registerAliases(['md'], { languageName: 'markdown' });
-hljs.registerAliases(['golang'], { languageName: 'go' });
-hljs.registerAliases(['rs'], { languageName: 'rust' });
-hljs.registerAliases(['docker'], { languageName: 'dockerfile' });
-hljs.registerAliases(['toml', 'conf'], { languageName: 'ini' });
-hljs.registerAliases(['text', 'txt'], { languageName: 'plaintext' });
+/** Set for the time of one renderMarkdown call: gets each lazy language that a code block needs. */
+let onMissing: ((lang: string) => void) | undefined;
 
 const marked = new Marked(
   { gfm: true, breaks: false },
@@ -57,23 +13,40 @@ const marked = new Marked(
     langPrefix: 'hljs language-',
     highlight(code, lang) {
       const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext';
+      if (language === 'plaintext' && isLanguagePending(lang)) onMissing?.(lang);
       try { return hljs.highlight(code, { language }).value; } catch { return code; }
     },
   }),
 );
 
-export function renderMarkdown(src: string): string {
-  return marked.parse(src ?? '') as string;
+/**
+ * Markdown to HTML (not sanitized: <Markdown> does that). A code block in a language that is not
+ * loaded yet renders as plain text, and `missing` gets its name: the caller loads it
+ * (lib/highlight.ts `loadLanguage`) and renders again.
+ */
+export function renderMarkdown(src: string, missing?: (lang: string) => void): string {
+  onMissing = missing;
+  try { return marked.parse(src ?? '') as string; }
+  finally { onMissing = undefined; }
 }
 
+/** Auto-detect tries the languages in the order the app registered them before the split: a tie then goes to the same language. */
+const AUTO_DETECT_ORDER = ['javascript', 'typescript', 'json', 'python', 'bash', 'css', 'xml', 'yaml', 'markdown', 'sql', 'go', 'rust', 'diff', 'ini', 'dockerfile', 'plaintext'];
+
+const escapeHtml = (code: string): string => code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+
 /** Highlight a raw code string. Uses `lang` (or its alias) when known; otherwise
- *  auto-detects. Returns inner HTML for a `<code class="hljs">`. */
+ *  auto-detects. Returns inner HTML for a `<code class="hljs">`.
+ *  A language (or, for auto-detect, the full set) that is not loaded yet gives escaped plain text
+ *  and starts the load; a caller that uses `useHighlightLanguage` renders again when it is in. */
 export function highlightCode(code: string, lang?: string): string {
   try {
     if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
-    return hljs.highlightAuto(code).value;
+    if (isLanguagePending(lang)) { void loadLanguage(lang!); return escapeHtml(code); }
+    if (!allLanguagesReady()) { void loadAllLanguages(); return escapeHtml(code); }
+    return hljs.highlightAuto(code, AUTO_DETECT_ORDER).value;
   } catch {
-    return code.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+    return escapeHtml(code);
   }
 }
 

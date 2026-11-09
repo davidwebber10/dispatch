@@ -1,5 +1,5 @@
 import type { ConvItem } from '../../../api/types';
-import { highlightCode } from '../../../lib/markdown';
+import { HighlightedCode } from '../../HighlightedCode';
 import { parseTable } from './tableParse';
 
 const MAX_ROWS = 200;
@@ -19,7 +19,7 @@ export function QueryView({ tool, result }: { tool: ConvItem; result?: ConvItem 
     <div>
       {sql && (
         <pre className="hljs" style={{ margin: 0, font: '400 11.5px var(--font-mono)', lineHeight: 1.5, padding: '9px 11px', borderBottom: out ? '1px solid var(--color-border)' : 'none', maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          <code dangerouslySetInnerHTML={{ __html: highlightCode(sql, 'sql') }} />
+          <HighlightedCode code={sql} lang="sql" />
         </pre>
       )}
       {result && (table

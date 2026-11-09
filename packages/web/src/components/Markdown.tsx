@@ -1,6 +1,8 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { renderMarkdown } from '../lib/markdown';
+import { loadLanguage } from '../lib/highlight';
+import { useThrottledValue } from '../hooks/useThrottledValue';
 import { chipifyHtml, type LedgerChips } from '../lib/ledgerRefs';
 import { findDocPaths, docName } from '../lib/docPaths';
 import { isLocalImageSrc, remoteImageHost } from '../lib/remoteImage';
@@ -205,25 +207,126 @@ function docifyHtml(html: string, accept?: (path: string) => boolean): string {
   return changed || forged ? tpl.innerHTML : html;
 }
 
+/** While a message streams, its text goes to the parser at most once in this time (W2-E). */
+export const STREAM_RENDER_MS = 100;
+
+const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
+/** A link reference definition (`[name]: url`): it changes links in every other block. */
+const LINK_DEFINITION = /^ {0,3}\[[^\]\n]+\]:/m;
+/** Raw HTML (a tag, a comment): one element can span blocks, and the sanitizer must see it whole. */
+const RAW_HTML = /<[A-Za-z/!?]/;
+
+/**
+ * Cuts markdown into top-level blocks for the streamed render: the pieces join back to `src`, and
+ * the HTML of the pieces, one after the other, is the HTML of `src`. A cut is made at a blank line
+ * outside a code fence, and only where the two sides cannot belong to one construct:
+ *   - not before an indented line (a list item's second paragraph, an indented code block),
+ *   - not before a list item when the block already has one (one list with blank lines in it),
+ *   - not at or after raw HTML, and not at all in a text with a link reference definition.
+ * When in doubt it does not cut: the piece is then parsed again on each render, as before W2-E.
+ */
+export function splitMarkdownBlocks(src: string): string[] {
+  if (!src) return [src];
+  if (LINK_DEFINITION.test(src)) return [src];
+  const starts: number[] = [0];
+  let fence: { ch: string; len: number } | null = null;
+  let afterBlank = false;
+  let blockHasList = false;
+  let blockHasText = false;
+  let pos = 0;
+  while (pos <= src.length) {
+    const nl = src.indexOf('\n', pos);
+    const end = nl === -1 ? src.length : nl;
+    const line = src.slice(pos, end);
+    const complete = nl !== -1;
+    if (fence) {
+      const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (close && close[1][0] === fence.ch && close[1].length >= fence.len) fence = null;
+    } else if (line.trim() === '') {
+      afterBlank = blockHasText;
+    } else {
+      // A line that is still arriving can turn into a list item, a fence or an indented line: no cut before it yet.
+      const cut = afterBlank && complete && !/^[ \t]/.test(line) && !(blockHasList && LIST_ITEM.test(line));
+      if (RAW_HTML.test(line) && !FENCE_OPEN.test(line)) {
+        // Everything from the block that holds the HTML to the end stays one piece.
+        if (cut) starts.push(pos);
+        break;
+      }
+      if (cut) { starts.push(pos); blockHasList = false; }
+      afterBlank = false;
+      blockHasText = true;
+      if (LIST_ITEM.test(line)) blockHasList = true;
+      const open = FENCE_OPEN.exec(line);
+      if (open) fence = { ch: open[1][0], len: open[1].length };
+    }
+    if (nl === -1) break;
+    pos = nl + 1;
+  }
+  return starts.map((at, i) => src.slice(at, starts[i + 1] ?? src.length));
+}
+
+interface BlockHtml { html: string; missing: readonly string[] }
+interface BlockCache { deps: readonly unknown[]; blocks: Map<string, BlockHtml> }
+
 /**
  * `ledger` (the Control Plane only — pinned card spec 2026-10-08, Unit 9) turns each known ledger
  * number into a chip with its question. The chips are made AFTER the sanitizer, on text nodes
  * only, so the question can never become markup; a click on one is handled here. `docs` (Chat)
  * turns each doc path into a doc chip the same way; a click calls `docs.onOpen` and goes no further.
+ *
+ * `streaming` (W2-E): the text is still arriving. The text then goes to the parser at most every
+ * STREAM_RENDER_MS, and only its last block is parsed: the HTML of each block before it is kept
+ * (splitMarkdownBlocks). When `streaming` turns false the full text is rendered in one pass, as
+ * for a message from history, so the HTML of a finished message does not depend on how it arrived.
  */
-export const Markdown = React.memo(function Markdown({ source, ledger, docs: own }: { source: string; ledger?: LedgerChips; docs?: DocChips }) {
+export const Markdown = React.memo(function Markdown({ source, ledger, docs: own, streaming = false }: { source: string; ledger?: LedgerChips; docs?: DocChips; streaming?: boolean }) {
   const inherited = useThreadDocs();
   const docs = own ?? inherited ?? LINKS_ONLY;
   const withDocs = !!docs;
   const accept = docs?.accept;
   const linkOf = docs?.link;
   const [loaded, setLoaded] = useState<ReadonlySet<string>>(() => new Set());
-  const html = useMemo(() => {
-    const safe = holdRemoteImages(sanitize(renderMarkdown(source), !!linkOf), loaded);
-    const clean = openableImages(linkOf ? neutralizeLinks(safe, linkOf) : safe);
-    const chipped = ledger ? chipifyHtml(clean, ledger.index) : clean;
-    return withDocs ? docifyHtml(chipped, accept) : chipped;
-  }, [source, ledger, withDocs, accept, linkOf, loaded]);
+  // Changes when a highlight.js language that a code block here waited for is in (lib/highlight.ts).
+  const [languages, setLanguages] = useState(0);
+  const text = useThrottledValue(source, STREAM_RENDER_MS, streaming);
+  const cache = useRef<BlockCache | null>(null);
+  const { html, missing } = useMemo(() => {
+    /** One block (or the full text): parse, ONE sanitize pass, then the chips and controls. */
+    const toHtml = (md: string): BlockHtml => {
+      const missing: string[] = [];
+      const safe = holdRemoteImages(sanitize(renderMarkdown(md, (l) => { if (!missing.includes(l)) missing.push(l); }), !!linkOf), loaded);
+      const clean = openableImages(linkOf ? neutralizeLinks(safe, linkOf) : safe);
+      const chipped = ledger ? chipifyHtml(clean, ledger.index) : clean;
+      return { html: withDocs ? docifyHtml(chipped, accept) : chipped, missing };
+    };
+    if (!streaming) { cache.current = null; return toHtml(text); }
+    // The kept HTML depends on everything that toHtml reads: a change of one of them empties it.
+    const deps = [ledger, withDocs, accept, linkOf, loaded, languages];
+    const prev = cache.current && cache.current.deps.every((d, i) => d === deps[i]) ? cache.current.blocks : null;
+    const blocks = splitMarkdownBlocks(text);
+    const next = new Map<string, BlockHtml>();
+    const missing: string[] = [];
+    let html = '';
+    blocks.forEach((block, i) => {
+      // The last block is open: more text can still change it. It is parsed on each render and not kept.
+      const closed = i < blocks.length - 1;
+      const done = (closed && (prev?.get(block) ?? next.get(block))) || toHtml(block);
+      if (closed) next.set(block, done);
+      html += done.html;
+      for (const l of done.missing) if (!missing.includes(l)) missing.push(l);
+    });
+    cache.current = { deps, blocks: next };
+    return { html, missing };
+  }, [text, streaming, ledger, withDocs, accept, linkOf, loaded, languages]);
+  // A code block in a language that is not loaded yet rendered plain: load it, then render again.
+  const wanted = missing.join(' ');
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    void Promise.all(wanted.split(' ').map(loadLanguage)).then((got) => { if (live && got.some(Boolean)) setLanguages((n) => n + 1); });
+    return () => { live = false; };
+  }, [wanted]);
   // Markdown-embedded images render as raw sanitized <img> tags with no React handlers,
   // so on a phone a tap did nothing while every ChatImage opened the lightbox — one
   // delegated click handler on the chokepoint gives every markdown image the same viewer.

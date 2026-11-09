@@ -1,7 +1,17 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import DOMPurify from 'dompurify';
 import { classifyLink } from '../lib/docLinks';
-import { Markdown } from './Markdown';
+import { Markdown, splitMarkdownBlocks, STREAM_RENDER_MS } from './Markdown';
+import { renderMarkdown } from '../lib/markdown';
+import { loadAllLanguages } from '../lib/highlight';
+
+// The parser, wrapped so the streamed-render tests (W2-E, at the end of the file) can count its calls.
+// It still is the real parser for every test.
+vi.mock('../lib/markdown', async (orig) => {
+  const m = await orig<typeof import('../lib/markdown')>();
+  return { ...m, renderMarkdown: vi.fn(m.renderMarkdown) };
+});
 import { ImageViewerHost } from './ChatImage';
 
 it('opens a markdown image from the keyboard with Enter and with Space', () => {
@@ -269,5 +279,210 @@ describe('sanitizer drops style, forms and media tags', () => {
     const { container } = render(<Markdown source={html} />);
     expect(container.querySelector(selector)).toBeNull();
     expect(container.innerHTML).not.toContain('evil.test');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Streamed render (engineering program 2026-11-09, W2-E)
+// ---------------------------------------------------------------------------------------------
+
+/** Texts whose block-by-block HTML is the one-shot HTML at every moment of the stream. */
+const STREAM_FIXTURES: Record<string, string> = {
+  paragraphs: 'First paragraph with **bold** and `code`.\n\nSecond paragraph, with a [link](https://example.com/a) in it.\n\nThird.\n',
+  headings: '# Title\n\nIntro text.\n\n## Part one\n\nBody one.\n\n### Detail\n\nBody two.\n\n---\n\nAfter the rule.\n',
+  codeTs: 'Before.\n\n```ts\nconst a: number = 1;\n\nfunction f() {\n  return a;\n}\n```\n\nAfter the code.\n',
+  codeBlankLines: '```js\nconst a = 1;\n\n\nconst b = 2;\n```\n\nText.\n\n~~~json\n{"a": 1}\n\n~~~\n',
+  codePython: 'Run this:\n\n```python\nprint("x")  # note\n\nx = 1\n```\n\nDone.\n',
+  codeNoLanguage: '```\nplain <b>not bold</b>\n\nmore\n```\n\nEnd.\n',
+  nestedFence: '````md\n```js\nlet a;\n```\n\nstill inside\n````\n\nOutside.\n',
+  table: 'Numbers:\n\n| Measure | Before | After |\n|---|---:|---:|\n| Page | 300 ms | 4 ms |\n| Loop | 310 ms | 2 ms |\n\nAfter the table.\n',
+  tightList: 'Steps:\n\n- one\n- two\n  - nested\n- three\n\nAfter the list.\n',
+  looseList: '- one\n\n- two\n\n  second paragraph of two\n\n- three\n\nAfter.\n',
+  orderedList: '1. first\n2. second\n\n3. third after a blank line\n\nAfter.\n\n5. a new list that starts at five\n',
+  listThenCode: '- item\n\n      indented code in the item\n\n- next\n\n    not in a list: indented code\n',
+  blockquote: '> quoted line one\n> quoted line two\n\n> a second quote\n\nPlain.\n',
+  links: 'See [the plan](https://example.com/plan), <https://example.com/auto> and [a doc](docs/plan.md).\n\nAlso `docs/readme.md` and src/lib/markdown.ts here.\n',
+  images: 'A local image:\n\n![chart](/a.png)\n\nA remote one:\n\n![remote](https://example.com/x.png)\n\nA linked one: [![badge](/b.png)](https://example.com)\n',
+  referenceLinks: 'See [the plan][plan] first.\n\nThen read on.\n\n[plan]: https://example.com/plan\n',
+  rawHtml: 'Intro.\n\n<details>\n\n<summary>More</summary>\n\nHidden **text**.\n\n</details>\n\nAfter.\n',
+  inlineHtml: 'A paragraph with <b>bold that\n\nnever closed here.\n\nNext paragraph.\n',
+  insightLike: 'Text.\n\n`★ Insight ─────`\nA note.\n`───────`\n\nMore text with #12 and #7.\n',
+  noTrailingNewline: 'One.\n\nTwo.\n\n```sh\nls -la',
+  crlfAndTabs: 'One.\r\n\r\nTwo.\r\n\r\n\tindented with a tab\r\n\r\nThree.\r\n',
+  mixed: '## Result\n\nThe change **works**.\n\n1. Build\n2. Test\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```diff\n- old\n+ new\n```\n\n> Note: done.\n\n![shot](/s.png)\n',
+};
+
+const htmlOf = (c: HTMLElement) => c.querySelector('.md-view')!.innerHTML;
+const oneShot = (source: string) => { const v = render(<Markdown source={source} />); const html = htmlOf(v.container); v.unmount(); return html; };
+
+describe('splitMarkdownBlocks', () => {
+  it('the pieces join back to the text', () => {
+    for (const text of Object.values(STREAM_FIXTURES)) {
+      for (let n = 0; n <= text.length; n += 7) expect(splitMarkdownBlocks(text.slice(0, n)).join('')).toBe(text.slice(0, n));
+      expect(splitMarkdownBlocks(text).join('')).toBe(text);
+    }
+  });
+
+  it('cuts at a blank line between two paragraphs', () => {
+    expect(splitMarkdownBlocks('One.\n\nTwo.\n\nThree.\n')).toEqual(['One.\n\n', 'Two.\n\n', 'Three.\n']);
+  });
+
+  it('a code fence that is still open is not split', () => {
+    expect(splitMarkdownBlocks('```js\nconst a = 1;\n\nconst b = 2;\n\nconst c = 3;')).toHaveLength(1);
+    expect(splitMarkdownBlocks('Text.\n\n```js\nconst a = 1;\n\nconst b = 2;\n')).toEqual(['Text.\n\n', '```js\nconst a = 1;\n\nconst b = 2;\n']);
+    // A shorter fence, or the other fence character, does not close it.
+    expect(splitMarkdownBlocks('````\n```\n\nx\n~~~~\n\ny\n')).toHaveLength(1);
+  });
+
+  it('a closed code fence ends its block at the next blank line', () => {
+    expect(splitMarkdownBlocks('```js\na\n\nb\n```\n\nAfter.\n')).toEqual(['```js\na\n\nb\n```\n\n', 'After.\n']);
+  });
+
+  it('does not cut inside one list, before an indented line, or before a line that is still arriving', () => {
+    expect(splitMarkdownBlocks('- a\n\n- b\n\n  more of b\n\n- c\n')).toHaveLength(1);
+    expect(splitMarkdownBlocks('Text.\n\n    code\n')).toHaveLength(1);
+    expect(splitMarkdownBlocks('- a\n\n-')).toHaveLength(1);
+    expect(splitMarkdownBlocks('- a\n\nNot yet a full line')).toHaveLength(1);
+    expect(splitMarkdownBlocks('- a\n\nA full line.\n')).toHaveLength(2);
+  });
+
+  it('does not cut a text with a link definition, and stops at raw HTML', () => {
+    expect(splitMarkdownBlocks('See [a][b].\n\nMore.\n\n[b]: https://example.com\n')).toHaveLength(1);
+    expect(splitMarkdownBlocks('One.\n\nTwo.\n\n<details>\n\nx\n\n</details>\n\nAfter.\n')).toEqual(['One.\n\n', 'Two.\n\n', '<details>\n\nx\n\n</details>\n\nAfter.\n']);
+  });
+});
+
+describe('streamed render', () => {
+  beforeAll(async () => { await loadAllLanguages(); }); // every code block highlights at once: no second render to wait for
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.mocked(renderMarkdown).mockClear(); });
+
+  /** Feeds `text` in pieces of `step` characters, one piece each 20 ms, with `streaming` set. */
+  function stream(text: string, step: number) {
+    const view = render(<Markdown source="" streaming />);
+    for (let n = step; n < text.length + step; n += step) {
+      view.rerender(<Markdown source={text.slice(0, n)} streaming />);
+      act(() => { vi.advanceTimersByTime(20); });
+    }
+    act(() => { vi.advanceTimersByTime(STREAM_RENDER_MS); });
+    return view;
+  }
+
+  describe('the streamed result of a text equals the one-shot result', () => {
+    for (const [name, text] of Object.entries(STREAM_FIXTURES)) {
+      it(`${name}: after the stream ends`, () => {
+        const want = oneShot(text);
+        for (const step of [1, 3, 17]) {
+          const view = stream(text, step);
+          view.rerender(<Markdown source={text} streaming={false} />);
+          expect(htmlOf(view.container)).toBe(want);
+          view.unmount();
+        }
+      });
+      // During the stream too (the block-by-block HTML), for every text whose blocks stand alone.
+      // The three others hold a construct that spans blocks; splitMarkdownBlocks keeps those whole,
+      // so they are equal as well. A failure here means a visible jump when a stream ends.
+      it(`${name}: while it still streams, at the end of the text`, () => {
+        const want = oneShot(text);
+        const view = stream(text, 5);
+        expect(htmlOf(view.container)).toBe(want);
+        view.unmount();
+      });
+    }
+  });
+
+  it('each prefix of a streamed text renders as that prefix renders in one shot', () => {
+    const text = STREAM_FIXTURES.mixed + STREAM_FIXTURES.looseList + STREAM_FIXTURES.codeBlankLines;
+    const view = render(<Markdown source="" streaming />);
+    for (let n = 11; n < text.length; n += 11) {
+      view.rerender(<Markdown source={text.slice(0, n)} streaming />);
+      act(() => { vi.advanceTimersByTime(STREAM_RENDER_MS); });
+      expect(htmlOf(view.container), `prefix of ${n} characters`).toBe(oneShot(text.slice(0, n)));
+    }
+  });
+
+  it('a closed block is not parsed again when text is added after it', () => {
+    const parser = vi.mocked(renderMarkdown);
+    const a = 'First block, **closed**.\n\n';
+    const b = '```ts\nconst closed = 2;\n```\n\n';
+    const view = render(<Markdown source={a} streaming />);
+    const grow = (source: string) => { view.rerender(<Markdown source={source} streaming />); act(() => { vi.advanceTimersByTime(STREAM_RENDER_MS); }); };
+    grow(a + b);
+    grow(a + b + 'Third block starts.\n');
+    parser.mockClear();
+    grow(a + b + 'Third block starts.\nAnd it grows.\n');
+    grow(a + b + 'Third block starts.\nAnd it grows.\nAnd again.\n');
+    grow(a + b + 'Third block starts.\nAnd it grows.\nAnd again.\n\nFourth.\n');
+    const parsed = parser.mock.calls.map((c) => c[0]);
+    expect(parsed.filter((t) => t === a)).toHaveLength(0);
+    expect(parsed.filter((t) => t === b)).toHaveLength(0);
+    // One parser call per render, for the open block; the third block is parsed once more when it closes.
+    expect(parsed).toEqual([
+      'Third block starts.\nAnd it grows.\n',
+      'Third block starts.\nAnd it grows.\nAnd again.\n',
+      'Third block starts.\nAnd it grows.\nAnd again.\n\n',
+      'Fourth.\n',
+    ]);
+    // Over the whole stream each closed block went to the parser one time as a closed block.
+    expect(htmlOf(view.container)).toBe(oneShot(a + b + 'Third block starts.\nAnd it grows.\nAnd again.\n\nFourth.\n'));
+  });
+
+  it('sanitize runs once per block per render', () => {
+    const sanitize = vi.spyOn(DOMPurify, 'sanitize');
+    try {
+      const text = 'One.\n\nTwo.\n\nThree.\n\n';
+      // The first streamed render of four new blocks: four passes, one for each.
+      const view = render(<Markdown source={text + 'Four\n'} streaming />);
+      expect(sanitize).toHaveBeenCalledTimes(4);
+      sanitize.mockClear();
+      view.rerender(<Markdown source={text + 'Four grows\n'} streaming />);
+      act(() => { vi.advanceTimersByTime(STREAM_RENDER_MS); });
+      expect(sanitize).toHaveBeenCalledTimes(1); // the open block only
+      expect(sanitize.mock.calls[0][0]).toBe('<p>Four grows</p>\n');
+      sanitize.mockClear();
+      view.rerender(<Markdown source={text + 'Four grows\n'} streaming={false} />);
+      expect(sanitize).toHaveBeenCalledTimes(1); // the stream ended: one pass over the full text
+      view.unmount();
+      sanitize.mockClear();
+      render(<Markdown source={text} />);
+      expect(sanitize).toHaveBeenCalledTimes(1); // a message from history: one pass, as before
+    } finally { sanitize.mockRestore(); }
+  });
+
+  it('the text goes to the parser at most once per 100 ms while it streams', () => {
+    const parser = vi.mocked(renderMarkdown);
+    const view = render(<Markdown source="x" streaming />);
+    parser.mockClear();
+    let text = 'x';
+    for (let i = 0; i < 200; i++) { // 200 deltas in one second
+      text += ' word';
+      view.rerender(<Markdown source={text} streaming />);
+      act(() => { vi.advanceTimersByTime(5); });
+    }
+    expect(parser.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(parser.mock.calls.length).toBeGreaterThanOrEqual(8);
+    act(() => { vi.advanceTimersByTime(STREAM_RENDER_MS); });
+    expect(view.container.textContent!.trim()).toBe(text); // the last text is on screen with no new prop
+  });
+
+  it('without streaming every change renders at once (the behavior before W2-E)', () => {
+    const view = render(<Markdown source="a" />);
+    view.rerender(<Markdown source="ab" />);
+    expect(view.container.textContent!.trim()).toBe('ab');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('chips, held images and routed links keep their behavior in a streamed block', () => {
+    const onOpen = vi.fn();
+    const docs = { onOpen, accept: () => true, link: (href: string) => classifyLink(href, { project: 'p1', projects: [] }) };
+    const text = 'Read `docs/plan.md` first.\n\n![remote](https://example.com/x.png)\n\n[web](https://example.com/w) and more';
+    const view = render(<Markdown source={text} docs={docs} streaming />);
+    const want = (() => { const v = render(<Markdown source={text} docs={docs} />); const h = htmlOf(v.container); v.unmount(); return h; })();
+    expect(htmlOf(view.container)).toBe(want);
+    fireEvent.click(view.container.querySelector('[data-doc-path]')!);
+    expect(onOpen).toHaveBeenCalledWith('docs/plan.md', null);
+    // "Load image" loads that address; the kept blocks are made again with it.
+    fireEvent.click(view.container.querySelector('[data-md-load-image]')!);
+    expect(view.container.querySelector('img')!.getAttribute('src')).toBe('https://example.com/x.png');
   });
 });

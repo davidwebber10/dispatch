@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowCircleUp } from '@phosphor-icons/react';
 import { IDLE_RELOAD_MS, UpdateBadge, UpdateDone, UpdateDoneBadge, UpdateFailed, UpdateRunning, pageReload, useUpdateProgressPoller } from './UpdateProgress';
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
-import { Blaster, blasterActivity } from './blaster/Blaster';
+import { blasterActivity } from './blaster/activity';
+
+// The waiting game is only drawn while an update runs, so its code loads then (W2-E). The update's
+// card does not wait for it: the arena appears behind the card when the chunk is in.
+const Blaster = lazy(() => import('./blaster/Blaster').then((m) => ({ default: m.Blaster })));
 
 const primary: React.CSSProperties = { height: 38, padding: '0 18px', background: 'var(--color-accent)', border: 'none', borderRadius: 'var(--radius-md)', color: 'var(--color-on-accent)', fontWeight: 600, fontSize: 13.5, cursor: 'pointer' };
 const ghost: React.CSSProperties = { height: 38, padding: '0 16px', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-secondary)', fontSize: 13.5, cursor: 'pointer' };
@@ -63,7 +67,7 @@ export function UpdateModal() {
           blur keeps the text readable over the moving ships. */}
       {/* The waiting game: the arena fills the screen, and the card below is its wall. A
           failure pauses it; after "Keep playing" the card is gone and the arena is open. */}
-      {arena && <Blaster getWall={donePlaying ? noWall : getWall} paused={runFailed} />}
+      {arena && <Suspense fallback={null}><Blaster getWall={donePlaying ? noWall : getWall} paused={runFailed} /></Suspense>}
       {done && donePlaying ? <UpdateDoneBadge /> : (
       <div
         ref={cardRef}
