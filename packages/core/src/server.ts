@@ -492,7 +492,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
     broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits, assistAccounts: options.assistAccounts,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id),
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
   });
 
   // Attach internals for server wiring
@@ -1066,7 +1066,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
-    watchCatchUp: (id) => watchDispatcher.catchUp(id),
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
   });
 
   // Serve the built web client (single-origin) when a build is present.
@@ -1326,6 +1326,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
         // Key files and key-related config of threads that are gone (named files only).
         const sweptKeys = sweepThreadKeyFiles(dataDir, alive);
         if (sweptKeys) console.log(`Removed ${sweptKeys} stale thread key file(s)`);
+        // The messages that waited through the restart (W2-C). After the kickstart, so a thread that runs again takes its own.
+        const flushed = flushOutboxAtBoot(outbox);
+        if (flushed.delivered) console.log(`Delivered ${flushed.delivered} message(s) that waited in the outbox`);
       }
       finally { setTimeout(() => endless.endBoot(), 1000).unref(); }
     });

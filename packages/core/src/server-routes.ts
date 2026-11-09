@@ -62,6 +62,7 @@ import { createToolsRouter } from './routes/tools.js';
 import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
+import { createOutboxRouter } from './routes/outbox.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
@@ -115,6 +116,8 @@ export interface ApiRouteDeps {
   /** Daemon only: the account limit figures behind `/api/usage-limits`. `createApp` leaves it unset, as main does. */
   /** Catches a watch up with a target that already settled; absent in tests that do not need it. */
   watchCatchUp?: (watchId: string) => string | null;
+  /** The delivery outbox (W2-C): GET /api/outbox lists its rows. */
+  outbox?: import('./delivery/outbox.js').DeliveryOutbox;
   usageLimits?: {
     snapshots: LimitSnapshots;
     accountFor: (provider: string) => string;
@@ -218,6 +221,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/update', createUpdateRouter(d.broadcaster, d.repoRoot, d.db));
   app.use('/api/appearance', createAppearanceRouter(d.dataDir));
   app.use('/api/watches', createWatchesRouter(d.db, d.watchCatchUp));
+  if (d.outbox) app.use('/api/outbox', createOutboxRouter(d.outbox));
   app.use('/api/analytics', createAnalyticsRouter(d.db));
   if (d.usageLimits) app.use('/api', createUsageLimitsRouter(d.db, d.usageLimits.snapshots, { accountFor: d.usageLimits.accountFor, refreshCodex: d.usageLimits.refreshCodex, summary: d.usageLimits.summary, useResetCredit: d.usageLimits.useResetCredit }));
   if (d.endless) app.use('/api/endless', createEndlessRouter(d.endless));
