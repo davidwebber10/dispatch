@@ -22,6 +22,7 @@ import { api, type ContentBlock } from '../../api/client';
 import { sendFailureText } from '../../lib/sendError';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
+import { useProjectTabs } from '../../stores/tabsSelectors';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { useLedgerCardSync } from '../../stores/ledgerCard';
 import { useStructuredChat, type ApiRetry, type CompactResult } from '../tabs/chat/useStructuredChat';
@@ -814,14 +815,11 @@ export function useCoordinatorSync(): void {
  * list (that change re-triggers), so it gets picked up in the archived list right after.
  */
 function useArchivedSync(activeId: string | null): void {
-  const byProject = useTabs((s) => s.byProject);
+  const terminals = useProjectTabs(activeId); // the shown project only (W1-F), not every project
   const setArchivedTerminals = useOverseer((s) => s.setArchivedTerminals);
 
   // Signature of the live managed-worker ids: changes when an agent is archived (drops out).
-  const liveSig = useMemo(() => {
-    const terminals = (activeId && byProject[activeId]) || [];
-    return terminals.filter(isManagedWorker).map((t) => t.id).join(',');
-  }, [activeId, byProject]);
+  const liveSig = useMemo(() => terminals.filter(isManagedWorker).map((t) => t.id).join(','), [terminals]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -843,18 +841,17 @@ function useArchivedSync(activeId: string | null): void {
  */
 export function useNeedsSync(): void {
   const activeId = useProjects((s) => s.activeId);
-  const byProject = useTabs((s) => s.byProject);
+  const terminals = useProjectTabs(activeId); // the shown project only (W1-F), not every project
   const byTerminal = useThreadStatus((s) => s.byTerminal);
   const setPending = useOverseer((s) => s.setPending);
 
   const waitingKey = useMemo(() => {
-    const terminals = (activeId && byProject[activeId]) || [];
     return terminals
       .filter(isManagedWorker)
       .filter((t) => mapStatus(t, byTerminal[t.id]) === 'waiting')
       .map((t) => t.id)
       .join(',');
-  }, [activeId, byProject, byTerminal]);
+  }, [terminals, byTerminal]);
 
   useEffect(() => {
     const ids = waitingKey ? waitingKey.split(',') : [];
@@ -896,11 +893,10 @@ export function useRenderVals(): RenderVals {
     })),
   );
   const activeId = useProjects((s) => s.activeId);
-  const byProject = useTabs((s) => s.byProject);
+  const terminals = useProjectTabs(activeId); // the shown project only (W1-F), not every project
   const byTerminal = useThreadStatus((s) => s.byTerminal);
 
   return useMemo(() => {
-    const terminals = (activeId && byProject[activeId]) || [];
     const archived = (activeId && archivedByProject[activeId]) || [];
     const missions = groupByMission(terminals, byTerminal, archived);
     const needs = needsFromThreads(terminals, byTerminal, pendingByTerminal).filter((n) => !resolved.includes(n.id));
@@ -953,5 +949,5 @@ export function useRenderVals(): RenderVals {
       overviewOpen: true,
       projectMatches,
     };
-  }, [coordinatorId, coordinatorProject, coordinatorItems, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded, activeId, byProject, byTerminal]);
+  }, [coordinatorId, coordinatorProject, coordinatorItems, coordinatorBusy, sendError, resolved, pendingByTerminal, archivedByProject, setupNeeded, activeId, terminals, byTerminal]);
 }
