@@ -75,15 +75,16 @@ export function bindEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 
 /**
  * The "Listens on" lines of `dispatch status`. The running daemon writes `<dataDir>/listen.json` (pid, port,
- * bind) when its port is bound. A file from another daemon (another port, or another pid when the service
- * manager knows the pid) is not believed. No file means a daemon from before DISPATCH_BIND: all interfaces.
+ * bind) when its port is bound. A file for another port, or from a process that is gone, is not believed.
+ * (The pid is not compared with the service manager's: `dispatch run` starts a daemon the manager does not know.)
+ * No file means a daemon from before DISPATCH_BIND: all interfaces.
  */
-export function listenLines(ctx: Pick<Ctx, 'dataDir' | 'port'>, pid?: number): string[] {
+export function listenLines(ctx: Pick<Ctx, 'dataDir' | 'port'>, alive: (pid: number) => boolean = pidAlive): string[] {
   let bind: string | null = null;
   try {
     if (ctx.dataDir) {
       const info = JSON.parse(fs.readFileSync(path.join(ctx.dataDir, 'listen.json'), 'utf8')) as { pid?: unknown; port?: unknown; bind?: unknown };
-      const ours = info.port === ctx.port && (pid === undefined || info.pid === pid);
+      const ours = info.port === ctx.port && typeof info.pid === 'number' && alive(info.pid);
       if (ours && typeof info.bind === 'string' && info.bind) bind = info.bind;
     }
   } catch { /* no file, or not JSON: all interfaces */ }
@@ -93,6 +94,10 @@ export function listenLines(ctx: Pick<Ctx, 'dataDir' | 'port'>, pid?: number): s
     '  A forwarder on this computer that adds no forwarding header (a plain proxy_pass, socat, ssh -R) looks like a local caller: give it its own sign-in.',
     '  If only this computer uses Dispatch, run "DISPATCH_BIND=127.0.0.1 dispatch install". See docs/network-access.md.',
   ];
+}
+
+function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
 export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
@@ -120,7 +125,7 @@ export function runCommand(argv: string[], ctx: Ctx): void | Promise<void> {
       console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
       // Stage 1 counts need a request. A test that injects a probe and no HTTP client makes none.
       const reachable = probeHttp(ctx.port, ctx.probe).startsWith('HTTP: reachable');
-      if (reachable) for (const l of listenLines(ctx, s.pid)) console.log(l);
+      if (reachable) for (const l of listenLines(ctx)) console.log(l);
       if (reachable && (ctx.apiFetch !== undefined || ctx.probe === undefined)) return printNoCredentialCounts(ctx);
       return;
     }

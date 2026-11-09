@@ -8,6 +8,8 @@ vi.mock('child_process', () => ({ execFileSync: vi.fn(() => ''), spawnSync: vi.f
 
 import { bindEnv, runCommand } from '../src/index.js';
 
+const { spawnSync: spawnSyncReal } = await vi.importActual<typeof import('child_process')>('child_process');
+
 const mkDaemon = (status: { loaded: boolean; pid?: number } = { loaded: true, pid: 42 }) => ({
   install: vi.fn(), uninstall: vi.fn(), start: vi.fn(), stop: vi.fn(), restart: vi.fn(), status: vi.fn(() => status),
 });
@@ -60,7 +62,7 @@ describe('status', () => {
   const line = () => logged.find((l) => l.startsWith('Listens on:'));
 
   test('prints "Listens on: all interfaces" and the forwarder advice when the daemon has no bind address', () => {
-    writeListen({ pid: 42, port: 3456, bind: null });
+    writeListen({ pid: process.pid, port: 3456, bind: null });
     status();
     expect(line()).toBe('Listens on: all interfaces');
     const advice = logged.join('\n');
@@ -69,7 +71,7 @@ describe('status', () => {
     expect(advice).toMatch(/docs\/network-access\.md/);
   });
   test('prints the address when the daemon was started with DISPATCH_BIND, and no bind advice', () => {
-    writeListen({ pid: 42, port: 3456, bind: '127.0.0.1' });
+    writeListen({ pid: process.pid, port: 3456, bind: '127.0.0.1' });
     status();
     expect(line()).toBe('Listens on: 127.0.0.1 (and the loopback addresses)');
     expect(logged.join('\n')).not.toMatch(/DISPATCH_BIND=/);
@@ -78,22 +80,26 @@ describe('status', () => {
     status();
     expect(line()).toBe('Listens on: all interfaces');
   });
-  test('a file from another daemon (another pid or port) is not believed', () => {
-    writeListen({ pid: 7, port: 3456, bind: '127.0.0.1' });
+  test('a file from a process that is gone, or for another port, is not believed', () => {
+    const child = spawnSyncReal(process.execPath, ['-e', '']); // a pid that has ended
+    writeListen({ pid: child.pid, port: 3456, bind: '127.0.0.1' });
     status();
     expect(line()).toBe('Listens on: all interfaces');
     logged.length = 0;
-    writeListen({ pid: 42, port: 9999, bind: '127.0.0.1' });
+    writeListen({ pid: process.pid, port: 9999, bind: '127.0.0.1' });
     status();
     expect(line()).toBe('Listens on: all interfaces');
   });
-  test('when the service manager gives no pid, the port alone decides', () => {
-    writeListen({ pid: 7, port: 3456, bind: '100.64.0.9' });
-    status(mkDaemon({ loaded: true }));
+  test('the pid is not compared with the service manager: a daemon from "dispatch run" is believed', () => {
+    writeListen({ pid: process.pid, port: 3456, bind: '100.64.0.9' });
+    status(mkDaemon({ loaded: true, pid: 1 }));
+    expect(line()).toBe('Listens on: 100.64.0.9 (and the loopback addresses)');
+    logged.length = 0;
+    status(mkDaemon({ loaded: false }));
     expect(line()).toBe('Listens on: 100.64.0.9 (and the loopback addresses)');
   });
   test('a daemon that does not answer gets no "Listens on" line', () => {
-    writeListen({ pid: 42, port: 3456, bind: null });
+    writeListen({ pid: process.pid, port: 3456, bind: null });
     status(mkDaemon({ loaded: false }), false);
     expect(line()).toBeUndefined();
   });
