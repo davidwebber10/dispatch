@@ -40,7 +40,8 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { SquaresFour, ArrowsSplit, Network } from '@phosphor-icons/react';
-import { useTabs, findTerminal, isDispatchTab, tabLabel, tabProjectId } from '../../stores/tabs';
+import { useTabs, isDispatchTab } from '../../stores/tabs';
+import { useTerminalLabel, useTerminalLabels, useTerminalProjectId, useTabProjectId, useTabProjectIds } from '../../stores/tabsSelectors';
 import { useProjects } from '../../stores/projects';
 import { useSettings, useDispatchName } from '../../stores/settings';
 import { useGroups } from './store';
@@ -118,7 +119,9 @@ const collisionDetection: CollisionDetection = (args) => {
 function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
   const openTabIds  = useTabs((s) => s.openTabIds);
   const activeTabId = useTabs((s) => s.activeTabId);
-  const byProject   = useTabs((s) => s.byProject);
+  // Labels and projects of the open tabs only (W1-F): a status event does not render the strip.
+  const labels      = useTerminalLabels(openTabIds);
+  const projectIds  = useTabProjectIds(openTabIds);
   const dirtyTabs   = useTabs((s) => s.dirtyTabs);
   const sessions    = useProjects((s) => s.sessions);
   const dispatchName = useDispatchName();
@@ -140,8 +143,8 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
       background: 'var(--color-pane)',
       borderBottom: '1px solid var(--color-border)',
     }}>
-      {openTabIds.map((id) => {
-        const proj = sessions.find((s) => s.id === tabProjectId(id, byProject));
+      {openTabIds.map((id, i) => {
+        const proj = sessions.find((s) => s.id === projectIds[i]);
         const act  = id === activeTabId;
         const dispatch = isDispatchTab(id);
         return (
@@ -165,7 +168,7 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
             {!dispatch && <TabActivityIndicator tabId={id} />}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
               <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {dispatch ? dispatchName : tabLabel(id, byProject)}
+                {dispatch ? dispatchName : (labels[i] ?? 'tab')}
               </span>
               <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {proj?.name ?? ''}
@@ -190,10 +193,10 @@ function ClassicTabBar({ onSelect }: { onSelect?: () => void }) {
    ═══════════════════════════════════════════════════════════════════════ */
 function DispatchChip({ tabId, onSelect }: { tabId: string; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
-  const byProject   = useTabs((s) => s.byProject);
+  const projectId   = useTabProjectId(tabId);
   const sessions    = useProjects((s) => s.sessions);
   const dispatchName = useDispatchName();
-  const proj = sessions.find((s) => s.id === tabProjectId(tabId, byProject));
+  const proj = sessions.find((s) => s.id === projectId);
   const act  = tabId === activeTabId;
   return (
     <div
@@ -281,12 +284,13 @@ function DropGap({ index }: { index: number }) {
    ═══════════════════════════════════════════════════════════════════════ */
 function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
-  const byProject   = useTabs((s) => s.byProject);
+  // Label and project only (W1-F); the activity glyph has its own narrow read (TabActivityIndicator).
+  const label       = useTerminalLabel(slot.tabId);
+  const projectId   = useTerminalProjectId(slot.tabId);
   const dirty       = useTabs((s) => !!s.dirtyTabs[slot.tabId]);
   const sessions    = useProjects((s) => s.sessions);
 
-  const t    = findTerminal(byProject, slot.tabId);
-  const proj = sessions.find((s) => s.id === t?.sessionId);
+  const proj = sessions.find((s) => s.id === projectId);
   const act  = slot.tabId === activeTabId;
 
   const { setNodeRef: dragRef, listeners, attributes, isDragging } = useDraggable({ id: slot.id });
@@ -342,7 +346,7 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
       <TabActivityIndicator tabId={slot.tabId} />
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: act ? 500 : 400, color: act ? 'var(--color-text-emphasis)' : 'var(--color-text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {t?.label ?? 'tab'}
+          {label ?? 'tab'}
         </span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {proj?.name ?? ''}
@@ -363,10 +367,10 @@ function SingleChip({ slot, index, onSelect }: { slot: SingleSlot; index: number
 
 /* Drag-overlay ghost for a single tab */
 function SingleTabGhost({ slot }: { slot: SingleSlot }) {
-  const byProject = useTabs((s) => s.byProject);
+  const label     = useTerminalLabel(slot.tabId);
+  const projectId = useTerminalProjectId(slot.tabId);
   const sessions  = useProjects((s) => s.sessions);
-  const t    = findTerminal(byProject, slot.tabId);
-  const proj = sessions.find((s) => s.id === t?.sessionId);
+  const proj = sessions.find((s) => s.id === projectId);
 
   return (
     <div style={{
@@ -383,7 +387,7 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, lineHeight: 1.2 }}>
         <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--color-text-emphasis)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {t?.label ?? 'tab'}
+          {label ?? 'tab'}
         </span>
         <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {proj?.name ?? ''}
@@ -399,7 +403,7 @@ function SingleTabGhost({ slot }: { slot: SingleSlot }) {
    ═══════════════════════════════════════════════════════════════════════ */
 function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; onSelect?: () => void }) {
   const activeTabId = useTabs((s) => s.activeTabId);
-  const byProject   = useTabs((s) => s.byProject);
+  const labels      = useTerminalLabels(slot.tabIds);
   // A group chip is the ONLY strip presence its member tabs have, so it has to speak for all of
   // them: if any pane inside it is unsaved, the chip says so. (Its × closes the whole group.)
   const dirtyCount  = useTabs((s) => slot.tabIds.filter((id) => s.dirtyTabs[id]).length);
@@ -409,7 +413,7 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
   const count   = slot.tabIds.length;
   const full    = count >= MAX_PANES;
   const title   = name?.trim() || `${count} Tab${count !== 1 ? 's' : ''}`;
-  const members = slot.tabIds.map((id) => findTerminal(byProject, id)?.label ?? 'tab').join(', ');
+  const members = labels.map((l) => l ?? 'tab').join(', ');
 
   const [editing, setEditing]     = useState(false);
   const [draftName, setDraftName] = useState('');
@@ -533,11 +537,11 @@ function GroupChip({ slot, index, onSelect }: { slot: GroupSlot; index: number; 
 
 /* Drag-overlay ghost for a group chip */
 function GroupChipGhost({ slot }: { slot: GroupSlot }) {
-  const byProject = useTabs((s) => s.byProject);
+  const labels    = useTerminalLabels(slot.tabIds);
   const name      = useGroups((s) => s.groups[slot.groupId]?.name);
   const count     = slot.tabIds.length;
   const title     = name?.trim() || `${count} Tab${count !== 1 ? 's' : ''}`;
-  const members   = slot.tabIds.map((id) => findTerminal(byProject, id)?.label ?? 'tab').join(', ');
+  const members   = labels.map((l) => l ?? 'tab').join(', ');
 
   return (
     <div style={{

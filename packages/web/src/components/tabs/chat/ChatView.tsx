@@ -1,46 +1,26 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { SignedOutCard } from './SignedOutCard';
-import { ModelSwitcher, ModelNotice } from './ModelSwitcher';
-import { friendlyModelName } from '../../../lib/modelName';
-import { ClaudeLogin, isClaudeAuthError } from '../../endless/ClaudeLogin';
-import { MessageScroller, useMessageScroller, useMessageScrollerScrollable } from '@shadcn/react/message-scroller';
-import { CaretDoubleDown, Sparkle, Brain, CaretRight, CheckCircle, WarningCircle, Paperclip, ArrowBendDownRight, X, Stop } from '@phosphor-icons/react';
-import type { ConvItem, PermissionQuestion } from '../../../api/types';
+import { ModelSwitcher } from './ModelSwitcher';
+import { isClaudeAuthError } from '../../endless/ClaudeLogin';
+import { MessageScroller } from '@shadcn/react/message-scroller';
+import type { ConvItem } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { useStructuredChat } from './useStructuredChat';
-import { useBootstrapOlderPages } from '../../../hooks/useBootstrapOlderPages';
-import { AskQuestionCard, AnsweredQuestionCard } from './AskQuestionCard';
-import { DismissableStatusNotice } from './StatusNotice';
-import { useDismissedNotices, noticeHidden, type NoticeFilter } from '../../../stores/dismissedNotices';
-import { isReportStatusTool, parseReportStatus, reportStatusKey } from './reportStatus';
-import { useTabs, findTerminal } from '../../../stores/tabs';
+import { AskQuestionCard } from './AskQuestionCard';
+import { useDismissedNotices, type NoticeFilter } from '../../../stores/dismissedNotices';
+import { useTerminal } from '../../../stores/tabsSelectors';
 import { useConnection } from '../../../stores/connection';
-import { useDraft } from '../../../hooks/useDraft';
 import { useIsMobile } from '../../../hooks/useIsMobile';
-import { useSettings, useDispatchName } from '../../../stores/settings';
-import { useDictation } from '../../../hooks/useDictation';
-import { PillComposer } from '../../composer/PillComposer';
-import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
-import { InsightText } from '../../InsightText';
-import type { LedgerChips } from '../../../lib/ledgerRefs';
-import { ThreadDocsContext, useThreadDocs, useThreadDocChips } from '../../threadDocs';
+import { ThreadDocsContext, useThreadDocChips } from '../../threadDocs';
 import { DocViewer } from '../../endless/DocViewer';
 import { ResumeAdviceCard } from './ResumeAdviceCard';
 import { WorkingIndicator, CompactingBar, ApiRetryIndicator } from '../../WorkingIndicator';
 import { Spinner } from '../../common/Spinner';
-import { ChatImage } from '../../ChatImage';
 import { ContextIndicator } from '../../ContextIndicator';
-import { useThreadModelControls } from './modelControls';
-import { useSlashMenu, runModelEffortCommand } from '../../composer/slash/useSlashMenu';
-import { usePickerRequest } from '../../../stores/pickerRequest';
-import { useTransportSwitch } from '../../layout/TransportToggle';
-import { ConfirmModal } from '../../common/ConfirmModal';
-import { textToSend } from '../../../lib/slashEscape';
-import { ToolCall, ToolResult, editDiffStat } from '../ToolCall';
-import { useToolGroupExpanded, useThoughtExpanded, uiKeyOf } from '../../../hooks/useToolUIState';
 import { modLabel } from '../../../lib/hostkeys';
 import { openFileTab } from '../../../lib/openFileTab';
-import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
+import { Composer } from './Composer';
+import { renderTimeline, EmptyState, ReconnectingState, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton } from './timeline';
 
 /**
  * ChatView — the structured (stream-json) thread surface, built on shadcn's
@@ -49,7 +29,7 @@ import { MODEL_IMAGE_MIME, fileToBase64 } from '../../../lib/image-attach';
  * useStructuredChat; tool calls are paired with their results by id.
  */
 export function ChatView({ terminalId }: { terminalId: string }) {
-  const tab = useTabs((s) => findTerminal(s.byProject, terminalId));
+  const tab = useTerminal(terminalId);
   const sessionId = tab?.sessionId;
   // A thread Chat started shows Chat's messages as "VIA CHAT", not the Control Plane's name.
   const relayName = relayNameFor(tab);
@@ -131,31 +111,10 @@ export function ChatView({ terminalId }: { terminalId: string }) {
   // loadOlder() page starts, as permanent group boundaries for renderTimeline (see usePageBoundaries).
   const pageBoundaries = usePageBoundaries(items);
 
-  const [draft, setDraft, clearDraft] = useDraft(terminalId);
   // Status cards the reader closed with ×, scoped to this thread (stores/dismissedNotices.ts).
   const dismissedKeys = useDismissedNotices((s) => s.keys);
   const noticeFilter = useMemo<NoticeFilter>(() => ({ scope: terminalId, keys: dismissedKeys }), [terminalId, dismissedKeys]);
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  // Mirror the draft in a ref so the async upload loop appends to the latest value
-  // (across awaits / multiple files) without clobbering what's already there.
-  const draftRef = useRef(draft); draftRef.current = draft;
-  const [dragActive, setDragActive] = useState(false); // drives the drop-target visual cue
-  // Images picked / dropped / PASTED are STAGED here as real base64 content blocks and ride
-  // out with the next doSend() as ONE turn — instead of each firing its own message the moment
-  // it's attached (which is what made a pasted screenshot jump straight into the chat before you
-  // could add a caption). Mirrors the coordinator Composer's composerImages buffer.
-  const [stagedImages, setStagedImages] = useState<ContentBlock[]>([]);
-
-  // Mobile voice dictation. The composer's left control becomes a + flyout (Add file /
-  // Dictate); choosing Dictate swaps the textarea for the recording UI, and the confirmed
-  // transcript is appended to the current draft. Desktop is unaffected.
   const isMobile = useIsMobile();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const sttConfigured = useSettings((s) => !!s.sttProvider && !!s.sttModel && !!s.sttSecretName);
-  const dictation = useDictation((text) => {
-    const next = (draftRef.current ? draftRef.current + ' ' : '') + text;
-    draftRef.current = next; setDraft(next);
-  });
 
   /**
    * "Resume full session", by button or by just sending (2026-11-06): a message sent while
@@ -169,135 +128,71 @@ export function ChatView({ terminalId }: { terminalId: string }) {
     setDismissedFullIds((prev) => (prev.has(terminalId) ? prev : new Set(prev).add(terminalId)));
   }
 
-  function doSend() {
-    // A command typed in the box (/model, /compact…) is Dispatch's to run, never the model's.
-    if (slash.interceptSend()) return;
-    const v = textToSend(draft);
-    if (!v && stagedImages.length === 0) return;
-    if (advice) dismissResumeAdvice();
-    // Text + any staged images go out as ONE turn: a leading text block (when there's a
-    // caption) followed by the image blocks. Falls back to a plain string turn when nothing
-    // is staged, matching the previous behavior for text-only sends.
-    if (stagedImages.length) {
-      send(v ? [{ type: 'text', text: v }, ...stagedImages] : [...stagedImages]);
-      setStagedImages([]);
-    } else {
-      send(v);
-    }
-    clearDraft();
-  }
+  // What the composer calls with one finished turn (text, or text and staged images). Stable for
+  // the memoized Composer: the latest `send`, advice and dismiss are read through a ref.
+  const sendLive = useRef({ send, advice, dismissResumeAdvice });
+  sendLive.current = { send, advice, dismissResumeAdvice };
+  const handleSend = useCallback((content: string | ContentBlock[]) => {
+    const live = sendLive.current;
+    if (live.advice) live.dismissResumeAdvice();
+    live.send(content);
+  }, []);
 
-  // Upload each picked file to the project inbox. An IMAGE is then STAGED as a REAL base64
-  // content block (see stagedImages) so it rides out with the user's next message as one
-  // turn — and it echoes back + renders inline via the foundation's parser. A non-image keeps
-  // the path-reference line in the draft so the user sends the path alongside their message
-  // (the agent can Read it).
-  // Each upload shows a progress tile with a cancel (composer/UploadTray.tsx).
-  const uploader = useInboxUploads(sessionId, async (res, f) => {
-    if (MODEL_IMAGE_MIME.has(f.type)) {
-      const data = await fileToBase64(f);
-      const block: ContentBlock = { type: 'image', source: { type: 'base64', media_type: f.type, data } };
-      setStagedImages((prev) => [...prev, block]);
-    } else {
-      const cur = draftRef.current;
-      const next = cur + (cur ? '\n' : '') + 'Attached file: ' + res.path;
-      draftRef.current = next;
-      setDraft(next);
-    }
-  });
-  async function attachFiles(files: FileList | null) {
-    if (!files || !files.length || !sessionId) return;
-    for (const f of Array.from(files)) uploader.start(f);
-  }
-
-  // Drag-and-drop + paste image upload — route dropped/pasted files through the SAME
-  // attachFiles path as the Paperclip (upload to inbox; an image rides along as a real
-  // base64 block so the model SEES it). Mirrors the coordinator Composer + TerminalTab.
-  // Gate on a FILE drag so the cue doesn't flash on text/element drags.
-  function onDragOver(e: DragEvent<HTMLDivElement>) {
-    if (!Array.from(e.dataTransfer.types || []).includes('Files')) return;
-    e.preventDefault();
-    setDragActive(true);
-  }
-  function onDragLeave(e: DragEvent<HTMLDivElement>) {
-    // Only clear when the pointer truly leaves the composer (not when crossing a child),
-    // so the cue doesn't flicker between the attach button / textarea / send button.
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
-  }
-  function onDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setDragActive(false);
-    if (e.dataTransfer.files?.length) void attachFiles(e.dataTransfer.files);
-  }
-  function onPaste(e: ClipboardEvent<HTMLTextAreaElement>) {
-    const files = e.clipboardData?.files;
-    if (files && files.length) { e.preventDefault(); void attachFiles(files); }
-  }
-
-  async function openFileInViewer(path: string) {
+  // Stable (W1-F): it is a key of the memoized timeline below.
+  const openFileInViewer = useCallback(async (path: string) => {
     if (!sessionId) return;
     // focus:true — you're on the Threads surface, so the file comes to front. (The
     // Control Plane calls the same helper with focus:false and stays put.)
     await openFileTab(sessionId, path, { focus: true });
-  }
+  }, [sessionId]);
 
-  // Send is enabled by EITHER a non-empty draft OR at least one staged image (a screenshot
-  // with no caption is a valid turn on its own).
-  const canSend = draft.trim().length > 0 || stagedImages.length > 0;
-  // The composer key doubles as the turn's brake. It offers Stop in the ONE state where
-  // there is nothing to send and something worth stopping: a turn in flight over an empty
-  // composer. Typing always wins — a mid-turn follow-up (the CLI queues it as its own turn)
-  // must never be blocked by the key having become a Stop. Deliberately keyed on `busy`
-  // alone: a native compaction is left to finish, since interrupting one mid-way is messy.
-  const stopMode = busy && !canSend;
-  function doStop() {
-    // Graceful: ends the CURRENT TURN and leaves the thread alive (Claude gets the
-    // stream-json `interrupt` control, Codex `turn/interrupt`). Deliberately not
-    // api.stopTerminal, which kills the process.
-    api.interrupt(terminalId).catch(() => { /* best-effort — nothing live to interrupt */ });
-  }
-  // The "/" menu (composer/slash): Dispatch's own commands for this thread. /model and /effort use the chip's lists and
-  // calls (modelControls.ts); a bare one opens the chip's card. Mid-turn they fail like the chip is disabled: the daemon
-  // answers "busy" and the typed text stays in the box. /cli asks first when the thread is working, like the CLI/Pretty switch.
-  const controls = useThreadModelControls(tab ?? { id: terminalId, sessionId: '', type: 'claude-code', config: {} });
-  const transport = useTransportSwitch(terminalId);
-  const slashHarness = controls.harness ?? 'claude-code';
   // A turn parked on a question is still a turn that runs (the daemon answers 409 then too), so the chip is off for it as well.
-  const [askRestart, setAskRestart] = useState(false);
-  const [restartError, setRestartError] = useState<string | null>(null);
   const turnRuns = busy || compacting || !!pending || tab?.status === 'needs_input';
-  const slash = useSlashMenu({
-    surface: 'thread', harness: slashHarness, value: draft, setValue: setDraft, mobile: isMobile,
-    model: controls.active ?? null, effort: controls.effort?.current ?? controls.effort?.defaultEffort ?? null,
-    models: controls.options, effortLevels: controls.effort?.levels,
-    run: async (name, args) => {
-      if (name === 'model' || name === 'effort') {
-        return runModelEffortCommand({
-          harness: slashHarness, name, args, models: controls.options, effortLevels: controls.effort?.levels,
-          openPicker: () => {
-            if (turnRuns) throw new Error(`This thread is busy — change the ${name} when the turn ends`);
-            usePickerRequest.getState().request(`thread:${terminalId}`);
-          },
-          pickModel: controls.pickModel, pickEffort: controls.pickEffort,
-        });
-      }
-      if (name === 'compact') { await api.compactTerminal(terminalId); return; }
-      if (name === 'stop') { await api.interrupt(terminalId); return; }
-      if (name === 'cli') {
-        if (!transport.canSwitch) throw new Error(transport.tip ?? 'This thread cannot switch to the CLI right now.');
-        const why = await transport.request('cli');
-        if (why) { transport.clearError(); throw new Error(why); } // shown as the menu's own notice, and the text stays
-        return;
-      }
-      if (name === 'restart') {
-        // Always ask first, idle or working, from the menu and from the phone's Commands sheet alike. The modal's wording follows the live turn state.
-        setAskRestart(true);
-        return;
-      }
-    },
-  });
-  // Composer key size: 44px on mobile — the platform minimum touch target; the 34px keys
-  // were "too small and too hard to press" (David, on-device). Desktop keeps the tighter 34.
+
+  // The status row under the text box. Memoized so the memoized Composer does not render on
+  // each streamed delta, only when one of these values changes.
+  const footer = useMemo(() => (
+    <>
+        {/* thin status row: muted context-window fill indicator, tappable for detail */}
+        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
+          {/* The active model, always shown once a thread has one, and the switcher behind it. */}
+          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
+          {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
+          {!isMobile && (
+            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
+          )}
+          <span style={{ marginLeft: 'auto' }} />
+          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
+        </div>
+    </>
+  ), [tab, turnRuns, isMobile, contextTokens, contextWindow, compacting, compactResult, model, terminalId, compact]);
+
+  /* The timeline, walked once per change of what it draws (W1-F). ChatView renders for many
+     reasons that do not touch the transcript (busy, the context meter, a question, the reveal
+     latch); before this memo each of those walked every item again, and so did every key press
+     while the draft lived here. The keys are the items array, the page boundaries, the split
+     point and the callbacks/filters, all stable between such renders. `pageBoundaries` is one
+     Set that usePageBoundaries adds to during render; it only grows when `items` changed, and
+     its size is a key as well, so a new boundary is never missed. */
+  const boundaryCount = pageBoundaries.size;
+  const timeline = useMemo(() => {
+    if (splitIdx === null) return renderTimeline(shown(items), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt);
+    return (
+      <>
+        {/* Mid-compaction: the bar is a full-width divider pinned at the point the
+            compaction began. Turns echoed after it (held on the CLI's stdin) render
+            below, so their position says "queued". The split is render-only — when
+            `compacting` clears, the timeline re-merges into one render and tool/result
+            pairing across the boundary works again. */}
+        {renderTimeline(shown(items.slice(0, splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
+        <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
+          <CompactingBar queued={items.length - splitIdx} />
+        </MessageScroller.Item>
+        {renderTimeline(shown(items.slice(splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
+      </>
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boundaryCount stands for the mutable Set
+  }, [items, splitIdx, shown, openFileInViewer, pageBoundaries, boundaryCount, relayName, loginItem, noticeFilter, authExt]);
 
   // Paint-settle gate (back-port of the Control Plane Stream's reveal latch): the scroller
   // stays visibility:hidden until the open/reconnect replay burst settles, so the reader
@@ -336,22 +231,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
                   showing "send a message to start" over a thread that may be full of
                   messages is a lie, so that state gets a centered reconnect spinner. */}
               {items.length === 0 && !busy && !compacting && (connStatus === 'open' ? <EmptyState model={model} /> : <ReconnectingState />)}
-              {splitIdx === null ? (
-                renderTimeline(shown(items), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)
-              ) : (
-                <>
-                  {/* Mid-compaction: the bar is a full-width divider pinned at the point the
-                      compaction began. Turns echoed after it (held on the CLI's stdin) render
-                      below, so their position says "queued". The split is render-only — when
-                      `compacting` clears, the timeline re-merges into one render and tool/result
-                      pairing across the boundary works again. */}
-                  {renderTimeline(shown(items.slice(0, splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, noticeFilter, authExt)}
-                  <MessageScroller.Item messageId="__compacting" style={{ display: 'flex' }}>
-                    <CompactingBar queued={items.length - splitIdx} />
-                  </MessageScroller.Item>
-                  {renderTimeline(shown(items.slice(splitIdx)), openFileInViewer, pageBoundaries, relayName, loginItem, undefined, authExt)}
-                </>
-              )}
+              {timeline}
               {pending?.questions && pending.questions.length > 0 && (
                 <MessageScroller.Item messageId="__ask" style={{ display: 'flex' }}>
                   {/* Interactive AskUserQuestion — answering unblocks the CLI (which is
@@ -425,125 +305,14 @@ export function ChatView({ terminalId }: { terminalId: string }) {
           lands on the status/board channel, never in the transcript), surface it right above the
           composer so it isn't invisible in thread mode. */}
 
-      {/* Composer (drop a file anywhere on it, or paste — routes through attachFiles) */}
-      <div
-        onDragOver={onDragOver}
-        onDragEnter={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-        style={{ flexShrink: 0, borderTop: '1px solid var(--color-border)', background: 'var(--color-pane)', padding: '10px 14px max(10px, var(--composer-safe-bottom, env(safe-area-inset-bottom)))' }}
-      >
-        {dragActive && (
-          <div style={{ maxWidth: 768, margin: '0 auto 6px', fontSize: 12, color: 'var(--color-accent)' }}>Drop image to attach</div>
-        )}
-        <div style={{ maxWidth: 768, margin: '0 auto' }}><UploadTray uploads={uploader.uploads} onCancel={uploader.cancel} /></div>
-        {/* Staged image thumbnails — each removable via its ×; they send with the next message.
-            Hidden behind the drag cue so the two don't fight for the same strip. */}
-        {!dragActive && stagedImages.length > 0 && (
-          <div style={{ maxWidth: 768, margin: '0 auto 8px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {stagedImages.map((block, i) =>
-              block.type === 'image' ? (
-                <StagedThumbnail
-                  key={i}
-                  src={`data:${block.source.media_type};base64,${block.source.data}`}
-                  onRemove={() => setStagedImages((prev) => prev.filter((_, j) => j !== i))}
-                />
-              ) : null,
-            )}
-          </div>
-        )}
-        {/* The shared composer (composer/PillComposer.tsx): + | text | mic | ↑, on desktop and phone. */}
-        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { void attachFiles(e.target.files); e.currentTarget.value = ''; }} />
-        <div style={{ maxWidth: 768, margin: '0 auto' }}>
-          <PillComposer
-            value={draft}
-            onChange={setDraft}
-            onSend={doSend}
-            /* Not while an upload runs: its image would miss this message. */
-            canSend={canSend && !uploader.busy}
-            stopMode={stopMode}
-            onStop={doStop}
-            placeholder="Message…"
-            pluginContext={{ surface: 'thread', terminalId, sessionId }}
-            onAddFile={() => fileInputRef.current?.click()}
-            dictation={dictation}
-            sttConfigured={sttConfigured}
-            textareaRef={taRef}
-            /* Prose only, so spelling help is on. autoCapitalize stays off so a path or a
-               command name pasted mid-message is not altered. */
-            textareaProps={{ onPaste, onKeyDown: slash.onKeyDown, autoCapitalize: 'off', autoCorrect: 'on', spellCheck: true }}
-            dragActive={dragActive}
-            mobile={isMobile}
-            menuExtra={slash.plusRow}
-            slash={slash.overlay}
-          />
-        </div>
-
-        {/* thin status row: muted context-window fill indicator, tappable for detail */}
-        <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
-          {/* The active model, always shown once a thread has one, and the switcher behind it. */}
-          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
-          {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
-          {!isMobile && (
-            <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>
-          )}
-          <span style={{ marginLeft: 'auto' }} />
-          <ContextIndicator contextTokens={contextTokens} contextWindow={contextWindow} compacting={compacting} compactResult={compactResult} model={model} terminalId={terminalId} compact={compact} showModel={false} />
-        </div>
-      </div>
-      {transport.confirmUi}
-      {restartError && (
-        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
-          <span style={{ flex: 1, minWidth: 0 }}>Could not restart: {restartError}</span>
-          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={() => setRestartError(null)}
-            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
-            <X size={13} weight="bold" />
-          </button>
-        </div>
-      )}
-      <ConfirmModal
-        open={askRestart}
-        title={turnRuns ? 'Restart this thread now?' : 'Restart this thread?'}
-        message={turnRuns
-          ? 'This thread is working. Restarting stops the current turn and starts the thread again, carrying on the same conversation. What it was in the middle of will not finish.'
-          : 'The thread starts again and carries on the same conversation.'}
-        confirmLabel={turnRuns ? 'Stop and restart' : 'Restart'}
-        onConfirm={() => { setAskRestart(false); setRestartError(null); api.relaunchTerminal(terminalId).catch((e) => setRestartError(e instanceof Error ? e.message : 'The thread could not be restarted.')); }}
-        onCancel={() => setAskRestart(false)}
-      />
-      {transport.error && (
-        <div role="alert" style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '4px 14px', font: '400 12.5px var(--font-sans)', color: 'var(--color-status-red)' }}>
-          <span style={{ flex: 1, minWidth: 0 }}>Could not switch: {transport.error}</span>
-          <button type="button" aria-label="Dismiss" title="Dismiss" onClick={transport.clearError}
-            style={{ flex: 'none', padding: 2, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', display: 'flex' }}>
-            <X size={13} weight="bold" />
-          </button>
-        </div>
-      )}
+      {/* The composer owns the draft (W1-F): a key press renders it, not this component. */}
+      <Composer terminalId={terminalId} sessionId={sessionId} tab={tab} busy={busy} turnRuns={turnRuns} onSend={handleSend} footer={footer} />
       <DocViewer owner={terminalId} />
     </div>
     </ThreadDocsContext.Provider>
   );
 }
 
-// Stable fallback id for a ConvItem that has neither `uuid` nor `toolId` (e.g. a plain
-// 'user'/'assistant'/'result' item built by useStructuredChat's non-streaming reconcile
-// path). Keyed by OBJECT IDENTITY, not array index: an item's index shifts every time
-// loadOlder() prepends an older page in FRONT of it, and an index-derived key would force
-// React to unmount+remount that node on every page — breaking MessageScroller's
-// preserveScrollOnPrepend, which tracks the reader's scroll anchor by DOM node identity.
-// Item objects themselves are never mutated in place after creation (the streaming reveal
-// path only rewrites items that already carry a real uuid), so a WeakMap-cached id stays
-// attached to the same logical item for its whole life in `items`.
-let fallbackIdCounter = 0;
-const fallbackIds = new WeakMap<ConvItem, string>();
-function stableId(it: ConvItem): string {
-  if (it.uuid) return it.uuid;
-  if (it.toolId) return it.toolId;
-  let id = fallbackIds.get(it);
-  if (!id) { id = `fallback-${++fallbackIdCounter}`; fallbackIds.set(it, id); }
-  return id;
-}
 
 /**
  * Detect a loadOlder() prepend (items[0] changed, but the array isn't a full reset — the
@@ -569,66 +338,7 @@ export function usePageBoundaries(items: ConvItem[]): Set<ConvItem> {
   return pageBoundariesRef.current;
 }
 
-/**
- * Surface-specific hooks into renderTimeline, so one renderer serves every transcript view.
- * Every hook is optional; leaving one out keeps the thread view's own rendering. Used by the
- * Control Plane (overseer/timeline.tsx's controlPlaneTimeline) for its agent cards, its
- * agency notices and its ledger chips, and by Chat (endless/timeline.tsx's chatTimeline)
- * for its cards, its doc chips and its per-message anchors.
- */
-export interface TimelineExtensions {
-  /** A tool call drawn as a custom card, given its paired result (if any yet). Return
-   *  undefined to fall through to the default rendering, or null to draw nothing — the
-   *  call's paired result is then hidden too. The card sits in the assistant turn's column,
-   *  outside any machinery strip, and is never folded into a same-tool ToolGroup. */
-  toolCard?(tool: ConvItem, result: ConvItem | undefined): ReactNode | undefined;
-  /** True to drop a standalone tool result (one whose call is not in the window). */
-  hideResult?(result: ConvItem): boolean;
-  /** A user turn drawn as something other than the human's bubble (e.g. a daemon notice that
-   *  arrived on the user role). Return undefined for the default UserBubble, null to drop the
-   *  turn. A custom row is its own centered row: it is not part of the human's turn, so it
-   *  draws no turn separator and does not group with the bubbles around it. */
-  userRow?(item: ConvItem): ReactNode | undefined;
-  /** Assistant prose, given the item it came from. Default: <AssistantText>. */
-  prose?(text: string, item: ConvItem): ReactNode;
-  /** Drawn in place of the login-error result (`loginItem`): Pretty's signed-out card. */
-  authCard?: ReactNode;
-  /** Plain (non-markdown) text inside user bubbles and report_status cards. Default: the text. */
-  plainText?(text: string): ReactNode;
-  /** Wraps each drawn unit, given the items it draws in order: one item, a tool call with its
-   *  paired result, or a same-tool run with its results. For a surface that needs its own
-   *  anchor, highlight or label around every message (Chat: per-message scroll ids, the search
-   *  focus outline, the project label and file chips). It never changes the grouping, keys or
-   *  pairing. Default: the node as is. */
-  frame?(items: ConvItem[], node: ReactNode): ReactNode;
-}
 
-/** A staged (pre-send) image preview with an × to drop it before sending. Mirrors the
- *  coordinator Composer's StagedThumbnail (packages/web/src/components/overseer/components/Composer.tsx). */
-function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void }) {
-  return (
-    <div style={{ position: 'relative', width: 48, height: 48, flex: 'none' }}>
-      <img src={src} alt="attachment" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', display: 'block' }} />
-      <button
-        type="button"
-        onClick={onRemove}
-        title="Remove image"
-        style={{ position: 'absolute', top: -6, right: -6, width: 18, height: 18, padding: 0, borderRadius: '50%', background: 'var(--color-base)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
-      >
-        <X size={11} weight="bold" />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Walk the timeline, pairing each tool with its result by id (parallel-safe) and
- * grouping each assistant turn into ONE row: a flush-left column holding that
- * turn's text / thinking / tool cards / footer. A `user` turn breaks the group
- * and renders its own right-aligned bubble. `pageBoundaries` (see usePageBoundaries)
- * also forces a break — otherwise a loadOlder() prepend
- * could silently merge into a group that already existed, defeating scroll preservation.
- */
 /** Who relayed a coordinator-sent turn in this thread: 'Chat' for a thread Chat started, else the Dispatch name. */
 export function relayNameFor(tab: { config?: Record<string, unknown> } | null | undefined): string | undefined {
   return tab?.config?.origin === 'endless' ? 'Chat' : undefined;
@@ -671,692 +381,6 @@ export function authProseToHide(items: ConvItem[], loginItem: ConvItem | null): 
   return out;
 }
 
-export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => void, pageBoundaries: Set<ConvItem>, relayName?: string, loginItem?: ConvItem | null, notices?: NoticeFilter, ext?: TimelineExtensions) {
-  // Map tool_use id -> its result item, so paired results aren't rendered standalone.
-  const resultById = new Map<string, ConvItem>();
-  // Set of tool ids that actually have a tool card, so an ORPHAN result (whose tool
-  // was trimmed from the replay ring / arrived out of order) is still rendered
-  // standalone instead of being silently dropped.
-  const toolIds = new Set<string>();
-  // Results already folded into a tool row by ADJACENCY pairing (the id-less shape). Filled
-  // during the walk below — a result is always reached after the tool that claimed it.
-  const consumed = new Set<ConvItem>();
-  for (const it of items) {
-    if (it.kind === 'tool-result' && it.toolId) resultById.set(it.toolId, it);
-    if (it.kind === 'tool' && it.toolId) toolIds.add(it.toolId);
-  }
-
-  // A surface's frame around each drawn unit (ext.frame); identity when it has none.
-  const frame = (covered: ConvItem[], node: React.ReactNode): React.ReactNode => (ext?.frame ? ext.frame(covered, node) : node);
-
-  const rows: React.ReactNode[] = [];
-  // Whether the previously RENDERED row was part of the human's turn (bubble or attached
-  // image). Consecutive user rows group: one YOU label on the first, no separators between.
-  // Strict adjacency (David's final rule): grouped when NOTHING rendered between them,
-  // split when ANYTHING did — including a tool strip.
-  let lastRowWasUser = false;
-  let group: { key: string; nodes: React.ReactNode[] } | null = null;
-  // Consecutive machinery nodes (tool calls/groups/orphan results) coalesce into ONE
-  // hairline-bordered block per the redesign — a run of calls reads as a single strip of
-  // terminal output between prose paragraphs, not a stack of standalone cards.
-  let mach: { key: string; nodes: React.ReactNode[] } | null = null;
-  const flushMach = () => {
-    if (mach && mach.nodes.length > 0 && group) {
-      group.nodes.push(<MachineryBlock key={`m-${mach.key}`} nodes={mach.nodes} />);
-      group.key = mach.key;
-    }
-    mach = null;
-  };
-  const flushGroup = () => {
-    flushMach();
-    if (group && group.nodes.length > 0) {
-      rows.push(
-        <MessageScroller.Item key={group.key} messageId={group.key} style={{ display: 'flex' }}>
-          <AssistantTurn>{group.nodes}</AssistantTurn>
-        </MessageScroller.Item>,
-      );
-      lastRowWasUser = false;
-    }
-    group = null;
-  };
-  const pushMach = (id: string, node: React.ReactNode) => {
-    if (!group) group = { key: id, nodes: [] };
-    group.key = id;
-    if (!mach) mach = { key: id, nodes: [] };
-    mach.key = id;
-    mach.nodes.push(<div key={id}>{node}</div>);
-  };
-
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    const id = stableId(it);
-
-    // A blank assistant/thinking item (a streamed message whose text block is empty —
-    // the common shape when a message only carries tool calls) renders nothing, but if
-    // it reaches the push path it still SPLITS a machinery strip in two and occupies a
-    // flex-gap slot — the "inconsistent tool-call spacing" bug: hollow hairline bands
-    // between blocks that should have been one strip. Skip it before it breaks anything.
-    if ((it.kind === 'assistant' || it.kind === 'thinking') && !(it.text ?? '').trim()) continue;
-
-    if (pageBoundaries.has(it)) flushGroup();
-
-    if (it.kind === 'user') {
-      const custom = ext?.userRow?.(it);
-      if (custom === null) continue;
-      if (custom !== undefined) {
-        flushGroup();
-        rows.push(
-          <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-            {frame([it], custom)}
-          </MessageScroller.Item>,
-        );
-        lastRowWasUser = false;
-        continue;
-      }
-      flushGroup();
-      // Turn separator: a hairline between the previous assistant block and this user turn,
-      // so long threads read as clearly delimited exchanges (redesign). Not before the
-      // first row, and not between CONSECUTIVE user rows — back-to-back sends read as one
-      // turn: one YOU label on the first, the rest grouped tight beneath it.
-      if (rows.length > 0 && !lastRowWasUser) {
-        rows.push(<div key={`sep-${id}`} aria-hidden style={{ height: 1, background: 'var(--color-hover)', flexShrink: 0 }} />);
-      }
-      rows.push(
-        <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          {frame([it], <UserBubble text={it.text ?? ''} source={it.source} grouped={lastRowWasUser} relayName={relayName} renderText={ext?.plainText} />)}
-        </MessageScroller.Item>,
-      );
-      lastRowWasUser = true;
-      continue;
-    }
-
-    // A user-attached image (imageFromUser) belongs with the human's turn: render it RIGHT-
-    // aligned on its own row, like a UserBubble — not folded into the flush-left assistant
-    // group the way a tool_result screenshot (imageFromUser falsy) is. Its caption, if any, is
-    // a separate 'user' text item just above it.
-    if (it.kind === 'image' && it.imageFromUser) {
-      flushGroup();
-      rows.push(
-        <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
-          {frame([it], (
-            <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
-              <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
-            </div>
-          ))}
-        </MessageScroller.Item>,
-      );
-      // Part of the human's turn: a following caption/text send groups under the same YOU.
-      lastRowWasUser = true;
-      continue;
-    }
-
-    // A surface's own card for this call (ext.toolCard) wins over everything below,
-    // including the same-tool run grouping. Resolved with the same pairing rule as the
-    // single-call path: by id, else by adjacency (marked consumed so it doesn't re-render).
-    let custom: React.ReactNode | undefined;
-    // The items the node below draws, for ext.frame: this one, plus a tool call's paired result.
-    let covered: ConvItem[] = [it];
-    if (it.kind === 'tool' && ext?.toolCard) {
-      const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
-      custom = ext.toolCard(it, result);
-      if (custom !== undefined && result && !it.toolId) consumed.add(result);
-      if (result) covered = [it, result];
-    }
-
-    // Look ahead for a run of consecutive same-tool calls (ignoring their interleaved
-    // results, which are rendered paired). A run of 2+ collapses into one ToolGroup.
-    // AskUserQuestion is excluded — it has live-overlay special-casing below.
-    if (custom === undefined && it.kind === 'tool' && it.toolName !== 'AskUserQuestion' && !isReportStatusTool(it.toolName)) {
-      const run: ConvItem[] = [it];
-      // Tool-result items encountered while scanning the run, IN ENCOUNTER ORDER — used
-      // below for en-bloc pairing of toolId-less members (see the `pairs` comment). Not
-      // re-derived via items.indexOf() below, so advancing `i` past the run afterward is
-      // an O(1) lookup — items.indexOf(run[run.length - 1]) would be an O(n) scan per
-      // group (O(n^2) per render), and if `items` ever held a duplicated object reference
-      // it could return an EARLIER index, moving `i` backwards into an infinite render loop.
-      const runResults: ConvItem[] = [];
-      let lastIdx = i;
-      for (let j = i + 1; j < items.length; j++) {
-        const nxt = items[j];
-        if (pageBoundaries.has(nxt)) break;                    // boundary wins over everything
-        if (nxt.kind === 'tool-result') {
-          // A paired result is transparent to the run. An ORPHAN result (its tool_use fell
-          // outside the replay window) renders standalone, so it must not be swallowed by
-          // the run's index jump below — end the run before it instead. A toolId-less
-          // result (older REST-paged history has no ids at all) has nothing to check
-          // against, so it stays transparent here and is paired en bloc (below) when the
-          // run's pairs are resolved.
-          if (nxt.toolId && !toolIds.has(nxt.toolId)) break;
-          runResults.push(nxt);
-          lastIdx = j;
-          continue;
-        }
-        if (nxt.kind !== 'tool' || nxt.toolName !== it.toolName) break;
-        run.push(nxt);
-        lastIdx = j;
-      }
-      if (run.length > 1) {
-        // Resolve each run member's result ONCE: by toolId via `resultById` when it has
-        // one (position-independent — correct for both the sequential [T,R,T,R] shape AND
-        // the batched [T,T,R,R] shape Claude Code actually emits for parallel same-tool
-        // calls: every tool_use block lands in ONE assistant message, all tool_results in
-        // the NEXT user message). A toolId-less member (older REST-paged history has no
-        // ids at all) has nothing to match by id, so it's paired EN BLOC instead: the k-th
-        // toolId-less run member gets the k-th toolId-less result encountered during the
-        // scan above — plain items[idx+1] adjacency would wrongly leave every result
-        // orphaned except the run's last (all the results trail after both tool_uses in
-        // the batched shape), permanently stuck on "running…" with a dead collapse button.
-        let toolIdLessSeen = 0;
-        const pairs = run.map((t) => ({
-          tool: t,
-          result: t.toolId ? resultById.get(t.toolId) : runResults[toolIdLessSeen++],
-        }));
-        const lastId = stableId(run[run.length - 1]);
-        const runItems = pairs.flatMap((p) => (p.result ? [p.tool, p.result] : [p.tool]));
-        pushMach(lastId, frame(runItems, <ToolGroup pairs={pairs} onViewFile={onViewFile} />));
-        // Skip past the run's members; their paired results are skipped by the
-        // existing `toolIds.has(...)` guard on the 'tool-result' branch.
-        i = lastIdx;
-        continue;
-      }
-    }
-
-    let node: React.ReactNode = null;
-    if (custom !== undefined) node = custom;
-    else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '', it) : <AssistantText text={it.text ?? ''} />;
-    else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
-    else if (it.kind === 'thinking') node = <Thinking id={uiKeyOf(it)} text={it.text ?? ''} />;
-    else if (it.kind === 'tool') {
-      const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;
-      // A result paired by ADJACENCY (neither side has a toolId — the shape REST-paged
-      // history always has, since conversation/transcript.ts emits no ids at all) must be
-      // marked consumed here. The `toolIds.has(...)` guard on the 'tool-result' branch below
-      // can only recognize an id-based pairing, so without this the very same output rendered
-      // twice on every REST-paged tool call: once folded into the tool row's "N lines", then
-      // again as a stray "Output · N lines" row directly beneath it.
-      if (result && !it.toolId) consumed.add(result);
-      if (result) covered = [it, result];
-      if (it.toolName === 'AskUserQuestion') {
-        // While still pending (no tool_result yet) the interactive <AskQuestionCard> below
-        // (the live overlay) covers it — node stays null and this item renders nothing here,
-        // same as before. Once answered, its tool_result is a REAL, durable part of the
-        // transcript (same as any other tool call) — render the collapsed record instead of
-        // dropping it forever (the previous behavior: this whole branch used to `continue`
-        // unconditionally, which is why an answered question vanished with no trace).
-        if (result) {
-          let questions: PermissionQuestion[] = [];
-          try { questions = JSON.parse(it.toolInput ?? '{}')?.questions ?? []; } catch { /* malformed */ }
-          if (questions.length) node = <AnsweredQuestionCard questions={questions} resultText={result.text ?? ''} />;
-        }
-      } else if (isReportStatusTool(it.toolName) && parseReportStatus(it.toolInput)) {
-        // Surface the buried status inline instead of the collapsed tool row: the model's
-        // findings/question (report_status summary/ask/blocker) become visible in thread view.
-        // The `{ ok: true }` result is already consumed by the pairing logic above, so it won't
-        // render a stray row beneath. Falls back to the generic ToolCall when there's no usable
-        // content to show.
-        // A card the reader closed (×) is skipped outright — not rendered empty — so it leaves
-        // no gap in the turn. The wrapper's own null-return is only the safety net for callers
-        // that pass no filter.
-        if (noticeHidden(notices, reportStatusKey(it.toolInput))) continue;
-        node = <DismissableStatusNotice scope={notices?.scope} input={it.toolInput} renderText={ext?.plainText} />;
-      } else {
-        // Generic machinery — routes through pushMach so consecutive calls share one
-        // bordered block, and so the header's Hide-tool-calls toggle can drop it.
-        pushMach(id, frame(covered, <ToolCall tool={it} result={result} onViewFile={onViewFile} />));
-        continue;
-      }
-    } else if (it.kind === 'tool-result') {
-      if (it.toolId && toolIds.has(it.toolId)) continue; // already shown paired with its tool
-      if (consumed.has(it)) continue;                    // ...or paired by adjacency, above
-      if (ext?.hideResult?.(it)) continue;               // ...or a surface hides it outright
-      pushMach(id, frame([it], <div style={{ padding: '0 20px' }}><ToolResult item={it} /></div>));
-      continue;
-    } else if (it.kind === 'result') node = it === loginItem && ext?.authCard ? ext.authCard : <ResultFooter item={it} login={it === loginItem} />;
-    // A system-injected event (background-task completion) that arrived as a `user`-role
-    // turn. Deliberately does NOT flushGroup() the way a real `user` turn does: it isn't a
-    // new speaker, it's an interruption inside the assistant's own turn — the assistant
-    // usually acts on it in the very next block, so breaking the column there would split
-    // one continuous turn into two.
-    else if (it.kind === 'notice') node = <TaskNotice text={it.text ?? ''} />;
-    else if (it.kind === 'system' && it.systemKind === 'model' && it.text) node = <ModelNotice model={it.text} />;
-    if (node == null) continue;
-
-    // A non-machinery node closes any open machinery strip first, so the bordered block
-    // ends exactly where the prose resumes.
-    flushMach();
-    if (!group) group = { key: id, nodes: [] };
-    // Anchor the group's React key to its LAST item, re-set on every push (not just at
-    // creation). A group's start can move earlier when loadOlder() prepends older history
-    // that merges into it (no `user` boundary between them) — keying by the first item would
-    // then change the key every time, forcing React to unmount+remount the node and breaking
-    // MessageScroller's preserveScrollOnPrepend (it tracks anchor position by DOM node
-    // identity). The group's LAST item is untouched by anything prepended before it, so
-    // keying there keeps the node — and the reader's scroll position — stable across a page.
-    group.key = id;
-    group.nodes.push(<div key={id}>{frame(covered, node)}</div>);
-  }
-  flushGroup();
-  return rows;
-}
-
-/**
- * A system-injected background-task completion (see lib/taskNotification.ts). Styled to
- * read as machine bookkeeping, not speech: muted, small, flush-left, at the same indent as
- * a tool row — which is what it is, structurally, the tail of a backgrounded tool call.
- * Only the CLI's own <summary> line is shown; the surrounding XML (task-id, tool-use-id,
- * output-file) is bookkeeping the reader has no use for.
- */
-export function TaskNotice({ text }: { text: string }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '4px 6px', minWidth: 0 }}>
-      <CheckCircle size={13} weight="bold" color="var(--color-text-tertiary)" style={{ flexShrink: 0 }} />
-      <span style={{ minWidth: 0, fontSize: 11.5, color: 'var(--color-text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={text}>
-        {text}
-      </span>
-    </div>
-  );
-}
-
-/** One assistant turn: a flush-left flex-column holding all its blocks. */
-function AssistantTurn({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {children}
-    </div>
-  );
-}
-
-/**
- * A consecutive run of machinery (tool calls/groups/orphan results) fenced by hairlines —
- * the redesign renders a turn's tool activity as one strip of terminal-ish rows between
- * prose paragraphs. Inner rows separate with a fainter hairline; the strip has no side
- * borders or background, so it stays quieter than a card.
- */
-export function MachineryBlock({ nodes }: { nodes: React.ReactNode[] }) {
-  return (
-    // Full-bleed (David's call): the -20px margins cancel MessageScroller.Content's side
-    // padding so row hover backgrounds run edge to edge; each row re-adds the 20px as its
-    // OWN padding, which keeps the caret exactly on the text rail.
-    <div style={{ display: 'flex', flexDirection: 'column', margin: '0 -20px', borderTop: '1px solid var(--color-hover)', borderBottom: '1px solid var(--color-hover)' }}>
-      {nodes.map((n, i) => (
-        <div key={i} style={{ minWidth: 0, borderTop: i > 0 ? '1px solid color-mix(in srgb, var(--color-hover) 55%, transparent)' : 'none' }}>{n}</div>
-      ))}
-    </div>
-  );
-}
-
-/** One run member paired with its already-resolved result (by toolId, or en bloc by
- * position — see renderTimeline's `pairs` construction), so ToolGroup never has to
- * re-derive pairing. */
-export type ToolPair = { tool: ConvItem; result?: ConvItem };
-
-/**
- * A run of consecutive same-tool calls, collapsed to one row. Six Reads in a turn
- * would otherwise be six separate rows that bury the assistant's prose.
- *
- * Expansion is TRI-STATE via `useToolGroupExpanded` — `undefined` (untouched) means
- * "auto": expanded while any member is running, collapsed once the whole run settles.
- * The instant the reader manually toggles it (`true`/`false`), that choice wins
- * permanently thereafter, including across the running→settled transition — a manual
- * COLLAPSE while a member is still running must stick, not get forced back open by
- * `running`, and a manual EXPAND must survive the run settling. A plain boolean (as
- * `open || running` used to compute it) can't represent "the reader hasn't touched
- * this yet" as distinct from "the reader chose collapsed."
- *
- * Expansion state is keyed off the FIRST member's id, which is immutable as a run
- * grows — the group's React key is anchored to its LAST item by renderTimeline, for
- * the scroll-preservation reasons documented there. Uses `toolId ?? uuid` (not the
- * reverse): `useStructuredChat` upgrades every content block of an assistant message to
- * that message's single `uuid` once the whole-message event lands, so several distinct
- * groups within one settled parallel-tool turn would otherwise collide on the same
- * `group:<uuid>` key and share one expansion toggle. `toolId` is unique per tool_use.
- */
-export function ToolGroup({ pairs, onViewFile }: { pairs: ToolPair[]; onViewFile: (p: string) => void }) {
-  const firstId = uiKeyOf(pairs[0].tool);
-  const running = pairs.some((p) => !p.result);
-  const [manualOpen, setManualOpen] = useToolGroupExpanded(firstId ? `group:${firstId}` : undefined, undefined);
-  const expanded = manualOpen === undefined ? running : manualOpen;
-  const toolName = pairs[0].tool.toolName ?? 'tool';
-  const lines = pairs.reduce((n, p) => n + (p.result?.text?.split('\n').length ?? 0), 0);
-  // Aggregate edit stat across the run (the redesign's `+33 −9`): only shown when EVERY
-  // member yields a stat — a mixed/partial sum would misstate the run.
-  const stats = pairs.map((p) => editDiffStat(p.tool.toolName, p.tool.toolInput));
-  const diff = stats.length > 0 && stats.every((s): s is { add: number; del: number } => s !== null)
-    ? stats.reduce((a, s) => ({ add: a.add + s.add, del: a.del + s.del }), { add: 0, del: 0 })
-    : null;
-
-  if (expanded) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open onClick={() => setManualOpen(false)} />
-        {/* Members flush-left with the header (no indent — David's call): the caret column
-            on each row already provides the visual hierarchy. */}
-        <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 4 }}>
-          {pairs.map(({ tool: t, result }) => (
-            <ToolCall key={stableId(t)} tool={t} result={result} onViewFile={onViewFile} />
-          ))}
-        </div>
-      </div>
-    );
-  }
-  return <GroupHeader toolName={toolName} count={pairs.length} lines={lines} diff={diff} running={running} open={false} onClick={() => setManualOpen(true)} />;
-}
-
-function GroupHeader({ toolName, count, lines, diff, running, open, onClick }: { toolName: string; count: number; lines: number; diff: { add: number; del: number } | null; running: boolean; open: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-expanded={open}
-      onClick={onClick}
-      style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '0 20px', height: 30, display: 'flex', gap: 10, alignItems: 'center' }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-hover)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-    >
-      <span style={{ width: 14, flexShrink: 0, display: 'flex', justifyContent: 'flex-start' }}>
-        <CaretRight size={10} weight="bold" style={{ color: 'var(--color-text-tertiary)', transition: 'transform .12s ease', transform: open ? 'rotate(90deg)' : 'none' }} />
-      </span>
-      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-secondary)' }}>{toolName}</span>
-      <span style={{ flexShrink: 0, font: '400 11.5px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>×{count}</span>
-      <span style={{ flex: 1, minWidth: 0 }} />
-      {diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'color-mix(in srgb, var(--color-status-green) 60%, var(--color-text-primary))' }}>+{diff.add} −{diff.del}</span>}
-      {running
-        ? <span className="chat-shimmer" style={{ flexShrink: 0, fontSize: 11 }}>running…</span>
-        : !diff && <span style={{ flexShrink: 0, font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{lines} line{lines !== 1 ? 's' : ''}</span>}
-    </button>
-  );
-}
-
-// Centered in the visible chat area (55vh ≈ the space above the composer on a phone),
-// replacing the EmptyState while the socket is down — see the render-site comment.
-function ReconnectingState() {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, height: '55vh', color: 'var(--color-text-secondary)', fontSize: 13.5 }}>
-      <Spinner size={22} />
-      <span>Reconnecting…</span>
-    </div>
-  );
-}
-
-function EmptyState({ model }: { model?: string }) {
-  return (
-    <div style={{ color: 'var(--color-text-tertiary)', fontSize: 13.5, textAlign: 'center', padding: '48px 0' }}>
-      <Sparkle size={28} weight="duotone" color="var(--color-accent)" style={{ marginBottom: 10 }} />
-      <div style={{ color: 'var(--color-text-secondary)' }}>Send a message to start the conversation.</div>
-      {model && <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>{friendlyModelName(model) ?? model}</div>}
-    </div>
-  );
-}
-
-// A 'user'-role turn the coordinator sent on the human's behalf (spawn_agent / message_agent)
-// still needs its own right-aligned slot in the timeline (it's structurally a user turn), but
-// reading it as "sent by the human" would be misleading — so it gets a small "via {Dispatch
-// name}" label (same ArrowBendDownRight "relayed" icon the coordinator's own Stream uses for
-// injected notices) and a muted/bordered bubble instead of the bright human-accent one.
-// `source === 'user'` or undefined (untagged/legacy) renders exactly like before.
-// `relayName` overrides the Dispatch name: a thread Chat started reads "via Chat".
-export function UserBubble({ text, source, grouped = false, relayName, renderText }: { text: string; source?: 'user' | 'coordinator'; grouped?: boolean; relayName?: string; renderText?: (text: string) => ReactNode }) {
-  const dispatchName = useDispatchName();
-  const viaCoordinator = source === 'coordinator';
-  return (
-    <div style={{ alignSelf: 'flex-end', maxWidth: '82%', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, padding: grouped ? '0 0 4px' : '8px 0 4px' }}>
-      {/* Turn meta (redesign): a small mono label above the bubble instead of an anonymous
-          blob — YOU for the human, the relay attribution for a coordinator-sent turn. A
-          `grouped` bubble (back-to-back sends with no agent response between) omits the
-          label: one YOU covers the whole run. No timestamp yet: ConvItems carry no
-          wall-clock time, and a fabricated one would lie on every replayed/paged item. */}
-      {grouped ? null : viaCoordinator ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>
-          <ArrowBendDownRight size={11} weight="bold" />
-          VIA {(relayName ?? dispatchName).toUpperCase()}
-        </div>
-      ) : (
-        <span style={{ font: '500 9.5px var(--font-mono)', letterSpacing: '1.3px', color: 'var(--color-accent)' }}>YOU</span>
-      )}
-      <div
-        style={{
-          background: viaCoordinator ? 'var(--color-elevated)' : 'var(--color-accent)',
-          border: viaCoordinator ? '1px solid var(--color-border)' : 'none',
-          color: viaCoordinator ? 'var(--color-text-primary)' : 'var(--color-on-accent)',
-          borderRadius: 'var(--radius-md)',
-          padding: '12px 15px',
-          font: '500 15.5px var(--font-sans)',
-          lineHeight: 1.55,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}
-      >
-        {renderText ? renderText(text) : text}
-      </div>
-    </div>
-  );
-}
-
-// Assistant prose flows through the SHARED <InsightText>; the chat surface uses the redesign's
-// left-railed clamped insight blocks (variant="rail") rather than the coordinator's tinted
-// callouts. The wrapper sets the redesign's reading size — md-view inherits it.
-// `ledger` (the Control Plane) draws known ledger numbers as chips.
-export function AssistantText({ text, ledger }: { text: string; ledger?: LedgerChips }) {
-  const docs = useThreadDocs();
-  if (!text) return null;
-  return (
-    <div style={{ fontSize: 14.5, lineHeight: 1.75, minWidth: 0 }}>
-      <InsightText source={text} scheme="global" variant="rail" docs={docs} ledger={ledger} />
-    </div>
-  );
-}
-
-// Collapsed, the row IS the preview: brain icon + the thought's first words in one dim italic
-// line (the icon alone says "thinking" — pairing the word with a preview read as two competing
-// texts). A Grok turn interleaves many thinking blocks between tool calls, so a column of
-// identical "Thinking" rows is unscannable, but so is a column of full-width ragged prose —
-// hence the single ellipsized line, width-capped so it doesn't stretch edge to edge. The word
-// "Thinking" returns as the header only while the row is open.
-/** `id`: the block's stable key (hooks/useToolUIState `uiKeyOf`). The open state lives under it, so
- *  it survives the remount that every appended block and the uuid upgrade cause (2026-11-06). */
-export function Thinking({ id, text }: { id?: string; text: string }) {
-  const [open, setOpen] = useThoughtExpanded(id, false);
-  if (!text.trim()) return null;
-  // One flat line: collapse whitespace, drop backtick fences — markdown isn't rendered here,
-  // so literal backticks are just clutter in a preview.
-  const preview = text.trim().replace(/\s+/g, ' ').replace(/`/g, '');
-  return (
-    <div>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', font: 'italic 400 12.5px var(--font-sans)', padding: 0 }}
-      >
-        <CaretRight size={11} weight="bold" style={{ flexShrink: 0, transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }} />
-        <Brain size={13} weight="duotone" style={{ flexShrink: 0 }} />
-        {open ? (
-          <span style={{ flexShrink: 0, color: 'var(--color-text-secondary)' }}>Thinking</span>
-        ) : (
-          <span style={{ minWidth: 0, maxWidth: 520, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {preview || 'Thinking'}
-          </span>
-        )}
-      </button>
-      {open && (
-        <div style={{ marginTop: 5, paddingLeft: 12, borderLeft: '2px solid var(--color-border)', color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Under a turn that failed on the Claude login: log the daemon in, then the user sends again. */
-function ResultLogin() {
-  const [done, setDone] = useState(false);
-  if (done) return <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>Logged in. Send your message again.</div>;
-  return <ClaudeLogin onDone={() => setDone(true)} />;
-}
-
-export function ResultFooter({ item, login = false }: { item: ConvItem; login?: boolean }) {
-  const parts: string[] = [];
-  if (typeof item.costUsd === 'number') parts.push(`$${item.costUsd.toFixed(item.costUsd < 0.01 ? 4 : 2)}`);
-  const tok = (item.tokensIn ?? 0) + (item.tokensOut ?? 0);
-  if (tok > 0) parts.push(`${tok.toLocaleString()} tok`);
-  if (item.durationMs) parts.push(`${(item.durationMs / 1000).toFixed(1)}s`);
-  if (item.turns) parts.push(`${item.turns} turn${item.turns !== 1 ? 's' : ''}`);
-  if (item.isError) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-status-red)', font: '400 12px var(--font-sans)' }}>
-          <WarningCircle size={14} weight="fill" /> {item.text || 'Turn ended with an error'}
-          {parts.length > 0 && <span style={{ opacity: 0.7 }}> · {parts.join(' · ')}</span>}
-        </div>
-        {login && <ResultLogin />}
-      </div>
-    );
-  }
-  if (parts.length === 0) return null;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-secondary)', font: '400 11.5px var(--font-mono)' }}>
-      <CheckCircle size={13} weight="fill" color="var(--color-accent)" /> {parts.join(' · ')}
-    </div>
-  );
-}
-
-/**
- * Render-nothing helper: keep a freshly-opened (or freshly-switched) thread pinned to
- * the bottom through its post-mount backfill burst. shadcn's autoScroll follows LIVE
- * deltas while the user is pinned, but the initial replay arrives as a rapid append
- * burst that can strand the viewport above the fold (a content change can flip the
- * scroller out of "following-bottom" before it catches up). We force scrollToEnd('auto')
- * — instant, never smooth — on each append while still engaged, then hand off to native
- * autoScroll the moment the user scrolls off-tail. Crucially this runs in a LAYOUT effect
- * (pre-paint): the stick lands before the browser paints each backfill frame, so the thread
- * opens ALREADY at the bottom instead of visibly scrolling top→bottom through its history.
- */
-export function StickToEndOnLoad({ terminalId, count, onReady }: { terminalId: string | null; count: number; onReady?: () => void }) {
-  const { scrollToEnd } = useMessageScroller();
-  const { end } = useMessageScrollerScrollable(); // end === true ⇒ off-tail (content below the fold)
-  const settledRef = useRef(false);
-  const prevCountRef = useRef(-1);
-  const termRef = useRef(terminalId);
-  const readyRef = useRef(false); // latched — onReady fires at most once per catch-up
-  const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useLayoutEffect(() => {
-    // New thread → re-arm so its own backfill re-sticks to the bottom, and hide again
-    // until it settles (the parent's paint gate — see the `ready` state at the render).
-    if (termRef.current !== terminalId) {
-      termRef.current = terminalId;
-      settledRef.current = false;
-      prevCountRef.current = -1;
-      readyRef.current = false;
-      if (quietTimerRef.current != null) { clearTimeout(quietTimerRef.current); quietTimerRef.current = null; }
-    }
-    // Reveal latch (back-ported from the Control Plane Stream): any real count change
-    // restarts a short quiet-window timer; once ~180ms passes with no further growth the
-    // burst has caught up and onReady fires ONCE. A count regression below re-arms it, so
-    // a ws-reconnect replay hides through ITS catch-up too.
-    if (count < prevCountRef.current) readyRef.current = false;
-    if (!readyRef.current && count !== prevCountRef.current) {
-      if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
-      quietTimerRef.current = setTimeout(() => {
-        quietTimerRef.current = null;
-        if (!readyRef.current) { readyRef.current = true; onReady?.(); }
-      }, 180);
-    }
-    // `items` only ever GROWS or RESETS-TO-EMPTY (useStructuredChat appends or setItems([])),
-    // so a count regression unambiguously means the list was cleared/replaced — a ws-reconnect
-    // `onReset` replay (same terminalId) or a non-keyed remount whose outgoing-thread count
-    // (e.g. 50) still sits in prevCountRef while the new backfill climbs 0→N<50. Re-arm so the
-    // append burst exceeds prevCount and re-sticks. (Handles tab-switch + reconnect + replay.)
-    if (count < prevCountRef.current) prevCountRef.current = -1;
-    if (settledRef.current) return;
-    if (count > prevCountRef.current) {
-      // Backfill / live append while still engaged → snap to the bottom. We scroll even
-      // when `end` reads off-tail: during the burst the viewport legitimately starts above
-      // the fold and must be pulled down. (Right after our own scroll `end` reads stale-true
-      // for a frame — but that frame is a count-GROWTH tick, handled here, never below.)
-      prevCountRef.current = count;
-      scrollToEnd({ behavior: 'auto' });
-      return;
-    }
-    // Count held steady AND we're parked off-tail → the user scrolled up themselves.
-    // Disengage for the rest of this thread; native autoScroll owns follow-while-pinned now.
-    if (end) settledRef.current = true;
-  }, [terminalId, count, end, scrollToEnd, onReady]);
-
-  useEffect(() => () => {
-    if (quietTimerRef.current != null) clearTimeout(quietTimerRef.current);
-  }, []);
-
-  return null;
-}
-
-/**
- * Render-nothing helper: pages in older history right after mount/thread-switch/reconnect
- * when the initial content is too short to overflow the viewport — otherwise the reader has
- * nothing to scroll and onViewportScroll's near-top trigger never fires, stranding `hasMore:
- * true` history that's unreachable through the UI. See useBootstrapOlderPages's doc comment.
- */
-export function BootstrapOlderPages(props: { hasMore: boolean; loadingOlder: boolean; loadOlder: () => void }) {
-  useBootstrapOlderPages(props);
-  return null;
-}
-
-/**
- * Explicit "Load earlier messages" control, rendered as the FIRST child of
- * MessageScroller.Content (above the timeline). Paging older history otherwise depends
- * entirely on the reader being able to SCROLL — onViewportScroll's near-top trigger, or
- * useBootstrapOlderPages' overflow check — which strands history whenever the current
- * window is short enough not to overflow (in the limit: nothing rendered at all, so there
- * is nothing to scroll). A tappable control makes older history reachable unconditionally,
- * on desktop and mobile alike. Hidden while a fetch is in flight — the floating
- * <LoadingOlderPill/> owns that state.
- */
-export function LoadEarlierButton({ show, onClick }: { show: boolean; onClick: () => void }) {
-  if (!show) return null;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        alignSelf: 'center',
-        font: '500 12px var(--font-sans)',
-        color: 'var(--color-text-secondary)',
-        background: 'var(--color-elevated)',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--radius-md)',
-        padding: '5px 12px',
-        cursor: 'pointer',
-      }}
-    >
-      Load earlier messages
-    </button>
-  );
-}
-
-/**
- * Floating "Loading earlier…" pill shown while loadOlder() is in flight. Deliberately
- * rendered as a sibling of MessageScroller.Viewport (absolutely positioned over it), NOT
- * as a Content child: the vendored scroller's preserveScrollOnPrepend keeps the reader's
- * position by diffing Content's actual children across a mutation, and toggling a node
- * in and out of that list right alongside the real prepend (both land in the same React
- * commit) can race that diff. Floating it outside Content sidesteps that entirely.
- */
-export function LoadingOlderPill({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 'var(--radius-2xl)', background: 'var(--color-elevated)', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)', fontSize: 11.5, zIndex: 5, pointerEvents: 'none' }}>
-      <Spinner size={11} /> Loading earlier…
-    </div>
-  );
-}
-
-/** shadcn MessageScroller.Button — floating "jump to latest", shown only off-tail. */
-export function JumpButton() {
-  const { end } = useMessageScrollerScrollable();
-  if (!end) return null;
-  return (
-    <MessageScroller.Button
-      direction="end"
-      style={{ position: 'absolute', right: 16, bottom: 16, width: 40, height: 40, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-accent)', color: 'var(--color-on-accent)', border: 'none', boxShadow: '0 8px 22px -6px var(--color-shadow)', cursor: 'pointer', zIndex: 5 }}
-    >
-      <CaretDoubleDown size={18} weight="bold" />
-    </MessageScroller.Button>
-  );
-}
+// The timeline walk and its leaf components live in ./timeline (W1-F). Re-exported here because
+// the Control Plane timeline, Chat and the tests import them from this file.
+export { renderTimeline, type TimelineExtensions, TaskNotice, MachineryBlock, ToolGroup, type ToolPair, UserBubble, AssistantText, Thinking, ResultFooter, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton } from './timeline';

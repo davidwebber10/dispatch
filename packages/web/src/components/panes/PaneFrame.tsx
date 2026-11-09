@@ -1,5 +1,5 @@
 import { DotsSixVertical, X } from '@phosphor-icons/react';
-import { useTabs, findTerminal } from '../../stores/tabs';
+import { useTerminalLabel } from '../../stores/tabsSelectors';
 import { TabHost } from '../tabs/TabHost';
 
 /** One pane inside a grouped view: a 30px title bar (label + grip + close) over
@@ -11,8 +11,8 @@ export function PaneFrame({ tabId, onClose, onMoveStart }: {
   /** Called on grip pointerdown — the pointer event is forwarded for drag tracking. */
   onMoveStart?: (e: React.PointerEvent) => void;
 }) {
-  const byProject = useTabs((s) => s.byProject);
-  const label = findTerminal(byProject, tabId)?.label ?? 'tab';
+  // The label only (W1-F): a status event, for this thread or any other, does not render the pane frame.
+  const label = useTerminalLabel(tabId) ?? 'tab';
 
   const iconBtn: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',

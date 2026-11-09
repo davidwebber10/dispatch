@@ -5,6 +5,14 @@ import { AllThreadsView } from './AllThreadsView';
 import { useProjects } from '../../stores/projects';
 import { useTabs } from '../../stores/tabs';
 import { useAccounts } from '../../stores/accounts';
+import { act } from '@testing-library/react';
+
+// Render counter (W1-F): ThreadRow renders the real ThreadLabel once per render of its own.
+const rowRenders = vi.hoisted(() => ({} as Record<string, number>));
+vi.mock('../sidebar/ThreadLabel', async (orig) => {
+  const actual = await orig<typeof import('../sidebar/ThreadLabel')>();
+  return { ...actual, ThreadLabel: (props: any) => { rowRenders[props.tab.id] = (rowRenders[props.tab.id] ?? 0) + 1; return <actual.ThreadLabel {...props} />; } };
+});
 
 const t = (id: string, sessionId: string, label: string, lastActivityAt: string, over: Record<string, unknown> = {}) =>
   ({ id, sessionId, type: 'claude-code', label, status: 'idle', config: {}, createdAt: lastActivityAt, lastActivityAt, archivedAt: null, ...over }) as any;
@@ -390,5 +398,30 @@ describe('the filter sheet (2026-11-06): folded sections for Project, Account, H
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(labels()).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
+  });
+});
+
+
+// W1-F: this view needs every project, so it does render on each status event; but only the row
+// of the thread that changed may render with it.
+describe('<AllThreadsView> render counts (W1-F)', () => {
+  it('a status event renders the row of that thread only, and the row shows the new status', () => {
+    rtlRender(<AllThreadsView onOpenThread={() => {}} />);
+    const before = { ...rowRenders };
+    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 'a1', status: 'needs_input' }); });
+    expect(rowRenders.b1).toBe(before.b1);
+    expect(rowRenders.a2).toBe(before.a2);
+    expect(rowRenders.a1).toBe(before.a1 + 1);
+    const row = document.querySelector('[data-thread-id="a1"]') as HTMLElement;
+    expect(within(row).getByLabelText('status-needs_input')).toBeInTheDocument();
+  });
+
+  it('a row still opens, with the latest onOpenThread, after the parent passed a new function', () => {
+    const first = vi.fn(); const second = vi.fn();
+    const { rerender } = rtlRender(<AllThreadsView onOpenThread={first} />);
+    rerender(<AllThreadsView onOpenThread={second} />);
+    fireEvent.click(document.querySelector('[data-thread-id="b1"]') as HTMLElement);
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith('B', 'b1');
   });
 });

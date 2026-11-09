@@ -1,4 +1,5 @@
-import { useTabs, findTerminal } from '../../stores/tabs';
+import { useTabs } from '../../stores/tabs';
+import { useTerminalStatus, useTerminalsIndicator } from '../../stores/tabsSelectors';
 import { projectIndicator } from '../../lib/status';
 import { Spinner } from '../common/Spinner';
 import { StatusDot } from '../common/StatusDot';
@@ -9,7 +10,7 @@ import { StatusDot } from '../common/StatusDot';
    idle tabs and for tabs with no backing terminal (files, virtual tabs). */
 
 export function TabActivityIndicator({ tabId }: { tabId: string }) {
-  const status = useTabs((s) => findTerminal(s.byProject, tabId)?.status);
+  const status = useTerminalStatus(tabId);
   const loading = useTabs((s) => !!s.loading[tabId]);
   if (status === undefined && !loading) return null;
   return glyph(projectIndicator(undefined, status ? [status] : [], loading));
@@ -17,10 +18,9 @@ export function TabActivityIndicator({ tabId }: { tabId: string }) {
 
 /** Group-chip variant: one glyph rolled up across the group's member tabs. */
 export function GroupActivityIndicator({ tabIds }: { tabIds: string[] }) {
-  const byProject = useTabs((s) => s.byProject);
-  const loadingMap = useTabs((s) => s.loading);
-  const statuses = tabIds.map((id) => findTerminal(byProject, id)?.status ?? '');
-  return glyph(projectIndicator(undefined, statuses, tabIds.some((id) => !!loadingMap[id])));
+  // The rolled-up glyph as one primitive from the store (W1-F): the chip renders only when the
+  // glyph itself changes, not on each status event of each thread.
+  return glyph(useTerminalsIndicator(tabIds));
 }
 
 function glyph(ind: ReturnType<typeof projectIndicator>) {

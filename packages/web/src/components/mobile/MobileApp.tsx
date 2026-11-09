@@ -94,7 +94,7 @@ type TabSpot =
 
 export function MobileApp() {
   const projects = useProjects((s) => s.sessions);
-  const byProject = useTabs((s) => s.byProject);
+  const byProject = useTabs((s) => s.byProject); // every project on purpose (W1-F): the project list shows a working mark per project, and the open thread can be in any of them
   const editing = useAgentUI((s) => s.editing);
   const reconnectGen = useReconnect((s) => s.gen);
 

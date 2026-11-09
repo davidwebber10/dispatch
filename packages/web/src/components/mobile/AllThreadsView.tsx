@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CaretDown, CaretRight, ChatsCircle } from '@phosphor-icons/react';
 import type { AccountProvider, Terminal } from '../../api/types';
 import { api } from '../../api/client';
@@ -54,6 +54,29 @@ const modelOf = (t: Terminal) => (typeof t.config?.model === 'string' && t.confi
 interface Option { key: string; label: string; note?: string; count: number }
 
 /**
+ * One row of the list, with its swipe (W1-F). Memoized: this view renders on every status event
+ * of every thread (it lists all projects), but a row's props are its own terminal (the store keeps
+ * that object until THIS thread changes), primitives and stable callbacks, so only the row of the
+ * thread that changed renders with it.
+ */
+const ListThreadRow = memo(function ListThreadRow({ tab, active, subtitle, swipe, onOpen, onArchive, onContext }: {
+  tab: Terminal; active: boolean; subtitle?: string; swipe: boolean;
+  onOpen: (tab: Terminal) => void; onArchive: (tab: Terminal) => void; onContext: (tab: Terminal, x: number, y: number) => void;
+}) {
+  return (
+    // Same row, ⋯ menu and swipe as a project's thread list. The swipe archives
+    // straight away: it is undoable from the project's Archived section.
+    <SwipeRow disabled={!swipe} actionLabel="Archive" actionColor="var(--color-status-red)" onAction={() => onArchive(tab)}>
+      <ThreadRow tab={tab} active={active} subtitle={subtitle}
+        onClick={() => onOpen(tab)}
+        onMiddle={() => onOpen(tab)}
+        onArchive={() => onArchive(tab)}
+        onContext={(x, y) => onContext(tab, x, y)} />
+    </SwipeRow>
+  );
+});
+
+/**
  * The Threads view of the phone's Projects tab (2026-10-28, replaces the Pinned tab): every
  * thread of every project, newest activity first, with filters and the search box from the
  * header. Pinning is gone: the few threads one works on are nearly always the latest ones, and
@@ -80,6 +103,8 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   const desktop = onQueryChange !== undefined;
   const [archivedOpen, setArchivedOpen] = useState(false);
   const projects = useProjects((s) => s.sessions);
+  // Every project on purpose (W1-F): this list IS every thread of every project, sorted and
+  // counted together. The rows are memoized (ListThreadRow), so a status event renders one row.
   const byProject = useTabs((s) => s.byProject);
   const accountsView = useAccounts((s) => s.view);
   // The swipe to archive is the phone's; on the desktop (the left panel's Threads view) a row is a plain row.
@@ -186,9 +211,14 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   // Which filters show: Account only once the accounts are known; on the Archived tab only Project.
   const shownFacets = tab === 'archived' ? (['project'] as FacetId[]) : FACET_IDS.filter((id) => id !== 'account' || !!accountsView);
 
-  async function archive(t: Terminal) {
+  // Stable for the memoized rows; onOpenThread is read through a ref, so a new function from the parent is still the one called.
+  const archive = useCallback(async (t: Terminal) => {
     try { await api.archiveTerminal(t.id); await useTabs.getState().loadTabs(t.sessionId); } catch { /* surfaced via connection state */ }
-  }
+  }, []);
+  const openRef = useRef(onOpenThread); openRef.current = onOpenThread;
+  const openRow = useCallback((t: Terminal) => openRef.current(t.sessionId, t.id), []);
+  const archiveRow = useCallback((t: Terminal) => { void archive(t); }, [archive]);
+  const contextRow = useCallback((t: Terminal, x: number, y: number) => setMenu({ tab: t, x, y }), []);
 
   // Active ⇄ Archived (2026-11-05): archived threads were only reachable inside each project.
   const tabBtn = (on: boolean): React.CSSProperties => ({
@@ -247,15 +277,9 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
           </div>
         )}
         {threads.map((t) => (
-          // Same row, ⋯ menu and swipe as a project's thread list. The swipe archives
-          // straight away: it is undoable from the project's Archived section.
-          <SwipeRow key={t.id} disabled={!isMobile} actionLabel="Archive" actionColor="var(--color-status-red)" onAction={() => void archive(t)}>
-            <ThreadRow tab={t} active={!isMobile && t.id === activeTabId} subtitle={[active.project ? '' : nameOf.get(t.sessionId) ?? '', startedText(t)].filter(Boolean).join(' · ') || undefined}
-              onClick={() => onOpenThread(t.sessionId, t.id)}
-              onMiddle={() => onOpenThread(t.sessionId, t.id)}
-              onArchive={() => void archive(t)}
-              onContext={(x, y) => setMenu({ tab: t, x, y })} />
-          </SwipeRow>
+          <ListThreadRow key={t.id} tab={t} active={!isMobile && t.id === activeTabId} swipe={isMobile}
+            subtitle={[active.project ? '' : nameOf.get(t.sessionId) ?? '', startedText(t)].filter(Boolean).join(' · ') || undefined}
+            onOpen={openRow} onArchive={archiveRow} onContext={contextRow} />
         ))}
         {desktop && (
           <div style={{ marginTop: 8 }}>

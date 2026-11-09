@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SortableList } from '../common/SortableList';
 import { SwipeRow } from '../common/SwipeRow';
 import { FolderOpen, CaretRight, Network, TerminalWindow, ChatCircle, Timer, Bell, Plus } from '@phosphor-icons/react';
 import type { Session, Terminal, AgentSchedule } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
-import { projectIndicator } from '../../lib/status';
+import { useProjectTabs, useProjectIndicator } from '../../stores/tabsSelectors';
 import { getAutoArchiveMs, remainingMs, formatRemaining, toDuration, useMinuteTick } from '../../lib/autoArchive';
 import { useProjects } from '../../stores/projects';
 import { useAgents } from '../../stores/agents';
@@ -179,6 +179,30 @@ export function ThreadRow({ tab, active, fadeKey, subtitle, onClick, onMiddle, o
   );
 }
 
+/**
+ * One thread row of a project card, with its swipe (W1-F). Memoized: its props are the row's
+ * own terminal (the store keeps that object's identity until THIS thread changes), primitives,
+ * and callbacks the card keeps stable. So a status event for one thread renders that one row,
+ * not every row of the card.
+ */
+const CardThreadRow = memo(function CardThreadRow({ tab, active, fadeKey, isMobile, onSelect, onAskArchive, onSwipe, onContext }: {
+  tab: Terminal; active: boolean; fadeKey?: number; isMobile: boolean;
+  onSelect: (tab: Terminal) => void; onAskArchive: (tab: Terminal) => void; onSwipe: (tab: Terminal) => void; onContext: (tab: Terminal, x: number, y: number) => void;
+}) {
+  return (
+    <SwipeRow disabled={!isMobile}
+      actionLabel={tab.type === 'file' ? 'Unpin' : 'Delete'}
+      actionColor={tab.type === 'file' ? 'var(--color-border-hover)' : 'var(--color-status-red)'}
+      onAction={() => onSwipe(tab)}>
+      <ThreadRow tab={tab} active={active} fadeKey={fadeKey}
+        onClick={(e) => { e.stopPropagation(); onSelect(tab); }}
+        onMiddle={() => useTabs.getState().openTab(tab.id, true)}
+        onArchive={() => onAskArchive(tab)}
+        onContext={(x, y) => onContext(tab, x, y)} />
+    </SwipeRow>
+  );
+});
+
 function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false);
   const fs = useSettings((s) => s.sidebarFontSize);
@@ -207,7 +231,13 @@ function AgentRow({ agent, active, onClick }: { agent: AgentSchedule; active: bo
 }
 
 
-export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: () => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
+/**
+ * Memoized (W1-F): the sidebar passes the project's own `session` object (the projects store keeps
+ * its identity until THAT project changes), primitives and stable callbacks, so a card renders
+ * for its own project only. Its thread list comes from `useProjectTabs`, which a status event in
+ * another project does not notify.
+ */
+export const ProjectCard = memo(function ProjectCard({ session, active, open, onToggle, onSelectTab, onSelectAgent, onNewAgent, onBrowseFiles, onDispatch, fadeActiveKey, highlightTabId, showManaged = false }: { session: Session; active: boolean; open?: boolean; onToggle?: (projectId: string) => void; onSelectTab: (id: string) => void; onSelectAgent?: (id: string) => void; onNewAgent?: (projectId: string) => void; onBrowseFiles?: (projectId: string) => void; onDispatch?: (projectId: string) => void; fadeActiveKey?: number; highlightTabId?: string | null; showManaged?: boolean }) {
   const allAgents = useAgents((s) => s.schedules);
   const dispatchName = useDispatchName();
   const threadSort = useListSort((s) => s.threadSort(session.id));
@@ -215,8 +245,10 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const agents = sortAgents(allAgents.filter((a) => a.projectId === session.id), agentSort);
   const agentSel = useAgents((s) => s.selectedId);
   const agentFocused = useAgentUI((s) => s.focused);
-  const tabs = useTabs((s) => s.byProject[session.id]) ?? [];
-  const activeTabId = useTabs((s) => s.activeTabId);
+  const tabs = useProjectTabs(session.id);
+  // The open tab, only while it is one of THIS project's threads: selecting a thread of another
+  // project must not render this card.
+  const activeTabId = useTabs((s) => (s.activeTabId && (s.byProject[session.id] ?? []).some((t) => t.id === s.activeTabId) ? s.activeTabId : null));
   // Desktop highlights the open tab persistently (activeTabId). Mobile passes
   // highlightTabId explicitly so the list only highlights a thread you just
   // returned FROM — opening a project fresh highlights nothing (null).
@@ -230,7 +262,6 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   const [renameProj, setRenameProj] = useState(false);
   const [newThread, setNewThread] = useState(false);
   const [projTab, setProjTab] = useState<'threads' | 'agents'>('threads');
-  const loadingMap = useTabs((s) => s.loading);
   const pfs = useSettings((s) => s.projectFontSize);
   const density = useSettings((s) => s.density);
   const maxThreads = useSettings((s) => s.sidebarMaxThreads);
@@ -267,7 +298,9 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
   };
   const showRow = (t: Terminal) => (showManaged ? isEphemeralAgent(t) : !isManaged(t));
   const visibleTabs = tabs.filter(showRow);
-  const indicator = projectIndicator(session.status, visibleTabs.map((t) => t.status), visibleTabs.some((t) => loadingMap[t.id]));
+  // A primitive from the store (not the whole `loading` map): a thread that starts in another
+  // project does not render this card.
+  const indicator = useProjectIndicator(session.id, session.status, showRow);
   const threadItems = sortThreads(visibleTabs.filter((t) => SECTIONS[0].types.includes(t.type)), threadSort);
   // Cap the list at the configured limit (0 = All). The active thread must never
   // be hidden by the cap — if it falls past the cut, the cap lifts while it's active.
@@ -296,6 +329,18 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
     setProjArchive(false);
     try { await useProjects.getState().archive(session.id); } catch { /* surfaced via connection state */ }
   }
+
+  // Stable row callbacks (see CardThreadRow). They read the latest props through a ref.
+  const live = useRef({ onSelectTab, archive });
+  live.current = { onSelectTab, archive };
+  const rowSelect = useCallback((t: Terminal) => live.current.onSelectTab(t.id), []);
+  const rowAskArchive = useCallback((t: Terminal) => setArchiveTarget(t), []);
+  const rowSwipe = useCallback((t: Terminal) => { if (t.type === 'file') void live.current.archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }, []);
+  const rowContext = useCallback((t: Terminal, x: number, y: number) => setCtxMenu({ tab: t, x, y }), []);
+  const row = (t: Terminal) => (
+    <CardThreadRow key={t.id} tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey} isMobile={isMobile}
+      onSelect={rowSelect} onAskArchive={rowAskArchive} onSwipe={rowSwipe} onContext={rowContext} />
+  );
 
   const renderSection = (sec: (typeof SECTIONS)[number]) => {
     // "Pinned files" off removes the shelf outright — header, chevron and rows. Pinning
@@ -331,18 +376,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
             </span>
           )}
         </SectionHeader>
-        {items.map((t) => (
-          <SwipeRow key={t.id} disabled={!isMobile}
-            actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-            actionColor={t.type === 'file' ? 'var(--color-border-hover)' : 'var(--color-status-red)'}
-            onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-            <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
-              onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-              onMiddle={() => useTabs.getState().openTab(t.id, true)}
-              onArchive={() => setArchiveTarget(t)}
-              onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
-          </SwipeRow>
-        ))}
+        {items.map(row)}
         {capped && !collapsed && <ShowMoreRow count={all.length - items.length} onClick={() => setShowAllFiles(true)} />}
         {sec.key === 'threads' && !items.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
       </div>
@@ -373,7 +407,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       }}
     >
       <div
-        onClick={() => { if (!isMobile) onToggle?.(); }}
+        onClick={() => { if (!isMobile) onToggle?.(session.id); }}
         style={{ padding: isMobile ? '4px 8px 8px' : '5px 6px 4px', cursor: isMobile ? 'default' : 'pointer' }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setProjMenu({ x: e.clientX, y: e.clientY }); }}
       >
@@ -458,18 +492,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
                     if (!ok) useListSort.getState().setThreadSort(session.id, prev);
                   });
                 }}
-                renderItem={(t) => (
-                  <SwipeRow key={t.id} disabled={!isMobile}
-                    actionLabel={t.type === 'file' ? 'Unpin' : 'Delete'}
-                    actionColor={t.type === 'file' ? 'var(--color-border-hover)' : 'var(--color-status-red)'}
-                    onAction={() => { if (t.type === 'file') void archive(t); else setPendingDelete({ kind: 'thread', thread: t }); }}>
-                    <ThreadRow tab={t} active={t.id === highlightId} fadeKey={fadeActiveKey}
-                      onClick={(e) => { e.stopPropagation(); onSelectTab(t.id); }}
-                      onMiddle={() => useTabs.getState().openTab(t.id, true)}
-                      onArchive={() => setArchiveTarget(t)}
-                      onContext={(x, y) => setCtxMenu({ tab: t, x, y })} />
-                  </SwipeRow>
-                )}
+                renderItem={row}
               />
               {threadsCapped && <ShowMoreRow count={threadItems.length - visibleThreads.length} onClick={() => setShowAllThreads(true)} />}
               {!threadItems.length && <div style={{ padding: '3px 7px', fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>No threads yet</div>}
@@ -563,7 +586,7 @@ export function ProjectCard({ session, active, open, onToggle, onSelectTab, onSe
       )}
     </div>
   );
-}
+});
 
 
 function TabPill({ label, count, active, mobile, onClick, automationsOf }: { label: string; count: number; active: boolean; mobile: boolean; onClick: () => void; automationsOf?: string }) {

@@ -150,3 +150,42 @@ describe('GroupedTabBar reveals the active tab', () => {
     expect(revealed).toHaveLength(0);
   });
 });
+
+/* W1-F: the strip reads labels and projects through narrow selectors, so a status event (they
+   fire constantly while agents work) does not render it for a thread it does not show. */
+describe('GroupedTabBar render counts on a status event (W1-F)', () => {
+  const status = (terminalId: string, s: string) => act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId, status: s }); });
+  beforeEach(() => {
+    useGroups.setState({ groups: {}, tabGroup: {} });
+    useTabs.setState({
+      byProject: {
+        s1: [{ ...term('t1', 'one'), type: 'shell' }, { ...term('t2', 'two'), type: 'shell' }] as Terminal[],
+        s2: [{ ...term('x1', 'elsewhere'), sessionId: 's2', type: 'shell' }] as Terminal[],
+      },
+      openTabIds: ['t1', 't2'], activeTabId: 't2', tabSession: { t1: 's1', t2: 's1' }, dirtyTabs: {}, loading: {},
+    });
+  });
+
+  for (const multiPane of [true, false]) {
+    it(`${multiPane ? 'grouped' : 'classic'} strip: a status event for a thread with no open tab commits nothing`, async () => {
+      useSettings.setState({ multiPane });
+      let commits = 0;
+      const { Profiler } = await import('react');
+      render(<Profiler id="strip" onRender={() => { commits++; }}><GroupedTabBar /></Profiler>);
+      expect(screen.getByText('one')).toBeInTheDocument();
+      commits = 0;
+      status('x1', 'working');
+      status('x1', 'idle');
+      expect(commits).toBe(0);
+    });
+
+    it(`${multiPane ? 'grouped' : 'classic'} strip: a status event for an open tab still shows its activity glyph`, () => {
+      useSettings.setState({ multiPane });
+      render(<GroupedTabBar />);
+      expect(screen.queryByLabelText('status-needs_input')).toBeNull();
+      status('t1', 'needs_input');
+      expect(screen.getByLabelText('status-needs_input')).toBeInTheDocument();
+      expect(screen.getByText('one')).toBeInTheDocument();
+    });
+  }
+});
