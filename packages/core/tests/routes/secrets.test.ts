@@ -85,4 +85,17 @@ describe('secrets routes: errors name no server path', () => {
     expect(r.status).toBe(400);
     expect(r.text).not.toContain('/Users/');
   });
+
+  // W1-C: the token scope rides /status and /connection.
+  it('GET /status carries tokenScope; PUT /connection changes it and refuses an unknown value', async () => {
+    expect((await request(app).get('/api/secrets/status').expect(200)).body.tokenScope).toBe('all');
+    const made = await request(app).put('/api/secrets/connection').send({ token: 'dp.sa.x', project: 'dispatch', config: 'dev' }).expect(200);
+    expect(made.body.tokenScope).toBe('opted-in');
+    const all = await request(app).put('/api/secrets/connection').send({ tokenScope: 'all' }).expect(200);
+    expect(all.body).toMatchObject({ connected: true, project: 'dispatch', config: 'dev', tokenScope: 'all' });
+    expect(all.body.token).toBeUndefined();
+    const bad = await request(app).put('/api/secrets/connection').send({ tokenScope: 'everyone' });
+    expect(bad.status).toBe(400);
+    expect((await request(app).get('/api/secrets/status')).body.tokenScope).toBe('all');
+  });
 });
