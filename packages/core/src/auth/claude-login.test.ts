@@ -285,14 +285,15 @@ describe('one link: the code link', () => {
     expect(svc.getToken()).toBeNull();
   });
 
-  test('a token cut in two by the terminal is not saved as the shorter half', async () => {
+  test('a token cut in two by the terminal waits for the rest, however long', async () => {
     const f = fakePty();
     const svc = new ClaudeLoginService(dir, f.spawn as any);
     await ready(svc, f);
     f.emit('\r\nsk-ant-oat01-FIRSTHALF');
-    await sleep(100); // shorter than two watches, so at most one can see the half
+    await sleep(700); // longer than two watches
+    expect(svc.getToken()).toBeNull();
     f.emit('_SECONDHALF\r\n');
-    await sleep(700);
+    await sleep(400);
     expect(svc.getToken()).toBe('sk-ant-oat01-FIRSTHALF_SECONDHALF');
   });
 
@@ -319,18 +320,121 @@ describe('one link: the code link', () => {
     expect(saved).toBe(1);
   });
 
-  test('status() still reports the finished login, and a new start clears it', async () => {
+  /** Spawns a new fake PTY for each attempt. */
+  const sequence = () => {
+    const fakes: Array<ReturnType<typeof fakePty>> = [];
+    return { fakes, spawn: (() => { const f = fakePty(); fakes.push(f); return f.spawn(); }) as any };
+  };
+  const readyOn = async (seq: ReturnType<typeof sequence>, begin: () => Promise<unknown>) => {
+    const p = begin();
+    setTimeout(() => seq.fakes[seq.fakes.length - 1].emit(URL_LINE), 20);
+    await p;
+  };
+
+  test('status() still reports the finished login, and a real new start clears it', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    await readyOn(seq, () => svc.start());
+    const first = svc.status()!.id;
+    const done = svc.submitCode('c');
+    setTimeout(() => seq.fakes[0].emit('sk-ant-oat01-DONE\r\n'), 20);
+    await done;
+    expect(svc.status()).toMatchObject({ id: first, status: 'complete', error: null });
+    await readyOn(seq, () => svc.start());
+    expect(svc.status()!.id).not.toBe(first);
+    expect(svc.status()!.status).toBe('awaiting_code');
+    svc.cancel();
+    expect(svc.status()).toBeNull();
+  });
+
+  test('a code submitted after the CLI printed a token keeps that token', async () => {
     const f = fakePty();
     const svc = new ClaudeLoginService(dir, f.spawn as any);
     await ready(svc, f);
-    const done = svc.submitCode('c');
-    setTimeout(() => f.emit('sk-ant-oat01-DONE\r\n'), 20);
-    await done;
+    f.emit('\r\nsk-ant-oat01-PRINTED_FIRST\r\n');
+    const s = await svc.submitCode('late-code');
+    expect(s.status).toBe('complete');
+    expect(svc.getToken()).toBe('sk-ant-oat01-PRINTED_FIRST');
+    expect(f.written).toEqual([]);
+  });
+
+  test('a second start with the same destination returns the waiting login', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    const first = svc.status()!.id;
+    const again = await svc.startForAccount(' Work ');
+    expect(again.id).toBe(first);
+    expect(seq.fakes).toHaveLength(1);
+  });
+
+  test('a start for another destination replaces the waiting login, so its token cannot change owner', async () => {
+    const seq = sequence();
+    const svc = new ClaudeLoginService(dir, seq.spawn);
+    const got: string[] = [];
+    svc.onAccountToken = (_token, label) => { got.push(label); };
+    await readyOn(seq, () => svc.startForAccount('Work'));
+    const first = svc.status()!.id;
+    await readyOn(seq, () => svc.start());
+    expect(seq.fakes[0].killed).toBe(true);
+    expect(svc.status()!.id).not.toBe(first);
+    seq.fakes[1].emit('\r\nsk-ant-oat01-SINGLE\r\n');
+    await sleep(700);
+    expect(got).toEqual([]);
+    expect(svc.getToken()).toBe('sk-ant-oat01-SINGLE');
+  });
+
+  test('the login is complete only after the account is stored, even if the CLI exits first', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let stored = () => {};
+    let calls = 0;
+    svc.onAccountToken = () => { calls++; return new Promise<void>((r) => { stored = r; }); };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    f.emit('\r\nsk-ant-oat01-SLOW_STORE\r\n');
+    await sleep(700);
+    expect(svc.status()?.status).toBe('exchanging');
+    f.exit();
+    await sleep(50);
+    expect(svc.status()?.status).toBe('exchanging');
+    stored();
+    await sleep(20);
     expect(svc.status()?.status).toBe('complete');
-    const next = fakePty();
-    const svc2 = new ClaudeLoginService(dir, next.spawn as any);
-    expect(svc2.status()).toBeNull();
-    svc.cancel();
+    expect(calls).toBe(1);
+  });
+
+  test('an account that cannot be stored ends the login and is not tried again', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    let calls = 0;
+    svc.onAccountToken = () => { calls++; return Promise.reject(new Error('disk full')); };
+    await ready(svc, f, () => svc.startForAccount('Work'));
+    const done = svc.submitCode('c');
+    setTimeout(() => f.emit('\r\nsk-ant-oat01-NOSTORE\r\n'), 20);
+    const s = await done;
+    expect(s.status).toBe('error');
+    expect(s.error).toMatch(/could not save/i);
+    expect(calls).toBe(1);
+    expect(f.killed).toBe(true);
+  });
+
+  test('a saved login that cannot be written ends the attempt from the watch', async () => {
+    const f = fakePty();
+    const notADir = path.join(dir, 'file');
+    fs.writeFileSync(notADir, 'x');
+    const svc = new ClaudeLoginService(notADir, f.spawn as any);
+    await ready(svc, f);
+    f.emit('\r\nsk-ant-oat01-NOWRITE\r\n');
+    await sleep(700);
+    expect(f.killed).toBe(true);
     expect(svc.status()).toBeNull();
+  });
+
+  test('a CLI that prints the link and exits at once is reported as failed', async () => {
+    const f = fakePty();
+    const svc = new ClaudeLoginService(dir, f.spawn as any);
+    const p = svc.start();
+    setTimeout(() => { f.emit(URL_LINE); f.exit(); }, 20);
+    expect((await p).status).toBe('error');
   });
 });

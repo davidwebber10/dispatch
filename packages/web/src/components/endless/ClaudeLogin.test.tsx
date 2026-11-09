@@ -103,4 +103,45 @@ describe('ClaudeLogin notices how the login ended', () => {
     await tick();
     expect(screen.getByRole('textbox', { name: 'Login code' })).toBeInTheDocument();
   });
+
+  it('treats a session with another id as an ended login', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session({ id: 'other' }) });
+    const onDone = await open();
+    await tick();
+    expect(await screen.findByText(/This login ended/)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('calls onDone one time when two status checks overlap', async () => {
+    const answers: Array<(v: { authenticated: boolean; session: ClaudeLoginSession | null }) => void> = [];
+    vi.spyOn(api, 'claudeAuthStatus').mockImplementation(() => new Promise((r) => { answers.push(r); }));
+    const onDone = await open();
+    await tick();
+    await tick();
+    expect(answers.length).toBeGreaterThanOrEqual(2);
+    await act(async () => { for (const a of answers) a({ authenticated: true, session: session({ status: 'complete', url: null }) }); });
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the status checks while a code is being sent', async () => {
+    const status = vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: false, session: session() });
+    vi.spyOn(api, 'claudeLoginCode').mockImplementation(() => new Promise(() => {}));
+    await open();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Login code' }), { target: { value: 'abc' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+    await tick();
+    status.mockClear();
+    await tick();
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it('finishes when the code arrived after the login had already completed', async () => {
+    vi.spyOn(api, 'claudeAuthStatus').mockResolvedValue({ authenticated: true, session: session({ status: 'complete', url: null }) });
+    vi.spyOn(api, 'claudeLoginCode').mockRejectedValue(new Error('no login in progress'));
+    const onDone = await open();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Login code' }), { target: { value: 'abc' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/no login in progress/)).not.toBeInTheDocument();
+  });
 });

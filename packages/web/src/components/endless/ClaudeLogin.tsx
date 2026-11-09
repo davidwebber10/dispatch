@@ -58,8 +58,9 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       api.claudeAuthStatus().then(({ session }) => {
         if (stopped) return;
         const mine = session && (!attemptId.current || session.id === attemptId.current);
-        if (mine && session.status === 'complete') { setPhase('sending'); onDone(); return; }
+        if (mine && session.status === 'complete') { stopped = true; setPhase('sending'); onDone(); return; }
         if (!mine || session.status === 'error') {
+          stopped = true;
           setError('This login ended. Start it again.');
           setUrl(null);
           setPhase('idle');
@@ -81,6 +82,9 @@ export function ClaudeLogin({ onDone, start: startFlow, buttonLabel = 'Log in to
       setError(s.error ?? 'The login did not finish. Try the code again.');
       setPhase('code');
     } catch (err) {
+      // The login may have finished just before this code arrived.
+      const session = (await api.claudeAuthStatus().catch(() => null))?.session;
+      if (session?.status === 'complete' && (!attemptId.current || session.id === attemptId.current)) { onDone(); return; }
       // The attempt is gone (a 400 with no session to resume): start again.
       setError(errorText(err));
       setUrl(null);

@@ -857,9 +857,9 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   // versions becomes the account `saved`; a login started for a new account lands here, and the
   // profile call fills in its email, account id and plan.
   accounts.migrateSavedClaudeToken(claudeLogin.getToken());
-  claudeLogin.onAccountToken = (token, label) => {
+  claudeLogin.onAccountToken = async (token, label) => {
     // Profile first, so signing an existing account in again updates it (adoptClaudeLoginToken).
-    void adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile).catch(() => {});
+    await adoptClaudeLoginToken(accounts, token, label, fetchClaudeProfile);
   };
   sessionService.setAccountEnv((type, config) => accounts.spawnEnv(type, config));
   const providerOfType = (type: string): AccountProvider | null => (type === 'claude-code' ? 'claude' : type === 'codex' ? 'codex' : null);
