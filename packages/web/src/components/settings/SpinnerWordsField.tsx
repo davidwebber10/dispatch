@@ -5,6 +5,7 @@ import { WORD_SETS, parseWords } from '../../lib/spinnerWords';
 import { SettingsRow, fieldFor, solidBtn, ghostBtn } from './ui';
 import { Segmented } from '../common/Segmented';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useDispatchName } from '../../stores/settings';
 
 type Mode = 'claude' | SpinnerVerbs['mode'];
 const MODES: [Mode, string][] = [['claude', "Claude's own"], ['append', "Add to Claude's"], ['replace', 'Only mine']];
@@ -46,8 +47,9 @@ export function SpinnerWordsField({ value, onSave, sets = [], onSaveSets }: {
   };
 
   const words = parseWords(text).length > 0;
+  const dispatchName = useDispatchName();
   return (
-    <SettingsRow label="Working words" hint="What Claude shows while it works, like “Flibbertigibbeting…”. Pretty threads, Control Plane and Chat use them too.">
+    <SettingsRow label="Working words" hint={`What Claude shows while it works, like “Flibbertigibbeting…”. Pretty threads, ${dispatchName} and Chat use them too.`}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="spinner-words">
         <Segmented ariaLabel="Working words" value={mode}
           options={MODES.map(([m, label]) => ({ value: m, label }))}

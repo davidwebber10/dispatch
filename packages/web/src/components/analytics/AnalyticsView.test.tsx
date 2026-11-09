@@ -304,6 +304,19 @@ describe('AnalyticsView · the view switch', () => {
   });
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  // W1-G (2026-11-09): the view of the coordinator carries the coordinator name from Settings.
+  it('the second view is named by the coordinator name setting', async () => {
+    const { useSettings } = await import('../../stores/settings');
+    const before = useSettings.getState().coordinatorName;
+    useSettings.setState({ coordinatorName: 'Houston' });
+    stub({ ...EMPTY, turns: 3, totalTokens: 10 });
+    render(<AnalyticsView />);
+    await waitFor(() => expect(screen.getByText('TOTAL TOKENS')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Houston' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Control Plane' })).toBeNull();
+    useSettings.setState({ coordinatorName: before });
+  });
+
   it('opens Usage on a first visit', async () => {
     stub({ ...EMPTY, turns: 3, totalTokens: 10 });
     render(<AnalyticsView />);

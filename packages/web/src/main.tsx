@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { loadPlugins } from './plugins/host';
 import { reloadForSignIn } from './lib/signInReload';
 import { reloadFresh } from './lib/shellCache';
@@ -75,7 +76,10 @@ watchForUpdates();
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    {/* The last line of defence: a render error outside every view boundary shows a card, not a blank page. */}
+    <ErrorBoundary scope="root">
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );
 

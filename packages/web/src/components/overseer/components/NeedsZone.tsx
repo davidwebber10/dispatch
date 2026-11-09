@@ -12,6 +12,7 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { Icon, MonoLabel, PillButton } from '../atoms';
 import { useOverseer, useRenderVals } from '../store';
 import type { Need, NeedAction } from '../types';
+import { useDispatchName } from '../../../stores/settings';
 
 // ---------------------------------------------------------------------------
 // Conflict panels — two side-by-side (desktop) or stacked (mobile) context boxes
@@ -159,6 +160,7 @@ function NeedCard({
   isMobile: boolean;
   onAction: (id: string, label: string) => void;
 }) {
+  const dispatchName = useDispatchName();
   return (
     <div
       style={{
@@ -181,7 +183,7 @@ function NeedCard({
         <Icon name={need.icon} weight="fill" size={16} color="var(--yellow)" />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tp)' }}>{need.title}</span>
         <span style={{ flex: 1 }} />
-        {/* "raised by Control Plane" — desktop only */}
+        {/* "raised by <coordinator name>" — desktop only */}
         {!isMobile && (
           <span
             style={{
@@ -193,7 +195,7 @@ function NeedCard({
               color: 'var(--tt)',
             }}
           >
-            raised by Control Plane
+            raised by {dispatchName}
           </span>
         )}
       </div>

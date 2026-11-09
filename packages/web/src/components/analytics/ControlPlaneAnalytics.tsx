@@ -11,6 +11,7 @@ import { Block, Kpi, NoData, chartTooltip, fmtDay, fmtSeconds, fmtTokens, labelS
 import type {
   AgentSeriesKey, ControlPlaneAnalytics as Payload, ControlPlaneProjectRow, MissionStatus,
 } from '../../api/types';
+import { useDispatchName } from '../../stores/settings';
 
 /*
  * The Control Plane view of the Analytics screen
@@ -27,7 +28,8 @@ const AGENT_SERIES: { key: AgentSeriesKey; color: string }[] = [
 ];
 /** Pink always means the Control Plane in this view. The other series in a pair is neutral. */
 const CONTROL_PLANE = SERIES[4];
-const NO_ACTIVITY = 'No Control Plane activity in this range.';
+/** `name` is the coordinator name from Settings (useDispatchName). */
+const noActivity = (name: string): string => `No ${name} activity in this range.`;
 const NO_COMPLETIONS = 'No missions completed in this range.';
 const COMPLETED_INFO = 'No working or queued agent, and no activity for 7 days.';
 
@@ -74,6 +76,9 @@ const isActive = (r: ControlPlaneProjectRow) => r.active;
 
 export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: string; projectId: string; provider: string }) {
   const isMobile = useIsMobile();
+  // The coordinator's name from Settings: every label of this view that names the coordinator uses it.
+  const dispatchName = useDispatchName();
+  const NO_ACTIVITY = noActivity(dispatchName);
   // Recharts cannot read `var(--color-*)`, so the theme resolves to literals once.
   // Recharts takes real colors, read from the theme tokens; read again when the theme changes.
   const themeId = useActiveTheme((s) => s.theme.id);
@@ -138,7 +143,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
       {/* 1. KPI row — the same position as the Usage KPI row. */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(6, 1fr)', gap: 12 }}>
         <Kpi label="SESSIONS" value={summary.sessions.toLocaleString()} caption={`${summary.sessionsActive} active · ${summary.sessionsNew} new in range`} />
-        <Kpi label="ACTIVE DAYS" value={summary.activeDays.toLocaleString()} caption="days with a Control Plane turn" />
+        <Kpi label="ACTIVE DAYS" value={summary.activeDays.toLocaleString()} caption={`days with a ${dispatchName} turn`} />
         <Kpi label="MISSIONS STARTED" value={summary.missionsStarted.toLocaleString()} />
         <Kpi label="MISSIONS COMPLETED" value={summary.missionsCompleted.toLocaleString()} info={COMPLETED_INFO} />
         <Kpi label="AGENTS STARTED" value={summary.agentsStarted.toLocaleString()} />
@@ -146,7 +151,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
           label="CONTROL PLANE TOKEN SHARE"
           value={tokenTotal > 0 ? share(summary.controlPlaneTokens, summary.agentTokens) : '—'}
           caption={tokenTotal > 0
-            ? `${fmtTokens(summary.controlPlaneTokens)} of ${fmtTokens(tokenTotal)} recorded Control Plane and agent tokens${since}`
+            ? `${fmtTokens(summary.controlPlaneTokens)} of ${fmtTokens(tokenTotal)} recorded ${dispatchName} and agent tokens${since}`
             : `no recorded tokens${since}`}
         />
       </div>
@@ -189,7 +194,7 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
                 {chartTooltip(theme, (v, name) => [fmtTokens(Number(v)), String(name)])}
                 {legend}
                 <Bar dataKey="agents" name="Agents" stackId="tokens" fill={OTHER} stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                <Bar dataKey="control-plane" name="Control Plane" stackId="tokens" fill={CONTROL_PLANE} stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="control-plane" name={dispatchName} stackId="tokens" fill={CONTROL_PLANE} stroke={theme.surface} strokeWidth={2} radius={[4, 4, 0, 0]} isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -206,8 +211,8 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
                 <YAxis allowDecimals={false} tick={axisTick} tickLine={false} axisLine={false} width={36} />
                 {chartTooltip(theme)}
                 {legend}
-                <Line type="monotone" dataKey="you" name="You → Control Plane" stroke={OTHER} strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="control-plane" name="Control Plane → agents" stroke={CONTROL_PLANE} strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="you" name={`You → ${dispatchName}`} stroke={OTHER} strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="control-plane" name={`${dispatchName} → agents`} stroke={CONTROL_PLANE} strokeWidth={2} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -290,7 +295,8 @@ export function ControlPlaneAnalytics({ from, projectId, provider }: { from?: st
 
 /** The active projects, then one muted footer row for the rest, so the sessions still add up. */
 function ProjectTable({ rows }: { rows: ControlPlaneProjectRow[] }) {
-  if (rows.length === 0) return <NoData height={60} message={NO_ACTIVITY} />;
+  const dispatchName = useDispatchName();
+  if (rows.length === 0) return <NoData height={60} message={noActivity(dispatchName)} />;
   const active = rows.filter(isActive);
   const idle = rows.filter((r) => !isActive(r));
   const idleSessions = idle.reduce((n, r) => n + r.sessions, 0);

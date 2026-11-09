@@ -20,7 +20,7 @@ import { api } from '../../../api/client';
 import { useDictation } from '../../../hooks/useDictation';
 import { PillComposer } from '../../composer/PillComposer';
 import { UploadTray, useInboxUploads } from '../../composer/UploadTray';
-import { useSettings } from '../../../stores/settings';
+import { useSettings, useDispatchName } from '../../../stores/settings';
 import { ContextIndicator } from '../../ContextIndicator';
 import { ModelSwitcher } from '../../tabs/chat/ModelSwitcher';
 import { useThreadModelControls } from '../../tabs/chat/modelControls';
@@ -76,6 +76,7 @@ function StagedThumbnail({ src, onRemove }: { src: string; onRemove: () => void 
 }
 
 export function Composer() {
+  const dispatchName = useDispatchName();
   const sendDirective = useOverseer((s) => s.sendDirective);
   const addComposerImage = useOverseer((s) => s.addComposerImage);
   const removeComposerImage = useOverseer((s) => s.removeComposerImage);
@@ -176,12 +177,12 @@ export function Composer() {
     models: controls.options, effortLevels: controls.effort?.levels,
     run: async (name, args) => {
       if (name === 'stop') { doStop(); return; }
-      if (!coordinatorId || !coordinatorTab) throw new Error('The Control Plane session has not started yet.');
+      if (!coordinatorId || !coordinatorTab) throw new Error(`The ${dispatchName} session has not started yet.`);
       if (name === 'model' || name === 'effort') {
         return runModelEffortCommand({
           harness: slashHarness, name, args, models: controls.options, effortLevels: controls.effort?.levels,
           openPicker: () => {
-            if (turnRuns) throw new Error(`The Control Plane is busy — change the ${name} when the turn ends`);
+            if (turnRuns) throw new Error(`${dispatchName} is busy — change the ${name} when the turn ends`);
             usePickerRequest.getState().request(`thread:${coordinatorId}`);
           },
           pickModel: controls.pickModel, pickEffort: controls.pickEffort,
@@ -272,7 +273,7 @@ export function Composer() {
             canSend={canSend && !uploader.busy}
             stopMode={stopMode}
             onStop={doStop}
-            placeholder={isMobile ? 'Fire a directive…' : 'Fire a directive to Control Plane…'}
+            placeholder={isMobile ? 'Fire a directive…' : `Fire a directive to ${dispatchName}…`}
             onAddFile={() => fileInputRef.current?.click()}
             dictation={dictation}
             sttConfigured={sttConfigured}

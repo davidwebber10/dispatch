@@ -15,6 +15,7 @@ import { Icon, MonoLabel, StatusDot, TypeIconBox } from '../atoms';
 import { Spinner } from '../../common/Spinner';
 import { useOverseer, useRenderVals } from '../store';
 import type { AgentThread, Mission, Outcome } from '../types';
+import { useDispatchName } from '../../../stores/settings';
 
 // Which slice of each mission the rail shows: LIVE (in-progress AgentThreadChips) — the
 // default, keeping the view to only active work — QUEUED (accepted-but-unlaunched workers,
@@ -446,6 +447,7 @@ function EmptyFilter({ tab }: { tab: RailTab }) {
 // ---------------------------------------------------------------------------
 
 function EmptyMissions() {
+  const dispatchName = useDispatchName();
   return (
     <div
       style={{
@@ -480,7 +482,7 @@ function EmptyMissions() {
       <p style={{ fontSize: 13, color: 'var(--ts)', lineHeight: 1.5, margin: 0 }}>
         No missions yet.
         <br />
-        Tell Control Plane what to work on.
+        Tell {dispatchName} what to work on.
       </p>
     </div>
   );

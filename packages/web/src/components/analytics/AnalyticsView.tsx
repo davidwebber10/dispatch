@@ -9,6 +9,7 @@ import { ControlPlaneAnalytics } from './ControlPlaneAnalytics';
 import type { AnalyticsPoint } from '../../api/types';
 import { FilterBar } from '../common/FilterBar';
 import { Select } from '../common/Select';
+import { useDispatchName } from '../../stores/settings';
 
 type RangeId = '7' | '30' | '90' | 'all';
 const RANGES: { id: RangeId; label: string; days: number | null }[] = [
@@ -107,9 +108,11 @@ export function AnalyticsView() {
 function ViewSwitch({ value, onChange, fullWidth }: {
   value: AnalyticsTab; onChange: (tab: AnalyticsTab) => void; fullWidth?: boolean;
 }) {
+  // The second view is the coordinator's: it carries the name from Settings.
+  const dispatchName = useDispatchName();
   const options: { id: AnalyticsTab; label: string }[] = [
     { id: 'usage', label: 'Usage' },
-    { id: 'control-plane', label: 'Control Plane' },
+    { id: 'control-plane', label: dispatchName },
   ];
   return (
     <div

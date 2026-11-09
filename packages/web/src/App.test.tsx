@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, vi, test, expect } from 'vitest';
 import App from './App';
-import { useUI, loadView } from './stores/ui';
+import { useUI, loadView, type View } from './stores/ui';
 import { useProjects } from './stores/projects';
 
 beforeEach(() => {
@@ -27,7 +27,8 @@ test('saved or requested Board views fall back to Threads', () => {
   localStorage.setItem('dispatch:view', 'board');
   expect(loadView()).toBe('workspace');
   render(<App />);
-  act(() => { useUI.getState().setView('board'); });
+  // 'board' is no longer a View (W1-G); the cast stands for an untyped caller such as a plugin.
+  act(() => { useUI.getState().setView('board' as View); });
   expect(useUI.getState().view).toBe('workspace');
   expect(screen.queryByTestId('board-view')).not.toBeInTheDocument();
 });

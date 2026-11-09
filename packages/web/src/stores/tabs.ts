@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Terminal } from '../api/types';
 import type { ServerEvent } from '../api/events-socket';
 import { useProjects } from './projects';
+import { useSettings } from './settings';
 import { clearDraft } from '../lib/fileDrafts';
 import { readSnapshot } from '../lib/launchSnapshot';
 
@@ -57,9 +58,13 @@ export const dispatchTabId = (sessionId: string): string => `${DISPATCH_PREFIX}$
 export const isDispatchTab = (id: string | null | undefined): boolean => !!id && id.startsWith(DISPATCH_PREFIX);
 export const dispatchSessionId = (id: string): string => id.slice(DISPATCH_PREFIX.length);
 
-/** Display label for a tab id — 'Control Plane' for the virtual tab, else the terminal's label. */
+/**
+ * Display label for a tab id: the coordinator name from Settings for the virtual tab ('Control Plane'
+ * when the name is blank), else the terminal's label. A component that must follow a live change of
+ * the name uses `useDispatchName()` instead.
+ */
 export function tabLabel(id: string, byProject: Record<string, Terminal[]>): string {
-  if (isDispatchTab(id)) return 'Control Plane';
+  if (isDispatchTab(id)) return useSettings.getState().coordinatorName.trim() || 'Control Plane';
   return findTerminal(byProject, id)?.label ?? 'tab';
 }
 

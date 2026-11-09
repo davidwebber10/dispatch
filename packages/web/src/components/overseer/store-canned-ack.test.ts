@@ -32,3 +32,11 @@ describe('needAction — Deny on a worker question', () => {
     expect(spy).toHaveBeenCalledWith('agent-t', { requestId: 'r-t', decision: 'deny' });
   });
 });
+
+// W1-G (2026-11-09): the greeting names the coordinator by the name from Settings.
+describe('CANNED.emptyGreeting', () => {
+  it('uses the coordinator name that it is given', () => {
+    expect(CANNED.emptyGreeting('Houston')).toMatch(/^I'm Houston — the coordinator for this project\./);
+    expect(CANNED.emptyGreeting('Control Plane')).toContain("I'm Control Plane — the coordinator");
+  });
+});
