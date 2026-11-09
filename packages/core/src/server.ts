@@ -594,6 +594,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.use(jsonCompression()); // API JSON over 1 KB goes out as br or gzip (http/compress.ts)
   // Create HTTP server
   const server = http.createServer(app);
+  server.keepAliveTimeout = 75_000; // W2-H: Node's 5 s made a direct http page (Tailscale) open a new connection after each short pause
+  server.headersTimeout = 76_000;   // must be above keepAliveTimeout, or a request that lands as the timer ends is cut
 
   // Create WebSocket servers (noServer mode)
   // maxPayload: one client message over the cap closes that socket (the default of ws is 100 MiB).

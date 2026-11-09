@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import type Database from 'better-sqlite3';
 import type { Router, RequestHandler, Request } from 'express';
 import { policyRouter, publicRoute, ownerOnlyStrict, keyRoute, needs, type Rule } from '../auth/route-policy.js';
@@ -8,6 +9,7 @@ import { principalOf, scopeOf } from '../auth/request-principal.js';
 import * as pluginData from '../db/plugin-data.js';
 import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
+import { IMMUTABLE, pickEncoding } from '../web-assets.js';
 import { insideRealRoot } from '../files/confine.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
@@ -783,10 +785,38 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   return router;
 }
 
+/** Plugin files that compress well; anything else (an image, a font) is sent as it is. */
+const PLUGIN_TEXT = new Set(['.js', '.mjs', '.css', '.json', '.map', '.html', '.htm', '.svg', '.txt', '.md']);
+/** Compressed plugin files, by encoding, path and stamp. A new stamp is a new key; the oldest key goes first. */
+const pluginBodies = new Map<string, Promise<Buffer>>();
+const PLUGIN_BODIES_MAX = 64;
+
+function compressedPluginFile(abs: string, stamp: number, enc: 'br' | 'gzip'): Promise<Buffer> {
+  const key = `${enc}:${stamp}:${abs}`;
+  let body = pluginBodies.get(key);
+  if (!body) {
+    body = fs.promises.readFile(abs).then((raw) => new Promise<Buffer>((resolve, reject) => {
+      const done = (err: Error | null, out: Buffer) => (err ? reject(err) : resolve(out));
+      if (enc === 'br') zlib.brotliCompress(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: raw.length } }, done);
+      else zlib.gzip(raw, { level: 9 }, done);
+    }));
+    pluginBodies.set(key, body);
+    body.catch(() => pluginBodies.delete(key));
+    if (pluginBodies.size > PLUGIN_BODIES_MAX) pluginBodies.delete(pluginBodies.keys().next().value as string);
+  }
+  return body;
+}
+
 /**
  * `GET /plugins/<id>/<path>`: a file of an enabled plugin, same-origin so the app's CSP lets the
- * client import it. Never cached (the author is editing it). HTML gets the previews' sandbox: a
- * plugin page in a frame runs with no cookie and no app origin.
+ * client import it. HTML gets the previews' sandbox: a plugin page in a frame runs with no cookie
+ * and no app origin.
+ *
+ * Cache (W2-H): the app loads a bundle as `<path>?v=<stamp>`, and the stamp changes when any file of
+ * the plugin changes. A request whose `v` IS the plugin's current stamp names bytes that never change
+ * under that address, so it is kept for good and sent compressed; before, each launch asked for every
+ * bundle again, uncompressed. Any other request (no `v`, an old or a wrong `v`) is `no-cache` and
+ * as-is, as before: the author is editing the file.
  */
 export function pluginAssetHandler(plugins: PluginRegistry): RequestHandler[] {
   return [publicRoute, (req, res) => {
@@ -795,10 +825,21 @@ export function pluginAssetHandler(plugins: PluginRegistry): RequestHandler[] {
     try { rest = decodeURIComponent(String(req.params[0] ?? '')); } catch { return void res.status(404).json({ error: 'plugin file not found' }); }
     const abs = plugins.resolveFile(id, rest);
     if (!abs) return void res.status(404).json({ error: 'plugin file not found' });
-    res.setHeader('Cache-Control', 'no-cache');
+    const v = req.query.v;
+    const stamp = plugins.get(id)?.stamp;
+    const current = typeof v === 'string' && typeof stamp === 'number' && v === String(stamp);
+    res.setHeader('Cache-Control', current ? IMMUTABLE : 'no-cache');
     const ext = path.extname(abs).toLowerCase();
     if (ext === '.html' || ext === '.htm') setFileHeaders(res, 'text/html', HTML_SANDBOX_CSP);
     else if (ext === '.svg') setFileHeaders(res, 'image/svg+xml', 'sandbox');
-    res.sendFile(abs);
+    const enc = current && PLUGIN_TEXT.has(ext) ? pickEncoding(req.headers['accept-encoding'] as string | undefined) : null;
+    if (!enc) return void res.sendFile(abs);
+    compressedPluginFile(abs, stamp as number, enc).then((buf) => {
+      if (!res.getHeader('Content-Type')) res.type(ext);
+      res.setHeader('Content-Encoding', enc);
+      res.setHeader('Vary', 'Accept-Encoding');
+      res.setHeader('Content-Length', String(buf.length));
+      res.end(buf);
+    }, () => { res.sendFile(abs); });
   }];
 }
