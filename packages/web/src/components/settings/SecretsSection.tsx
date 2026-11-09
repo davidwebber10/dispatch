@@ -235,6 +235,11 @@ export function SecretsSection() {
   );
   const count = `${secrets.length} variable${secrets.length === 1 ? '' : 's'}`;
 
+  const scopeSelect = (
+    <Select ariaLabel="Give the Doppler token to" value={tokenScope} disabled={busy} onChange={(v) => void changeScope(v as DopplerTokenScope)} style={{ width: isMobile ? '100%' : 230 }}
+      options={[{ value: 'all', label: 'Every thread' }, { value: 'opted-in', label: 'Only threads that I turn on' }]} />
+  );
+
   return (
     <SettingsPage intro={INTRO}>
       <SettingsGroup title="Doppler">
@@ -249,8 +254,10 @@ export function SecretsSection() {
               : 'A thread has DOPPLER_TOKEN only after you turn it on in the thread menu (More). The Doppler tools and the integrations work in every thread.'}
             {scopeChanged && <span style={{ display: 'block' }}>The change takes effect when a thread next starts.</span>}
           </>}
-          control={<Select ariaLabel="Give the Doppler token to" value={tokenScope} disabled={busy} onChange={(v) => void changeScope(v as DopplerTokenScope)} style={{ width: isMobile ? 190 : 230 }}
-            options={[{ value: 'all', label: 'Every thread' }, { value: 'opted-in', label: 'Only threads that I turn on' }]} />} />
+          control={isMobile ? undefined : scopeSelect}>
+          {/* On a phone the select takes its own line: beside the label it cut its text short. */}
+          {isMobile ? scopeSelect : null}
+        </SettingsRow>
         {tokenScope === 'all' && (
           <div key="scope-advice" data-testid="token-scope-advice" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
             <ShieldWarning size={16} style={{ flexShrink: 0, color: 'var(--color-status-amber, var(--color-text-secondary))' }} />
