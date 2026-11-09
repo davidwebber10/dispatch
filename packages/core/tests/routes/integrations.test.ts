@@ -143,3 +143,44 @@ describe('GET /api/integrations/export is strict owner', () => {
     expect(res.text).toContain('hunter2');
   });
 });
+
+// Integration: the list masked nothing for a local caller with no credential, so any local program read every env
+// value (W1-B finding). It now gets the masked list; the web page and the owner token still see the values.
+describe('GET /api/integrations masks values for a local program with no credential', () => {
+  const TOKEN = 'owner-access-token-for-the-integrations-list-test-0123456';
+  async function gated() {
+    const express = (await import('express')).default;
+    const { createIntegrationsRouter } = await import('../../src/routes/integrations.js');
+    const { IntegrationsService } = await import('../../src/integrations/service.js');
+    const { createPrincipalMiddleware } = await import('../../src/auth/request-principal.js');
+    const { createKeyScope } = await import('../../src/auth/key-scope.js');
+    const { KeyRegistry } = await import('../../src/auth/principals.js');
+    const { GATE_VIA } = await import('../../src/auth/access-gate.js');
+    const integrationsDb = await import('../../src/db/integrations.js');
+    const d = new Database(':memory:'); initSchema(d);
+    integrationsDb.create(d, { id: 'i1', name: 'files', type: 'stdio', command: 'npx', env: { DB_PASSWORD: 'hunter2' } });
+    const g = express();
+    g.use((req: any, _res: any, next: any) => { req[GATE_VIA] = 'local'; next(); });
+    g.use(createPrincipalMiddleware({ registry: new KeyRegistry(), scope: createKeyScope(d), getToken: () => TOKEN, via: 'test' }));
+    g.use(express.json());
+    g.use('/api/integrations', createIntegrationsRouter(new IntegrationsService(d, null, () => false)));
+    return g;
+  }
+
+  it('a local program with no credential and no browser headers gets the list with masked values', async () => {
+    const res = await request(await gated()).get('/api/integrations');
+    expect(res.status).toBe(200);
+    expect(res.body.integrations).toHaveLength(1);
+    expect(res.text).not.toContain('hunter2');
+  });
+
+  it('the web page and the owner token still get the values', async () => {
+    const g = await gated();
+    const page = await request(g).get('/api/integrations').set('Sec-Fetch-Site', 'same-origin');
+    expect(page.text).toContain('hunter2');
+    const plain = await request(g).get('/api/integrations').set('Host', 'mac.tail1.ts.net:3456').set('Referer', 'http://mac.tail1.ts.net:3456/');
+    expect(plain.text).toContain('hunter2');
+    const owner = await request(g).get('/api/integrations').set('Authorization', `Bearer ${TOKEN}`);
+    expect(owner.text).toContain('hunter2');
+  });
+});

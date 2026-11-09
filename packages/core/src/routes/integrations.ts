@@ -1,6 +1,6 @@
 import type { Router } from 'express';
-import { keyRoute, policyRouter, ownerOnlyStrict } from '../auth/route-policy.js';
-import { ownerOnlyStrictRead } from '../auth/owner-read-proof.js';
+import { keyRoute, policyRouter, ownerOnlyStrict, looksLikeBrowser } from '../auth/route-policy.js';
+import { ownerOnlyStrictRead, sameOriginReferer } from '../auth/owner-read-proof.js';
 import { allowRule } from '../auth/key-rules.js';
 import { creatorOf } from '../auth/creator.js';
 import { principalOf } from '../auth/request-principal.js';
@@ -12,11 +12,17 @@ export function createIntegrationsRouter(integrations: IntegrationsService): Rou
   // A thread key may list (so it can tell "I may add one" from "I may not look"), but never reads a secret value:
   // every header and env value is masked, and a `${NAME}` reference is shown as it is. The owner and a
   // credential-free local caller (the browser UI before a token exists) see everything. /export stays owner only.
+  // A local program with no credential that does not look like the web page also gets the masked list
+  // (engineering program, Wave 1 integration): before this, any program on the machine read every value here.
   router.get('/', keyRoute({ thread: allowRule }), (req, res) => {
-    let keyed = false;
-    try { keyed = ['thread', 'chat', 'shell'].includes(principalOf(req).kind); } catch { /* no principal: a bare test app */ }
+    let masked = false;
+    try {
+      const p = principalOf(req);
+      if (['thread', 'chat', 'shell'].includes(p.kind)) masked = true;
+      else if (p.kind === 'none' && p.via !== 'test' && !looksLikeBrowser(req.headers) && !sameOriginReferer(req.headers)) masked = true;
+    } catch { /* no principal: a bare test app */ }
     const all = integrations.list();
-    res.json({ integrations: keyed ? all.map(maskIntegration) : all });
+    res.json({ integrations: masked ? all.map(maskIntegration) : all });
   });
 
   // SEC-20: a thread with its own key may create this (never blocked); the route records the thread as the creator.
