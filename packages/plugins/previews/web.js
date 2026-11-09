@@ -55,6 +55,9 @@ export function threadsWithPreviews(items, project) {
   return [...m.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
 
+/** How many previews a list shows before Show older (2026-11-09). */
+const PAGE = 20;
+
 export default function activate(d) {
   const { h, hooks: { useState, useEffect, useMemo }, ui, storage, events, icons, actions, apiPath } = d;
   const ID = d.id || 'previews';
@@ -203,12 +206,19 @@ export default function activate(d) {
       void usePv.getState().load();
       return () => { void usePv.getState().markAllSeen(sessionId); };
     }, [sessionId]);
+    // The same page of 20 as the history (2026-11-09): every card at once crashed the page on an iPhone.
+    // Hooks stay above the early return, so their order never changes.
+    const [shown, setShown] = useState(PAGE);
+    useEffect(() => { setShown(PAGE); }, [sessionId]);
     if (!sessionId) return null;
     const mine = items.filter((p) => p.sessionId === sessionId);
     return h(ui.Modal, { open: true, sheet: true, title: projectName ? `Previews · ${projectName}` : 'Previews', onClose: () => usePv.getState().closeSheet() },
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, paddingBottom: 6 } },
         mine.length === 0 && h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '8px 0 14px' } }, loaded ? 'Nothing here yet. A thread can hand you files and text with its preview tool.' : 'Loading…'),
-        ...mine.map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) }))));
+        ...mine.slice(0, shown).map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })),
+        mine.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
+          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+          `Show older (${mine.length - shown} more)`)));
   }
 
   // ── the history across projects (the rail view), grouped by day ──────────────────────────
@@ -234,16 +244,20 @@ export default function activate(d) {
       { id: 'thread', title: 'Thread', allLabel: 'All threads', value: thread || null, onChange: (v) => setThread(v || ''),
         options: threads.map((t) => ({ value: t.id, label: t.label, count: t.count })) },
     ];
+    // A page of 20 at a time (2026-11-09): with every card at once, 74 previews crashed the page on an iPhone.
+    const [shown, setShown] = useState(PAGE);
+    useEffect(() => { setShown(PAGE); }, [project, thread, query]);
+    const visible = useMemo(() => items.slice(0, shown), [items, shown]);
     const groups = useMemo(() => {
       const out = [];
-      for (const p of items) {
+      for (const p of visible) {
         const t = new Date(p.createdAt);
         const day = Number.isNaN(t.getTime()) ? '' : t.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
         const g = out[out.length - 1];
         if (g && g.day === day) g.items.push(p); else out.push({ day, items: [p] });
       }
       return out;
-    }, [items]);
+    }, [visible]);
     return h('div', { style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px clamp(16px, 4vw, 26px) 40px' } },
       h('div', { style: { maxWidth: 820, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 } },
         h('div', null,
@@ -256,7 +270,10 @@ export default function activate(d) {
         all.length > 0 && items.length === 0 && h('div', { style: { fontSize: 13.5, color: 'var(--color-text-tertiary)', padding: '12px 0' } }, 'No preview matches.'),
         ...groups.map((g) => h('section', { key: g.day, style: { display: 'flex', flexDirection: 'column', gap: 10 } },
           h('h2', { style: { margin: 0, font: '500 10.5px var(--font-mono)', letterSpacing: '1.2px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)' } }, g.day),
-          ...g.items.map((p) => h(Item, { key: p.id, preview: p, onDelete: (id) => void usePv.getState().remove(id) }))))));
+          ...g.items.map((p) => h(Item, { key: p.id, preview: p, onDelete: (id) => void usePv.getState().remove(id) })))),
+        items.length > shown && h('button', { type: 'button', onClick: () => setShown((n) => n + PAGE),
+          style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+          `Show older (${items.length - shown} more)`)));
   }
 
   // ── the right-column tab (desktop, 2026-11-09): the open thread's previews only ───────────
