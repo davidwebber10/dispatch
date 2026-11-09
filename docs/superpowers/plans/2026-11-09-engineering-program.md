@@ -1701,3 +1701,41 @@ These rows are in the review tables. The roadmap does not name them, and they ar
 | 1 | A build health (S), B security boundaries (S–M), C Doppler and Cloudflare (M), D reliability (M), E daemon performance (M), F web render (M), G web safety and palette (M), H Claude account 403 and back-off (S–M) | about 2 weeks in parallel |
 | 2 | A config store (M–L), B transcript reader (M), C outbox and boot recovery (M–L), D structured core (M–L), E bundle and markdown (M), F navigation and attention (M–L), G why panel (M) | about 3 to 4 weeks in parallel |
 | 3 | A buildDaemon (L), B SessionService split (L, after A), C status authority (L), D journal (L), E UI primitives (M–L), F plugin SDK (M), G diff and worktrees (M–L) | about 4 to 6 weeks; A then B is the long path |
+
+
+## 4A. Wave 2 additions: remote latency (Tailscale / Cloudflare), added 2026-11-09
+
+Source: a Fable latency review of this branch (150 ms RTT model). Findings: a warm start still blocks on `theme-boot.js` (not served by the service worker, `max-age=0`, parser-blocking): 3 RTT; each thread open or tab switch opens a new WebSocket and empties the view (3–4 RTT); the boot sends about 14 fixed API calls plus one `terminals` call per project; the user's own message, archive and rename wait for the server; the daemon is HTTP/1.1 with Node's 5 s keep-alive, so direct `http://…:3456` pays a new connection after each 5 s pause; resume uses a 1.5 s pong wait and then remounts every thread view (full replay) on a slow cellular wake; structured replay frames under 1 KB are not compressed and Grok/OpenCode replay the full ring; the desktop terminal replay asks for 4 MB on each connect.
+
+### W2-H: Remote launch latency
+
+**Owns:** `packages/web/public/sw.js`; `packages/web/src/main.tsx` (the `watchForUpdates` function only); new `packages/core/src/routes/bootstrap.ts` + test; one mount line in `server-routes.ts`; new `packages/web/src/lib/bootstrap.ts` + test; `packages/web/src/lib/resync.ts`; `packages/core/src/server.ts` (two lines after `http.createServer`: `keepAliveTimeout = 75_000`, `headersTimeout = 76_000`); `packages/core/src/routes/plugins.ts` (`pluginAssetHandler` only); `packages/web/src/plugins/host.ts` (`loadPlugins` only); one line in the `App.tsx` boot effect (merge after W2-F).
+
+**Design:**
+- Service worker serves `theme-boot.js` and `manifest.webmanifest` cache-first then refreshes; bump `VERSION`; make path tests relative to the SW scope (works under `DISPATCH_BASE_PATH`).
+- `GET /api/bootstrap` → `{ sessions, terminalsByProject, stalls, authRequests, update, usageSummary, sharedSettings, plugins, schedules }`. Each part applies the same redaction and key rules as its own route (a thread key gets 403). Compressed by W1-E. `loadBootstrap()` fills the stores; on 404 (older daemon) it falls back to today's calls. `resyncAfterReconnect` uses one all-projects terminals call.
+- After a shell refresh with a new entry name, the SW fetches the new entry + CSS, then posts `shell-updated`; at idle it warms the lazy chunks listed in the Vite manifest.
+- Plugin file with `?v=` equal to the current stamp: `immutable` + br/gzip; without `?v=`: `no-cache` as today.
+
+**Tests first:** `sw.test.js`: "theme-boot.js comes from the cache with no network wait", "a new shell stores the new entry chunk before the message", "an /api path is not handled". `routes/bootstrap.test.ts`: "each part equals its own route", "a thread key gets 403", "a body over 1 KB is compressed". `lib/bootstrap.test.ts`: "one request fills the stores", "a 404 uses the old calls". `lib/resync.test.ts`: "a reconnect sends one request for 20 projects". `routes/plugins.test.ts`: "a current stamp gives immutable and an encoding", "an old stamp gives no-cache". Server: "keepAliveTimeout is 75000".
+
+**Acceptance:** isolated instance, 150 ms added latency (CDP): a warm launch paints the list with 0 blocking requests; one bootstrap request at launch; one list request at reconnect. Before/after request counts and time-to-list in the hand-off. **Effort:** M.
+
+### W2-I: Thread open and action latency
+
+**Owns:** `packages/web/src/components/tabs/chat/useStructuredChat.ts` (the reset block and `send` only); new `packages/web/src/lib/threadViewCache.ts`; `packages/web/src/api/structured-socket.ts`, `terminal-socket.ts`, `events-socket.ts`; `packages/core/src/ws/structured.ts` (the replay loop), `ws/terminal.ts` (the replay send), `ws/client-wss.ts`; `stores/tabs.ts` and `stores/projects.ts` (new optimistic `archive` and `rename` actions) and their callers in `ThreadMenu.tsx`, `ProjectCard.tsx`, `AllThreadsView.tsx`, `CommandPalette.tsx`; `App.tsx` (the `useResume` block only).
+
+**Design:**
+- `threadViewCache`: `get(id)`/`put(id, items)`, 20 threads × 300 items, memory only. On open/switch the view shows cached items at once (marked stale); the first replay replaces them with no duplicates.
+- Optimistic send: a local `user` item with `localId`; the next `user` event with the same text replaces it; a failed POST marks it failed (retry offered).
+- `useTabs.archive(id)` / rename remove or change the row first; on error `loadTabs` and a hint.
+- `?batch=1` on the structured socket: the replay is one frame `{ type: 'replay', events: [...] }`, compressed; older clients get today's frames. Live events that arrive during the replay are sent after it, in order.
+- Terminal socket negotiates deflate; the replay frame is compressed, live frames are not; desktop starts at 1 MB and uses the phone step-up path.
+- Resume: `checkAlive(4000)`; a failed check reconnects the sockets without bumping `reconnectGen` (no remount); a socket in `CONNECTING` for 8 s closes and retries.
+
+**Tests first:** `threadViewCache.test.ts`: "the 21st thread removes the oldest". `useStructuredChat` tests: "a switch back shows cached items before the socket opens", "a replay replaces cached items with no duplicate", "a sent message shows before the echo, and the echo does not add a second one", "a failed POST marks the bubble". `stores/tabs.test.ts`: "archive removes the row before the request ends", "a failed archive puts the row back". `ws/structured.test.ts`: "batch=1 sends one frame with the same events in order", "no batch parameter keeps the old frames", "a live event during the replay arrives after it". `ws/terminal.test.ts`: "the replay frame is compressed and a live frame is not". `events-socket` test: "a socket in CONNECTING for 8 s closes and tries again".
+
+**Acceptance:** with 150 ms added latency: a tab switch back shows content in the same frame; a sent message shows in the same frame; replay bytes for a 200-event Claude thread and a 4 MB terminal before/after in the hand-off. **Effort:** M–L.
+
+**Integration order for Wave 2 with these:** … W2-E, W2-F, then W2-H, then W2-I (W2-I rebases on W2-D's ring changes and W2-F's App.tsx).
+**Wave 3 note:** W3-D gives each item a `seq`; add a resume cursor (`?after=seq`) to its design. Carrying the structured streams on the events socket (one socket per page) is a Wave 3 item after W3-C.
