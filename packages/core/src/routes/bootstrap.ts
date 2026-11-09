@@ -121,8 +121,13 @@ export function createBootstrapRouter(app: Express): Router {
 
   router.get('/', ownerOnly, async (req, res) => {
     const want = wanted(req);
+    // Under DISPATCH_BASE_PATH a middleware of the app strips the mount prefix from each request. An inner
+    // call goes through the same middleware, so it carries the prefix that the outer call came with.
+    const full = String(req.originalUrl ?? '').split('?')[0];
+    const at = full.lastIndexOf(req.baseUrl);
+    const prefix = req.baseUrl && at > 0 ? full.slice(0, at) : '';
     const ok = async (path: string): Promise<unknown> => {
-      const a = await innerGet(app, req, path);
+      const a = await innerGet(app, req, prefix + path);
       // Not 200: refused, absent or failed. no-store: the route does not let its answer be kept or compressed.
       if (a.status !== 200 || a.body === null || a.noStore) return null;
       return a.body;
@@ -157,7 +162,7 @@ export function createBootstrapRouter(app: Express): Router {
     }
 
     await Promise.all(jobs);
-    // Always checked with the daemon (the ETag gives a 304 when nothing changed); never served from a cache alone.
+    // Always asked from the daemon; never served from a cache alone.
     res.setHeader('Cache-Control', 'no-cache');
     // The key order of the plan, so two answers with the same data are the same bytes (the ETag then matches).
     res.json(Object.fromEntries(BOOTSTRAP_PARTS.filter((p) => p in out).map((p) => [p, out[p] ?? null])));

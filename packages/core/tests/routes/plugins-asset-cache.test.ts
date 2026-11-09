@@ -36,7 +36,8 @@ describe('plugin file cache headers (W2-H)', () => {
     initSchema(db);
     const app = createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), bundledDir: null, secretsDir: tmp });
     // 127.0.0.1 only: supertest's own server listens on every address, and another program on this computer can then answer.
-    server = http.createServer(app).listen(0, '127.0.0.1');
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const rows = (await request(server).get('/api/plugins')).body.plugins as { id: string; stamp: number }[];
     stamp = rows.find((r) => r.id === 'p')!.stamp;
     expect(stamp).toBeGreaterThan(0);
