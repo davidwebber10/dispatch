@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { COOLDOWN, newGame, step, type Game, type Input, type Rect, type Vec, type Weapon } from './engine';
 import { readBest, recordBest } from '../popScore';
 
-/** The time of the last key, mouse or touch input (UpdateModal reloads after a quiet spell once the update is done). */
-export const blasterActivity = { last: 0 };
+// In its own small module, so UpdateModal can read it without the game's code (W2-E).
+import { blasterActivity } from './activity';
+export { blasterActivity };
 
 // literal color: the blaster is a self-contained game scene drawn on a dark canvas in every theme, so its palette and the canvas fills below stay literal.
 const BG = '#060908';

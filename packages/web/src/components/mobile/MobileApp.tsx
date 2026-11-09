@@ -31,7 +31,7 @@ import { AllThreadsView } from './AllThreadsView';
 import { useProjectsView } from '../../stores/projectsView';
 import { NewProjectModal } from '../sidebar/NewProjectModal';
 import { FilesPane } from '../inspector/FilesPane';
-import { TabHost } from '../tabs/TabHost';
+import { TabHost } from '../tabs/LazyTabHost';
 import { AgentPane } from '../agents/AgentPane';
 import { EditAgentModal } from '../agents/EditAgentModal';
 import { PluginDialogs } from '../../plugins/PluginDialogs';
@@ -50,9 +50,9 @@ import { useThreadMenuBadge } from '../../plugins/menuBadge';
 import { Spinner } from '../common/Spinner';
 import { SortableList } from '../common/SortableList';
 import { timeAgo } from '../../lib/time';
-import { OverseerView } from '../overseer/OverseerView';
+import { OverseerView } from '../overseer/LazyOverseerView';
 import { useStableOrder } from '../../hooks/useStableOrder';
-import { ChatMode } from '../endless/ChatMode';
+import { ChatMode } from '../endless/LazyChatMode';
 
 const AnalyticsView = lazy(() => import('../analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 

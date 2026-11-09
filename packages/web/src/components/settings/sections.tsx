@@ -1,23 +1,43 @@
-import { useMemo, type ComponentType } from 'react';
+import { lazy, Suspense, useMemo, type ComponentType } from 'react';
 import { usePluginRegistry, type PluginSettingsSection } from '../../plugins/registry';
 import { pluginIcon } from '../../plugins/sdk';
 import { PluginBoundary } from '../../plugins/PluginBoundary';
 import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench, DeviceMobile, HardDrives, Info, UserCircle, PuzzlePiece, GraduationCap } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
-import { AppearanceSection } from './AppearanceSection';
-import { NotificationsSection } from './NotificationsSection';
-import { DictationSection } from './DictationSection';
-import { AgentsSection } from './AgentsSection';
-import { AccountsSection } from './AccountsSection';
-import { UsageLimitsSection } from './UsageLimitsSection';
-import { IntegrationsSection } from './IntegrationsSection';
-import { SecretsSection } from './SecretsSection';
-import { ToolsSection } from './ToolsSection';
-import { AccessSection } from './AccessSection';
-import { ServersSection } from './ServersSection';
-import { PluginsSection } from './PluginsSection';
-import { SkillsSection } from './SkillsSection';
-import { AboutSection } from './AboutSection';
+import { Spinner } from '../common/Spinner';
+
+// The sections' code is not in the first load (engineering program 2026-11-09, W2-E): this list
+// (labels and icons, used by the navigation, the phone's list and the command palette) is, and the
+// components come as ONE chunk (allSections.ts) when a section is first drawn. One chunk, so that
+// a move from section to section needs no second request.
+type SectionProps = { onDone?: () => void };
+const sectionFallback = (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160, width: '100%' }}>
+    <Spinner size={20} />
+  </div>
+);
+function lazySection(name: keyof typeof import('./allSections')): ComponentType<SectionProps> {
+  const Impl = lazy(() => import('./allSections').then((m) => ({ default: m[name] as ComponentType<SectionProps> })));
+  const Section = (props: SectionProps) => <Suspense fallback={sectionFallback}><Impl {...props} /></Suspense>;
+  Section.displayName = name;
+  return Section;
+}
+/** Start the fetch of the sections' code before a section is drawn (e.g. when Settings opens). */
+export function preloadSettingsSections(): void { void import('./allSections').catch(() => {}); }
+const AppearanceSection = lazySection('AppearanceSection');
+const NotificationsSection = lazySection('NotificationsSection');
+const DictationSection = lazySection('DictationSection');
+const AgentsSection = lazySection('AgentsSection');
+const AccountsSection = lazySection('AccountsSection');
+const UsageLimitsSection = lazySection('UsageLimitsSection');
+const IntegrationsSection = lazySection('IntegrationsSection');
+const SecretsSection = lazySection('SecretsSection');
+const ToolsSection = lazySection('ToolsSection');
+const AccessSection = lazySection('AccessSection');
+const ServersSection = lazySection('ServersSection');
+const PluginsSection = lazySection('PluginsSection');
+const SkillsSection = lazySection('SkillsSection');
+const AboutSection = lazySection('AboutSection');
 
 /**
  * The settings sections, declared once and rendered by both shells:

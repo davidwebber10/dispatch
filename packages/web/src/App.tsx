@@ -1,35 +1,19 @@
 import { useEffect, useRef, lazy, Suspense } from 'react';
-import { AppShell } from './components/layout/AppShell';
-import { Workspace } from './components/layout/Workspace';
-import { GroupedTabBar } from './components/panes/GroupedTabBar';
-import { GroupedPaneView } from './components/panes/GroupedPaneView';
-import { ProjectSidebar } from './components/sidebar/ProjectSidebar';
-import { TabHost } from './components/tabs/TabHost';
-import { OverseerView } from './components/overseer/OverseerView';
-import { EmptyWorkspace } from './components/layout/EmptyWorkspace';
-import { Inspector } from './components/inspector/Inspector';
-import { SettingsView } from './components/settings/SettingsView';
+import { SetupWizard } from './components/setup/LazySetupWizard';
 import { useUsageLimits } from './stores/usageLimits';
-import { PanelToggle } from './components/layout/PanelToggle';
-import { DispatchWorkPane } from './components/overseer/components/DispatchWorkPane';
-import { AgentPane } from './components/agents/AgentPane';
-import { closeAgentPane } from './components/agents/closeAgentPane';
-import { EditAgentModal } from './components/agents/EditAgentModal';
-import { PluginDialogs } from './plugins/PluginDialogs';
 import { AuthBanner } from './components/auth/AuthBanner';
 import { UpdateModal } from './components/update/UpdateModal';
 import { HighScoreCelebration } from './components/update/HighScoreCelebration';
-import { MobileApp } from './components/mobile/MobileApp';
-import { ChatMode } from './components/endless/ChatMode';
 import { useEndless } from './stores/endless';
 import { HintToast } from './components/common/HintToast';
-import { Spinner } from './components/common/Spinner';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
-import { SetupWizard } from './components/setup/SetupWizard';
 import { useIsMobile } from './hooks/useIsMobile';
 import { useTabCycleShortcut } from './hooks/useTabCycleShortcut';
 import { createEventsSocket, type EventsSocket } from './api/events-socket';
 import { preloadTerminalTab } from './components/tabs/LazyTerminalTab';
+import { preloadTabHost } from './components/tabs/LazyTabHost';
+import { preloadOverseerView } from './components/overseer/LazyOverseerView';
+import { preloadChatMode } from './components/endless/LazyChatMode';
 import { writeSnapshot } from './lib/launchSnapshot';
 import { useSpinnerWords } from './stores/spinnerWords';
 import { useConnection } from './stores/connection';
@@ -40,20 +24,14 @@ import { useThreadStatus } from './stores/threadStatus';
 import { useAuth } from './stores/auth';
 import { useUpdate } from './stores/update';
 import { applyPluginEvent } from './plugins/host';
-import { PluginView, Slot } from './plugins/PluginView';
-import { CommandPalette } from './components/CommandPalette';
-import { isPluginView } from './plugins/registry';
 import { useHost } from './stores/host';
-import { useAgents } from './stores/agents';
 import { useAnalyticsFeed } from './stores/analytics';
-import { useLedgerCard } from './stores/ledgerCard';
-import { openDecisionCount } from './components/overseer/ledger';
-import { useAgentUI } from './stores/agentUI';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { useSettings, loadSharedSettings } from './stores/settings';
+import { useAgents } from './stores/agents';
+import { useLedgerCard } from './stores/ledgerCard';
 import { useServers } from './stores/servers';
-import { useGroups } from './components/panes/store';
 import { useViewing } from './stores/viewing';
 import { useUI } from './stores/ui';
 import { parseThreadPath } from './lib/deepLink';
@@ -62,34 +40,26 @@ import { readPendingIntent } from './lib/pendingIntent';
 import { resyncAfterReconnect } from './lib/resync';
 import { clearBadge } from './lib/badge';
 
-const AnalyticsView = lazy(() => import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
+// The two shells (engineering program 2026-11-09, W2-E). Each is its own chunk: the phone never
+// downloads the desktop shell, and the desktop never downloads the phone's. The import starts here,
+// when this module is evaluated, and not at the first render; index.html also preloads the chunk
+// for the page's width (vite.config.ts, shellPreload), so it adds no round trip after the entry.
+const PHONE_MAX_WIDTH = 768; // the same limit as useIsMobile
+const loadPhoneShell = () => import('./components/mobile/MobileApp').then((m) => ({ default: m.MobileApp }));
+const loadDesktopShell = () => import('./components/layout/DesktopShell').then((m) => ({ default: m.DesktopShell }));
+const startsOnPhone = typeof window !== 'undefined' && window.innerWidth <= PHONE_MAX_WIDTH;
+const firstShell = startsOnPhone ? loadPhoneShell() : loadDesktopShell();
+const MobileApp = lazy(() => (startsOnPhone ? firstShell : loadPhoneShell()) as ReturnType<typeof loadPhoneShell>);
+const DesktopShell = lazy(() => (startsOnPhone ? loadDesktopShell() : firstShell) as ReturnType<typeof loadDesktopShell>);
+firstShell.catch(() => {}); // a failed fetch is reported by React.lazy at render, inside the error boundary
 
-// Centred in the pane at the same footprint the loaded view will occupy, so
-// nothing jumps when the ~120kB gzipped Recharts chunk finishes downloading.
-const analyticsFallback = (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', width: '100%' }}>
-    <Spinner size={24} />
-  </div>
-);
+// Shown for the moment between the entry and the shell chunk: the canvas, with nothing on it.
+const shellFallback = <div style={{ height: '100dvh', width: '100%', background: 'var(--color-canvas)' }} />;
 
 export default function App() {
   const activeTerminalId = useTabs((s) => s.activeTabId);
-  const selectTab = (id: string) => { useAgentUI.getState().blur(); useTabs.getState().setActiveTab(id); };
-  const dispatchProject = (projectId: string) => { useAgentUI.getState().blur(); useTabs.getState().openDispatch(projectId); };
-  const activeId = useProjects((s) => s.activeId);
-  // The Control Plane's open decisions, for the collapsed details toggle (pinned card spec, Unit 7).
-  const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
-  const view = useUI((s) => s.view);
   const isMobile = useIsMobile();
   useTabCycleShortcut(); // Ctrl+Tab / Ctrl+Shift+Tab cycle open tabs
-  const agentFocused = useAgentUI((s) => s.focused);
-  const agentSelected = useAgents((s) => s.selectedId);
-  const editing = useAgentUI((s) => s.editing);
-  const multiPane = useSettings((s) => s.multiPane);
-  // The group the active tab belongs to (if any). Subscribing keeps the operator
-  // main reactive: merging/unmerging the active tab swaps single ⇄ grouped view.
-  const activeGroupId = useGroups((s) => (activeTerminalId ? s.tabGroup[activeTerminalId] : undefined));
-  const reconnectGen = useReconnect((s) => s.gen);
   const sockRef = useRef<EventsSocket | null>(null);
 
   useEffect(() => {
@@ -111,6 +81,9 @@ export default function App() {
     // spinner; it is split out of the startup script (LazyTerminalTab).
     const idle = (cb: () => void) => ('requestIdleCallback' in window ? window.requestIdleCallback(cb, { timeout: 4000 }) : setTimeout(cb, 2500));
     idle(preloadTerminalTab);
+    // The same for the views that the first screen did not need (W2-E): the thread view (the phone
+    // starts on the list), then the Control Plane and Chat. They then open with no wait on a slow link.
+    idle(() => { preloadTabHost(); preloadOverseerView(); preloadChatMode(); });
     // Keep the launch snapshot current (lib/launchSnapshot.ts): the project and thread lists, saved
     // a moment after they change so a burst of status events writes once.
     let snapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -250,77 +223,18 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
 
-  if (isMobile) {
-    // The boundary keeps the banners and the update prompt on screen when the phone UI throws.
-    return (<><SetupWizard /><AuthBanner /><UpdateModal /><HighScoreCelebration /><ErrorBoundary scope="phone app"><MobileApp /></ErrorBoundary><HintToast /></>);
-  }
-
-  const showAgent = agentFocused && !!agentSelected;
-
+  // Each shell is its own chunk, loaded for its own width only (W2-E). The Suspense sits inside the
+  // boundary, so a chunk that fails to load shows the boundary's card and not a blank page.
   return (
     <>
       <SetupWizard />
       <AuthBanner />
       <UpdateModal />
       <HighScoreCelebration />
-      <Slot name="app.overlay" />
-      <CommandPalette />
-      <AppShell>
-        {/* One boundary per view: a render error leaves the shell (the icon rail) on screen, and
-            a change of view starts clean (the key). */}
-        <ErrorBoundary key={view} scope={`${view} view`}>
-        {view === 'settings'
-          ? <SettingsView />
-          : isPluginView(view)
-          ? <PluginView viewKey={view} />
-          : view === 'chat'
-          ? <ChatMode />
-          : view === 'analytics'
-          ? <Suspense fallback={analyticsFallback}><AnalyticsView /></Suspense>
-          : (
-            <Workspace
-              sidebar={
-                <ProjectSidebar
-                  onSelectTab={selectTab}
-                  onSelectAgent={(id) => useAgentUI.getState().selectAgent(id)}
-                  onNewAgent={(pid) => useAgentUI.getState().openNew(pid)}
-                  onDispatch={dispatchProject}
-                />}
-              main={
-                showAgent
-                  ? <AgentPane onClose={closeAgentPane} />
-                  : (
-                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-                      {/* The panel toggles flank the tab strip — the old TopBar's
-                          top-left / top-right positions, one row down. */}
-                      <div style={{ display: 'flex', flexShrink: 0 }}>
-                        <PanelToggle side="left" />
-                        {/* Own bar styling too: GroupedTabBar returns null with no tabs,
-                            and the strip must stay a continuous 44px bar even then. */}
-                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-pane)', borderBottom: '1px solid var(--color-border)' }}>
-                          <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
-                        </div>
-                        <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
-                      </div>
-                      {activeTerminalId
-                        ? (isDispatchTab(activeTerminalId)
-                            // Dispatch coordinator opens as a tab — wrap it so its height:100%
-                            // root flexes within the space left below the tab strip.
-                            ? <div style={{ flex: 1, minHeight: 0, display: 'flex' }}><OverseerView key={activeTerminalId} /></div>
-                            : (multiPane && activeGroupId
-                                ? <GroupedPaneView key={`${activeGroupId}:${reconnectGen}`} groupId={activeGroupId} />
-                                : <TabHost key={`${activeTerminalId}:${reconnectGen}`} terminalId={activeTerminalId} />))
-                        : <EmptyWorkspace onSelectTab={selectTab} />}
-                    </div>
-                  )
-              }
-              inspector={<Inspector projectId={activeId} terminalId={activeTerminalId} onOpenFile={selectTab} detailsSlot={isDispatchTab(activeTerminalId) ? <DispatchWorkPane /> : undefined} />}
-            />
-          )}
-        </ErrorBoundary>
-      </AppShell>
-      {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
-      <PluginDialogs />
+      {isMobile
+        // The boundary keeps the banners and the update prompt on screen when the phone UI throws.
+        ? <ErrorBoundary key="phone" scope="phone app"><Suspense fallback={shellFallback}><MobileApp /></Suspense></ErrorBoundary>
+        : <ErrorBoundary key="desktop" scope="desktop app"><Suspense fallback={shellFallback}><DesktopShell /></Suspense></ErrorBoundary>}
       <HintToast />
     </>
   );

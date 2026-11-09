@@ -15,11 +15,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-test('renders the app shell with the icon-rail navigation', () => {
+test('renders the app shell with the icon-rail navigation', { timeout: 30_000 }, async () => {
   render(<App />);
   // The brand text moved into the rail logo's dropdown; the rail's nav items are
   // the always-visible identity of the shell now.
-  expect(screen.getByRole('button', { name: /^(Projects|Threads)$/ })).toBeInTheDocument();
+  // The desktop shell is its own chunk since W2-E, so it shows one tick after the first render.
+  expect(await screen.findByRole('button', { name: /^(Projects|Threads)$/ }, { timeout: 20_000 })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Board' })).not.toBeInTheDocument();
 });
 
