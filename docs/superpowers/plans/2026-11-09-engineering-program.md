@@ -94,11 +94,11 @@ Every workstream obeys all of these.
 10. Core tests: from `packages/core`, run
     `env -u DISPATCH_API -u DISPATCH_AUTH -u DISPATCH_SESSION -u DISPATCH_TERMINAL npx vitest run`.
 11. Web tests: from `packages/web`, run `npx vitest run`.
-12. During work, run the affected test files only. Run the full suite once at the end of the workstream.
+12. During work, run the affected test files only. Before the report, run the full core suite and the full web suite (section 1A).
     Do not pipe a test run through `head` or `tail`. Write the output to a file, then read the file.
 13. Never build into the main checkout `~/Sites/dispatch`. Build only in your own worktree.
 14. Never start a daemon on port 3456. Never read or write `~/.dispatch`.
-    For an end-to-end check use an isolated instance: `HOME=<temp dir> PORT=<free port, not 3456> node dist/server.js`.
+    For an end-to-end check use an isolated instance: `HOME=<scratch fake home> PORT=41xx node dist/server.js` (4100 to 4199).
 15. Smoke-start the built daemon in the isolated instance before a workstream is called done. A missing `.js`
     extension passes the build and the tests, and then the daemon does not start.
 16. All existing tests stay green. If a test must change, the commit message says why.
@@ -111,6 +111,107 @@ Every workstream obeys all of these.
 20. Never kill a process that you did not start. Retry a transient `index.lock`; do not delete it.
 21. Move-only commits are separate from behaviour commits. A move-only commit says so in its message.
 22. Dispatch each workstream to a fresh general-purpose worker, not to a fork.
+
+---
+
+## 1A. Testing strategy (binding for every workstream)
+
+The owner asked for thorough tests. Each rule in this section is a condition of "done". A hand-off that does not show the
+evidence is not accepted.
+
+### 1A.1 Rules for each workstream
+
+1. **Tests first.** Write each test in the "Tests first" list before the code. Run it and see it fail for the right reason.
+   Put the failing output (test name and the assertion message) in the first commit message of that test, or in the hand-off.
+2. **Affected files during work.** Run only the test files that the change touches.
+3. **Full suites before the report.** In its own worktree the workstream runs the **full core suite and the full web suite**:
+   - core: from `packages/core`, `env -u DISPATCH_API -u DISPATCH_AUTH -u DISPATCH_SESSION -u DISPATCH_TERMINAL npx vitest run > <scratch>/core.txt 2>&1`
+   - web: from `packages/web`, `npx vitest run > <scratch>/web.txt 2>&1`
+   - Read the files. Do not pipe a run through `head` or `tail`.
+4. **Known failures.** At the plan commit, 2 tests fail in `packages/core/src/routes/files.test.ts`. Every other failure is a failure of the workstream.
+   W1-B changes that file: it must name the 2 tests in its hand-off, show that the same 2 fail before its change, and not add a third.
+   If a workstream repairs the 2, it says so.
+5. **Manual verification.** Each workstream has a manual step against an isolated daemon, built in its own worktree:
+   `HOME=<scratch fake home> PORT=41xx node packages/core/dist/server.js` (a free port from 4100 to 4199; never 3456; never the real `~/.dispatch`).
+   - A core change is driven with `curl` and a WebSocket client script. The hand-off holds the commands and the answers.
+   - A UI change is driven with Playwright against the isolated daemon. The hand-off holds the screenshots (light and dark theme, desktop width and phone width).
+   - Agent processes come from the fake CLIs in `packages/core/tests/structured` (`fake-claude.mjs`, `fake-codex-app-server.mjs`). No real model call is made.
+   - Do not press the empty-workspace "New Thread" button in a probe against a real daemon. Use the isolated instance only.
+6. **Stop your own processes.** The workstream stops the isolated daemon that it started. It never stops another process.
+7. **Hand-off content.** Test counts for both suites, the list of new test files, the manual verification record, and the numbers from 1A.3 where they apply.
+
+### 1A.2 Regression tests for each bug class in the review
+
+Each class gets a named test that fails on the old code. The owner workstream writes it; the wave integrator runs it on the merged branch.
+
+| Bug class | Test (file, name) | Key assertion | Owner |
+|---|---|---|---|
+| Lost config update | `packages/core/src/sessions/thread-config.test.ts`, "two patches from two stale copies both land" | After read A, read B, patch A.x, patch B.y: both keys are present | W2-A |
+| Lost config update, real path | `packages/core/tests/regression/config-lost-update.test.ts`, "a model switch during a status write keeps the scheduled wake" | Drive `SessionService` and `StatusService` on one database; no key is lost | W2-A |
+| Lost delivery | `packages/core/tests/regression/lost-delivery.test.ts`, "a Finished notice sent while the coordinator is down arrives once after it starts" | Exactly one message reaches the fake coordinator; the outbox row is `delivered` | W2-C |
+| Lost delivery, watch | same file, "a one-shot watch whose delivery failed fires on the next start" | `fired_at` is null before the delivery and set after it | W2-C |
+| Duplicate delivery | same file, "the same settle event enqueues one row" ; `routes/terminals.test.ts`, "two POSTs with one key deliver once" | One row; one message | W2-C, W1-D |
+| Stale working status | `packages/core/tests/regression/stale-working.test.ts`, "a working thread whose process is dead is explained and can be reset" ; `runtime/stall-watchdog.test.ts`, "flags a working thread with no frame" | The explanation names the dead process; the flag is set; the status is not changed by the watchdog | W1-D, W2-G |
+| Stale working status, client | `packages/web/src/components/tabs/chat/useStructuredChat.test.ts`, "a replay with an open tool call and a header with turnOpen false shows not busy" | `busy === false` | W3-C |
+| Restart recovery, runs | `packages/core/tests/regression/restart-recovery.test.ts`, "an open run with a dead terminal is closed at boot and the schedule fires again" | The run is closed; `listDueSchedules` returns the schedule | W1-D |
+| Restart recovery, wakes and questions | same file, "a scheduled thread with a dead process is flagged" ; "a pending question is shown again after a new daemon on the same database" | Lifecycle event `wake.lost`; `getPendingPermission` returns the payload | W2-C |
+| Restart recovery, history | `packages/core/src/routes/journal.test.ts`, "a Grok thread returns history after a new daemon instance" | Same items, same sequences | W3-D |
+| Transcript paging blocks the loop | `packages/core/src/conversation/reader.test.ts`, "a large generated file: no event-loop block over 50 ms during a page read" | A 100 MB synthetic file (made in a temp dir, removed after); `perf_hooks.monitorEventLoopDelay` max under 50 ms; `fs.readFileSync` is not called. Use 20 MB when `CI=1` | W2-B |
+| Sidebar re-render on each status event | `packages/web/src/components/sidebar/ProjectSidebar.test.tsx`, "a status event for project A does not render the ProjectCard of project B" | A render counter (`React.Profiler` `onRender`, or a counter in a mocked child) stays equal for project B | W1-F |
+| Chat tree rebuilt on each key press | `packages/web/src/components/tabs/chat/Composer.test.tsx`, "typing does not call renderTimeline" | The spy call count does not change over 20 key presses | W1-F |
+| Markdown parsed again on each delta | `packages/web/src/components/Markdown.test.tsx`, "a closed block is not parsed again when text is added after it" | Parser spy count per block is 1 | W2-E |
+| Missing wire is a silent no-op | `packages/core/src/daemon/parity.test.ts`, "every service that production wires is also wired in the test build" | The two lists are equal | W3-A |
+| History duplicates and loss | `packages/web/src/components/tabs/chat/useChatHistory.test.ts`, "two items with the same seq render once" | One row | W3-D |
+| Secret read by a local caller | `packages/core/src/routes/files.test.ts`, "an absolute read of the access token answers 403" | 403 for every principal | W1-B |
+
+### 1A.3 Load and performance checks, with numbers before and after
+
+Each performance item reports a number from the wave base and a number from its branch, taken the same way on the same machine.
+The hand-off holds both numbers and the command or script. Scripts live in `packages/core/scripts/perf/` and `packages/web/scripts/perf/` (new; owned by the workstream that needs them).
+
+| Item | Measure | How | Owner |
+|---|---|---|---|
+| Transcript paging | Event-loop delay p99 and max, page time, RSS | Page a 100 MB synthetic transcript 50 times through the isolated daemon with `curl`; read `monitorEventLoopDelay` from a debug script | W2-B |
+| Tail reads | Time of `findNewestUnresolvedUserUuid`, backfill and token totals on a 16 MB file | A script that calls each function 20 times | W1-E |
+| JSON and WebSocket compression | Transfer size of `/conversation` (200 items) and of the first replay frames | `curl --compressed -w '%{size_download}'`; a WebSocket script that sums frame bytes | W1-E |
+| Activity events | `terminal:activity` frames per minute with 10 fake busy terminals | A WebSocket script that counts frames for 60 s | W1-E |
+| Sidebar renders | React commits per minute with 30 fake working threads | A vitest perf test with `React.Profiler`, and one Playwright run with the React profiler build | W1-F |
+| Key press cost | Script time per key press in a 500-item chat | Playwright trace on the isolated daemon with a seeded thread | W1-F |
+| Streamed markdown | Parser calls and long tasks during a 4,000-token streamed reply at 4× CPU throttle | Playwright with CPU throttle; the parser spy count from the unit test | W2-E |
+| Entry bundle | Raw and gzip size of the entry chunk; chunk count | `check-bundle.mjs` output | W2-E |
+| Structured ring | Heap with 30 fake threads after 200 streamed messages each; events in a replay | A script on the isolated daemon; `process.memoryUsage()` through a debug route that exists only under `NODE_ENV=test` | W2-D |
+| Lifecycle trim and indexes | Time for 5,000 status events; query plan of the four indexed lookups (`EXPLAIN QUERY PLAN` shows the index) | A script on a temp database | W1-E |
+
+A change that makes a number worse needs a reason in the hand-off, or it is not merged.
+
+### 1A.4 Integration test plan for each wave
+
+The integrator runs this on the merged wave branch, in a worktree, after the last merge of the wave.
+
+1. `pnpm install` in the worktree. Build in the worktree.
+2. Full core suite and full web suite (the commands of 1A.1). Only the 2 known failures are accepted, and only while they still exist.
+3. `pnpm -C packages/core run typecheck` and `pnpm run lint` (from Wave 1 on). `check-bundle.mjs` (from Wave 2 on).
+4. Every regression test of 1A.2 that exists at that wave, run by name.
+5. **Smoke start** of the built daemon: `HOME=<scratch fake home> PORT=41xx node packages/core/dist/server.js`.
+   `curl -fsS http://localhost:41xx/api/sessions` answers. The log has no import error.
+6. **End-to-end pass of the main flows**, with Playwright and `curl` against that daemon, with the fake CLIs on `PATH`:
+
+   | Flow | Steps | Pass when |
+   |---|---|---|
+   | Create a thread | Open the app; add a project on a temp directory; open the thread picker from the sidebar "Add thread" control; create a Pretty thread | The thread row shows; status goes to idle |
+   | Message a Pretty thread | Type a message; send | The user bubble and the fake reply show once; the spinner stops; a reload shows the same history once |
+   | Coordinator `spawn_agent` | Open the coordinator; let the fake coordinator call `spawn_agent` (scripted in the fake CLI), or call the same REST route with a thread key | A worker thread shows; its Finished notice reaches the coordinator once |
+   | Usage flyout | Open the usage ring flyout on desktop width and on phone width | The cards render; an account with a failed read shows its state (W1-H); no console error |
+   | Previews tab | Open the Previews tab of a thread | The tab loads through the plugin SDK; no deprecation warning after W3-F |
+   | Command palette | Open the palette; type part of the thread label; press Enter | The thread opens; from Wave 2 the URL is `/p/<project>/t/<thread>` and Back returns |
+   | Restart | Stop the isolated daemon during a fake turn; start it again | The status is right; no thread is "working" with a dead process and no explanation; pending notices arrive once |
+
+   Save one screenshot per flow in the scratch folder and list the paths in the wave report.
+7. Wave-specific checks:
+   - Wave 1: `curl --compressed` shows `Content-Encoding`; an absolute read of `<fake home>/.dispatch/access-token` answers 403; `DISPATCH_BIND=127.0.0.1` binds to that address; a second build keeps the chunks of the first build.
+   - Wave 2: a model switch keeps every other config key (read through the diagnostics route); `./bin/dispatch doctor <id>` prints an explanation (point the CLI at the isolated port); paging a 100 MB transcript does not stop a second thread's socket.
+   - Wave 3: reload during and after a fake turn shows the right spinner; a fake ACP thread shows history after a restart; a thread in a new worktree shows its diff and discards a file.
+8. Stop the isolated daemon. Write the wave report: counts, numbers of 1A.3, screenshots, open issues.
 
 ---
 
@@ -159,12 +260,13 @@ Table rows that the roadmap does not name, placed in this program:
 | Web #4 split the three core files | W1-F (`timeline/`), W2-F (mobile navigation hook), W3-C (`useStructuredChat` split) |
 | Security: warn about a forwarder in `dispatch status` | W1-B |
 | Visible name follows the coordinator name setting | W1-G |
+| Owner request: Claude accounts with a 403 on usage and profile; back-off on 429 | W1-H |
 
 ---
 
 ## 3. Wave 1: quick wins and independent hardening
 
-Base: `claude-resets` at the plan commit. Seven workstreams. None changes `sessions/service.ts`.
+Base: `claude-resets` at the plan commit. Seven workstreams and one small one (W1-H). None changes `sessions/service.ts`.
 
 ### W1-A: Build health
 
@@ -635,6 +737,82 @@ Migration (write it in `docs/secrets.md` and in the release note):
 
 ---
 
+### W1-H: Claude accounts whose usage or profile read answers 403 (small)
+
+**Covers:** an owner request of 2026-11-09. Two saved Claude accounts on the live install (ids `fce43419`, `d35c27aa`) get HTTP 403 on the usage and profile reads.
+
+**What the code shows (checked; the live tokens were not read)**
+- A saved Claude account holds one field for its login: `token` (`packages/core/src/auth/accounts.ts:18`). It has no refresh token and no expiry time.
+- The token comes from the headless `claude setup-token` flow (`accounts.ts:5`, `:249-262`; `auth/claude-login.ts:204`).
+- The code already expects the failure: "An added account's token may only run a model" (`limits/gauge.ts:436`). On a failed read it backs off that account and runs a tiny turn as it (`gauge.ts:437-438`).
+- The reader returns only `true` or `false` (`limits/claude-usage.ts:209-216`). A 401, a 403, a 429 and a network error look the same to the gauge and to the UI.
+- The `cli` account has no back-off after a failed read (`gauge.ts:437` excludes it): it reads again every 2 minutes (`gauge.ts:58`), also after a 429.
+- The accounts route asks for a failed profile again every 2 minutes (`routes/accounts.ts:22`, `:49`).
+
+**Most likely cause:** the saved token has a scope for model use only, and the usage and profile endpoints refuse it with 403.
+An expired token is the second candidate; that case usually answers 401, and Dispatch has no refresh token for a saved account in any case.
+The workstream must confirm the cause before it writes the fix (step 1).
+
+**Owns**
+- `packages/core/src/limits/claude-usage.ts`, `packages/core/src/limits/gauge.ts` (the Claude read block `:424-441` and the back-off maps)
+- `packages/core/src/auth/accounts.ts`, `packages/core/src/routes/accounts.ts`, `packages/core/src/auth/claude-login.ts` (read; change only if step 1 shows a stored refresh token is possible)
+- `packages/web/src/components/settings/AccountsSection.tsx`, the account card in the usage flyout (`components/layout/UsageRings.tsx` or the card file it uses), `packages/web/src/stores/accounts.ts`, `packages/web/src/api/types.ts` (one field)
+
+**Design**
+1. **Diagnose first.** Add the failure reason to the log line: the HTTP status and the `error.type` and `error.message` fields of the answer body (never the token).
+   The owner runs the isolated build against a copy of one saved token, or reads the live log after the release; the hand-off records the body for 403.
+   Decide from the body: "scope" (the token cannot read usage), "expired or revoked" (a new sign-in repairs it), or another reason.
+2. **A typed result.** `ClaudeUsageReader` returns `Promise<UsageReadResult>`:
+   `{ ok: true } | { ok: false; reason: 'no-token' | 'unauthorized' | 'forbidden' | 'rate-limited' | 'server' | 'network'; status?: number; retryAfterMs?: number }`.
+   The boolean callers change to `.ok`.
+3. **Account state.** The gauge keeps `usageAccess` per account: `'ok' | 'sign-in-needed' | 'not-available' | 'rate-limited'`, with the time of the last good read.
+   - 401, or a 403 whose body says expired or revoked: `sign-in-needed`.
+   - 403 for scope: `not-available`. The fallback tiny turn stays the source of the figures for that account, as today.
+   - The state is in the public account view (`PublicAccount.usageAccess`), never the token.
+4. **No spend of the CLI's refresh token.** The `cli` account is still never refreshed by Dispatch (`claude-usage.ts:9-11`).
+   - If step 1 shows that Dispatch can store a refresh token for a **saved** account, the store gets optional fields `refreshToken?` and `expiresAt?`,
+     and `refreshSavedClaudeToken(account, deps): Promise<'refreshed' | 'failed'>` uses **that account's own** refresh token only, once per expiry, with the result saved atomically.
+   - If no refresh token exists for a saved account (the code today), there is no refresh. The account shows "Sign in again".
+5. **Back-off.** One helper for all failures: `nextReadAfter(result: UsageReadResult, failures: number, now: number): number`.
+   - 429: wait for `Retry-After` when the header is present; otherwise 4, 8, 16, 32 and at most 60 minutes. It applies to the `cli` account too.
+   - `forbidden` and `unauthorized`: 6 hours, and at once after the account's token changes or after the owner presses "Check again".
+   - `server` and `network`: 4, 8, 16 and at most 30 minutes. A good read clears the count.
+   - The profile retry in `routes/accounts.ts:22` uses the same state; it does not ask again every 2 minutes for a refused account.
+   - The checks run inside the gauge loop that exists. No new timer.
+6. **UI.** On the account card in the flyout and in Settings, Accounts:
+   - `sign-in-needed`: the text "Sign in again to see usage for this account" and a "Sign in again" button that opens the existing Claude login flow for that account (the token is replaced in place; `addClaude` matches by account id, `accounts.ts:134-137`).
+   - `not-available`: the text "This sign-in can run threads. It cannot read usage figures." and the figures from the tiny turn when they exist. No error colour.
+   - `rate-limited`: the last figures with "Updated N min ago".
+   - Phosphor icons only (`SignIn`, `Info`, `ClockCounterClockwise`).
+
+**Interfaces produced:** `UsageReadResult`, `nextReadAfter`, `PublicAccount.usageAccess`.
+
+**Tests first**
+- `limits/claude-usage.test.ts` (add): "a 403 returns forbidden with the status" ; "a 401 returns unauthorized" ; "a 429 with Retry-After returns the wait in milliseconds" ;
+  "the log line holds the status and the error type and never the token" ; "a 200 returns ok and records the windows as before".
+- `limits/gauge.test.ts` (add; the 950 existing lines stay green)
+  - "after a 429 the cli account is not read again before the wait ends" ; "the wait doubles on a second 429 and stops at 60 minutes" ; "a good read clears the wait"
+  - "after a 403 a saved account is read again only after 6 hours or a token change" ; "the tiny turn still runs for a not-available account"
+  - "two accounts back off independently"
+- `auth/accounts.test.ts` (add): "the public view carries usageAccess and no token" ; if a refresh token is stored: "a refresh uses the saved account's own refresh token and never reads the CLI credential" (the CLI token source is a spy with zero calls).
+- `routes/accounts.test.ts` (add): "a refused profile is not asked again within the back-off".
+- Web: `AccountsSection.test.tsx` "an account with sign-in-needed shows the Sign in again button and it starts the login for that account id" ;
+  "an account with not-available shows the note and no error style" ; the usage flyout test "a rate-limited account shows its last figures".
+
+**Manual verification:** the isolated daemon with a fake usage endpoint (a local HTTP server given through the injected `fetch` or an env override that exists only for tests):
+answer 403, 401, 429 with `Retry-After: 120`, then 200. Record the request times; take Playwright screenshots of the card in each state.
+
+**Acceptance**
+- The cause of the 403 is written in the hand-off with the response body (no token).
+- No account is polled every 2 minutes after a 429 or a 403. The request log of the manual check shows the waits.
+- No code path refreshes or rewrites the CLI's own credential (guard test above).
+- Both live account states have a clear text and a next step on the card and in Settings.
+
+**Effort:** S to M. If step 1 shows that the scope is the cause and the owner wants real usage figures for saved accounts,
+a login with a wider scope for saved accounts is a new item (section 7, item 8).
+
+---
+
 ### 3.8 Wave 1 integration
 
 **Order**
@@ -642,15 +820,16 @@ Migration (write it in `docs/secrets.md` and in the release note):
 2. W1-B, then W1-C (both touch `auth/access-gate.ts`, `bin/dispatch` and `docs/network-access.md`, in different regions).
 3. W1-D.
 4. W1-E.
-5. W1-G (deletions first make the W1-F merge smaller).
-6. W1-F.
-7. W1-A follow-up commit: run the linter on the merged tree, add `void` where `no-floating-promises` fails, set the warning ceiling.
+5. W1-H (its files are its own; merge at any point after W1-A).
+6. W1-G (deletions first make the W1-F merge smaller).
+7. W1-F.
+8. W1-A follow-up commit: run the linter on the merged tree, add `void` where `no-floating-promises` fails, set the warning ceiling.
 
 **Integrator tasks after the merges**
 - Mount `<StallBadge terminalId={…} />` in the thread row of `ProjectCard.tsx` and in the tab item of `GroupedTabBar.tsx`.
 - Apply the `ServerEvent` type to `stores/threadStatus.ts`; add `terminal:stall` to the union.
 - Add `jsonCompression()` before the routers in **both** `createApp` and `startServer` if W1-E wired only one.
-- Run both full suites, the type-check and the linter. Smoke-start the isolated daemon.
+- Run the integration test plan of section 1A.4 (full suites, type-check, linter, smoke start, end-to-end pass).
 
 **Known conflict points**
 
@@ -666,6 +845,8 @@ Migration (write it in `docs/secrets.md` and in the release note):
 | `bin/dispatch`, `docs/network-access.md` | B, C | B merges first; C adds its own subcommand and its own section. |
 | `packages/web/src/stores/tabs.ts` | F (`applyEvent`), G (`tabLabel`, signature type) | G merges first; F rebases. |
 | `packages/web/src/api/client.ts` | C (secrets functions), D (message functions, `listStalls`) | Regions do not overlap. |
+| `packages/web/src/api/types.ts` | H (one field on the account type) | Append only. |
+| `packages/core/src/limits/*`, `auth/accounts.ts`, `routes/accounts.ts`, the usage flyout card | H only | No other Wave 1 stream owns these files. |
 | `packages/web/src/components/panes/GroupedTabBar.tsx` | F | G must not edit the comment at `:115` when it deletes `layout/TabBar.tsx`; F updates the comment. |
 | `packages/web/src/App.tsx`, `main.tsx` | G | F does not touch them. |
 | `packages/web/vite.config.ts`, `packages/web/package.json` | E (`build`), G (`dependencies`) | Different keys. The lockfile conflicts: regenerate it with `pnpm install` at the merge. |
@@ -1070,7 +1251,7 @@ Base: the integrated Wave 1. Seven workstreams. `sessions/service.ts` has one ma
 - Move the config writes inside the two lent regions (if any were added by B or C) to `ThreadConfigStore.patch`. Run the guard test.
 - Wire `DeliveryOutbox.list`, `StallWatchdog.get` and `pendingQuestionsDb.get` into the diagnostics route.
 - Confirm that the client renders a compacted replay correctly (W2-D) with the throttled markdown (W2-E).
-- Run both full suites, the type-check, the linter, `check-bundle.mjs`. Smoke-start the isolated daemon.
+- Run the integration test plan of section 1A.4 (full suites, type-check, linter, `check-bundle.mjs`, smoke start, end-to-end pass).
 
 **Known conflict points**
 
@@ -1404,7 +1585,7 @@ Base: the integrated Wave 2. Seven workstreams. Two of them have a gate.
 **Integrator tasks after the merges**
 - Put `BootRecovery.run()` (W3-B) behind `Daemon.bootRecover()` (W3-A).
 - Give `CoordinatorNotifier` the outbox and the journal as required inputs.
-- Run both full suites, the type-check, the linter, `check-bundle.mjs` and the three ratchet or guard tests. Smoke-start the isolated daemon.
+- Run the integration test plan of section 1A.4, and the three ratchet or guard tests.
 - Bump the version in all four `package.json` files and write `docs/releases/v4.5.0.md` (see `docs/RELEASING.md`). The release note must name:
   the Doppler token scope, `DISPATCH_BIND`, the Cloudflare Access check, the deprecated `sdk.api` and `sdk.stores`, and the strict owner check on three routes.
 
@@ -1465,6 +1646,11 @@ The final reviewer checks these points first.
 23. The entry bundle is under the budget. An open tab from the earlier build still loads its chunks after a new build.
 24. No command in any hand-off used port 3456, `~/.dispatch`, or the main checkout.
 
+**Tests**
+25. Each hand-off shows the tests-first evidence, both full suite results, the manual verification record and the numbers of section 1A.3. The only accepted failures are the 2 known ones in `routes/files.test.ts`.
+26. Each regression test of section 1A.2 exists, and fails when its fix is reverted (check three of them by a revert in a scratch worktree).
+27. W1-H: no code path refreshes or rewrites the CLI's own Claude credential. After a 429 or a 403 the next request waits for the back-off.
+
 ---
 
 ## 7. Deferred, needs owner
@@ -1479,6 +1665,7 @@ These items need a product decision by the owner. They are not in this program.
 5. **Diff review semantics.** This plan defines Approve as "stage the file" and makes no commit. The owner can choose a commit or a merge step.
 6. **Doppler default for existing installs.** This plan keeps the scope "every thread" for an existing connection. The owner can choose to move existing installs to "only threads that I turn on" in a later release.
 7. **Removal date of `sdk.api` and `sdk.stores`.** This plan keeps them with a warning. The owner sets the version that removes them, after the private marketplace plugins move.
+8. **Usage figures for saved Claude accounts.** If W1-H confirms that the saved token cannot read usage because of its scope, real figures need a sign-in with a wider scope (for example a login folder per account, as Codex accounts have). That changes how a saved account signs in. The owner decides.
 
 ---
 
@@ -1511,6 +1698,6 @@ These rows are in the review tables. The roadmap does not name them, and they ar
 
 | Wave | Workstreams | Effort |
 |---|---|---|
-| 1 | A build health (S), B security boundaries (S–M), C Doppler and Cloudflare (M), D reliability (M), E daemon performance (M), F web render (M), G web safety and palette (M) | about 2 weeks in parallel |
+| 1 | A build health (S), B security boundaries (S–M), C Doppler and Cloudflare (M), D reliability (M), E daemon performance (M), F web render (M), G web safety and palette (M), H Claude account 403 and back-off (S–M) | about 2 weeks in parallel |
 | 2 | A config store (M–L), B transcript reader (M), C outbox and boot recovery (M–L), D structured core (M–L), E bundle and markdown (M), F navigation and attention (M–L), G why panel (M) | about 3 to 4 weeks in parallel |
 | 3 | A buildDaemon (L), B SessionService split (L, after A), C status authority (L), D journal (L), E UI primitives (M–L), F plugin SDK (M), G diff and worktrees (M–L) | about 4 to 6 weeks; A then B is the long path |
