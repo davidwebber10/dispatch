@@ -245,9 +245,19 @@ export const useTabs = create<TabsState>((set, get) => ({
     try {
       await api.archiveTerminal(id);
     } catch (e) {
-      console.error('useTabs.archive: archiveTerminal failed, putting the row back', e);
+      console.error('useTabs.archive: archiveTerminal failed', e);
       archiving.delete(id);
-      if (t && rowIndex >= 0) {
+      // The request can fail on its way back (a timeout, a dropped link) after the daemon archived the
+      // thread. So the daemon says what is true, and nothing is put back before it answers.
+      const known = pid ? await get().loadTabs(pid).then(() => true, () => false) : false;
+      if (known && pid && !(get().byProject[pid] ?? []).some((x) => x.id === id)) {
+        // The daemon did archive it: the row and the tab stay away, as after a success.
+        get().closeTab(id, { force: true });
+        return true;
+      }
+      // Still active (the list above has its row again), or the daemon is out of reach: then the row
+      // goes back where it was, because the request most likely never arrived.
+      if (!known && t && rowIndex >= 0) {
         const list = (get().byProject[t.sessionId] ?? []).slice();
         if (!list.some((x) => x.id === id)) { list.splice(Math.min(rowIndex, list.length), 0, t); set({ byProject: { ...get().byProject, [t.sessionId]: list } }); }
       }
@@ -258,7 +268,6 @@ export const useTabs = create<TabsState>((set, get) => ({
         set({ openTabIds: open, activeTabId: wasActive && get().activeTabId === neighbour ? id : get().activeTabId });
         persist(get());
       }
-      if (pid) await get().loadTabs(pid).catch(() => { /* offline: the row put back above stays */ });
       useHint.getState().show('The thread could not be archived.');
       return false;
     }

@@ -139,6 +139,41 @@ test('a failed archive does not take the owner away from the tab they moved to',
   expect(useTabs.getState().activeTabId).toBe('t1');
 });
 
+// Final review of v4.5.0: the request can fail on the way back (a timeout, a dropped link) after the
+// daemon archived the thread. The store asks the daemon what is true before it puts anything back.
+test('a failed archive that the daemon did complete does not bring the row or the tab back', async () => {
+  const d = deferred<void>();
+  vi.spyOn(api, 'archiveTerminal').mockReturnValue(d.promise);
+  vi.spyOn(api, 'listTerminals').mockResolvedValue([row('t1'), row('t3')]); // the truth: t2 is archived
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  useHint.setState({ msg: null });
+  useTabs.setState({ byProject: { s1: [row('t1'), row('t2'), row('t3')] }, openTabIds: ['t1', 't2', 't3'], activeTabId: 't2', tabSession: { t1: 's1', t2: 's1', t3: 's1' } });
+  const done = useTabs.getState().archive('t2');
+  d.reject(new Error('timeout'));
+  expect(await done).toBe(true); // it is archived
+  expect(useTabs.getState().byProject.s1.map((t) => t.id)).toEqual(['t1', 't3']);
+  expect(useTabs.getState().openTabIds).toEqual(['t1', 't3']);
+  expect(useTabs.getState().activeTabId).toBe('t3');
+  expect(useTabs.getState().tabSession.t2).toBeUndefined();
+  expect(useHint.getState().msg).toBeNull(); // nothing failed for the owner
+});
+
+test('a failed archive with the daemon out of reach puts the row and the tab back', async () => {
+  const d = deferred<void>();
+  vi.spyOn(api, 'archiveTerminal').mockReturnValue(d.promise);
+  vi.spyOn(api, 'listTerminals').mockRejectedValue(new Error('offline')); // the truth cannot be read
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  useHint.setState({ msg: null });
+  useTabs.setState({ byProject: { s1: [row('t1'), row('t2'), row('t3')] }, openTabIds: ['t1', 't2', 't3'], activeTabId: 't2', tabSession: { t1: 's1', t2: 's1', t3: 's1' } });
+  const done = useTabs.getState().archive('t2');
+  d.reject(new Error('offline'));
+  expect(await done).toBe(false);
+  expect(useTabs.getState().byProject.s1.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
+  expect(useTabs.getState().openTabIds).toEqual(['t1', 't2', 't3']);
+  expect(useTabs.getState().activeTabId).toBe('t2');
+  expect(useHint.getState().msg).toBe('The thread could not be archived.');
+});
+
 test('a list that loads while the archive is open does not bring the row back', async () => {
   const d = deferred<void>();
   vi.spyOn(api, 'archiveTerminal').mockReturnValue(d.promise);
