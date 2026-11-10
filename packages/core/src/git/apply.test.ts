@@ -279,4 +279,44 @@ describe('a repository cannot make the review run a command', () => {
       expect(fs.existsSync(marker)).toBe(false);
     } finally { fs.rmSync(marker, { force: true }); fs.rmSync(hook, { force: true }); }
   });
+
+  // v4.5.0 review (minor): `git diff` cleans a changed file with the filter that the attributes name, and the
+  // command of that filter comes from the config of the repository.
+  it('the diff does not run a filter command that the config of the repository defines', async () => {
+    const { threadDiff, listChanges } = await import('./diff.js');
+    const marker = `${repo.dir}.marker`;
+    const hook = `${repo.dir}.filter.sh`;
+    fs.writeFileSync(hook, `#!/bin/sh\necho ran >> "${marker}"\ncat\n`, { mode: 0o755 });
+    try {
+      repo.write('.gitattributes', '*.txt filter=evil\n');
+      repo.git('config', 'filter.evil.clean', hook);
+      repo.git('config', 'filter.evil.process', hook);
+      repo.git('config', 'filter.evil.required', 'true');
+      repo.write('a.txt', 'edited\n');
+      fs.rmSync(marker, { force: true });
+      const d = await threadDiff(repo.dir);
+      expect(d.files.map((f) => f.path)).toEqual(['.gitattributes', 'a.txt']);
+      expect(d.files[1]).toMatchObject({ status: 'modified', additions: 1, deletions: 3 });
+      expect(d.files[1].patch).toContain('+edited');
+      expect((await listChanges(repo.dir)).map((c) => c.path)).toEqual(['.gitattributes', 'a.txt']);
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally { fs.rmSync(marker, { force: true }); fs.rmSync(hook, { force: true }); }
+  });
+
+  it('only the filters of the repository config are turned off, and the commands of git-lfs stay', async () => {
+    const { repoFiltersOff } = await import('./exec.js');
+    expect(await repoFiltersOff(repo.dir)).toEqual([]); // the usual repository: nothing to turn off
+    repo.git('config', 'filter.lfs.clean', 'git-lfs clean -- %f');
+    repo.git('config', 'filter.lfs.smudge', 'git-lfs smudge -- %f');
+    repo.git('config', 'filter.lfs.process', 'git-lfs filter-process');
+    repo.git('config', 'filter.lfs.required', 'true');
+    expect(await repoFiltersOff(repo.dir)).toEqual([]); // what `git lfs install --local` writes: the user's own tool
+    repo.git('config', 'filter.odd=name with.dots.smudge', 'sh -c "id"');
+    expect(await repoFiltersOff(repo.dir)).toEqual([
+      ['filter.odd=name with.dots.clean', ''], ['filter.odd=name with.dots.smudge', ''], ['filter.odd=name with.dots.process', ''], ['filter.odd=name with.dots.required', 'false'],
+    ]);
+    // A changed git-lfs entry is a command of the repository like any other.
+    repo.git('config', 'filter.lfs.clean', 'git-lfs clean -- %f; id');
+    expect((await repoFiltersOff(repo.dir)).map(([k]) => k)).toContain('filter.lfs.clean');
+  });
 });

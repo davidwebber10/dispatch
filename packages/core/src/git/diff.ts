@@ -7,7 +7,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { git, gitOrNull, GitFailed } from './exec.js';
+import { git, gitOrNull, GitFailed, repoFiltersOff, type ConfigPair } from './exec.js';
 import { checkRelPath, confine, realDir, PathRefused } from './paths.js';
 import { holdsSecret, type SecretRoots } from '../files/secret-paths.js';
 
@@ -112,13 +112,15 @@ const zList = (out: string): string[] => out.split('\0').filter((p) => p !== '')
  * Every changed file of the directory, with counts and no patch text: tracked changes against HEAD (staged or
  * not), then the untracked files that no ignore rule covers. Throws `GitFailed` when the directory is not a repository.
  */
-export async function listChanges(workDir: string): Promise<Change[]> {
+export async function listChanges(workDir: string, filtersOff?: ConfigPair[]): Promise<Change[]> {
   const base = await baseOf(workDir);
   const scope = ['--no-ext-diff', '--no-textconv', '--relative', '-M', '-z'];
+  // No filter command of the repository's own config runs for a look at the diff (exec.ts, repoFiltersOff).
+  const config = filtersOff ?? await repoFiltersOff(workDir);
   const [names, nums, unstaged, others] = await Promise.all([
-    git(workDir, ['diff', base, ...scope, '--name-status']),
-    git(workDir, ['diff', base, ...scope, '--numstat']),
-    git(workDir, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '-z', '--name-only']),
+    git(workDir, ['diff', base, ...scope, '--name-status'], { config }),
+    git(workDir, ['diff', base, ...scope, '--numstat'], { config }),
+    git(workDir, ['diff', '--no-ext-diff', '--no-textconv', '--relative', '-z', '--name-only'], { config }),
     git(workDir, ['ls-files', '--others', '--exclude-standard', '-z']),
   ]);
   const counts = parseNumstat(nums);
@@ -181,9 +183,9 @@ async function loadUntracked(abs: string, cap: number): Promise<Loaded> {
   };
 }
 
-async function loadTracked(workDir: string, base: string, c: Change, cap: number): Promise<Loaded> {
+async function loadTracked(workDir: string, base: string, c: Change, cap: number, config: ConfigPair[]): Promise<Loaded> {
   try {
-    const out = await git(workDir, ['diff', base, ...PATCH_FLAGS, '--', ...(c.oldPath ? [c.oldPath] : []), c.path], { maxBuffer: Math.max(cap * 2, 4 * 1024 * 1024) });
+    const out = await git(workDir, ['diff', base, ...PATCH_FLAGS, '--', ...(c.oldPath ? [c.oldPath] : []), c.path], { maxBuffer: Math.max(cap * 2, 4 * 1024 * 1024), config });
     return { patch: hunksOf(out) };
   } catch (e) {
     if (e instanceof GitFailed && e.overflow) return { omitted: 'large' };
@@ -204,7 +206,8 @@ export async function threadDiff(workDir: string, opts: ThreadDiffOptions = {}):
   if (!(await isRepo(workDir))) return { files: [], truncated: false, shared, repo: false, branch: null, workDir };
   const branch = (await gitOrNull(workDir, ['symbolic-ref', '--quiet', '--short', 'HEAD']))?.trim() || null;
   const base = await baseOf(workDir);
-  let changes = await listChanges(workDir);
+  const filtersOff = await repoFiltersOff(workDir);
+  let changes = await listChanges(workDir, filtersOff);
   let truncated = false;
   if (opts.path !== undefined) {
     try { checkRelPath(opts.path); } catch (e) { if (e instanceof PathRefused) return { files: [], truncated: false, shared, repo: true, branch, workDir }; throw e; }
@@ -229,7 +232,7 @@ export async function threadDiff(workDir: string, opts: ThreadDiffOptions = {}):
       if (loaded.additions !== undefined) file.additions = loaded.additions;
       if (loaded.binary) file.binary = true;
     } else {
-      loaded = await loadTracked(workDir, base, c, budget);
+      loaded = await loadTracked(workDir, base, c, budget, filtersOff);
     }
     if (loaded.omitted) { file.patchOmitted = loaded.omitted; if (loaded.omitted === 'large') truncated = true; continue; }
     if (loaded.patch === undefined) continue;
