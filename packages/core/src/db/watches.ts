@@ -95,14 +95,18 @@ export function remove(db: Database.Database, id: string): boolean {
 }
 
 /**
- * Deletes every watch where `terminalId` is either the watcher or the target — used when a thread is deleted.
- * The messages that wait for the deleted thread go with it (W2-C): its delivery_outbox rows and its saved question.
+ * Deletes every watch where `terminalId` is either the watcher or the target: the thread was archived or deleted.
+ * The messages that wait for it go with it (W2-C): its delivery_outbox rows.
+ *
+ * The saved question (W2-C) goes only when the thread is DELETED. An archive keeps it (`keepQuestion`): an archived
+ * thread can be restored, and it then shows the card of its question again. Without the row, a restored thread said
+ * "needs input" and had nothing to answer (v4.5.0 review).
  */
-export function removeForTerminal(db: Database.Database, terminalId: string): void {
+export function removeForTerminal(db: Database.Database, terminalId: string, opts: { keepQuestion?: boolean } = {}): void {
   db.prepare('DELETE FROM thread_watches WHERE watcher_terminal_id = ? OR target_terminal_id = ?')
     .run(terminalId, terminalId);
   outboxDb.removeForTarget(db, terminalId);
-  pendingQuestionsDb.remove(db, terminalId);
+  if (!opts.keepQuestion) pendingQuestionsDb.remove(db, terminalId);
 }
 
 /** Count of live watches owned by this watcher (used for fan-out caps). */

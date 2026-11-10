@@ -104,6 +104,8 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('reconcileAtBoot: lost wakes', () => {
+  /** A daemon that ran its boot check: every real daemon does, right after it starts. */
+  function started() { const d = boot(); d.recover(); return d; }
   /** A thread ends its turn with ScheduleWakeup: the wake lives in its process. */
   function schedule(d: ReturnType<typeof boot>, id = 't') {
     d.manager.live.add(id);
@@ -113,7 +115,7 @@ describe('reconcileAtBoot: lost wakes', () => {
   }
 
   it('a scheduled thread with a dead process becomes idle with the lost-wake text and one lifecycle event', () => {
-    schedule(boot());
+    schedule(started());
     const d = boot(); // the restart: the process and its wake are gone
     const result = d.recover();
     expect(result.lostWakes).toEqual(['t']);
@@ -136,7 +138,7 @@ describe('reconcileAtBoot: lost wakes', () => {
   });
 
   it('a thread that waits for a usage limit is not a lost wake: the daemon resumes it itself', () => {
-    const first = boot();
+    const first = started();
     schedule(first);
     const now = Date.now();
     parksDb.upsert(first.db, { terminal_id: 't', provider: 'claude-code', kind: 'session', resets_at: now + 3600_000, wake_at: now + 3600_000, message: 'limit', parsed: 1, attempts: 0, state: 'parked', parked_at: now }, now);
@@ -146,14 +148,14 @@ describe('reconcileAtBoot: lost wakes', () => {
   });
 
   it('an archived scheduled thread is left alone', () => {
-    const first = boot();
+    const first = started();
     schedule(first);
     terminalsDb.archive(first.db, 't');
     expect(boot().recover().lostWakes).toEqual([]);
   });
 
   it('the starter of a worker gets one lost-wake notice when it runs again; it is not started for it', () => {
-    const first = boot();
+    const first = started();
     terminalsDb.writeConfigRaw(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'lead', spawnDepth: 1 });
     schedule(first);
     const d = boot();
@@ -170,7 +172,7 @@ describe('reconcileAtBoot: lost wakes', () => {
   });
 
   it('a worker the overseer started reports its lost wake to the overseer', () => {
-    const first = boot();
+    const first = started();
     terminalsDb.writeConfigRaw(first.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'coord', spawnDepth: 1 });
     schedule(first);
     const d = boot();
@@ -179,10 +181,47 @@ describe('reconcileAtBoot: lost wakes', () => {
     expect(d.manager.sent.filter((s) => s.id === 'coord')).toHaveLength(1);
   });
 
+  // v4.5.0 review, I7: the check had no age limit. The first boot of the version that has it found every thread that
+  // an earlier version left `scheduled` (weeks of them), and each worker among them made a lost-wake notice that
+  // started its coordinator and a turn.
+  it('the first boot after the upgrade leaves the old scheduled threads as they are: no event, no notice, no coordinator turn', () => {
+    const old = boot(); // the version before: it never ran this check
+    terminalsDb.create(old.db, { id: 'w2', sessionId: 's1', type: 'claude-code', label: 'Old worker', config: { transport: 'structured', role: 'agent', spawnedBy: 'lead', spawnDepth: 1 } });
+    terminalsDb.writeConfigRaw(old.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'coord', spawnDepth: 1 });
+    schedule(old, 't');
+    schedule(old, 'w2');
+    // They went dormant a week ago (the test runs in one millisecond; the real backlog is old).
+    old.db.prepare('UPDATE thread_lifecycle SET observed_at = ? WHERE terminal_id IN (?, ?)').run(new Date(Date.now() - 7 * 86_400_000).toISOString(), 't', 'w2');
+    const d = boot(); // the first start of the new version
+    const result = d.recover();
+    expect(result.lostWakes).toEqual([]);
+    expect(d.statusOf('t')).toBe('scheduled');
+    expect(d.statusOf('w2')).toBe('scheduled');
+    expect(d.events('t', 'wake.lost')).toHaveLength(0);
+    expect(d.outbox.list({})).toEqual([]);
+    expect(d.manager.spawns).toEqual([]); // no coordinator was started
+    expect(d.manager.sent).toEqual([]);   // and none got a turn
+    // A thread that schedules a wake under the new version is flagged at the next start. The old ones still are not.
+    terminalsDb.create(d.db, { id: 'n', sessionId: 's1', type: 'claude-code', label: 'New poller', config: { transport: 'structured' } });
+    schedule(d, 'n');
+    const next = boot();
+    expect(next.recover().lostWakes).toEqual(['n']);
+    expect(next.statusOf('n')).toBe('waiting');
+    expect(next.statusOf('t')).toBe('scheduled');
+    expect(next.outbox.list({})).toEqual([]);
+    expect(boot().recover().lostWakes).toEqual([]);
+  });
+
+  it('a daemon that stopped before its boot check ended does not hide the wakes that the daemon before it lost', () => {
+    schedule(started());
+    boot(); // a start that died before the check
+    expect(boot().recover().lostWakes).toEqual(['t']);
+  });
+
   it('a plain thread with no starter is flagged with no notice', () => {
-    schedule(boot());
+    schedule(started());
     const d = boot();
-    d.recover();
+    expect(d.recover().lostWakes).toEqual(['t']);
     expect(d.outbox.list({})).toEqual([]);
   });
 });
@@ -325,6 +364,23 @@ describe('pending questions survive a restart', () => {
     const d = boot();
     expect(d.recover().restoredQuestions).toEqual([]);
     expect(pendingQuestionsDb.get(d.db, 'lead')).toBeUndefined();
+  });
+
+  // v4.5.0 review (minor): the archive deleted the saved question, so a restored thread said "needs input" with no card.
+  it('an archive keeps the saved question and a restore shows its card again; a delete of the project removes it', () => {
+    ask(boot());
+    const d = boot(); // the restart: the question lives in the database only
+    expect(d.recover().restoredQuestions).toEqual(['t']);
+    d.svc.removeTerminal('t'); // archive
+    expect(terminalsDb.getById(d.db, 't')!.archived_at).toBeTruthy();
+    expect(pendingQuestionsDb.get(d.db, 't')).toBeDefined();
+    expect(d.svc.getPendingPermission('t')).toBeNull(); // an archived thread shows no card
+    d.svc.restoreTerminal('t');
+    expect(d.statusOf('t')).toBe('needs_input');
+    expect(d.svc.getPendingPermission('t')).toMatchObject({ requestId: 'req-1', questions: QUESTION.questions });
+    d.svc.removeTerminal('t');
+    d.svc.archive('s1'); // the project is deleted: its threads are gone for good
+    expect(pendingQuestionsDb.get(d.db, 't')).toBeUndefined();
   });
 
   it('a question whose process is still alive is not listed as restored', () => {

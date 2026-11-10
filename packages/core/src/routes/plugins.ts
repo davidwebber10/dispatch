@@ -12,6 +12,7 @@ import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
 import { IMMUTABLE, pickEncoding } from '../web-assets.js';
 import { insideRealRoot } from '../files/confine.js';
 import { createThumbnailer, type Thumbnailer } from '../files/thumbnail.js';
+import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
@@ -230,6 +231,8 @@ export interface AssistLimitsDeps {
   hasAccount?: (harness: 'claude' | 'codex', id: string) => boolean;
   /** Small copies of images for `?thumb=` (2026-11-09). Default: a cache in the data folder. */
   thumbs?: Thumbnailer;
+  /** The credential deny-list of the file route (files/secret-paths.ts). Default: the roots of this machine. */
+  secretRoots?: SecretRoots;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
   push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
@@ -239,6 +242,9 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   // Created on first use, so a test app that never asks for a thumbnail never touches the data folder.
   let thumbs: Thumbnailer | null = limits.thumbs ?? null;
   const thumbnailer = (): Thumbnailer => (thumbs ??= createThumbnailer({ cacheDir: path.join(platform.dataDir(), 'cache', 'thumbs') }));
+  // Read on first use too: a router that serves no file never looks at the data folder.
+  let roots: SecretRoots | null = limits.secretRoots ?? null;
+  const secretRoots = (): SecretRoots => (roots ??= defaultSecretRoots(platform.dataDir()));
   const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -398,6 +404,10 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!file || !session || !insideRealRoot(session.working_dir, file.path) || !fs.existsSync(file.path)) {
       return void res.status(404).json({ error: 'file not found' });
     }
+    // Credentials are never served, to any caller (v4.5.0 review, I4): a project whose folder is the home folder
+    // or the data folder, or a hard link in a project to a secret file. The check is before the thumbnail, so no
+    // small copy of such a file is made either. An error of the check refuses the file.
+    if (await holdsSecret(file.path, secretRoots()).catch(() => true)) return void res.status(403).json({ error: SECRET_PATH_ERROR });
     const mime = PROJECT_FILE_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
     // `?thumb=<width>` (2026-11-09): a list's small copy of an image. Anything that cannot be made small
     // (not an image, a width that is not offered, a broken file, no resizer) gets the original below.

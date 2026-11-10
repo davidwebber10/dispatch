@@ -118,6 +118,7 @@ describe('restart recovery: wakes and questions', () => {
 
   it('a scheduled thread with a dead process is flagged', () => {
     const first = daemon();
+    first.boot(); // every daemon runs the boot check when it starts; a wake scheduled after it is one a restart can lose
     first.live.add('t');
     first.status.markWorking('t');
     first.status.markScheduled('t', 'Scheduled — check the deploy');

@@ -710,6 +710,58 @@ describe('read refuses a path that holds credentials', () => {
     expect(ok.status).toBe(200);
   });
 
+  // v4.5.0 review, I4: the deny-list compared the text of the path. A second name of the same file went around it.
+  it('a hard link to a secret answers 403 on read, download and image', async () => {
+    const app = await secretApp(home);
+    fs.linkSync(path.join(dataDir, 'access-token'), path.join(otherRepo, 'notes.txt'));
+    fs.linkSync(path.join(home, '.ssh', 'id_ed25519'), path.join(otherRepo, 'key.txt'));
+    fs.linkSync(path.join(dataDir, 'keys', 't1.h1'), path.join(workDir, 'shot.png'));
+    for (const owner of [true, false]) {
+      const auth = (r: request.Test) => (owner ? r.set('Authorization', `Bearer ${OWNER_TOKEN}`) : r);
+      for (const p of [path.join(otherRepo, 'notes.txt'), path.join(otherRepo, 'key.txt'), 'Sites/other-repo/notes.txt']) {
+        const res = await read(app, p, owner);
+        expect(res.status, `read ${owner ? 'owner' : 'no credential'} ${p}`).toBe(403);
+        expect(res.body).toEqual(REFUSAL);
+        expect(res.text).not.toContain('the-owner-token');
+        expect(res.text).not.toContain('PRIVATE KEY');
+      }
+      expect((await read(app, path.join(otherRepo, 'notes.txt'), owner, { sniff: '1' })).status).toBe(403);
+      for (const p of ['Sites/other-repo/notes.txt', 'Sites/other-repo/key.txt']) {
+        const res = await auth(request(app).get('/api/sessions/s1/files/download').query({ path: p }));
+        expect(res.status, `download ${owner ? 'owner' : 'no credential'} ${p}`).toBe(403);
+        expect(res.body).toEqual(REFUSAL);
+      }
+      const img = await auth(request(app).get('/api/sessions/s1/files/image').query({ path: 'Sites/project/shot.png' }));
+      expect(img.status).toBe(403);
+      expect(img.body).toEqual(REFUSAL);
+    }
+    // An ordinary file with two names (a pnpm store file) still reads and downloads.
+    fs.linkSync(path.join(otherRepo, 'readme.md'), path.join(workDir, 'readme-link.md'));
+    expect((await read(app, path.join(workDir, 'readme-link.md'))).body.content).toBe('other repository');
+    expect((await request(app).get('/api/sessions/s1/files/download').query({ path: 'Sites/project/readme-link.md' })).status).toBe(200);
+  });
+
+  it.runIf(process.platform === 'darwin' && fs.existsSync('/System/Volumes/Data/private'))('the /System/Volumes/Data path of a secret answers 403', async () => {
+    const alt = (p: string) => `/System/Volumes/Data${p}`;
+    expect(fs.readFileSync(alt(path.join(dataDir, 'access-token')), 'utf8')).toBe('the-owner-token\n'); // the second path does reach the file
+    const app = await secretApp();
+    for (const owner of [true, false]) {
+      for (const p of [path.join(dataDir, 'access-token'), path.join(dataDir, 'dispatch.db'), path.join(dataDir, 'keys', 't1.h1'), path.join(home, '.ssh', 'id_ed25519')]) {
+        const res = await read(app, alt(p), owner);
+        expect(res.status, `${owner ? 'owner' : 'no credential'} ${alt(p)}`).toBe(403);
+        expect(res.body).toEqual(REFUSAL);
+      }
+    }
+    // The same form of an ordinary file still reads.
+    expect((await read(app, alt(path.join(otherRepo, 'readme.md')))).body.content).toBe('other repository');
+    // A project that is opened by the second path of the home folder cannot download a secret either.
+    const viaAlt = await secretApp(alt(home));
+    for (const p of ['.dispatch/access-token', '.ssh/id_ed25519']) {
+      expect((await request(viaAlt).get('/api/sessions/s1/files/download').query({ path: p })).status, p).toBe(403);
+      expect((await read(viaAlt, p)).status, p).toBe(403);
+    }
+  });
+
   it('an absolute read of a file in another repository still answers 200', async () => {
     const app = await secretApp();
     for (const owner of [true, false]) {

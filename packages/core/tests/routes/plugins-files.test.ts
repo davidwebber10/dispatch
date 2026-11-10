@@ -170,6 +170,39 @@ describe('plugin file routes (2026-11-07)', () => {
     expect((await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`)).status).toBe(404);
   });
 
+  // v4.5.0 review, I4: this route served any registered file of a project, the credential files too.
+  it('a file that holds credentials is never served: by its path in the data folder, by a hard link, or as a thumbnail', async () => {
+    const REFUSAL = { error: 'This path holds credentials. Dispatch does not serve it.' };
+    // A project whose folder is the data folder (`tmp` is the data folder of this app).
+    sessionsDb.create(db, { id: 'D', provider: 'claude-code', name: 'Data', workingDir: tmp });
+    fs.writeFileSync(path.join(tmp, 'access-token.txt'), 'the-owner-token'); // a name the atomic-write rule denies
+    fs.writeFileSync(path.join(tmp, 'keys', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    fs.writeFileSync(path.join(tmp, 'plain.txt'), 'an ordinary file');
+    const token = await register({}, 'previews', { path: 'access-token.txt', sessionId: 'D' });
+    const key = await register({}, 'previews', { path: 'keys/shot.png', sessionId: 'D' });
+    const plain = await register({}, 'previews', { path: 'plain.txt', sessionId: 'D' });
+    // A hard link in an ordinary project to the plugin's own key file.
+    fs.linkSync(path.join(tmp, 'keys', 'plugin-previews'), path.join(proj, 'leak.txt'));
+    const link = await register(asThread(), 'previews', { path: 'leak.txt' });
+    for (const r of [token, key, plain, link]) expect(r.status).toBe(201);
+
+    for (const r of [token, key, link]) {
+      const got = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+      expect(got.status, r.body.name).toBe(403);
+      expect(got.body).toEqual(REFUSAL);
+      expect(got.text).not.toContain('the-owner-token');
+    }
+    // The thumbnail branch checks first: no small copy of a secret image is made.
+    const thumb = await request(app).get(`/api/plugins/previews/files/${key.body.fileId}?thumb=480`);
+    expect(thumb.status).toBe(403);
+    expect(thumb.body).toEqual(REFUSAL);
+    expect(fs.existsSync(path.join(tmp, 'cache', 'thumbs'))).toBe(false);
+    // An ordinary file of the same project is served as before.
+    const ok = await request(app).get(`/api/plugins/previews/files/${plain.body.fileId}`);
+    expect(ok.status).toBe(200);
+    expect(ok.text).toBe('an ordinary file');
+  });
+
   it('a file reference is removed by the owner or the plugin key, and removing the plugin clears its files', async () => {
     const r = await register(asThread(), 'previews', { path: 'shot.png' });
     const r2 = await register(asThread(), 'previews', { path: 'notes.md' });

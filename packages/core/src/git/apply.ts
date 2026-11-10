@@ -5,6 +5,9 @@
  *   - Every path passes `confine` (text, real location, credential list) AND must be one of the changed files that
  *     git lists right now. A folder, `.`, a glob or an unchanged file is not in that list, so it is refused.
  *   - All paths are checked before the first file is touched. One bad path refuses the whole call.
+ *   - The place of each path on the disk must be able to hold a file (`checkPlace`, v4.5.0 review I5). `git restore`
+ *     and `git add` act on whatever stands at the path: a folder that took the place of a deleted file is REMOVED by
+ *     a restore, with every file in it (the ignored ones too), and is staged whole by an add. Such a path is refused.
  *   - git gets each path after `--`, with pathspec magic off (`--literal-pathspecs` in exec.ts).
  *   - There is no `git reset --hard`, no `git checkout -- .`, no `git clean` and no `git stash` here, and none may
  *     be added. Discard uses `git restore` on one file, `git rm --cached` on one file and `unlink` on one file.
@@ -13,6 +16,7 @@
  *     carries the object id, so `git cat-file -p <id>` gives the content back until git prunes it.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 import { git, gitOrNull, isLockError } from './exec.js';
 import { confine, PathRefused } from './paths.js';
 import { listChanges, isRepo, type Change } from './diff.js';
@@ -32,6 +36,33 @@ export interface DiscardResult {
 
 interface Target { change: Change; abs: string; oldAbs?: string }
 
+async function lstatOrNull(p: string): Promise<fs.Stats | null> {
+  try { return await fs.promises.lstat(p); } catch { return null; }
+}
+
+/**
+ * The place of `rel` on the disk must be able to hold that one file. Throws `PathRefused` when:
+ *   - a folder stands at the path (a tracked file was deleted and a folder with that name was made). A restore of
+ *     the file removes the folder and all that is in it; an add stages the files in it;
+ *   - a part of the path that must be a folder is a file (a folder was replaced by a file). A restore of a file
+ *     below it removes that file to make the folder.
+ * A path with nothing at it, or with missing folders above it, is fine: a restore only creates there.
+ */
+async function checkPlace(abs: string, rel: string): Promise<void> {
+  if ((await lstatOrNull(abs))?.isDirectory()) {
+    throw new PathRefused(`"${rel}" is a folder now, not a file. Dispatch does not stage or remove a folder. Move the folder away, then refresh the review.`);
+  }
+  // The nearest part above it that exists. `confine` already refused a symbolic link there.
+  for (let p = path.dirname(abs); ; p = path.dirname(p)) {
+    const st = await lstatOrNull(p);
+    if (st) {
+      if (!st.isDirectory()) throw new PathRefused(`"${rel}" is below "${path.basename(p)}", which is not a folder now. Dispatch does not replace a file with a folder. Refresh the review.`);
+      return;
+    }
+    if (path.dirname(p) === p) return;
+  }
+}
+
 /** Check every path, then return the changes they name. Throws `PathRefused` and touches nothing. */
 async function targetsOf(workDir: string, paths: unknown, roots: SecretRoots | undefined): Promise<Target[]> {
   if (!Array.isArray(paths) || paths.length === 0) throw new PathRefused('Give the paths of the files as a non-empty list.', 400);
@@ -48,7 +79,10 @@ async function targetsOf(workDir: string, paths: unknown, roots: SecretRoots | u
     const change = changed.get(p);
     if (!change) throw new PathRefused(`"${p}" is not a changed file in this directory. Refresh the review and try again.`);
     if (change.directory) throw new PathRefused(`"${p}" is a folder with its own git repository. Dispatch does not stage or remove it.`);
-    targets.push({ change, abs: a, ...(change.oldPath ? { oldAbs: await confine(workDir, change.oldPath, roots) } : {}) });
+    const oldAbs = change.oldPath ? await confine(workDir, change.oldPath, roots) : undefined;
+    await checkPlace(a, p);
+    if (oldAbs && change.oldPath) await checkPlace(oldAbs, change.oldPath);
+    targets.push({ change, abs: a, ...(oldAbs ? { oldAbs } : {}) });
   }
   return targets;
 }
@@ -64,10 +98,6 @@ export async function approvePaths(workDir: string, paths: unknown, roots?: Secr
     for (let i = 0; i < all.length; i += CHUNK) await git(workDir, ['add', '--', ...all.slice(i, i + CHUNK)], { write: true });
   } catch (e) { throw busy(e); }
   return { staged: targets.map((t) => t.change.path) };
-}
-
-async function lstatOrNull(p: string): Promise<fs.Stats | null> {
-  try { return await fs.promises.lstat(p); } catch { return null; }
 }
 
 /** Put the file's content in the object store. Best effort: a link, a folder or a very large file has no copy. */
@@ -89,17 +119,22 @@ async function unlinkOne(abs: string): Promise<void> {
 
 async function discardOne(workDir: string, t: Target): Promise<void> {
   const c = t.change;
-  const restore = (p: string) => git(workDir, ['restore', '--source=HEAD', '--staged', '--worktree', '--', p], { write: true });
+  // The place is checked again right before git acts on it: the first check was before the first file of the call.
+  const restore = async (p: string, abs: string) => {
+    await checkPlace(abs, p);
+    return git(workDir, ['restore', '--source=HEAD', '--staged', '--worktree', '--', p], { write: true });
+  };
   const unstageNew = (p: string) => git(workDir, ['rm', '--cached', '--force', '--quiet', '--', p], { write: true });
   if (c.status === 'untracked') return unlinkOne(t.abs);
   if (c.status === 'added') { await unstageNew(c.path); return unlinkOne(t.abs); }
   if (c.status === 'renamed' && c.oldPath) {
     // First bring the old file back, then take the new one away: a failure in between loses nothing.
-    await restore(c.oldPath);
+    if (!t.oldAbs) throw new Error('The old path of the rename was not checked.');
+    await restore(c.oldPath, t.oldAbs);
     await unstageNew(c.path);
     return unlinkOne(t.abs);
   }
-  await restore(c.path); // modified, deleted
+  await restore(c.path, t.abs); // modified, deleted
 }
 
 /**

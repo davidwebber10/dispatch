@@ -41,6 +41,8 @@ export function accountIdOf(config: string | null | undefined): string {
 const MIN = 60_000;
 /** While an added Claude account's usage read waits (see nextReadAfter), its tiny turn runs at most this often. */
 const CLAUDE_READ_BACKOFF_MS = 30 * MIN;
+/** A read that the owner asks for (Refresh, "Check again") comes at most once in this time for one account. */
+const CLAUDE_FORCED_MIN_MS = 30_000;
 /**
  * What an account's sign-in can do for the usage figures (W1-H, 2026-11-09):
  * `sign-in-needed` (401, or a 403 that says expired or revoked: a new sign-in repairs it),
@@ -418,8 +420,10 @@ export class UsageGauge {
   /**
    * An account whose usage read failed: no read before `until` (nextReadAfter; the CLI login too).
    * `auth`: a 401 or 403, which a changed token (`stamp`) ends at once. `probe`: the tiny turn still runs meanwhile.
+   * `reason`: why the read failed. It is kept here and not read from the access state: an account that a 403 refused
+   * keeps its `not-available` state through a later 429, and the wait of that 429 must hold all the same.
    */
-  private claudeWait = new Map<string, { until: number; auth: boolean; stamp: string | null; probe: boolean }>();
+  private claudeWait = new Map<string, { until: number; reason: Extract<UsageReadResult, { ok: false }>['reason']; auth: boolean; stamp: string | null; probe: boolean }>();
   /** Failed reads in a row, per account. A good read clears it. */
   private claudeFailures = new Map<string, number>();
   private claudeAccess = new Map<string, UsageAccess>();
@@ -445,7 +449,13 @@ export class UsageGauge {
         if (a.provider !== 'claude-code' || this.claudeReading.has(a.accountId)) continue;
         const id = a.accountId;
         const hasFigures = !!this.d.snapshots.get('claude-code', this.d.accountFor('claude-code', id), id);
-        const forced = this.claudeForced.delete(id);
+        let forced = this.claudeForced.has(id);
+        if (forced) {
+          const hold = this.holdAskedRead(id, now);
+          if (hold === 'soon') continue; // it stays asked: a later pass reads it
+          this.claudeForced.delete(id);
+          if (hold === 'wait') forced = false; // the wait of a 429 holds: the usual rules below decide
+        }
         const stamp = this.d.claudeTokenStamp?.(id) ?? null;
         const wait = this.claudeWait.get(id);
         if (wait && !forced) {
@@ -498,7 +508,7 @@ export class UsageGauge {
     const current = this.claudeAccess.get(id)?.state;
     // A refused token cannot run a turn either, so an added account takes none. The CLI login does: the turn makes the CLI renew its token.
     const probe = !(current === 'sign-in-needed' && id !== 'cli');
-    this.claudeWait.set(id, { until: nextReadAfter(res, failures, now), auth: res.reason === 'unauthorized' || res.reason === 'forbidden', stamp, probe });
+    this.claudeWait.set(id, { until: nextReadAfter(res, failures, now), reason: res.reason, auth: res.reason === 'unauthorized' || res.reason === 'forbidden', stamp, probe });
     if (probe) this.fallbackProbe(now, id);
   }
 
@@ -508,7 +518,22 @@ export class UsageGauge {
     return a ? { ...a } : null;
   }
 
-  /** The owner pressed "Check again": read this account now, inside its wait and with nothing active. */
+  /**
+   * Why a read that the owner asked for does not run now (v4.5.0 review, I6), or null when it may run.
+   * `wait`: Anthropic answered 429 and its wait still runs, whatever the access state of the account says.
+   * `soon`: the last read of this account was less than CLAUDE_FORCED_MIN_MS ago (many presses give one read).
+   */
+  private holdAskedRead(id: string, now: number): 'wait' | 'soon' | null {
+    const wait = this.claudeWait.get(id);
+    if (wait?.reason === 'rate-limited' && now < wait.until) return 'wait';
+    if (now - (this.lastClaudeRead.get(id) ?? -Infinity) < CLAUDE_FORCED_MIN_MS) return 'soon';
+    return null;
+  }
+
+  /**
+   * The owner pressed "Check again": read this account now, inside the wait of a 401, 403 or failed read and with
+   * nothing active. The wait of a 429 holds, and two such reads of one account are at least 30 seconds apart.
+   */
   checkClaudeNow(accountId = 'cli'): void {
     this.claudeForced.add(accountId);
     try { this.maybeProbeClaude(); } catch (err) { console.warn('[usage-gauge] account read failed:', err); }
@@ -517,7 +542,8 @@ export class UsageGauge {
   /**
    * The Refresh button of the usage window (2026-11-09): read every Claude account and ask every Codex
    * account now, whatever their normal clocks, then broadcast. It resolves when the reads end. A Claude
-   * account that Anthropic asked to wait (429 with its wait still running) is not read: the wait holds.
+   * account that Anthropic asked to wait (429 with its wait still running) is not read: the wait holds,
+   * whatever the access state says. An account that was read less than 30 seconds ago is not read again.
    */
   async refreshNow(): Promise<void> {
     const now = this.now();
@@ -526,8 +552,7 @@ export class UsageGauge {
       const id = a.accountId;
       if (a.provider === 'claude-code' && this.d.readClaudeUsage) {
         if (this.claudeReading.has(id)) continue;
-        const wait = this.claudeWait.get(id);
-        if (wait && now < wait.until && this.claudeAccess.get(id)?.state === 'rate-limited') continue;
+        if (this.holdAskedRead(id, now)) continue;
         const stamp = this.d.claudeTokenStamp?.(id) ?? null;
         this.lastClaudeRead.set(id, now);
         this.claudeReading.add(id);
