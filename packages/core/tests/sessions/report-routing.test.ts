@@ -346,16 +346,16 @@ describe('owner-decisions capture', () => {
   it('captures only for a worker the overseer started', () => {
     const c = makeService();
     worker(c, 'coord');
-    vi.spyOn(c.svc as any, 'lastTurnTexts').mockReturnValue([block]);
-    const capture = vi.spyOn(c.svc as any, 'captureOwnerDecisions');
+    vi.spyOn((c.svc as any).notifier, 'lastTurnTexts').mockReturnValue([block]);
+    const capture = vi.spyOn((c.svc as any).notifier, 'captureOwnerDecisions');
     c.svc.noteAgentCompletion('w');
     expect(capture).toHaveBeenCalledTimes(1);
   });
   it('leaves the block in the report to the starter for any other worker', () => {
     const c = makeService();
     worker(c, 'u');
-    vi.spyOn(c.svc as any, 'lastTurnTexts').mockReturnValue([block]);
-    const capture = vi.spyOn(c.svc as any, 'captureOwnerDecisions');
+    vi.spyOn((c.svc as any).notifier, 'lastTurnTexts').mockReturnValue([block]);
+    const capture = vi.spyOn((c.svc as any).notifier, 'captureOwnerDecisions');
     c.svc.noteAgentCompletion('w');
     expect(capture).not.toHaveBeenCalled();
     expect(ledgerDb.listBySession(c.db, 's1')).toHaveLength(0);
@@ -363,7 +363,7 @@ describe('owner-decisions capture', () => {
   it('captures for an old worker with no starter', () => {
     const c = makeService();
     worker(c);
-    const capture = vi.spyOn(c.svc as any, 'captureOwnerDecisions');
+    const capture = vi.spyOn((c.svc as any).notifier, 'captureOwnerDecisions');
     c.svc.noteAgentCompletion('w');
     expect(capture).toHaveBeenCalledTimes(1);
   });
