@@ -192,6 +192,75 @@ describe('discardPaths', () => {
   });
 });
 
+// v4.5.0 review, I5: `git restore` and `git add` act on whatever stands at the path. A folder that took the place of a
+// tracked file, or a file that took the place of a folder on the way, made them touch files the page did not name.
+describe('a path whose place on the disk is no longer a file', () => {
+  /** The tracked file `b.txt` is deleted and a folder `b.txt/` stands there, with an ignored file and a new file. */
+  function folderAtFilePath() {
+    repo.write('.gitignore', 'b.txt/.env\n');
+    repo.git('add', '.gitignore');
+    repo.git('commit', '-qm', 'ignore');
+    fs.rmSync(path.join(repo.dir, 'b.txt'));
+    repo.write('b.txt/.env', 'SECRET=1\n');     // ignored: git status does not list it
+    repo.write('b.txt/notes.txt', 'my notes\n'); // untracked: listed as its own row
+  }
+
+  it('discard refuses a deleted file whose path is a folder now, and the folder stays as it is', async () => {
+    folderAtFilePath();
+    const before = repo.status();
+    expect(before).toContain(' D b.txt');
+    await expect(discardPaths(repo.dir, ['b.txt'], roots())).rejects.toThrow(/is a folder now/);
+    await expect(discardPaths(repo.dir, ['b.txt'], roots())).rejects.toBeInstanceOf(PathRefused);
+    expect(repo.read('b.txt/.env')).toBe('SECRET=1\n');
+    expect(repo.read('b.txt/notes.txt')).toBe('my notes\n');
+    expect(repo.status()).toBe(before);
+    // One bad path refuses the whole call: the other file is not touched.
+    repo.write('a.txt', 'edited\n');
+    await expect(discardPaths(repo.dir, ['a.txt', 'b.txt'], roots())).rejects.toThrow(/is a folder now/);
+    expect(repo.read('a.txt')).toBe('edited\n');
+    // The file inside the folder is a row of its own, and its discard removes that one file only.
+    const res = await discardPaths(repo.dir, ['b.txt/notes.txt'], roots());
+    expect(res.errors).toEqual([]);
+    expect(repo.exists('b.txt/notes.txt')).toBe(false);
+    expect(repo.read('b.txt/.env')).toBe('SECRET=1\n');
+  });
+
+  it('approve refuses it too: `git add` on the folder would stage files the page did not name', async () => {
+    folderAtFilePath();
+    await expect(approvePaths(repo.dir, ['b.txt'], roots())).rejects.toThrow(/is a folder now/);
+    expect(staged()).toEqual([]);
+    expect(repo.read('b.txt/.env')).toBe('SECRET=1\n');
+  });
+
+  it('discard refuses a file below a folder that is a file now, and that file stays', async () => {
+    fs.rmSync(path.join(repo.dir, 'dir'), { recursive: true });
+    repo.write('dir', 'a file where the folder was\n');
+    const before = repo.status();
+    expect(before).toContain(' D dir/c.txt');
+    await expect(discardPaths(repo.dir, ['dir/c.txt'], roots())).rejects.toThrow(/is not a folder/);
+    await expect(approvePaths(repo.dir, ['dir/c.txt'], roots())).rejects.toThrow(/is not a folder/);
+    expect(repo.read('dir')).toBe('a file where the folder was\n');
+    expect(repo.status()).toBe(before);
+    expect(staged()).toEqual([]);
+  });
+
+  it('a rename whose old path is a folder now is refused: the restore of the old file would remove the folder', async () => {
+    repo.git('mv', 'old-name.txt', 'new-name.txt');
+    repo.write('old-name.txt/keep.txt', 'keep\n');
+    repo.git('update-index', '--refresh');
+    await expect(discardPaths(repo.dir, ['new-name.txt'], roots())).rejects.toThrow(/is a folder now/);
+    expect(repo.read('old-name.txt/keep.txt')).toBe('keep\n');
+    expect(repo.exists('new-name.txt')).toBe(true);
+  });
+
+  it('a deleted file in a deleted folder is still restored: nothing stands in the way', async () => {
+    fs.rmSync(path.join(repo.dir, 'dir'), { recursive: true });
+    const res = await discardPaths(repo.dir, ['dir/c.txt'], roots());
+    expect(res.errors).toEqual([]);
+    expect(repo.read('dir/c.txt')).toBe('sea\n');
+  });
+});
+
 describe('a repository cannot make the review run a command', () => {
   it('diff, approve and discard do not run core.fsmonitor', async () => {
     const { threadDiff } = await import('./diff.js');
