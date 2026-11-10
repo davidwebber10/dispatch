@@ -691,6 +691,9 @@ export const api = {
   // The status snapshot of a thread (W3-C): what the `system/status` frame of the structured socket carries.
   getTerminalStatus: (id: string) => req<import('./types').StatusSnapshot>(`/api/terminals/${encodeURIComponent(id)}/status`),
   // A page of the thread's message journal (W3-D). `before`: older items, for scroll back. `after`: newer items.
+  // The URL of an image that the message journal keeps outside an item's payload (a `journal_image`
+  // source). A sync URL builder, for an <img src>; the route answers with the picture's bytes.
+  journalImageUrl: (terminalId: string, imageId: string) => apiPath(`/api/terminals/${encodeURIComponent(terminalId)}/journal/images/${encodeURIComponent(imageId)}`),
   getJournal: (id: string, params: { before?: number; after?: number; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.before != null) q.set('before', String(params.before));

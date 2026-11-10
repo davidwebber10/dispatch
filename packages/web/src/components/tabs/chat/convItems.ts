@@ -23,12 +23,19 @@ export function flattenContent(content: unknown): string {
   return safeJson(content);
 }
 
+/** What the timeline shows in the place of an image that the daemon's message journal could not keep. */
+export const IMAGE_NOT_KEPT = 'Image not kept — too large';
+
 /**
  * Turn an Anthropic-style image content block into an `'image'` ConvItem, or null if
- * `b` isn't an image. Three source shapes:
+ * `b` isn't an image. The source shapes:
  *   - inline base64 (`source.type === 'base64'`) → a `data:` URI (needs no session)
  *   - remote URL (`source.type === 'url'`)       → that URL verbatim
  *   - a local path/file ref                      → the sandboxed byte route via api.imageUrl
+ *   - `source.type === 'journal_image'`          → the image route of the message journal: the
+ *     item was over the journal's payload limit, so the daemon keeps the bytes outside it
+ *   - `source.type === 'cut'`                    → no picture: the image was over the journal's
+ *     image bound. The item has `imageNote` in the place of a URL, so the reader sees why.
  * The path case needs a `sessionId` to build the route; without one we skip it (the
  * data-URI / URL cases still parse, e.g. in unit tests with no session wired).
  */
@@ -36,6 +43,10 @@ export function imageItemFromBlock(b: any, sessionId?: string): ConvItem | null 
   if (!b || b.type !== 'image') return null;
   const alt = typeof b.alt === 'string' ? b.alt : (typeof b.title === 'string' ? b.title : undefined);
   const src = b.source ?? {};
+  if (src.type === 'journal_image' && typeof src.id === 'string' && typeof src.thread === 'string') {
+    return { kind: 'image', imageUrl: api.journalImageUrl(src.thread, src.id), imageMime: typeof src.media_type === 'string' ? src.media_type : undefined, imageAlt: alt };
+  }
+  if (src.type === 'cut') return { kind: 'image', imageNote: IMAGE_NOT_KEPT, imageAlt: alt };
   if (src.type === 'base64' && src.data) {
     const mime = src.media_type || 'image/png';
     return { kind: 'image', imageUrl: `data:${mime};base64,${src.data}`, imageMime: mime, imageAlt: alt };

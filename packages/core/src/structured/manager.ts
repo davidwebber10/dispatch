@@ -11,7 +11,7 @@ import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect
 import { killWithGrace } from '../platform/kill-grace.js';
 import { authRequiredFrame } from '../auth/auth-failure.js';
 import { EventRing } from './shared/event-ring.js';
-import type { JournalRecorder } from '../journal/recorder.js';
+import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
@@ -58,6 +58,8 @@ interface Session {
   ring: EventRing;
   /** Drops a finished message's stream frames from the ring once its whole frames are in (ring only). */
   compactor: ClaudeStreamCompactor;
+  /** Writes the finished items of this session to the message journal (W3-D). Absent with no journal. */
+  recorder?: ThreadRecorder;
   /** When true, gated tools are surfaced as a Need instead of auto-allowed. */
   escalate: boolean;
   /** Optional per-session tool policy consulted before auto-allow; a deny is written straight
@@ -415,7 +417,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     // conversation first and the View isn't blank after a daemon restart.
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     // W3-D: each finished item goes to the message journal. Claude sends each block again as a whole frame.
-    this.journal?.attach(terminalId, session.ring, { wholeFrames: true, seeds: opts.seedEvents });
+    const recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: true, seeds: opts.seedEvents });
+    session.recorder = recorder;
     this.sessions.set(terminalId, session);
     child.stderr.on('data', (chunk: Buffer) => {
       // Redact the whole joined text, so a key split across two chunks is still found.
@@ -618,6 +621,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // Fix 1: only clear the map if this child is still the current session
       // (a re-spawn may have already replaced it; its exit must not evict the new child)
       if (this.sessions.get(terminalId)?.child !== child) return;
+      recorder?.close(); // W3-D: a block that streamed when the CLI exited is written
       session.pending = null; // drop any unanswered permission — the process is gone
       for (const c of session.controls?.values() ?? []) { clearTimeout(c.timer); c.reject(new Error('The thread stopped')); }
       session.controls?.clear();
@@ -855,6 +859,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     // which must then find the session gone and stay silent — this is the one 'exit'.
     this.sessions.delete(terminalId);
     s.rl.close(); // Fix 3: close readline so buffered lines stop emitting after kill
+    s.recorder?.close(); // W3-D: a block that streams at a stop (of the thread, of the daemon) is written
     killWithGrace(s.child); // SIGTERM, then SIGKILL if the CLI ignores it
     // A CLI that had already exited (still draining) reports its own code, not the kill's 0.
     this.fire('exit', terminalId, s.exitCode ?? 0, s.exitCode !== undefined ? redactKeys(s.stderrTail?.trim() ?? '') || undefined : undefined);

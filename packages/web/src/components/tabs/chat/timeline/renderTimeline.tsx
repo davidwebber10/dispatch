@@ -165,7 +165,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
         <MessageScroller.Item key={id} messageId={id} style={{ display: 'flex', flexDirection: 'column' }}>
           {frame([it], (
             <div style={{ alignSelf: 'flex-end', maxWidth: '85%', paddingBottom: 4 }}>
-              <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />
+              <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} note={it.imageNote} />
             </div>
           ))}
         </MessageScroller.Item>,
@@ -249,7 +249,7 @@ export function renderTimeline(items: ConvItem[], onViewFile: (p: string) => voi
     let node: React.ReactNode = null;
     if (custom !== undefined) node = custom;
     else if (it.kind === 'assistant') node = ext?.prose ? ext.prose(it.text ?? '', it) : <AssistantText text={it.text ?? ''} />;
-    else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} />;
+    else if (it.kind === 'image') node = <ChatImage src={it.imageUrl ?? ''} alt={it.imageAlt} note={it.imageNote} />;
     else if (it.kind === 'thinking') node = <Thinking id={uiKeyOf(it)} text={it.text ?? ''} />;
     else if (it.kind === 'tool') {
       const result = it.toolId ? resultById.get(it.toolId) : items[i + 1]?.kind === 'tool-result' ? items[i + 1] : undefined;

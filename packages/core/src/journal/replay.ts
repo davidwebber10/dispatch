@@ -90,8 +90,10 @@ export function createJournalReplay(journal: MessageJournal, recorder?: JournalR
   const tailOf = (terminalId: string, items: JournalItem[], reset: boolean): unknown[] => {
     const state = recorder?.stateEvents(terminalId) ?? [];
     // After a daemon restart the recorder has no usage yet: the journal's newest assistant item has it.
+    // A resume with a cursor needs it too (the client clears its context meter at each reconnect), and
+    // its own items are only the ones after the cursor: the newest window of the thread is read.
     const hasUsage = state.some((e) => (e as { type?: unknown } | null)?.type === 'assistant');
-    const usage = !hasUsage && reset ? usageOf(items) : null;
+    const usage = hasUsage ? null : usageOf(reset ? items : journal.page(terminalId, { limit: REPLAY_MAX_ITEMS }).items);
     return [...(usage ? [usage] : []), ...state, ...(recorder?.openEvents(terminalId) ?? [])];
   };
   return {

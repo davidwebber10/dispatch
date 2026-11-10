@@ -158,3 +158,22 @@ it('the download fallback still works for a data: image that cannot be decoded',
   fireEvent.click(screen.getByLabelText('Download image'));
   await waitFor(() => expect(hrefs).toContain(src));
 });
+
+// Final review of v4.5.0, I2: an image that the journal could not keep, or no longer has.
+it('with no source and a note, shows the note (an image the journal could not keep)', () => {
+  render(<ChatImage src="" note="Image not kept — too large" />);
+  expect(screen.getByText('Image not kept — too large')).toBeTruthy();
+  expect(document.querySelector('img')).toBeNull();
+});
+
+it('with no source and no note, renders nothing', () => {
+  const { container } = render(<ChatImage src="" />);
+  expect(container.innerHTML).toBe('');
+});
+
+it('an image that does not load shows a note in its place', () => {
+  render(<ChatImage src={`/api/terminals/t1/journal/images/${'a'.repeat(64)}`} alt="shot" />);
+  fireEvent.error(screen.getByAltText('shot'));
+  expect(screen.getByText('Image not available')).toBeTruthy();
+  expect(document.querySelector('img')).toBeNull();
+});

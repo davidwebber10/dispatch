@@ -19,6 +19,8 @@ const se = (event: Record<string, unknown>, parent?: string) => ({ type: 'stream
 const userText = (text: string, extra: Record<string, unknown> = {}) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, ...extra });
 const whole = (block: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ type: 'assistant', message: { role: 'assistant', content: [block] }, ...extra });
 const result = (extra: Record<string, unknown> = {}) => ({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5, ...extra });
+/** One event of an agent's replay of its history (ACP session/load). */
+const replay = (thread: { beginReplay(): void; endReplay(): void }, ring: EventRing, event: unknown) => { thread.beginReplay(); ring.push(event); thread.endReplay(); };
 
 /** A streamed text block as Codex and ACP send it: no whole frame follows. */
 function streamBlock(ring: EventRing, index: number, pieces: string[], kind: 'text' | 'thinking' = 'text', stop: Record<string, unknown> = {}) {
@@ -105,31 +107,31 @@ describe('JournalRecorder: a harness that streams and sends no whole message (Co
     expect(rows()).toEqual([]);
   });
 
-  it('a replay of the agent (session/load) fills an empty journal once, and is ignored when the journal has rows', () => {
+  it('a replay of the agent (session/load) fills an empty journal once, and is ignored after the import', () => {
     const db = new Database(':memory:');
     initSchema(db);
     const journal = new MessageJournal(db);
     const rows = () => journal.page('t', { limit: 500 }).items;
-    const replay = (thread: { beginReplay(): void; endReplay(): void }, ring: EventRing, event: unknown) => { thread.beginReplay(); ring.push(event); thread.endReplay(); };
 
     const ring1 = new EventRing();
-    const first = new JournalRecorder(journal).attach('t', ring1, { wholeFrames: false, expectReplay: true });
+    const first = new JournalRecorder(journal).attach('t', ring1, { wholeFrames: false, replaySession: 's1' });
     replay(first, ring1, userText('earlier question'));
     replay(first, ring1, whole({ type: 'text', text: 'earlier answer' }));
-    first.loadEnded();
+    first.loadEnded(true);
     expect(rows().map((r) => r.kind)).toEqual(['user', 'assistant']);
 
     // The daemon starts again on the same database: the agent replays the same history.
     const ring2 = new EventRing();
-    const again = new JournalRecorder(journal).attach('t', ring2, { wholeFrames: false, expectReplay: true });
+    const again = new JournalRecorder(journal).attach('t', ring2, { wholeFrames: false, replaySession: 's1' });
     const replayed = userText('earlier question') as Record<string, unknown>;
     replay(again, ring2, replayed);
     // A message sent while the replay is on its way is a live event: it is written.
     ring2.push(userText('sent during the load'));
     replay(again, ring2, whole({ type: 'text', text: 'earlier answer' }));
-    again.loadEnded();
+    again.loadEnded(true);
     expect(rows().map((r) => r.seq)).toEqual([1, 2, 3]);
     expect(replayed.seq).toBeUndefined();
+    expect(replayed.journal_replayed).toBe(true);
     expect((rows()[2].payload as any).message.content[0].text).toBe('sent during the load');
   });
 
@@ -138,13 +140,144 @@ describe('JournalRecorder: a harness that streams and sends no whole message (Co
     initSchema(db);
     const journal = new MessageJournal(db);
     const ring = new EventRing();
-    const thread = new JournalRecorder(journal).attach('t', ring, { wholeFrames: false, expectReplay: true });
+    const thread = new JournalRecorder(journal).attach('t', ring, { wholeFrames: false, replaySession: 's1' });
     ring.push(userText('sent right after the resume')); // before the first replayed frame
     thread.beginReplay(); ring.push(userText('earlier question')); thread.endReplay();
     thread.beginReplay(); ring.push(whole({ type: 'text', text: 'earlier answer' })); thread.endReplay();
-    thread.loadEnded();
+    thread.loadEnded(true);
     const texts = journal.page('t').items.map((r) => (r.payload as any).message.content[0].text);
     expect(texts).toEqual(['earlier question', 'earlier answer', 'sent right after the resume']);
+  });
+});
+
+// Final review of v4.5.0, C2. The import of a replayed history was decided by "the journal has no
+// row". A load that failed left a notice as row 1, so no later replay was ever imported and the
+// history of the thread was gone for a journal client. The import is now decided by a mark for the
+// session, written only after a load that worked.
+describe('JournalRecorder: the import of a replayed history (ACP session/load)', () => {
+  function world() {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const journal = new MessageJournal(db);
+    const rows = () => journal.page('t', { limit: 500 }).items.map((r) => [r.seq, r.kind, (r.payload as any).message?.content?.[0]?.text ?? (r.payload as any).subtype]);
+    const attach = (session: string | undefined) => {
+      const ring = new EventRing();
+      const thread = new JournalRecorder(journal).attach('t', ring, { wholeFrames: false, replaySession: session });
+      return { ring, thread };
+    };
+    return { db, journal, rows, attach };
+  }
+  const spawnError = () => ({ type: 'system', subtype: 'spawn_error', message: 'the session could not be loaded' });
+
+  it('a first load that fails writes no mark: the next load that works imports the history, once', () => {
+    const { rows, attach, journal } = world();
+    const first = attach('s1');
+    first.thread.loadEnded(false); // the agent refused the load and replayed nothing
+    first.ring.push(spawnError());
+    expect(rows()).toEqual([[1, 'notice', 'spawn_error']]);
+    expect(journal.hasImport('t', 's1')).toBe(false);
+
+    const second = attach('s1');
+    const q = userText('earlier question') as Record<string, unknown>;
+    replay(second.thread, second.ring, q);
+    replay(second.thread, second.ring, whole({ type: 'text', text: 'earlier answer' }));
+    second.thread.loadEnded(true);
+    expect(rows()).toEqual([[1, 'notice', 'spawn_error'], [2, 'user', 'earlier question'], [3, 'assistant', 'earlier answer']]);
+    expect(q.seq).toBe(2);
+    expect(q.journal_replayed).toBeUndefined(); // new to the journal: a journal client gets it
+    expect(journal.hasImport('t', 's1')).toBe(true);
+
+    const third = attach('s1');
+    const again = userText('earlier question') as Record<string, unknown>;
+    replay(third.thread, third.ring, again);
+    replay(third.thread, third.ring, whole({ type: 'text', text: 'earlier answer' }));
+    third.thread.loadEnded(true);
+    expect(rows()).toHaveLength(3);
+    expect(again.journal_replayed).toBe(true);
+  });
+
+  it('a load that fails after a part of the history is completed by the next load, not written twice', () => {
+    const { rows, attach, journal } = world();
+    const first = attach('s1');
+    replay(first.thread, first.ring, userText('yes'));
+    replay(first.thread, first.ring, whole({ type: 'text', text: 'ok' }));
+    first.thread.loadEnded(false);
+    first.ring.push(spawnError());
+    expect(rows()).toEqual([[1, 'user', 'yes'], [2, 'assistant', 'ok'], [3, 'notice', 'spawn_error']]);
+    expect(journal.hasImport('t', 's1')).toBe(false);
+
+    const second = attach('s1');
+    const events = [userText('yes'), whole({ type: 'text', text: 'ok' }), userText('yes'), whole({ type: 'text', text: 'ok' }), userText('more')] as Record<string, unknown>[];
+    for (const e of events) replay(second.thread, second.ring, e);
+    second.thread.loadEnded(true);
+    // The same words two times are two items: the journal had the first pair, it gets the second.
+    expect(rows()).toEqual([[1, 'user', 'yes'], [2, 'assistant', 'ok'], [3, 'notice', 'spawn_error'], [4, 'user', 'yes'], [5, 'assistant', 'ok'], [6, 'user', 'more']]);
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 4, 5, 6]);
+    expect(events.map((e) => e.journal_replayed === true)).toEqual([true, true, false, false, false]); // a journal client has the first two
+    expect(journal.hasImport('t', 's1')).toBe(true);
+  });
+
+  it('a tool call of a part import keeps its row', () => {
+    const { rows, attach } = world();
+    const tool = () => whole({ type: 'tool_use', id: 'call-1', name: 'Shell', input: { command: 'ls' } });
+    const first = attach('s1');
+    replay(first.thread, first.ring, tool());
+    first.thread.loadEnded(false);
+    const second = attach('s1');
+    replay(second.thread, second.ring, tool());
+    replay(second.thread, second.ring, whole({ type: 'text', text: 'done' }));
+    second.thread.loadEnded(true);
+    expect(rows().map((r) => [r[0], r[1]])).toEqual([[1, 'tool'], [2, 'assistant']]);
+  });
+
+  it('a session that started under the journal is never imported: the journal has it from its first item', () => {
+    const { rows, attach, journal } = world();
+    const first = attach(undefined);
+    first.thread.sessionStarted('s1');
+    first.ring.push(userText('question'));
+    first.ring.push(se({ type: 'message_start' }));
+    streamBlock(first.ring, 0, ['ans', 'wer']);
+    first.ring.push(result());
+    expect(journal.hasImport('t', 's1')).toBe(true);
+
+    const second = attach('s1');
+    // The agent replays the reply with other white space: no match by words is needed, or tried.
+    replay(second.thread, second.ring, userText('question'));
+    replay(second.thread, second.ring, whole({ type: 'text', text: 'answer, as the agent keeps it' }));
+    second.thread.loadEnded(true);
+    expect(rows().map((r) => r[1])).toEqual(['user', 'assistant', 'result']);
+  });
+
+  it('the mark is for one session: the history of another session of the thread is imported', () => {
+    const { rows, attach } = world();
+    const first = attach('s1');
+    replay(first.thread, first.ring, userText('in the first session'));
+    first.thread.loadEnded(true);
+    const second = attach('s2');
+    replay(second.thread, second.ring, userText('in the second session'));
+    second.thread.loadEnded(true);
+    expect(rows().map((r) => r[2])).toEqual(['in the first session', 'in the second session']);
+  });
+
+  it('a deleted thread loses its marks', () => {
+    const { journal, attach } = world();
+    attach('s1').thread.loadEnded(true);
+    expect(journal.hasImport('t', 's1')).toBe(true);
+    journal.removeThread('t');
+    expect(journal.hasImport('t', 's1')).toBe(false);
+  });
+
+  it('close writes the blocks that stream (a kill, a process exit, a daemon stop)', () => {
+    const { rows, attach } = world();
+    const { ring, thread } = attach(undefined);
+    ring.push(userText('question'));
+    ring.push(se({ type: 'message_start' }));
+    ring.push(se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+    ring.push(se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half an ans' } }));
+    thread.close();
+    expect(rows()).toEqual([[1, 'user', 'question'], [2, 'assistant', 'half an ans']]);
+    thread.close(); // a second close (the next attach) adds nothing
+    expect(rows()).toHaveLength(2);
   });
 });
 
@@ -279,6 +412,35 @@ describe('JournalRecorder: what is not finished yet', () => {
     expect(recorder.openEvents('unknown')).toEqual([]);
   });
 
+  // Final review of v4.5.0, C1: Claude sends each block again as a whole frame of ONE block, so the
+  // position of a block in its frame is always 0. A viewer that connects in the middle of a message
+  // needs the id of the message and the count of whole frames it had, or it cannot tell which
+  // streamed block a later whole frame finishes (it showed the text block two times).
+  it('openEvents of a Claude message gives the id of the message and the count of its whole frames', () => {
+    const { ring, recorder } = setup(true);
+    const frame = (block: Record<string, unknown>) => ({ type: 'assistant', uuid: `u-${String(block.type)}`, message: { id: 'msg_1', role: 'assistant', content: [block] } });
+    ring.push(se({ type: 'message_start', message: { id: 'msg_1', role: 'assistant', content: [] } }));
+    ring.push(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    ring.push(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hm' } }));
+    ring.push(se({ type: 'content_block_stop', index: 0 }));
+    ring.push(frame({ type: 'thinking', thinking: 'hm' }));
+    // Between two blocks: no block is open, and the message is still in flight.
+    const head = se({ type: 'message_start', message: { id: 'msg_1' }, wholes: 1 });
+    expect(recorder.openEvents('t')).toEqual([head]);
+    ring.push(se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }));
+    ring.push(se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'so ' } }));
+    ring.push(se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'far' } }));
+    expect(recorder.openEvents('t')).toEqual([
+      head,
+      se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+      se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'so far' } }),
+    ]);
+    ring.push(se({ type: 'content_block_stop', index: 1 }));
+    ring.push(frame({ type: 'text', text: 'so far' }));
+    ring.push(se({ type: 'message_stop' }));
+    expect(recorder.openEvents('t')).toEqual([]); // the message ended: nothing is in flight
+  });
+
   it('stateEvents gives the last usage and a standing sign-in notice; a good result clears the notice', () => {
     const { ring, recorder } = setup(true);
     const frame = whole({ type: 'text', text: 'x' }, { uuid: 'u1', context_window: 1000 }) as any;
@@ -293,6 +455,30 @@ describe('JournalRecorder: what is not finished yet', () => {
     ]);
     ring.push(result());
     expect(recorder.stateEvents('t')).toHaveLength(1);
+  });
+
+  // Final review of v4.5.0 (minor): after a daemon restart the recorder has no usage in memory. The
+  // first window took it from the journal; a resume with a cursor did not, and the context meter
+  // of the chat stayed empty until the next reply.
+  it('a resume with a cursor after a daemon restart still gets the context usage, from the journal', () => {
+    const { ring, journal } = setup(true);
+    const frame = whole({ type: 'text', text: 'x' }, { uuid: 'u1', context_window: 1000 }) as any;
+    frame.message.usage = { input_tokens: 7, output_tokens: 1 };
+    frame.message.model = 'claude-x';
+    ring.push(userText('q'));
+    ring.push(frame);
+    ring.push(result());
+    const usage = { type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 7, output_tokens: 1 }, model: 'claude-x' }, context_window: 1000 };
+
+    const restarted = new JournalRecorder(journal); // a new daemon: no session is attached yet
+    const first = restarted.replay('t', { allowReset: true })!;
+    expect(first.frame.reset).toBe(true);
+    expect(first.tail).toEqual([usage]);
+    const resume = restarted.replay('t', { after: 3, allowReset: true })!;
+    expect(resume.frame).toMatchObject({ reset: false, after: 3, items: [] });
+    expect(resume.tail).toEqual([usage]);
+    // The cursor is before the newest reply: the usage is still the newest one of the thread.
+    expect(restarted.replay('t', { after: 1, allowReset: true })!.tail).toEqual([usage]);
   });
 
   it('a journal that cannot write does not stop the ring', () => {

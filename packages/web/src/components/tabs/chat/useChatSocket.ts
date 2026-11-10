@@ -118,6 +118,10 @@ export function useChatSocket(args: {
   const streamingRef = useRef(false);                 // sticky once any stream_event seen
   const turnRef = useRef(0);                           // monotonic turn id → unique block keys
   const blockMapRef = useRef<Map<number, BlockRec>>(new Map()); // content-block index → record
+  // The message that streams now: its id, and how many of its whole `assistant` frames came already.
+  // Claude sends each block again as a whole frame of ONE block, so the position of a block in its
+  // frame is always 0; its stream index is `wholes` (see the whole-`assistant` reconcile below).
+  const streamMsgRef = useRef<{ id?: string; wholes: number }>({ wholes: 0 });
   // Keys of replies added from a stop's final_text (see content_block_stop below). They do not make
   // the stream "own" the view, so a REST page still loading after a reconnect still lands.
   const recoveredRef = useRef<Set<string>>(new Set());
@@ -152,6 +156,7 @@ export function useChatSocket(args: {
     oldestLineRef.current = undefined; pageTokenRef.current += 1; // discard any in-flight fetch from the previous thread
     inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
     streamingRef.current = false; turnRef.current = 0; blockMapRef.current.clear(); recoveredRef.current.clear();
+    streamMsgRef.current = { wholes: 0 };
     pendingRef.current.clear();
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
@@ -257,6 +262,7 @@ export function useChatSocket(args: {
         setAuthRequired(null); // the replay re-sends a standing system/auth_required
         setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
         blockMapRef.current.clear(); recoveredRef.current.clear();
+        streamMsgRef.current = { wholes: 0 };
         // Re-arm pagination too: `items` above is being fully rebuilt from a fresh replay,
         // so a stale REST anchor from before the reconnect could otherwise skip a gap of
         // history between the new tail replay and where the old anchor left off.
@@ -389,6 +395,13 @@ export function useChatSocket(args: {
           if (se.type === 'message_start') {
             turnRef.current += 1;
             blockMapRef.current.clear();
+            // `wholes` is set by the daemon when this view connects in the middle of the message
+            // (journal/recorder.ts openEvents): the whole frames that came before the connect.
+            const mid = se.message?.id;
+            streamMsgRef.current = {
+              id: typeof mid === 'string' && mid ? mid : undefined,
+              wholes: typeof se.wholes === 'number' && se.wholes > 0 ? Math.floor(se.wholes) : 0,
+            };
             return;
           }
 
@@ -487,12 +500,26 @@ export function useChatSocket(args: {
             // Land any buffered deltas first so trailing text/thinking isn't lost and
             // no later frame overwrites the authoritative tool input reconciled below.
             flushNow();
-            // Every block this whole event reports belongs to the message that was just
-            // streamed (blockMapRef is cleared per message_start — see above), so these are
-            // exactly the synthetic per-block keys (`s-turn-idx`) created at content_block_start
-            // for THIS message. Upgrading them to the real `uuid` here is what lets a later
-            // loadOlder() page recognize (and correctly dedup) this same item from disk.
-            const blockKeys = new Set(Array.from(blockMapRef.current.values(), (r) => r.key));
+            // THE STREAM INDEX OF A BLOCK (final review of v4.5.0, C1). A stream_event's `index`
+            // is the position of the block in the MESSAGE. Claude sends each block again as a
+            // whole frame of ONE block, so the position in the FRAME is always 0 and is not the
+            // stream index. The stream index of the first block of this frame is the count of
+            // whole frames that this message had before it (`wholes`). The count starts at the
+            // message_start; a view that connects in the middle of a message gets it from the
+            // daemon. With the frame position alone, a view that connected while block 1 (text)
+            // streamed after block 0 (thinking) found no rec at 0 and added the text again.
+            const stream = streamMsgRef.current;
+            const sameMessage = !!stream.id && event.message.id === stream.id;
+            const base = sameMessage ? stream.wholes : 0;
+            if (sameMessage) stream.wholes += event.message.content.length;
+            // The synthetic per-block keys (`s-turn-idx`, made at content_block_start) of the
+            // blocks that this whole event reports. Upgrading them to the real `uuid` here is what
+            // lets a later loadOlder() page recognize (and correctly dedup) this same item from disk.
+            // With the stream index known, they are the keys of this frame's blocks alone; else
+            // every block of the message that streams (blockMapRef is cleared per message_start).
+            const blockKeys = new Set<string>(sameMessage
+              ? event.message.content.flatMap((_: unknown, i: number) => { const rec = blockMapRef.current.get(base + i); return rec ? [rec.key] : []; })
+              : Array.from(blockMapRef.current.values(), (r) => r.key));
             const tools = event.message.content.filter((b: any) => b.type === 'tool_use');
             // REPLAY-CUT RECOVERY. The ws replay is bounded to the last 200 ring events, so it
             // can start PAST a message's content_block_start. Those orphaned deltas are dropped
@@ -503,14 +530,22 @@ export function useChatSocket(args: {
             // nothing, so it is appended here from the authoritative whole event — the SAME
             // rule already applied to "any tool we never saw start", now covering text/thinking
             // too, and in content order so a recovered block keeps its place relative to the
-            // rest of the message. `index` is a position in this message's content array, which
-            // is exactly what a stream_event's `index` addresses. The check is presence-only
-            // (not the rec's kind): if an index ever failed to line up, skipping is the safe
-            // direction — a miss, never a duplicated bubble.
+            // rest of the message. A block is looked up by its stream index (`base`, above).
+            // With no message id to count on (an older daemon, a ring replay that starts past
+            // the message_start), the frame position is the best guess. A block whose text a
+            // streamed block of the same kind holds already was streamed: it is never added again.
+            const streamedSame = (b: any): boolean => {
+              if (sameMessage) return false;
+              const kind = b.type === 'thinking' ? 'thinking' : 'assistant';
+              const text = b.type === 'thinking' ? (b.thinking ?? b.text ?? '') : (b.text ?? '');
+              if (!text) return false;
+              for (const rec of blockMapRef.current.values()) if (rec.kind === kind && rec.text === text) return true;
+              return false;
+            };
             const appendable: { b: any; index: number }[] = event.message.content
-              .map((b: any, index: number) => ({ b, index }))
+              .map((b: any, index: number) => ({ b, index: base + index }))
               .filter(({ b, index }: { b: any; index: number }) => b.type === 'tool_use'
-                || ((b.type === 'text' || b.type === 'thinking') && !blockMapRef.current.has(index)));
+                || ((b.type === 'text' || b.type === 'thinking') && !blockMapRef.current.has(index) && !streamedSame(b)));
             if (appendable.length || (uuid && blockKeys.size)) {
               setItems((p) => {
                 // DEFENSE-IN-DEPTH (replay/REST overlap): if this message's real uuid is already

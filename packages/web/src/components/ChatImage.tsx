@@ -48,8 +48,15 @@ export function useViewerHost(): ((v: Viewing) => void) | null {
   return useContext(ViewerContext);
 }
 
-export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: string; maxHeight?: number | string }) {
+/**
+ * `note`: the text to show when there is no `src` (an image that the daemon's message journal
+ * could not keep). An image that does not load (its bytes are gone) shows a note too, in the place
+ * of the browser's broken-image mark.
+ */
+export function ChatImage({ src, alt, maxHeight = 320, note }: { src: string; alt?: string; maxHeight?: number | string; note?: string }) {
   const [open, setOpen] = useState(false);
+  // The source that failed to load: a changed src gets its own try.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const host = useContext(ViewerContext);
   // A web address is a way to send data out through the reader's browser, so the image is only
   // requested after a click (the same rule as a Markdown image). data:, blob: and this app's own
@@ -57,7 +64,8 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
   // Consent names the address that was approved: a changed src needs its own click.
   const [consentedSrc, setConsentedSrc] = useState<string | null>(null);
   const consented = consentedSrc === src;
-  if (!src) return null;
+  if (!src) return note ? <span className="chat-image-note" role="note">{note}</span> : null;
+  if (failedSrc === src) return <span className="chat-image-note" role="note">Image not available</span>;
   if (!consented && !isLocalImageSrc(src)) {
     const from = remoteImageHost(src);
     return (
@@ -85,6 +93,7 @@ export function ChatImage({ src, alt, maxHeight = 320 }: { src: string; alt?: st
           src={src}
           alt={alt || ''}
           loading="lazy"
+          onError={() => setFailedSrc(src)}
           style={{
             display: 'block',
             maxWidth: '100%',

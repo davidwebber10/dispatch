@@ -763,16 +763,36 @@ describe('replay from the message journal', () => {
     const journalClient = connect(t, JOURNAL_REQ());
     const olderClient = connect(t, REQ);
     const before = [journalClient.length, olderClient.length];
-    // The agent replays the session (ACP session/load): the recorder ignores the frame and marks it.
-    const recorder = t.recorder.attach('t1', t.ring, { wholeFrames: false, expectReplay: true });
+    // The agent replays the session (ACP session/load). The journal has the history of this session
+    // (its import mark is set): the recorder ignores the frame and marks it.
+    t.recorder.journal.markImported('t1', 'sess-1');
+    const recorder = t.recorder.attach('t1', t.ring, { wholeFrames: false, replaySession: 'sess-1' });
     recorder.beginReplay();
     t.push(userEvent('question 1'));
     recorder.endReplay();
-    recorder.loadEnded();
+    recorder.loadEnded(true);
     expect(journalClient.length).toBe(before[0]);          // it has this item from the journal already
     expect(olderClient.length).toBe(before[1] + 1);        // as before W3-D
     t.push(userEvent('a new question'));
     expect(journalClient[journalClient.length - 1]).toMatchObject({ type: 'user', seq: 5 });
+  });
+
+  // Final review of v4.5.0, C2: a replay is hidden from a journal client only when the journal has it.
+  it('history that a resume imports (no import mark: an earlier load failed) reaches a client that got the journal frame', () => {
+    const t = thread();
+    t.turn(1); // rows 1 to 4; the journal has no import mark for the session
+    const journalClient = connect(t, JOURNAL_REQ());
+    const before = journalClient.length;
+    const recorder = t.recorder.attach('t1', t.ring, { wholeFrames: false, replaySession: 'sess-1' });
+    recorder.beginReplay();
+    t.push(userEvent('a question from before the journal')); // the journal lacks it: it is imported and sent
+    t.push(userEvent('question 1'));                         // the journal has it (row 1): not sent again
+    recorder.endReplay();
+    recorder.loadEnded(true);
+    const got = journalClient.slice(before);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ type: 'user', seq: 5 });
+    expect(got[0].message.content[0].text).toBe('a question from before the journal');
   });
 
   it('batch=1 carries the journal frame inside the replay frame, with the model and the pending question after it', () => {
