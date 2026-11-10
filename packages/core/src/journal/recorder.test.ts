@@ -457,6 +457,30 @@ describe('JournalRecorder: what is not finished yet', () => {
     expect(recorder.stateEvents('t')).toHaveLength(1);
   });
 
+  // Final review of v4.5.0 (minor): after a daemon restart the recorder has no usage in memory. The
+  // first window took it from the journal; a resume with a cursor did not, and the context meter
+  // of the chat stayed empty until the next reply.
+  it('a resume with a cursor after a daemon restart still gets the context usage, from the journal', () => {
+    const { ring, journal } = setup(true);
+    const frame = whole({ type: 'text', text: 'x' }, { uuid: 'u1', context_window: 1000 }) as any;
+    frame.message.usage = { input_tokens: 7, output_tokens: 1 };
+    frame.message.model = 'claude-x';
+    ring.push(userText('q'));
+    ring.push(frame);
+    ring.push(result());
+    const usage = { type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 7, output_tokens: 1 }, model: 'claude-x' }, context_window: 1000 };
+
+    const restarted = new JournalRecorder(journal); // a new daemon: no session is attached yet
+    const first = restarted.replay('t', { allowReset: true })!;
+    expect(first.frame.reset).toBe(true);
+    expect(first.tail).toEqual([usage]);
+    const resume = restarted.replay('t', { after: 3, allowReset: true })!;
+    expect(resume.frame).toMatchObject({ reset: false, after: 3, items: [] });
+    expect(resume.tail).toEqual([usage]);
+    // The cursor is before the newest reply: the usage is still the newest one of the thread.
+    expect(restarted.replay('t', { after: 1, allowReset: true })!.tail).toEqual([usage]);
+  });
+
   it('a journal that cannot write does not stop the ring', () => {
     const { ring, db } = setup(false);
     db.exec('DROP TABLE thread_journal');
