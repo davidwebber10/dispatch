@@ -109,7 +109,7 @@ in place of the card. One or two plain sentences: what is missing, and what to d
 | Phone | full width with the shell's 14px gutter; Segmented and Select switch to the `lg` size themselves; inputs use `fieldFor(true)` (16px text, 36px tall: iOS does not zoom) |
 | Icon tile | 32px on a row, 48px in a sub-page header |
 
-## 8. Hard rules (tests enforce the first two)
+## 8. Hard rules (tests enforce the first two and the last)
 
 - No native `<select>` (`src/lib/noNativeSelect.test.ts`): use `Select`, `SearchSelect`, `MultiSelect`, `Segmented`.
 - Colors from tokens only (`src/lib/colorLiterals.test.ts`): `var(--color-…)`, `TONE_VAR`.

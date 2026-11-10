@@ -491,6 +491,17 @@ describe('Modal — focus and keyboard', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('leaves Escape to a dropdown that is open outside the dialog (portaled to the body)', () => {
+    const onClose = vi.fn();
+    render(<Modal open onClose={onClose} title="T"><button>Save</button></Modal>);
+    const dropdownField = document.createElement('input');
+    document.body.appendChild(dropdownField);
+    dropdownField.focus();
+    fireEvent.keyDown(dropdownField, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    dropdownField.remove();
+  });
+
   it('an untitled dialog is still a dialog, and the Close control is a labelled button', () => {
     render(<Opener sheet titled={false} />);
     open();

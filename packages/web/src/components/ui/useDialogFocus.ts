@@ -8,7 +8,8 @@ import './ui.css';
  *   - focus moves into the dialog when it opens (a field with `autoFocus` keeps it; otherwise the
  *     panel itself takes it, so a phone does not open its keyboard and no button looks picked);
  *   - Tab stays inside: from the last control it goes to the first, and back;
- *   - Escape closes it, when it is the layer on top and nothing inside handled the key first;
+ *   - Escape closes it, when it is the layer on top, nothing inside handled the key first, and
+ *     focus is not in a dropdown outside it;
  *   - focus returns to the control that opened it, unless the app has put focus somewhere itself.
  * The panel needs `tabIndex={-1}`.
  */
@@ -30,6 +31,10 @@ export function useDialogFocus(open: boolean, panelRef: RefObject<HTMLElement | 
       if (!isTopLayer(id)) return;
       if (e.key === 'Escape') {
         if (e.defaultPrevented) return;
+        // Focus is in something outside the dialog that is not a layer of this stack (an older
+        // dropdown or a viewer, portaled to the body): the key is its key.
+        const t = e.target;
+        if (t instanceof Element && t !== document.body && t !== document.documentElement && !panel.contains(t)) return;
         e.preventDefault();
         closeRef.current();
         return;
