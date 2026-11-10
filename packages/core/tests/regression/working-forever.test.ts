@@ -133,6 +133,28 @@ describe('Working forever: the socket says the status, the frames do not', () =>
     expect(c.frames[0].generation).toBeGreaterThan(before.generation);
   });
 
+  // Found in the manual check (kill -9 of the daemon mid-turn, page open): the page reconnects first and its
+  // connection starts the process again. The boot check then found a live process and left `working` for ever.
+  it('a restart: a thread whose process the reconnect started again, with no turn in the new daemon, is settled', () => {
+    startTurn('cc');
+    const next = new StatusService(db, { broadcast: vi.fn() });
+    expect(next.accept({ ...event('cc', 'process.started'), generation: 'gen-2', sequence: 1, turnId: undefined })).toBe(true);
+    const c = client('cc', next);
+    expect(c.frames[0]).toMatchObject({ status: 'working', turnOpen: true }); // the stored status, until the boot check
+    next.reconcileProcesses(() => true); // the process is alive: the reconnect started it
+    expect(c.last()).toMatchObject({ status: 'error', turnOpen: false });
+    expect(terminalsDb.getById(db, 'cc')!.status).toBe('error');
+  });
+
+  it('a restart: a thread that runs a turn in the new daemon keeps working through the boot check', () => {
+    startTurn('cc');
+    const next = new StatusService(db, { broadcast: vi.fn() });
+    expect(next.accept({ ...event('cc', 'process.started'), generation: 'gen-2', sequence: 1, turnId: undefined })).toBe(true);
+    expect(next.accept({ ...event('cc', 'turn.started'), generation: 'gen-2', sequence: 2, turnId: 'turn-2' })).toBe(true); // the boot kickstart
+    next.reconcileProcesses(() => true);
+    expect(next.snapshot('cc')).toMatchObject({ status: 'working', turnOpen: true });
+  });
+
   it('a restart with a kept turn: the shutdown write-back reads as an open turn until the boot settles it', () => {
     startTurn('cc');
     expect(status.accept(event('cc', 'process.exited', { exitCode: 0 }))).toBe(true); // the shutdown's kill

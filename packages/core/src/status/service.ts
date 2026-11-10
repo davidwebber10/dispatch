@@ -481,8 +481,16 @@ export class StatusService {
   /** After boot recovery, persisted working state must have a live owner. */
   reconcileProcesses(isAlive: (terminalId: string) => boolean): void {
     if (!this.db.open) return;
-    const rows = this.db.prepare("SELECT id FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')").all() as { id: string }[];
-    for (const { id } of rows) if (!isAlive(id)) this.markExited(id, 1);
+    const rows = this.db.prepare("SELECT id, status FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')").all() as { id: string; status: string }[];
+    for (const { id, status } of rows) {
+      if (!isAlive(id)) { this.markExited(id, 1); continue; }
+      // W3-C: a live process is not a live turn. A client that reconnects before this check starts the
+      // process of its thread again, so the process is alive, but the turn died with the daemon before.
+      // `working` with no transition in THIS daemon is that daemon's status: every turn of this one (the
+      // boot kickstart too) went through a transition. Only a harness thread: its process is the daemon's own.
+      if (status === 'working' && !this.last.has(id)
+        && this.db.prepare('SELECT 1 FROM thread_lifecycle WHERE terminal_id=? AND generation IS NOT NULL').get(id)) this.markFailed(id);
+    }
   }
 
   markFailed(terminalId: string): void {
