@@ -1543,3 +1543,93 @@ test('the uuid upgrade keeps each streamed block\'s first key as blockKey (2026-
   const after = result.current.items.filter((i) => i.kind === 'thinking' || i.kind === 'assistant');
   expect(after.map((i) => [i.uuid, i.blockKey])).toEqual([['real-1', 's-1-0'], ['real-1', 's-1-1']]);
 });
+
+
+// ---- W3-C: one status authority ----
+//
+// The daemon's status snapshot (the `system/status` frame with `turnOpen`) decides "busy". The frames of the
+// replay do not. More cases, one for each class of "Working forever": useStructuredChat.status.test.ts.
+{
+  const statusFrame = (over: Record<string, unknown> = {}) => ({
+    type: 'system', subtype: 'status', status: 'idle', turnOpen: false, generation: 100, sequence: 1, at: '2026-11-09T10:00:00.000Z', activity: null, ...over,
+  });
+  const working = (sequence: number, over: Record<string, unknown> = {}) => statusFrame({ status: 'working', turnOpen: true, sequence, ...over });
+  const idle = (sequence: number, over: Record<string, unknown> = {}) => statusFrame({ status: 'idle', turnOpen: false, sequence, ...over });
+  const streamStart = { type: 'stream_event', event: { type: 'message_start' } };
+  const toolStart = { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tool-1', name: 'Bash' } } };
+  const assistantTool = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'sleep 600' } }] } };
+  const result = { type: 'result', is_error: false, num_turns: 1 };
+  const feed = (...events: unknown[]) => act(() => { for (const e of events) cbs.onEvent(e); });
+  const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
+
+  test('busy follows the header and not the replayed frames', () => {
+    const { result: r } = renderHook(() => useStructuredChat('w3c-status'));
+    // A settled thread whose replay ends mid-turn: the old fold latched "Working" on it.
+    feed(idle(4), { type: 'user', message: { role: 'user', content: 'go' } }, streamStart, toolStart, assistantTool);
+    expect(r.current.busy).toBe(false);
+    expect(r.current.items.some((i) => i.kind === 'tool')).toBe(true); // the frames still render
+
+    // And the reverse: the header says a turn runs, and a replayed `result` of an older turn does not hide it.
+    act(() => cbs.onReset?.());
+    feed(working(5), { type: 'user', message: { role: 'user', content: 'go' } }, result);
+    expect(r.current.busy).toBe(true);
+  });
+
+  test('a replay with an open tool call and a header with turnOpen false shows not busy', () => {
+    const { result: r } = renderHook(() => useStructuredChat('w3c-status'));
+    feed(idle(9), streamStart, toolStart, assistantTool);
+    expect(r.current.busy).toBe(false);
+    const tool = r.current.items.find((i) => i.kind === 'tool');
+    expect(tool?.toolId).toBe('tool-1'); // the open call is on screen, with no result under it
+    expect(r.current.items.some((i) => i.kind === 'tool-result')).toBe(false);
+  });
+
+  test('an older status frame is ignored', () => {
+    const { result: r } = renderHook(() => useStructuredChat('w3c-status'));
+    feed(working(7));
+    feed(idle(8));
+    feed(working(6)); // late
+    expect(r.current.busy).toBe(false);
+    feed(working(8, { generation: 99 })); // an older daemon, a higher sequence
+    expect(r.current.busy).toBe(false);
+    feed(working(1, { generation: 101 })); // a newer daemon, a lower sequence
+    expect(r.current.busy).toBe(true);
+  });
+
+  test('sending shows busy until the first status frame', async () => {
+    vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+    const { result: r } = renderHook(() => useStructuredChat('w3c-status'));
+    feed(idle(3));
+    act(() => r.current.send('hello'));
+    expect(r.current.busy).toBe(true); // sending: no status frame says so yet
+    await flush();
+    expect(r.current.busy).toBe(true);
+    feed(working(4));
+    expect(r.current.busy).toBe(true); // now from the snapshot
+    feed(idle(5));
+    expect(r.current.busy).toBe(false); // sending did not outlive the first status frame
+  });
+
+  test('with no status frame the old fold still works', async () => {
+    vi.spyOn(api, 'sendStructuredMessage').mockResolvedValue(undefined as any);
+    const { result: r } = renderHook(() => useStructuredChat('w3c-status'));
+    // An old daemon: no header. The frames decide, as before.
+    feed({ type: 'user', message: { role: 'user', content: 'go' } }, streamStart, toolStart);
+    expect(r.current.busy).toBe(true);
+    feed(assistantTool, result);
+    expect(r.current.busy).toBe(false);
+    act(() => r.current.send('more'));
+    expect(r.current.busy).toBe(true);
+    await flush();
+    feed(streamStart);
+    feed({ type: 'permission', pending: { requestId: 'r1', toolName: 'Bash', input: {} } });
+    expect(r.current.busy).toBe(false);
+    feed(streamStart);
+    act(() => cbs.onClose?.());
+    expect(r.current.busy).toBe(false);
+    // The synthetic settle of the daemon still clears a replay that ends mid-turn.
+    act(() => cbs.onReset?.());
+    feed(streamStart, toolStart, { type: 'result', subtype: 'backfill', is_error: false });
+    expect(r.current.busy).toBe(false);
+  });
+}

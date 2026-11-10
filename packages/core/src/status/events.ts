@@ -10,6 +10,25 @@
 // normalizeCodex below never produce it; PTY-driven threads have no such signal to observe.
 export type ThreadStatus = 'queued' | 'starting' | 'working' | 'needs_input' | 'idle' | 'done' | 'error' | 'scheduled';
 
+/**
+ * The status of one thread as StatusService last committed it (W3-C). The same object goes to every
+ * reader: the `system/status` frame of the structured socket, the `terminal:status` event, and
+ * GET /api/terminals/:id/status.
+ *
+ * `(generation, sequence)` orders the snapshots: `generation` rises with each daemon start and `sequence`
+ * with each committed transition of that daemon. A reader ignores a snapshot that is lower than the last one.
+ */
+export interface StatusSnapshot {
+  status: ThreadStatus;
+  /** True while a turn is in flight: the committed status is `working`. A client shows "Working" from this alone. */
+  turnOpen: boolean;
+  generation: number;
+  sequence: number;
+  /** When the transition was committed (ISO). */
+  at: string;
+  activity: string | null;
+}
+
 export interface NormalizedEvent {
   /** null = this event doesn't change the status (still useful for sessionId capture). */
   status: ThreadStatus | null;

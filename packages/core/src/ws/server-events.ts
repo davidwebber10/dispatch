@@ -32,6 +32,10 @@ export type TerminalStatusEvent = {
   threadStatus?: string;
   /** Null clears the activity line; absent leaves it as it is. */
   activity?: string | null;
+  /** The status snapshot of this transition (W3-C). Absent from a sender that is not StatusService. */
+  turnOpen?: boolean;
+  generation?: number;
+  sequence?: number;
 };
 /** The stall watchdog (W1-D): a working thread with no output past the threshold; null clears the flag. */
 export type TerminalStallEvent = { type: 'terminal:stall'; terminalId: string; stalledSince: string | null };

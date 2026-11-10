@@ -1,12 +1,10 @@
-import type { StatusService } from '../status/service.js';
+import { StatusService } from '../status/service.js';
 import type Database from 'better-sqlite3';
 import type { SessionStatus } from '../types.js';
 import type { PTYManager } from '../pty/manager.js';
 import type { EventBroadcaster } from '../ws/events.js';
-import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import { getProvider } from '../providers/registry.js';
-import { aggregateSessionStatus } from '../status/aggregate.js';
 
 // Output timing is an inferred fallback for terminals without native lifecycle
 // observations. Silence or a terminal redraw cannot override an authoritative event.
@@ -40,7 +38,7 @@ export function ptyStatusTick(
 ): void {
   {
     const now = Date.now();
-    const touchedSessions = new Set<string>();
+    let detached: StatusService | undefined;
 
     for (const id of ptyManager.liveIds()) {
       const term = terminalsDb.getById(db, id);
@@ -64,21 +62,10 @@ export function ptyStatusTick(
         ? 'working'
         : current === 'needs_input' ? 'needs_input' : 'waiting';
 
-      if (next !== current) {
-        if (lifecycle && next !== 'needs_input') { lifecycle.markInferred(id, next); continue; }
-        db.prepare(`INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES (?,?,'inferred',?) ON CONFLICT(terminal_id) DO UPDATE SET status=excluded.status, source='inferred', observed_at=excluded.observed_at`).run(id,next,new Date().toISOString());
-        terminalsDb.updateStatus(db, id, next);
-        broadcaster.broadcast({ type: 'terminal:status', terminalId: id, status: next });
-        touchedSessions.add(term.session_id);
-      }
-    }
-
-    for (const sessionId of touchedSessions) {
-      const sessionStatus = aggregateSessionStatus(terminalsDb.listBySession(db, sessionId).map((t) => t.status || 'waiting'));
-      const session = sessionsDb.getById(db, sessionId);
-      if (session && session.status !== 'done' && session.status !== sessionStatus) {
-        sessionsDb.updateStatus(db, sessionId, sessionStatus);
-        broadcaster.broadcast({ type: 'session:status', sessionId, status: sessionStatus, lastActivityAt: session.last_activity_at });
+      // `next` differs from `current` only as working <-> waiting: a `needs_input` row keeps its status above.
+      // StatusService is the one writer of the status (W3-C). A caller with no service (a test) gets a detached one.
+      if (next !== current && next !== 'needs_input') {
+        (lifecycle ?? (detached ??= StatusService.detached(db, broadcaster))).markInferred(id, next);
       }
     }
   }

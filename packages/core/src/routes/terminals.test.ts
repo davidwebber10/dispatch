@@ -445,3 +445,37 @@ describe('GET /api/terminals/:id/diagnostics', () => {
     expect(body.explanation.rule).toBe('idle');
   });
 });
+
+// W3-C: the status snapshot over REST, for a client whose send got no status frame in 10 s.
+describe('GET /api/terminals/:id/status', () => {
+  function world() {
+    const db = new Database(':memory:');
+    initSchema(db);
+    sessionsDb.create(db, { id: 'proj', provider: 'claude-code', name: 'p', workingDir: '/x' });
+    terminalsDb.create(db, { id: 't1', sessionId: 'proj', type: 'claude-code', label: 'Worker', skipPermissions: true });
+    const status = new StatusService(db, { broadcast: vi.fn() });
+    const session = { getTerminal: (id: string) => { const row = terminalsDb.getById(db, id); return row ? terminalsDb.rowToTerminal(row) : null; } };
+    const a = express();
+    a.use(express.json());
+    a.use('/api', createTerminalsRouter(session as unknown as SessionService, undefined, status));
+    return { status, a };
+  }
+
+  it('answers the same snapshot as the status service', async () => {
+    const { status, a } = world();
+    status.markWorking('t1', 'Working…');
+    const res = await request(a).get('/api/terminals/t1/status');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(status.snapshot('t1'));
+    expect(res.body).toMatchObject({ status: 'working', turnOpen: true, activity: 'Working…' });
+    status.markIdle('t1');
+    expect((await request(a).get('/api/terminals/t1/status')).body).toMatchObject({ status: 'idle', turnOpen: false, sequence: res.body.sequence + 1 });
+  });
+
+  it('answers 404 for an unknown thread and 503 with no status service', async () => {
+    const { a } = world();
+    expect((await request(a).get('/api/terminals/nope/status')).status).toBe(404);
+    const bare = await request(app({ getTerminal: () => ({ id: 't1' }) as never })).get('/api/terminals/t1/status');
+    expect(bare.status).toBe(503);
+  });
+});

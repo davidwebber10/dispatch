@@ -503,3 +503,96 @@ describe('batched replay', () => {
     } finally { server.close(); }
   });
 });
+
+// ---- The status header (W3-C, one status authority) ----
+//
+// The client no longer works out "busy" from the replayed frames. The daemon says it: the first frame of a
+// connection is `{ type: 'system', subtype: 'status', ...StatusSnapshot }`, and each committed transition
+// sends the same frame live. The synthetic settle stays one release for a cached old client.
+describe('the status header', () => {
+  const snap = (over: Record<string, unknown> = {}) => ({ status: 'idle', turnOpen: false, generation: 7, sequence: 3, at: '2026-11-09T10:00:00.000Z', activity: null, ...over });
+  const source = (current: unknown) => {
+    const listeners = new Set<(id: string, s: unknown) => void>();
+    return {
+      listeners,
+      snapshot: vi.fn(() => current as any),
+      onStatus: (l: (id: string, s: unknown) => void) => { listeners.add(l); return () => { listeners.delete(l); }; },
+      fire: (id: string, s: unknown) => { for (const l of [...listeners]) l(id, s); },
+    };
+  };
+  const closableWs = () => {
+    const sent: any[] = [];
+    const handlers: Record<string, () => void> = {};
+    return { sent, close: () => handlers.close?.(), ws: { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)), close: () => {}, on: (e: string, fn: () => void) => { handlers[e] = fn; } } as any };
+  };
+  const connect = (ws: any, req: any, ring: unknown[], status: unknown, settled?: () => boolean) =>
+    handleStructuredConnection(ws, req, ringManager(ring), undefined, undefined, undefined, settled, undefined, undefined, status as any);
+
+  it('the status frame is the first frame', () => {
+    const { ws, sent } = fakeWs();
+    connect(ws, REQ, [REAL_TURN], source(snap({ status: 'working', turnOpen: true, activity: 'Working…' })));
+    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, activity: 'Working…' }) }, REAL_TURN]);
+
+    // Before the inactive sentinel too.
+    const empty = fakeWs();
+    connect(empty.ws, REQ, [], source(snap()));
+    expect(empty.sent).toEqual([{ type: 'system', subtype: 'status', ...snap() }, { type: 'system', subtype: 'inactive' }]);
+  });
+
+  it('a replay that ends mid-turn on a settled thread has turnOpen false in the header', () => {
+    const { ws, sent } = fakeWs();
+    connect(ws, REQ, MID_TURN_RING, source(snap()), () => true);
+    expect(sent[0]).toEqual({ type: 'system', subtype: 'status', ...snap() });
+    expect(sent[0].turnOpen).toBe(false);
+    expect(sent.slice(1, 1 + MID_TURN_RING.length)).toEqual(MID_TURN_RING);
+  });
+
+  it('old client: the synthetic settle still follows a mid-turn replay of a settled thread', () => {
+    const { ws, sent } = fakeWs();
+    connect(ws, REQ, MID_TURN_RING, source(snap()), () => true);
+    expect(sent[sent.length - 1]).toEqual({ type: 'result', subtype: 'backfill', is_error: false });
+  });
+
+  it('a live transition sends one status frame with the next sequence', () => {
+    const { ws, sent } = fakeWs();
+    const status = source(snap({ sequence: 3 }));
+    connect(ws, REQ, [REAL_TURN], status);
+    sent.length = 0;
+    status.fire('t1', snap({ status: 'working', turnOpen: true, sequence: 4 }));
+    expect(sent).toEqual([{ type: 'system', subtype: 'status', ...snap({ status: 'working', turnOpen: true, sequence: 4 }) }]);
+    status.fire('t1', snap({ sequence: 5 }));
+    expect(sent.map((f) => f.sequence)).toEqual([4, 5]);
+  });
+
+  it('a transition of another thread is not sent, and the listener goes with the socket', () => {
+    const { ws, sent, close } = closableWs();
+    const status = source(snap());
+    connect(ws, REQ, [REAL_TURN], status);
+    sent.length = 0;
+    status.fire('other', snap({ sequence: 9 }));
+    expect(sent).toEqual([]);
+    expect(status.listeners.size).toBe(1);
+    close();
+    expect(status.listeners.size).toBe(0);
+  });
+
+  it('batch=1: the status frame is the first event of the replay frame', () => {
+    const { ws, sent } = fakeWs();
+    connect(ws, { url: '/api/terminals/t1/structured-ws?tail=200&batch=1' }, [REAL_TURN], source(snap()));
+    expect(sent).toEqual([{ type: 'replay', done: true, events: [{ type: 'system', subtype: 'status', ...snap() }, REAL_TURN] }]);
+  });
+
+  it('with no status source, an unknown thread or a source that throws, the frames are the old ones', () => {
+    const none = fakeWs();
+    connect(none.ws, REQ, [REAL_TURN], undefined);
+    expect(none.sent).toEqual([REAL_TURN]);
+
+    const unknown = fakeWs();
+    connect(unknown.ws, REQ, [REAL_TURN], source(null));
+    expect(unknown.sent).toEqual([REAL_TURN]);
+
+    const broken = fakeWs();
+    connect(broken.ws, REQ, [REAL_TURN], { snapshot: () => { throw new Error('db gone'); }, onStatus: () => { throw new Error('db gone'); } });
+    expect(broken.sent).toEqual([REAL_TURN]);
+  });
+});

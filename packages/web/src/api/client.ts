@@ -686,4 +686,7 @@ export const api = {
   analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
   analyticsTracking: () => req<AnalyticsTracking>('/api/analytics/tracking'),
   analyticsControlPlane: (r: AnalyticsRange) => req<ControlPlaneAnalytics>(`/api/analytics/control-plane${qs(r)}`),
+
+  // The status snapshot of a thread (W3-C): what the `system/status` frame of the structured socket carries.
+  getTerminalStatus: (id: string) => req<import('./types').StatusSnapshot>(`/api/terminals/${encodeURIComponent(id)}/status`),
 };

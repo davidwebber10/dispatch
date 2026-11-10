@@ -4,6 +4,7 @@ import type { ConvItem, PendingPermission } from '../../../api/types';
 import { api, type ContentBlock } from '../../../api/client';
 import { sendFailureText } from '../../../lib/sendError';
 import { threadViewCache } from '../../../lib/threadViewCache';
+import { useChatBusy } from './useChatBusy';
 import { useChatHistory } from './useChatHistory';
 import { useChatQuestions } from './useChatQuestions';
 import { useChatSocket } from './useChatSocket';
@@ -46,7 +47,8 @@ export interface StructuredChat {
   /** True while `items` is what this page last saw of the thread (the view cache, or the items
    *  kept through a reconnect) and the daemon's replay has not replaced it yet (W2-I). */
   stale: boolean;
-  busy: boolean;        // a turn is in flight (sent or streaming, no result yet)
+  /** A turn is in flight. From the daemon's status snapshot (`turnOpen`), or a send that is on its way (W3-C). */
+  busy: boolean;
   model?: string;
   /** Context tokens used AS OF the latest assistant turn (input + cache_read + cache_creation).
    *  Undefined until the first assistant event of the thread lands. Compare against
@@ -129,7 +131,8 @@ export interface StructuredChat {
  * Drives a structured (stream-json) thread for the chat UI. Opens the live ws,
  * folds raw events into a flat ConvItem timeline, pairs tool calls with their
  * results by id (robust to parallel/interleaved tools), captures the per-turn
- * `result` (cost/tokens/duration) and the model, and tracks a `busy` flag.
+ * `result` (cost/tokens/duration) and the model. `busy` is not folded from the events: it is
+ * the daemon's status snapshot (useChatBusy).
  *
  * AUTO-ADAPT streaming: once any `stream_event` is seen for the thread we set a
  * streaming flag and build the assistant side (text, thinking, tool_use args)
@@ -159,7 +162,9 @@ export function useStructuredChat(
   // so a tab switch back paints content in the same frame. They are stale until the replay replaces them.
   const [items, setItems] = useState<ConvItem[]>(() => (terminalId ? threadViewCache.get(terminalId) ?? [] : []));
   const [stale, setStale] = useState(() => items.length > 0);
-  const [busy, setBusy] = useState(false);
+  // W3-C: "busy" is the daemon's status snapshot, or a send on its way. No frame of the fold sets it.
+  const busyControl = useChatBusy(terminalId);
+  const { busy, beginSending, sendAccepted, sendFailed } = busyControl;
   const [model, setModel] = useState<string | undefined>();
   const [authRequired, setAuthRequired] = useState<AuthRequired | null>(null);
   const [contextTokens, setContextTokens] = useState<number | undefined>();
@@ -176,19 +181,19 @@ export function useStructuredChat(
 
   // Surface a failed send in the timeline and stop the spinner (P0c).
   const showSendFailure = useCallback((err: unknown) => {
-    setBusy(false);
+    sendFailed();
     setItems((p) => [...p, { kind: 'result', isError: true, text: sendFailureText(err) }]);
-  }, []);
+  }, [sendFailed]);
 
   // The pending question and its actions (useChatQuestions), the older-history paging
   // (useChatHistory) and the socket fold (useChatSocket). The order is the order the hooks had
   // before the split: the history's items effect runs before the socket effect.
   const { pending, setPending, permissionRef, replyToQuestion, denyQuestion, replyFromCard, denyFromCard, answer } =
-    useChatQuestions(terminalId, setBusy, showSendFailure);
+    useChatQuestions(terminalId, busyControl, showSendFailure);
   const history = useChatHistory(terminalId, pageable, items, setItems, stale);
   const { hasMore, loadingOlder, loadOlder } = history;
   useChatSocket({
-    terminalId, sessionId, setItems, setStale, setBusy, setModel, setAuthRequired, setContextTokens, setContextWindow,
+    terminalId, sessionId, setItems, setStale, busy: busyControl, setModel, setAuthRequired, setContextTokens, setContextWindow,
     setCompacting, setCompactResult, setApiRetry, setPending, permissionRef, history,
   });
 
@@ -228,11 +233,11 @@ export function useStructuredChat(
         ? p.map((it) => { if (it.localId !== localId) return it; const { sendState: _s, ...rest } = it; return state ? { ...rest, sendState: state } : rest; })
         : p));
     };
-    setBusy(true);
+    beginSending();
     // P0c: the POST rejects (e.g. the claude process died → 400) — surface it and
     // stop spinning instead of leaving "Working…" forever. The bubble is marked failed and offers Retry.
-    api.sendStructuredMessage(terminalId, payload).then(() => settle(undefined), (err) => { settle('failed'); showSendFailure(err); });
-  }, [terminalId, replyToQuestion, showSendFailure]);
+    api.sendStructuredMessage(terminalId, payload).then(() => { settle(undefined); sendAccepted(); }, (err) => { settle('failed'); showSendFailure(err); });
+  }, [terminalId, replyToQuestion, showSendFailure, beginSending, sendAccepted]);
 
   const retrySend = useCallback((localId: string) => {
     const payload = localSendsRef.current.get(localId);

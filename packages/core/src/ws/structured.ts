@@ -4,6 +4,22 @@ import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
 import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
 import { wsMaxBufferedBytes } from '../caps.js';
+import type { StatusSnapshot } from '../status/events.js';
+
+/**
+ * The status authority as this socket needs it (W3-C): StatusService. `snapshot` is the status as last
+ * committed (null for an unknown thread); `onStatus` calls back after each committed transition and
+ * returns the function that removes the listener.
+ */
+export interface StatusSource {
+  snapshot(terminalId: string): StatusSnapshot | null;
+  onStatus(listener: (terminalId: string, snapshot: StatusSnapshot) => void): () => void;
+}
+
+/** The frame that carries a status snapshot: the first frame of a connection, then one per transition. */
+function statusFrame(snapshot: StatusSnapshot): { type: 'system'; subtype: 'status' } & StatusSnapshot {
+  return { type: 'system', subtype: 'status', ...snapshot };
+}
 
 /**
  * True iff at least one ring event would fold into a VISIBLE conversation item in the
@@ -103,6 +119,14 @@ export function handleStructuredConnection(
    * database kept it. Sent as the same `permission` frame as a live one, so the same inline card shows.
    */
   restoredPending?: (terminalId: string) => unknown,
+  /**
+   * The status authority (W3-C). With it, the first frame of the connection is the status snapshot
+   * (`{ type: 'system', subtype: 'status', status, turnOpen, generation, sequence, at, activity }`), before
+   * the replay, and each committed transition sends the same frame live. The client shows "Working" from
+   * `turnOpen` and no longer from the frames it sees. Absent, or a thread it does not know: no status frame
+   * (the client then keeps its old fold of the frames).
+   */
+  status?: StatusSource,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -136,14 +160,22 @@ export function handleStructuredConnection(
   // newest-window fetch (since removed: it raced the replay and doubled transcripts). Sent
   // BEFORE replay; harmless alongside one, since the client only hydrates while nothing
   // conversational is rendered (see useStructuredChat's 'system'/'inactive' handler).
-  // The frames the client gets first, in order: the sentinel, the replay, the settle, the pending permission.
+  // The frames the client gets first, in order: the status header (W3-C), the sentinel, the replay, the settle, the pending permission.
   // They are sent in step with the client's free buffer space (see below); live events that arrive meanwhile wait behind them.
   const frames: unknown[] = [];
+  // W3-C: the status header. It is the first frame, so the client knows `turnOpen` before it folds one
+  // replayed frame. A source that throws costs the header only, never the replay.
+  let header: StatusSnapshot | null = null;
+  try { header = status?.snapshot(id) ?? null; } catch { header = null; }
+  if (header) frames.push(statusFrame(header));
   if (!hasRenderableEvents(events)) frames.push({ type: 'system', subtype: 'inactive' });
   for (const e of events) frames.push(e);
   // Phantom-"Working…" guard: a replay that ends mid-turn latches the client's busy spinner.
   // If the daemon's own status says this thread is settled — and no pending permission is
   // about to be surfaced (that frame clears busy itself) — append the swallowed settle.
+  // REMOVE AFTER v4.5.0 (W3-C): a client from v4.5.0 on reads `turnOpen` from the status header and ignores
+  // this frame for "busy". It stays one release for a cached older web build, with `replayLeavesBusy` and
+  // the `isThreadSettled` parameter. The release note of v4.5.0 names the removal.
   let settled = false;
   try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
   if (settled && !manager.getPending(id) && replayLeavesBusy(events)) {
@@ -198,9 +230,16 @@ export function handleStructuredConnection(
   manager.on('exit', onExit);
   manager.on('permission', onPermission);
   manager.on('permission-cleared', onCleared);
+  // W3-C: the live status frame. One per committed transition of this thread, in the commit order; it waits
+  // behind the replay like every live event, so it never arrives before the header.
+  let offStatus: (() => void) | undefined;
+  try {
+    offStatus = status?.onStatus((tid, snapshot) => { if (tid === id) emit(JSON.stringify(statusFrame(snapshot))); });
+  } catch { offStatus = undefined; }
   ws.on('close', () => {
     manager.off('event', onEvent); manager.off('exit', onExit); manager.off('permission', onPermission);
     manager.off('permission-cleared', onCleared);
+    try { offStatus?.(); } catch { /* the listener list is gone with the service */ }
   });
   // Send the frames, then the live events held meanwhile, one at a time. Each waits until the client has room (half
   // the back-pressure limit), so neither a big history nor a backlog of held events is queued all at once. There is

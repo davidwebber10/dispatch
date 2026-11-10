@@ -140,6 +140,7 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
           (tid) => sessionService.getTerminal(tid)?.status !== 'working',
           (tid) => sessionService.activeModel(tid),
           (tid) => sessionService.getPendingPermission(tid),
+          i.statusService, // W3-C: the status header and the live status frame
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {

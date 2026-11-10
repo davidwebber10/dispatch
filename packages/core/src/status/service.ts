@@ -5,8 +5,8 @@ import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import { ThreadConfigStore } from '../sessions/thread-config.js';
 import * as sessionsDb from '../db/sessions.js';
-import type { EventBroadcaster } from '../ws/events.js';
-import type { ThreadStatus } from './events.js';
+import { createNoopBroadcaster, type EventBroadcaster } from '../ws/events.js';
+import type { StatusSnapshot, ThreadStatus } from './events.js';
 import { providerForHook } from '../providers/registry.js';
 import { aggregateSessionStatus } from './aggregate.js';
 import { resolveTranscriptPath } from '../sessions/transcript-path.js';
@@ -29,6 +29,30 @@ const TO_TERMINAL: Record<ThreadStatus, string> = {
 
 export type TurnBoundary = { terminalId: string; sessionId: string; threadStatus: ThreadStatus; phase: 'baseline' | 'start' | 'end'; nativeTurnId?: string };
 export type TurnBoundaryListener = (event: TurnBoundary) => void;
+
+export type StatusListener = (terminalId: string, snapshot: StatusSnapshot) => void;
+
+/** One meaning of "a turn is open" for every reader (W3-C): the committed status is `working`. */
+function turnOpenOf(status: ThreadStatus): boolean { return status === 'working'; }
+
+/**
+ * `generation` of the status snapshots of one daemon process: the start time in milliseconds, so a later
+ * daemon has a higher one. Two services made in the same millisecond (tests) still get different values.
+ */
+let lastGeneration = 0;
+function nextGeneration(): number {
+  lastGeneration = Math.max(Date.now(), lastGeneration + 1);
+  return lastGeneration;
+}
+
+/**
+ * The ONE write of `terminals.status` (W3-C). The column is a mirror of the status that StatusService
+ * committed; no other module writes it (guard test: status/service.test.ts, "no code path writes
+ * terminals.status outside apply").
+ */
+function writeMirror(db: Database.Database, terminalId: string, terminalStatus: string): void {
+  terminalsDb.updateStatus(db, terminalId, terminalStatus);
+}
 
 export type SettledListener = (info: { terminalId: string; sessionId: string; threadStatus: ThreadStatus }) => void;
 
@@ -60,15 +84,92 @@ export class StatusService {
     };
   }
 
+  // ── The status authority (W3-C) ────────────────────────────────────────────
+  // `thread_lifecycle` is the record of a thread's status and `terminals.status` is its mirror; both are
+  // written here, in one transaction. Each committed transition gets the next `sequence` of this daemon
+  // (`generation`), and every reader gets the same snapshot of it: the `terminal:status` event, the
+  // `system/status` frame of the structured socket, and GET /api/terminals/:id/status.
+  private readonly generation = nextGeneration();
+  private sequence = 0;
+  /** Per thread: the sequence and the activity text of its last committed transition in this daemon. */
+  private last = new Map<string, { sequence: number; activity: string | null }>();
+  private statusListeners: StatusListener[] = [];
+
+  /** A StatusService with no clients to tell (an isolated SessionService, a test). */
+  static detached(db: Database.Database, broadcaster?: EventBroadcaster): StatusService {
+    return new StatusService(db, broadcaster ?? createNoopBroadcaster());
+  }
+
+  /**
+   * The daemon's shutdown only: a turn that the shutdown cut is written back as `working`, so the next
+   * boot finds it (SessionService.shutdownPreservingInterruptedTurns). No event and no listener: the
+   * clients are going away with the daemon, and the next daemon reads the row.
+   */
+  static restoreInterruptedTurn(db: Database.Database, terminalId: string): void {
+    writeMirror(db, terminalId, 'working');
+  }
+
+  /** Subscribe to every committed status transition. Returns the function that removes the listener. */
+  onStatus(listener: StatusListener): () => void {
+    this.statusListeners.push(listener);
+    return () => { this.statusListeners = this.statusListeners.filter((l) => l !== listener); };
+  }
+
+  /**
+   * The status of a thread as last committed: what a client that connects now must show. Null for an
+   * unknown thread. `sequence` is 0 for a thread with no transition in this daemon yet (the stored status
+   * of the previous one); `turnOpen` has one definition, turnOpenOf.
+   */
+  snapshot(terminalId: string): StatusSnapshot | null {
+    if (!this.db.open) return null;
+    const terminal = terminalsDb.getById(this.db, terminalId);
+    if (!terminal) return null;
+    const lifecycle = this.db.prepare('SELECT status, observed_at FROM thread_lifecycle WHERE terminal_id=?').get(terminalId) as
+      { status: string; observed_at: string } | undefined;
+    const status = threadStatusOf(terminal.status ?? 'waiting', lifecycle?.status);
+    const last = this.last.get(terminalId);
+    return {
+      status, turnOpen: turnOpenOf(status), generation: this.generation, sequence: last?.sequence ?? 0,
+      at: lifecycle?.observed_at ?? terminal.created_at ?? new Date(0).toISOString(), activity: last?.activity ?? null,
+    };
+  }
+
+  /**
+   * Tell every reader about the transition that this transaction commits: one `terminal:status` event and
+   * one call of each status listener, with the same sequence. Runs as a deferred effect, so nothing is
+   * sent for a transaction that rolled back. `known.threadStatus` absent: only the coarse status is known
+   * (an inferred status); `known.activity` absent: the activity text stays as it was.
+   */
+  private publish(terminalId: string, terminalStatus: string, at: string, known: { threadStatus?: ThreadStatus; activity?: string | null }): void {
+    const sequence = ++this.sequence;
+    const status = known.threadStatus ?? threadStatusOf(terminalStatus, null);
+    this.defer(() => {
+      const activity = 'activity' in known ? known.activity ?? null : this.last.get(terminalId)?.activity ?? null;
+      this.last.set(terminalId, { sequence, activity });
+      const snapshot: StatusSnapshot = { status, turnOpen: turnOpenOf(status), generation: this.generation, sequence, at, activity };
+      this.broadcaster.broadcast({
+        type: 'terminal:status', terminalId, status: terminalStatus,
+        ...(known.threadStatus ? { threadStatus: known.threadStatus } : {}),
+        ...('activity' in known ? { activity: known.activity ?? null } : {}),
+        turnOpen: snapshot.turnOpen, generation: snapshot.generation, sequence,
+      });
+      for (const listener of this.statusListeners) {
+        try { listener(terminalId, snapshot); }
+        catch (error) { console.warn('Status listener failed:', error instanceof Error ? error.message : String(error)); }
+      }
+    });
+  }
+
   markInferred(terminalId: string, status: 'working' | 'waiting'): void {
     this.transition(() => {
       const terminal = terminalsDb.getById(this.db, terminalId);
       if (!terminal || this.db.prepare("SELECT 1 FROM thread_lifecycle WHERE terminal_id=? AND source='authoritative'").get(terminalId)) return;
-      terminalsDb.updateStatus(this.db, terminalId, status);
+      const at = new Date().toISOString();
+      writeMirror(this.db, terminalId, status);
       this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id,status,source,observed_at) VALUES (?,?,'inferred',?)
-        ON CONFLICT(terminal_id) DO UPDATE SET status=excluded.status,source='inferred',observed_at=excluded.observed_at`).run(terminalId,status,new Date().toISOString());
-      logLifecycle(this.db,{ terminalId,type: `status.${status}`,observedAt: new Date().toISOString() },'inferred');
-      this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status }));
+        ON CONFLICT(terminal_id) DO UPDATE SET status=excluded.status,source='inferred',observed_at=excluded.observed_at`).run(terminalId,status,at);
+      logLifecycle(this.db,{ terminalId,type: `status.${status}`,observedAt: at },'inferred');
+      this.publish(terminalId, status, at, {});
       this.aggregateSession(terminal.session_id);
     });
   }
@@ -380,8 +481,16 @@ export class StatusService {
   /** After boot recovery, persisted working state must have a live owner. */
   reconcileProcesses(isAlive: (terminalId: string) => boolean): void {
     if (!this.db.open) return;
-    const rows = this.db.prepare("SELECT id FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')").all() as { id: string }[];
-    for (const { id } of rows) if (!isAlive(id)) this.markExited(id, 1);
+    const rows = this.db.prepare("SELECT id, status FROM terminals WHERE archived_at IS NULL AND status IN ('working','needs_input')").all() as { id: string; status: string }[];
+    for (const { id, status } of rows) {
+      if (!isAlive(id)) { this.markExited(id, 1); continue; }
+      // W3-C: a live process is not a live turn. A client that reconnects before this check starts the
+      // process of its thread again, so the process is alive, but the turn died with the daemon before.
+      // `working` with no transition in THIS daemon is that daemon's status: every turn of this one (the
+      // boot kickstart too) went through a transition. Only a harness thread: its process is the daemon's own.
+      if (status === 'working' && !this.last.has(id)
+        && this.db.prepare('SELECT 1 FROM thread_lifecycle WHERE terminal_id=? AND generation IS NOT NULL').get(id)) this.markFailed(id);
+    }
   }
 
   markFailed(terminalId: string): void {
@@ -427,25 +536,27 @@ export class StatusService {
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return false;
     this.transition(() => {
+      const at = new Date().toISOString();
       this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, 'idle', 'authoritative', ?)
         ON CONFLICT(terminal_id) DO UPDATE SET status='idle', source=excluded.source, observed_at=excluded.observed_at`)
-        .run(terminalId, terminal.external_id ?? '', new Date().toISOString());
-      terminalsDb.updateStatus(this.db, terminalId, TO_TERMINAL.idle);
-      logLifecycle(this.db, { terminalId, type: 'status.reset', observedAt: new Date().toISOString() }, 'applied');
-      this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: TO_TERMINAL.idle, threadStatus: 'idle', activity: null }));
+        .run(terminalId, terminal.external_id ?? '', at);
+      writeMirror(this.db, terminalId, TO_TERMINAL.idle);
+      logLifecycle(this.db, { terminalId, type: 'status.reset', observedAt: at }, 'applied');
+      this.publish(terminalId, TO_TERMINAL.idle, at, { threadStatus: 'idle', activity: null });
       this.aggregateSession(terminal.session_id);
     });
     return true;
   }
 
   private apply(sessionId: string, terminalId: string, status: ThreadStatus, activity?: string, opts: { activity?: boolean } = {}): void {
+    const at = new Date().toISOString();
     this.db.prepare(`INSERT INTO thread_lifecycle(terminal_id, external_session_id, status, source, observed_at) VALUES (?, ?, ?, 'authoritative', ?)
       ON CONFLICT(terminal_id) DO UPDATE SET external_session_id=excluded.external_session_id, status=excluded.status, source=excluded.source, observed_at=excluded.observed_at`)
-      .run(terminalId, terminalsDb.getById(this.db, terminalId)?.external_id ?? '', status, new Date().toISOString());
+      .run(terminalId, terminalsDb.getById(this.db, terminalId)?.external_id ?? '', status, at);
     const prior = terminalsDb.getById(this.db, terminalId)?.status; // persisted enum before update
     const terminalStatus = TO_TERMINAL[status];
-    terminalsDb.updateStatus(this.db, terminalId, terminalStatus);
-    if (!this.currentEvent) logLifecycle(this.db, { terminalId, type: `status.${status}`, observedAt: new Date().toISOString() }, 'applied');
+    writeMirror(this.db, terminalId, terminalStatus);
+    if (!this.currentEvent) logLifecycle(this.db, { terminalId, type: `status.${status}`, observedAt: at }, 'applied');
     // Activity means "the thread thought about something": a turn started/ended, it
     // asked for input, went dormant, or errored. 'starting' (SessionStart) is an
     // open/revive edge — attaching to a thread must not make it look recently active.
@@ -469,7 +580,7 @@ export class StatusService {
         current.boardState?.override ? { boardState: { ...current.boardState, override: null } } : null
       ));
     } catch { /* best effort — status must never fail on board bookkeeping */ }
-    this.defer(() => this.broadcaster.broadcast({ type: 'terminal:status', terminalId, status: terminalStatus, threadStatus: status, activity: activity ?? null }));
+    this.publish(terminalId, terminalStatus, at, { threadStatus: status, activity: activity ?? null });
     if (status !== 'starting' && prior === 'working' && (terminalStatus === 'waiting' || terminalStatus === 'needs_input')) {
       for (const fn of this.settledListeners) {
         this.defer(() => fn({ terminalId, sessionId, threadStatus: status }));

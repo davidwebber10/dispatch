@@ -8,6 +8,7 @@ import { classifyUserText } from '../../../lib/taskNotification';
 import { threadViewCache } from '../../../lib/threadViewCache';
 import { shownThisTurn, type ChatHistory } from './useChatHistory';
 import type { ApiRetry, AuthRequired, CompactResult } from './useStructuredChat';
+import type { ChatBusy } from './useChatBusy';
 
 // The live socket of a structured chat and the fold of its events into the timeline. Moved out of
 // useStructuredChat.ts unchanged (W3-C, move-only split).
@@ -165,7 +166,8 @@ export function useChatSocket(args: {
   sessionId?: string;
   setItems: Dispatch<SetStateAction<ConvItem[]>>;
   setStale: Dispatch<SetStateAction<boolean>>;
-  setBusy: Dispatch<SetStateAction<boolean>>;
+  /** "Is a turn in flight?" is the daemon's answer, not this fold's (W3-C): see useChatBusy. */
+  busy: Pick<ChatBusy, 'frame' | 'socketReset' | 'socketClosed' | 'sendFailed'>;
   setModel: Dispatch<SetStateAction<string | undefined>>;
   setAuthRequired: Dispatch<SetStateAction<AuthRequired | null>>;
   setContextTokens: Dispatch<SetStateAction<number | undefined>>;
@@ -178,7 +180,7 @@ export function useChatSocket(args: {
   history: ChatHistory;
 }): void {
   const {
-    terminalId, sessionId, setItems, setStale, setBusy, setModel, setAuthRequired, setContextTokens, setContextWindow,
+    terminalId, sessionId, setItems, setStale, busy, setModel, setAuthRequired, setContextTokens, setContextWindow,
     setCompacting, setCompactResult, setApiRetry, setPending, permissionRef,
   } = args;
   const {
@@ -209,7 +211,7 @@ export function useChatSocket(args: {
 
   useEffect(() => {
     if (!terminalId) {
-      setItems([]); setStale(false); setBusy(false); setModel(undefined); setPending(null);
+      setItems([]); setStale(false); setModel(undefined); setPending(null);
       setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
       hasMoreRef.current = pageableRef.current; setHasMore(pageableRef.current);
       loadingOlderRef.current = false; setLoadingOlder(false);
@@ -223,7 +225,7 @@ export function useChatSocket(args: {
     let staleSet = new Set<ConvItem>(cached);
     let staleActive = cached.length > 0;
     setItems(cached); setStale(staleActive);
-    setBusy(false); setModel(undefined); setPending(null); setAuthRequired(null);
+    setModel(undefined); setPending(null); setAuthRequired(null);
     useActiveModel.getState().clear(terminalId); // the connect's system/model frame brings the current one
     setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null);
     hasMoreRef.current = pageableRef.current && !staleActive; setHasMore(hasMoreRef.current);
@@ -322,7 +324,7 @@ export function useChatSocket(args: {
         // before dropStale's updater, which is queued later.
         staleActive = true; setStale(true);
         setItems((p) => { staleSet = new Set(p); return p; });
-        setBusy(false);
+        busy.socketReset();
         setPending(null); // the server re-sends a still-pending permission after replay
         setAuthRequired(null); // the replay re-sends a standing system/auth_required
         setContextTokens(undefined); setContextWindow(undefined); setCompacting(false); setCompactResult(null); setApiRetry(null); // replay rebuilds these
@@ -337,9 +339,9 @@ export function useChatSocket(args: {
         inactiveHydratedRef.current = false; anchorBlockedRef.current = false;
       },
       onClose: () => {
-        // P0b safety net: if the ws drops we can't trust an in-flight turn to ever
-        // emit `result`, so stop spinning. A live reconnect re-sets busy via deltas.
-        setBusy(false);
+        // P0b safety net: with no socket nothing is known about the turn, so stop spinning.
+        // The status header of the next connection says what is true.
+        busy.socketClosed();
       },
       onReplayEnd: () => {
         // A batched replay is folded. A local bubble with no echo in it (its POST is still on its way)
@@ -351,6 +353,9 @@ export function useChatSocket(args: {
         });
       },
       onEvent: (event: any) => {
+        // W3-C: the daemon's status frame says whether a turn is in flight. It is not part of the
+        // timeline. Every other frame goes on to the fold, which no longer decides "busy".
+        if (busy.frame(event)) return;
         const type = event?.type;
         // W2-I: the first frame that can render (not a `system` line, not a permission) is the replay
         // or a live turn: the stale items go now, in the same render as what replaces them. The
@@ -402,7 +407,7 @@ export function useChatSocket(args: {
         }
 
         if (type === 'system' && event.subtype === 'spawn_error') {
-          setBusy(false);
+          busy.sendFailed(); // no turn will come of the send
           const why = typeof event.message === 'string' && event.message ? event.message : 'unknown error';
           setItems((p) => [...p, { kind: 'result', isError: true, text: `Could not start the thread: ${why}` }]);
           return;
@@ -441,7 +446,6 @@ export function useChatSocket(args: {
         if (type === 'permission') {
           if (event.pending) {
             setPending(event.pending as PendingPermission);
-            setBusy(false);
           } else {
             setPending(null);
           }
@@ -451,7 +455,6 @@ export function useChatSocket(args: {
         // --- Streaming protocol (Anthropic stream_event) ---------------------
         if (type === 'stream_event' && event.event) {
           streamingRef.current = true;
-          setBusy(true);
           clearApiRetry(); // the call went through — retries are over
           const se = event.event;
 
@@ -530,7 +533,6 @@ export function useChatSocket(args: {
         }
 
         if (type === 'assistant' && Array.isArray(event.message?.content)) {
-          setBusy(true);
           clearApiRetry(); // the call went through — retries are over
           // Context fill: the LATEST assistant call's usage (not a running sum — result.usage
           // sums every API round-trip in a multi-tool turn, badly over-counting). Recomputed
@@ -686,7 +688,6 @@ export function useChatSocket(args: {
 
         if (type === 'result') {
           flushNow(); // land any buffered trailing tokens before the footer
-          setBusy(false);
           // A turn that worked proves the login works again: the signed-out card goes.
           if (event.is_error !== true && event.subtype !== 'backfill') setAuthRequired(null);
           // A CLI blocked on a question cannot end a turn, so any card still up is stale. On
@@ -722,5 +723,5 @@ export function useChatSocket(args: {
       // stale: then the cache already holds the same items, and an empty view must not replace them.
       if (!staleActive) threadViewCache.put(terminalId, itemsRef.current);
     };
-  }, [terminalId, setPending, hydrateInactive]);
+  }, [terminalId, setPending, hydrateInactive, busy.frame, busy.socketReset, busy.socketClosed, busy.sendFailed]);
 }
