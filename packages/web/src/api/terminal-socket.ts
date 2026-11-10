@@ -158,7 +158,10 @@ export function openTerminalSocket(opts: Opts) {
       opts.onClose?.();
       connect();
     }, CONNECT_TIMEOUT_MS);
+    // Each handler acts only for the current socket (I3): a socket that close() or detach() dropped
+    // says nothing more to the consumer, whenever its events arrive.
     sock.onopen = () => {
+      if (ws !== sock) return;
       clearTimeout(connectTimer);
       open = true;
       backoff = 500;
@@ -169,6 +172,7 @@ export function openTerminalSocket(opts: Opts) {
       while (queue.length) { try { sock.send(queue.shift()!); } catch { /* ignore */ } }
     };
     sock.onmessage = (ev) => {
+      if (ws !== sock) return;
       if (expectMeta) {
         expectMeta = false;
         const meta = parseReplayMeta(ev.data);
@@ -177,7 +181,9 @@ export function openTerminalSocket(opts: Opts) {
       opts.onData(ev.data);
     };
     sock.onclose = () => {
+      if (ws !== sock) return;
       clearTimeout(connectTimer);
+      ws = null;
       open = false;
       opts.onClose?.();
       if (stopped) return;
@@ -211,8 +217,8 @@ export function openTerminalSocket(opts: Opts) {
       stopped = true;
       live.delete(reconnect);
       if (timer) clearTimeout(timer);
-      clearTimeout(connectTimer);
-      ws?.close();
+      // I3: the handlers go with the socket, so a late close event of a dead link reaches nobody.
+      detach();
     },
   };
 }

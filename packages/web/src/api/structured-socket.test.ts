@@ -157,3 +157,42 @@ test('onEventSeen gets each event before onEvent, in a replay and live', () => {
   expect(got).toEqual(['seen 1', 'event 1', 'seen 2', 'event 2', 'seen 3', 'event 3']);
   sock.close();
 });
+
+// ---- I3 (final review of v4.5.0): a closed socket reaches nobody ----
+/** A browser socket: close() does not fire `onclose` at once. A dead link fires it much later. */
+class LateCloseWS implements TerminalWS {
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  onmessage: ((ev: { data: string }) => void) | null = null;
+  closeCalls = 0;
+  send() {}
+  close() { this.closeCalls++; }
+}
+
+test('close() detaches the handlers: a late close or message of the closed socket reaches nobody', () => {
+  vi.useFakeTimers();
+  const made: LateCloseWS[] = [];
+  const got: unknown[] = [];
+  let closes = 0;
+  const sock = openStructuredSocket({
+    terminalId: 't1', onEvent: (e) => got.push(e), onClose: () => { closes++; },
+    wsFactory: () => { const w = new LateCloseWS(); made.push(w); return w; },
+  });
+  const ws = made[0];
+  const { onopen, onclose, onmessage } = ws; // what the browser still holds for a socket that was not detached
+  ws.onopen!();
+  sock.close();
+  expect(ws.closeCalls).toBe(1);
+  expect(ws.onopen).toBeNull();
+  expect(ws.onclose).toBeNull();
+  expect(ws.onmessage).toBeNull();
+  // The handlers of before close() are inert too (the view of this socket is gone).
+  onmessage!({ data: JSON.stringify({ type: 'late' }) });
+  onclose!();
+  onopen!();
+  expect(got).toEqual([]);
+  expect(closes).toBe(0);
+  vi.advanceTimersByTime(60_000);
+  expect(made).toHaveLength(1); // and no reconnect
+  vi.useRealTimers();
+});

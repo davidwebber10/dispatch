@@ -300,3 +300,54 @@ describe('compatibility', () => {
     expect(r.current.busy).toBe(false);
   });
 });
+
+// I3 (final review of v4.5.0). ChatView is not keyed by thread, so two threads share this hook. After a
+// wake from sleep the socket of thread A is dead; its close event arrives when the owner is in thread B.
+describe('a socket that is no longer current', () => {
+  test('a late close of the thread before does not remove Working from the current thread', () => {
+    const { result: r, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 'thread-a' } });
+    feed(working(2));
+    const a = cbs;
+    rerender({ id: 'thread-b' });
+    expect(cbs).not.toBe(a); // thread B has its own socket
+    feed(working(7, { generation: 200 }));
+    expect(r.current.busy).toBe(true);
+    act(() => a.onClose?.()); // the dead socket of thread A closes now
+    expect(r.current.busy).toBe(true);
+  });
+
+  test('a late frame or reset of the thread before does not change the current thread', () => {
+    const { result: r, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 'thread-a' } });
+    feed(working(2));
+    const a = cbs;
+    rerender({ id: 'thread-b' });
+    feed(working(7, { generation: 200 }));
+    // A status frame of thread A, newer by its order than the one of thread B.
+    act(() => a.onEvent(idle(9, { generation: 300 })));
+    expect(r.current.busy).toBe(true);
+    act(() => a.onReset?.());
+    feed(idle(1, { generation: 200 })); // older than what thread B shows: still not taken
+    expect(r.current.busy).toBe(true);
+    feed(idle(8, { generation: 200 }));
+    expect(r.current.busy).toBe(false);
+  });
+
+  test('back in the first thread, the late close of its old socket changes nothing', () => {
+    const { result: r, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 'thread-a' } });
+    feed(working(2));
+    const oldA = cbs;
+    rerender({ id: 'thread-b' });
+    rerender({ id: 'thread-a' });
+    feed(working(3));
+    act(() => oldA.onClose?.());
+    expect(r.current.busy).toBe(true);
+  });
+
+  test('the close of the current socket still stops Working', () => {
+    const { result: r, rerender } = renderHook(({ id }) => useStructuredChat(id), { initialProps: { id: 'thread-a' } });
+    rerender({ id: 'thread-b' });
+    feed(working(7));
+    act(() => cbs.onClose?.());
+    expect(r.current.busy).toBe(false);
+  });
+});

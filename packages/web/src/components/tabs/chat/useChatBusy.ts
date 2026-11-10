@@ -75,7 +75,13 @@ export function useChatBusy(terminalId: string): ChatBusy {
   const headerSeenRef = useRef(false);                   // this connection sent a status frame
   const sendRef = useRef<{ baseline: StatusSnapshot | null; accepted: boolean; timer: ReturnType<typeof setTimeout> } | null>(null);
   const terminalRef = useRef(terminalId);
-  terminalRef.current = terminalId;
+  // I3: ChatView is not keyed by thread, so two threads share this state. Each change of thread starts
+  // a new epoch, and `frame`, `socketReset` and `socketClosed` act only in the epoch that made them. The
+  // socket of the thread before holds the callbacks of its own epoch: its late events (the close of a
+  // link that died in sleep) change nothing here.
+  const epochRef = useRef(0);
+  if (terminalRef.current !== terminalId) { terminalRef.current = terminalId; epochRef.current += 1; }
+  const epoch = epochRef.current;
 
   const endSending = useCallback(() => {
     if (sendRef.current) clearTimeout(sendRef.current.timer);
@@ -104,6 +110,7 @@ export function useChatBusy(terminalId: string): ChatBusy {
   }, [terminalId, endSending]);
 
   const frame = useCallback((event: unknown): boolean => {
+    if (epochRef.current !== epoch) return isStatusFrame(event); // a socket that is no longer current
     if (isStatusFrame(event)) {
       headerSeenRef.current = true;
       const { status, turnOpen, generation, sequence, at, activity } = event;
@@ -121,19 +128,21 @@ export function useChatBusy(terminalId: string): ChatBusy {
       if (folded !== undefined) setLegacyBusy(folded);
     }
     return false;
-  }, [applyStatus]);
+  }, [applyStatus, epoch]);
 
   const socketReset = useCallback(() => {
+    if (epochRef.current !== epoch) return;
     // The header that follows is taken as it is, whatever its order (a daemon restart counts from 0).
     headerSeenRef.current = false;
     lastRef.current = null;
     setLegacyBusy(false);
-  }, []);
+  }, [epoch]);
 
   const socketClosed = useCallback(() => {
+    if (epochRef.current !== epoch) return;
     setLegacyBusy(false);
     setSnapshot((prev) => (prev && prev.turnOpen ? { ...prev, turnOpen: false } : prev));
-  }, []);
+  }, [epoch]);
 
   const beginSending = useCallback(() => {
     if (sendRef.current) clearTimeout(sendRef.current.timer);

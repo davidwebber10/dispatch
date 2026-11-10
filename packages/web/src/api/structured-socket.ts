@@ -116,7 +116,10 @@ export function openStructuredSocket(opts: Opts) {
       opts.onClose?.();
       connect();
     }, CONNECT_TIMEOUT_MS);
+    // Each handler acts only for the current socket (I3): a socket that close() or detach() dropped
+    // says nothing more to the consumer, whenever its events arrive.
     sock.onopen = () => {
+      if (ws !== sock) return;
       clearTimeout(connectTimer);
       backoff = 500;
       // On a reconnect the server replays buffered events; tell the consumer first.
@@ -124,6 +127,7 @@ export function openStructuredSocket(opts: Opts) {
       connectedOnce = true;
     };
     sock.onmessage = (ev) => {
+      if (ws !== sock) return;
       let msg: unknown;
       try { msg = JSON.parse(ev.data); } catch { return; /* ignore malformed frames */ }
       const m = msg as { type?: unknown; events?: unknown; done?: unknown } | null;
@@ -136,7 +140,9 @@ export function openStructuredSocket(opts: Opts) {
       deliver(msg);
     };
     sock.onclose = () => {
+      if (ws !== sock) return;
       clearTimeout(connectTimer);
+      ws = null;
       opts.onClose?.();
       if (stopped) return;
       // Reconnect with backoff so the pane self-heals after a dropped connection.
@@ -161,8 +167,9 @@ export function openStructuredSocket(opts: Opts) {
       stopped = true;
       live.delete(reconnect);
       if (timer) clearTimeout(timer);
-      clearTimeout(connectTimer);
-      ws?.close();
+      // I3: the handlers go with the socket. The close event of a dead link can arrive minutes later
+      // (a wake from sleep), when the consumer's callbacks belong to another thread.
+      detach();
     },
   };
 }
