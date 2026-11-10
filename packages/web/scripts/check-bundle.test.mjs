@@ -149,14 +149,28 @@ describe('helpers', () => {
 
 // Final review of v4.5.0: no script ran this check, so nothing enforced the budget.
 describe('the web build runs the check', () => {
-  it('`pnpm build` of the web package runs check-bundle.mjs after `vite build`, and a failed check fails the build', () => {
+  // The install build (`dispatch update` runs it on the owner's machine) must never fail on the
+  // budget: a release a few kB over would leave the owner with no update. The build reports;
+  // a release check runs the script without --warn, which exits 1 over budget.
+  it('`pnpm build` runs check-bundle.mjs --warn after `vite build`: it reports, it does not fail the install', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
     const steps = pkg.scripts.build.split('&&').map((s) => s.trim());
     const vite = steps.indexOf('vite build');
-    const check = steps.indexOf('node scripts/check-bundle.mjs');
+    const check = steps.indexOf('node scripts/check-bundle.mjs --warn');
     expect(vite).toBeGreaterThanOrEqual(0);
     expect(check).toBeGreaterThan(vite);
-    // Every step is joined with `&&`: an exit code of 1 from the check is the exit code of the build.
-    expect(pkg.scripts.build).not.toMatch(/\|\||;/);
+    expect(pkg.scripts['check-bundle']).toBe('node scripts/check-bundle.mjs');
+  });
+
+  it('--warn exits 0 over budget and prints FAILED; without it the exit code is 1', async () => {
+    const { execFileSync, spawnSync } = await import('node:child_process');
+    const script = path.join(__dirname, 'check-bundle.mjs');
+    const empty = fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'cb-'));
+    const warn = spawnSync(process.execPath, [script, empty, '--warn'], { encoding: 'utf8' });
+    const strict = spawnSync(process.execPath, [script, empty], { encoding: 'utf8' });
+    expect(warn.status).toBe(0);
+    expect(warn.stdout + warn.stderr).toMatch(/FAILED|WARNING/);
+    expect(strict.status).toBe(1);
+    void execFileSync;
   });
 });

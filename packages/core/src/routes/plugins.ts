@@ -11,7 +11,7 @@ import { projectListRule, allowRule } from '../auth/key-rules.js';
 import { setFileHeaders, HTML_SANDBOX_CSP } from '../http/active-content.js';
 import { IMMUTABLE, pickEncoding } from '../web-assets.js';
 import { insideRealRoot } from '../files/confine.js';
-import { createThumbnailer, type Thumbnailer } from '../files/thumbnail.js';
+import { createThumbnailer, thumbnailHeaders, type Thumbnailer } from '../files/thumbnail.js';
 import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
@@ -415,7 +415,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (req.query.thumb !== undefined && mime.startsWith('image/') && mime !== 'image/svg+xml' && Number.isInteger(width)) {
       const small = await thumbnailer().thumbnail(file.path, width).catch(() => null);
       if (small) {
-        res.setHeader('Cache-Control', 'private, max-age=86400');
+        res.set(thumbnailHeaders(small));
         setFileHeaders(res, 'image/jpeg', 'sandbox');
         res.type('image/jpeg');
         return void res.sendFile(small);

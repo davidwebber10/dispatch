@@ -6,10 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/prune-assets.mjs && node scripts/check-bundle.mjs",
+    "build": "tsc -b && vite build && node scripts/prune-assets.mjs && node scripts/check-bundle.mjs --warn",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check-bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.0",

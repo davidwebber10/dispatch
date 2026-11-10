@@ -69,6 +69,10 @@ describe('plugin file routes (2026-11-07)', () => {
     expect(thumb.headers['content-type']).toMatch(/^image\/jpeg/);
     expect(Number(thumb.headers['content-length'])).toBeLessThan(Number(full.headers['content-length']));
     expect(thumb.headers['x-content-type-options']).toBe('nosniff');
+    // The URL of a copy does not change when its source does: a short max-age and an ETag that names
+    // the source version (final review of v4.5.0).
+    expect(thumb.headers['cache-control']).toBe('private, max-age=300');
+    expect(thumb.headers.etag).toMatch(/^"thumb-[0-9a-f]{32}"$/);
   });
 
   it('?thumb on a file that cannot be made small (not an image, a bad width, a broken image) answers the original', async () => {

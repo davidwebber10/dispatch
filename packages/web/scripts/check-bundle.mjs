@@ -202,7 +202,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   else {
     if (r.report.entry) console.log(formatReport(r.report));
     for (const e of r.errors) console.error(`check-bundle: ${e}`);
-    console.log(r.ok ? 'check-bundle: OK' : `check-bundle: FAILED (${r.errors.length})`);
+    console.log(r.ok ? 'check-bundle: OK' : `check-bundle: FAILED (${r.errors.length})${args.includes('--warn') ? ' (WARNING only: the install build goes on)' : ''}`);
   }
-  process.exit(r.ok ? 0 : 1);
+  // --warn (the install build, which `dispatch update` runs on the owner's machine): report only.
+  process.exit(r.ok || args.includes('--warn') ? 0 : 1);
 }
