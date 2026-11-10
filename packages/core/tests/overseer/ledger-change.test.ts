@@ -111,13 +111,14 @@ describe('wireLedger — both LedgerService instances broadcast ledger:changed',
     expect(routerLedger.add('s1', 'coord', { kind: 'do', text: 'Check staging.', title: 'Check staging' })).toMatchObject({ id: 'N1' });
   });
 
-  it('createApp and startServer both build their ledger with wireLedger', () => {
-    const src = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
+  // W3-A: createApp and startServer are one build (daemon/build.ts). The text checks moved to that file.
+  it('the one build makes its ledger with wireLedger and shares it with Chat and the routes', () => {
+    const src = fs.readFileSync(new URL('../../src/daemon/build.ts', import.meta.url), 'utf8');
     expect(src.match(/new LedgerService\(/g)).toHaveLength(1); // inside wireLedger only
-    // createApp builds it inline; startServer builds one and shares it with Chat (EndlessService).
-    // Both pass it to mountApiRoutes, which mounts the one ledger router.
-    expect(src.match(/ledgerService: wireLedger\(db, sessionService, broadcaster\)/g)).toHaveLength(1);
+    // One ledger: Chat (EndlessService) gets it, and mountApiRoutes mounts the one ledger router on it.
     expect(src.match(/const ledgerService = wireLedger\(db, sessionService, broadcaster\)/g)).toHaveLength(1);
-    expect(src.match(/ledgerService,/g)!.length).toBeGreaterThanOrEqual(1);
+    expect(src).toMatch(/ledger: ledgerService,/);
+    expect(src).toMatch(/pushService, ledgerService,/);
+    expect(fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8')).not.toMatch(/new LedgerService\(/);
   });
 });

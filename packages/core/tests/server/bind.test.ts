@@ -89,11 +89,16 @@ describe('the daemon', () => {
   let child: ChildProcess | undefined;
   let home = '';
   afterEach(async () => {
-    if (child && child.exitCode === null) {
-      const exited = new Promise((r) => child!.once('exit', r));
-      child.kill('SIGTERM');
-      setTimeout(() => child?.kill('SIGKILL'), 5000).unref();
+    // `c`, not `child`: the timer below once read the variable when it fired, 5 s later, and then killed the
+    // daemon of the NEXT test (exit code null, then this hook waited for an exit that had passed). A child
+    // that a signal ended has exitCode null and signalCode set.
+    const c = child;
+    if (c && c.exitCode === null && c.signalCode === null) {
+      const exited = new Promise((r) => c.once('exit', r));
+      c.kill('SIGTERM');
+      const hard = setTimeout(() => c.kill('SIGKILL'), 5000);
       await exited;
+      clearTimeout(hard);
     }
     child = undefined;
     if (home) fs.rmSync(home, { recursive: true, force: true });

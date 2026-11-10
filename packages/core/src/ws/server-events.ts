@@ -9,14 +9,17 @@
  * older daemon. An object payload is `ServerEventPayload` here: this file has no imports, so the
  * reader gives it its real type (Session, Terminal, AgentRun and so on).
  *
- * The broadcaster (`ws/events.ts`) is still untyped. W3-A of the 2026-11-09 engineering program
- * types `broadcast()` with this union and adds the event shapes that are missing here.
+ * The broadcaster (`ws/events.ts`) takes `BroadcastEvent` (W3-A of the 2026-11-09 engineering program):
+ * an event with a type that this file declares must have the declared shape. The events that the daemon
+ * sends and that no store of the app reads are in `DaemonOnlyServerEvent`; they are not in
+ * `KnownServerEvent`, so the web check of required fields has no row for them.
  *
  * When you add a member, also add its required fields to `REQUIRED_FIELDS` in the web file. The
  * compiler refuses the web build until you do.
  */
 
-export type ServerEventPayload = Record<string, unknown>;
+/** An object payload. `object`, not a record: the daemon's own row types (Terminal, Session, AgentRun) are interfaces, which have no index signature. */
+export type ServerEventPayload = object;
 
 // ── Threads (terminals) ──────────────────────────────────────────────────────
 export type TerminalCreatedEvent = { type: 'terminal:created'; terminal: ServerEventPayload };
@@ -96,6 +99,18 @@ export type PluginChangedEvent = { type: 'plugin:changed'; id: string; plugin?: 
 export type PluginDataEvent = { type: 'plugin:data'; id: string; key: string; deleted?: boolean };
 export type PluginUpdatesEvent = { type: 'plugin:updates'; updates: unknown[] };
 
+// ── Events that the daemon sends and that no store of the app reads ──────────
+// Plugin pages, hook scripts and workers read them (plugins/workers.ts, the plugin SDK).
+export type PluginSettingsEvent = { type: 'plugin:settings'; id: string };
+export type PluginUpdatedEvent = { type: 'plugin:updated'; id: string; from?: string | null; to?: string | null };
+/** What plugins observe of a thread: the fields that every type has (plugins/thread-events.ts has the others). */
+type ThreadObserved<T extends string> = T extends string
+  ? { type: T; terminalId: string; sessionId: string; harness: string; at: string }
+  : never;
+/** One member for each type, so that a sender's event narrows to its member. */
+export type ThreadObservedEvent = ThreadObserved<'thread:spawned' | 'thread:prompt' | 'thread:tool' | 'thread:turn' | 'thread:status'>;
+export type DaemonOnlyServerEvent = PluginSettingsEvent | PluginUpdatedEvent | ThreadObservedEvent;
+
 /** Every event type that the app itself reads. */
 export type KnownServerEvent =
   | TerminalCreatedEvent | TerminalStatusEvent | TerminalActivityEvent | TerminalStallEvent | TerminalExitEvent | TerminalRemovedEvent
@@ -120,3 +135,15 @@ export type KnownServerEventType = KnownServerEvent['type'];
 
 /** The member with this `type`: `EventOf<'terminal:status'>`. */
 export type EventOf<T extends KnownServerEventType> = Extract<KnownServerEvent, { type: T }>;
+
+/** Every event with a declared shape: the ones the app reads and the ones only plugins read. */
+export type DeclaredServerEvent = KnownServerEvent | DaemonOnlyServerEvent;
+
+/**
+ * What the daemon's `broadcast()` accepts for an event of type `T`. A declared type must have its
+ * declared shape: a missing or mistyped field is a compile error at the sender. Any other type
+ * (a plugin's own event, a type held in a `string`) passes as `UnknownServerEvent`.
+ */
+export type BroadcastEvent<T extends string = string> = T extends DeclaredServerEvent['type']
+  ? Extract<DeclaredServerEvent, { type: T }>
+  : UnknownServerEvent;

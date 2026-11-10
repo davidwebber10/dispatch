@@ -93,7 +93,9 @@ describe('plugin file routes (2026-11-07)', () => {
     expect(got.status).toBe(200);
     expect(got.headers['content-type']).toMatch(/^image\/png/);
     expect(got.headers['x-content-type-options']).toBe('nosniff');
-    expect(got.headers['content-security-policy']).toBeUndefined();
+    // W3-A: the test build has the security headers of the daemon, so an image carries the policy of the app.
+    // It is not the sandbox policy: that one is for a file that can run script (below).
+    expect(got.headers['content-security-policy']).not.toContain('sandbox');
     expect(got.headers['content-disposition']).toBe('inline; filename="shot.png"');
 
     const html = await register(asThread(), 'previews', { path: path.join(proj, 'page.html') });

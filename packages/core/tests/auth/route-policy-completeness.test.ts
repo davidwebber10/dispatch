@@ -216,18 +216,23 @@ describe('default deny in the full app', () => {
   });
 });
 
+// W3-A: createApp and startServer are one build (daemon/build.ts), so the list is mounted in one place.
 describe('one mount list', () => {
-  const src = fs.readFileSync(
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/server.ts'), 'utf8',
-  );
+  const read = (rel: string) => fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src', rel), 'utf8');
+  const daemonFiles = fs.readdirSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/daemon')).filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'));
 
-  test('createApp and startServer both call mountApiRoutes', () => {
-    expect(src).toContain("import { mountApiRoutes } from './server-routes.js'");
-    expect(src.match(/mountApiRoutes\(app,/g)).toHaveLength(2);
+  test('buildDaemon calls mountApiRoutes once, and createApp and startServer both call buildDaemon', () => {
+    const build = read('daemon/build.ts');
+    expect(build).toContain("import { mountApiRoutes, type ApiRouteDeps } from '../server-routes.js'");
+    expect(build.match(/mountApiRoutes\(app,/g)).toHaveLength(1);
+    const server = read('server.ts');
+    expect(server).not.toContain('mountApiRoutes');
+    expect(server.match(/buildDaemon\(\{/g)).toHaveLength(2);
   });
 
-  test('server.ts mounts no /api route of its own except the login route', () => {
-    const own = src.match(/app\.(use|get|post|put|patch|delete|all)\(\s*'\/api[^']*'/g) ?? [];
+  test('the daemon files mount no /api route of their own except the login route', () => {
+    const own = ['server.ts', ...daemonFiles.map((f) => `daemon/${f}`)]
+      .flatMap((f) => read(f).match(/app\.(use|get|post|put|patch|delete|all)\(\s*'\/api[^']*'/g) ?? []);
     expect(own).toEqual(["app.post('/api/access/login'"]);
   });
 });
