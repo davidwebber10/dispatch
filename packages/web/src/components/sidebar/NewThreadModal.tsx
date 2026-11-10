@@ -305,12 +305,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
     return () => { on = false; };
   }, [sessionId, harness, canResume]);
 
-  // Esc closes the modal.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Esc closes the modal: the shared Modal does it (W3-E), and keeps Tab inside the picker.
 
   async function saveKey() {
     if (keySaving || !harnessSettings || !keyDraft.trim()) return;

@@ -4,7 +4,8 @@ import { api } from '../../api/client';
 import type { ToolStatus, ToolsResponse } from '../../api/types';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { timeAgo } from '../../lib/time';
-import { ghostBtn, codeChip, fieldFor, SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, type Tone } from './ui';
+import { codeChip, fieldFor, SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, type Tone } from './ui';
+import { Button } from '../ui';
 
 type Bucket = 'needs-auth' | 'unchecked' | 'ready' | 'missing';
 const bucketOf = (t: ToolStatus): Bucket => {
@@ -72,9 +73,9 @@ export function ToolsSection() {
   const needsAuth = tools.filter((t) => bucketOf(t) === 'needs-auth').length;
 
   const checkBtn = (
-    <button style={{ ...ghostBtn, ...(checking ? { opacity: 0.6, cursor: 'default' } : {}) }} disabled={checking} onClick={() => void checkAgain()}>
+    <Button variant="ghost" size="sm" style={checking ? { opacity: 0.6 } : undefined} disabled={checking} onClick={() => void checkAgain()}>
       {checking ? 'Checking…' : 'Check again'}
-    </button>
+    </Button>
   );
   const footer = (
     <>

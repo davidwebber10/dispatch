@@ -5,7 +5,8 @@ import { useApplyUpdate } from '../update/useApplyUpdate';
 import { STEP_LABEL } from '../update/UpdateProgress';
 import { Markdown } from '../Markdown';
 import { splitNoteHeadline } from '../../lib/releaseNotes';
-import { SettingsGroup, SettingsRow, Sheet, ghostBtn, solidBtn, StatusMark } from './ui';
+import { SettingsGroup, SettingsRow, Sheet, StatusMark } from './ui';
+import { Button } from '../ui';
 
 /**
  * Settings → About & updates → the "Dispatch" group: the always-reachable update surface (the
@@ -60,16 +61,16 @@ export function UpdatesSection() {
     <SettingsRow label={<span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>{available.version} is available</span>}
       hint="Dispatch restarts, and this page reloads by itself."
       control={(
-        <button type="button" onClick={() => void apply()} disabled={applying} style={{ ...solidBtn(!applying), opacity: applying ? 0.7 : 1 }}>
+        <Button variant="primary" size="sm" onClick={() => void apply()} disabled={applying} style={applying ? { opacity: 0.7 } : undefined}>
           {applying ? 'Updating…' : 'Update now'}
-        </button>
+        </Button>
       )} />
   ) : (
     <SettingsRow label="Check for updates"
       hint={checkError
         ? <span style={{ color: 'var(--color-status-red)' }}>Couldn't reach the server.</span>
         : checked ? "You're up to date." : 'Looks for a newer release on GitHub.'}
-      control={<button type="button" onClick={() => void check()} disabled={checking} style={{ ...ghostBtn, opacity: checking ? 0.6 : 1 }}>{checking ? 'Checking…' : 'Check now'}</button>} />
+      control={<Button onClick={() => void check()} disabled={checking} variant="ghost" size="sm" style={checking ? { opacity: 0.6 } : undefined}>{checking ? 'Checking…' : 'Check now'}</Button>} />
   );
 
   return (

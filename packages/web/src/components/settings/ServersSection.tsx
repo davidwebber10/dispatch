@@ -4,7 +4,8 @@ import { useConnection } from '../../stores/connection';
 import { useServers, currentLabel, type ServerOption } from '../../stores/servers';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ConfirmModal } from '../common/ConfirmModal';
-import { SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, Sheet, ghostBtn, solidBtn, fieldFor, iconBtn, CONNECTION_STATUS, type Tone } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, StatusMark, EmptyState, Sheet, fieldFor, CONNECTION_STATUS, type Tone } from './ui';
+import { Button, IconButton } from '../ui';
 
 /** This browser's link to the daemon, as a status tone (the words come from ui CONNECTION_STATUS). */
 const CONNECTION_TONE: Record<'open' | 'connecting' | 'closed', { tone: Tone; label: string }> = {
@@ -29,7 +30,7 @@ export function ServersSection() {
   const [removing, setRemoving] = useState<ServerOption | null>(null);
   const conn = CONNECTION_TONE[status];
 
-  const addButton = <button type="button" style={ghostBtn} onClick={() => setAdding(true)}>Add server…</button>;
+  const addButton = <Button variant="ghost" size="sm" onClick={() => setAdding(true)}>Add server…</Button>;
 
   return (
     <SettingsPage>
@@ -48,9 +49,8 @@ export function ServersSection() {
             <SettingsRow key={s.origin} icon={HardDrives} label={s.label}
               hint={<span style={{ display: 'block', fontFamily: 'var(--font-mono)', fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.origin}</span>}
               control={(
-                <button type="button" title="Remove server" aria-label={`Remove ${s.label}`} onClick={() => setRemoving(s)} style={{ ...iconBtn, width: 30, height: 30, padding: 0, border: 'none', color: 'var(--color-text-tertiary)' }}>
-                  <Trash size={16} />
-                </button>
+                <IconButton label={`Remove ${s.label}`} title="Remove server" icon={<Trash size={16} />} onClick={() => setRemoving(s)}
+                  style={{ width: 30, height: 30, borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)' }} />
               )} />
           ))}
         </SettingsGroup>
@@ -98,8 +98,8 @@ function AddServerSheet({ open, onClose, phone }: { open: boolean; onClose: () =
       </label>
       {err && <div role="alert" style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{err}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-        <button type="button" style={ghostBtn} onClick={close}>Cancel</button>
-        <button type="button" onClick={() => void add()} disabled={!canAdd} style={solidBtn(canAdd)}>Add server</button>
+        <Button variant="ghost" size="sm" onClick={close}>Cancel</Button>
+        <Button onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm">Add server</Button>
       </div>
     </Sheet>
   );

@@ -16,8 +16,8 @@ export const ADOPTED = [
   'components/common/DirectoryPicker.tsx',
   'components/sidebar/NewThreadModal.tsx',
 ];
-/** The count when W3-E merged. */
-export const RECORDED = 999; // set when the adoption is done
+/** The count when W3-E merged (it was 107 before the adoption). */
+export const RECORDED = 37;
 
 const stripComments = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`\\\w])\/\/.*$/gm, '$1');
 

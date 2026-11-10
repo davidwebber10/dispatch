@@ -6,7 +6,7 @@ import { HARNESSES, defaultModeFor, type Harness } from '../../lib/harnesses';
 import { DEFAULT_AUTO_ARCHIVE_MS, toDuration, fromDuration, type DurationUnit } from '../../lib/autoArchive';
 import {
   Toggle, SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark,
-  ghostBtn, solidBtn, fieldFor, miniChip, noteText,
+  fieldFor, miniChip, noteText,
 } from './ui';
 import { useSettings } from '../../stores/settings';
 import { SpinnerWordsField } from './SpinnerWordsField';
@@ -16,6 +16,7 @@ import { Segmented } from '../common/Segmented';
 import { HARNESS_MARK } from '../common/HarnessStrip';
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { Button, IconButton } from '../ui';
 
 /**
  * Settings → Agents (formerly Harnesses), redesigned 2026-11-07 (docs/design/settings-layout.md):
@@ -293,8 +294,8 @@ function OpenRouterKey({ data, isMobile, put, setData, setErr }: {
             onChange={(e) => setKeyDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void saveKey(); }}
             style={{ ...fieldFor(isMobile), flex: 1, minWidth: 0, boxSizing: 'border-box', fontFamily: 'var(--font-mono)' }} />
-          <button type="button" aria-label="Save key" disabled={!canSave} onClick={() => void saveKey()}
-            style={{ ...solidBtn(canSave), height: isMobile ? 36 : 30 }}>{keySaving ? 'Saving…' : 'Save'}</button>
+          <Button variant="primary" size="sm" aria-label="Save key" disabled={!canSave} onClick={() => void saveKey()}
+            style={{ height: isMobile ? 36 : 30 }}>{keySaving ? 'Saving…' : 'Save'}</Button>
         </div>
       </SettingsRow>
     </SettingsGroup>
@@ -303,7 +304,8 @@ function OpenRouterKey({ data, isMobile, put, setData, setErr }: {
 
 const listReset: React.CSSProperties = { listStyle: 'none', margin: 0, padding: 0 };
 const hairline = (i: number): React.CSSProperties => ({ borderTop: i > 0 ? '1px solid var(--color-border)' : 'none' });
-const iconX: React.CSSProperties = { width: 28, height: 28, padding: 0, flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)', cursor: 'pointer' };
+/** The remove control of a model row: the icon button at 28px, in the quiet text color. */
+const iconX: React.CSSProperties = { width: 28, height: 28, borderRadius: 'var(--radius-sm)', color: 'var(--color-text-tertiary)' };
 
 /**
  * The OpenCode picker list: the rows you have, a catalog search to add more, a reset.
@@ -349,7 +351,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
 
   return (
     <SettingsGroup title="Models in the picker"
-      action={<button type="button" onClick={onReset} style={{ ...ghostBtn, height: 26 }}>Reset to defaults</button>}
+      action={<Button onClick={onReset} variant="ghost" size="sm" style={{ height: 26 }}>Reset to defaults</Button>}
       footer="The New Thread window offers these models, in this order.">
       <ul aria-label="OpenCode models" style={listReset}>
         {models.map((m, i) => (
@@ -357,9 +359,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
             <SettingsRow style={{ padding: '7px 6px 7px 12px' }} label={m.label}
               value={<span style={{ ...mono, display: 'block' }}>{shortId(m.model)}</span>}
               control={
-                <button type="button" aria-label={`Remove ${m.label}`} title="Remove" onClick={() => remove(m.model)} style={iconX}>
-                  <X size={13} weight="bold" />
-                </button>
+                <IconButton label={`Remove ${m.label}`} title="Remove" icon={<X size={13} weight="bold" />} onClick={() => remove(m.model)} style={iconX} />
               } />
           </li>
         ))}
@@ -398,7 +398,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
                   </span>
                   {added
                     ? <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', flex: 'none' }}>Added</span>
-                    : <button type="button" aria-label={`Add ${r.label}`} onClick={() => add({ label: r.label, model: r.id })} style={{ ...ghostBtn, height: 28 }}>Add</button>}
+                    : <Button aria-label={`Add ${r.label}`} onClick={() => add({ label: r.label, model: r.id })} variant="ghost" size="sm" style={{ height: 28 }}>Add</Button>}
                 </li>
               );
             })}
@@ -406,7 +406,7 @@ function OpencodeModelList({ models, defaultModel, isMobile, onSave, onReset }: 
             {results && typedIsId && !typedMatched && (
               <li style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px 7px 10px', borderTop: results.length ? '1px solid var(--color-border)' : 'none' }}>
                 <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)', flex: 1, minWidth: 0 }}>Not in the catalog. Add it anyway?</span>
-                <button type="button" aria-label={`Add ${typed} as typed`} onClick={() => add({ label: shortId(typed), model: typed })} style={{ ...ghostBtn, height: 28 }}>Add as typed</button>
+                <Button aria-label={`Add ${typed} as typed`} onClick={() => add({ label: shortId(typed), model: typed })} variant="ghost" size="sm" style={{ height: 28 }}>Add as typed</Button>
               </li>
             )}
           </ul>

@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { X } from '@phosphor-icons/react';
 import type { SpinnerSet, SpinnerVerbs } from '../../api/types';
 import { WORD_SETS, parseWords } from '../../lib/spinnerWords';
-import { SettingsRow, fieldFor, solidBtn, ghostBtn } from './ui';
+import { SettingsRow, fieldFor } from './ui';
 import { Segmented } from '../common/Segmented';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useDispatchName } from '../../stores/settings';
+import { Button } from '../ui';
 
 type Mode = 'claude' | SpinnerVerbs['mode'];
 const MODES: [Mode, string][] = [['claude', "Claude's own"], ['append', "Add to Claude's"], ['replace', 'Only mine']];
@@ -88,13 +89,13 @@ export function SpinnerWordsField({ value, onSave, sets = [], onSaveSets }: {
                   onChange={(e) => setSetName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') saveAsSet(); if (e.key === 'Escape') setNaming(false); }}
                   style={{ ...fieldFor(isMobile), flex: 1, boxSizing: 'border-box' }} />
-                <button type="button" onClick={saveAsSet} disabled={!setName.trim() || !words} style={{ ...solidBtn(!!setName.trim() && words), height: isMobile ? 36 : 30 }}>Save</button>
-                <button type="button" onClick={() => setNaming(false)} style={{ ...ghostBtn, height: isMobile ? 36 : 30 }}>Cancel</button>
+                <Button onClick={saveAsSet} disabled={!setName.trim() || !words} variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }}>Save</Button>
+                <Button onClick={() => setNaming(false)} variant="ghost" size="sm" style={{ height: isMobile ? 36 : 30 }}>Cancel</Button>
               </div>
             ) : (
-              <button type="button" onClick={() => setNaming(true)} disabled={!words} style={{ ...ghostBtn, alignSelf: 'flex-start', opacity: words ? 1 : 0.5 }}>
+              <Button variant="ghost" size="sm" onClick={() => setNaming(true)} disabled={!words} style={{ alignSelf: 'flex-start' }}>
                 Save these words as a set
-              </button>
+              </Button>
             ))}
           </>
         )}

@@ -11,8 +11,9 @@ import { copyText } from '../../lib/clipboard';
 import { useHint } from '../../stores/hint';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSubPage } from './subPageNav';
-import { sectionLabel, ghostBtn, solidBtn, fieldInput, fieldFor, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
+import { sectionLabel, fieldInput, fieldFor, Toggle, ToneDot, TONE_VAR, IconTile, SettingsSubPage, type Tone } from './ui';
 import { Select } from '../common/Select';
+import { Button } from '../ui';
 
 const note: React.CSSProperties = { fontSize: 11.5, lineHeight: 1.5, color: 'var(--color-text-tertiary)' };
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -276,7 +277,7 @@ export function PluginsSection() {
       </div>
     );
     const dev: [string, React.ReactNode, React.ReactNode?][] = [
-      ['Folder', path, <button key="cp" type="button" style={{ ...ghostBtn, height: 26, padding: '0 8px', display: 'flex', alignItems: 'center', gap: 5 }} onClick={() => void copyText(path).then(() => useHint.getState().show('Path copied')).catch(() => {})}><CopyIcon size={13} />Copy path</button>],
+      ['Folder', path, <Button key="cp" variant="ghost" size="sm" icon={<CopyIcon size={13} />} style={{ height: 26, padding: '0 8px', gap: 5 }} onClick={() => void copyText(path).then(() => useHint.getState().show('Path copied')).catch(() => {})}>Copy path</Button>],
       ['Id', r.id],
       ['Version', r.version],
       ['Key', r.keyed ? `Key issued · ~/.dispatch/keys/plugin-${r.id}` : 'No key'],
@@ -327,8 +328,8 @@ export function PluginsSection() {
                     {r.marketplaceGone ? 'Marketplace removed' : `From ${marketName(r.install.marketplace) ?? 'a marketplace'}`}{r.pinned ? ` · Pinned to v${r.pinned}` : ''}
                   </span>
                 </span>
-                {r.update?.changelog && <button type="button" style={ghostBtn} onClick={() => setNotesOpen(notesOpen === r.id ? null : r.id)}>What's new</button>}
-                <button type="button" style={solidBtn(!(disabled || !r.update || r.marketplaceGone))} disabled={disabled || !r.update || r.marketplaceGone} onClick={() => run(r.id, () => api.updatePlugin(r.id))}>Update</button>
+                {r.update?.changelog && <Button variant="ghost" size="sm" onClick={() => setNotesOpen(notesOpen === r.id ? null : r.id)}>What's new</Button>}
+                <Button variant="primary" size="sm" disabled={disabled || !r.update || r.marketplaceGone} onClick={() => run(r.id, () => api.updatePlugin(r.id))}>Update</Button>
               </div>
               {notesOpen === r.id && r.update?.changelog && (
                 <div style={{ ...groupRow(1), display: 'block' }}>
@@ -344,13 +345,13 @@ export function PluginsSection() {
                   <>
                     <Select ariaLabel="Pin to version" value={r.pinned ?? ''} onChange={(picked) => { const v = picked || null; setPinning(null); void run(r.id, () => api.pinPlugin(r.id, v)); }} style={{ width: 160 }}
                       options={[{ value: '', label: 'No pin' }, ...pinning.versions.map((v) => ({ value: v.version, label: `v${v.version}` }))]} />
-                    <button type="button" style={ghostBtn} onClick={() => setPinning(null)}>Cancel</button>
+                    <Button variant="ghost" size="sm" onClick={() => setPinning(null)}>Cancel</Button>
                     <span style={note}>A pin stops updates past that version.</span>
                   </>
                 ) : (
                   <div style={buttons}>
-                    <button type="button" style={ghostBtn} disabled={disabled} onClick={() => run(r.id, () => api.rollbackPlugin(r.id))}>Roll back</button>
-                    <button type="button" style={ghostBtn} disabled={disabled} onClick={() => void api.pluginVersions(r.id).then((v) => setPinning({ id: r.id, versions: v.versions })).catch(() => setPinning({ id: r.id, versions: [] }))}>Pin…</button>
+                    <Button variant="ghost" size="sm" disabled={disabled} onClick={() => run(r.id, () => api.rollbackPlugin(r.id))}>Roll back</Button>
+                    <Button variant="ghost" size="sm" disabled={disabled} onClick={() => void api.pluginVersions(r.id).then((v) => setPinning({ id: r.id, versions: v.versions })).catch(() => setPinning({ id: r.id, versions: [] }))}>Pin…</Button>
                   </div>
                 )}
               </div>
@@ -391,8 +392,8 @@ export function PluginsSection() {
                     <span style={body}>{workerLabel(r.workerStats)}</span>
                   </span>
                   <div style={buttons}>
-                    <button type="button" style={ghostBtn} onClick={() => { setLogText(''); setLogsOf(r.id); }}>Logs</button>
-                    <button type="button" style={ghostBtn} disabled={disabled || !r.enabled} onClick={() => { setBusy(r.id); void api.restartPluginWorker(r.id).then(() => refresh()).catch(() => {}).finally(() => setBusy(null)); }}>Restart</button>
+                    <Button variant="ghost" size="sm" onClick={() => { setLogText(''); setLogsOf(r.id); }}>Logs</Button>
+                    <Button variant="ghost" size="sm" disabled={disabled || !r.enabled} onClick={() => { setBusy(r.id); void api.restartPluginWorker(r.id).then(() => refresh()).catch(() => {}).finally(() => setBusy(null)); }}>Restart</Button>
                   </div>
                 </div>
               )}
@@ -414,19 +415,19 @@ export function PluginsSection() {
           <GroupLabel>ACTIONS</GroupLabel>
           <div style={{ ...group, padding: '12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={buttons}>
-              <button type="button" style={ghostBtn} disabled={disabled || !r.enabled} onClick={() => void reload(r)}>Reload</button>
-              <button type="button" style={ghostBtn} disabled={disabled} onClick={() => void exportData(r)}>Export data</button>
-              <button type="button" style={ghostBtn} disabled={disabled} onClick={() => fileInput.current?.click()}>Import data…</button>
-              {r.bundled && <button type="button" style={ghostBtn} onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</button>}
-              {!r.bundled && <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={disabled} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</button>}
+              <Button variant="ghost" size="sm" disabled={disabled || !r.enabled} onClick={() => void reload(r)}>Reload</Button>
+              <Button variant="ghost" size="sm" disabled={disabled} onClick={() => void exportData(r)}>Export data</Button>
+              <Button variant="ghost" size="sm" disabled={disabled} onClick={() => fileInput.current?.click()}>Import data…</Button>
+              {r.bundled && <Button variant="ghost" size="sm" onClick={() => setCopying({ id: r.id, newId: `my-${r.id}` })}>Copy to local…</Button>}
+              {!r.bundled && <Button variant="danger" size="sm" disabled={disabled} onClick={() => (setDeleteData(false), setRemoving(r))}>Remove</Button>}
               <input ref={fileInput} type="file" accept="application/json,.json" aria-label={`Import file for ${r.id}`} style={{ display: 'none' }}
                 onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void pickImport(r, f); }} />
             </div>
             {copying?.id === r.id && (
               <div style={buttons}>
                 <input aria-label="New plugin id" value={copying.newId} onChange={(e) => setCopying({ id: r.id, newId: e.target.value })} style={{ ...fieldInput, width: 180 }} />
-                <button type="button" style={solidBtn(true)} disabled={disabled} onClick={() => copy(r)}>Copy</button>
-                <button type="button" style={ghostBtn} onClick={() => setCopying(null)}>Cancel</button>
+                <Button variant="primary" size="sm" disabled={disabled} onClick={() => copy(r)}>Copy</Button>
+                <Button variant="ghost" size="sm" onClick={() => setCopying(null)}>Cancel</Button>
                 <span style={note}>A local copy you can change. The bundled one stays as it is.</span>
               </div>
             )}
@@ -466,7 +467,7 @@ export function PluginsSection() {
       )}
 
       <section aria-label="Local plugins" style={stack}>
-        <GroupLabel action={<button type="button" style={ghostBtn} onClick={() => { setCreating((c) => !c); setErr(''); }}>New plugin…</button>}>LOCAL</GroupLabel>
+        <GroupLabel action={<Button variant="ghost" size="sm" onClick={() => { setCreating((c) => !c); setErr(''); }}>New plugin…</Button>}>LOCAL</GroupLabel>
         {creating && (
           <div style={{ ...group, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
@@ -478,8 +479,8 @@ export function PluginsSection() {
               <input aria-label="Plugin name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Daily rundown" style={fieldInput} />
             </label>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" style={solidBtn(true)} disabled={busy !== null} onClick={create}>Create</button>
-              <button type="button" style={ghostBtn} onClick={() => { setCreating(false); setErr(''); }}>Cancel</button>
+              <Button variant="primary" size="sm" disabled={busy !== null} onClick={create}>Create</Button>
+              <Button variant="ghost" size="sm" onClick={() => { setCreating(false); setErr(''); }}>Cancel</Button>
             </div>
           </div>
         )}
@@ -509,8 +510,8 @@ export function PluginsSection() {
                 {m.description && <div style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{m.description}</div>}
                 {m.error && <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{m.error}{/username|publickey|permission denied|authentication failed|could not read from remote|terminal prompts disabled/i.test(m.error) ? ' — sign in with gh auth login or add an ssh key.' : ''}</div>}
                 <div style={buttons}>
-                  <button type="button" style={ghostBtn} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</button>
-                  <button type="button" style={{ ...ghostBtn, color: 'var(--color-status-red)' }} disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</button>
+                  <Button variant="ghost" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.pullMarketplace(m.slug))}>Check now</Button>
+                  <Button variant="danger" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(m.slug, () => api.removeMarketplace(m.slug))}>Remove</Button>
                   {m.lastPulledAt && <span style={{ ...note, marginLeft: 'auto' }}>Checked {new Date(m.lastPulledAt).toLocaleString()}</span>}
                 </div>
               </div>
@@ -525,7 +526,7 @@ export function PluginsSection() {
                   onKeyDown={(e) => { if (e.key === 'Enter' && marketUrl.trim() && marketBusy === null) void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); }); }}
                   placeholder="https://github.com/your-org/plugins.git" spellCheck={false} autoCapitalize="off"
                   style={{ ...fieldFor(isMobile), flex: 1, fontFamily: 'var(--font-mono)' }} />
-                <button type="button" aria-label="Add marketplace" style={{ ...solidBtn(marketUrl.trim().length > 0), height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>{isMobile ? 'Add' : 'Add marketplace'}</button>
+                <Button aria-label="Add marketplace" variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }} disabled={marketBusy !== null || !marketUrl.trim()} onClick={() => void marketRun('add', async () => { await api.addMarketplace(marketUrl.trim()); setMarketUrl(''); })}>{isMobile ? 'Add' : 'Add marketplace'}</Button>
               </div>
               {marketErr && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{marketErr}</div>}
             </div>
@@ -552,7 +553,7 @@ export function PluginsSection() {
                       </span>
                       {e.installed
                         ? <span style={{ ...note, fontSize: 12, flexShrink: 0 }}>Installed v{e.installed.version}</span>
-                        : <button type="button" style={solidBtn(marketBusy === null)} disabled={marketBusy !== null} onClick={() => void marketRun(`${e.kind}:${e.id}`, () => (e.kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</button>}
+                        : <Button variant="primary" size="sm" disabled={marketBusy !== null} onClick={() => void marketRun(`${e.kind}:${e.id}`, () => (e.kind === 'plugin' ? api.installPlugin(m.slug, e.id) : api.installSkill(m.slug, e.id)))}>Install</Button>}
                     </div>
                   ))}
                 </div>
@@ -589,7 +590,7 @@ export function PluginsSection() {
         message={removing ? `The folder ~/.dispatch/plugins/${removing.id} will be deleted. Its saved data and settings are kept, and come back if you install it again.` : ''}
         onConfirm={() => removing && remove(removing)} onCancel={() => setRemoving(null)}>
         <div style={{ marginTop: 12 }}>
-          <button type="button" style={ghostBtn} onClick={() => removing && void api.exportPluginData(removing.id).catch((e) => setErr(e instanceof Error ? e.message : String(e)))}>Download data and settings</button>
+          <Button variant="ghost" size="sm" onClick={() => removing && void api.exportPluginData(removing.id).catch((e) => setErr(e instanceof Error ? e.message : String(e)))}>Download data and settings</Button>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, color: 'var(--color-text-primary)', cursor: 'pointer' }}>
           <input type="checkbox" checked={deleteData} onChange={(e) => setDeleteData(e.target.checked)} />

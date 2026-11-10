@@ -5,11 +5,15 @@
  */
 
 import { Modal } from '../common/Modal';
+import { IconButton } from '../ui/IconButton';
 import { Children, useState } from 'react';
 import { CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
+// Buttons (W3-E): a section uses `Button` and `IconButton` from components/ui. `ghostBtn`,
+// `solidBtn` and `dangerBtn` stay for plugins (`d.ui.styles`) and for code not yet converted;
+// components/ui/ui.css holds the same shapes as classes.
 export const ghostBtn: React.CSSProperties = { height: 30, padding: '0 12px', background: 'transparent', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', color: 'var(--color-text-secondary)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' };
 export const miniChip: React.CSSProperties = { flexShrink: 0, font: '500 9.5px var(--font-mono)', letterSpacing: '0.6px', textTransform: 'uppercase', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-xs)', padding: '1px 5px' };
 export const codeChip: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-body)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '1px 5px', whiteSpace: 'nowrap' };
@@ -270,10 +274,7 @@ export function IconGhost({ title, onClick, active, danger, children }: { title:
   const [hover, setHover] = useState(false);
   const color = active ? 'var(--color-accent)' : danger && hover ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   return (
-    <button title={title} onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ width: 24, height: 24, padding: 0, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: 'var(--radius-sm)', color, cursor: 'pointer' }}>
-      {children}
-    </button>
+    <IconButton label={title} size="sm" icon={children} onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ color }} />
   );
 }
 
