@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { createPluginSdk } from './facade';
 import { useProjects } from '../stores/projects';
 // The bundled Previews plugin is plain JS.
@@ -48,5 +48,63 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
     const Tab = tabs[0].Component;
     render(<Tab terminalId="t9" sessionId="s1" />);
     expect(await screen.findByText(/No previews from this thread yet/)).toBeInTheDocument();
+  });
+});
+
+// I8 (final review of v4.5.0): the thread tab rendered every card. On the phone it opens in a sheet, and
+// on WSL2 (no sips) every picture is full size. It gets the same page of 20 as the History and the Sheet.
+describe('Previews thread tab: a page of 20 with Show older', () => {
+  type Tab = React.ComponentType<{ terminalId: string | null; sessionId: string | null }>;
+  let Tab: Tab;
+  beforeEach(() => {
+    useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }] as never });
+    const base = createPluginSdk('previews');
+    const tabs: { Component: Tab }[] = [];
+    // 45 previews of thread t1 (newest first is Preview 0) and 3 of thread t2.
+    const mine = Array.from({ length: 45 }, (_, i) => ({
+      id: `p${i}`, sessionId: 's1', sessionName: 'Alpha', terminalId: 't1', terminalLabel: 'Perf', title: `Preview ${i}`, note: null, text: `text ${i}`,
+      files: [], createdAt: new Date(Date.UTC(2026, 10, 9, 12, 0, 0) - i * 60_000).toISOString(), seenAt: 'seen',
+    }));
+    const other = Array.from({ length: 3 }, (_, i) => ({ ...mine[0], id: `o${i}`, terminalId: 't2', terminalLabel: 'Other', title: `Other ${i}` }));
+    const DOCS = [...mine, ...other];
+    const d = {
+      ...base,
+      docs: { ...base.docs, entries: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
+      events: { on: () => () => {} },
+      register: (c: { inspectorTabs?: { Component: Tab }[] }) => { tabs.push(...(c.inspectorTabs ?? [])); },
+    };
+    activate(d as never);
+    Tab = tabs[0].Component;
+  });
+
+  it('shows the newest 20 first, and Show older adds 20 at a time', async () => {
+    render(<Tab terminalId="t1" sessionId="s1" />);
+    await screen.findByText('Preview 0');
+    expect(screen.queryByText('Preview 19')).not.toBeNull();
+    expect(screen.queryByText('Preview 20')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show older (25 more)' }));
+    expect(screen.queryByText('Preview 39')).not.toBeNull();
+    expect(screen.queryByText('Preview 40')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show older (5 more)' }));
+    expect(screen.queryByText('Preview 44')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Show older/ })).toBeNull();
+  });
+
+  it('another thread starts at its first page again, with no hook-order error', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { rerender } = render(<Tab terminalId="t1" sessionId="s1" />);
+    await screen.findByText('Preview 0');
+    fireEvent.click(screen.getByRole('button', { name: /Show older/ }));
+    expect(screen.queryByText('Preview 39')).not.toBeNull();
+    rerender(<Tab terminalId="t2" sessionId="s1" />);
+    expect(screen.queryByText('Other 2')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Show older/ })).toBeNull(); // 3 previews: no more pages
+    rerender(<Tab terminalId={null} sessionId="s1" />);
+    expect(screen.getByText('Open a thread to see its previews.')).toBeInTheDocument();
+    rerender(<Tab terminalId="t1" sessionId="s1" />);
+    expect(screen.queryByText('Preview 19')).not.toBeNull();
+    expect(screen.queryByText('Preview 20')).toBeNull();
+    expect(errors.mock.calls.filter((c) => /hook/i.test(String(c[0])))).toEqual([]);
+    errors.mockRestore();
   });
 });

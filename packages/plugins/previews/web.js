@@ -290,11 +290,23 @@ export default function activate(d) {
       return () => { for (const x of usePv.getState().items) if (!x.seenAt && x.terminalId === terminalId) void usePv.getState().markSeen(x.id); };
     }, [terminalId]);
     const mine = useMemo(() => (terminalId ? all.filter((p) => p.terminalId === terminalId) : []), [all, terminalId]);
+    // The same page of 20 as the history and the sheet (2026-11-09, I8): on the phone this tab opens in
+    // a sheet, and a daemon with no thumbnails (WSL2 has no sips) serves every picture at full size.
+    // Every hook is above the returns, so their order never changes.
+    // The count belongs to one thread: another thread starts at its first page, in its first render
+    // (the effect alone would render the longer list of the thread before once).
+    const [page, setPage] = useState({ id: terminalId, shown: PAGE });
+    useEffect(() => { setPage({ id: terminalId, shown: PAGE }); }, [terminalId]);
+    const shown = page.id === terminalId ? page.shown : PAGE;
+    const visible = useMemo(() => mine.slice(0, shown), [mine, shown]);
     const empty = (text) => h('div', { style: { fontSize: 13, color: 'var(--color-text-tertiary)', padding: '4px 2px' } }, text);
+    if (!terminalId) return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } }, empty('Open a thread to see its previews.'));
     return h('div', { style: { padding: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-      !terminalId ? empty('Open a thread to see its previews.')
-        : mine.length === 0 ? empty(loaded ? 'No previews from this thread yet. A thread can hand you files and text with its preview tool.' : 'Loading…')
-        : mine.map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })));
+      mine.length === 0 && empty(loaded ? 'No previews from this thread yet. A thread can hand you files and text with its preview tool.' : 'Loading…'),
+      ...visible.map((p) => h(Item, { key: p.id, preview: p, showProject: false, onDelete: (id) => void usePv.getState().remove(id) })),
+      mine.length > shown && h('button', { type: 'button', onClick: () => setPage({ id: terminalId, shown: shown + PAGE }),
+        style: { alignSelf: 'center', height: 34, padding: '0 16px', background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', color: 'var(--color-text-primary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' } },
+        `Show older (${mine.length - shown} more)`));
   }
 
   // ── the header eye: the project's unseen count, opens the sheet ──────────────────────────
