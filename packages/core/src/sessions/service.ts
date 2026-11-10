@@ -9,9 +9,10 @@ import { BootRecovery } from './boot-recovery.js';
 import { ThreadQuestions } from './thread-questions.js';
 import { HarnessRegistry } from './harness-registry.js';
 import { ThreadFiles } from './thread-files.js';
+import { ThreadMessages } from './thread-messages.js';
 import { emptySessionWiring, type SessionWiring, type StatusContext } from './session-wiring.js';
 import { ThreadSettings } from './thread-settings-service.js';
-import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
+import { redactKeysDeep } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
 import fs from 'fs';
 import os from 'os';
@@ -44,8 +45,6 @@ import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { findLiveCoordinator } from '../auth/key-scope.js';
 import { DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ThreadConfigStore, pickClientSettable } from './thread-config.js';
-import { ptyMessagePayload, flattenForPty } from './pty-message.js';
-import { senderLine } from '../auth/key-rules.js';
 
 export { disallowedToolsFor, type SpawnKey } from './thread-spawner.js';
 
@@ -194,6 +193,16 @@ export class SessionService {
       },
     });
     this.files = new ThreadFiles({ db, pty: ptyManager });
+    this.messages = new ThreadMessages({
+      db, pty: ptyManager, clock: () => this.clock(), spawner: this.spawner,
+      threads: {
+        structuredManagerForTerminal: (id) => this.structuredManagerForTerminal(id),
+        ensureStructuredAlive: (id) => this.ensureStructuredAlive(id),
+        isStructuredTerminal: (row) => this.isStructuredTerminal(row),
+        sendStructuredMessage: (id, content, source, logAs) => this.sendStructuredMessage(id, content, source, logAs),
+        noteThreadTouched: (id, source, logAs) => this.noteThreadTouched(id, source, logAs),
+      },
+    });
     this.bootRecovery = new BootRecovery({
       db, configStore: this.configStore,
       threads: {
@@ -215,6 +224,8 @@ export class SessionService {
   private readonly questions: ThreadQuestions;
   /** Where a path that a thread names is, and a file reference typed into a CLI (sessions/thread-files.ts). */
   private readonly files: ThreadFiles;
+  /** The messages to a thread and the overseer message log (sessions/thread-messages.ts). */
+  private readonly messages: ThreadMessages;
   /** The boot kickstart and the shutdown that keeps interrupted turns (sessions/boot-recovery.ts). */
   private readonly bootRecovery: BootRecovery;
 
@@ -810,47 +821,9 @@ export class SessionService {
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
-  ): void {
-    this.noteThreadTouched(terminalId, source, logAs);
-    // Lazily resume a thread that died on a daemon restart (resumes the same claude
-    // conversation when an external_id was captured) before delivering the message.
-    const manager = this.structuredManagerForTerminal(terminalId);
-    if (!manager?.isAlive(terminalId)) this.ensureStructuredAlive(terminalId);
-    if (!manager?.isAlive(terminalId)) {
-      const cause = this.spawner.lastSpawnError.get(terminalId);
-      throw new Error(cause ? `could not start the thread: ${cause}` : 'no structured session for terminal');
-    }
-    manager.sendMessage(terminalId, content, source);
-    this.logCoordinatorMessage(terminalId, content, logAs ?? (source === 'user' ? 'user' : source === 'coordinator' ? 'coordinator' : 'daemon'));
-  }
+  ): void { return this.messages.sendStructuredMessage(terminalId, content, source, logAs); }
 
-  /**
-   * The overseer message log (structured-recap spec, Unit 1): every message that reaches a
-   * coordinator, with who sent it, so a ledger quote can be checked against the human's real
-   * words. Only coordinators are logged. Written AFTER manager.sendMessage returns; a failed
-   * write is logged and never blocks the send.
-   */
-  private logCoordinatorMessage(
-    terminalId: string,
-    content: string | import('../structured/manager.js').ContentBlock[],
-    source: coordinatorMessagesDb.CoordinatorMessageSource,
-  ): void {
-    try {
-      const row = terminalsDb.getById(this.db, terminalId);
-      if (!row) return;
-      let cfg: Record<string, any> = {};
-      try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
-      if (cfg.role !== 'coordinator') return;
-      coordinatorMessagesDb.append(this.db, {
-        terminalId,
-        source,
-        text: redactKeys(coordinatorMessagesDb.messageText(content)),
-        sentAt: new Date(this.clock()).toISOString(),
-      });
-    } catch (err) {
-      console.error(`coordinator message log: write failed for ${terminalId}`, err);
-    }
-  }
+  private logCoordinatorMessage(terminalId: string, content: string | import('../structured/manager.js').ContentBlock[], source: coordinatorMessagesDb.CoordinatorMessageSource): void { return this.messages.logCoordinatorMessage(terminalId, content, source); }
 
   /**
    * True when this terminal actually runs the structured (Pretty) transport — BOTH the config
@@ -863,60 +836,13 @@ export class SessionService {
     return config.transport === 'structured' && !!this.structuredManagerFor(terminal.type);
   }
 
-  /**
-   * Deliver a message to a thread on EITHER transport — the transport-agnostic entry point
-   * behind POST /terminals/:id/message (and so behind the dispatch MCP's message_thread).
-   *
-   * Previously that route called sendStructuredMessage directly, which throws
-   * "no structured session for terminal" for a PTY thread — so one thread could only ever
-   * message a peer that happened to be in Pretty mode. A PTY thread has no message channel,
-   * but it does have a TUI we can type into (exactly what sendFileReference already does), so
-   * route it there instead of failing. Returns which transport delivered it, plus whether any
-   * non-text blocks had to be dropped, so the caller can be honest with the sender.
-   */
   sendThreadMessage(
     terminalId: string,
     content: string | import('../structured/manager.js').ContentBlock[],
     source?: import('../structured/manager.js').MessageSource,
     logAs?: coordinatorMessagesDb.CoordinatorMessageSource,
     fromProject?: import('../auth/key-rules.js').SenderFacts,
-  ): { transport: 'structured' | 'pty'; droppedNonText: boolean; delivered?: string | import('../structured/manager.js').ContentBlock[] } {
-    // A cross-project message from a thread of another project (owner decisions PK-4 and PK-5): the daemon
-    // puts one line before the text so the receiver, and the owner who reads the thread, see where it came from.
-    if (fromProject) {
-      const line = senderLine(fromProject);
-      content = typeof content === 'string' ? `${line}\n\n${content}` : [{ type: 'text', text: line }, ...content];
-    }
-    const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) throw new Error('Thread not found');
-    // A shell tab has no agent to read a message: text typed into it RUNS AS A COMMAND, with the
-    // daemon user's full rights and outside any coordinator's sandbox. message_thread,
-    // message_agent, and spawn_agent all arrive here, so refuse it for every caller.
-    if (terminal.type === 'shell') {
-      throw new Error('cannot message a shell tab: it has no agent, so the text would run as a command');
-    }
-
-    if (this.isStructuredTerminal(terminal)) {
-      this.sendStructuredMessage(terminalId, content, source, logAs);
-      return { transport: 'structured', droppedNonText: false, delivered: content };
-    }
-    this.noteThreadTouched(terminalId, source, logAs);
-
-    // PTY: type the message into the CLI's own input box and submit it.
-    const { text, droppedNonText } = flattenForPty(content as string | { type?: string; text?: string }[]);
-    if (!text) {
-      throw new Error(
-        droppedNonText
-          ? 'cannot deliver this message to a CLI thread: it has no text (images can only be sent to a Pretty thread)'
-          : 'text is required',
-      );
-    }
-    // Deliberately NOT auto-relaunched the way a structured thread is: restarting a PTY would
-    // discard the live terminal the human may be reading. Fail loudly instead.
-    if (!this.ptyManager.isAlive(terminalId)) throw new Error('thread process is not running');
-    this.ptyManager.write(terminalId, ptyMessagePayload(text));
-    return { transport: 'pty', droppedNonText, delivered: text };
-  }
+  ): { transport: 'structured' | 'pty'; droppedNonText: boolean; delivered?: string | import('../structured/manager.js').ContentBlock[] } { return this.messages.sendThreadMessage(terminalId, content, source, logAs, fromProject); }
 
   private outbox?: DeliveryOutbox;
   /** The daemon's delivery outbox (server wiring: delivery/wiring.ts). */
