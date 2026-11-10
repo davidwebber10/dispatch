@@ -404,8 +404,28 @@ describe('a thread through the build', () => {
   test('bootRecover closes the status of a working thread whose process is gone, and delivers what waited in the outbox', async () => {
     const k = kit();
     seedThread(k, 't1', 'working');
+    // A CLI thread with no process: its wake waits in the outbox (W2-C).
+    terminalsDb.create(k.db, { id: 't2', sessionId: 'p1', type: 'claude-code', label: 'CLI thread', config: {} });
+    const { outbox, ptyManager } = k.daemon.services;
+    expect(outbox.enqueue({ kind: 'watch', targetId: 't2', body: 'wake up', dedupKey: 'w1' }).state).toBe('pending');
+    const write = vi.spyOn(ptyManager, 'write');
+    (ptyManager as unknown as { spawn(id: string): number }).spawn('t2'); // the next life: the process of t2 runs again
     await k.daemon.bootRecover({ settleMs: 0 });
     expect(terminalsDb.getById(k.db, 't1')!.status).not.toBe('working');
+    expect((outbox.list({ terminalId: 't2' }) as { state: string }[])[0].state).toBe('delivered');
+    expect(write).toHaveBeenCalledTimes(1);
+    // A second recovery delivers nothing again.
+    await k.daemon.bootRecover({ settleMs: 0 });
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  test('bootRecover after stop does nothing and does not throw', async () => {
+    const k = kit();
+    seedThread(k, 't1', 'working');
+    const recovered = k.daemon.bootRecover({ settleMs: 20 });
+    k.daemon.stop();
+    k.db.close();
+    await expect(recovered).resolves.toBeUndefined();
   });
 
   test('stop kills the processes of every manager and revokes the keys', () => {
