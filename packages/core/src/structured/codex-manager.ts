@@ -361,11 +361,18 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       const res = await conn.request('thread/read', { threadId: session.threadId, includeTurns: true });
       turns = Array.isArray(res?.thread?.turns) ? res.thread.turns : [];
     }
-    for (const turn of turns) {
-      for (const item of Array.isArray(turn?.items) ? turn.items : []) {
-        for (const ev of backfillItem(item)) this.pushEvent(session, ev);
+    // W3-D: this is history that Codex keeps itself (the transcript route reads it). It goes in the
+    // ring and to the viewers as before, and NOT in the message journal: as a replay, the recorder
+    // marks each event and writes none. Without this, each resume (a daemon restart, a recovery
+    // of the app-server) wrote the whole history again with new sequences.
+    session.recorder?.beginReplay();
+    try {
+      for (const turn of turns) {
+        for (const item of Array.isArray(turn?.items) ? turn.items : []) {
+          for (const ev of backfillItem(item)) this.pushEvent(session, ev);
+        }
       }
-    }
+    } finally { session.recorder?.endReplay(); }
   }
 
   private onConnExit(conn: JsonRpcStdioClient): void {

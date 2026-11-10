@@ -85,6 +85,58 @@ describe('the Codex manager writes the journal', () => {
   });
 });
 
+// Final review of v4.5.0, I1: Codex keeps its own history (the REST transcript route reads it), and
+// the manager puts it in the ring again at each resume. That backfill went through the journal's
+// recorder, so each resume wrote the whole history again with new sequences.
+describe('the Codex manager: a resume writes no old history into the journal', () => {
+  const fake = path.join(fakes, 'fake-codex-app-server.mjs');
+  const backfilled = (manager: IStructuredManager) => new Promise<any[]>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('the resume backfill did not come')), 8000);
+    const tick = () => {
+      const events = manager.getEvents('t1') as any[];
+      if (events.some((e) => e?.type === 'assistant' && e.message?.content?.[0]?.text === 'earlier answer')) { clearTimeout(t); resolve(events); } else setTimeout(tick, 10);
+    };
+    tick();
+  });
+
+  it('three resumes on one database add no row, and a reconnect with a cursor gets nothing old', async () => {
+    const first = journalFor(new CodexStructuredSessionManager());
+    first.manager.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd() });
+    const idle = once(first.manager, 'idle');
+    first.manager.sendMessage('t1', 'stream please');
+    await idle;
+    const before = first.rows();
+    expect(before.map((r) => [r.seq, r.kind])).toEqual([[1, 'user'], [2, 'assistant'], [3, 'result']]);
+    first.manager.killAll();
+
+    let last = first;
+    for (let n = 0; n < 3; n++) {
+      // The daemon starts again: a new manager and a new journal instance on the same database.
+      const next = journalFor(new CodexStructuredSessionManager(), first.db);
+      const live: any[] = [];
+      next.manager.on('event', (_id: string, e: unknown) => live.push(e));
+      next.manager.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), resumeId: 'thread-fake-1' });
+      const ring = await backfilled(next.manager);
+      expect(next.rows()).toEqual(before); // the backfill of the resume is not journaled
+      // The ring has the history (the summary of a thread reads it), with no sequence; a journal client does not get it again.
+      const old = ring.filter((e) => e?.type === 'user' || e?.type === 'assistant');
+      expect(old.map((e) => [e.seq, e.journal_replayed])).toEqual([[undefined, true], [undefined, true]]);
+      expect(live.filter((e) => e?.type === 'user' || e?.type === 'assistant').every((e) => e.journal_replayed === true)).toBe(true);
+      // A reconnect with the cursor of the last item the client holds: nothing is newer.
+      const resume = next.manager.journal!.replay('t1', { after: 3, allowReset: false })!;
+      expect(resume.frame.reset).toBe(false);
+      expect(resume.frame.items).toEqual([]);
+      last = next;
+      if (n < 2) next.manager.killAll();
+    }
+    // A new turn after the resumes goes on with the next sequence.
+    const idle2 = once(last.manager, 'idle');
+    last.manager.sendMessage('t1', 'stream please');
+    await idle2;
+    expect(last.rows().map((r) => r.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
 describe('the ACP manager (Grok, OpenCode) writes the journal', () => {
   const spawn = (manager: AcpStructuredSessionManager, stateDir: string, extra: Record<string, unknown> = {}) =>
     manager.spawn('t1', { command: process.execPath, args: [path.join(fakes, 'fake-acp-agent.mjs')], workDir: os.tmpdir(), env: { FAKE_ACP_STATE_DIR: stateDir }, ...extra } as any);
