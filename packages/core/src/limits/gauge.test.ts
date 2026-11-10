@@ -1130,9 +1130,67 @@ describe('Claude read back-off and usage access (W1-H)', () => {
     answer.cli = { ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 30 * MIN };
     await run(2);
     expect(at(reads, 'cli')).toEqual([0]);
+    expect(g.claudeUsageAccess('cli')!.state).toBe('rate-limited');
     await g.refreshNow();
     expect(at(reads, 'cli')).toEqual([0]); // the Retry-After wait holds
     expect(at(reads, 'w1')).toEqual([0, 2]);
+  });
+
+  // v4.5.0 review, I6: the wait held only for an account whose state was `rate-limited`. An account that a 403
+  // refused keeps `not-available` through a later 429, so each press of Refresh read it again: ten reads in 5 seconds.
+  it('refreshNow after a 403 and then a 429: the wait of the 429 holds for a not-available account, for every press', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(1);
+    expect(at(reads, 'w1')).toEqual([0]);
+    expect(g.claudeUsageAccess('w1')!.state).toBe('not-available');
+    // Refresh reads inside the 6-hour wait of the 403 (the owner asked). This read answers 429.
+    answer.w1 = { ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 30 * MIN };
+    await g.refreshNow();
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    expect(g.claudeUsageAccess('w1')!.state).toBe('not-available'); // the refusal stays said
+    for (let i = 0; i < 10; i++) { clock += 500; await g.refreshNow(); }
+    clock += 5 * MIN;
+    await g.refreshNow();
+    expect(at(reads, 'w1')).toEqual([0, 1]); // no read inside the wait, whatever the state says
+    // The wait ended: the next press reads again.
+    clock += 25 * MIN;
+    await g.refreshNow();
+    expect(reads.w1).toHaveLength(3);
+  });
+
+  it('"Check again" after a 403 and then a 429 does not read inside the wait of the 429 either', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(1);
+    answer.w1 = { ok: false, reason: 'rate-limited', status: 429, retryAfterMs: 30 * MIN };
+    g.checkClaudeNow('w1'); await flush();
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    for (let i = 0; i < 5; i++) { clock += MIN; g.checkClaudeNow('w1'); await flush(); }
+    await run(3); // the request is not kept for a later pass
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    clock += 30 * MIN;
+    g.checkClaudeNow('w1'); await flush();
+    expect(reads.w1).toHaveLength(3);
+  });
+
+  it('a read that the owner asks for comes at most once in 30 seconds for one account', async () => {
+    build();
+    answer.w1 = SCOPE;
+    await run(1); // 0: both read
+    for (let i = 0; i < 10; i++) { await g.refreshNow(); clock += 500; } // ten presses in 5 seconds
+    expect(at(reads, 'cli')).toEqual([0, 1]);
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    for (let i = 0; i < 10; i++) { g.checkClaudeNow('w1'); await flush(); clock += 500; }
+    expect(at(reads, 'w1')).toEqual([0, 1]);
+    // 30 seconds after the last read, the request that waited is done on the next pass, and a new press reads again.
+    clock = T0 + MIN + 31_000;
+    g.tick(); await flush();
+    expect(reads.w1).toEqual([T0, T0 + MIN, T0 + MIN + 31_000]);
+    clock += 31_000;
+    await g.refreshNow();
+    expect(reads.w1).toHaveLength(4);
+    expect(reads.cli).toHaveLength(3);
   });
 
   it('refreshNow asks every Codex account directly, whatever its poll clock', async () => {
