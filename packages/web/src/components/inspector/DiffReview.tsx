@@ -6,6 +6,7 @@ import { useTabs } from '../../stores/tabs';
 import { useProjects } from '../../stores/projects';
 import { useGitStatus } from '../../stores/gitStatus';
 import { Select } from '../common/Select';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { Hunk } from '../tabs/toolviews/DiffView';
 import type { DiffLine } from '../tabs/toolviews/diff';
 
@@ -58,18 +59,15 @@ function reason(e: unknown): string {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const baseName = (p: string) => p.replace(/\/+$/, '').split('/').pop() ?? p;
 
-const ICON_BTN: React.CSSProperties = {
+const ICON_BTN_BASE: React.CSSProperties = {
   width: 28, height: 28, flexShrink: 0, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
   color: 'var(--color-text-secondary)',
 };
-const TEXT_BTN: React.CSSProperties = {
+const TEXT_BTN_BASE: React.CSSProperties = {
   height: 28, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
   background: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
   font: '500 12px var(--font-sans)', color: 'var(--color-text-primary)', cursor: 'pointer', whiteSpace: 'nowrap',
-};
-const DANGER_BTN: React.CSSProperties = {
-  ...TEXT_BTN, background: 'var(--color-status-red)', borderColor: 'var(--color-status-red)', color: 'var(--color-on-accent)', fontWeight: 600,
 };
 const NOTE: React.CSSProperties = {
   display: 'flex', gap: 8, alignItems: 'flex-start', padding: '8px 10px', margin: '8px 10px 0',
@@ -80,6 +78,11 @@ const NOTE: React.CSSProperties = {
 type Confirm = { kind: 'discard'; files: DiffFile[] } | { kind: 'worktree'; worktree: ThreadWorktreeState };
 
 export function DiffReview({ projectId, terminalId, onClose }: { projectId: string | null; terminalId: string | null; onClose?: () => void }) {
+  // A phone gets finger-sized controls (36px); the desktop column keeps 28px.
+  const phone = useIsMobile();
+  const ICON_BTN: React.CSSProperties = phone ? { ...ICON_BTN_BASE, width: 36, height: 36 } : ICON_BTN_BASE;
+  const TEXT_BTN: React.CSSProperties = phone ? { ...TEXT_BTN_BASE, height: 38, fontSize: 14, padding: '0 14px' } : TEXT_BTN_BASE;
+  const DANGER_BTN: React.CSSProperties = { ...TEXT_BTN, background: 'var(--color-status-red)', borderColor: 'var(--color-status-red)', color: 'var(--color-on-accent)', fontWeight: 600 };
   const project = useProjects((s) => s.sessions.find((x) => x.id === projectId));
   const tabs = useTabs((s) => (projectId ? s.byProject[projectId] : undefined));
   // Threads that run in their own directory (a worktree). The others share the project directory.
@@ -143,10 +146,10 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
     setBusy(true); setError(null); setMessage(null);
     try {
       const res = await api.discardChanges(projectId, target, files.map((f) => f.path));
-      setDone(res);
-      if (res.errors.length) setError(res.errors.map((x) => `${x.path}: ${x.error}`).join(' '));
       setConfirm(null);
       await afterChange();
+      setDone(res);
+      if (res.errors.length) setError(res.errors.map((x) => `${x.path}: ${x.error}`).join(' '));
     } catch (e) { setError(reason(e)); setConfirm(null); } finally { setBusy(false); }
   }
 
@@ -320,16 +323,16 @@ export function DiffReview({ projectId, terminalId, onClose }: { projectId: stri
 
         {files.length > 0 && (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 10px 4px', flexWrap: 'wrap' }}>
-              <span style={{ flex: 1, minWidth: 90, font: '500 12px var(--font-sans)', color: 'var(--color-text-secondary)' }}>
-                {plural(files.length, 'file')}
-                <span style={{ color: 'var(--color-status-green)', marginLeft: 8, fontFamily: 'var(--font-mono)' }}>+{totals.add}</span>
-                <span style={{ color: 'var(--color-status-red)', marginLeft: 6, fontFamily: 'var(--font-mono)' }}>-{totals.del}</span>
-              </span>
-              <button type="button" onClick={() => void approve(toApprove)} disabled={busy || toApprove.length === 0} style={{ ...TEXT_BTN, opacity: busy || toApprove.length === 0 ? 0.5 : 1 }}>
+            <div style={{ padding: '10px 10px 0', font: '500 12px var(--font-sans)', color: 'var(--color-text-secondary)' }}>
+              {plural(files.length, 'file')}
+              <span style={{ color: 'var(--color-status-green)', marginLeft: 8, fontFamily: 'var(--font-mono)' }}>+{totals.add}</span>
+              <span style={{ color: 'var(--color-status-red)', marginLeft: 6, fontFamily: 'var(--font-mono)' }}>-{totals.del}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px 6px' }}>
+              <button type="button" onClick={() => void approve(toApprove)} disabled={busy || toApprove.length === 0} style={{ ...TEXT_BTN, flex: 1, justifyContent: 'center', opacity: busy || toApprove.length === 0 ? 0.5 : 1 }}>
                 <Check size={14} />Approve all
               </button>
-              <button type="button" onClick={() => setConfirm({ kind: 'discard', files: actionable })} disabled={busy || actionable.length === 0} style={{ ...TEXT_BTN, color: 'var(--color-status-red)', opacity: busy || actionable.length === 0 ? 0.5 : 1 }}>
+              <button type="button" onClick={() => setConfirm({ kind: 'discard', files: actionable })} disabled={busy || actionable.length === 0} style={{ ...TEXT_BTN, flex: 1, justifyContent: 'center', color: 'var(--color-status-red)', opacity: busy || actionable.length === 0 ? 0.5 : 1 }}>
                 <Trash size={14} />Discard all
               </button>
             </div>

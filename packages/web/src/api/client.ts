@@ -689,7 +689,7 @@ export const api = {
   analyticsControlPlane: (r: AnalyticsRange) => req<ControlPlaneAnalytics>(`/api/analytics/control-plane${qs(r)}`),
   // Diff review and thread worktrees (W3-G). `terminalId` null reviews the project directory.
   getThreadDiff: (sessionId: string, terminalId: string | null, path?: string) =>
-    req<ThreadDiff>(`/api/sessions/${sessionId}/git/diff${qs({ terminalId: terminalId ?? undefined, path })}`),
+    req<ThreadDiff>(`/api/sessions/${sessionId}/git/diff?${new URLSearchParams({ ...(terminalId ? { terminalId } : {}), ...(path ? { path } : {}) }).toString()}`),
   // Stages the files (git add). It makes no commit.
   approveChanges: (sessionId: string, terminalId: string | null, paths: string[]) =>
     req<{ staged: string[] }>(`/api/sessions/${sessionId}/git/approve`, { method: 'POST', body: body({ terminalId, paths }) }),

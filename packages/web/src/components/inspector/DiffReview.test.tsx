@@ -15,7 +15,7 @@ const FILES: DiffFile[] = [
 ];
 const diff = (over: Partial<ThreadDiff> = {}): ThreadDiff => ({ files: FILES, truncated: false, shared: false, repo: true, branch: 'dispatch/side', workDir: '/repo/.claude/worktrees/side', ...over });
 
-let confirmSpy: ReturnType<typeof vi.spyOn>;
+let confirmSpy: { mock: { calls: unknown[][] } };
 
 beforeEach(() => {
   useProjects.setState({ sessions: [{ id: 'p1', name: 'proj', workingDir: '/repo' }] } as any);
