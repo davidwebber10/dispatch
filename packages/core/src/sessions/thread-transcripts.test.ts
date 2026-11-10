@@ -36,11 +36,14 @@ afterEach(() => {
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
 });
 
+/** The private locator, read the way ConversationReader reads it. */
+const locate = (id: string) => (transcripts as unknown as { locateTranscript(id: string): { file: string } | null | 'unsupported' }).locateTranscript(id);
+
 describe('ThreadTranscripts', () => {
   it('locates a Claude Code transcript by the stored session id and pages it', async () => {
     terminalsDb.create(db, { id: 't', sessionId: 's1', type: 'claude-code', label: 't', externalId: 'sess' });
     write('sess', [userLine('one', 'u1'), userLine('two', 'u2')]);
-    const located = transcripts.locateTranscript('t');
+    const located = locate('t');
     expect(located && located !== 'unsupported' && located.file).toBe(path.join(projectsDir(), 'sess.jsonl'));
     const page = await transcripts.getConversation('t', { limit: 1 });
     expect(page.items.map((i: any) => i.text)).toEqual(['two']);
@@ -49,8 +52,8 @@ describe('ThreadTranscripts', () => {
 
   it('a type with no transcript is unsupported; a missing thread has none', () => {
     terminalsDb.create(db, { id: 'sh', sessionId: 's1', type: 'shell', label: 'sh' });
-    expect(transcripts.locateTranscript('sh')).toBe('unsupported');
-    expect(transcripts.locateTranscript('missing')).toBeNull();
+    expect(locate('sh')).toBe('unsupported');
+    expect(locate('missing')).toBeNull();
   });
 
   it('recovers the session id of a thread only from one transcript born after the thread', () => {
