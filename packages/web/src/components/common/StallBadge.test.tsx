@@ -1,8 +1,9 @@
-import { render, act } from '@testing-library/react';
+import { render, act, renderHook } from '@testing-library/react';
 import { beforeEach, afterEach, expect, test, vi } from 'vitest';
 import { StallBadge, stallTitle } from './StallBadge';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
+import { useMinuteTick } from '../../lib/autoArchive';
 
 const NOW = Date.parse('2026-11-09T10:30:00.000Z');
 
@@ -43,6 +44,35 @@ test('the minutes count up while the badge shows', () => {
   expect(getByRole('img').getAttribute('title')).toContain('10 min');
   act(() => { vi.advanceTimersByTime(3 * 60_000); });
   expect(getByRole('img').getAttribute('title')).toContain('13 min');
+});
+
+// Final review of v4.5.0: each badge ran its own setInterval. All badges, and the other minute labels of
+// the app (lib/autoArchive.ts useMinuteTick), now share one minute clock.
+test('many badges run one timer, not one each', () => {
+  const stalls: Record<string, number> = {};
+  for (let i = 0; i < 12; i++) stalls[`t${i}`] = NOW - (10 + i) * 60_000;
+  useThreadStatus.setState({ stalls });
+  const { getAllByRole, unmount } = render(<>{Object.keys(stalls).map((id) => <StallBadge key={id} terminalId={id} />)}</>);
+  expect(getAllByRole('img')).toHaveLength(12);
+  expect(vi.getTimerCount()).toBe(1);
+  // The one clock moves every badge.
+  act(() => { vi.advanceTimersByTime(60_000); });
+  expect(getAllByRole('img').map((b) => b.getAttribute('title')!.match(/\d+/)![0])).toEqual(Object.keys(stalls).map((_, i) => String(11 + i)));
+  unmount();
+  expect(vi.getTimerCount()).toBe(0); // and the clock stops with the last badge
+});
+
+test('a badge shares the clock of the other minute labels', () => {
+  useThreadStatus.setState({ stalls: { t1: NOW - 10 * 60_000 } });
+  const other = renderHook(() => useMinuteTick(true));
+  render(<StallBadge terminalId="t1" />);
+  expect(vi.getTimerCount()).toBe(1);
+  other.unmount();
+});
+
+test('a thread with no stall runs no timer', () => {
+  render(<><StallBadge terminalId="t1" /><StallBadge terminalId="t2" /></>);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 test('goes away when the flag clears', () => {
