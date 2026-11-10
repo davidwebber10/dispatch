@@ -14,6 +14,8 @@ import type { DaemonServices } from './build.js';
  */
 export async function runBootRecovery(s: DaemonServices, opts: { network: boolean; settleMs?: number }): Promise<void> {
   const { db, dataDir, sessionService, statusService, agentService, ptyManager, outbox, endless } = s;
+  // Before the kickstart waits: a wake that a thread schedules from now on belongs to this daemon (boot-reconcile.ts).
+  const startedAt = Date.now();
   if (opts.network) {
     // The spawn path is sync and reads caches only, so load the OpenRouter and models.dev catalogs
     // once now. A chat-only model resumed right after boot then gets its tools turned off instead
@@ -53,8 +55,9 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
     // W2-C: a scheduled wake that the restart killed is flagged, and a thread that waits on a saved
     // question keeps waiting: the process check below must not turn it into an error, nor close its run.
-    const reconciled = reconcileAtBoot({ db, isAlive: alive, markIdle: (id, activity) => statusService.markIdle(id, activity), outbox });
+    const reconciled = reconcileAtBoot({ db, isAlive: alive, markIdle: (id, activity) => statusService.markIdle(id, activity), outbox, startedAt });
     if (reconciled.lostWakes.length) console.log(`Flagged ${reconciled.lostWakes.length} scheduled wake(s) that the restart lost`);
+    if (reconciled.oldScheduled.length) console.log(`Left ${reconciled.oldScheduled.length} scheduled thread(s) from before the last start as they are (no process, no notice)`);
     if (reconciled.restoredQuestions.length) console.log(`Kept ${reconciled.restoredQuestions.length} pending question(s) through the restart`);
     const waitsOnQuestion = new Set(reconciled.restoredQuestions);
     const aliveOrWaiting = (id: string) => alive(id) || waitsOnQuestion.has(id);

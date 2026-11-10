@@ -5,6 +5,9 @@
  *    and the wake lives in its process. The restart kills the process, so the wake never fires and
  *    the thread reads "scheduled" for ever. `reconcileAtBoot` flags it: a `wake.lost` lifecycle
  *    event, status idle with a fixed text, and a notice to its starter. It does not restart the thread.
+ *    Only a wake that was scheduled under a daemon that ran this check is flagged (v4.5.0 review, I7):
+ *    the threads that an earlier version left `scheduled` are a backlog, and a notice for each of them
+ *    would start its coordinator and a turn on the first boot after the upgrade.
  *
  * 2. A pending question. The question a structured thread waits on lives in its manager's memory.
  *    Here it is written to `pending_questions` when it is asked and removed when it is resolved.
@@ -19,6 +22,7 @@ import type Database from 'better-sqlite3';
 import * as terminalsDb from '../db/terminals.js';
 import * as parksDb from '../db/usage-limits.js';
 import * as pendingQuestionsDb from '../db/pending-questions.js';
+import * as appState from '../db/app-state.js';
 import { logLifecycle } from '../runtime/diagnostics.js';
 import { resolveReportTarget } from './report-target.js';
 import { stripControlChars } from './pty-message.js';
@@ -38,6 +42,31 @@ export interface BootReconcileDeps {
   markIdle: (terminalId: string, activity: string) => void;
   /** The lost-wake notice to the thread's starter goes through it. Absent: no notice. */
   outbox?: Pick<DeliveryOutbox, 'enqueue'>;
+  /** When this daemon started (ms). Default: the time of the call. */
+  startedAt?: number;
+}
+
+/**
+ * `app_state` key: the start time (ms) of the last daemon that ended this check. A thread that became `scheduled`
+ * at or after it did so under a daemon that ran the check, so its wake is one that a restart lost. Absent: no daemon
+ * ran the check on this database yet (the first boot after the upgrade), and every `scheduled` thread is backlog.
+ * It is written when the check ENDS, with the start time of the daemon: a daemon that stops before that changes
+ * nothing, and the next one still flags what the daemon before it lost.
+ */
+export const LOST_WAKE_SINCE_KEY = 'boot.lost_wake_since';
+
+function lostWakeSince(db: Database.Database): number | null {
+  const raw = appState.get(db, LOST_WAKE_SINCE_KEY);
+  const n = raw === null ? NaN : Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** When the thread became `scheduled` (ms): the time of its last status change, when that change was to `scheduled`. Null: not known. */
+function scheduledAt(db: Database.Database, terminalId: string): number | null {
+  const row = db.prepare('SELECT status, observed_at FROM thread_lifecycle WHERE terminal_id = ?').get(terminalId) as { status: string; observed_at: string } | undefined;
+  if (!row || row.status !== 'scheduled') return null;
+  const at = Date.parse(row.observed_at);
+  return Number.isFinite(at) ? at : null;
 }
 
 function cfgOf(raw: string | null | undefined): Record<string, any> {
@@ -59,11 +88,15 @@ function lostWakeTarget(db: Database.Database, row: terminalsDb.TerminalRow): st
  * `StatusService.reconcileProcesses`: that call turns every `needs_input` thread with a dead
  * process into an error, and the caller must spare the ids in `restoredQuestions`.
  */
-export function reconcileAtBoot(deps: BootReconcileDeps): { lostWakes: string[]; restoredQuestions: string[] } {
+export function reconcileAtBoot(deps: BootReconcileDeps): { lostWakes: string[]; restoredQuestions: string[]; oldScheduled: string[] } {
   const { db } = deps;
+  const startedAt = deps.startedAt ?? Date.now();
   const lostWakes: string[] = [];
   const restoredQuestions: string[] = [];
-  if (!db.open) return { lostWakes, restoredQuestions };
+  /** Scheduled threads with a dead process that are older than the check: left as they are. */
+  const oldScheduled: string[] = [];
+  if (!db.open) return { lostWakes, restoredQuestions, oldScheduled };
+  const since = lostWakeSince(db);
 
   // 1. Lost wakes. A thread paused for a usage limit is `scheduled` too, but the daemon resumes that one itself.
   let paused = new Set<string>();
@@ -71,6 +104,9 @@ export function reconcileAtBoot(deps: BootReconcileDeps): { lostWakes: string[];
   const scheduled = db.prepare("SELECT * FROM terminals WHERE archived_at IS NULL AND status = 'scheduled'").all() as terminalsDb.TerminalRow[];
   for (const row of scheduled) {
     if (paused.has(row.id) || deps.isAlive(row.id)) continue;
+    // The backlog: scheduled before a daemon ran this check, or at a time that is not known. No event, no notice.
+    const at = since === null ? null : scheduledAt(db, row.id);
+    if (since === null || at === null || at < since) { oldScheduled.push(row.id); continue; }
     try {
       logLifecycle(db, { terminalId: row.id, type: 'wake.lost', observedAt: new Date().toISOString() }, 'applied');
       const event = db.prepare("SELECT MAX(id) AS id FROM lifecycle_events WHERE terminal_id = ? AND event_type = 'wake.lost'").get(row.id) as { id: number | null };
@@ -100,7 +136,10 @@ export function reconcileAtBoot(deps: BootReconcileDeps): { lostWakes: string[];
     if (row.archived_at || deps.isAlive(row.id)) continue;
     restoredQuestions.push(row.id);
   }
-  return { lostWakes, restoredQuestions };
+  try { appState.set(db, LOST_WAKE_SINCE_KEY, String(startedAt)); } catch (err) {
+    console.warn('[boot] could not record the lost-wake check:', err instanceof Error ? err.message : String(err));
+  }
+  return { lostWakes, restoredQuestions, oldScheduled };
 }
 
 /** The saved question of a thread that still waits on it (status needs_input), or null. */
