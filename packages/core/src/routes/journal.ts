@@ -20,7 +20,9 @@ import { publicItem } from '../journal/replay.js';
  */
 export function createJournalRouter(journal: MessageJournal, threadExists: (terminalId: string) => boolean): Router {
   const router = policyRouter();
-  router.get('/terminals/:terminalId/journal', keyRoute({ thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule, plugin: needs('read:threads') }), (req, res) => {
+  const readRules = { thread: readRule, roleRun: readRule, chat: allowRule, summarizer: allowRule, plugin: needs('read:threads') };
+
+  router.get('/terminals/:terminalId/journal', keyRoute(readRules), (req, res) => {
     const id = req.params.terminalId;
     const read = (name: string): number | undefined | null => {
       const raw = req.query[name];
@@ -41,5 +43,34 @@ export function createJournalRouter(journal: MessageJournal, threadExists: (term
       res.status(500).json({ error: 'Could not read the journal' });
     }
   });
+
+  /**
+   * GET /api/terminals/:terminalId/journal/images/:imageId : the bytes of an image that the journal
+   * keeps outside its payload (final review of v4.5.0, I2). An item over the payload limit has, in
+   * place of the base64 data of an image, `source: { type: 'journal_image', id, media_type, thread }`;
+   * the client reads the picture from here. The key rules are the ones of the journal page.
+   *
+   * Only PNG, JPEG, GIF and WebP are ever stored (journal.ts), and the answer cannot be read as a
+   * page: `nosniff`, and a policy that allows nothing. An id belongs to its thread: another
+   * thread's id is 404.
+   */
+  router.get('/terminals/:terminalId/journal/images/:imageId', keyRoute(readRules), (req, res) => {
+    const { terminalId, imageId } = req.params;
+    try {
+      if (!/^[0-9a-f]{64}$/.test(imageId) || !threadExists(terminalId)) return void res.status(404).json({ error: 'Image not found' });
+      const image = journal.image(terminalId, imageId);
+      if (!image) return void res.status(404).json({ error: 'Image not found' });
+      res.setHeader('Content-Type', image.mediaType);
+      res.setHeader('Content-Length', String(image.data.length));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'); // the id is the hash of the bytes
+      res.end(image.data);
+    } catch (err) {
+      console.error(`[journal] image of ${terminalId} failed:`, err);
+      res.status(500).json({ error: 'Could not read the image' });
+    }
+  });
+
   return router;
 }

@@ -46,6 +46,13 @@ export interface JournalStatements {
   hasImport: Database.Statement;
   markImport: Database.Statement;
   deleteImports: Database.Statement;
+  putImage: Database.Statement;
+  getImage: Database.Statement;
+  imageStats: Database.Statement;
+  oldestImages: Database.Statement;
+  deleteImage: Database.Statement;
+  deleteImagesUpTo: Database.Statement;
+  deleteImages: Database.Statement;
 }
 
 export function prepareJournal(db: Database.Database): JournalStatements {
@@ -78,5 +85,17 @@ export function prepareJournal(db: Database.Database): JournalStatements {
     hasImport: db.prepare('SELECT 1 AS n FROM thread_journal_imports WHERE terminal_id = ? AND session_id = ?'),
     markImport: db.prepare('INSERT OR IGNORE INTO thread_journal_imports (terminal_id, session_id, at) VALUES (?, ?, ?)'),
     deleteImports: db.prepare('DELETE FROM thread_journal_imports WHERE terminal_id = ?'),
+    // The images of the items over the payload limit (table `thread_journal_images`). The same image again keeps
+    // its bytes and moves `last_seq` to the newest row that refers to it.
+    putImage: db.prepare(`
+      INSERT INTO thread_journal_images (terminal_id, id, media_type, data, bytes, last_seq, at)
+      VALUES (@terminal_id, @id, @media_type, @data, @bytes, @last_seq, @at)
+      ON CONFLICT (terminal_id, id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq)`),
+    getImage: db.prepare('SELECT media_type, data FROM thread_journal_images WHERE terminal_id = ? AND id = ?'),
+    imageStats: db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes FROM thread_journal_images WHERE terminal_id = ?'),
+    oldestImages: db.prepare('SELECT id, bytes, last_seq FROM thread_journal_images WHERE terminal_id = ? ORDER BY last_seq ASC, at ASC'),
+    deleteImage: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ? AND id = ?'),
+    deleteImagesUpTo: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ? AND last_seq <= ?'),
+    deleteImages: db.prepare('DELETE FROM thread_journal_images WHERE terminal_id = ?'),
   };
 }

@@ -12,6 +12,7 @@
 // `seq` is the sequence of the JOURNAL. It is not the status sequence of StatusService
 // (`statusSeq` in the code that holds both).
 
+import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { GAP_PREFIX, prepareJournal, type JournalKind, type JournalRow, type JournalStatements } from './db.js';
 
@@ -23,6 +24,18 @@ export const MAX_PAYLOAD_CHARS = 256 * 1024;
 export const MAX_THREAD_ROWS = 50_000;
 /** The most payload characters that one thread keeps (64 MB). The oldest rows go first. */
 export const MAX_THREAD_BYTES = 64 * 1024 * 1024;
+/**
+ * The most base64 characters of ONE image that the journal keeps (8 MB of text, about 6 MB of
+ * picture). An image in a payload over the payload limit is kept outside the payload, in the image
+ * store, up to this size; a larger one is cut and the client says so.
+ */
+export const MAX_IMAGE_CHARS = 8 * 1024 * 1024;
+/** The most image bytes that one thread keeps in the image store (64 MB). The oldest images go first. */
+export const MAX_THREAD_IMAGE_BYTES = 64 * 1024 * 1024;
+/** The only types the image store takes and the image route serves. No SVG: it can hold script. */
+const IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/** The `source.type` of an image whose bytes are in the image store: `{ type, id, media_type, thread }`. */
+export const IMAGE_REF = 'journal_image';
 /** A trim removes rows down to this part of the limit, so the next appends do not trim again. */
 const TRIM_TO = 0.8;
 export const DEFAULT_PAGE_LIMIT = 120;
@@ -78,7 +91,12 @@ export interface JournalOptions {
   maxPayloadChars?: number;
   maxThreadRows?: number;
   maxThreadBytes?: number;
+  maxImageChars?: number;
+  maxThreadImageBytes?: number;
 }
+
+/** An image that `moveImages` took out of a payload: `data` is its base64 text. */
+interface MovedImage { id: string; mediaType: string; data: string }
 
 /** `append` with an Idempotency-Key that the thread has already. `seq` is the row that holds the key. */
 export class JournalDuplicateKeyError extends Error {
@@ -95,6 +113,8 @@ export class MessageJournal {
   private readonly maxPayloadChars: number;
   private readonly maxThreadRows: number;
   private readonly maxThreadBytes: number;
+  private readonly maxImageChars: number;
+  private readonly maxThreadImageBytes: number;
   /** Rows and bytes of the threads this instance wrote to. Read from the database on first use. */
   private readonly known = new Map<string, ThreadStats>();
   private readonly appendTx: (terminalId: string, item: JournalInput) => number;
@@ -104,6 +124,8 @@ export class MessageJournal {
     this.maxPayloadChars = Math.max(64, opts.maxPayloadChars ?? MAX_PAYLOAD_CHARS);
     this.maxThreadRows = Math.max(2, opts.maxThreadRows ?? MAX_THREAD_ROWS);
     this.maxThreadBytes = Math.max(1, opts.maxThreadBytes ?? MAX_THREAD_BYTES);
+    this.maxImageChars = Math.max(1, opts.maxImageChars ?? MAX_IMAGE_CHARS);
+    this.maxThreadImageBytes = Math.max(1, opts.maxThreadImageBytes ?? MAX_THREAD_IMAGE_BYTES);
     this.appendTx = db.transaction((terminalId: string, item: JournalInput) => this.appendNow(terminalId, item));
   }
 
@@ -121,7 +143,7 @@ export class MessageJournal {
       const held = this.q.byKey.get(terminalId, item.idemKey) as JournalRow | undefined;
       if (held) throw new JournalDuplicateKeyError(terminalId, item.idemKey, held.seq);
     }
-    const { json } = cutPayload(item.payload, this.maxPayloadChars);
+    const { json, images } = this.encode(terminalId, item.payload);
     if (item.nativeId) {
       const row = this.q.byNative.get(terminalId, item.nativeId) as { seq: number; bytes: number } | undefined;
       if (row) {
@@ -129,6 +151,7 @@ export class MessageJournal {
         const stats = this.known.get(terminalId);
         if (stats) stats.bytes += json.length - row.bytes;
         if (item.idemKey) this.q.setKey.run(item.idemKey, terminalId, row.seq);
+        this.keepImages(terminalId, row.seq, images);
         return row.seq;
       }
     }
@@ -138,8 +161,53 @@ export class MessageJournal {
       idem_key: item.idemKey ?? null, at: item.at ?? new Date().toISOString(), bytes: json.length,
     }) as { seq: number };
     stats.rows += 1; stats.bytes += json.length;
+    this.keepImages(terminalId, seq, images);
     if (stats.rows > this.maxThreadRows || stats.bytes > this.maxThreadBytes) this.trim(terminalId);
     return seq;
+  }
+
+  /**
+   * The JSON of a payload as a row keeps it. A payload under the limit is kept as it is. In one
+   * over the limit, each image goes out of the payload first (`images`; the payload gets a
+   * reference), then what is still too long is cut (cutPayload).
+   */
+  private encode(terminalId: string, payload: unknown): { json: string; images: MovedImage[] } {
+    const whole = stringify(payload);
+    if (whole.length <= this.maxPayloadChars) return { json: whole, images: [] };
+    const images: MovedImage[] = [];
+    const light = moveImages(payload, terminalId, this.maxImageChars, images);
+    return { json: cutPayload(light, this.maxPayloadChars).json, images };
+  }
+
+  /** Put the images of row `seq` in the image store, and keep the thread's images under their bound. */
+  private keepImages(terminalId: string, seq: number, images: MovedImage[]): void {
+    if (!images.length) return;
+    const at = new Date().toISOString();
+    for (const image of images) {
+      const data = Buffer.from(image.data, 'base64');
+      this.q.putImage.run({ terminal_id: terminalId, id: image.id, media_type: image.mediaType, data, bytes: data.length, last_seq: seq, at });
+    }
+    let { bytes } = this.imageStats(terminalId);
+    if (bytes <= this.maxThreadImageBytes) return;
+    // The oldest images go first, down to the trim target. An image of this row always stays.
+    const target = Math.floor(this.maxThreadImageBytes * TRIM_TO);
+    for (const old of this.q.oldestImages.all(terminalId) as { id: string; bytes: number; last_seq: number }[]) {
+      if (bytes <= target || old.last_seq >= seq) break;
+      this.q.deleteImage.run(terminalId, old.id);
+      bytes -= old.bytes;
+    }
+  }
+
+  /** An image of the thread from the image store, or null. `id` is the `id` of a `journal_image` source. */
+  image(terminalId: string, id: string): { mediaType: string; data: Buffer } | null {
+    const row = this.q.getImage.get(terminalId, id) as { media_type: string; data: Buffer } | undefined;
+    return row ? { mediaType: row.media_type, data: row.data } : null;
+  }
+
+  /** How many images the thread has in the image store, and their bytes. */
+  imageStats(terminalId: string): { images: number; bytes: number } {
+    const row = this.q.imageStats.get(terminalId) as { n: number; bytes: number };
+    return { images: row.n, bytes: row.bytes };
   }
 
   /** A window of the thread's items, oldest first. With no option: the newest `limit` items. */
@@ -170,6 +238,7 @@ export class MessageJournal {
   removeThread(terminalId: string): void {
     this.q.deleteThread.run(terminalId);
     this.q.deleteImports.run(terminalId);
+    this.q.deleteImages.run(terminalId);
     this.known.delete(terminalId);
   }
 
@@ -207,8 +276,10 @@ export class MessageJournal {
   /** Give a row that has no native id one, with the payload that carries it. False when the row has one already. */
   setNative(terminalId: string, seq: number, nativeId: string, payload: unknown): boolean {
     if (this.seqOfNative(terminalId, nativeId)) return false;
-    const { json } = cutPayload(payload, this.maxPayloadChars);
-    return this.q.setNative.run(nativeId, json, json.length, terminalId, seq).changes > 0;
+    const { json, images } = this.encode(terminalId, payload);
+    const changed = this.q.setNative.run(nativeId, json, json.length, terminalId, seq).changes > 0;
+    if (changed) this.keepImages(terminalId, seq, images);
+    return changed;
   }
 
   /** The item that holds this Idempotency-Key, or null. */
@@ -269,6 +340,7 @@ export class MessageJournal {
       }
       if (!progress) break;
       this.q.deleteUpTo.run(terminalId, cutoff);
+      this.q.deleteImagesUpTo.run(terminalId, cutoff); // an image goes with the last row that refers to it
     }
     this.known.set(terminalId, { rows, bytes });
     return removed;
@@ -310,6 +382,28 @@ export function cutPayload(payload: unknown, limit: number): { json: string; tru
   return { json, truncated: true };
 }
 
+/**
+ * A copy of `value` in which each base64 image is a reference to the image store:
+ * `{ type: 'journal_image', id, media_type, thread }`. The images go to `out`. An image that the
+ * store does not take (over `maxChars`, or a type that is no picture) stays as it is: `cutPayload`
+ * then cuts it when it is too long.
+ */
+function moveImages(value: unknown, terminalId: string, maxChars: number, out: MovedImage[]): unknown {
+  if (Array.isArray(value)) return value.map((v) => moveImages(v, terminalId, maxChars, out));
+  if (typeof value !== 'object' || value === null) return value;
+  const o = value as Record<string, unknown>;
+  if (o.type === 'base64' && typeof o.data === 'string') {
+    const mediaType = typeof o.media_type === 'string' ? o.media_type.toLowerCase() : '';
+    if (!o.data.length || o.data.length > maxChars || !IMAGE_TYPES.has(mediaType)) return value;
+    const id = createHash('sha256').update(o.data).digest('hex');
+    if (!out.some((i) => i.id === id)) out.push({ id, mediaType, data: o.data });
+    return { type: IMAGE_REF, id, media_type: mediaType, thread: terminalId };
+  }
+  const copy: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) copy[k] = moveImages(v, terminalId, maxChars, out);
+  return copy;
+}
+
 function stringify(value: unknown): string {
   try { return JSON.stringify(value) ?? 'null'; } catch { return 'null'; }
 }
@@ -319,7 +413,8 @@ function shorten(value: unknown, cap: number): unknown {
   if (Array.isArray(value)) return value.map((v) => shorten(v, cap));
   if (typeof value === 'object' && value !== null) {
     const o = value as Record<string, unknown>;
-    // Half of a base64 picture is not a picture: the source goes whole, and the client shows no image.
+    // Half of a base64 picture is not a picture: the source goes whole, and the client shows a note
+    // in its place. Only an image that the image store did not take comes here (see moveImages).
     if (o.type === 'base64' && typeof o.data === 'string' && o.data.length > cap) return { type: 'cut', media_type: o.media_type };
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o)) out[k] = shorten(v, cap);

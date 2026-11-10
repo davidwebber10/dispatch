@@ -78,6 +78,102 @@ describe('MessageJournal', () => {
     expect(small.truncated).toBe(false);
   });
 
+  // Final review of v4.5.0, I2: an image over about 190 KB made its payload pass the limit, the cut
+  // replaced its source with { type: 'cut' }, and the client showed nothing after a reopen.
+  describe('an image in a payload over the limit', () => {
+    /** `bytes` of data that does not compress or repeat, as base64. */
+    const picture = (bytes: number, seed = 1) => { const b = Buffer.alloc(bytes); for (let i = 0; i < bytes; i++) b[i] = (i * 31 + seed * 17 + (i >> 8)) & 0xff; return b; };
+    const withImage = (data: Buffer, media_type = 'image/png') => ({
+      type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'look at this' }, { type: 'image', source: { type: 'base64', media_type, data: data.toString('base64') } }] },
+    });
+    const sourceOf = (item: { payload: unknown }) => (item.payload as any).message.content[1].source;
+
+    it('keeps the image: the row has a reference, the image store has the bytes once', () => {
+      const j = new MessageJournal(open());
+      const data = picture(300 * 1024);
+      j.append('a', { kind: 'user', payload: withImage(data) });
+      const [item] = j.page('a').items;
+      expect(item.truncated).toBe(false); // nothing was lost
+      const source = sourceOf(item);
+      expect(source).toEqual({ type: 'journal_image', id: expect.stringMatching(/^[0-9a-f]{64}$/), media_type: 'image/png', thread: 'a' });
+      expect((item.payload as any).message.content[0].text).toBe('look at this');
+      expect(JSON.stringify(item.payload).length).toBeLessThan(1000);
+      const stored = j.image('a', source.id)!;
+      expect(stored.mediaType).toBe('image/png');
+      expect(stored.data.equals(data)).toBe(true);
+      // The same picture again (a second message, a second thread) is its own reference to one stored copy per thread.
+      j.append('a', { kind: 'user', payload: withImage(data) });
+      expect(sourceOf(j.page('a').items[1]).id).toBe(source.id);
+      expect(j.imageStats('a')).toEqual({ images: 1, bytes: data.length });
+      expect(j.image('b', source.id)).toBeNull(); // an image belongs to its thread
+    });
+
+    it('a small image in a small payload stays in the payload', () => {
+      const j = new MessageJournal(open());
+      const data = picture(20 * 1024);
+      j.append('a', { kind: 'user', payload: withImage(data) });
+      expect(sourceOf(j.page('a').items[0])).toEqual({ type: 'base64', media_type: 'image/png', data: data.toString('base64') });
+      expect(j.imageStats('a')).toEqual({ images: 0, bytes: 0 });
+    });
+
+    it('an image in a tool result is kept too, and long text next to it is still cut', () => {
+      const j = new MessageJournal(open());
+      const data = picture(250 * 1024, 2);
+      const big = 'x'.repeat(MAX_PAYLOAD_CHARS + 5000);
+      j.append('a', { kind: 'tool', payload: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: big }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: data.toString('base64') } }] }] } } });
+      const [item] = j.page('a').items;
+      const blocks = (item.payload as any).message.content[0].content;
+      expect(item.truncated).toBe(true); // the text was cut
+      expect(blocks[0].text.length).toBeLessThan(big.length);
+      expect(blocks[1].source.type).toBe('journal_image');
+      expect(j.image('a', blocks[1].source.id)!.data.equals(data)).toBe(true);
+    });
+
+    it('an image over the image bound is not kept: the source says so, and the item is flagged', () => {
+      const j = new MessageJournal(open(), { maxImageChars: 100_000 });
+      j.append('a', { kind: 'user', payload: withImage(picture(300 * 1024)) });
+      const [item] = j.page('a').items;
+      expect(sourceOf(item)).toEqual({ type: 'cut', media_type: 'image/png' });
+      expect(item.truncated).toBe(true);
+      expect(j.imageStats('a').images).toBe(0);
+    });
+
+    it('data that is not a picture type is never stored for the image route', () => {
+      const j = new MessageJournal(open());
+      j.append('a', { kind: 'user', payload: withImage(picture(300 * 1024), 'text/html') });
+      expect(sourceOf(j.page('a').items[0]).type).toBe('cut');
+      expect(j.imageStats('a').images).toBe(0);
+    });
+
+    it('the images of a thread stay under the image bound, the oldest go first; another thread is not touched', () => {
+      const j = new MessageJournal(open(), { maxThreadImageBytes: 1_000_000 });
+      j.append('b', { kind: 'user', payload: withImage(picture(300 * 1024, 99)) });
+      for (let n = 1; n <= 8; n++) j.append('a', { kind: 'user', payload: withImage(picture(300 * 1024, n)) });
+      expect(j.imageStats('a').bytes).toBeLessThanOrEqual(1_000_000);
+      expect(j.imageStats('a').images).toBeGreaterThanOrEqual(2);
+      const items = j.page('a').items;
+      expect(j.image('a', sourceOf(items[7]).id)).not.toBeNull(); // the newest image is there
+      expect(j.image('a', sourceOf(items[0]).id)).toBeNull();     // the oldest is gone; its row stays
+      expect(j.imageStats('b').images).toBe(1);
+    });
+
+    it('an image goes with the trim of its row, and with its thread', () => {
+      const db = open();
+      const now = new Date().toISOString();
+      db.prepare("INSERT INTO sessions (id, provider, name, working_dir, created_at, updated_at, last_activity_at) VALUES ('s','claude-code','s','/tmp',?,?,?)").run(now, now, now);
+      for (const id of ['a', 'b', 'c']) db.prepare("INSERT INTO terminals (id, session_id, type, label, created_at) VALUES (?, 's', 'grok', 'x', ?)").run(id, now);
+      const j = new MessageJournal(db, { maxThreadRows: 10 });
+      for (const id of ['a', 'b', 'c']) j.append(id, { kind: 'user', payload: withImage(picture(300 * 1024)) });
+      for (let n = 0; n < 30; n++) j.append('a', { kind: 'user', payload: user(`m${n}`) });
+      expect(j.page('a', { limit: 500 }).firstSeq).toBeGreaterThan(1); // the row of the image was trimmed
+      expect(j.imageStats('a').images).toBe(0);
+      j.removeThread('b');
+      expect(j.imageStats('b').images).toBe(0);
+      db.prepare("DELETE FROM terminals WHERE id = 'c'").run();
+      expect(j.imageStats('c').images).toBe(0);
+    });
+  });
+
   it('a repeated idempotency key is refused', () => {
     const j = new MessageJournal(open());
     const seq = j.append('a', { kind: 'user', payload: user('once'), idemKey: 'k1' });

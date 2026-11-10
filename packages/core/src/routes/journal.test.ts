@@ -103,6 +103,36 @@ describe('GET /api/terminals/:terminalId/journal', () => {
     expect((await request(app).get('/api/terminals/tA/journal').set(bad)).status).toBe((await request(app).get('/api/terminals/tA/conversation').set(bad)).status);
   });
 
+  // Final review of v4.5.0, I2: an image that the journal keeps outside its payload is read from here.
+  it('serves an image that the journal keeps, as a picture and nothing else', async () => {
+    const db = new Database(':memory:');
+    const { app, journal } = daemon(db);
+    seedProjects(db);
+    const data = Buffer.alloc(300 * 1024); for (let i = 0; i < data.length; i++) data[i] = (i * 31 + (i >> 8)) & 0xff;
+    journal.append('tA', { kind: 'user', payload: { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: data.toString('base64') } }] } } });
+    const page = await request(app).get('/api/terminals/tA/journal').expect(200);
+    const source = page.body.items[0].payload.message.content[0].source;
+    expect(source).toMatchObject({ type: 'journal_image', media_type: 'image/png', thread: 'tA' });
+    const res = await request(app).get(`/api/terminals/tA/journal/images/${source.id}`).buffer(true).parse((r, cb) => { const chunks: Buffer[] = []; r.on('data', (c: Buffer) => chunks.push(c)); r.on('end', () => cb(null, Buffer.concat(chunks))); }).expect(200);
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toContain("default-src 'none'");
+    expect((res.body as Buffer).equals(data)).toBe(true);
+    // Another thread, an id that is no image, an id that is no id, an unknown thread.
+    await request(app).get(`/api/terminals/tA2/journal/images/${source.id}`).expect(404);
+    await request(app).get(`/api/terminals/tA/journal/images/${'0'.repeat(64)}`).expect(404);
+    await request(app).get('/api/terminals/tA/journal/images/..%2F..%2Fsecret').expect(404);
+    await request(app).get(`/api/terminals/nope/journal/images/${source.id}`).expect(404);
+    // The key rules are the ones of the journal page.
+    const key = (id: string) => ({ Authorization: `Bearer ${(app.locals.keys.mint({ kind: 'thread', terminalId: id }).key as string)}` });
+    await request(app).get(`/api/terminals/tA/journal/images/${source.id}`).set(key('tA')).expect(200);
+    const pageOther = await request(app).get('/api/terminals/tB/journal').set(key('tA'));
+    const imageOther = await request(app).get(`/api/terminals/tB/journal/images/${source.id}`).set(key('tA'));
+    expect(imageOther.status === 404 || imageOther.status === pageOther.status).toBe(true);
+    const bad = { Authorization: 'Bearer dsp_thread_not-a-real-key' };
+    expect((await request(app).get(`/api/terminals/tA/journal/images/${source.id}`).set(bad)).status).toBe((await request(app).get('/api/terminals/tA/journal').set(bad)).status);
+  });
+
   it('a key in an item is redacted', async () => {
     const db = new Database(':memory:');
     const { app, journal } = daemon(db);

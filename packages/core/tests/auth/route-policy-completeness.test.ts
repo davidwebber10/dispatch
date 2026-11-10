@@ -53,6 +53,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/terminals/:terminalId/conversation',
   // W3-D: the journal page has the key rules of the conversation route.
   'GET /api/terminals/:terminalId/journal',
+  // Final review of v4.5.0 (I2): an image that the journal keeps outside its payload; the same key rules.
+  'GET /api/terminals/:terminalId/journal/images/:imageId',
   'GET /api/terminals/:terminalId/permission',
   'POST /api/terminals/:terminalId/message',
   'POST /api/terminals/:terminalId/permission',

@@ -302,6 +302,30 @@ test('a whole frame that comes after the next block started finishes its own blo
   expect(result.current.items.map((i) => i.uuid)).toEqual(['u-think', 'u-text']);
 });
 
+// ---- an image that the journal keeps outside its payload, or could not keep (final review of v4.5.0, I2) ----
+
+test('a journal image reference renders as a picture from the image route of its thread', () => {
+  const id = 'a'.repeat(64);
+  const event = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'journal_image', id, media_type: 'image/png', thread: 't1' } }] } };
+  expect(itemsFromEvent(event, undefined, 4)).toEqual([
+    { kind: 'user', text: 'look', seq: 4 },
+    { kind: 'image', imageUrl: `/api/terminals/t1/journal/images/${id}`, imageMime: 'image/png', imageAlt: undefined, imageFromUser: true, seq: 4 },
+  ]);
+});
+
+test('an image that the journal could not keep shows a clear note, not nothing', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  const cut = { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', source: { type: 'cut', media_type: 'image/png' } }] }, journal_cut: true };
+  journal(frame([row(1, cut), row(2, assistantEvent('I see it'))]));
+  expect(result.current.items.map((i) => [i.kind, i.text ?? i.imageNote, i.imageFromUser])).toEqual([
+    ['user', 'look', undefined], ['image', 'Image not kept — too large', true], ['assistant', 'I see it', undefined],
+  ]);
+  expect(result.current.items[1].imageUrl).toBeUndefined();
+  // In a tool result too.
+  const tool = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: [{ type: 'image', source: { type: 'cut', media_type: 'image/png' } }] }] } };
+  expect(itemsFromEvent(tool, undefined).map((i) => [i.kind, i.imageNote])).toEqual([['tool-result', undefined], ['image', 'Image not kept — too large']]);
+});
+
 // ---- an older daemon ----
 
 test('a daemon with no journal (no frame, no seq) works as before, and no cursor is sent', async () => {

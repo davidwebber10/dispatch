@@ -614,4 +614,25 @@ function initializeSchema(db: Database.Database): void {
       DELETE FROM thread_journal_imports WHERE terminal_id = OLD.id;
     END;
   `));
+  // Final review of v4.5.0 (I2): the images of journal items whose payload is over the payload limit.
+  // The payload keeps a reference ({ type: 'journal_image', id, media_type, thread }) and the bytes
+  // are here, once for each (thread, id); `id` is the SHA-256 of the image's base64 text. `last_seq`
+  // is the newest journal row that holds a reference, so the trim of the rows removes the image
+  // with its last row. Before this table such an image was cut from its payload and was lost.
+  migrate(db, 'w3d-thread-journal-images', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_journal_images (
+      terminal_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      media_type TEXT NOT NULL,
+      data BLOB NOT NULL,
+      bytes INTEGER NOT NULL,
+      last_seq INTEGER NOT NULL,
+      at TEXT NOT NULL,
+      PRIMARY KEY (terminal_id, id)
+    );
+    CREATE TRIGGER IF NOT EXISTS thread_journal_images_thread_deleted AFTER DELETE ON terminals
+    BEGIN
+      DELETE FROM thread_journal_images WHERE terminal_id = OLD.id;
+    END;
+  `));
 }
