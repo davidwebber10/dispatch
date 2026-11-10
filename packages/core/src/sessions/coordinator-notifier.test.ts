@@ -74,7 +74,7 @@ describe('CoordinatorNotifier', () => {
 
   it('the same turn end makes one outbox row: a second call with the same lifecycle position is a duplicate', () => {
     const c = make();
-    c.db.prepare("INSERT INTO thread_lifecycle (terminal_id, status, generation, sequence) VALUES ('a', 'waiting', 'g1', 4)").run();
+    c.db.prepare("INSERT INTO thread_lifecycle (terminal_id, status, source, observed_at, generation, sequence) VALUES ('a', 'waiting', 'test', '2026-01-01T00:00:00Z', 'g1', 4)").run();
     c.notifier.noteAgentCompletion('a');
     c.notifier.noteAgentCompletion('a');
     expect(c.rows().length).toBe(1);
