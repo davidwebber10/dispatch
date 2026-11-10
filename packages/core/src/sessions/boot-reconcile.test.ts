@@ -190,6 +190,8 @@ describe('reconcileAtBoot: lost wakes', () => {
     terminalsDb.writeConfigRaw(old.db, 't', { transport: 'structured', role: 'agent', spawnedBy: 'coord', spawnDepth: 1 });
     schedule(old, 't');
     schedule(old, 'w2');
+    // They went dormant a week ago (the test runs in one millisecond; the real backlog is old).
+    old.db.prepare('UPDATE thread_lifecycle SET observed_at = ? WHERE terminal_id IN (?, ?)').run(new Date(Date.now() - 7 * 86_400_000).toISOString(), 't', 'w2');
     const d = boot(); // the first start of the new version
     const result = d.recover();
     expect(result.lostWakes).toEqual([]);
@@ -362,6 +364,23 @@ describe('pending questions survive a restart', () => {
     const d = boot();
     expect(d.recover().restoredQuestions).toEqual([]);
     expect(pendingQuestionsDb.get(d.db, 'lead')).toBeUndefined();
+  });
+
+  // v4.5.0 review (minor): the archive deleted the saved question, so a restored thread said "needs input" with no card.
+  it('an archive keeps the saved question and a restore shows its card again; a delete of the project removes it', () => {
+    ask(boot());
+    const d = boot(); // the restart: the question lives in the database only
+    expect(d.recover().restoredQuestions).toEqual(['t']);
+    d.svc.removeTerminal('t'); // archive
+    expect(terminalsDb.getById(d.db, 't')!.archived_at).toBeTruthy();
+    expect(pendingQuestionsDb.get(d.db, 't')).toBeDefined();
+    expect(d.svc.getPendingPermission('t')).toBeNull(); // an archived thread shows no card
+    d.svc.restoreTerminal('t');
+    expect(d.statusOf('t')).toBe('needs_input');
+    expect(d.svc.getPendingPermission('t')).toMatchObject({ requestId: 'req-1', questions: QUESTION.questions });
+    d.svc.removeTerminal('t');
+    d.svc.archive('s1'); // the project is deleted: its threads are gone for good
+    expect(pendingQuestionsDb.get(d.db, 't')).toBeUndefined();
   });
 
   it('a question whose process is still alive is not listed as restored', () => {

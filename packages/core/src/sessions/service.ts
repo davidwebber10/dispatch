@@ -446,6 +446,8 @@ export class SessionService {
     }
     // The hard delete takes the archived threads' rows too: list them before it, for their files.
     const archived = terminalsDb.listArchivedBySession(this.db, id);
+    // An archived thread kept its saved question for a restore. Now it is deleted, so the question goes too.
+    for (const terminal of archived) watchesDb.removeForTerminal(this.db, terminal.id);
     terminalsDb.removeBySession(this.db, id);
     for (const terminal of [...terminals, ...archived]) this.removeThreadMcpConfig(terminal.id);
 
@@ -1111,7 +1113,8 @@ export class SessionService {
     // thread_watches has no FK to terminals (rows outlive a deleted watcher/target by
     // design — see db/watches.ts), so this is the daemon's one "a thread is gone" hook:
     // sweep any watch where this terminal was either side, else rows accumulate forever.
-    watchesDb.removeForTerminal(this.db, terminalId);
+    // The saved question stays: a restore shows its card again. The delete of the project removes it.
+    watchesDb.removeForTerminal(this.db, terminalId, { keepQuestion: true });
     // A restore re-spawns, which writes the file again.
     this.removeThreadMcpConfig(terminalId);
   }
