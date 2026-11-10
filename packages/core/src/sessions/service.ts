@@ -60,6 +60,15 @@ function withRootSpawnDepth(config: Record<string, any> | undefined): Record<str
   return { ...c, spawnDepth: 0 };
 }
 
+/**
+ * A folder in a worktree of a project (`<project>/.claude/worktrees/<name>` or
+ * `<project>/.worktrees/<name>`, or a folder below one). A thread that runs there does not set the
+ * last folder: that is the default folder of the new-project picker, and a worktree is not a project.
+ */
+function isWorktreeFolder(dir: string): boolean {
+  return /(^|\/)(\.claude\/worktrees|\.worktrees)\/[^/]+(\/|$)/.test(dir.replace(/\\/g, '/'));
+}
+
 export class SessionService {
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private terminalStatusWriter?: (id: string, status: 'queued' | 'waiting' | 'error') => void;
@@ -541,7 +550,7 @@ export class SessionService {
       ? workingDir.replace(/^~/, os.homedir())
       : session.working_dir;
 
-    if (workingDir) {
+    if (workingDir && !isWorktreeFolder(resolvedDir)) {
       appState.set(this.db, 'last_directory', resolvedDir);
     }
 
@@ -677,7 +686,7 @@ export class SessionService {
       ? workingDir.replace(/^~/, os.homedir())
       : session.working_dir;
 
-    if (workingDir) {
+    if (workingDir && !isWorktreeFolder(resolvedDir)) {
       appState.set(this.db, 'last_directory', resolvedDir);
     }
 
