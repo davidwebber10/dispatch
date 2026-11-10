@@ -74,6 +74,7 @@ import { createEventsBroadcaster, answerEventsPing, createNoopBroadcaster } from
 import type { EventBroadcaster } from './ws/events.js';
 import { handleTerminalConnection } from './ws/terminal.js';
 import { handleStructuredConnection } from './ws/structured.js';
+import { wireJournal } from './journal/wire.js';
 import { ClaudeStructuredSessionManager, type IStructuredManager } from './structured/manager.js';
 import { CodexStructuredSessionManager } from './structured/codex-manager.js';
 import { AcpStructuredSessionManager } from './structured/acp-manager.js';
@@ -475,6 +476,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
   sessionService.setPluginInjection((harness, sessionId) => { const inj = plugins.modelInjection(harness); return { ...inj, prompts: [...inj.prompts, ...skills.injection(sessionId, harness)] }; });
   sessionService.setUserPromptListener((id, text, source) => threadEvents.onPrompt(id, text, source));
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, options.managers, threadEvents);
+  const journalWiring = wireJournal(db, harnessManagers.values()); // W3-D: the message journal
   wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   agentService.setLifecycleService(statusService);
@@ -495,7 +497,7 @@ export function createApp(options: CreateAppOptions): import('express').Express 
     ledgerService: wireLedger(db, sessionService, broadcaster),
     toolsBase, toolsAuth, dataDir: dispatchDir, repoRoot: resolveRepoRoot(),
     broadcaster, plugins, assistRunner: options.assistRunner ?? null, noCredentialStats, endless: options.endless, usageLimits: options.usageLimits, assistAccounts: options.assistAccounts,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
   });
 
   // Attach internals for server wiring
@@ -742,6 +744,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   app.locals.installer = installer;
   app.locals.skills = skills;
   const harnessManagers = wireHarnesses(sessionService, statusService, db, broadcaster, undefined, threadEvents);
+  const journalWiring = wireJournal(db, harnessManagers.values()); // W3-D: the message journal
   wireRestoredQuestions(db, sessionService, harnessManagers.values(), statusService); // a pending question survives a restart (W2-C)
   const structuredManager = harnessManagers.get('claude-code')!;
   const extraManagers = new Map([...harnessManagers].filter(([name]) => name !== 'claude-code'));
@@ -1072,7 +1075,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       return reachableAddresses(me?.ips ?? [], platform.flavor === 'wsl');
     }, refreshPtyEnv, endless,
     usageLimits: { snapshots: limitSnapshots, accountFor: limitAccount, refreshCodex, summary: () => usageGauge.summary(), refresh: () => usageGauge.refreshNow(), onSettingsChange: () => usageGauge.settingsChanged(), useResetCredit: (p: string, creditId?: string, accountId?: string) => (p === 'codex' ? pollCodex.useCredit(creditId, accountId) : Promise.resolve(null)) },
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
   });
 
   // Serve the built web client (single-origin) when a build is present.
@@ -1193,6 +1196,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           (tid) => sessionService.getTerminal(tid)?.status !== 'working',
           (tid) => sessionService.activeModel(tid),
           (tid) => sessionService.getPendingPermission(tid),
+          journalWiring.replay, // W3-D: `journal=1` replays from the message journal; `after=<seq>` resumes
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {

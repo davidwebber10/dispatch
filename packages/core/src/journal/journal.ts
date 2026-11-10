@@ -52,6 +52,8 @@ export interface JournalItem {
   at: string;
   /** True when the payload was over the limit and was cut. */
   truncated: boolean;
+  /** The Idempotency-Key of the request that made the item, or null. Not sent to a client. */
+  idemKey: string | null;
 }
 
 export interface JournalPage {
@@ -260,7 +262,7 @@ function toItem(row: JournalRow): JournalItem {
   let payload: unknown = null;
   try { payload = JSON.parse(row.payload); } catch { payload = null; }
   const truncated = typeof payload === 'object' && payload !== null && (payload as Record<string, unknown>)[CUT_FLAG] === true;
-  return { seq: row.seq, kind: row.kind, nativeId: row.native_id, payload, at: row.at, truncated };
+  return { seq: row.seq, kind: row.kind, nativeId: row.native_id, payload, at: row.at, truncated, idemKey: row.idem_key };
 }
 
 /**

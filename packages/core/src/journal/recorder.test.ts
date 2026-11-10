@@ -302,3 +302,25 @@ describe('JournalRecorder: what is not finished yet', () => {
     expect(ring.length).toBe(1);
   });
 });
+
+describe('JournalRecorder: growth', () => {
+  it('the journal grows with the finished items, not with the deltas', () => {
+    const { ring, journal } = setup(false);
+    const pieces = Array.from({ length: 2000 }, (_, i) => `word${i} `);
+    let ringChars = 0;
+    for (let turn = 0; turn < 5; turn++) {
+      ring.push(userText(`question ${turn}`));
+      ring.push(se({ type: 'message_start' }));
+      streamBlock(ring, 0, pieces);
+      ring.push(result());
+      ringChars += pieces.reduce((n, p) => n + JSON.stringify(se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: p } })).length, 0);
+    }
+    const stats = journal.stats('t');
+    const text = pieces.join('').length;
+    expect(stats.rows).toBe(15); // 5 turns of user, assistant, result: not 10,000 deltas
+    expect(stats.bytes).toBeLessThan(5 * text + 15 * 300);
+    expect(stats.bytes).toBeLessThan(ringChars / 5);
+    expect(journal.totals()).toEqual({ rows: 15, bytes: stats.bytes, threads: 1 });
+    console.log(`[w3-d] 5 turns of 2,000 deltas: ${ringChars} characters of delta events, ${stats.bytes} characters in the journal (${stats.rows} rows)`);
+  });
+});
