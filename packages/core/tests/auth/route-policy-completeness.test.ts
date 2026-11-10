@@ -51,6 +51,8 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'GET /api/sessions/:id/overseer/worker-defaults',
   'GET /api/terminals/:terminalId',
   'GET /api/terminals/:terminalId/conversation',
+  // W3-D: the journal page has the key rules of the conversation route.
+  'GET /api/terminals/:terminalId/journal',
   'GET /api/terminals/:terminalId/permission',
   'POST /api/terminals/:terminalId/message',
   'POST /api/terminals/:terminalId/permission',

@@ -569,4 +569,31 @@ function initializeSchema(db: Database.Database): void {
       created_at TEXT
     );
   `));
+  // W3-D: the message journal. One row for each finished item of a thread (a user message, an assistant
+  // message, a tool call, a tool result, a result footer, a notice), written when the item is finished.
+  // `seq` counts up per thread and never repeats. `native_id` is the harness's own id of the item, when
+  // it has one: the same id updates the row and keeps its seq. `idem_key` is the Idempotency-Key of the
+  // POST that made a user message (W1-D), so a repeated key is refused after a restart too.
+  // `bytes` is the length of `payload`, so the size bound of a thread needs no read of the payloads.
+  // The trigger removes the rows of a deleted thread (not of an archived one). A migration that
+  // builds the `terminals` table again must create the trigger again: DROP TABLE drops it.
+  migrate(db, 'w3d-thread-journal', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_journal (
+      terminal_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      native_id TEXT,
+      payload TEXT NOT NULL,
+      idem_key TEXT,
+      at TEXT NOT NULL,
+      bytes INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (terminal_id, seq)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_journal_idem ON thread_journal(terminal_id, idem_key) WHERE idem_key IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_thread_journal_native ON thread_journal(terminal_id, native_id) WHERE native_id IS NOT NULL;
+    CREATE TRIGGER IF NOT EXISTS thread_journal_thread_deleted AFTER DELETE ON terminals
+    BEGIN
+      DELETE FROM thread_journal WHERE terminal_id = OLD.id;
+    END;
+  `));
 }

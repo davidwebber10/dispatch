@@ -689,4 +689,13 @@ export const api = {
 
   // The status snapshot of a thread (W3-C): what the `system/status` frame of the structured socket carries.
   getTerminalStatus: (id: string) => req<import('./types').StatusSnapshot>(`/api/terminals/${encodeURIComponent(id)}/status`),
+  // A page of the thread's message journal (W3-D). `before`: older items, for scroll back. `after`: newer items.
+  getJournal: (id: string, params: { before?: number; after?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.before != null) q.set('before', String(params.before));
+    if (params.after != null) q.set('after', String(params.after));
+    if (params.limit != null) q.set('limit', String(params.limit));
+    const query = q.toString();
+    return req<import('./types').JournalPage>(`/api/terminals/${encodeURIComponent(id)}/journal${query ? `?${query}` : ''}`);
+  },
 };

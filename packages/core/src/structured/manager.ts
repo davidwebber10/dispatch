@@ -11,6 +11,7 @@ import { detectClaudeLimit, pauseLabel, type UsageLimit } from '../limits/detect
 import { killWithGrace } from '../platform/kill-grace.js';
 import { authRequiredFrame } from '../auth/auth-failure.js';
 import { EventRing } from './shared/event-ring.js';
+import type { JournalRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
@@ -252,6 +253,12 @@ export interface IStructuredManager extends EventEmitter {
    * untested, so a reply there falls back to a normal send.
    */
   readonly repliesToQuestions?: boolean;
+  /**
+   * The recorder of the message journal (W3-D), set by the daemon (journal/wire.ts). The manager gives
+   * it the ring of each session it spawns; the structured socket asks it for the replay of a thread.
+   * Absent: the manager writes no journal and the socket replays the ring.
+   */
+  journal?: JournalRecorder;
   setDefaultEnv(env: Record<string, string>): void;
   spawn(terminalId: string, opts: StructuredSpawnOpts): number;
   sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void;
@@ -386,6 +393,9 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     withSummary: false,
   };
 
+  /** The message journal's recorder (W3-D). Set by the daemon; a manager with none writes no journal. */
+  journal?: JournalRecorder;
+
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
@@ -404,6 +414,8 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
+    // W3-D: each finished item goes to the message journal. Claude sends each block again as a whole frame.
+    this.journal?.attach(terminalId, session.ring, { wholeFrames: true, seeds: opts.seedEvents });
     this.sessions.set(terminalId, session);
     child.stderr.on('data', (chunk: Buffer) => {
       // Redact the whole joined text, so a key split across two chunks is still found.

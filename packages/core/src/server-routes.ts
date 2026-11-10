@@ -64,6 +64,7 @@ import { createUpdateRouter } from './routes/update.js';
 import { createAppearanceRouter } from './routes/appearance.js';
 import { createWatchesRouter } from './routes/watches.js';
 import { createOutboxRouter } from './routes/outbox.js';
+import { createJournalRouter } from './routes/journal.js';
 import { createAnalyticsRouter } from './routes/analytics.js';
 import { createEndlessRouter } from './routes/endless.js';
 import { createUsageLimitsRouter } from './routes/usage-limits.js';
@@ -120,6 +121,8 @@ export interface ApiRouteDeps {
   watchCatchUp?: (watchId: string) => string | null;
   /** The delivery outbox (W2-C): GET /api/outbox lists its rows. */
   outbox?: import('./delivery/outbox.js').DeliveryOutbox;
+  /** The message journal (W3-D): GET /api/terminals/:terminalId/journal reads its pages. */
+  journal?: import('./journal/journal.js').MessageJournal;
   usageLimits?: {
     /** The Refresh button of the usage window (2026-11-09): read every account now. */
     refresh?: () => Promise<void>;
@@ -164,6 +167,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
 
   app.use('/api/sessions', createSessionsRouter(d.sessionService, d.broadcaster, d.db));
   app.use('/api', createTerminalsRouter(d.sessionService, d.terminalsBroadcaster, d.statusService));
+  if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
   app.use('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
   app.use('/api', createLedgerRouter(d.ledgerService));
   const accountsForAssist = d.assistAccounts ?? d.accounts;

@@ -596,3 +596,204 @@ describe('the status header', () => {
     expect(broken.sent).toEqual([REAL_TURN]);
   });
 });
+
+// ---- W3-D: the replay from the message journal (`?journal=1`) and the resume cursor (`?after=seq`) ----
+import Database from 'better-sqlite3';
+import { initSchema } from '../db/schema.js';
+import { MessageJournal } from '../journal/journal.js';
+import { JournalRecorder } from '../journal/recorder.js';
+import { EventRing } from '../structured/shared/event-ring.js';
+
+describe('replay from the message journal', () => {
+  const userEvent = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+  const stream = (event: Record<string, unknown>) => ({ type: 'stream_event', event });
+  const JOURNAL_REQ = (extra = '') => ({ url: `/api/terminals/t1/structured-ws?tail=200&journal=1${extra}` }) as any;
+
+  /** A thread with a real ring, a recorder and a journal: `turn(n)` runs one finished turn (4 items). */
+  function thread() {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const journal = new MessageJournal(db);
+    const recorder = new JournalRecorder(journal);
+    const ring = new EventRing();
+    recorder.attach('t1', ring, { wholeFrames: false });
+    const emitter = new EventEmitter();
+    const push = (e: unknown) => { ring.push(e); emitter.emit('event', 't1', e); };
+    const turn = (n: number) => {
+      push(userEvent(`question ${n}`));
+      push(stream({ type: 'message_start' }));
+      push(stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+      push(stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: `answer ${n} ` } }));
+      push(stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'in two deltas' } }));
+      push(stream({ type: 'content_block_stop', index: 0 }));
+      push({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `call-${n}`, name: 'Shell', input: { command: 'ls' } }] } });
+      push({ type: 'result', subtype: 'turn', is_error: false, duration_ms: 3 });
+    };
+    const manager = Object.assign(emitter, {
+      getEvents: () => ring.snapshot(), getEventsTail: (_id: string, n: number) => ring.tail(n), getPending: () => null,
+      journal: recorder, // the daemon sets it on each manager (journal/wire.ts)
+    }) as any;
+    return { journal, recorder, ring, manager, push, turn };
+  }
+  const connect = (t: ReturnType<typeof thread>, req: any, opts: { restOwned?: boolean; settled?: boolean } = {}) => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, req, t.manager, undefined, () => opts.restOwned === true, () => false, () => opts.settled !== false);
+    return sent;
+  };
+
+  it('replayed finished items carry seq', () => {
+    const t = thread();
+    t.turn(1); t.turn(2);
+    const sent = connect(t, JOURNAL_REQ());
+    expect(sent).toHaveLength(1);
+    const frame = sent[0];
+    expect(frame).toMatchObject({ type: 'journal', reset: true, after: null, firstSeq: 1, lastSeq: 8, hasMore: false });
+    expect(frame.items.map((i: any) => i.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(frame.items.map((i: any) => i.kind)).toEqual(['user', 'assistant', 'tool', 'result', 'user', 'assistant', 'tool', 'result']);
+    expect(frame.items[1].payload.message.content).toEqual([{ type: 'text', text: 'answer 1 in two deltas' }]);
+    // No delta is replayed: the frame holds finished items only.
+    expect(JSON.stringify(sent)).not.toContain('content_block_delta');
+  });
+
+  it('an older client (no journal parameter) gets the ring as before, and its finished events carry seq', () => {
+    const t = thread();
+    t.turn(1);
+    const sent = connect(t, REQ);
+    expect(sent).toEqual(t.ring.snapshot());
+    expect(sent.some((f) => f.type === 'journal')).toBe(false);
+    expect(sent.filter((f) => typeof f.seq === 'number').map((f) => f.seq)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a reconnect with afterSeq sends only newer items', () => {
+    const t = thread();
+    t.turn(1); t.turn(2); t.turn(3);
+    const sent = connect(t, JOURNAL_REQ('&after=8'));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'journal', reset: false, after: 8, lastSeq: 12 });
+    expect(sent[0].items.map((i: any) => i.seq)).toEqual([9, 10, 11, 12]);
+  });
+
+  it('a reconnect that has everything gets an empty frame, not the history again', () => {
+    const t = thread();
+    t.turn(1);
+    const sent = connect(t, JOURNAL_REQ('&after=4'));
+    expect(sent).toEqual([{ type: 'journal', reset: false, after: 4, items: [], firstSeq: 1, lastSeq: 4, hasMore: false }]);
+  });
+
+  it('a cursor ahead of the journal, or one whose next rows were trimmed, gets the newest window again', () => {
+    const t = thread();
+    t.turn(1); t.turn(2);
+    expect(connect(t, JOURNAL_REQ('&after=99'))[0]).toMatchObject({ type: 'journal', reset: true, after: null });
+    t.journal.trim('t1', { maxRows: 2 });
+    const sent = connect(t, JOURNAL_REQ('&after=3'));
+    expect(sent[0]).toMatchObject({ type: 'journal', reset: true, firstSeq: 7, lastSeq: 8 });
+    expect(sent[0].items.map((i: any) => i.seq)).toEqual([7, 8]);
+  });
+
+  it('the block that streams now follows the frame, and live events follow that', () => {
+    const t = thread();
+    t.turn(1);
+    t.push(userEvent('question 2'));
+    t.push(stream({ type: 'message_start' }));
+    t.push(stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+    t.push(stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half ' } }));
+    t.push(stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'an answer' } }));
+    const sent = connect(t, JOURNAL_REQ(), { settled: false });
+    expect(sent[0].items.map((i: any) => i.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(sent.slice(1)).toEqual([
+      stream({ type: 'message_start' }),
+      stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+      stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half an answer' } }),
+    ]);
+    const stop = stream({ type: 'content_block_stop', index: 0 });
+    t.push(stop);
+    expect(sent[sent.length - 1]).toEqual({ ...stop, seq: 6 });
+  });
+
+  it('a working thread with no open block still shows busy: a message start follows the frame', () => {
+    const t = thread();
+    t.turn(1);
+    t.push(userEvent('question 2'));
+    expect(connect(t, JOURNAL_REQ(), { settled: false }).slice(1)).toEqual([stream({ type: 'message_start' })]);
+    // A settled thread gets no such frame.
+    expect(connect(t, JOURNAL_REQ(), { settled: true })).toHaveLength(1);
+  });
+
+  it('a settled thread whose tail would leave the spinner on gets the settle', () => {
+    const t = thread();
+    t.turn(1);
+    t.push({ type: 'assistant', subtype: 'context_fill', message: { role: 'assistant', content: [], usage: { input_tokens: 9 } } });
+    const sent = connect(t, JOURNAL_REQ(), { settled: true });
+    expect(sent.slice(1)).toEqual([
+      { type: 'assistant', message: { role: 'assistant', content: [], usage: { input_tokens: 9 } } },
+      { type: 'result', subtype: 'backfill', is_error: false },
+    ]);
+  });
+
+  it('a thread with an empty journal gets the ring as before', () => {
+    const { ws, sent } = fakeWs();
+    const db = new Database(':memory:');
+    initSchema(db);
+    handleStructuredConnection(ws, JOURNAL_REQ(), { ...ringManager([REAL_TURN]), journal: new JournalRecorder(new MessageJournal(db)) });
+    expect(sent).toEqual([REAL_TURN]);
+    // And a manager with no journal at all.
+    const plain = fakeWs();
+    handleStructuredConnection(plain.ws, JOURNAL_REQ(), ringManager([REAL_TURN]));
+    expect(plain.sent).toEqual([REAL_TURN]);
+  });
+
+  it('a thread whose history REST owns (Codex) gets no first window from the journal, but a resume is served', () => {
+    const t = thread();
+    t.turn(1); t.turn(2);
+    expect(connect(t, JOURNAL_REQ(), { restOwned: true })).toEqual([{ type: 'system', subtype: 'inactive' }]);
+    const resumed = connect(t, JOURNAL_REQ('&after=4'), { restOwned: true });
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0].items.map((i: any) => i.seq)).toEqual([5, 6, 7, 8]);
+  });
+
+  it('a journal source that throws falls back to the ring', () => {
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, JOURNAL_REQ(), { ...ringManager([REAL_TURN]), journal: { replay: () => { throw new Error('db gone'); } } });
+    expect(sent).toEqual([REAL_TURN]);
+  });
+
+  it('history that the agent replays at a resume is not sent to a client that got the journal frame; an older client still gets it', () => {
+    const t = thread();
+    t.turn(1);
+    const journalClient = connect(t, JOURNAL_REQ());
+    const olderClient = connect(t, REQ);
+    const before = [journalClient.length, olderClient.length];
+    // The agent replays the session (ACP session/load): the recorder ignores the frame and marks it.
+    const recorder = t.recorder.attach('t1', t.ring, { wholeFrames: false, expectReplay: true });
+    recorder.beginReplay();
+    t.push(userEvent('question 1'));
+    recorder.endReplay();
+    recorder.loadEnded();
+    expect(journalClient.length).toBe(before[0]);          // it has this item from the journal already
+    expect(olderClient.length).toBe(before[1] + 1);        // as before W3-D
+    t.push(userEvent('a new question'));
+    expect(journalClient[journalClient.length - 1]).toMatchObject({ type: 'user', seq: 5 });
+  });
+
+  it('batch=1 carries the journal frame inside the replay frame, with the model and the pending question after it', () => {
+    const t = thread();
+    t.turn(1);
+    const { ws, sent } = fakeWs();
+    handleStructuredConnection(ws, JOURNAL_REQ('&batch=1'), { ...t.manager, on: () => {}, off: () => {}, getPending: () => ({ requestId: 'r1' }) }, undefined, undefined, undefined, undefined, () => 'model-x');
+    expect(sent).toHaveLength(1);
+    expect(sent[0].events.map((e: any) => e.type)).toEqual(['journal', 'system', 'permission']);
+  });
+
+  it('a resume with the cursor sends far fewer bytes than the replay it replaces', () => {
+    const t = thread();
+    for (let n = 1; n <= 50; n++) t.turn(n);
+    const bytes = (frames: unknown[]) => frames.reduce((sum: number, f) => sum + Buffer.byteLength(JSON.stringify(f)), 0);
+    const ringReplay = bytes(connect(t, REQ));                       // before W3-D: the ring tail on every reconnect
+    const journalReplay = bytes(connect(t, JOURNAL_REQ()));          // a first open from the journal
+    const lastSeen = t.journal.lastSeq('t1') - 4;                     // the client missed one turn
+    const resume = bytes(connect(t, JOURNAL_REQ(`&after=${lastSeen}`)));
+    console.log(`[w3-d] reconnect of a 50-turn thread: ring tail ${ringReplay} bytes, journal window ${journalReplay} bytes, resume with the cursor ${resume} bytes`);
+    expect(resume).toBeLessThan(ringReplay / 10);
+    expect(resume).toBeLessThan(journalReplay / 10);
+  });
+});

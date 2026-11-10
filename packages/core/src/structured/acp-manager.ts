@@ -44,6 +44,7 @@ import type {
 import { GrokTranslator, buildPermissionResponse, type AcpPermissionOption, type GrokAction } from './grok-translate.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { EventRing } from './shared/event-ring.js';
+import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
 import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
@@ -81,6 +82,8 @@ interface GrokSession {
   ring: EventRing;
   /** Keeps a closed block's text as one delta in the ring (ring only; see shared/stream-compaction.ts). */
   coalescer: BlockDeltaCoalescer;
+  /** Writes the finished items of this session to the message journal (W3-D). Absent with no journal. */
+  recorder?: ThreadRecorder;
   escalate: boolean;
   pending: PendingPermission | null;
   /** The ACP request a surfaced `pending` answers (server req id + its options). */
@@ -120,6 +123,9 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     this.switchTimeoutMs = opts.switchTimeoutMs ?? 15_000;
   }
 
+  /** The message journal's recorder (W3-D). Set by the daemon; a manager with none writes no journal. */
+  journal?: JournalRecorder;
+
   setDefaultEnv(env: Record<string, string>): void { this.defaultEnv = env; }
 
   spawn(terminalId: string, opts: StructuredSpawnOpts): number {
@@ -142,6 +148,8 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
       ready: Promise.resolve(),
     };
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
+    // W3-D: each finished item goes to the message journal. ACP prose has no whole frame: a block is finished at its stop.
+    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false, expectReplay: !!opts.resumeId });
     this.sessions.set(terminalId, session);
     conn.on('notification', (method, params) => this.onFrame(session, { method, params }));
     conn.on('request', (method, id, params) => this.onServerRequest(session, method, id, params));
@@ -180,6 +188,7 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
         this.adoptModel(session, res);
       } finally {
         session.loading = false;
+        session.recorder?.loadEnded(); // W3-D: the replayed history is in (or was ignored)
       }
     } else {
       const res = await session.conn.request('session/new', { cwd, mcpServers: [] });
@@ -263,7 +272,10 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     if (this.sessions.get(session.terminalId) !== session) return;
     const sid = frame.params?.sessionId;
     if (typeof sid === 'string' && session.sessionId && sid !== session.sessionId) return;
-    this.applyActions(session, session.translator.translate(frame, { replay: session.loading }));
+    // W3-D: a frame of a session/load replay is history that the journal has already (see ThreadRecorder.beginReplay).
+    const replay = session.loading;
+    if (replay) session.recorder?.beginReplay();
+    try { this.applyActions(session, session.translator.translate(frame, { replay })); } finally { if (replay) session.recorder?.endReplay(); }
   }
 
   private onServerRequest(session: GrokSession, method: string, id: RpcId, params: any): void {

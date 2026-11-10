@@ -38,8 +38,9 @@ export class EventRing {
 
   /**
    * Called with each event that `push` adds, after it is in the ring. Not called for seeded
-   * history, and not for the changes that `compact` makes. Not used yet: the message journal
-   * of W3-D writes from it.
+   * history, and not for the changes that `compact` makes. The message journal writes from it
+   * (journal/recorder.ts, W3-D): it sets `seq` on the event that finished an item, so the hook
+   * runs before the manager emits the event to the viewers.
    */
   onCommit?: (event: unknown) => void;
 

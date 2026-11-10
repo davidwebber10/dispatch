@@ -1,4 +1,5 @@
 import { wsUrl } from '../lib/basePath';
+import type { JournalFrame } from './types';
 export interface TerminalWS {
   onopen: (() => void) | null;
   onclose: (() => void) | null;
@@ -18,6 +19,20 @@ interface Opts {
    *  frames and no end mark, so this never fires there. */
   onReplayEnd?: () => void;
   onClose?: () => void;
+  /**
+   * W3-D: the newest journal sequence the consumer holds, or undefined when its view is not exactly
+   * the journal up to a sequence (a block still streams, or it has seen no sequence). Read at each
+   * connect: a number goes out as `after=<seq>`, and the daemon then sends only what is newer.
+   */
+  resumeAfter?: () => number | undefined;
+  /** W3-D: called with each event right before `onEvent` (replayed or live). The consumer reads the event's `seq` here. */
+  onEventSeen?: (event: unknown) => void;
+  /**
+   * W3-D: the `journal` frame of a daemon that replays from its message journal. With this handler the
+   * frame goes here and not to `onEvent`. Without it, each item is delivered to `onEvent` as its
+   * event with the item's `seq`.
+   */
+  onJournal?: (frame: JournalFrame) => void;
   wsFactory?: (url: string) => TerminalWS;
 }
 
@@ -31,9 +46,17 @@ const REPLAY_TAIL = 200;
 export const CONNECT_TIMEOUT_MS = 8000;
 
 // `batch=1`: the daemon sends the replay as one compressed frame, `{ type: 'replay', events }` (W2-I).
-// A daemon that does not know the parameter ignores it and sends the frames one by one.
-function url(terminalId: string): string {
-  return wsUrl(`/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}&batch=1`);
+// `journal=1`: the daemon replays from its message journal, as one `journal` frame of finished items (W3-D).
+// `after=<seq>`: only the items after that sequence (a reconnect that kept its view).
+// A daemon that does not know a parameter ignores it and sends the frames as it always did.
+function url(terminalId: string, after?: number): string {
+  const cursor = typeof after === 'number' && Number.isInteger(after) && after >= 0 ? `&after=${after}` : '';
+  return wsUrl(`/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}&batch=1&journal=1${cursor}`);
+}
+
+function isJournalFrame(v: unknown): v is JournalFrame {
+  const f = v as { type?: unknown; items?: unknown } | null;
+  return !!f && f.type === 'journal' && Array.isArray(f.items);
 }
 
 /** The live sockets of this page, so a resume can replace them without a remount of the views. */
@@ -65,9 +88,25 @@ export function openStructuredSocket(opts: Opts) {
     try { old.close(); } catch { /* ignore */ }
   }
 
+  /** One event to the consumer. One bad event must not cost the rest. */
+  function event(e: unknown) {
+    try { opts.onEventSeen?.(e); } catch { /* ignore */ }
+    try { opts.onEvent(e); } catch { /* ignore */ }
+  }
+  function deliver(e: unknown) {
+    if (!isJournalFrame(e)) { event(e); return; }
+    if (opts.onJournal) { try { opts.onJournal(e); } catch { /* ignore */ } return; }
+    for (const item of e.items) {
+      const payload = item?.payload;
+      if (payload && typeof payload === 'object') event({ ...(payload as object), seq: item.seq });
+    }
+  }
+
   function connect() {
     if (stopped) return;
-    const sock = factory(url(opts.terminalId));
+    let after: number | undefined;
+    try { after = opts.resumeAfter?.(); } catch { after = undefined; } // no cursor: the daemon sends the newest window
+    const sock = factory(url(opts.terminalId, after));
     ws = sock;
     clearTimeout(connectTimer);
     connectTimer = setTimeout(() => {
@@ -90,11 +129,11 @@ export function openStructuredSocket(opts: Opts) {
       const m = msg as { type?: unknown; events?: unknown; done?: unknown } | null;
       if (m && m.type === 'replay' && Array.isArray(m.events)) {
         // One task for the whole replay: React folds every event into one render.
-        for (const e of m.events) { try { opts.onEvent(e); } catch { /* one bad event must not cost the rest */ } }
+        for (const e of m.events) deliver(e);
         if (m.done !== false) { try { opts.onReplayEnd?.(); } catch { /* ignore */ } }
         return;
       }
-      try { opts.onEvent(msg); } catch { /* ignore */ }
+      deliver(msg);
     };
     sock.onclose = () => {
       clearTimeout(connectTimer);

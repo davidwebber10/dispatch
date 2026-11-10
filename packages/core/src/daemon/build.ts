@@ -9,6 +9,7 @@
  * The build itself starts nothing: no listener, no interval, no recovery. The caller does that:
  *   attach(server) → listen → listening(port) → bootRecover() → startTimers() … stop().
  */
+import { wireJournal } from '../journal/wire.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -437,6 +438,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // Plugins observe hook payloads, spawns, declarations and prompts (plugins design, section 3.3).
   statusService.setHookListener((p, id, payload) => threadEvents.onHookPayload(p, id, payload));
   const harnesses = wireHarnesses({ db, sessionService, statusService, threadEvents, env, injected: opts.managers });
+  const journalWiring = wireJournal(db, harnesses.managers.values()); // W3-D: the message journal
   wireRestoredQuestions(db, sessionService, harnesses.managers.values(), statusService); // a pending question survives a restart (W2-C)
   agentService.setLifecycleService(statusService);
   statusService.onHarnessCommitted((event) => { if (event.type === 'process.exited') rolesService.handleTerminalExit(event.terminalId); });
@@ -566,7 +568,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     noCredentialStats: auth.noCredentialStats, pairCodes: auth.pairCodes, devices: auth.devices, cookiePath: basePath || '/',
     reachableAddresses: auth.reachableAddresses, refreshPtyEnv: spawnEnv.refresh,
     endless: opts.endless ?? endless, usageLimits: opts.usageLimits ?? limits.routeDeps,
-    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox,
+    watchCatchUp: (id) => watchDispatcher.catchUp(id), outbox, journal: journalWiring.journal,
   });
   const webDist = opts.webDist === undefined ? defaultWebDist(env) : opts.webDist;
   const servesWeb = mountWeb(app, { webDist, basePath, dataDir, plugins });

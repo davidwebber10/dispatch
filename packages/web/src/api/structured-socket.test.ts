@@ -10,7 +10,7 @@ test('opens the ws with a bounded ?tail= param so replay stays fast on long thre
     onEvent: () => {},
     wsFactory: (u) => { openedUrl = u; return fakeWs; },
   });
-  expect(openedUrl).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1');
+  expect(openedUrl).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1'); // W3-D added journal=1
   sock.close();
 });
 
@@ -93,4 +93,67 @@ test('reconnectStructuredSockets replaces each live socket at once and fires onR
   sock.close();
   reconnectStructuredSockets(); // a closed socket is not brought back
   expect(made).toHaveLength(2);
+});
+
+// ---- W3-D: the message journal ----
+test('the socket asks for the journal, and a reconnect sends the cursor as after=<seq>', () => {
+  vi.useFakeTimers();
+  const urls: string[] = [];
+  const sockets: FakeWS[] = [];
+  let cursor: number | undefined;
+  const sock = openStructuredSocket({
+    terminalId: 't1', onEvent: () => {}, resumeAfter: () => cursor,
+    wsFactory: (u) => { urls.push(u); const ws = new FakeWS(); sockets.push(ws); return ws; },
+  });
+  sockets[0].open();
+  expect(urls[0]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1');
+  cursor = 41;
+  sockets[0].close(); // the connection drops
+  vi.advanceTimersByTime(600);
+  expect(urls[1]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1&after=41');
+  cursor = undefined; // a block streams: no cursor
+  sockets[1].open();
+  sockets[1].close();
+  vi.advanceTimersByTime(600);
+  expect(urls[2]).toBe('ws://localhost:3000/api/terminals/t1/structured-ws?tail=200&batch=1&journal=1');
+  sock.close();
+  vi.useRealTimers();
+});
+
+test('a journal frame goes to onJournal, not to onEvent; the events after it go on as before', () => {
+  const got: unknown[] = [];
+  let ws!: FakeWS;
+  const frame = { type: 'journal', reset: true, after: null, items: [{ seq: 1, kind: 'user', at: 'x', payload: { type: 'user' } }], firstSeq: 1, lastSeq: 1, hasMore: false };
+  const sock = openStructuredSocket({
+    terminalId: 't1', onEvent: (e) => got.push(['event', e]), onJournal: (f) => got.push(['journal', f]), onReplayEnd: () => got.push('END'),
+    wsFactory: () => (ws = new FakeWS()),
+  });
+  ws.open();
+  ws.msg({ type: 'replay', done: true, events: [frame, { type: 'system', subtype: 'model', model: 'm' }] });
+  expect(got).toEqual([['journal', frame], ['event', { type: 'system', subtype: 'model', model: 'm' }], 'END']);
+  sock.close();
+});
+
+test('with no onJournal, the items of a journal frame are delivered as events with their seq', () => {
+  const got: unknown[] = [];
+  let ws!: FakeWS;
+  const sock = openStructuredSocket({ terminalId: 't1', onEvent: (e) => got.push(e), wsFactory: () => (ws = new FakeWS()) });
+  ws.open();
+  ws.msg({ type: 'journal', reset: true, after: null, items: [{ seq: 4, kind: 'user', at: 'x', payload: { type: 'user', message: { content: 'hi' } } }], firstSeq: 4, lastSeq: 4, hasMore: false });
+  expect(got).toEqual([{ type: 'user', message: { content: 'hi' }, seq: 4 }]);
+  sock.close();
+});
+
+test('onEventSeen gets each event before onEvent, in a replay and live', () => {
+  const got: string[] = [];
+  let ws!: FakeWS;
+  const sock = openStructuredSocket({
+    terminalId: 't1', onEvent: (e: any) => got.push(`event ${e.n}`), onEventSeen: (e: any) => got.push(`seen ${e.n}`),
+    wsFactory: () => (ws = new FakeWS()),
+  });
+  ws.open();
+  ws.msg({ type: 'replay', done: true, events: [{ n: 1 }, { n: 2 }] });
+  ws.msg({ n: 3 });
+  expect(got).toEqual(['seen 1', 'event 1', 'seen 2', 'event 2', 'seen 3', 'event 3']);
+  sock.close();
 });

@@ -245,6 +245,10 @@ export interface ConvItem {
   systemKind?: 'model';
   ts?: string;
   uuid?: string;
+  // The sequence of the item in the daemon's message journal (W3-D): the item's identity in the thread.
+  // Two items with the same `seq` are the same item. Absent on an item from before the journal (a
+  // transcript page), on a block that still streams and on a line this client added itself.
+  seq?: number;
   line?: number;      // source JSONL line index (enables jump-to from search)
   toolInput?: string; // tool call's raw arguments (for the Input tab)
   toolFile?: string;  // file path argument (for output-language inference)
@@ -677,4 +681,36 @@ export interface StatusSnapshot {
   sequence: number;
   at: string;
   activity: string | null;
+}
+
+/**
+ * One finished item of a thread in the daemon's message journal (W3-D). `payload` is the
+ * Claude-shaped event of the item: the client folds it the way it folds a socket event.
+ * `seq` is the journal sequence (per thread, never a repeat). It is not the status sequence.
+ */
+export interface JournalItem {
+  seq: number;
+  kind: 'user' | 'assistant' | 'tool' | 'result' | 'notice';
+  at: string;
+  payload: unknown;
+  truncated?: true;
+}
+
+/** GET /api/terminals/:id/journal. `firstSeq`: the oldest sequence the journal has; older history is the transcript route's. */
+export interface JournalPage {
+  items: JournalItem[];
+  firstSeq: number;
+  lastSeq: number;
+  hasMore: boolean;
+}
+
+/**
+ * The first frame of a structured socket that replays from the journal (`?journal=1`).
+ * `reset: true`: the newest window, it replaces the view. `reset: false`: the items after the
+ * cursor the client sent (`?after=seq`); the view stays and they are added.
+ */
+export interface JournalFrame extends JournalPage {
+  type: 'journal';
+  reset: boolean;
+  after: number | null;
 }
