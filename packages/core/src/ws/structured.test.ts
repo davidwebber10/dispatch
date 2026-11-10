@@ -664,6 +664,24 @@ describe('replay from the message journal', () => {
     expect(sent).toEqual([REAL_TURN]);
   });
 
+  it('history that the agent replays at a resume is not sent to a client that got the journal frame; an older client still gets it', () => {
+    const t = thread();
+    t.turn(1);
+    const journalClient = connect(t, JOURNAL_REQ());
+    const olderClient = connect(t, REQ);
+    const before = [journalClient.length, olderClient.length];
+    // The agent replays the session (ACP session/load): the recorder ignores the frame and marks it.
+    const recorder = t.recorder.attach('t1', t.ring, { wholeFrames: false, expectReplay: true });
+    recorder.beginReplay();
+    t.push(userEvent('question 1'));
+    recorder.endReplay();
+    recorder.loadEnded();
+    expect(journalClient.length).toBe(before[0]);          // it has this item from the journal already
+    expect(olderClient.length).toBe(before[1] + 1);        // as before W3-D
+    t.push(userEvent('a new question'));
+    expect(journalClient[journalClient.length - 1]).toMatchObject({ type: 'user', seq: 5 });
+  });
+
   it('batch=1 carries the journal frame inside the replay frame, with the model and the pending question after it', () => {
     const t = thread();
     t.turn(1);

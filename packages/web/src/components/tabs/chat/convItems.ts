@@ -1,6 +1,7 @@
 import type { ConvItem } from '../../../api/types';
 import { api } from '../../../api/client';
 import { classifyUserText } from '../../../lib/taskNotification';
+import { modelFromFrame } from '../../../lib/modelName';
 
 // The pure helpers that turn the parts of a Claude-shaped event into timeline items. Moved out of
 // useChatSocket.ts unchanged (W3-D, move-only), so the socket fold and the fold of the message
@@ -87,4 +88,71 @@ export function errorText(event: any): string | undefined {
   if (typeof event.result === 'string' && event.result) return event.result;
   const errors = Array.isArray(event.errors) ? event.errors.filter((e: unknown) => typeof e === 'string' && e) : [];
   return errors.length ? errors.join('\n') : undefined;
+}
+
+/**
+ * The timeline items of one WHOLE event (W3-D): a `user`, `assistant`, `result` or notice event as
+ * the daemon's message journal keeps it. It is the fold that the chat socket applies to the same
+ * event when no stream came before it (useChatSocket.ts), built with the same helpers, so an item
+ * from the journal renders like the item from the socket (useChatHistory.test.ts keeps the two in
+ * step). An event that renders nothing gives no item. With `seq`, each item carries it.
+ */
+export function itemsFromEvent(event: unknown, sessionId: string | undefined, seq?: number): ConvItem[] {
+  const e = event as any;
+  if (!e || typeof e !== 'object') return [];
+  const out: ConvItem[] = [];
+  if (e.type === 'system') {
+    if (e.subtype === 'model') {
+      const model = modelFromFrame(e);
+      if (e.switched === true && model) out.push({ kind: 'system', systemKind: 'model', text: model });
+    } else if (e.subtype === 'settings_refused') {
+      out.push({ kind: 'result', isError: true, text: typeof e.message === 'string' && e.message ? e.message : 'The model or effort change was refused.' });
+    } else if (e.subtype === 'spawn_error') {
+      out.push({ kind: 'result', isError: true, text: `Could not start the thread: ${typeof e.message === 'string' && e.message ? e.message : 'unknown error'}` });
+    }
+  } else if (e.type === 'assistant' && Array.isArray(e.message?.content)) {
+    const uuid = typeof e.uuid === 'string' ? e.uuid : undefined;
+    for (const b of e.message.content) {
+      if (!b) continue;
+      if (b.type === 'text' && b.text) out.push({ kind: 'assistant', text: b.text, ...(uuid ? { uuid } : {}) });
+      else if (b.type === 'thinking') out.push({ kind: 'thinking', text: b.thinking ?? b.text ?? '', ...(uuid ? { uuid } : {}) });
+      else if (b.type === 'tool_use') out.push({ kind: 'tool', toolName: b.name, toolId: b.id, toolInput: safeJson(b.input), toolFile: b.input?.file_path ?? b.input?.path, ...(uuid ? { uuid } : {}) });
+      else if (b.type === 'image') { const img = imageItemFromBlock(b, sessionId); if (img) out.push(img); }
+    }
+  } else if (e.type === 'user' && e.message) {
+    if (e.isSynthetic || e.isMeta) return [];
+    const content = e.message.content;
+    const source = e.meta?.source as ConvItem['source'] | undefined;
+    const uuid = typeof e.uuid === 'string' ? e.uuid : undefined;
+    if (typeof content === 'string') {
+      if (content.trim()) { const it = userOrNotice(content, source, uuid); if (it) out.push(it); }
+    } else if (Array.isArray(content)) {
+      for (const b of content) {
+        if (!b) continue;
+        if (b.type === 'tool_result') {
+          out.push({ kind: 'tool-result', toolId: b.tool_use_id, text: flattenContent(b.content), isError: b.is_error === true, ...(uuid ? { uuid } : {}) });
+          out.push(...imagesFromContent(b.content, sessionId));
+        } else if (b.type === 'text' && b.text) {
+          const it = userOrNotice(b.text, source, uuid);
+          if (it) out.push(it);
+        } else if (b.type === 'image') {
+          const img = imageItemFromBlock(b, sessionId);
+          if (img) out.push({ ...img, imageFromUser: true });
+        }
+      }
+    }
+  } else if (e.type === 'result') {
+    if (e.subtype === 'backfill') return [];
+    out.push({
+      kind: 'result',
+      isError: e.is_error === true,
+      costUsd: typeof e.total_cost_usd === 'number' ? e.total_cost_usd : undefined,
+      turns: typeof e.num_turns === 'number' ? e.num_turns : undefined,
+      durationMs: typeof e.duration_ms === 'number' ? e.duration_ms : undefined,
+      tokensIn: e.usage?.input_tokens,
+      tokensOut: e.usage?.output_tokens,
+      text: e.is_error ? errorText(e) : undefined,
+    });
+  }
+  return seq === undefined ? out : out.map((it) => ({ ...it, seq }));
 }

@@ -686,4 +686,14 @@ export const api = {
   analyticsRecords: () => req<AnalyticsRecords>('/api/analytics/records'),
   analyticsTracking: () => req<AnalyticsTracking>('/api/analytics/tracking'),
   analyticsControlPlane: (r: AnalyticsRange) => req<ControlPlaneAnalytics>(`/api/analytics/control-plane${qs(r)}`),
+
+  // A page of the thread's message journal (W3-D). `before`: older items, for scroll back. `after`: newer items.
+  getJournal: (id: string, params: { before?: number; after?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.before != null) q.set('before', String(params.before));
+    if (params.after != null) q.set('after', String(params.after));
+    if (params.limit != null) q.set('limit', String(params.limit));
+    const query = q.toString();
+    return req<import('./types').JournalPage>(`/api/terminals/${encodeURIComponent(id)}/journal${query ? `?${query}` : ''}`);
+  },
 };

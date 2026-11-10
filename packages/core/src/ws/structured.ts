@@ -202,7 +202,13 @@ export function handleStructuredConnection(
     }
     held.push(json);
   };
-  const onEvent = (eid: string, event: unknown) => { if (eid === id) emit(JSON.stringify(event)); };
+  // W3-D: a client that got the journal frame has the thread's history. History that an agent replays at a
+  // resume (ACP session/load) is marked by the journal's recorder and is not sent to it a second time.
+  const skipReplayed = fromJournal !== null;
+  const onEvent = (eid: string, event: unknown) => {
+    if (eid !== id || (skipReplayed && (event as { journal_replayed?: unknown } | null)?.journal_replayed === true)) return;
+    emit(JSON.stringify(event));
+  };
   // P0b: the CLI never emits a `result` when its process exits/crashes mid-turn,
   // so the client's `busy` would spin forever. Synthesize one from the manager's
   // 'exit' so the existing result handler clears `busy` and shows the error.

@@ -57,6 +57,9 @@ interface StreamState { messageId?: string; wholes: number }
 /** The ring's hook. EventRing has it; a test can pass any object with the field. */
 export interface CommitSource { onCommit?: (event: unknown) => void }
 
+/** Set on an event that an agent replayed at a resume and the journal ignored (it has the item already). */
+export const REPLAYED_MARK = 'journal_replayed';
+
 function isFrame(v: unknown): v is Frame { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
 function streamFrame(event: Frame, parent: string): Frame {
@@ -216,7 +219,11 @@ export class ThreadRecorder {
 
   private fold(event: unknown): void {
     if (!isFrame(event)) return;
-    if (this.replaying) { if (!this.importing) return; }
+    if (this.replaying) {
+      // History that the journal has already. The mark tells the structured socket not to send it to
+      // a client that got the journal frame (it would show the history twice).
+      if (!this.importing) { event[REPLAYED_MARK] = true; return; }
+    }
     else if (this.awaitingReplay && this.importing) { this.held.push(event); return; }
     switch (event.type) {
       case 'user': this.user(event); return;

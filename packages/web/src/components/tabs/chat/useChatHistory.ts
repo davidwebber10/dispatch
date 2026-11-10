@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { ConvItem } from '../../../api/types';
+import type { ConvItem, JournalFrame } from '../../../api/types';
 import { api } from '../../../api/client';
+import { itemsFromEvent } from './convItems';
 
 // Older-history paging of a structured chat: the REST pages above the socket replay. Moved out of
 // useStructuredChat.ts unchanged (W3-C, move-only split).
@@ -46,6 +47,94 @@ export function shownThisTurn(items: ConvItem[], text: string): boolean {
     if (it.kind === 'assistant' && it.line !== undefined && (it.text ?? '').trim() === want) return true;
   }
   return false;
+}
+
+/**
+ * Says when a reconnect may ask the daemon for "only what is newer" (W3-D, the resume cursor).
+ *
+ * The daemon's message journal gives each FINISHED item a sequence, and the event that finished
+ * the item carries it (`seq`). The view equals "the journal up to sequence N" only when nothing on
+ * screen is still unfinished: a block that streams is on screen and is not a journal item yet. So
+ * the tracker counts the streamed blocks that started and are not finished, and gives a cursor only
+ * while the count is zero. With no cursor the reconnect gets the newest window again, as a first
+ * open does: slower, never wrong.
+ *
+ * A streamed block is finished by: its stop when the stop carries a `seq` (Codex, ACP); a whole
+ * `assistant` frame with a `seq` that belongs to the message that streams, one block for each
+ * content block (Claude, matched on the message id); a `result` with a `seq` (a turn end finishes
+ * every block; the daemon writes what was cut off before the footer).
+ */
+export class ResumeTracker {
+  private unfinished = 0;
+  private clean: number | undefined;
+  /** The id of the message that streams, for the lead agent ('') and each sub-agent (its parent tool id). */
+  private messageIds = new Map<string, string>();
+
+  /** Fold one socket event. Returns the event's journal sequence, or undefined. */
+  note(event: unknown): number | undefined {
+    const e = event as any;
+    if (!e || typeof e !== 'object') return undefined;
+    const seq = typeof e.seq === 'number' ? e.seq : undefined;
+    const parent = typeof e.parent_tool_use_id === 'string' ? e.parent_tool_use_id : '';
+    if (e.type === 'stream_event' && e.event) {
+      const se = e.event;
+      if (se.type === 'message_start') {
+        const id = se.message?.id;
+        if (typeof id === 'string' && id) this.messageIds.set(parent, id); else this.messageIds.delete(parent);
+      } else if (se.type === 'content_block_start') {
+        this.unfinished += 1;
+        this.clean = undefined;
+      } else if (se.type === 'content_block_stop' && seq !== undefined) {
+        this.unfinished = Math.max(0, this.unfinished - 1);
+      }
+    } else if (e.type === 'assistant' && seq !== undefined) {
+      const id = this.messageIds.get(parent);
+      const blocks = Array.isArray(e.message?.content) ? e.message.content.length : 0;
+      if (id && e.message?.id === id) this.unfinished = Math.max(0, this.unfinished - blocks);
+    } else if (e.type === 'result' && seq !== undefined) {
+      this.unfinished = 0;
+    }
+    if (seq !== undefined) this.clean = this.unfinished === 0 ? seq : undefined;
+    return seq;
+  }
+
+  /** The newest sequence the view holds completely, or undefined when a reconnect must get the window again. */
+  cursor(): number | undefined { return this.clean; }
+
+  /** A journal frame was applied: the view is the journal up to `seq`. The events after the frame open blocks again. */
+  synced(seq: number): void {
+    this.unfinished = 0;
+    this.messageIds.clear();
+    this.clean = seq;
+  }
+
+  reset(): void {
+    this.unfinished = 0;
+    this.messageIds.clear();
+    this.clean = undefined;
+  }
+}
+
+/**
+ * `add` with the journal sequence of the event it came from. When the view has an item with that
+ * sequence already, the event is the same item again and nothing is added: two items with the same
+ * `seq` render once. With no sequence (an older daemon, a stream delta) `add` is returned as it is.
+ */
+export function withSeq(prev: ConvItem[], add: ConvItem[], seq: number | undefined): ConvItem[] {
+  if (seq === undefined || !add.length) return add;
+  if (prev.some((it) => it.seq === seq)) return [];
+  return add.map((it) => (it.seq === seq ? it : { ...it, seq }));
+}
+
+/** What the socket module gives the journal frame handler: its own stale handling and its append. */
+export interface JournalFrameContext {
+  /** Remove the stale items (the view cache, or the items kept through a reconnect): the frame replaces them. */
+  dropStale: () => void;
+  /** The stale items are the truth after all: the frame only adds to them. */
+  keepStale: () => void;
+  /** The socket fold's append (a daemon echo replaces the local bubble of the same message). */
+  merge: (prev: ConvItem[], add: ConvItem[]) => ConvItem[];
+  sessionId?: string;
 }
 
 export type ChatHistory = ReturnType<typeof useChatHistory>;
@@ -105,6 +194,64 @@ export function useChatHistory(
   // per-thread refs below.
   const inactiveHydratedRef = useRef(false);
 
+  // W3-D: the daemon's message journal.
+  // `journalRef`: set by a journal frame that replaced the view. While `more` is true, older pages come
+  // from the journal route, before `oldestSeq`; after that from the transcript route, as before W3-D.
+  const journalRef = useRef({ active: false, oldestSeq: 0, more: false });
+  // The journal sequence of the event that the socket fold handles now (see noteEvent), or undefined.
+  const seqRef = useRef<number | undefined>(undefined);
+  const trackerRef = useRef(new ResumeTracker());
+  const sessionRef = useRef<string | undefined>(undefined);
+  // The paging state as this module last set it. A socket reconnect clears the live refs (the view is
+  // about to be replaced); a resume keeps the view, so it puts this state back.
+  const savedRef = useRef<{ hasMore?: boolean; oldestLine?: number }>({});
+  useEffect(() => {
+    journalRef.current = { active: false, oldestSeq: 0, more: false };
+    seqRef.current = undefined;
+    trackerRef.current.reset();
+    savedRef.current = {};
+  }, [terminalId]);
+
+  /** The socket calls this with each event right before the fold. */
+  const noteEvent = useCallback((event: unknown) => { seqRef.current = trackerRef.current.note(event); }, []);
+  /** The cursor of a reconnect (`?after=`), or undefined: see ResumeTracker. */
+  const resumeCursor = useCallback(() => trackerRef.current.cursor(), []);
+
+  /**
+   * The `journal` frame of the socket. `reset: true`: the newest window of the thread; it replaces
+   * the view (the stale items go in the same render). `reset: false`: the answer to the cursor of a
+   * reconnect; the view stays, with its paging state, and the frame's items are added. Either way an
+   * item whose `seq` the view has already is not added a second time.
+   */
+  const onJournalFrame = useCallback((frame: JournalFrame, ctx: JournalFrameContext) => {
+    sessionRef.current = ctx.sessionId;
+    seqRef.current = undefined;
+    const rows = Array.isArray(frame.items) ? frame.items : [];
+    if (frame.reset) {
+      ctx.dropStale();
+      journalRef.current = { active: true, oldestSeq: rows[0]?.seq ?? frame.firstSeq, more: frame.hasMore === true };
+      // Below the journal's first item, a harness with a transcript reads the transcript route.
+      const more = journalRef.current.more || pageableRef.current;
+      hasMoreRef.current = more; setHasMore(more);
+      oldestLineRef.current = undefined;
+      savedRef.current = { hasMore: more, oldestLine: undefined };
+    } else {
+      ctx.keepStale();
+      const more = savedRef.current.hasMore ?? pageableRef.current;
+      hasMoreRef.current = more; setHasMore(more);
+      oldestLineRef.current = savedRef.current.oldestLine;
+    }
+    const lastSeq = Math.max(typeof frame.lastSeq === 'number' ? frame.lastSeq : 0, frame.after ?? 0, rows.length ? rows[rows.length - 1].seq : 0);
+    trackerRef.current.synced(lastSeq);
+    if (!rows.length) return;
+    setItems((prev) => {
+      const have = new Set<number>();
+      for (const it of prev) if (it.seq !== undefined) have.add(it.seq);
+      const add = rows.filter((r) => !have.has(r.seq)).flatMap((r) => itemsFromEvent(r.payload, ctx.sessionId, r.seq));
+      return add.length ? ctx.merge(prev, add) : prev;
+    });
+  }, [setItems]);
+
   // The `system/inactive` rescue of the socket fold (see useChatSocket): hydrate the first view from
   // the REST transcript. `takeStale` returns the stale items that the page replaces, and drops them.
   const hydrateInactive = useCallback((takeStale: () => Set<ConvItem> | null, recoveredRef: MutableRefObject<Set<string>>) => {
@@ -142,6 +289,7 @@ export function useChatHistory(
           if (prev.some(conversational)) return prev; // authoritative — skips the anchor too
           oldestLineRef.current = conv.startLine;
           hasMoreRef.current = conv.hasMore; setHasMore(conv.hasMore);
+          savedRef.current = { hasMore: conv.hasMore, oldestLine: conv.startLine };
           if (!conv.items.length) return prev;
           return [...conv.items, ...prev.filter((it) => !(recovered(it) && shownThisTurn(conv.items, it.text ?? '')))];
         });
@@ -159,6 +307,37 @@ export function useChatHistory(
   const loadOlder = useCallback(() => {
     if (!terminalId || loadingOlderRef.current || !hasMoreRef.current) return;
     const tok = pageTokenRef.current;
+    // W3-D: while the journal has older items, the page comes from the journal route, before the oldest
+    // sequence the view holds. An item is identified by its `seq`: no fingerprint, so nothing is removed
+    // because its words equal another item's. When the journal is at its first item, the code below
+    // takes over: the transcript route, for a harness that has one.
+    if (journalRef.current.active && journalRef.current.more) {
+      loadingOlderRef.current = true;
+      setLoadingOlder(true);
+      api.getJournal(terminalId, { before: journalRef.current.oldestSeq, limit: OLDER_PAGE_LIMIT })
+        .then((page) => {
+          if (tok !== pageTokenRef.current) return; // thread switched / ws reset mid-flight — discard
+          const rows = Array.isArray(page.items) ? page.items : [];
+          const journal = journalRef.current;
+          if (rows.length) journal.oldestSeq = rows[0].seq;
+          journal.more = page.hasMore === true && rows.length > 0;
+          const more = journal.more || pageableRef.current;
+          hasMoreRef.current = more; setHasMore(more);
+          savedRef.current = { ...savedRef.current, hasMore: more };
+          if (!rows.length) return;
+          setItems((prev) => {
+            const have = new Set<number>();
+            for (const it of prev) if (it.seq !== undefined) have.add(it.seq);
+            const fresh = rows.filter((r) => !have.has(r.seq)).flatMap((r) => itemsFromEvent(r.payload, sessionRef.current, r.seq));
+            return fresh.length ? [...fresh, ...prev] : prev;
+          });
+        })
+        .catch(() => { /* transient — the next near-top scroll retries */ })
+        .finally(() => {
+          if (tok === pageTokenRef.current) { loadingOlderRef.current = false; setLoadingOlder(false); }
+        });
+      return;
+    }
     // First call only (no numeric anchor probed yet): anchor precisely on the oldest
     // already-rendered item's real identity, so this fetches genuinely-older content
     // instead of the newest REST window (which would just overlap the ws-replayed tail —
@@ -192,6 +371,7 @@ export function useChatHistory(
         oldestLineRef.current = conv.startLine;
         hasMoreRef.current = conv.hasMore;
         setHasMore(conv.hasMore);
+        savedRef.current = { hasMore: conv.hasMore, oldestLine: conv.startLine };
         if (conv.items.length) {
           // Dedup against what's already rendered by real identity (shared Claude Code
           // message uuid — see the 'assistant'/'user' handlers above and transcript.ts)
@@ -252,5 +432,7 @@ export function useChatHistory(
     hasMore, loadingOlder, loadOlder, hydrateInactive,
     pageableRef, hasMoreRef, setHasMore, loadingOlderRef, setLoadingOlder, oldestLineRef, pageTokenRef,
     itemsRef, anchorBlockedRef, inactiveHydratedRef,
+    // W3-D: the message journal (the socket module wires these to the socket)
+    seqRef, noteEvent, resumeCursor, onJournalFrame,
   };
 }

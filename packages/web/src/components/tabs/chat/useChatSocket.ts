@@ -5,7 +5,7 @@ import type { ConvItem, PendingPermission } from '../../../api/types';
 import { openStructuredSocket } from '../../../api/structured-socket';
 import { safeJson, flattenContent, imageItemFromBlock, imagesFromContent, userOrNotice, errorText } from './convItems';
 import { threadViewCache } from '../../../lib/threadViewCache';
-import { shownThisTurn, type ChatHistory } from './useChatHistory';
+import { shownThisTurn, withSeq, type ChatHistory } from './useChatHistory';
 import type { ApiRetry, AuthRequired, CompactResult } from './useStructuredChat';
 
 // The live socket of a structured chat and the fold of its events into the timeline. Moved out of
@@ -108,6 +108,9 @@ export function useChatSocket(args: {
   // tear down + reopen the ws. A ref lets the in-effect closures read the latest value.
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  // W3-D: the journal hooks of the history module, read through a ref inside the socket effect.
+  const journalRef = useRef(args.history);
+  journalRef.current = args.history;
 
   // Streaming bookkeeping (refs so rapid deltas don't churn renders for tracking).
   const streamingRef = useRef(false);                 // sticky once any stream_event seen
@@ -209,7 +212,9 @@ export function useChatSocket(args: {
     // inactive-rescue page only lands on a view with no conversation items to collide with
     // (see the 'system'/'inactive' handler below).
     const appendItems = (add: ConvItem[]) => {
-      if (add.length) setItems((p) => appendWithEchoMatch(p, add));
+      // W3-D: the items of a finished event carry its journal sequence; a sequence the view has is not added twice.
+      const seq = journalRef.current.seqRef.current;
+      if (add.length) setItems((p) => appendWithEchoMatch(p, withSeq(p, add, seq)));
     };
 
     // W2-I: the stale items (the view cache at open, or the items kept through a reconnect) go the moment
@@ -226,6 +231,13 @@ export function useChatSocket(args: {
 
     const sock = openStructuredSocket({
       terminalId,
+      // W3-D: the message journal. The history module keeps the cursor, sees each event before the fold
+      // (for its `seq`) and applies the journal frame; the stale handling and the append stay here.
+      resumeAfter: () => journalRef.current.resumeCursor(),
+      onEventSeen: (event) => journalRef.current.noteEvent(event),
+      onJournal: (frame) => journalRef.current.onJournalFrame(frame, {
+        dropStale, keepStale: () => { staleActive = false; setStale(false); }, merge: appendWithEchoMatch, sessionId: sessionIdRef.current,
+      }),
       onReset: () => {
         // Reconnect: server replays its buffer. Clear the view + per-turn tracking so
         // replayed deltas rebuild cleanly. `streamingRef` stays sticky (per-thread).
@@ -615,7 +627,7 @@ export function useChatSocket(args: {
           // clear `busy`. It carries no telemetry, so swallow it before it becomes a
           // rendered <ResultFooter/> card.
           if (event.subtype === 'backfill') return;
-          setItems((p) => [...p, {
+          appendItems([{
             kind: 'result',
             isError: event.is_error === true,
             costUsd: typeof event.total_cost_usd === 'number' ? event.total_cost_usd : undefined,
