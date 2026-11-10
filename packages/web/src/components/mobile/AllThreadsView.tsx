@@ -15,6 +15,7 @@ import { ThreadRow } from '../sidebar/ProjectCard';
 import { ThreadMenu, type ThreadMenuAt } from '../sidebar/ThreadMenu';
 import { ArchivedThreadsList } from './ArchivedThreadsList';
 import { isAgentStarted, startedByOf, startedByText } from '../../lib/startedBy';
+import { useMinuteTick } from '../../lib/autoArchive';
 
 const FILTER_KEY = 'dispatch:mobileThreadsProject';
 // v2 (2026-11-06): the default became All. The old key mostly held 'mine' written automatically as
@@ -38,6 +39,11 @@ const WITHIN_KEY = 'dispatch:threadsActiveWithin';
 const readWithin = (): Within | null => {
   try { const v = localStorage.getItem(WITHIN_KEY); return WITHIN.some((w) => w.value === v) ? (v as Within) : null; } catch { return null; }
 };
+/**
+ * A thread that works now, or that waits for the owner, is active whatever its last activity stamp
+ * says (I9): the stamp of a turn that has run for 70 minutes is 70 minutes old.
+ */
+export const activeNow = (t: Pick<Terminal, 'status'>): boolean => t.status === 'working' || t.status === 'needs_input';
 /** The start of the period, as an ISO string comparable with lastActivityAt. */
 export function withinSince(w: Within, now = new Date()): string {
   if (w === 'hour') return new Date(now.getTime() - 3600_000).toISOString();
@@ -208,22 +214,36 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
   );
   const starter: Starter = anyAgents ? chosenStarter : 'all';
   const inStarter = (t: Terminal) => starter === 'all' || isMine(t) === (starter === 'mine');
-  // Every active thread that matches the search, newest first: the base for every count and the list.
-  const pool = useMemo(() => {
+  // Every active thread, and those that match the search, newest first.
+  const everyThread = useMemo(() => {
     const all: Terminal[] = [];
     for (const p of projects) for (const t of byProject[p.id] ?? []) if (t.type !== 'file' && !t.archivedAt) all.push(t);
-    const since = within ? withinSince(within) : '';
-    return all
-      .filter((t) => !since || lastActive(t) >= since)
-      .filter((t) => !q || t.label.toLowerCase().includes(q) || (nameOf.get(t.sessionId) ?? '').toLowerCase().includes(q))
-      .sort((a, b) => (lastActive(a) < lastActive(b) ? 1 : lastActive(a) > lastActive(b) ? -1 : 0));
-  }, [projects, byProject, q, nameOf, within]);
+    return all;
+  }, [projects, byProject]);
+  const searched = useMemo(() => everyThread
+    .filter((t) => !q || t.label.toLowerCase().includes(q) || (nameOf.get(t.sessionId) ?? '').toLowerCase().includes(q))
+    .sort((a, b) => (lastActive(a) < lastActive(b) ? 1 : lastActive(a) > lastActive(b) ? -1 : 0)), [everyThread, q, nameOf]);
+  // The cut-off of Active within moves with the clock (I9): the shared minute tick renders this view
+  // once a minute, only while the filter is on. The rows are memoized, so none of them renders for it.
+  const minute = useMinuteTick(within !== null);
+  // The base for every count and the list. A thread that works now, or waits for the owner, always stays.
+  const pool = useMemo(() => {
+    if (!within) return searched;
+    const since = withinSince(within, new Date());
+    return searched.filter((t) => activeNow(t) || lastActive(t) >= since);
+    // `minute` is not read: a new value means the cut-off moved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searched, within, minute]);
   const matching = pool.filter((t) => passes(t));
   const nMine = matching.filter(isMine).length;
   const counts: Record<Starter, number> = { mine: nMine, agents: matching.length - nMine, all: matching.length };
   const threads = matching.filter(inStarter);
   const otherFilter: Starter | null = starter === 'mine' ? 'agents' : starter === 'agents' ? 'mine' : null;
   const otherCount = otherFilter ? counts[otherFilter] : 0;
+  // The threads that only Active within hides: they pass the search and every other filter. The filter
+  // is saved per device, so a list that it empties must say so and offer the way out (I9).
+  const withinLabel = WITHIN.find((w) => w.value === within)?.label ?? '';
+  const withinHides = within && !threads.length ? searched.filter((t) => passes(t) && inStarter(t)).length : 0;
   const findParent = (sessionId: string) => (id: string) => (byProject[sessionId] ?? []).find((x) => x.id === id) ?? null;
   const startedText = (t: Terminal) => startedByText(startedByOf(t, findParent(t.sessionId)));
 
@@ -319,7 +339,15 @@ export function AllThreadsView({ onOpenThread, query = '', onQueryChange }: { on
         {!loading && !threads.length && (
           <div style={{ padding: '48px 28px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13.5, lineHeight: 1.6 }}>
             <ChatsCircle size={30} style={{ opacity: 0.5 }} />
-            <div style={{ marginTop: 10 }}>{q || onFacets.length || otherCount || statusOn ? 'No threads match.' : 'No threads yet.'}</div>
+            <div style={{ marginTop: 10 }}>
+              {withinHides > 0 ? `The filter "Active within: ${withinLabel}" hides ${withinHides} ${withinHides === 1 ? 'thread' : 'threads'}.`
+                : everyThread.length ? 'No threads match.' : 'No threads yet.'}
+            </div>
+            {withinHides > 0 && (
+              <button type="button" onClick={() => setWithin(null)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+                Clear the filter
+              </button>
+            )}
             {otherFilter && otherCount > 0 && (
               <button type="button" onClick={() => setStarter(otherFilter)} style={{ marginTop: 12, height: 34, padding: '0 14px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
                 {otherFilter === 'agents' ? `Show ${otherCount} agent ${otherCount === 1 ? 'thread' : 'threads'}` : `Show ${otherCount} of my threads`}
