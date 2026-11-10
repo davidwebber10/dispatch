@@ -160,6 +160,24 @@ describe('MessageJournal', () => {
     expect(j.lastSeq('t2')).toBe(1);
   });
 
+  it('an import mark is for one session of one thread, and goes with a deleted thread', () => {
+    const db = open();
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO sessions (id, provider, name, working_dir, created_at, updated_at, last_activity_at) VALUES ('s','claude-code','s','/tmp',?,?,?)").run(now, now, now);
+    for (const id of ['t1', 't2']) db.prepare("INSERT INTO terminals (id, session_id, type, label, created_at) VALUES (?, 's', 'grok', 'x', ?)").run(id, now);
+    const j = new MessageJournal(db);
+    expect(j.hasImport('t1', 'sess-a')).toBe(false);
+    j.markImported('t1', 'sess-a');
+    j.markImported('t1', 'sess-a'); // a second mark changes nothing
+    j.markImported('t2', 'sess-a');
+    expect(j.hasImport('t1', 'sess-a')).toBe(true);
+    expect(j.hasImport('t1', 'sess-b')).toBe(false);
+    expect(new MessageJournal(db).hasImport('t1', 'sess-a')).toBe(true); // it is in the database, not in memory
+    db.prepare("DELETE FROM terminals WHERE id = 't1'").run();
+    expect(j.hasImport('t1', 'sess-a')).toBe(false);
+    expect(j.hasImport('t2', 'sess-a')).toBe(true);
+  });
+
   it('a page does not go below a gap mark', () => {
     const j = new MessageJournal(open());
     for (let n = 1; n <= 3; n++) j.append('a', { kind: 'user', payload: user(`old${n}`) });

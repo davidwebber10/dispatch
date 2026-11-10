@@ -149,7 +149,8 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     };
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     // W3-D: each finished item goes to the message journal. ACP prose has no whole frame: a block is finished at its stop.
-    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false, expectReplay: !!opts.resumeId });
+    // A resume replays the session's history: the journal takes it when it has no import mark for the session.
+    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false, replaySession: opts.resumeId });
     this.sessions.set(terminalId, session);
     conn.on('notification', (method, params) => this.onFrame(session, { method, params }));
     conn.on('request', (method, id, params) => this.onServerRequest(session, method, id, params));
@@ -161,6 +162,7 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     conn.on('exit', (code: number) => {
       // Only evict if this child is still the current session (a re-spawn may have replaced it).
       if (this.sessions.get(terminalId)?.conn !== conn) return;
+      session.recorder?.close(); // W3-D: a block that streamed when the agent died is written
       session.pending = null;
       session.pendingApproval = null;
       this.sessions.delete(terminalId);
@@ -183,18 +185,24 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
       session.sessionId = resumeId;
       this.fire('session', session.terminalId, resumeId);
       session.loading = true;
+      let loaded = false;
       try {
         const res = await session.conn.request('session/load', { sessionId: resumeId, cwd, mcpServers: [] });
+        loaded = true;
         this.adoptModel(session, res);
       } finally {
         session.loading = false;
-        session.recorder?.loadEnded(); // W3-D: the replayed history is in (or was ignored)
+        // W3-D: the replayed history is in (or was ignored). Only a load that the agent answered
+        // with no error was the whole history: a failed load writes no import mark, so the next
+        // load completes it.
+        session.recorder?.loadEnded(loaded);
       }
     } else {
       const res = await session.conn.request('session/new', { cwd, mcpServers: [] });
       const sessionId = res?.sessionId;
       if (typeof sessionId !== 'string' || !sessionId) throw new Error('session/new returned no sessionId');
       session.sessionId = sessionId;
+      session.recorder?.sessionStarted(sessionId); // W3-D: the journal has this session from its first item
       this.adoptModel(session, res);
       this.fire('session', session.terminalId, sessionId);
     }
@@ -460,6 +468,7 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     session.pendingApproval = null;
     this.sessions.delete(terminalId);
     session.conn.close();
+    session.recorder?.close(); // W3-D: a block that streams at a stop (of the thread, of the daemon) is written
     this.fire('exit', terminalId, 0);
   }
 

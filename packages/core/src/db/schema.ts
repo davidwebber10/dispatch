@@ -596,4 +596,22 @@ function initializeSchema(db: Database.Database): void {
       DELETE FROM thread_journal WHERE terminal_id = OLD.id;
     END;
   `));
+  // Final review of v4.5.0 (C2): which replayed histories the journal holds. An ACP agent replays the
+  // history of a session at each resume (session/load). The journal takes it once: a row here says
+  // "the journal has the history of this session of this thread", and it is written only after a load
+  // that worked (or at the start of a session that was born under the journal). With no row, the next
+  // replay is imported. Before this table the rule was "the journal has no row", and one failed load
+  // made a notice row that hid the history for ever.
+  migrate(db, 'w3d-thread-journal-imports', () => db.exec(`
+    CREATE TABLE IF NOT EXISTS thread_journal_imports (
+      terminal_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      PRIMARY KEY (terminal_id, session_id)
+    );
+    CREATE TRIGGER IF NOT EXISTS thread_journal_imports_thread_deleted AFTER DELETE ON terminals
+    BEGIN
+      DELETE FROM thread_journal_imports WHERE terminal_id = OLD.id;
+    END;
+  `));
 }

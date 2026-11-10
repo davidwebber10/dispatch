@@ -39,8 +39,12 @@ export interface AttachOptions {
   wholeFrames: boolean;
   /** The history that the manager seeds the ring with at a resume (the Claude transcript backfill). */
   seeds?: unknown[];
-  /** True when the agent will replay the session's history (an ACP resume). See ThreadRecorder.beginReplay. */
-  expectReplay?: boolean;
+  /**
+   * The external session whose history the agent will replay at this spawn (an ACP resume with
+   * `session/load`). The journal takes that history when it has no import mark for the session.
+   * See ThreadRecorder.beginReplay and loadEnded.
+   */
+  replaySession?: string;
 }
 
 interface OpenBlock {
@@ -96,7 +100,18 @@ export class ThreadRecorder {
   private blocks = new Map<string, OpenBlock>();
   private streams = new Map<string, StreamState>();
   private replaying = false;
+  /** True while a replayed history is taken into the journal: the journal has no import mark for the session. */
   private importing = false;
+  /** A write of the import failed: no mark is written, so the next load completes it. */
+  private importBroken = false;
+  /**
+   * What the journal had before this import, when it was not empty (an earlier load failed after a
+   * part of the history, or the thread got rows with no import): for each fingerprint, the
+   * sequences of the rows that have it, oldest first. A replayed item that matches takes a row
+   * and is not written again. Built at the first replayed event; null when not needed.
+   */
+  private existing: Map<string, number[]> | null = null;
+  private existingRead = false;
   private warned = false;
   private usage: Frame | null = null;
   private auth: unknown = null;
@@ -106,42 +121,62 @@ export class ThreadRecorder {
   private held: unknown[] = [];
   private awaitingReplay = false;
 
-  constructor(private readonly journal: MessageJournal, private readonly terminalId: string, private readonly wholeFrames: boolean, expectReplay = false) {
-    if (!expectReplay) return;
+  constructor(private readonly journal: MessageJournal, private readonly terminalId: string, private readonly wholeFrames: boolean, private readonly replaySession?: string) {
+    if (!replaySession) return;
     this.awaitingReplay = true;
-    // Decided now, before any event of this session: an echo that lands before the replay must not
-    // make a journal that was empty look like one that has the history.
-    try { this.importing = this.journal.lastSeq(this.terminalId) === 0; } catch (err) { this.warn(err); }
+    // Decided now, before any event of this session, and by the mark, not by "the journal is empty":
+    // a load that failed leaves rows (its notice, a part of the history) and no mark, and the next
+    // load must still take the history. When the mark cannot be read, nothing is imported.
+    try { this.importing = !this.journal.hasImport(this.terminalId, replaySession); } catch (err) { this.warn(err); }
   }
 
   /** The ring's `onCommit`. Never throws. */
   commit(event: unknown): void {
-    try { this.fold(event); } catch (err) { this.warn(err); }
+    try { this.fold(event); } catch (err) {
+      if (this.importing) this.importBroken = true;
+      this.warn(err);
+    }
   }
 
   /**
-   * The agent replays the history of the session (ACP `session/load`): the events between
-   * `beginReplay` and `endReplay` come from a replayed frame. They are the history that the journal
-   * has already, so they are ignored. A thread whose journal was empty at the spawn (it is from
-   * before the journal) takes them once: that is how its history gets in.
+   * The agent replays history (ACP `session/load`, the Codex resume backfill): the events between
+   * `beginReplay` and `endReplay` come from a replayed frame. When the journal has the history
+   * already they are ignored, and marked so that a journal client does not get them again. A
+   * session with no import mark (a thread from before the journal, or a load that failed) takes
+   * them: that is how its history gets in. See loadEnded.
    */
   beginReplay(): void { this.replaying = true; }
   endReplay(): void { this.replaying = false; }
 
   /**
-   * The load of a resumed session ended. A live event that came while the history was still on its
-   * way (the echo of a message sent right after the resume) was held, so the history is first: it
-   * is written now.
+   * A new session started under this recorder (ACP `session/new`): the journal has each of its
+   * items from the first one, so a later replay of the session is never imported.
    */
-  loadEnded(): void {
+  sessionStarted(sessionId: string): void {
+    try { if (sessionId) this.journal.markImported(this.terminalId, sessionId); } catch (err) { this.warn(err); }
+  }
+
+  /**
+   * The load of a resumed session ended. `ok`: the agent answered the load with no error, so the
+   * replay was the whole history. Only then the import mark of the session is written; after a
+   * load that failed, the next load imports again and completes what this one left.
+   *
+   * A live event that came while the history was still on its way (the echo of a message sent
+   * right after the resume) was held, so the history is first: it is written now.
+   */
+  loadEnded(ok: boolean): void {
     this.awaitingReplay = false;
     const held = this.held;
     this.held = [];
     try {
-      if (this.importing) this.flush();
-      this.importing = false;
-      for (const event of held) this.fold(event);
+      if (this.importing) {
+        this.flush();
+        if (ok && !this.importBroken && this.replaySession) this.journal.markImported(this.terminalId, this.replaySession);
+      }
     } catch (err) { this.warn(err); }
+    this.importing = false;
+    this.existing = null;
+    try { for (const event of held) this.fold(event); } catch (err) { this.warn(err); }
   }
 
   /**
@@ -190,7 +225,11 @@ export class ThreadRecorder {
     } catch (err) { this.warn(err); }
   }
 
-  /** The session ended or is replaced: what streamed and was not finished is written as it is. */
+  /**
+   * The session ended (a kill, a process exit, a daemon stop) or is replaced: what streamed and
+   * was not finished is written as it is. The manager calls it when the session ends; a second
+   * call (the next attach) finds nothing open and writes nothing.
+   */
   close(): void {
     try { this.flush(); } catch (err) { this.warn(err); }
   }
@@ -236,6 +275,9 @@ export class ThreadRecorder {
       // History that the journal has already. The mark tells the structured socket not to send it to
       // a client that got the journal frame (it would show the history twice).
       if (!this.importing) { event[REPLAYED_MARK] = true; return; }
+      // An import into a journal that has rows: an item that a row holds already takes that row.
+      const seq = this.takeExisting(event);
+      if (seq) { event.seq = seq; event[REPLAYED_MARK] = true; return; }
     }
     else if (this.awaitingReplay && this.importing) { this.held.push(event); return; }
     switch (event.type) {
@@ -246,6 +288,28 @@ export class ThreadRecorder {
       case 'system': this.system(event); return;
       default: return;
     }
+  }
+
+  /**
+   * The sequence of the journal row that holds this replayed item already, or 0. Only text items
+   * are matched by their words: a tool call and a tool result have a native id, and `append`
+   * keeps their row. The same words two times are two items: each match uses up one row.
+   */
+  private takeExisting(event: Frame): number {
+    if (event.type !== 'user' && event.type !== 'assistant') return 0;
+    if (!this.existingRead) {
+      this.existingRead = true;
+      if (this.journal.lastSeq(this.terminalId) > 0) {
+        const existing = new Map<string, number[]>();
+        this.journal.eachAnonymous(this.terminalId, (seq, payload) => {
+          const key = fingerprint(payload);
+          const seqs = existing.get(key);
+          if (seqs) seqs.push(seq); else existing.set(key, [seq]);
+        });
+        this.existing = existing;
+      }
+    }
+    return this.existing?.get(fingerprint(event))?.shift() ?? 0;
   }
 
   private user(e: Frame): void {
@@ -430,7 +494,7 @@ export class JournalRecorder implements JournalReplaySource {
    */
   attach(terminalId: string, ring: CommitSource, opts: AttachOptions): ThreadRecorder {
     this.threads.get(terminalId)?.close();
-    const thread = new ThreadRecorder(this.journal, terminalId, opts.wholeFrames, opts.expectReplay === true);
+    const thread = new ThreadRecorder(this.journal, terminalId, opts.wholeFrames, opts.replaySession || undefined);
     this.threads.set(terminalId, thread);
     if (opts.seeds?.length) thread.importSeeds(opts.seeds);
     ring.onCommit = (event) => thread.commit(event);

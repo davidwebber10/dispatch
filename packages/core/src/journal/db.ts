@@ -42,6 +42,10 @@ export interface JournalStatements {
   deleteUpTo: Database.Statement;
   deleteThread: Database.Statement;
   totals: Database.Statement;
+  anonymous: Database.Statement;
+  hasImport: Database.Statement;
+  markImport: Database.Statement;
+  deleteImports: Database.Statement;
 }
 
 export function prepareJournal(db: Database.Database): JournalStatements {
@@ -69,5 +73,10 @@ export function prepareJournal(db: Database.Database): JournalStatements {
     deleteUpTo: db.prepare('DELETE FROM thread_journal WHERE terminal_id = ? AND seq <= ?'),
     deleteThread: db.prepare('DELETE FROM thread_journal WHERE terminal_id = ?'),
     totals: db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes, COUNT(DISTINCT terminal_id) AS threads FROM thread_journal'),
+    // The user and assistant rows with no native id, oldest first (the dedupe of an import: see recorder.ts).
+    anonymous: db.prepare("SELECT seq, payload FROM thread_journal WHERE terminal_id = ? AND native_id IS NULL AND kind IN ('user', 'assistant') ORDER BY seq ASC"),
+    hasImport: db.prepare('SELECT 1 AS n FROM thread_journal_imports WHERE terminal_id = ? AND session_id = ?'),
+    markImport: db.prepare('INSERT OR IGNORE INTO thread_journal_imports (terminal_id, session_id, at) VALUES (?, ?, ?)'),
+    deleteImports: db.prepare('DELETE FROM thread_journal_imports WHERE terminal_id = ?'),
   };
 }

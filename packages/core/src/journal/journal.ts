@@ -169,7 +169,34 @@ export class MessageJournal {
   /** Remove every row of the thread (the thread was deleted). The trigger of the migration does the same. */
   removeThread(terminalId: string): void {
     this.q.deleteThread.run(terminalId);
+    this.q.deleteImports.run(terminalId);
     this.known.delete(terminalId);
+  }
+
+  /**
+   * True when the journal holds the history of this external session of the thread: an agent's
+   * replay of it (ACP session/load) was imported whole, or the session started under the journal.
+   */
+  hasImport(terminalId: string, sessionId: string): boolean {
+    return this.q.hasImport.get(terminalId, sessionId) !== undefined;
+  }
+
+  /** Mark that the journal holds the history of this session of the thread. Only after a load that worked. */
+  markImported(terminalId: string, sessionId: string): void {
+    this.q.markImport.run(terminalId, sessionId, new Date().toISOString());
+  }
+
+  /**
+   * Call `visit` with each user and assistant row of the thread that has no native id, oldest first.
+   * One row is in memory at a time. An import that completes an earlier part import reads them
+   * to know what the journal has already (see recorder.ts).
+   */
+  eachAnonymous(terminalId: string, visit: (seq: number, payload: unknown) => void): void {
+    for (const row of this.q.anonymous.iterate(terminalId) as IterableIterator<{ seq: number; payload: string }>) {
+      let payload: unknown = null;
+      try { payload = JSON.parse(row.payload); } catch { payload = null; }
+      visit(row.seq, payload);
+    }
   }
 
   /** The sequence of the row with this native id, or 0. */

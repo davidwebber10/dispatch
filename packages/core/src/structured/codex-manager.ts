@@ -29,7 +29,7 @@ import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type Trans
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { EventRing } from './shared/event-ring.js';
-import type { JournalRecorder } from '../journal/recorder.js';
+import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
 import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
@@ -68,6 +68,8 @@ interface CodexSession {
   ring: EventRing;
   /** Keeps a closed block's text as one delta in the ring (ring only; see shared/stream-compaction.ts). */
   coalescer: BlockDeltaCoalescer;
+  /** Writes the finished items of this session to the message journal (W3-D). Absent with no journal. */
+  recorder?: ThreadRecorder;
   escalate: boolean;
   pending: PendingPermission | null;
   /** The Codex ServerRequest a surfaced `pending` corresponds to (method + server req id). */
@@ -220,7 +222,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     };
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     // W3-D: each finished item goes to the message journal. Codex prose has no whole frame: a block is finished at its stop.
-    this.journal?.attach(terminalId, session.ring, { wholeFrames: false });
+    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false });
     this.sessions.set(terminalId, session);
     session.ready = this.beginThread(session, conn);
     return conn.pid;
@@ -376,6 +378,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     const conn2 = this.makeConnection(this.connSpec);
     this.conn = conn2;
     for (const session of live) {
+      session.recorder?.close(); // W3-D: a block that streamed when the app-server died is written
       session.pending = null;
       session.pendingApproval = null;
       this.fire('failed', session.terminalId);
@@ -778,6 +781,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     session.pending = null;
     if (session.threadId) this.threadToTerminal.delete(session.threadId);
     this.sessions.delete(terminalId);
+    session.recorder?.close(); // W3-D: a block that streams at a stop (of the thread, of the daemon) is written
     this.fire('exit', terminalId, 0);
     // Tear down the shared server once the last codex thread is gone (closing it ends every
     // thread's MCP set); otherwise release just this thread so its MCP set does not outlive it.

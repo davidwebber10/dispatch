@@ -5,6 +5,9 @@
 // It keeps each session's turns in a JSON file (FAKE_ACP_STATE_DIR, default the system temp dir),
 // so a `session/load` in a NEW process replays the history, as the real agents do.
 //
+// FAKE_ACP_LOAD_FAIL=1: `session/load` answers with an error and replays nothing.
+// FAKE_ACP_LOAD_FAIL_AFTER=<n>: `session/load` replays <n> turns, then answers with an error.
+//
 // A prompt text of `TOOL <words>` adds a tool call with its result to the turn. `HANG <words>`
 // streams the words and never ends the turn. Any other text gets a thought and a streamed reply,
 // `echo:<text>`.
@@ -35,11 +38,15 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (msg.method === 'session/load') {
     sessionId = msg.params.sessionId;
+    const failAfter = process.env.FAKE_ACP_LOAD_FAIL === '1' ? 0 : process.env.FAKE_ACP_LOAD_FAIL_AFTER ? Number(process.env.FAKE_ACP_LOAD_FAIL_AFTER) : null;
+    let sent = 0;
     for (const turn of load(sessionId)) {
+      if (failAfter !== null && sent++ >= failAfter) break;
       update({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: turn.user } }, { isReplay: true });
       update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: turn.agent } }, { isReplay: true });
       notify('_x.ai/session/update', { sessionId, update: { sessionUpdate: 'turn_completed', stop_reason: 'end_turn', usage: { inputTokens: 5, outputTokens: 5 } }, _meta: { isReplay: true } });
     }
+    if (failAfter !== null) return write({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'the session could not be loaded' } });
     return write({ jsonrpc: '2.0', id: msg.id, result: { models: { currentModelId: MODEL } } });
   }
   if (msg.method === 'session/prompt') {

@@ -142,3 +142,115 @@ describe('the ACP manager (Grok, OpenCode) writes the journal', () => {
     expect(rows().map((r) => [r.seq, r.kind, text(r)])).toEqual([[1, 'user', 'earlier question'], [2, 'assistant', 'earlier answer']]);
   });
 });
+
+// Final review of v4.5.0, C2: a load that fails must not cost the thread its history, and a block
+// that streams when the process stops must be written.
+describe('the ACP manager: a load that fails, and a stop in the middle of a block', () => {
+  const spawn = (manager: AcpStructuredSessionManager, stateDir: string, extra: Record<string, unknown> = {}, env: Record<string, string> = {}) =>
+    manager.spawn('t1', { command: process.execPath, args: [path.join(fakes, 'fake-acp-agent.mjs')], workDir: os.tmpdir(), env: { FAKE_ACP_STATE_DIR: stateDir, ...env }, ...extra } as any);
+  const resumed = (manager: IStructuredManager) => new Promise<void>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('the resume did not finish')), 8000);
+    const tick = () => ((manager.getEvents('t1') as any[]).some((e) => e?.subtype === 'backfill') ? (clearTimeout(t), resolve()) : setTimeout(tick, 10));
+    tick();
+  });
+  const history = (stateDir: string, turns: { user: string; agent: string }[]) => fs.writeFileSync(path.join(stateDir, 'fake-acp-old-session.json'), JSON.stringify(turns));
+  const shown = (rows: { kind: string; payload: unknown }[]) => rows.map((r) => [r.kind, text(r)]);
+
+  it('a first load that fails, then a load that works: the history is in the journal, once, and a journal client gets it', async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3d-acp-'));
+    history(stateDir, [{ user: 'earlier question', agent: 'earlier answer' }]);
+    const first = journalFor(new AcpStructuredSessionManager('grok'));
+    const failed = once(first.manager, 'failed');
+    spawn(first.manager, stateDir, { resumeId: 'old-session' }, { FAKE_ACP_LOAD_FAIL: '1' });
+    await failed;
+    expect(first.rows().map((r) => r.kind)).toEqual(['notice']); // "Could not start the thread"
+    first.manager.killAll();
+
+    const second = journalFor(new AcpStructuredSessionManager('grok'), first.db);
+    spawn(second.manager, stateDir, { resumeId: 'old-session' });
+    await resumed(second.manager);
+    expect(shown(second.rows())).toEqual([['notice', 'system'], ['user', 'earlier question'], ['assistant', 'earlier answer']]);
+    // The replay of the journal (what a `journal=1` client gets first) has the history.
+    const frame = second.manager.journal!.replay('t1', { allowReset: true })!.frame;
+    expect(frame.items.map((i) => i.kind)).toEqual(['notice', 'user', 'assistant']);
+    second.manager.killAll();
+
+    const third = journalFor(new AcpStructuredSessionManager('grok'), first.db);
+    spawn(third.manager, stateDir, { resumeId: 'old-session' });
+    await resumed(third.manager);
+    expect(third.rows()).toHaveLength(3); // the same history again adds nothing
+    const idle = once(third.manager, 'idle');
+    third.manager.sendMessage('t1', 'next');
+    await idle;
+    expect(shown(third.rows()).slice(3).map((r) => r[0])).toEqual(['user', 'assistant', 'assistant', 'result']);
+  });
+
+  it('a load that fails after a part of the history: the next load adds the rest', async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3d-acp-'));
+    history(stateDir, [{ user: 'question one', agent: 'answer one' }, { user: 'question two', agent: 'answer two' }]);
+    const first = journalFor(new AcpStructuredSessionManager('grok'));
+    const failed = once(first.manager, 'failed');
+    spawn(first.manager, stateDir, { resumeId: 'old-session' }, { FAKE_ACP_LOAD_FAIL_AFTER: '1' });
+    await failed;
+    expect(shown(first.rows())).toEqual([['user', 'question one'], ['assistant', 'answer one'], ['notice', 'system']]);
+    first.manager.killAll();
+
+    const second = journalFor(new AcpStructuredSessionManager('grok'), first.db);
+    spawn(second.manager, stateDir, { resumeId: 'old-session' });
+    await resumed(second.manager);
+    expect(shown(second.rows())).toEqual([
+      ['user', 'question one'], ['assistant', 'answer one'], ['notice', 'system'], ['user', 'question two'], ['assistant', 'answer two'],
+    ]);
+    expect(second.rows().map((r) => r.seq)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('a kill in the middle of a block writes the text that streamed', async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3d-acp-'));
+    const { manager, rows } = journalFor(new AcpStructuredSessionManager('grok'));
+    spawn(manager, stateDir);
+    const streamed = new Promise<void>((resolve) => {
+      const on = (_id: string, e: any) => { if (e?.event?.delta?.text === 'bravo ') { manager.off('event', on); resolve(); } };
+      manager.on('event', on);
+    });
+    manager.sendMessage('t1', 'HANG alpha bravo'); // the fake streams the words and never ends the turn
+    await streamed;
+    expect(shown(rows())).toEqual([['user', 'HANG alpha bravo'], ['assistant', 'thinking about it']]); // the text block is still open
+    manager.kill('t1'); // a stop of the thread, or of the daemon (killAll)
+    expect(shown(rows())).toEqual([['user', 'HANG alpha bravo'], ['assistant', 'thinking about it'], ['assistant', 'alpha bravo ']]);
+  });
+
+  it('an agent process that dies in the middle of a block: the text that streamed is written', async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'w3d-acp-'));
+    const { manager, rows } = journalFor(new AcpStructuredSessionManager('grok'));
+    const pid = spawn(manager, stateDir);
+    const streamed = new Promise<void>((resolve) => {
+      const on = (_id: string, e: any) => { if (e?.event?.delta?.text === 'bravo ') { manager.off('event', on); resolve(); } };
+      manager.on('event', on);
+    });
+    manager.sendMessage('t1', 'HANG alpha bravo');
+    await streamed;
+    const exit = once(manager, 'exit');
+    process.kill(pid, 'SIGKILL'); // the agent of THIS test: `pid` is the child that spawn() started
+    await exit;
+    expect(shown(rows()).at(-1)).toEqual(['assistant', 'alpha bravo ']);
+  });
+});
+
+describe('the Claude manager: a stop in the middle of a block', () => {
+  it('a kill in the middle of a block writes the text that streamed, as a partial item', async () => {
+    const { manager, rows } = journalFor(new StructuredSessionManager());
+    manager.spawn('t1', { command: process.execPath, args: [path.join(fakes, 'fake-claude-stream.mjs')], workDir: process.cwd() });
+    const streamed = new Promise<void>((resolve) => {
+      let deltas = 0;
+      const on = (_id: string, e: any) => { if (e?.type === 'stream_event' && e.event?.type === 'content_block_delta' && e.event.delta?.text === 'charlie ' && ++deltas === 1) { manager.off('event', on); resolve(); } };
+      manager.on('event', on);
+    });
+    manager.sendMessage('t1', 'HANG 3'); // a finished message, then a block of 3 deltas with no whole frame
+    await streamed;
+    const before = rows().length;
+    manager.kill('t1');
+    const added = rows().slice(before);
+    expect(added.map((r) => [r.kind, text(r), (r.payload as any).partial])).toEqual([['assistant', 'alpha bravo charlie ', true]]);
+  });
+});
+
