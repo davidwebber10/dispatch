@@ -17,6 +17,9 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) { console
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const TOKEN_MS = Number(process.env.FAKE_STREAM_TOKEN_MS ?? 12.5);
 let turn = 0;
+// Ids are unique for each process, as real ones are: a daemon restart starts a new process, and
+// the same uuid again would be the same item for the message journal (it would update its row).
+const RUN = `${process.pid.toString(36)}${Date.now().toString(36)}`;
 send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude-fake-stream', session_id: 'sess-fake-stream' });
 
 const rl = readline.createInterface({ input: process.stdin });
@@ -25,7 +28,7 @@ rl.on('line', (line) => {
   if (msg.type === 'control_request') { send({ type: 'control_response', response: { subtype: 'success', request_id: msg.request_id } }); return; }
   if (msg.type !== 'user') return;
   turn += 1;
-  const id = `msg-fake-${turn}`;
+  const id = `msg-fake-${RUN}-${turn}`;
   const content = msg.message?.content;
   const asked = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b) => b?.text ?? '').join('') : '';
   // "short": a short reply, for a quick history. Any other text: the long reply.
@@ -39,7 +42,7 @@ rl.on('line', (line) => {
     ev({ type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '' } });
     ev({ type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking } });
     ev({ type: 'content_block_stop', index });
-    send({ type: 'assistant', uuid: `uuid-fake-${turn}-thinking`, session_id: 'sess-fake-stream', message: { id, role: 'assistant', content: [{ type: 'thinking', thinking }] } });
+    send({ type: 'assistant', uuid: `uuid-fake-${RUN}-${turn}-thinking`, session_id: 'sess-fake-stream', message: { id, role: 'assistant', content: [{ type: 'thinking', thinking }] } });
     index = 1;
   }
   ev({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } });
@@ -49,7 +52,7 @@ rl.on('line', (line) => {
     clearInterval(tick);
     ev({ type: 'content_block_stop', index });
     ev({ type: 'message_stop' });
-    send({ type: 'assistant', uuid: `uuid-fake-${turn}`, session_id: 'sess-fake-stream', message: { id, role: 'assistant', content: [{ type: 'text', text }] } });
+    send({ type: 'assistant', uuid: `uuid-fake-${RUN}-${turn}`, session_id: 'sess-fake-stream', message: { id, role: 'assistant', content: [{ type: 'text', text }] } });
     send({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'sess-fake-stream', num_turns: turn, total_cost_usd: 0 });
   }, TOKEN_MS);
 });
