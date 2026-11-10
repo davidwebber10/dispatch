@@ -3,6 +3,7 @@ import type { PromptSource } from '../plugins/thread-events.js';
 import { PromptInput } from './prompt-input.js';
 import { ThreadTranscripts } from './thread-transcripts.js';
 import { CoordinatorNotifier } from './coordinator-notifier.js';
+import { emptySessionWiring, type SessionWiring, type StatusContext } from './session-wiring.js';
 import { ThreadSettings } from './thread-settings-service.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { clientMessage } from '../http/client-message.js';
@@ -64,16 +65,6 @@ import { ThreadConfigStore, pickClientSettable, type ConfigPatch } from './threa
 import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
 import { senderLine } from '../auth/key-rules.js';
 
-interface StatusContext {
-  serverUrl: string;
-  /** Directory where per-terminal Claude hook settings files are written. */
-  hooksDir: string;
-  /** Absolute path to the Codex notify helper script. */
-  codexHelperPath: string;
-  /** Absolute path to the Grok hook helper script. */
-  grokHelperPath?: string;
-}
-
 /** Grace period before the boot kickstart runs, so a save-burst on shutdown can coalesce. */
 const KICKSTART_SETTLE_MS = 4000;
 
@@ -112,12 +103,6 @@ function withRootSpawnDepth(config: Record<string, any> | undefined): Record<str
 }
 
 export class SessionService {
-  /** Supplies the Doppler MCP spec for spawned CLIs; set by the server wiring. */
-  private secretsServerSpec: (() => { spec: McpServerSpec | null; prompt: string | null }) | null = null;
-  /** Supplies the catalog MCP specs for spawned CLIs; set by the server wiring. */
-  private integrationsSpecs: (() => McpServerSpec[]) | null = null;
-  /** Plugins' MCP servers and instruction blocks per harness (docs/superpowers/specs/2026-11-07-plugins-design.md, section 3). */
-  private pluginInjection: ((harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }) | null = null;
   /** How spawned CLIs phone home with lifecycle events; set by the server wiring. */
   private terminalStatusWriter?: (id: string, status: 'queued' | 'waiting' | 'error') => void;
   setTerminalStatusWriter(writer: (id: string, status: 'queued' | 'waiting' | 'error') => void): void { this.terminalStatusWriter = writer; }
@@ -125,10 +110,9 @@ export class SessionService {
     if (this.terminalStatusWriter) this.terminalStatusWriter(id, status);
     else terminalsDb.updateStatus(this.db, id, status); // isolated service/test compatibility
   }
-  private usageLimits?: UsageLimitService;
   /** The thread an auto-resume is being sent to: that send is not the owner taking over. */
   private resuming: string | null = null;
-  setUsageLimitService(svc: UsageLimitService): void { this.usageLimits = svc; }
+  setUsageLimitService(svc: UsageLimitService): void { this.wiring.usageLimits = svc; }
   /** Send the usage-limit auto-resume text. Unlike every other send it keeps the park's attempt count. */
   resumeAfterUsageLimit(terminalId: string, text: string): 'pty' | 'structured' {
     this.resuming = terminalId;
@@ -149,7 +133,7 @@ export class SessionService {
   private noteThreadTouched(terminalId: string, source?: string, logAs?: string): void {
     // Only the owner's own message (tagged source 'user') takes over; notices, recaps, watches and
     // coordinator sends leave the pause alone.
-    if (this.resuming !== terminalId && source === 'user') this.usageLimits?.onUserMessage(terminalId);
+    if (this.resuming !== terminalId && source === 'user') this.wiring.usageLimits?.onUserMessage(terminalId);
   }
   private onUserPrompt?: (terminalId: string, text: string, source: PromptSource) => void;
   private promptInputs = new Map<string, PromptInput>();
@@ -161,37 +145,24 @@ export class SessionService {
   }
   noteUserInput(terminalId: string, data: string): void {
     // Typing counts; a bare focus-in/out report from the terminal does not.
-    if (/[\x20-\x7e\r]/.test(data.replace(/\x1b\[[IO]/g, ''))) this.usageLimits?.onUserMessage(terminalId);
+    if (/[\x20-\x7e\r]/.test(data.replace(/\x1b\[[IO]/g, ''))) this.wiring.usageLimits?.onUserMessage(terminalId);
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal || terminal.label_source !== 'default' || !isAgentType(terminal.type)) { this.promptInputs.delete(terminalId); return; }
     const input = this.promptInputs.get(terminalId) ?? new PromptInput();
     this.promptInputs.set(terminalId, input);
     for (const prompt of input.feed(data)) this.noteUserPrompt(terminalId, prompt);
   }
-  private statusContext: StatusContext | null = null;
-  /** Supplies a tools-awareness note injected into the developer instructions; set by server wiring. */
-  private toolsAwareness?: () => string | null;
-  /** The per-thread account env (multi-account spec 2026-11-06): the thread's Claude token or Codex home. Set by the server wiring. */
-  private accountEnv?: (type: string, config: Record<string, unknown>) => Record<string, string>;
-  setAccountEnv(fn: (type: string, config: Record<string, unknown>) => Record<string, string>): void { this.accountEnv = fn; }
-  /** The accounts a thread type can run on (multi-account): validates a switch, and names the default an unpinned thread uses. */
-  private accountDirectory?: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string };
-  setAccountDirectory(d: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string }): void { this.accountDirectory = d; }
+  setAccountEnv(fn: (type: string, config: Record<string, unknown>) => Record<string, string>): void { this.wiring.accountEnv = fn; }
+  setAccountDirectory(d: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string }): void { this.wiring.accountDirectory = d; }
   /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
   clock: () => number = () => Date.now();
   private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
   /** Why the last revive of a structured thread failed, so a send can say so (#76). */
   private lastSpawnError = new Map<string, string>();
-  /** Override for structured command (test seam: lets tests spawn fake-claude instead of real claude). */
-  private structuredCommandOverride?: { command: string; args: string[] };
-  /**
-   * The home folder that holds the Claude overseers' own memory folders (overseer memory scope
-   * spec 2026-10-07, Unit 1). startServer sets os.homedir(); tests set a fs.mkdtempSync folder.
-   * Unset → no memory folder is created, no note is copied and no --settings flag is passed, so a
-   * service a test builds without it never writes into a real home.
-   */
-  private overseerMemoryHome: string | null = null;
-  setOverseerMemoryHome(home: string): void { this.overseerMemoryHome = home; }
+  setOverseerMemoryHome(home: string): void { this.wiring.overseerMemoryHome = home; }
+
+  /** What the daemon hands over after the service is built (sessions/session-wiring.ts). The parts read it at each use. */
+  private readonly wiring: SessionWiring = emptySessionWiring();
 
   constructor(
     private db: Database.Database,
@@ -225,7 +196,7 @@ export class SessionService {
     });
     this.settings = new ThreadSettings({
       db, configStore: this.configStore, pty: ptyManager,
-      accountDirectory: () => this.accountDirectory,
+      accountDirectory: () => this.wiring.accountDirectory,
       onTerminalChanged: (sessionId) => this.onTerminalChanged?.(sessionId),
       threads: {
         structuredManagerFor: (type) => this.structuredManagerFor(type),
@@ -251,35 +222,19 @@ export class SessionService {
    */
   private readonly configStore: ThreadConfigStore;
 
-  /**
-   * The port the daemon actually bound. The agency helper sends its calls here, so it must not
-   * guess from PORT: the daemon can fall back to another port when its first choice is taken.
-   */
-  private daemonPort: number | null = null;
-  setDaemonPort(port: number): void { this.daemonPort = port; }
+  setDaemonPort(port: number): void { this.wiring.daemonPort = port; }
 
-  /**
-   * The daemon's own address for first-party callers (loopback, bound port, base path). It goes
-   * into the agency MCP env as DISPATCH_API: the only place a thread key may be sent to. Not a secret.
-   */
-  private daemonApi: string | null = null;
-  setDaemonApi(url: string): void { this.daemonApi = url.replace(/\/+$/, ''); }
+  setDaemonApi(url: string): void { this.wiring.daemonApi = url.replace(/\/+$/, ''); }
   private apiUrl(): string | null {
-    if (this.daemonApi) return this.daemonApi;
-    if (this.statusContext?.serverUrl) return this.statusContext.serverUrl.replace(/\/+$/, '');
-    return this.daemonPort ? `http://127.0.0.1:${this.daemonPort}` : null;
+    if (this.wiring.daemonApi) return this.wiring.daemonApi;
+    if (this.wiring.statusContext?.serverUrl) return this.wiring.statusContext.serverUrl.replace(/\/+$/, '');
+    return this.wiring.daemonPort ? `http://127.0.0.1:${this.wiring.daemonPort}` : null;
   }
 
-  /**
-   * Per-thread keys (stage 1). Unset until the daemon (or a test) hands in the registry; an unset
-   * service mints nothing and every spawn runs as before. The exits of the PTY manager and of
-   * every structured manager reach `ThreadKeys` from here, so a test service needs no extra wiring.
-   */
-  private threadKeys: ThreadKeys | null = null;
   setKeyRegistry(registry: KeyRegistry, opts: { keyDir?: string; codexSticky?: boolean } = {}): void {
-    if (this.threadKeys) return;
+    if (this.wiring.threadKeys) return;
     const tk = new ThreadKeys(registry, opts);
-    this.threadKeys = tk;
+    this.wiring.threadKeys = tk;
     if (typeof this.ptyManager.on === 'function') {
       this.ptyManager.on('exit', (id: string, _code: number, pid?: number) => {
         if (typeof pid === 'number') tk.onPtyExit(id, pid);
@@ -291,18 +246,18 @@ export class SessionService {
   private revokeKeysOnExit(manager: import('../structured/manager.js').IStructuredManager): void {
     if (this.keyedManagers.has(manager)) return;
     this.keyedManagers.add(manager);
-    manager.on('exit', (terminalId: string) => this.threadKeys?.onStructuredExit(terminalId));
+    manager.on('exit', (terminalId: string) => this.wiring.threadKeys?.onStructuredExit(terminalId));
   }
 
   /** The daemon's own stop: every key, the sticky Codex Pretty keys too. */
-  revokeEveryKey(): void { this.threadKeys?.revokeAll(); }
+  revokeEveryKey(): void { this.wiring.threadKeys?.revokeAll(); }
 
   /** Stop, stop-all: the current key of a terminal (the sticky Codex Pretty key stays). */
-  private revokeLiveKey(terminalId: string): void { this.threadKeys?.revokeLive(terminalId); }
+  private revokeLiveKey(terminalId: string): void { this.wiring.threadKeys?.revokeLive(terminalId); }
   /** Archive, delete, switch to the CLI view: every key of a terminal, the sticky one too. */
   private revokeAllKeys(terminalId: string): void {
-    this.threadKeys?.revokeLive(terminalId);
-    this.threadKeys?.revokeSticky(terminalId);
+    this.wiring.threadKeys?.revokeLive(terminalId);
+    this.wiring.threadKeys?.revokeSticky(terminalId);
   }
 
   /**
@@ -311,7 +266,7 @@ export class SessionService {
    * registry is set.
    */
   private mintSpawnKey(terminalId: string, kind: 'thread' | 'shell', opts: { codexPretty?: boolean; keyFile?: boolean } = {}): SpawnKey | null {
-    const tk = this.threadKeys;
+    const tk = this.wiring.threadKeys;
     if (!tk) return null;
     const minted = opts.codexPretty ? tk.codexKey(terminalId) : tk.mintForSpawn(terminalId, kind);
     if (!opts.keyFile) return minted;
@@ -324,19 +279,18 @@ export class SessionService {
   }
 
   setSecretsServerSpec(fn: () => { spec: McpServerSpec | null; prompt: string | null }): void {
-    this.secretsServerSpec = fn;
+    this.wiring.secretsServerSpec = fn;
   }
 
   setPluginInjection(fn: (harness: string, sessionId: string | null) => { specs: McpServerSpec[]; prompts: string[]; toolNames: string[] }): void {
-    this.pluginInjection = fn;
+    this.wiring.pluginInjection = fn;
   }
-  private onSpawned: ((terminalId: string, toolsAvailable: string[]) => void) | null = null;
-  setSpawnListener(fn: (terminalId: string, toolsAvailable: string[]) => void): void { this.onSpawned = fn; }
+  setSpawnListener(fn: (terminalId: string, toolsAvailable: string[]) => void): void { this.wiring.onSpawned = fn; }
   private onStatusDeclared: ((terminalId: string, decl: import('../structured/manager.js').StatusDeclaration) => void) | null = null;
   setStatusDeclaredListener(fn: (terminalId: string, decl: import('../structured/manager.js').StatusDeclaration) => void): void { this.onStatusDeclared = fn; }
 
   setIntegrationsSpecs(fn: () => McpServerSpec[]): void {
-    this.integrationsSpecs = fn;
+    this.wiring.integrationsSpecs = fn;
   }
 
   /**
@@ -344,22 +298,22 @@ export class SessionService {
    * the thread was launched with on its row (`config.toolsAvailable`, spec section 3.3).
    */
   private applyPluginInjection(terminalId: string, harness: string, specs: McpServerSpec[], prompts: string[]): void {
-    if (!this.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
+    if (!this.wiring.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
     // The thread's project: a project's skills reach its threads and not another's (spec section 8).
-    const inj = this.pluginInjection(harness, this.getTerminal(terminalId)?.sessionId ?? null);
+    const inj = this.wiring.pluginInjection(harness, this.getTerminal(terminalId)?.sessionId ?? null);
     // A plugin's server must find the daemon under every harness: Codex passes only the listed
     // variables to an MCP server, so the address rides in the spec's own env (as the agency's does).
     const api = this.apiUrl();
-    const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.daemonPort ? { DISPATCH_PORT: String(this.daemonPort) } : {}) };
+    const reach = { ...(api ? { DISPATCH_API: api } : {}), ...(this.wiring.daemonPort ? { DISPATCH_PORT: String(this.wiring.daemonPort) } : {}) };
     specs.push(...inj.specs.map((s) => ({ ...s, env: { ...reach, ...(s.env ?? {}) } })));
     prompts.push(...inj.prompts);
     const toolsAvailable = specs.map((s) => s.name);
     try { this.configStore.patch(terminalId, { toolsAvailable }); } catch { /* the record is informational */ }
-    try { this.onSpawned?.(terminalId, toolsAvailable); } catch { /* observers never block a spawn */ }
+    try { this.wiring.onSpawned?.(terminalId, toolsAvailable); } catch { /* observers never block a spawn */ }
   }
 
   setToolsAwareness(fn: () => string | null): void {
-    this.toolsAwareness = fn;
+    this.wiring.toolsAwareness = fn;
   }
 
   registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void {
@@ -368,16 +322,16 @@ export class SessionService {
     if (existing && existing !== manager) throw new Error(`Structured manager already registered: ${type}`);
     if (existing) return;
     this.structuredManagers.set(type, manager);
-    if (this.threadKeys) this.revokeKeysOnExit(manager);
+    if (this.wiring.threadKeys) this.revokeKeysOnExit(manager);
     this.persistStructuredSessionIds(manager, type);
     // A shared harness process (Codex app-server) that restarts gets a new pid; keep the stored one current.
     manager.on('process-restarted', (terminalId: string, pid: number) => {
       try { if (pid > 0 && terminalsDb.getById(this.db, terminalId)) terminalsDb.updatePid(this.db, terminalId, pid); } catch { /* best effort */ }
     });
     manager.on('usage-limit', (terminalId: string, limit: import('../limits/detect.js').UsageLimit) => {
-      try { this.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
+      try { this.wiring.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
     });
-    for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.usageLimits?.onTurnEnded(terminalId));
+    for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.wiring.usageLimits?.onTurnEnded(terminalId));
     // A model or effort the harness refused LATE (Codex: on the turn that first carries it): the saved pick goes back.
     manager.on('settings-refused', (terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }) => this.undoRefusedPick(terminalId, info));
     if (type === 'claude-code') {
@@ -461,7 +415,7 @@ export class SessionService {
     });
   }
 
-  setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.structuredCommandOverride = cmd; }
+  setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.wiring.structuredCommandOverride = cmd; }
 
   /**
    * Wire the Codex structured (app-server) manager. Only called by server wiring when
@@ -509,7 +463,7 @@ export class SessionService {
   }
 
   setStatusContext(ctx: StatusContext): void {
-    this.statusContext = ctx;
+    this.wiring.statusContext = ctx;
   }
 
   /**
@@ -536,7 +490,7 @@ export class SessionService {
    * Codex passes argv, so for them the specs are already handled by composeInjection.
    */
   private buildStatusHooks(terminalId: string, type: string, mcpSpecs: McpServerSpec[] = [], keyed = false): StatusHooksInjection | undefined {
-    const ctx = this.statusContext;
+    const ctx = this.wiring.statusContext;
     if (!ctx) return undefined;
     const provider = getProvider(type);
     const plan = provider.buildStatusHooks?.({
@@ -667,7 +621,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       this.revokeLiveKey(terminal.id);
-      this.usageLimits?.onStopped(terminal.id);
+      this.wiring.usageLimits?.onStopped(terminal.id);
       this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
       terminalsDb.updatePid(this.db, terminal.id, null);
@@ -684,7 +638,7 @@ export class SessionService {
     const terminals = terminalsDb.listBySession(this.db, id);
     for (const terminal of terminals) {
       this.revokeAllKeys(terminal.id);
-      this.usageLimits?.onStopped(terminal.id);
+      this.wiring.usageLimits?.onStopped(terminal.id);
       if (this.ptyManager.isAlive(terminal.id)) this.ptyManager.kill(terminal.id);
       this.structuredManagerFor(terminal.type)?.kill(terminal.id);
     }
@@ -1078,7 +1032,7 @@ export class SessionService {
   }
 
   stopTerminal(terminalId: string): void {
-    this.usageLimits?.onStopped(terminalId);
+    this.wiring.usageLimits?.onStopped(terminalId);
     const terminal = terminalsDb.getById(this.db, terminalId);
     if (!terminal) return;
     this.revokeLiveKey(terminalId);
@@ -1424,7 +1378,7 @@ export class SessionService {
 
   /** Gracefully interrupt a structured thread's current turn (does NOT kill it). */
   interrupt(terminalId: string): boolean {
-    this.usageLimits?.onStopped(terminalId);
+    this.wiring.usageLimits?.onStopped(terminalId);
     return this.structuredManagerForTerminal(terminalId)?.interrupt(terminalId) ?? false;
   }
 
@@ -1606,7 +1560,7 @@ export class SessionService {
   }
 
   stopAllTerminals(): void {
-    this.threadKeys?.revokeAllLive(); // PTY keys only: Pretty threads keep running, so their keys stay
+    this.wiring.threadKeys?.revokeAllLive(); // PTY keys only: Pretty threads keep running, so their keys stay
     this.ptyManager.killAll();
   }
 
@@ -1622,7 +1576,7 @@ export class SessionService {
     if (!terminal) return;
     this.revokeAllKeys(terminalId);
     // An archived thread can never resume: drop its usage-limit pause (parked or capped) so the banner and chip clear.
-    this.usageLimits?.onStopped(terminalId);
+    this.wiring.usageLimits?.onStopped(terminalId);
     // Only kill PTY for terminal types that have processes
     if (terminalsDb.isPtyType(terminal.type)) {
       if (this.ptyManager.isAlive(terminalId)) this.ptyManager.kill(terminalId);
@@ -1668,7 +1622,7 @@ export class SessionService {
   private spawnTerminal(terminalId: string): void {
     const row = terminalsDb.getById(this.db, terminalId);
     let sk: SpawnKey | null = null;
-    if (row && this.threadKeys) {
+    if (row && this.wiring.threadKeys) {
       let cfg: Record<string, any> = {};
       try { cfg = JSON.parse(row.config || '{}'); } catch { /* default {} */ }
       // A refused coordinator throws in the body before anything starts, so it mints nothing here.
@@ -1682,7 +1636,7 @@ export class SessionService {
     try {
       this.spawnTerminalKeyed(terminalId, sk);
     } catch (err) {
-      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      if (sk) this.wiring.threadKeys?.spawnFailed(sk.handle);
       throw err;
     }
   }
@@ -1733,16 +1687,16 @@ export class SessionService {
       const provider = getProvider(terminal.type);
       const specs: McpServerSpec[] = [];
       const prompts: string[] = [];
-      const sec = this.secretsServerSpec?.();
+      const sec = this.wiring.secretsServerSpec?.();
       if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
-      const intgSpecs = this.integrationsSpecs?.() ?? [];
+      const intgSpecs = this.wiring.integrationsSpecs?.() ?? [];
       specs.push(...intgSpecs);
       if (this.isPeerEligible(terminal.type)) {
         specs.push(this.agencyServerSpec(terminalId, terminal.session_id, effectiveSpawnDepth(config), !!sk));
         prompts.push(this.peerPromptFor(terminal));
       }
       this.applyPluginInjection(terminalId, terminal.type, specs, prompts);
-      const developerNote = this.toolsAwareness?.() ?? null;
+      const developerNote = this.wiring.toolsAwareness?.() ?? null;
       const secretsMcp = composeInjection(specs, {
         configPath: this.perTerminalMcpConfigPath(terminalId), prompts, developerNote,
         // The Codex CLI view passes the key-file path through; every other harness the key variable.
@@ -1789,7 +1743,7 @@ export class SessionService {
     // them for the top-level command. Everything but `plugins` links back to the real home.
     // The account overlay first, so a thread's own Claude token or Codex home rides every launch
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
-    const spawnEnv: Record<string, string> = { ...(this.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const spawnEnv: Record<string, string> = { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -1799,7 +1753,7 @@ export class SessionService {
       else spawnEnv.DISPATCH_AUTH = sk.key;
     }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
-    if (sk) this.threadKeys?.bindPty(terminalId, pid, sk.handle);
+    if (sk) this.wiring.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
     // send the next relaunch chasing a conversation that never existed.
@@ -1876,7 +1830,7 @@ export class SessionService {
         "the project's shared memory folder is left out of this start, and the next start tries again",
       );
     }
-    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.overseerMemoryHome ?? os.homedir(), workDir, resolved.dir);
+    const { own, shared, refused } = coordinatorMemoryFolders(terminal.type, this.wiring.overseerMemoryHome ?? os.homedir(), workDir, resolved.dir);
     if (refused.length) {
       console.error(`[overseer-memory] ${terminal.id}: left out of the memory scope, because a symlink leads outside its memory root: ${refused.join(', ')}`);
     }
@@ -1898,7 +1852,7 @@ export class SessionService {
     folders: { own: string | null; sharedProjectDir: string | null } | null,
   ): string | undefined {
     if (config.role !== 'coordinator' || terminal.type !== 'claude-code' || !folders) return undefined;
-    const home = this.overseerMemoryHome;
+    const home = this.wiring.overseerMemoryHome;
     if (!home) {
       console.error(
         `[overseer-memory] Claude overseer ${terminal.id} starts without its own memory folder: no memory home is set ` +
@@ -1954,7 +1908,7 @@ export class SessionService {
     try {
       this.spawnStructuredKeyed(terminal, config, workDir, manager, sk);
     } catch (err) {
-      if (sk) this.threadKeys?.spawnFailed(sk.handle);
+      if (sk) this.wiring.threadKeys?.spawnFailed(sk.handle);
       throw err;
     }
   }
@@ -1970,16 +1924,16 @@ export class SessionService {
     // Same secrets/integrations/tools-awareness MCP wiring as a fresh PTY spawn.
     const specs: McpServerSpec[] = [];
     const prompts: string[] = [];
-    const sec = this.secretsServerSpec?.();
+    const sec = this.wiring.secretsServerSpec?.();
     if (sec?.spec) { specs.push(sec.spec); if (sec.prompt) prompts.push(sec.prompt); }
-    const intgSpecs = this.integrationsSpecs?.() ?? [];
+    const intgSpecs = this.wiring.integrationsSpecs?.() ?? [];
     specs.push(...intgSpecs);
     if (this.isPeerEligible(terminal.type)) {
       specs.push(this.agencyServerSpec(terminal.id, terminal.session_id, effectiveSpawnDepth(config), !!sk));
       prompts.push(this.peerPromptFor(terminal));
     }
     this.applyPluginInjection(terminal.id, terminal.type, specs, prompts);
-    const developerNote = this.toolsAwareness?.() ?? null;
+    const developerNote = this.wiring.toolsAwareness?.() ?? null;
     const structuredMcp = composeInjection(specs, {
       configPath: this.perTerminalMcpConfigPath(terminal.id), prompts, developerNote,
       // Codex Pretty: the thread config (a pipe to the app-server) holds the literal key.
@@ -1993,11 +1947,11 @@ export class SessionService {
     // manager's own turn boundaries drive status, and hook-reported Stop events on top
     // would double-report every turn.
     let grokPluginDir: string | undefined;
-    if (terminal.type === 'grok' && this.statusContext) {
+    if (terminal.type === 'grok' && this.wiring.statusContext) {
       try {
         const mcpServers = this.mcpEntries(specs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
-          dir: path.join(this.statusContext.hooksDir, 'grok-homes', terminal.id),
+          dir: path.join(this.wiring.statusContext.hooksDir, 'grok-homes', terminal.id),
           realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
         });
@@ -2045,10 +1999,10 @@ export class SessionService {
     }
 
     let sc: { command: string; args: string[] };
-    if (this.structuredCommandOverride) {
+    if (this.wiring.structuredCommandOverride) {
       // Test seam: spawn the fake instead of real claude. Still surface `-r <id>` on
       // resume so the resume path is observable in tests.
-      sc = { command: this.structuredCommandOverride.command, args: [...this.structuredCommandOverride.args] };
+      sc = { command: this.wiring.structuredCommandOverride.command, args: [...this.wiring.structuredCommandOverride.args] };
       if (resumeSessionId) sc.args.push('-r', resumeSessionId);
     } else {
       // Coordinators get their native-orchestration tools (Agent/Task/Workflow) stripped at
@@ -2119,7 +2073,7 @@ export class SessionService {
     // takes no flags for any of it. Best-effort like the grok plugin dir: a thread
     // without injections still runs, on OpenCode's own global config.
     let opencodeEnv: Record<string, string> | undefined;
-    if (terminal.type === 'opencode' && this.statusContext) {
+    if (terminal.type === 'opencode' && this.wiring.statusContext) {
       try {
         const mcpServers = this.mcpEntries(specs, '{env:DISPATCH_AUTH}');
         // A model with no tool-capable endpoint (settings/model-capabilities.ts) runs
@@ -2139,7 +2093,7 @@ export class SessionService {
           }
         }
         const cfgPath = writeOpencodeConfig({
-          dir: path.join(this.statusContext.hooksDir, 'opencode-homes', terminal.id),
+          dir: path.join(this.wiring.statusContext.hooksDir, 'opencode-homes', terminal.id),
           model: resolvedModel,
           escalate,
           systemPrompt: [persona, toolsDisabled ? undefined : structuredMcp?.systemPrompt].filter(Boolean).join('\n\n') || undefined,
@@ -2164,7 +2118,7 @@ export class SessionService {
       effort: terminal.type === 'codex' ? this.codexEffortFor(config, resolvedModel) : undefined,
       // Named on a system/auth_required event, so the chat can say WHICH login is signed out.
       accountId: terminal.type === 'claude-code' || terminal.type === 'codex'
-        ? (typeof config.accountId === 'string' && config.accountId ? config.accountId : this.accountDirectory?.defaultId(terminal.type) ?? 'cli')
+        ? (typeof config.accountId === 'string' && config.accountId ? config.accountId : this.wiring.accountDirectory?.defaultId(terminal.type) ?? 'cli')
         : undefined,
       // Codex delivers this via thread/start's `developerInstructions` (see codex-manager.ts) — the
       // ONLY per-thread prompt channel it has, so it must carry the persona AND the peer/tools
@@ -2208,9 +2162,9 @@ export class SessionService {
       // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { ...(this.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
     });
-    if (sk) this.threadKeys?.bindStructured(terminal.id, sk.handle);
+    if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }
 
@@ -2451,7 +2405,7 @@ export class SessionService {
       args: [agencyPath],
       env: {
         DISPATCH_SESSION: sessionId,
-        DISPATCH_PORT: String(this.daemonPort ?? process.env.PORT ?? 3456),
+        DISPATCH_PORT: String(this.wiring.daemonPort ?? process.env.PORT ?? 3456),
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
         ...(api ? { DISPATCH_API: api } : {}),
