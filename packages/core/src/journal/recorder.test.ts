@@ -106,25 +106,45 @@ describe('JournalRecorder: a harness that streams and sends no whole message (Co
   });
 
   it('a replay of the agent (session/load) fills an empty journal once, and is ignored when the journal has rows', () => {
-    const first = setup(false);
-    first.thread.beginReplay();
-    first.ring.push(userText('earlier question'));
-    first.ring.push(whole({ type: 'text', text: 'earlier answer' }));
-    first.thread.endReplay();
-    expect(first.rows().map((r) => r.kind)).toEqual(['user', 'assistant']);
+    const db = new Database(':memory:');
+    initSchema(db);
+    const journal = new MessageJournal(db);
+    const rows = () => journal.page('t', { limit: 500 }).items;
+    const replay = (thread: { beginReplay(): void; endReplay(): void }, ring: EventRing, event: unknown) => { thread.beginReplay(); ring.push(event); thread.endReplay(); };
+
+    const ring1 = new EventRing();
+    const first = new JournalRecorder(journal).attach('t', ring1, { wholeFrames: false, expectReplay: true });
+    replay(first, ring1, userText('earlier question'));
+    replay(first, ring1, whole({ type: 'text', text: 'earlier answer' }));
+    first.loadEnded();
+    expect(rows().map((r) => r.kind)).toEqual(['user', 'assistant']);
 
     // The daemon starts again on the same database: the agent replays the same history.
-    const ring = new EventRing();
-    const again = new JournalRecorder(first.journal).attach('t', ring, { wholeFrames: false });
-    again.beginReplay();
+    const ring2 = new EventRing();
+    const again = new JournalRecorder(journal).attach('t', ring2, { wholeFrames: false, expectReplay: true });
     const replayed = userText('earlier question') as Record<string, unknown>;
-    ring.push(replayed);
-    ring.push(whole({ type: 'text', text: 'earlier answer' }));
-    again.endReplay();
-    expect(first.rows().map((r) => r.seq)).toEqual([1, 2]);
+    replay(again, ring2, replayed);
+    // A message sent while the replay is on its way is a live event: it is written.
+    ring2.push(userText('sent during the load'));
+    replay(again, ring2, whole({ type: 'text', text: 'earlier answer' }));
+    again.loadEnded();
+    expect(rows().map((r) => r.seq)).toEqual([1, 2, 3]);
     expect(replayed.seq).toBeUndefined();
-    ring.push(userText('a new question'));
-    expect(first.rows().map((r) => r.seq)).toEqual([1, 2, 3]);
+    expect((rows()[2].payload as any).message.content[0].text).toBe('sent during the load');
+  });
+
+  it('a message sent before the replayed history of an old thread is in comes after that history', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const journal = new MessageJournal(db);
+    const ring = new EventRing();
+    const thread = new JournalRecorder(journal).attach('t', ring, { wholeFrames: false, expectReplay: true });
+    ring.push(userText('sent right after the resume')); // before the first replayed frame
+    thread.beginReplay(); ring.push(userText('earlier question')); thread.endReplay();
+    thread.beginReplay(); ring.push(whole({ type: 'text', text: 'earlier answer' })); thread.endReplay();
+    thread.loadEnded();
+    const texts = journal.page('t').items.map((r) => (r.payload as any).message.content[0].text);
+    expect(texts).toEqual(['earlier question', 'earlier answer', 'sent right after the resume']);
   });
 });
 

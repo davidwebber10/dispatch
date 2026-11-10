@@ -149,7 +149,7 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     };
     if (opts.seedEvents?.length) session.ring.seed(opts.seedEvents);
     // W3-D: each finished item goes to the message journal. ACP prose has no whole frame: a block is finished at its stop.
-    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false });
+    session.recorder = this.journal?.attach(terminalId, session.ring, { wholeFrames: false, expectReplay: !!opts.resumeId });
     this.sessions.set(terminalId, session);
     conn.on('notification', (method, params) => this.onFrame(session, { method, params }));
     conn.on('request', (method, id, params) => this.onServerRequest(session, method, id, params));
@@ -183,13 +183,12 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
       session.sessionId = resumeId;
       this.fire('session', session.terminalId, resumeId);
       session.loading = true;
-      session.recorder?.beginReplay(); // W3-D: the agent replays history that the journal has already
       try {
         const res = await session.conn.request('session/load', { sessionId: resumeId, cwd, mcpServers: [] });
         this.adoptModel(session, res);
       } finally {
         session.loading = false;
-        session.recorder?.endReplay();
+        session.recorder?.loadEnded(); // W3-D: the replayed history is in (or was ignored)
       }
     } else {
       const res = await session.conn.request('session/new', { cwd, mcpServers: [] });
@@ -273,7 +272,10 @@ export class AcpStructuredSessionManager extends StructuredEmitter implements IS
     if (this.sessions.get(session.terminalId) !== session) return;
     const sid = frame.params?.sessionId;
     if (typeof sid === 'string' && session.sessionId && sid !== session.sessionId) return;
-    this.applyActions(session, session.translator.translate(frame, { replay: session.loading }));
+    // W3-D: a frame of a session/load replay is history that the journal has already (see ThreadRecorder.beginReplay).
+    const replay = session.loading;
+    if (replay) session.recorder?.beginReplay();
+    try { this.applyActions(session, session.translator.translate(frame, { replay })); } finally { if (replay) session.recorder?.endReplay(); }
   }
 
   private onServerRequest(session: GrokSession, method: string, id: RpcId, params: any): void {
