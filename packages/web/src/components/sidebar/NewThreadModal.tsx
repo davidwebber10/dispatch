@@ -647,10 +647,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                   {worktreeError ?? (worktree ? 'A new branch from the current commit. The project files stay as they are.' : 'Off: the thread works in the project directory')}
                 </span>
               </span>
-              <button type="button" role="switch" aria-checked={worktree} aria-label="Run in a new worktree" onClick={() => setWorktree((v) => !v)}
-                style={{ flex: 'none', width: m ? 44 : 34, height: m ? 26 : 20, borderRadius: 'var(--radius-lg)', border: 'none', padding: m ? 3 : 2, cursor: 'pointer', background: worktree ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
-                <span style={{ display: 'block', width: m ? 20 : 16, height: m ? 20 : 16, borderRadius: 'var(--radius-md)', background: 'var(--color-text-primary)', transform: worktree ? `translateX(${m ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
-              </button>
+              <RowSwitch on={worktree} label="Run in a new worktree" onToggle={() => setWorktree((v) => !v)} mobile={m} />
             </Row>
           )}
           {/* AUTO-ARCHIVE — the whole row toggles (title or switch). While on, the duration
@@ -664,10 +661,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
                 {!m && autoArchive && durationControl}
-                <button type="button" role="switch" aria-checked={autoArchive} aria-label="Auto-archive when idle" onClick={toggleArchive}
-                  style={{ flex: 'none', width: m ? 44 : 34, height: m ? 26 : 20, borderRadius: 'var(--radius-lg)', border: 'none', padding: m ? 3 : 2, cursor: 'pointer', background: autoArchive ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
-                  <span style={{ display: 'block', width: m ? 20 : 16, height: m ? 20 : 16, borderRadius: 'var(--radius-md)', background: 'var(--color-text-primary)', transform: autoArchive ? `translateX(${m ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
-                </button>
+                <RowSwitch on={autoArchive} label="Auto-archive when idle" onToggle={toggleArchive} mobile={m} />
               </div>
             </div>
             {m && autoArchive && (
@@ -736,5 +730,15 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
         )}
       </div>
     </Modal>
+  );
+}
+
+/** The on/off switch of a row in this window: one shape for both rows, larger on a phone. */
+function RowSwitch({ on, label, onToggle, mobile }: { on: boolean; label: string; onToggle: () => void; mobile: boolean }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={onToggle}
+      style={{ flex: 'none', width: mobile ? 44 : 34, height: mobile ? 26 : 20, borderRadius: 'var(--radius-lg)', border: 'none', padding: mobile ? 3 : 2, cursor: 'pointer', background: on ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
+      <span style={{ display: 'block', width: mobile ? 20 : 16, height: mobile ? 20 : 16, borderRadius: 'var(--radius-md)', background: 'var(--color-text-primary)', transform: on ? `translateX(${mobile ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
+    </button>
   );
 }
