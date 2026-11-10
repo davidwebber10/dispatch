@@ -280,6 +280,28 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     try { plugins.remove(req.params.id); if (req.query.keepData !== '1') pluginData.clearPlugin(db, req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
   });
 
+  // ── a bound caller reaches its own plugin only (engineering program 2026-11-09, W3-F) ──
+  // The narrow SDK names the plugin it is bound to in X-Dispatch-Plugin-Bound. A plugin's web bundle
+  // runs in the owner's session, so no key tells the daemon which plugin asked; this header does.
+  // A request that carries it and names another plugin in its path is refused before any rule or
+  // handler runs. The check is a guard against a wrong or forged path through the SDK, not a sandbox:
+  // code in the owner's page can send a request with no such header. X-Dispatch-Plugin alone (the
+  // version 1 SDK) stays a log tag.
+  const boundRefusals = new Set<string>();
+  router.param('id', (req, res, next, id: string) => {
+    const header = req.headers['x-dispatch-plugin-bound'];
+    if (header === undefined || !req.path.startsWith('/plugins/')) return void next();
+    const boundTo = Array.isArray(header) ? header.join(',') : header;
+    if (boundTo === id) return void next();
+    const pair = `${boundTo.slice(0, 64)}|${id}`;
+    if (!boundRefusals.has(pair)) {
+      if (boundRefusals.size > 500) boundRefusals.clear();
+      boundRefusals.add(pair);
+      console.log(`[plugins] refused ${req.method} ${req.path.replace(/[^\x20-\x7e]/g, '?')}: the request is bound to plugin ${JSON.stringify(boundTo.slice(0, 64))} and names ${JSON.stringify(id)}`);
+    }
+    res.status(403).json({ error: 'out_of_scope', message: 'A plugin reaches its own routes only.' });
+  });
+
   // ── storage and settings (spec section 5) ──────────────────────────────────────────────
   const known = (req: Request, res: import('express').Response): boolean => {
     if (plugins.get(req.params.id)) return true;

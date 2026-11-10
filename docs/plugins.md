@@ -23,6 +23,7 @@ marketplace follow.
   "name": "Daily rundown",
   "version": "0.1.0",
   "description": "What happened in the last day, per project.",
+  "sdk": 2,
   "web": "web.js",
   "contributes": { "views": [{ "id": "rundown", "label": "Rundown", "icon": "sun" }] },
   "permissions": []
@@ -30,6 +31,10 @@ marketplace follow.
 ```
 
 - `id` is lowercase letters, digits and dashes, up to 64, and must equal the folder name.
+- `sdk` is the SDK version that `web.js` is written for. Write `2`. Without it the plugin gets
+  the deprecated version 1 object (see [SDK version 1](#sdk-version-1-deprecated)). "New plugin…"
+  still writes a version 1 starter that uses no deprecated member; add `"sdk": 2` and change
+  `d.register('<id>', {...})` to `d.register({...})` and `d.hint` to `d.ui.hint`.
 - `web` names the browser bundle inside the folder. A plugin without `web` is listed but does
   nothing yet.
 - `dispatch` (optional) is `">=3.28"`: the daemon refuses to load the plugin on an older
@@ -42,30 +47,36 @@ the files yourself. A thread can write them too.
 
 ## The browser part
 
-`web.js` exports `activate(d)`. `d` is the SDK (the shared `window.dispatch`, with `d.id` set
-to this plugin's own id): the app's React and hooks, its stores, its API client, its UI
-primitives and style tokens, per-plugin storage, and `register`. Use `d.id` wherever the
-plugin names itself (`register`, `storage`, `settings`, `fetch`): a copy to local then runs
-under its new id without an edit. A plugin ships no React of its own; it builds elements with `d.h`
-(`React.createElement`), or with JSX through a build that maps `react` to
-`window.dispatch.React`.
+`web.js` exports `activate(d)`. `d` is the SDK: the app's React and hooks, its UI primitives and
+style tokens, the plugin's documents and settings, the app's threads and projects as plain data,
+and `register`. A plugin ships no React of its own; it builds elements with `d.h`
+(`React.createElement`), or with JSX through a build that maps `react` to the app's React.
+
+There are two versions of `d`. `"sdk": 2` in `plugin.json` gives **SDK version 2**, which this
+document describes. Without it, the plugin gets [SDK version 1](#sdk-version-1-deprecated),
+which is kept for one release.
+
+The version 2 object is **bound to the plugin**. No function takes a plugin id: `d.docs.get(key)`
+reads this plugin's document, `d.register(contributions)` registers under this plugin's id, and
+`d.worker.fetch(path)` reaches this plugin's worker. So a plugin cannot name another plugin's
+documents, settings, worker, files or budget, and a copy to local runs under its new id without
+an edit. `d.id` is the id, to read.
 
 ```js
 export default function activate(d) {
-  const { h, hooks: { useState, useEffect }, api, ui, storage, hint } = d;
+  const { h, hooks: { useProjects }, ui, docs } = d;
 
   function Rundown() {
-    const [rows, setRows] = useState(null);
-    useEffect(() => { api.listSessions().then(setRows); }, []);
+    const projects = useProjects();   // plain data: [{ id, name, workingDir, archived }]
     return h('div', { style: { padding: 24 } },
       h('h1', { style: { fontSize: 18 } }, 'Daily rundown'),
-      ...(rows ?? []).map((s) => h('div', { key: s.id, style: ui.styles.item }, s.name)));
+      ...projects.map((p) => h('div', { key: p.id, style: ui.styles.item }, p.name)));
   }
 
-  d.register('daily-rundown', {
+  d.register({
     views: [{ id: 'rundown', label: 'Rundown', icon: 'sun', Component: Rundown }],
     settings: [{ id: 'rundown', label: 'Daily rundown', blurb: 'How far back it looks', icon: 'sun', Component: Settings }],
-    threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick: ({ tab }) => { storage.set('daily-rundown', 'pinned', tab.id); hint('Pinned'); } }],
+    threadMenu: [{ id: 'pin', label: 'Pin to rundown', onPick: ({ tab }) => { docs.set('pinned', tab.id); ui.hint('Pinned'); } }],
     composerActions: [{ id: 'sum', label: 'Summarize', onClick: (ctx) => ctx.insert('Summarize where you are.') }],
     slots: [{ id: 'form', slot: 'composer.before', Component: TemplatePicker }],
   });
@@ -108,22 +119,46 @@ component.
 export default function activate(d) {
   const { h, hooks: { useDoc } } = d;
   function Notes({ terminalId, sessionId }) {
-    const [text] = useDoc(d.id, `notes:${terminalId ?? sessionId ?? 'none'}`, '');
+    const [text] = useDoc(`notes:${terminalId ?? sessionId ?? 'none'}`, '');
     if (!terminalId) return h('div', { style: { padding: 16 } }, 'Open a thread to see its notes.');
     return h('pre', { style: { padding: 16, whiteSpace: 'pre-wrap' } }, text || 'No notes yet.');
   }
-  d.register(d.id, { inspectorTabs: [{ id: 'notes', label: 'Notes', icon: 'note', priority: 10, Component: Notes }] });
+  d.register({ inspectorTabs: [{ id: 'notes', label: 'Notes', icon: 'note', priority: 10, Component: Notes }] });
 }
 ```
 
-The SDK object, in full:
+The SDK object (version 2), in full:
 
-- `version`, `React`, `h`, `Fragment`.
+- `version` (the number 2), `id` (this plugin's id), `React`, `h`, `Fragment`.
 - `hooks`: `useState`, `useEffect`, `useMemo`, `useCallback`, `useRef`, `useIsMobile`,
-  `useContributions(kind, filter?)`, `useStore(store, selector)`.
-- `stores`: `useUI`, `useProjects`, `useTabs`, `useUpdate`, `useThreadStatus`.
-  Read them; write through `actions`.
-- `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`, `setBadge(viewKey, n)` (an unseen count on one of the plugin's views; 0 clears it).
+  `useContributions(kind, filter?)`.
+  - `useDoc(key, fallback)` gives `[value, setValue, loading]` for one of this plugin's documents,
+    and refreshes when another client (or a thread) writes that document.
+  - `useProjects()` gives the projects, and `useThreads()` the loaded threads, as React state.
+    The array is the same object until the list changes, so it is safe in a `useMemo` dependency.
+- `docs`: this plugin's documents. `get(key, fallback)`, `set(key, value)`, `delete(key)`,
+  `keys()`, `entries()` (every document with its value, in one request), all async. Documents live
+  on the daemon (`~/.dispatch/dispatch.db`), so they are the same on every device. Writes land in
+  order. A document is at most 256 KB; a plugin holds at most 2000. `delete` of a missing key is
+  not an error.
+- `settings`: `get(fallback?)` and `set(value)`, one JSON value for the plugin.
+- `threads`: the app's threads as plain data.
+  - `list()` gives the threads of every project whose list the app has loaded; `get(id)` gives one,
+    or null. A thread is `{ id, projectId, label, kind, status, archived, createdAt,
+    lastActivityAt }`. `kind` is the harness (`claude-code`, `codex`, …).
+  - `status(id)` gives `{ status, state, activity, stalledSince }`, or null. `state` and `activity`
+    are null until a live status event arrives.
+  - `load(projectId?)` asks the app to read the thread list of one project (of every project
+    with no id) and resolves with those threads.
+  - `onChange(fn)` calls `fn` when a thread is added, removed or changed, or a status changes. It
+    returns the function that stops it. A reload of the plugin stops it too.
+- `projects`: `list()`, `active()` (the open project, or null) and `onChange(fn)`. A project is
+  `{ id, name, workingDir, archived }`.
+- `navigate(route)` goes to a screen and adds one history entry. A route is
+  `{ view: 'workspace', projectId?, threadId?, agentId? }`, `{ view: 'settings', section?, subPage? }`,
+  `{ view: 'chat' }`, `{ view: 'analytics' }` or `{ view: 'plugin:<id>:<view>' }`.
+- `actions`: `setView(key)`, `openThread(projectId, terminalId)`, `openSettings(sectionKey)`,
+  `setBadge(view, n)` (an unseen count on one of this plugin's views, by the view's id or its key; 0 clears it; another plugin's key is ignored).
   `openSchedule({ projectId?, prompt, cron?, label? })` opens the new-automation dialog with those
   fields filled; `openNewThreads({ projectId?, prompts })` opens the new-thread dialog listing one
   thread per prompt. Neither creates anything: the person reviews and presses Save or Start (each
@@ -132,8 +167,18 @@ The SDK object, in full:
   a drafted skill (name, id, description, the `SKILL.md` body, and all projects or the open one,
   all editable); only its **Create** writes and enables the skill. It resolves with `{ id }`, or
   null on Cancel.
-- `id`, `apiPath(path)`, `storage.all(plugin)` (every document with its value in one call).
-- `api`: the app's API client, with the owner's credentials.
+- `events.on(type, handler)`: see [Thread events and hooks](#thread-events-and-hooks).
+- `assist(request)`: see [Assist: one model call](#assist-one-model-call).
+- `model`: what this plugin's model calls cost. `usage({ from?, to? })`, `share({ accountId?,
+  harness? })`, `budget()` and `setBudget({ percentWeekly?, usdWeekly? })`.
+- `plugin.disable()` turns this plugin off, as the switch on the Plugins page does.
+- `files`: the file references that threads registered with this plugin. `url(fileId)` is the
+  address of the bytes (for an `<img src>` or the `FileViewer`); `remove(fileId)` removes the
+  reference.
+- `worker.fetch(path, init?)`: this plugin's worker, see [The worker](#the-worker). A path that
+  leaves the worker (`..`, a full URL) is refused.
+- `url(path)`: an app-root-relative path (`/api/...`, `/plugins/...`) as the browser must request it.
+- `zustand.create`: the app's zustand, for a store of the plugin's own.
 - `ui`: `Modal`, `Markdown`, `FileViewer`, `Toggle`, `FilterBar`, `Select`, `MultiSelect`,
   `Segmented`, `SettingsGroup`, `SettingsRow`, and `styles` (`sectionLabel`, `row`, `item`,
   `ghostBtn`, `solidBtn(on)`, `chip`, `fieldInput`).
@@ -188,20 +233,80 @@ The SDK object, in full:
     Do not render a native `<select>`: the app has none, and a test fails on one in a bundled
     plugin.
 - `icons`: the map above.
-- `storage`: `get(plugin, key, fallback)`, `set(plugin, key, value)`, `remove(plugin, key)`,
-  `list(plugin)`, all async. Documents live on the daemon (`~/.dispatch/dispatch.db`), so they
-  are the same on every device. Writes to one plugin land in order. A document is at most
-  256 KB; a plugin holds at most 2000.
-- `settings`: `get(plugin, fallback)` and `set(plugin, value)`, one document per plugin.
-- `hooks.useDoc(plugin, key, fallback)` gives `[value, setValue, loading]` and refreshes when
-  another client (or a thread) writes that document.
-- `fetch(plugin, path, init)`: the app's fetch with an `X-Dispatch-Plugin` header, for a
-  plugin's own calls to the API.
-- `hint(text)`, `copyText(text)`.
-- `register(id, contributions)`, `unregister(id)`.
+- `ui.hint(text)` shows a short line at the bottom of the screen. `ui.copyText(text)` copies.
+- `register(contributions)` replaces this plugin's contributions.
 
-A selector that returns a new array on every call loops React. Use `useContributions`, or
-`useMemo` over a store's list.
+The object and its namespaces are frozen. The types are in the `@dispatchd/sdk` package
+(`packages/sdk/index.d.ts`): `DispatchSdkV2`, `ThreadInfo`, `ProjectInfo`, `ThreadStatusInfo`.
+
+A selector that returns a new array on every call loops React. Use `useProjects`, `useThreads` or
+`useContributions`, or `useMemo` over a list.
+
+### What the binding does, and what it does not
+
+Each request that the version 2 object makes carries the header `X-Dispatch-Plugin-Bound: <id>`.
+The daemon refuses a request whose header names one plugin and whose path names another, with
+`403 out_of_scope`. So a wrong path through the SDK cannot reach another plugin.
+
+This is not a sandbox. A bundle is code in the owner's page, and it runs with the owner's session.
+Install a plugin only from a source that you trust. A plugin's worker and its MCP server are
+different: they hold the plugin key, and the daemon limits that key to the plugin's own routes
+(see [Permissions and the plugin key](#permissions-and-the-plugin-key)).
+
+### SDK version 1 (deprecated)
+
+A plugin whose `plugin.json` says `"sdk": 1`, or has no `sdk` field, gets the version 1 object.
+It still works in this release. It has two members that version 2 does not have:
+
+- `api`: the app's API client, with the owner's credentials.
+- `stores`: the app's stores (`useUI`, `useProjects`, `useTabs`, `useUpdate`, `useThreadStatus`),
+  and `hooks.useStore(store, selector)`.
+
+**`sdk.api` and `sdk.stores` go away in the next major version of Dispatch.** The first use of each
+by a plugin writes one warning to the browser console. The warning names the plugin and the
+replacement.
+
+The other members of version 1 take the plugin id as their first argument: `storage.get(plugin,
+key, fallback)`, `storage.set`, `storage.remove`, `storage.list`, `storage.all`,
+`settings.get(plugin, fallback)`, `settings.set(plugin, value)`, `hooks.useDoc(plugin, key,
+fallback)`, `assist(plugin, request)`, `fetch(plugin, path, init)`, `worker.fetch(plugin, path,
+init)`, `register(id, contributions)`, `unregister(id)`. The id must be the plugin's own (`d.id`).
+A call that names another plugin is refused before any request. `hint(text)`, `copyText(text)`
+and `apiPath(path)` are at the top level. A bundle with no default export can still register
+through the shared `window.dispatch`.
+
+### Moving a plugin to SDK version 2
+
+1. Set `"sdk": 2` in `plugin.json` (`"sdkVersion": 2` is read as the same field).
+2. Change each call as the table shows.
+3. Reload the plugin. Open its screens with the browser console open: there must be no warning.
+
+| Version 1 | Version 2 |
+| --- | --- |
+| `d.register(id, contributions)` | `d.register(contributions)` |
+| `d.storage.get(id, key, fallback)` / `set` / `remove` / `list` / `all` | `d.docs.get(key, fallback)` / `set(key, value)` / `delete(key)` / `keys()` / `entries()` |
+| `d.settings.get(id, fallback)` / `set(id, value)` | `d.settings.get(fallback)` / `set(value)` |
+| `d.hooks.useDoc(id, key, fallback)` | `d.hooks.useDoc(key, fallback)` |
+| `d.assist(id, request)` | `d.assist(request)` |
+| `d.worker.fetch(id, path, init)` | `d.worker.fetch(path, init)` |
+| `d.fetch(id, '/api/plugins/<id>/files/<fileId>', { method: 'DELETE' })` | `d.files.remove(fileId)` |
+| `d.apiPath('/api/plugins/<id>/files/<fileId>')` | `d.files.url(fileId)` |
+| `d.apiPath(path)` | `d.url(path)` |
+| `d.hint(text)`, `d.copyText(text)` | `d.ui.hint(text)`, `d.ui.copyText(text)` |
+| `d.stores.useProjects((s) => s.sessions)` | `d.hooks.useProjects()` (or `d.projects.list()` outside a component) |
+| `d.stores.useTabs((s) => s.byProject)` | `d.hooks.useThreads()` (or `d.threads.list()`); a thread's project is `projectId`, its harness is `kind` |
+| `d.stores.useThreadStatus(...)` | `d.threads.status(id)` with `d.threads.onChange(fn)` |
+| `d.stores.useUI` (`setView`) | `d.actions.setView(key)` or `d.navigate(route)` |
+| `d.api.listSessions()` | `d.projects.list()` |
+| `d.api.listTerminals(projectId)` | `d.threads.load(projectId)` |
+| `d.api.pluginAssistUsage(id)`, `pluginAssistShare(id, q)`, `pluginBudget(id)`, `setPluginBudget(id, b)` | `d.model.usage()`, `d.model.share(q)`, `d.model.budget()`, `d.model.setBudget(b)` |
+| `d.api.disablePlugin(id)` | `d.plugin.disable()` |
+| `d.actions.setBadge('plugin:<id>:<view>', n)` | the same, or `d.actions.setBadge('<view>', n)` |
+| another `d.api` method | no replacement. Put the work in the plugin's [worker](#the-worker) (it holds the plugin key and its permissions) and call it with `d.worker.fetch`. |
+
+`threadMenu` and `projectMenu` items still get `{ tab }` and `{ session }`. Read `tab.id`,
+`tab.sessionId`, `tab.label` and `session.id`, `session.name` only.
+
 
 ## Themes
 
@@ -255,7 +360,7 @@ removed. Anything not listed is refused: `The plugin "<id>" lacks the permission
 
 ## Storage and settings routes
 
-For a plugin's processes (or `d.fetch`):
+For a plugin's processes:
 
 - `GET /api/plugins/<id>/data` lists documents (key, writer, size, time).
 - `GET`, `PUT`, `DELETE /api/plugins/<id>/data/<key>`; the PUT body is `{ "value": ... }`.
@@ -327,7 +432,7 @@ call) is not in this slice.
 
 ## Assist: one model call
 
-`d.assist(plugin, { system, messages, maxTokens, harness?, model?, accountId? })` runs one turn
+`d.assist({ system, messages, maxTokens, harness?, model?, accountId? })` runs one turn
 with no tools and returns `{ text, usage, ms, model, harness, accountId, costUsd }`. `usage`
 keeps `cacheReadTokens` and `cacheCreateTokens` apart from `inputTokens`.
 
@@ -395,7 +500,7 @@ capTokens }`, and at the cap assist answers 429 `{ error: 'budget', window: 'unk
   `/api/plugins/<id>/worker/<path>`: the owner, the plugin's own key, and thread keys when the
   plugin grants `threads:call-worker`. The daemon forwards the method, path, query, headers and
   body, drops the caller's credential, and adds `X-Dispatch-Principal` (`owner`, `thread:<id>`,
-  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialized (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch(d.id, 'jobs/run', { method: 'POST' })`.
+  `plugin:<id>`) and `X-Dispatch-Session`. A JSON body is re-serialized (so it is under the daemon's 1 MiB JSON cap); a large upload uses another content type and streams through. In the browser, `d.worker.fetch('jobs/run', { method: 'POST' })`.
 
 ## Bundled plugins
 

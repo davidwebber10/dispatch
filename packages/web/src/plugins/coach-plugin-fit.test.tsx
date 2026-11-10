@@ -97,7 +97,7 @@ describe('Coach plugin-fit: Try it (coach plan Task 12c)', () => {
     const openNewThreads = vi.fn();
     const openSchedule = vi.fn();
     const d = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)), cards: { items: [card] } }, actions: { openNewThreads, openSchedule } });
-    const coach = createCoach(d, { now: () => new Date(2026, 10, 23, 13, 0) });
+    const coach = createCoach(d.sdk, { now: () => new Date(2026, 10, 23, 13, 0) });
     await coach.ready;
     const Card = (d.registered.coach.slots[0] as { Component: (p: Record<string, unknown>) => JSX.Element | null }).Component;
     const set = vi.fn();

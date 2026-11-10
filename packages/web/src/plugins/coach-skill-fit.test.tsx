@@ -88,7 +88,7 @@ describe('Coach skill card: Create skill (coach plan Task 12d)', () => {
   const card = { id: 'skill-fit:x', type: 'skill-fit', measure: 'reuse', terminalId: 't1', projectId: 's1', headline: CONFIRM.headline, why: CONFIRM.why, skill: DRAFT, action: { kind: 'skill', label: 'Create skill' }, excerpt: '', reason: 'r', at: NOW.toISOString() };
   async function mount(createSkill: unknown) {
     const d = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)), cards: { items: [card] } }, actions: { createSkill } });
-    const coach = createCoach(d, { now: () => new Date(2026, 10, 23, 13, 0) });
+    const coach = createCoach(d.sdk, { now: () => new Date(2026, 10, 23, 13, 0) });
     await coach.ready;
     const Card = (d.registered.coach.slots[0] as { Component: (p: Record<string, unknown>) => JSX.Element | null }).Component;
     const set = vi.fn();

@@ -101,7 +101,7 @@ type Comp = (p: Record<string, unknown>) => JSX.Element | null;
 describe('Coach: a stale look back offers Run again (coach fix T7)', () => {
   it('shows the note and Run again asks for a new estimate', async () => {
     const d: FakeD = fakeD({ docs: { cadence: { ...emptyCadence(new Date(2026, 9, 1)), lookbackAnswered: true }, 'reviews:lb': { id: 'lb', at: NOW.toISOString(), scope: { kind: 'range', from: ago(30 * 1440), to: NOW.toISOString() }, backfill: true, state: 'done', stale: true, report: { summary: 'The Coach read 3 threads.', findings: [], nextSteps: [] } } } });
-    const coach = createCoach(d, { now: () => NOW });
+    const coach = createCoach(d.sdk, { now: () => NOW });
     await coach.ready;
     const View = (d.registered.coach as Record<string, { Component: Comp }[]>).views[0].Component;
     render(<View />);

@@ -5,7 +5,7 @@
   "description": "Looks at how you work with AI and suggests one small next step at a natural break. You control how often, what it remembers, and what it may spend.",
   "author": "dispatch",
   "dispatch": ">=3.27",
-  "sdk": 1,
+  "sdk": 2,
   "web": "web.js",
   "budget": { "percentWeekly": 3, "usdWeekly": 5 },
   "contributes": {

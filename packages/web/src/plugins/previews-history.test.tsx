@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { buildSdk } from './sdk';
+import { createPluginSdk } from './facade';
 import { FilterBar } from '../components/common/FilterBar';
 import { Select } from '../components/common/Select';
 import { useProjects } from '../stores/projects';
@@ -27,13 +28,13 @@ describe('the Previews history filters are the shared FilterBar (2026-11-07)', (
   let History: React.ComponentType;
   beforeEach(() => {
     useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] as never });
-    const base = buildSdk();
+    const base = createPluginSdk('previews');
     const views: { Component: React.ComponentType }[] = [];
     const d = {
-      ...base, id: 'previews',
-      storage: { ...base.storage, all: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
+      ...base,
+      docs: { ...base.docs, entries: vi.fn(async () => DOCS.map((v) => ({ key: `preview:${v.id}`, value: v }))), set: vi.fn(async () => {}) },
       events: { on: () => () => {} },
-      register: (_id: string, c: { views: { Component: React.ComponentType }[] }) => { views.push(...c.views); },
+      register: (c: { views: { Component: React.ComponentType }[] }) => { views.push(...c.views); },
     };
     activate(d as never);
     History = views[0].Component;

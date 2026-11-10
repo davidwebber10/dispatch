@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { buildSdk } from './sdk';
+import { buildSdk, createLegacySdk, __resetDeprecationWarningsForTest } from './sdk';
+import { createPluginSdk } from './facade';
+import { api } from '../api/client';
+import { useProjects } from '../stores/projects';
 import { applyPluginEvent } from './host';
 
 /** A fake daemon for the plugin storage routes: documents live in a map; every call is recorded. */
@@ -141,5 +144,95 @@ describe('plugin SDK settings primitives (coach settings cleanup, 2026-11-07)', 
   it('ui carries the shared MultiSelect, Segmented, SettingsGroup and SettingsRow', () => {
     const d = buildSdk();
     for (const k of ['MultiSelect', 'Segmented', 'SettingsGroup', 'SettingsRow'] as const) expect(typeof (d.ui as Record<string, unknown>)[k]).toBe('function');
+  });
+});
+
+describe('the version 1 compatibility shim (engineering program 2026-11-09, W3-F)', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { __resetDeprecationWarningsForTest(); warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { warn.mockRestore(); });
+
+  it('the first read of sdk.api by a v1 plugin warns once', () => {
+    const d = createLegacySdk('old-plugin');
+    expect(warn).not.toHaveBeenCalled(); // building the object reads nothing
+    expect(d.api).toBe(api);
+    expect(d.api.listPlugins).toBe(api.listPlugins);
+    void d.api;
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain('old-plugin');
+    expect(line).toContain('sdk.api');
+    expect(line).toMatch(/docs|settings|worker/); // the replacement
+    expect(line).toMatch(/next major/);
+    // A reload hands the bundle a new object: the same plugin does not warn again.
+    void createLegacySdk('old-plugin').api;
+    expect(warn).toHaveBeenCalledTimes(1);
+    // Another plugin gets its own warning.
+    void createLegacySdk('other-plugin').api;
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[1][0])).toContain('other-plugin');
+  });
+
+  it('the first read of sdk.stores by a v1 plugin warns once, and names threads and projects', () => {
+    const d = createLegacySdk('old-plugin');
+    expect(d.stores.useProjects).toBe(useProjects);
+    void d.stores.useTabs; void d.stores;
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain('old-plugin');
+    expect(line).toContain('sdk.stores');
+    expect(line).toMatch(/threads/);
+    expect(line).toMatch(/projects/);
+  });
+
+  it('a v1 plugin that reads neither api nor stores logs nothing, and everything else works as before', async () => {
+    const d = createLegacySdk('p');
+    expect(d.id).toBe('p');
+    expect(d.version).toBe('1.0');
+    await d.storage.set('p', 'k', 1);
+    expect(await d.storage.get('p', 'k', 0)).toBe(1);
+    expect(await d.storage.list('p')).toEqual(['k']);
+    expect(await d.storage.all('p')).toEqual([{ key: 'k', value: 1 }]);
+    await d.settings.set('p', { a: 1 });
+    expect(await d.settings.get('p', null)).toEqual({ a: 1 });
+    await d.fetch('p', '/api/plugins/p/data');
+    await d.worker.fetch('p', 'x');
+    await d.assist('p', { messages: [{ role: 'user', content: 'hi' }] });
+    d.hint('x'); expect(typeof d.copyText).toBe('function'); expect(typeof d.apiPath).toBe('function');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a v1 plugin cannot act as another plugin: storage, settings, assist, fetch and worker refuse another id before any request', async () => {
+    const d = createLegacySdk('p');
+    daemon.docs.set('q/secret', 'theirs');
+    const before = daemon.calls.length;
+    await expect(d.storage.get('q', 'secret', null)).rejects.toThrow(/"p".*"q"|"q".*"p"/);
+    await expect(d.storage.set('q', 'secret', 'stolen')).rejects.toThrow(/its own id/);
+    await expect(d.storage.remove('q', 'secret')).rejects.toThrow(/its own id/);
+    await expect(d.storage.list('q')).rejects.toThrow(/its own id/);
+    await expect(d.storage.all('q')).rejects.toThrow(/its own id/);
+    await expect(d.settings.get('q', null)).rejects.toThrow(/its own id/);
+    await expect(d.settings.set('q', {})).rejects.toThrow(/its own id/);
+    await expect(d.assist('q', { messages: [] })).rejects.toThrow(/its own id/);
+    await expect(d.fetch('q', '/api/plugins/q/data')).rejects.toThrow(/its own id/);
+    await expect(d.worker.fetch('q', 'x')).rejects.toThrow(/its own id/);
+    expect(daemon.calls.length).toBe(before);
+    expect(daemon.docs.get('q/secret')).toBe('theirs');
+  });
+
+  it('a v2 plugin object has no api and no stores key', () => {
+    const d = createPluginSdk('p') as unknown as Record<string, unknown>;
+    expect('api' in d).toBe(false);
+    expect('stores' in d).toBe(false);
+    expect(d.api).toBeUndefined();
+    expect(d.stores).toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the shared window.dispatch object also warns once for api and once for stores', () => {
+    const d = buildSdk();
+    void d.api; void d.api; void d.stores; void d.stores;
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(String(warn.mock.calls[0][0])).toContain('window.dispatch');
   });
 });

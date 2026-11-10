@@ -30,10 +30,17 @@ import { usePluginDialogs } from './PluginDialogs';
  * bundle finds at `window.dispatch`. A bundle ships no React or zustand; it uses the app's through
  * this object, so its screens share the app's React tree, styles and stores. `register` is the
  * one write; everything else is what the app already has.
+ *
+ * Two versions (engineering program 2026-11-09, W3-F). This file builds VERSION 1: the object a
+ * plugin whose manifest says `sdk: 1` (or nothing) gets, and the shared `window.dispatch`. It hands
+ * out the app's API client and stores, so it is kept for one release only: `api` and `stores` are
+ * getters that log one warning for each plugin, and they go away in the next major version.
+ * VERSION 2 is facade.ts (`createPluginSdk`): the plugin id is bound and no store or client leaves
+ * the app. The pieces both versions share (icons, events, the write queue, the controls) are here.
  */
 export const SDK_VERSION = '1.0';
 
-const ICONS: Record<string, Icon> = {
+export const ICONS: Record<string, Icon> = {
   puzzle: Icons.PuzzlePiece, sun: Icons.Sun, star: Icons.Star, sparkle: Icons.Sparkle, lightning: Icons.Lightning,
   calendar: Icons.Calendar, clock: Icons.Clock, note: Icons.Note, rocket: Icons.Rocket, flag: Icons.Flag, heart: Icons.Heart,
   folder: Icons.Folder, terminal: Icons.TerminalWindow, git: Icons.GitBranch, cloud: Icons.Cloud, database: Icons.Database,
@@ -52,7 +59,7 @@ export const tabIcon = (icon: InspectorTabIcon | undefined): Icon => (typeof ico
  * land in order; a read waits for the queued writes of that plugin.
  */
 const queues = new Map<string, Promise<unknown>>();
-function queued<T>(plugin: string, work: () => Promise<T>): Promise<T> {
+export function queued<T>(plugin: string, work: () => Promise<T>): Promise<T> {
   const prev = queues.get(plugin) ?? Promise.resolve();
   const next = prev.catch(() => undefined).then(work);
   queues.set(plugin, next);
@@ -93,7 +100,7 @@ const eventListeners = new Map<string, Set<EventHandler>>();
 export function dispatchServerEvent(e: ServerEvent): void {
   for (const key of [e.type, '*']) for (const fn of eventListeners.get(key) ?? []) { try { fn(e); } catch (err) { console.error('[plugin event handler]', err); } }
 }
-const events = {
+export const events = {
   /** Subscribe to one type, several, or '*'; returns the unsubscribe. */
   on(type: string | string[], handler: EventHandler): () => void {
     const keys = Array.isArray(type) ? type : [type];
@@ -113,15 +120,20 @@ export function notifyDocChanged(plugin: string, key: string): void {
   for (const fn of docListeners.get(`${plugin}/${key}`) ?? []) fn();
 }
 
+/** What `useDocOf` reads and writes through: version 1 passes its storage, version 2 its bound docs. */
+export interface DocAccess { get<T>(key: string, fallback: T): Promise<T>; set(key: string, value: unknown): Promise<void> }
+
 /** A document as React state: `[value, setValue, loading]`; refreshes when another client writes it. */
-function useDoc<T = unknown>(plugin: string, key: string, fallback: T): [T, (next: T) => Promise<void>, boolean] {
+export function useDocOf<T = unknown>(access: DocAccess, plugin: string, key: string, fallback: T): [T, (next: T) => Promise<void>, boolean] {
   const [value, setValue] = useState<T>(fallback);
   const [loading, setLoading] = useState(true);
   const fallbackRef = useRef(fallback);
+  const accessRef = useRef(access);
+  accessRef.current = access;
   const load = useCallback(async () => {
-    try { setValue(await storage.get(plugin, key, fallbackRef.current)); } catch { /* keep what is shown */ }
+    try { setValue(await accessRef.current.get(key, fallbackRef.current)); } catch { /* keep what is shown */ }
     setLoading(false);
-  }, [plugin, key]);
+  }, [plugin, key]); // eslint-disable-line react-hooks/exhaustive-deps -- `plugin` names whose document this is
   useEffect(() => {
     void load();
     const id = `${plugin}/${key}`;
@@ -129,8 +141,12 @@ function useDoc<T = unknown>(plugin: string, key: string, fallback: T): [T, (nex
     set.add(load); docListeners.set(id, set);
     return () => { set.delete(load); if (set.size === 0) docListeners.delete(id); };
   }, [plugin, key, load]);
-  const update = useCallback(async (next: T) => { setValue(next); await storage.set(plugin, key, next); }, [plugin, key]);
+  const update = useCallback(async (next: T) => { setValue(next); await accessRef.current.set(key, next); }, [key]);
   return [value, update, loading];
+}
+function useDoc<T = unknown>(plugin: string, key: string, fallback: T): [T, (next: T) => Promise<void>, boolean] {
+  const access = useMemo<DocAccess>(() => ({ get: (k, f) => storage.get(plugin, k, f), set: (k, v) => storage.set(plugin, k, v) }), [plugin]);
+  return useDocOf(access, plugin, key, fallback);
 }
 
 /** A fetch that names the plugin, so the daemon's log can say which plugin called what. */
@@ -139,6 +155,39 @@ function pluginFetch(plugin: string, path: string, init: RequestInit = {}): Prom
   headers.set('X-Dispatch-Plugin', plugin);
   return fetch(apiPath(path), { ...init, headers });
 }
+
+/**
+ * The deprecated members (W3-F): one console warning for each plugin and member, on the first read.
+ * A reload hands the bundle a new object, so the memory is here, not on the object.
+ */
+const warned = new Set<string>();
+const REPLACEMENT: Record<'api' | 'stores', string> = {
+  api: 'Use the bound members of SDK version 2: sdk.docs, sdk.settings, sdk.worker.fetch, sdk.assist, sdk.model, sdk.files and sdk.plugin.',
+  stores: 'Use sdk.threads and sdk.projects (plain data, with onChange), sdk.hooks.useThreads and sdk.hooks.useProjects, and sdk.navigate, of SDK version 2.',
+};
+function warnDeprecated(pluginId: string, member: 'api' | 'stores'): void {
+  const id = `${pluginId}|${member}`;
+  if (warned.has(id)) return;
+  warned.add(id);
+  const who = pluginId ? `The plugin "${pluginId}"` : 'A plugin (through window.dispatch)';
+  console.warn(`[dispatch] ${who} uses sdk.${member}, which is deprecated and goes away in the next major version of Dispatch. ${REPLACEMENT[member]} Set "sdk": 2 in plugin.json to get that object. See docs/plugins.md, "Moving a plugin to SDK version 2".`);
+}
+/** Test seam: forget which plugins were warned. */
+export function __resetDeprecationWarningsForTest(): void { warned.clear(); }
+
+/** The controls and styles both SDK versions hand out. */
+export const uiKit = { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, MultiSelect, Segmented, SettingsGroup, SettingsRow, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } };
+
+/** The app actions both SDK versions hand out (the W2-F wrappers: a plugin never touches the UI store). */
+export const appActions = {
+  setView: (key: string): void => useUI.getState().setView(key as never),
+  openThread: (projectId: string, terminalId: string): Promise<void> => openThreadInPlace(projectId, terminalId),
+  openSettings: (sectionKey: string): void => useUI.getState().requestSettings(sectionKey),
+  setBadge: (viewKey: string, n: number): void => usePluginRegistry.getState().setBadge(viewKey, n),
+  openSchedule: (p: { projectId?: string; prompt: string; cron?: string; label?: string }): void => usePluginDialogs.getState().openSchedule(p),
+  openNewThreads: (p: { projectId?: string; prompts: string[] }): void => usePluginDialogs.getState().openNewThreads(p),
+  createSkill: (draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }): Promise<{ id: string } | null> => usePluginDialogs.getState().openSkill(draft),
+};
 
 export interface DispatchSdk {
   version: string;
@@ -155,6 +204,7 @@ export interface DispatchSdk {
     useStore: <S, T>(store: UseBoundStore<StoreApi<S>>, selector: (s: S) => T) => T;
   };
   zustand: { create: typeof create };
+  /** @deprecated Goes away in the next major version. Use `threads`, `projects`, `hooks.useThreads`, `hooks.useProjects` and `navigate` of SDK version 2 (facade.ts). */
   stores: { useUI: typeof useUI; useProjects: typeof useProjects; useTabs: typeof useTabs; useUpdate: typeof useUpdate; useThreadStatus: typeof useThreadStatus };
   actions: {
     setView: (key: string) => void;
@@ -169,8 +219,9 @@ export interface DispatchSdk {
     /** Opens the skill review sheet with a draft; resolves with the created skill's id on Create, null on Cancel. */
     createSkill: (draft: { id?: string; name: string; description?: string; body: string; projects?: string[]; projectId?: string }) => Promise<{ id: string } | null>;
   };
+  /** @deprecated Goes away in the next major version. Use the bound members of SDK version 2 (facade.ts). */
   api: typeof api;
-  ui: { Modal: typeof Modal; Markdown: typeof Markdown; FileViewer: typeof FileViewer; Toggle: typeof Toggle; FilterBar: typeof FilterBar; Select: typeof Select; MultiSelect: typeof MultiSelect; Segmented: typeof Segmented; SettingsGroup: typeof SettingsGroup; SettingsRow: typeof SettingsRow; styles: { sectionLabel: React.CSSProperties; row: React.CSSProperties; item: React.CSSProperties; ghostBtn: React.CSSProperties; solidBtn: typeof solidBtn; chip: React.CSSProperties; fieldInput: React.CSSProperties } };
+  ui: typeof uiKit;
   icons: Record<string, Icon>;
   storage: typeof storage;
   settings: typeof settings;
@@ -188,7 +239,13 @@ export interface DispatchSdk {
   unregister: (plugin: string) => void;
 }
 
-export function buildSdk(): DispatchSdk {
+/**
+ * The version 1 object. `pluginId` only names the plugin in the deprecation warning; the shared
+ * `window.dispatch` has none. `api` and `stores` are getters, so building or copying the rest of the
+ * object warns nobody.
+ */
+export function buildSdk(pluginId = ''): DispatchSdk {
+  const stores = { useUI, useProjects, useTabs, useUpdate, useThreadStatus };
   return {
     version: SDK_VERSION,
     id: '',
@@ -200,18 +257,10 @@ export function buildSdk(): DispatchSdk {
       useStore: (store, selector) => store(selector),
     },
     zustand: { create },
-    stores: { useUI, useProjects, useTabs, useUpdate, useThreadStatus },
-    actions: {
-      setView: (key) => useUI.getState().setView(key as never),
-      openThread: (projectId, terminalId) => openThreadInPlace(projectId, terminalId),
-      openSettings: (sectionKey) => useUI.getState().requestSettings(sectionKey),
-      setBadge: (viewKey, n) => usePluginRegistry.getState().setBadge(viewKey, n),
-      openSchedule: (p) => usePluginDialogs.getState().openSchedule(p),
-      openNewThreads: (p) => usePluginDialogs.getState().openNewThreads(p),
-      createSkill: (draft) => usePluginDialogs.getState().openSkill(draft),
-    },
-    api,
-    ui: { Modal, Markdown, FileViewer, Toggle, FilterBar, Select, MultiSelect, Segmented, SettingsGroup, SettingsRow, styles: { sectionLabel, row, item, ghostBtn, solidBtn, chip, fieldInput } },
+    get stores() { warnDeprecated(pluginId, 'stores'); return stores; },
+    actions: { ...appActions },
+    get api() { warnDeprecated(pluginId, 'api'); return api; },
+    ui: uiKit,
     icons: ICONS,
     storage,
     settings,
@@ -225,6 +274,42 @@ export function buildSdk(): DispatchSdk {
     register: (plugin, c) => usePluginRegistry.getState().register(plugin, c),
     unregister: (plugin) => usePluginRegistry.getState().unregister(plugin),
   };
+}
+
+/**
+ * The version 1 object for one plugin (the compatibility shim, W3-F): what `activate` gets when the
+ * manifest does not say `sdk: 2`. Everything a version 1 bundle used is still there. The id the
+ * bundle passes must be its own: a call that names another plugin is refused before any request, as
+ * `register` always was (spec section 14). Listeners the bundle adds are dropped with its
+ * contributions, so a reload never leaves a second copy behind.
+ */
+export function createLegacySdk(pluginId: string): DispatchSdk {
+  const d = buildSdk(pluginId);
+  const refusal = (what: string, given: string): Error => new Error(`The plugin "${pluginId}" called ${what} with the id "${given}". A plugin uses its own id.`);
+  /** `fn(plugin, ...)` only when `plugin` is this plugin; the promise rejects otherwise. */
+  const own = <A extends unknown[], R>(what: string, fn: (plugin: string, ...rest: A) => Promise<R>) =>
+    (plugin: string, ...rest: A): Promise<R> => (plugin === pluginId ? fn(plugin, ...rest) : Promise.reject(refusal(what, plugin)));
+  const base = { storage: d.storage, settings: d.settings, assist: d.assist, fetch: d.fetch, worker: d.worker, useDoc: d.hooks.useDoc, events: d.events };
+  d.id = pluginId;
+  d.storage = {
+    get: own('storage.get', base.storage.get) as typeof storage.get,
+    set: own('storage.set', base.storage.set),
+    remove: own('storage.remove', base.storage.remove),
+    list: own('storage.list', base.storage.list),
+    all: own('storage.all', base.storage.all) as typeof storage.all,
+  };
+  d.settings = { get: own('settings.get', base.settings.get) as typeof settings.get, set: own('settings.set', base.settings.set) };
+  d.assist = own('assist', base.assist);
+  d.fetch = own('fetch', base.fetch);
+  d.worker = { fetch: own('worker.fetch', base.worker.fetch) };
+  d.hooks = { ...d.hooks, useDoc: ((plugin: string, key: string, fallback: unknown) => { if (plugin !== pluginId) throw refusal('hooks.useDoc', plugin); return base.useDoc(plugin, key, fallback); }) as typeof useDoc };
+  d.events = { on: (type, handler) => { const off = base.events.on(type, handler); usePluginRegistry.getState().addCleanup(pluginId, off); return off; } };
+  d.register = (id, c) => {
+    if (id !== pluginId) throw new Error(`The bundle registered as "${id}" but plugin.json says "${pluginId}". A plugin registers under its own id.`);
+    usePluginRegistry.getState().register(id, c);
+  };
+  d.unregister = (id) => { if (id === pluginId) usePluginRegistry.getState().unregister(id); else console.warn(`[plugin ${pluginId}] tried to unregister "${id}"; ignored`); };
+  return d;
 }
 
 declare global { interface Window { dispatch?: DispatchSdk } }

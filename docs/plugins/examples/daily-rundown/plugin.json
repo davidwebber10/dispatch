@@ -2,6 +2,7 @@
   "id": "daily-rundown",
   "name": "Daily rundown",
   "version": "0.1.0",
+  "sdk": 2,
   "description": "What happened in the last day, per project.",
   "web": "web.js",
   "contributes": {

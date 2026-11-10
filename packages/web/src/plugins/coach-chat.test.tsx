@@ -82,7 +82,7 @@ afterEach(() => { cleanup(); });
 type Comp = (p: Record<string, unknown>) => JSX.Element | null;
 async function boot(over: { docs?: Record<string, unknown>; actions?: Record<string, unknown> } = {}) {
   const d: FakeD = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)), signals: fold(days(2)), ...(over.docs ?? {}) }, actions: over.actions });
-  const coach = createCoach(d, { now: () => NOW });
+  const coach = createCoach(d.sdk, { now: () => NOW });
   await coach.ready;
   const reg = d.registered.coach as Record<string, { Component: Comp }[]>;
   return { d, View: reg.views[0].Component, Tab: reg.inspectorTabs[0].Component };
@@ -101,8 +101,8 @@ describe('Coach chat in the app (coach plan Task 12e)', () => {
     render(<View />);
     const chat = await ask('Why do I under-delegate?');
     expect(await within(chat).findByText('I have seen 2 active days. I need about 3 more before I can see patterns.')).toBeInTheDocument();
-    expect(d.assist.mock.calls[0][1]).toMatchObject({ harness: 'claude', model: 'opus' });
-    expect(JSON.stringify(d.assist.mock.calls[0][1])).toMatch(/too little data/i);
+    expect(d.assist.mock.calls[0][0]).toMatchObject({ harness: 'claude', model: 'opus' });
+    expect(JSON.stringify(d.assist.mock.calls[0][0])).toMatch(/too little data/i);
     await waitFor(() => expect((d.docs.get('chat') as { turns: { role: string }[] }).turns.map((t) => t.role)).toEqual(['user', 'coach']));
     // Nothing said in the chat becomes a memory fact.
     expect(d.docs.has('memory')).toBe(false);
@@ -200,7 +200,7 @@ describe('Coach screen: the measure bars (owner, 2026-11-07)', () => {
     expect(await screen.findByTestId('coach-measures')).toBeInTheDocument();
     cleanup();
     const d = fakeD({ docs: { cadence: emptyCadence(new Date(2026, 10, 1)), measures: { scores: SCORES, weakest: 'reuse', history: [] } }, settings: { showMeasures: false } });
-    const coach = createCoach(d, { now: () => NOW });
+    const coach = createCoach(d.sdk, { now: () => NOW });
     await coach.ready;
     const View = (d.registered.coach as Record<string, { Component: Comp }[]>).views[0].Component;
     render(<View />);

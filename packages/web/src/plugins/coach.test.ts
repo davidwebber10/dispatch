@@ -17,7 +17,7 @@ describe('Coach: the plugin skeleton (coach plan Task 7)', () => {
 
   it('activate registers the view, the settings section, the card slot, the right-column tab and the mute commands', async () => {
     const d = fakeD();
-    const coach = createCoach(d);
+    const coach = createCoach(d.sdk);
     await coach.ready;
     const c = d.registered.coach as Record<string, { id: string; slot?: string }[]>;
     expect(c.views.map((v) => v.id)).toEqual(['coach']);
@@ -39,7 +39,7 @@ describe('Coach: the plugin skeleton (coach plan Task 7)', () => {
     expect(s.advanced.minConfidence).toBe(0.85);
     expect(withDefaults(null)).toEqual(DEFAULT_SETTINGS);
     const d = fakeD({ settings: { howOften: 'quiet' } });
-    const coach = createCoach(d);
+    const coach = createCoach(d.sdk);
     await coach.ready;
     expect(coach.store.getState().settings.howOften).toBe('quiet');
     expect(coach.store.getState().settings.maxPerDay).toBe(3);

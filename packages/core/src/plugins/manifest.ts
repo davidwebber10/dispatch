@@ -34,7 +34,7 @@ export interface PluginManifest {
   author?: string;
   /** A `>=X.Y[.Z]` range the running daemon must satisfy. */
   dispatch?: string;
-  /** The SDK major the web part was built against. */
+  /** The SDK major the web part was built against: 2 gets the narrow SDK, 1 or absent the version 1 object (docs/plugins.md). */
   sdk?: number;
   /** The browser bundle, relative to the plugin folder. */
   web?: string;
@@ -78,7 +78,9 @@ export function parseManifest(raw: string, folderId: string): ParsedManifest {
   if (typeof data.description === 'string') m.description = data.description;
   if (typeof data.author === 'string') m.author = data.author;
   if (typeof data.dispatch === 'string') m.dispatch = data.dispatch;
+  // `sdkVersion` is a second name for `sdk` (engineering program 2026-11-09, W3-F); `sdk` wins.
   if (typeof data.sdk === 'number') m.sdk = data.sdk;
+  else if (typeof data.sdkVersion === 'number') m.sdk = data.sdkVersion;
   if (typeof data.web === 'string') m.web = data.web;
   if (data.enabledByDefault === true) m.enabledByDefault = true;
   if (isRecord(data.contributes)) m.contributes = data.contributes as PluginContributes;
