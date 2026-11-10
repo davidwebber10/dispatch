@@ -3,7 +3,7 @@ import { ArrowSquareOut, ArrowClockwise, Copy, Check } from '@phosphor-icons/rea
 import { api } from '../../api/client';
 import type { CodexLoginSession } from '../../api/types';
 import { copyText } from '../../lib/clipboard';
-import { solidBtn, ghostBtn } from './ui';
+import { Button } from '../ui';
 
 /** How often the daemon is asked whether the code was approved. A test sets it lower. */
 export const codexLoginTiming = { pollMs: 2000 };
@@ -63,15 +63,14 @@ export function CodexLogin({ accountId, onDone, onCancel }: { accountId: string;
     try { await copyText(session.code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* the code stays on screen to type */ }
   };
 
-  const iconBtn: React.CSSProperties = { ...ghostBtn, display: 'inline-flex', alignItems: 'center', gap: 6 };
   return (
     <div data-testid="codex-login" style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
       {error ? (
         <>
           <span role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)', overflowWrap: 'anywhere' }}>{error}</span>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => setAttempt((n) => n + 1)} style={{ ...solidBtn(true), display: 'inline-flex', alignItems: 'center', gap: 6 }}><ArrowClockwise size={13} weight="bold" />Try again</button>
-            {onCancel && <button type="button" onClick={() => void cancel()} style={ghostBtn}>Cancel</button>}
+            <Button onClick={() => setAttempt((n) => n + 1)} variant="primary" size="sm" icon={<ArrowClockwise size={13} weight="bold" />}>Try again</Button>
+            {onCancel && <Button onClick={() => void cancel()} variant="ghost" size="sm">Cancel</Button>}
           </div>
         </>
       ) : !session ? (
@@ -86,12 +85,12 @@ export function CodexLogin({ accountId, onDone, onCancel }: { accountId: string;
           </a>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{ font: '600 20px var(--font-mono)', letterSpacing: 2, color: 'var(--color-text-primary)', padding: '4px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)' }}>{session.code}</span>
-            <button type="button" aria-label="Copy the code" onClick={() => void copy()} style={iconBtn}>{copied ? <Check size={13} /> : <Copy size={13} />}{copied ? 'Copied' : 'Copy'}</button>
+            <Button variant="ghost" size="sm" aria-label="Copy the code" icon={copied ? <Check size={13} /> : <Copy size={13} />} onClick={() => void copy()}>{copied ? 'Copied' : 'Copy'}</Button>
           </div>
           <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
             The code expires in 15 minutes. If ChatGPT refuses it, turn on device code sign-in for Codex in ChatGPT's security settings.
           </span>
-          {onCancel && <div><button type="button" onClick={() => void cancel()} style={ghostBtn}>Cancel</button></div>}
+          {onCancel && <div><Button onClick={() => void cancel()} variant="ghost" size="sm">Cancel</Button></div>}
         </>
       )}
     </div>

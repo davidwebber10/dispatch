@@ -3,8 +3,9 @@ import { api, ApiError } from '../../api/client';
 import { BASE } from '../../lib/basePath';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { DevicesList } from './DevicesList';
-import { SettingsPage, SettingsGroup, SettingsRow, SettingsDisclosure, fieldFor, solidBtn, ghostBtn, codeChip } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, SettingsDisclosure, fieldFor, codeChip } from './ui';
 import { useSubPage } from './subPageNav';
+import { Button } from '../ui';
 
 /**
  * Settings → Devices & access: sign in another device (network exposure spec, 8.1, first slice).
@@ -190,9 +191,9 @@ export function AccessSection() {
           </SettingsRow>
           <SettingsRow label="Sign-in code" hint="Works once, for 5 minutes."
             control={(
-              <button type="button" disabled={busy} onClick={() => void makeCode()} style={solidBtn(!busy)}>
+              <Button variant="primary" size="sm" disabled={busy} onClick={() => void makeCode()}>
                 {live ? 'New code' : 'Make a code'}
-              </button>
+              </Button>
             )}>
             {error && <div role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</div>}
             {live && (
@@ -211,7 +212,7 @@ export function AccessSection() {
                   <li>Scan the QR code with the phone's camera and open the link.</li>
                   <li>Or open <span style={{ fontFamily: 'var(--font-mono)' }}>{address.trim() || 'the address'}</span> on the phone, tap <b>Enter a code</b>, and type the code.</li>
                 </ol>
-                <button type="button" style={{ ...ghostBtn, alignSelf: 'flex-end' }} onClick={() => { setPair(null); setError(null); }}>Clear code</button>
+                <Button variant="ghost" size="sm" style={{ alignSelf: 'flex-end' }} onClick={() => { setPair(null); setError(null); }}>Clear code</Button>
               </div>
             )}
           </SettingsRow>

@@ -5,7 +5,8 @@ import { deviceId, syncEnrollment } from '../../lib/push';
 import { timeAgo } from '../../lib/time';
 import { useSettings } from '../../stores/settings';
 import { ConfirmModal } from '../common/ConfirmModal';
-import { SettingsGroup, SettingsRow, EmptyState, ghostBtn, miniChip } from './ui';
+import { SettingsGroup, SettingsRow, EmptyState, miniChip } from './ui';
+import { Button } from '../ui';
 
 /**
  * Settings → Notifications: devices that receive push notifications (all devices).
@@ -66,7 +67,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
   if (state === 'error' || !subs) {
     return (
       <section role="group" aria-label={TITLE} style={bare}>
-        <EmptyState action={<button type="button" style={ghostBtn} onClick={() => void load()}>Try again</button>}>Could not load the devices that get alerts.</EmptyState>
+        <EmptyState action={<Button variant="ghost" size="sm" onClick={() => void load()}>Try again</Button>}>Could not load the devices that get alerts.</EmptyState>
       </section>
     );
   }
@@ -88,7 +89,7 @@ export function PushSubscriptionsList({ now = Date.now }: { now?: () => number }
               icon={deviceIcon(s.label)}
               label={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>{s.label}{s.deviceId === mine && <span style={{ ...miniChip, color: 'var(--color-accent)' }}>This device</span>}</span>}
               hint={<>{s.lastSentAt ? `Last alert ${timeAgo(s.lastSentAt, t)} ago` : 'No alert yet'} · <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.host}</span></>}
-              control={<button type="button" disabled={busy} aria-label={`Revoke ${s.label}`} style={{ ...ghostBtn, height: 28 }} onClick={() => setPending(s)}>Revoke</button>}
+              control={<Button disabled={busy} aria-label={`Revoke ${s.label}`} variant="ghost" size="sm" style={{ height: 28 }} onClick={() => setPending(s)}>Revoke</Button>}
             />
           </div>
         ))}

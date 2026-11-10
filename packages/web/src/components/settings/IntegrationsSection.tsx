@@ -8,10 +8,11 @@ import { useSecrets } from '../../stores/secrets';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { Segmented } from '../common/Segmented';
 import {
-  ghostBtn, solidBtn, fieldFor, Sheet, Toggle,
+  fieldFor, Sheet, Toggle,
   SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, EmptyState,
 } from './ui';
 import { useSubPage } from './subPageNav';
+import { Button } from '../ui';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 11.5 };
 const oneLine: React.CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
@@ -176,7 +177,7 @@ export function IntegrationsSection() {
     );
   }
 
-  const addButton = (label: string) => <button type="button" style={ghostBtn} onClick={openSheet}>{label}</button>;
+  const addButton = (label: string) => <Button variant="ghost" size="sm" onClick={openSheet}>{label}</Button>;
   const footer = (
     <>
       <div>{'Write ${NAME} in a header or env value. '}{`Dispatch reads NAME from Doppler${dopplerWhere} when the integration starts; the value never appears in a command line or a config file.`}</div>
@@ -249,8 +250,8 @@ export function IntegrationsSection() {
         )}
         {sheetErr && <div style={{ fontSize: 12, color: 'var(--color-status-red)' }}>{sheetErr}</div>}
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          <button type="button" onClick={() => setSheet(false)} style={{ ...ghostBtn, flex: 1, height: isMobile ? 40 : 32 }}>Cancel</button>
-          <button type="button" aria-label="Add integration" onClick={() => void add()} disabled={!canAdd} style={{ ...solidBtn(canAdd), flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Adding…' : 'Add'}</button>
+          <Button onClick={() => setSheet(false)} variant="ghost" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>Cancel</Button>
+          <Button aria-label="Add integration" onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Adding…' : 'Add'}</Button>
         </div>
       </Sheet>
       {removeConfirm}

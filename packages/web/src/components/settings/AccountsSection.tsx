@@ -6,10 +6,11 @@ import { ConfirmModal } from '../common/ConfirmModal';
 import { ClaudeLogin } from '../endless/ClaudeLogin';
 import { HARNESS_MARK } from '../common/HarnessStrip';
 import { CodexLogin } from './CodexLogin';
-import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, Sheet, fieldFor, solidBtn, ghostBtn, noteText } from './ui';
+import { SettingsPage, SettingsGroup, SettingsRow, SettingsSubPage, StatusMark, Sheet, fieldFor, noteText } from './ui';
 import { useSubPage } from './subPageNav';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { USAGE_ACCESS_TEXT, updatedAgo, usageAccessOf } from '../../stores/accounts';
+import { Button } from '../ui';
 
 /**
  * Settings → Accounts (multi-account spec 2026-11-06): the signed-in accounts under each harness,
@@ -124,7 +125,7 @@ export function AccountsSection() {
     const isDefault = view.defaults[provider] === a.id;
     const access = provider === 'claude' ? usageAccessOf(a) : null;
     const checkAgain = (
-      <button type="button" aria-label={`Check usage again for ${a.label}`} disabled={checking} onClick={() => void checkUsage(a.id)} style={{ ...ghostBtn, opacity: checking ? 0.5 : 1 }}>{checking ? 'Checking…' : 'Check again'}</button>
+      <Button aria-label={`Check usage again for ${a.label}`} disabled={checking} onClick={() => void checkUsage(a.id)} variant="ghost" size="sm">{checking ? 'Checking…' : 'Check again'}</Button>
     );
     const accessNote = (Icon: PhosphorIcon, text: string) => (
       <span data-testid="usage-access-note" style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 6 }}>
@@ -153,7 +154,7 @@ export function AccountsSection() {
             <SettingsGroup title="Sign in">
               <SettingsRow label="Sign in to ChatGPT" hint="This account has no login yet. Dispatch shows a link and a code to use on any device."
                 control={codexSignIn !== a.id
-                  ? <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => { setAdding(null); setCodexSignIn(a.id); }} style={solidBtn(true)}>Sign in</button>
+                  ? <Button aria-label={`Sign in again to ${a.label}`} onClick={() => { setAdding(null); setCodexSignIn(a.id); }} variant="primary" size="sm">Sign in</Button>
                   : undefined}>
                 {codexSignIn === a.id && adding === null && <CodexLogin accountId={a.id} onDone={codexSignInEnded} onCancel={codexSignInEnded} />}
               </SettingsRow>
@@ -165,7 +166,7 @@ export function AccountsSection() {
               {access.state === 'sign-in-needed' && (
                 <SettingsRow label="Sign in again" hint={accessNote(SignIn, a.isCli ? USAGE_ACCESS_TEXT.signInCli : USAGE_ACCESS_TEXT.signIn)}
                   control={!a.isCli && claudeSignIn !== a.id
-                    ? <button type="button" aria-label={`Sign in again to ${a.label}`} onClick={() => setClaudeSignIn(a.id)} style={{ ...solidBtn(true), display: 'inline-flex', alignItems: 'center', gap: 6 }}><SignIn size={14} weight="bold" />Sign in again</button>
+                    ? <Button aria-label={`Sign in again to ${a.label}`} onClick={() => setClaudeSignIn(a.id)} variant="primary" size="sm" icon={<SignIn size={14} weight="bold" />}>Sign in again</Button>
                     : undefined}>
                   {!a.isCli && claudeSignIn === a.id && (
                     <ClaudeLogin autoStart buttonLabel="Sign in again" start={() => api.accountsClaudeLogin(a.label, a.id)} onDone={() => { setClaudeSignIn(null); void checkUsage(a.id); }} />
@@ -186,7 +187,7 @@ export function AccountsSection() {
             <SettingsRow label="Default account" hint={`New ${PROVIDER_TITLE[provider]} threads use it unless you pick another.`}
               control={isDefault
                 ? <StatusMark tone="accent">Default</StatusMark>
-                : <button type="button" aria-label={`Make ${a.label} the default`} onClick={() => void setDefault(provider, a.id)} style={ghostBtn}>Make default</button>} />
+                : <Button aria-label={`Make ${a.label} the default`} onClick={() => void setDefault(provider, a.id)} variant="ghost" size="sm">Make default</Button>} />
           </SettingsGroup>
 
           {!a.isCli && (
@@ -206,10 +207,10 @@ export function AccountsSection() {
     return (
       <SettingsGroup title={PROVIDER_TITLE[provider]}
         action={
-          <button type="button" aria-label={`Add ${PROVIDER_TITLE[provider]} account`} onClick={() => { setAdding(provider); setLabel(''); setCodexSignIn(null); }}
-            style={{ ...ghostBtn, height: 26, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <Plus size={12} weight="bold" />Add account
-          </button>
+          <Button variant="ghost" size="sm" icon={<Plus size={12} weight="bold" />} aria-label={`Add ${PROVIDER_TITLE[provider]} account`} onClick={() => { setAdding(provider); setLabel(''); setCodexSignIn(null); }}
+            style={{ height: 26, padding: '0 10px', gap: 5 }}>
+            Add account
+          </Button>
         }>
         {!view
           ? <SettingsRow label={error ? 'Not loaded' : 'Loading…'} />
@@ -255,8 +256,8 @@ export function AccountsSection() {
               <>
                 <div style={noteText}>Dispatch shows a link and a code. Open the link on any device, sign in to ChatGPT, and enter the code.</div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" disabled={busy} onClick={() => void addCodex()} style={{ ...solidBtn(!busy), height: isMobile ? 36 : 30 }}>Add and sign in</button>
-                  <button type="button" onClick={closeAdd} style={{ ...ghostBtn, height: isMobile ? 36 : 30 }}>Cancel</button>
+                  <Button disabled={busy} onClick={() => void addCodex()} variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }}>Add and sign in</Button>
+                  <Button onClick={closeAdd} variant="ghost" size="sm" style={{ height: isMobile ? 36 : 30 }}>Cancel</Button>
                 </div>
               </>
             )}
@@ -287,8 +288,8 @@ function AccountName({ account: a, isMobile, onSave }: { account: Account; isMob
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save(); } if (e.key === 'Escape') setDraft(initial); }}
             style={{ ...fieldFor(isMobile), flex: 1, minWidth: 0, boxSizing: 'border-box' }} />
-          <button type="button" aria-label="Save name" disabled={!changed || saving} onClick={() => void save()}
-            style={{ ...solidBtn(changed && !saving), height: isMobile ? 36 : 30 }}>Save</button>
+          <Button variant="primary" size="sm" aria-label="Save name" disabled={!changed || saving} onClick={() => void save()}
+            style={{ height: isMobile ? 36 : 30 }}>Save</Button>
         </div>
       </SettingsRow>
   );

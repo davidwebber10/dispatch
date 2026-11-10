@@ -4,9 +4,10 @@ import type { DopplerTokenScope } from '../../api/types';
 import { useSecrets } from '../../stores/secrets';
 import { api } from '../../api/client';
 import { useIsMobile } from '../../hooks/useIsMobile';
-import { ghostBtn, solidBtn, fieldFor, Toggle, IconGhost, Sheet, StatusMark, SettingsPage, SettingsGroup, SettingsRow } from './ui';
+import { fieldFor, Toggle, IconGhost, Sheet, StatusMark, SettingsPage, SettingsGroup, SettingsRow } from './ui';
 import { Select } from '../common/Select';
 import { ConfirmModal } from '../common/ConfirmModal';
+import { Button } from '../ui';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const errText: React.CSSProperties = { fontSize: 12, color: 'var(--color-status-red)', padding: '0 4px' };
@@ -209,7 +210,7 @@ export function SecretsSection() {
               <input type="password" aria-label="Doppler service token" value={token} onChange={(e) => setToken(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void connect(); }} placeholder="dp.st.…" autoComplete="off"
                 style={{ ...field, flex: 1, fontFamily: 'var(--font-mono)' }} />
-              <button onClick={() => void connect()} disabled={!token.trim() || busy} style={{ ...solidBtn(!!token.trim() && !busy), height: isMobile ? 36 : 30 }}>Connect</button>
+              <Button onClick={() => void connect()} disabled={!token.trim() || busy} variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }}>Connect</Button>
             </div>
           </SettingsRow>
           {projects.length > 0 && (
@@ -229,9 +230,9 @@ export function SecretsSection() {
   }
 
   const resyncBtn = (
-    <button onClick={() => void resync()} disabled={busy} style={{ ...ghostBtn, display: 'flex', alignItems: 'center', gap: 5, color: synced ? 'var(--color-accent)' : 'var(--color-text-secondary)' }}>
-      {synced ? <><Check size={13} weight="bold" />Synced</> : 'Re-sync'}
-    </button>
+    <Button variant="ghost" size="sm" icon={synced ? <Check size={13} weight="bold" /> : undefined} onClick={() => void resync()} disabled={busy} style={{ gap: 5, color: synced ? 'var(--color-accent)' : undefined }}>
+      {synced ? 'Synced' : 'Re-sync'}
+    </Button>
   );
   const count = `${secrets.length} variable${secrets.length === 1 ? '' : 's'}`;
 
@@ -262,7 +263,7 @@ export function SecretsSection() {
           <div key="scope-advice" data-testid="token-scope-advice" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '10px 12px', fontSize: 12.5, color: 'var(--color-text-secondary)' }}>
             <ShieldWarning size={16} style={{ flexShrink: 0, color: 'var(--color-status-amber, var(--color-text-secondary))' }} />
             <span style={{ flex: '1 1 220px', minWidth: 0 }}>Every thread can read the Doppler token. Most threads need only the Doppler tools.</span>
-            <button type="button" onClick={() => void changeScope('opted-in')} disabled={busy} style={{ ...ghostBtn, height: isMobile ? 36 : 28, flexShrink: 0 }}>Limit to threads that I turn on</button>
+            <Button onClick={() => void changeScope('opted-in')} disabled={busy} variant="ghost" size="sm" style={{ height: isMobile ? 36 : 28, flexShrink: 0 }}>Limit to threads that I turn on</Button>
           </div>
         )}
       </SettingsGroup>
@@ -272,7 +273,7 @@ export function SecretsSection() {
         {secrets.length > 0 && (
           <div key="filter" style={{ display: 'flex', gap: 8, padding: '8px 12px', alignItems: 'center' }}>
             <input aria-label="Filter variables" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter variables" style={{ ...field, flex: 1 }} />
-            <button onClick={() => void toggleAll()} style={{ ...ghostBtn, height: isMobile ? 36 : 30 }}>{allShown ? 'Hide all values' : 'Reveal all values'}</button>
+            <Button onClick={() => void toggleAll()} variant="ghost" size="sm" style={{ height: isMobile ? 36 : 30 }}>{allShown ? 'Hide all values' : 'Reveal all values'}</Button>
           </div>
         )}
         {filtered.map((s) => (
@@ -303,8 +304,8 @@ export function SecretsSection() {
         </label>
         <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>Saves to Doppler in {where}.</span>
         <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-          <button onClick={() => setSheet(false)} style={{ ...ghostBtn, flex: 1, height: isMobile ? 40 : 32 }}>Cancel</button>
-          <button aria-label="Save variable" onClick={() => void add()} disabled={!canAdd} style={{ ...solidBtn(canAdd), flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Saving…' : 'Add'}</button>
+          <Button onClick={() => setSheet(false)} variant="ghost" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>Cancel</Button>
+          <Button aria-label="Save variable" onClick={() => void add()} disabled={!canAdd} variant="primary" size="sm" style={{ flex: 1, height: isMobile ? 40 : 32 }}>{busy ? 'Saving…' : 'Add'}</Button>
         </div>
       </Sheet>
 

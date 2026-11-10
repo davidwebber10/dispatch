@@ -5,7 +5,8 @@ import { timeAgo } from '../../lib/time';
 import { reloadFresh } from '../../lib/shellCache';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { ConfirmModal } from '../common/ConfirmModal';
-import { SettingsGroup, SettingsRow, SettingsSubPage, EmptyState, ghostBtn, solidBtn, fieldFor, sectionLabel } from './ui';
+import { SettingsGroup, SettingsRow, SettingsSubPage, EmptyState, fieldFor, sectionLabel } from './ui';
+import { Button } from '../ui';
 
 /**
  * Settings → Devices & access: signed-in devices (network exposure spec, 8.1 and 8.2).
@@ -161,7 +162,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
                 <input aria-label="Device name" value={draft} maxLength={60} onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void rename(d); }}
                   style={{ ...fieldFor(isMobile), flex: 1 }} />
-                <button type="button" disabled={busy || !changed} style={{ ...solidBtn(!busy && changed), height: isMobile ? 36 : 30 }} onClick={() => void rename(d)}>Save</button>
+                <Button disabled={busy || !changed} variant="primary" size="sm" style={{ height: isMobile ? 36 : 30 }} onClick={() => void rename(d)}>Save</Button>
               </div>
             </SettingsRow>
           </SettingsGroup>
@@ -188,7 +189,7 @@ export function DevicesList({ now = Date.now, reload = () => { void reloadFresh(
     return (
       <>
         <section role="group" aria-label="Signed-in devices">
-          <EmptyState action={<button type="button" style={ghostBtn} onClick={() => void load()}>Try again</button>}>Could not load the device list.</EmptyState>
+          <EmptyState action={<Button variant="ghost" size="sm" onClick={() => void load()}>Try again</Button>}>Could not load the device list.</EmptyState>
         </section>
         {extra}
       </>

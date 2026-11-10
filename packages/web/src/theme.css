@@ -45,6 +45,15 @@
      Circles stay 50%. */
   --radius-xs:4px; --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px; --radius-2xl:20px; --radius-pill:999px;
   --shadow-glow:0 0 6px 1px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  /* Scales for the UI primitives (components/ui, engineering program W3-E). New code uses these;
+     the rest of the app still holds literal sizes and moves over one area at a time.
+     Type: six steps for text. */
+  --text-xs:11px; --text-sm:12px; --text-base:13px; --text-md:14px; --text-lg:16px; --text-xl:19px;
+  /* Space: eight steps for padding and gaps. */
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-7:32px; --space-8:40px;
+  /* Layers, lowest first. `overlay` is a dialog and its scrim; a dropdown opens above the dialog
+     that holds it; `modal` is a confirm dialog, above both; a toast is above everything. */
+  --z-base:0; --z-sticky:10; --z-overlay:100; --z-dropdown:300; --z-modal:400; --z-toast:1000;
 }
 * { box-sizing: border-box; }
 /* Browser: 100dvh tracks Safari's dynamic URL/tab bar so the bottom input isn't

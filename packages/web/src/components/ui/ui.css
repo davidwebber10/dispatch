@@ -1,0 +1,71 @@
+/* The UI primitives (engineering program 2026-11-09, W3-E): Button, IconButton, Menu, Popover and
+   the dialog parts that Modal and ConfirmModal share. Classes, not inline style objects. Every
+   color, radius and layer is a token from theme.css.
+
+   The button shapes are the ones Settings already had (settings/ui.tsx `ghostBtn`, `solidBtn`,
+   `dangerBtn`; the ConfirmModal buttons), so an adopted page looks the same. Two things are left
+   as they were on purpose, until the whole app moves to the scales:
+     - a button does not set its font family (the old inline styles did not), so it keeps the
+       browser's control font;
+     - the small filled button keeps its 12.5px text, a half step that the type scale does not have. */
+
+/* The keyboard focus ring of the whole app: one rule. It is in the `base` layer, so a Tailwind
+   utility, a component class and an inline style can still set their own outline. */
+@layer base {
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+}
+
+/* ---- Button ---- */
+.ui-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
+.ui-btn:disabled, .ui-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.ui-btn__icon { display: inline-flex; flex: none; }
+.ui-btn__label { display: inline-block; min-width: 0; }
+.ui-btn--loading .ui-btn__label, .ui-btn--loading .ui-btn__icon { visibility: hidden; }
+.ui-btn__spinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+
+.ui-btn--sm { height: 30px; border-radius: var(--radius-sm); font-size: var(--text-sm); }
+.ui-btn--md { height: 34px; border-radius: var(--radius-md); font-size: var(--text-base); }
+
+.ui-btn--primary { flex-shrink: 0; background: var(--color-accent); border: none; color: var(--color-on-accent); font-weight: 600; }
+.ui-btn--primary.ui-btn--sm { padding: 0 14px; font-size: 12.5px; }
+.ui-btn--primary.ui-btn--md { padding: 0 18px; }
+
+.ui-btn--secondary { background: var(--color-elevated); border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); }
+.ui-btn--secondary.ui-btn--sm { padding: 0 12px; }
+.ui-btn--secondary.ui-btn--md { padding: 0 16px; }
+
+.ui-btn--ghost, .ui-btn--danger { background: transparent; border: 1px solid var(--color-border-strong); color: var(--color-text-secondary); white-space: nowrap; }
+.ui-btn--ghost.ui-btn--sm, .ui-btn--danger.ui-btn--sm { padding: 0 12px; }
+.ui-btn--ghost.ui-btn--md, .ui-btn--danger.ui-btn--md { padding: 0 16px; }
+/* Destructive on a page: the ghost button in red, never a filled red button (settings-layout.md, part 4). */
+.ui-btn--danger { color: var(--color-status-red); }
+/* Destructive in the action row of a confirm dialog: the filled button, in red. */
+.ui-dialog-actions .ui-btn--danger { flex-shrink: 0; background: var(--color-status-red); border: none; color: var(--color-on-danger); font-weight: 600; white-space: normal; }
+.ui-dialog-actions .ui-btn--danger.ui-btn--md { padding: 0 18px; }
+
+/* ---- IconButton ---- */
+/* padding 0 and a fixed box: with the browser's own button padding a fixed-width button squeezes
+   its SVG to a sliver (fixed in v2.8.10 for the + and sort icons). */
+.ui-icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--color-text-secondary); cursor: pointer; }
+.ui-icon-btn:disabled { opacity: 0.5; cursor: default; }
+.ui-icon-btn--sm { width: 24px; height: 24px; }
+.ui-icon-btn--md { width: 32px; height: 32px; border-radius: var(--radius-md); }
+.ui-icon-btn__icon { display: inline-flex; }
+
+/* ---- Popover and Menu ---- */
+.ui-popover { position: fixed; z-index: var(--z-dropdown); box-sizing: border-box; max-width: calc(100vw - 16px); overflow: auto; background: var(--color-elevated); border: 1px solid var(--color-border-hover); border-radius: var(--radius-lg); box-shadow: 0 16px 40px -12px var(--color-shadow-strong); color: var(--color-text-primary); font-size: var(--text-base); }
+.ui-popover:focus { outline: none; }
+.ui-menu { min-width: 180px; padding: var(--space-1); display: flex; flex-direction: column; }
+.ui-menu__item { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 30px; padding: 0 var(--space-2); background: transparent; border: none; border-radius: var(--radius-sm); color: var(--color-text-body); font-family: inherit; font-size: var(--text-base); text-align: left; white-space: nowrap; cursor: pointer; }
+.ui-menu__item:hover, .ui-menu__item:focus { background: var(--color-hover); color: var(--color-text-primary); outline: none; }
+.ui-menu__item:disabled { opacity: 0.5; cursor: default; background: transparent; }
+.ui-menu__item--danger, .ui-menu__item--danger:hover, .ui-menu__item--danger:focus { color: var(--color-status-red); }
+.ui-menu__icon { display: inline-flex; flex: none; color: var(--color-text-secondary); }
+.ui-menu__item--danger .ui-menu__icon { color: inherit; }
+.ui-menu__separator { height: 1px; margin: var(--space-1) 0; background: var(--color-border); }
+@media (pointer: coarse) { .ui-menu__item { min-height: 44px; font-size: var(--text-lg); } }
+
+/* ---- Dialog parts (Modal, ConfirmModal) ---- */
+/* The panel takes focus when a dialog opens with no field of its own; a ring round the whole card says nothing. */
+.ui-dialog:focus { outline: none; }
+.ui-dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
