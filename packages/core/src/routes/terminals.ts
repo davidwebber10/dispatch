@@ -187,11 +187,10 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
       ?? { lifecycle: null, captureFailure: null, events: [], status: threadStatusOf(terminal.status, null), turnOpen: null, park: null };
     const sources = req.app.locals as DiagnosticsSources;
 
-    // The process. A Pretty thread asks its manager; a CLI thread asks the PTY manager.
+    // The process: SessionService answers for a CLI (PTY) thread and for a Pretty thread alike.
     const manager = attempt(() => (terminal.config?.transport === 'structured' ? sessionService.structuredManagerFor(terminal.type) : null));
     const transport: 'structured' | 'pty' = manager ? 'structured' : 'pty';
-    const pty = (sessionService as unknown as { ptyManager?: { isAlive(id: string): boolean } }).ptyManager;
-    const alive = attempt(() => (manager ? manager.isAlive(id) : pty ? pty.isAlive(id) : null));
+    const alive = attempt(() => sessionService.isProcessAlive(id));
     const process = alive === null ? null : { alive, transport };
 
     const flag = attempt(() => sources.stallWatchdog?.get?.(id));

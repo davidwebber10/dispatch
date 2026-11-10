@@ -260,7 +260,7 @@ describe('GET /api/terminals/stalls', () => {
 // StatusService; the process, the watchdog, the outbox and the saved questions are stand-ins.
 describe('GET /api/terminals/:id/diagnostics', () => {
   const NOW = Date.now();
-  function world(opts: { transport?: 'structured' | 'pty'; alive?: boolean; pending?: unknown } = {}) {
+  function world(opts: { transport?: 'structured' | 'pty'; alive?: boolean; pending?: unknown; privatePtyAlive?: boolean } = {}) {
     const db = new Database(':memory:');
     initSchema(db);
     sessionsDb.create(db, { id: 'proj', provider: 'claude-code', name: 'p', workingDir: '/x' });
@@ -274,7 +274,8 @@ describe('GET /api/terminals/:id/diagnostics', () => {
       getTerminal: (id: string) => { const row = terminalsDb.getById(db, id); return row ? terminalsDb.rowToTerminal(row) : null; },
       structuredManagerFor: () => (transport === 'structured' ? manager : undefined),
       getPendingPermission: () => (transport === 'structured' ? state.pending : null),
-      ptyManager: { isAlive: () => state.alive },
+      isProcessAlive: () => state.alive,
+      ...(opts.privatePtyAlive ? { ptyManager: { isAlive: () => true } } : {}),
     };
     const a = express();
     a.use(express.json());
@@ -343,6 +344,13 @@ describe('GET /api/terminals/:id/diagnostics', () => {
     expect(after.status).toBe('idle');
     expect(after.explanation.rule).toBe('idle');
     expect(after.events[0].event_type).toBe('status.reset');
+  });
+
+  it('the process comes from SessionService.isProcessAlive, not from a private field of the service', async () => {
+    // A private ptyManager field that says "alive" must not be read.
+    const { get } = world({ transport: 'pty', alive: false, privatePtyAlive: true });
+    const body = await get();
+    expect(body.process).toEqual({ alive: false, transport: 'pty' });
   });
 
   it('a CLI thread reads its process from the PTY manager', async () => {

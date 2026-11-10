@@ -1027,6 +1027,11 @@ export class SessionService {
     return this.ptyManager.isAlive(terminalId);
   }
 
+  /** True when a process backs the thread now: its CLI (PTY) process, or its structured (Pretty) process. */
+  isProcessAlive(terminalId: string): boolean {
+    return this.ptyManager.isAlive(terminalId) || !!this.structuredManagerForTerminal(terminalId)?.isAlive(terminalId);
+  }
+
   /** A question that only the database still holds after a restart (sessions/boot-reconcile.ts, W2-C). */
   private restoredQuestions?: import('./boot-reconcile.js').RestoredQuestions;
   setRestoredQuestions(r: import('./boot-reconcile.js').RestoredQuestions): void { this.restoredQuestions = r; }
