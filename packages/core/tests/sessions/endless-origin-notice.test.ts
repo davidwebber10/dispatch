@@ -46,7 +46,7 @@ describe('a thread Chat started never reaches the Control Plane', () => {
 
   it('does not capture its owner-decisions block into the ledger', () => {
     const { svc } = makeService();
-    const capture = vi.spyOn(svc as any, 'captureOwnerDecisions');
+    const capture = vi.spyOn((svc as any).notifier, 'captureOwnerDecisions');
     svc.noteAgentCompletion('chat');
     expect(capture).not.toHaveBeenCalled();
   });
@@ -54,7 +54,7 @@ describe('a thread Chat started never reaches the Control Plane', () => {
   it('finalOutput gives the last turn texts in order, or an empty string', () => {
     const { svc } = makeService();
     expect(svc.finalOutput('chat')).toBe('');
-    vi.spyOn(svc as any, 'lastTurnTexts').mockReturnValue(['Done: login fixed.', 'Report: the cookie path was wrong.']);
+    vi.spyOn((svc as any).notifier, 'lastTurnTexts').mockReturnValue(['Done: login fixed.', 'Report: the cookie path was wrong.']);
     expect(svc.finalOutput('chat')).toBe('Report: the cookie path was wrong.\n\nDone: login fixed.');
   });
 });
