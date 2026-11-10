@@ -8,6 +8,7 @@ import { ThreadSpawner } from './thread-spawner.js';
 import { BootRecovery } from './boot-recovery.js';
 import { ThreadQuestions } from './thread-questions.js';
 import { HarnessRegistry } from './harness-registry.js';
+import { ThreadFiles } from './thread-files.js';
 import { emptySessionWiring, type SessionWiring, type StatusContext } from './session-wiring.js';
 import { ThreadSettings } from './thread-settings-service.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
@@ -43,7 +44,7 @@ import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { findLiveCoordinator } from '../auth/key-scope.js';
 import { DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ThreadConfigStore, pickClientSettable } from './thread-config.js';
-import { ptyMessagePayload, flattenForPty, hasControlChars } from './pty-message.js';
+import { ptyMessagePayload, flattenForPty } from './pty-message.js';
 import { senderLine } from '../auth/key-rules.js';
 
 export { disallowedToolsFor, type SpawnKey } from './thread-spawner.js';
@@ -192,6 +193,7 @@ export class SessionService {
         noteQuestionAnsweredInChat: (id, reply, imageCount, canned) => this.noteQuestionAnsweredInChat(id, reply, imageCount, canned),
       },
     });
+    this.files = new ThreadFiles({ db, pty: ptyManager });
     this.bootRecovery = new BootRecovery({
       db, configStore: this.configStore,
       threads: {
@@ -211,6 +213,8 @@ export class SessionService {
   private readonly settings: ThreadSettings;
   /** The answers to the question or gated tool of a structured thread (sessions/thread-questions.ts). */
   private readonly questions: ThreadQuestions;
+  /** Where a path that a thread names is, and a file reference typed into a CLI (sessions/thread-files.ts). */
+  private readonly files: ThreadFiles;
   /** The boot kickstart and the shutdown that keeps interrupted turns (sessions/boot-recovery.ts). */
   private readonly bootRecovery: BootRecovery;
 
@@ -1148,65 +1152,9 @@ export class SessionService {
     this.ptyManager.write(terminalId, data);
   }
 
-  resolveTerminalFilePath(terminalId: string, requestedPath: string): string | null {
-    const terminal = terminalsDb.getById(this.db, terminalId);
-    if (!terminal) return null;
+  resolveTerminalFilePath(terminalId: string, requestedPath: string): string | null { return this.files.resolveTerminalFilePath(terminalId, requestedPath); }
 
-    const session = sessionsDb.getById(this.db, terminal.session_id);
-    if (!session) return null;
-
-    const sessionRoot = path.resolve(session.working_dir);
-    const terminalRoot = path.resolve(terminal.working_dir || session.working_dir);
-    const roots = Array.from(new Set([terminalRoot, sessionRoot]));
-
-    if (path.isAbsolute(requestedPath)) {
-      const resolved = path.resolve(requestedPath);
-      if (roots.some(root => this.isPathInside(root, resolved))) return resolved;
-      throw new Error('Path traversal not allowed');
-    }
-
-    const sessionResolved = path.resolve(sessionRoot, requestedPath);
-    if (!this.isPathInside(sessionRoot, sessionResolved)) {
-      throw new Error('Path traversal not allowed');
-    }
-
-    if (requestedPath === '.dispatch/inbox' || requestedPath.startsWith('.dispatch/inbox/')) {
-      return sessionResolved;
-    }
-
-    if (this.pathExists(sessionResolved)) {
-      return sessionResolved;
-    }
-
-    const terminalResolved = path.resolve(terminalRoot, requestedPath);
-    if (!this.isPathInside(terminalRoot, terminalResolved)) {
-      throw new Error('Path traversal not allowed');
-    }
-    return terminalResolved;
-  }
-
-  private pathExists(resolvedPath: string): boolean {
-    try {
-      return fs.existsSync(resolvedPath);
-    } catch {
-      return false;
-    }
-  }
-
-  sendFileReference(terminalId: string, requestedPath: string, mode: 'agent-context' | 'shell-path' = 'agent-context'): { sentText: string } | null {
-    const absolutePath = this.resolveTerminalFilePath(terminalId, requestedPath);
-    if (!absolutePath) return null;
-    if (!this.ptyManager.isAlive(terminalId)) throw new Error('Terminal process is not running');
-    // A path with a CR, ESC or other control character would be typed as keystrokes (quoting a path
-    // for a shell does not neutralize terminal control bytes), in both modes.
-    if (hasControlChars(absolutePath)) return null;
-
-    const sentText = mode === 'shell-path'
-      ? `${this.shellEscapePath(absolutePath)} `
-      : `Use this file as context: ${absolutePath}\r`;
-    this.ptyManager.write(terminalId, sentText);
-    return { sentText };
-  }
+  sendFileReference(terminalId: string, requestedPath: string, mode: 'agent-context' | 'shell-path' = 'agent-context'): { sentText: string } | null { return this.files.sendFileReference(terminalId, requestedPath, mode); }
 
   stopAllTerminals(): void {
     this.wiring.threadKeys?.revokeAllLive(); // PTY keys only: Pretty threads keep running, so their keys stay
@@ -1271,15 +1219,6 @@ export class SessionService {
   shutdownPreservingInterruptedTurns(stopAll: () => void): string[] { return this.bootRecovery.shutdownPreservingInterruptedTurns(stopAll); }
 
   private removeThreadMcpConfig(terminalId: string): void { return this.injection.removeThreadMcpConfig(terminalId); }
-
-  private isPathInside(root: string, target: string): boolean {
-    const relative = path.relative(root, target);
-    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-  }
-
-  private shellEscapePath(absolutePath: string): string {
-    return `'${absolutePath.replace(/'/g, `'\\''`)}'`;
-  }
 
   private defaultTerminalLabel(sessionId: string, type: TerminalType): string {
     const terminals = terminalsDb.listBySession(this.db, sessionId);
