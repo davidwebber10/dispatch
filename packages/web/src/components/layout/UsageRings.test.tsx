@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within, act, fireEvent, waitFor } from '@testing-library/react';
-import { UsageRings } from './UsageRings';
+import { UsageRings, PARTIAL_NOTE_MS } from './UsageRings';
 import { ringModels, ringTone } from './usageGauge';
 import { useAccounts } from '../../stores/accounts';
 import { useUsageLimits } from '../../stores/usageLimits';
@@ -223,6 +223,42 @@ describe('Refresh (2026-11-09: the figures are not live, so Refresh reads them n
     expect(btn).not.toBeDisabled();
     expect(screen.getByTestId('usage-updated')).toHaveTextContent(/^Updated /);
     expect(useUsageLimits.getState().summary?.providers[0].asOf).toBe(now + 60_000);
+  });
+
+  // Final review of v4.5.0: the note of a partial answer stayed until the next Refresh.
+  describe('a partial answer (a read took longer than the daemon waits)', () => {
+    const fresh = (rev: number, asOf: number, over: Record<string, unknown> = {}) =>
+      ({ ...(summary() as any), epoch: 'p1', rev, providers: (summary() as any).providers.map((p: any) => ({ ...p, asOf })), ...over });
+    const partialRefresh = async () => {
+      useUsageLimits.setState({ summary: null, epoch: null, retired: [], rev: 0 });
+      vi.spyOn(api, 'refreshUsage').mockResolvedValue(fresh(2, now + 60_000, { partial: true }) as never);
+      render(<UsageRings summary={summary()} now={now} dense />);
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Refresh usage' })); });
+      expect(screen.getByTestId('usage-updated')).toHaveTextContent('some figures still loading');
+    };
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('the note goes when the late usage-limits broadcast arrives', async () => {
+      await partialRefresh();
+      act(() => { useUsageLimits.getState().applyEvent({ type: 'usage-limits', ...fresh(3, now + 90_000) } as never); });
+      expect(screen.getByTestId('usage-updated')).toHaveTextContent(/^Updated /);
+      expect(screen.getByTestId('usage-updated')).not.toHaveTextContent('some figures still loading');
+    });
+
+    it('a broadcast that the store drops (not newer) does not remove the note', async () => {
+      await partialRefresh();
+      act(() => { useUsageLimits.getState().applyEvent({ type: 'usage-limits', ...fresh(2, now + 60_000) } as never); });
+      expect(screen.getByTestId('usage-updated')).toHaveTextContent('some figures still loading');
+    });
+
+    it('with no broadcast, the note goes after a short time', async () => {
+      vi.useFakeTimers();
+      await partialRefresh();
+      act(() => { vi.advanceTimersByTime(PARTIAL_NOTE_MS - 1); });
+      expect(screen.getByTestId('usage-updated')).toHaveTextContent('some figures still loading');
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(screen.getByTestId('usage-updated')).not.toHaveTextContent('some figures still loading');
+    });
   });
 
   it('a failed refresh says so and keeps the old figures', async () => {
