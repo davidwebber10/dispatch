@@ -1311,6 +1311,10 @@ test('RE-ARM: a first loadOlder that bails for want of an anchor resumes paging 
 // reconcile now appends any text/thinking block whose stream index never opened a BlockRec,
 // mirroring the "append any tool we never saw start" rule.
 
+// The frames below have the shape that Claude sends (final review of v4.5.0, C1): each content block
+// comes again as a whole `assistant` frame of ONE block, with the id of its message.
+const claudeWhole = (block: any, uuid: string, messageId = 'msg_1') => ({ type: 'assistant', uuid, message: { id: messageId, role: 'assistant', content: [block] } });
+
 test('REPLAY CUT: a message whose content_block_start was trimmed still renders its prose from the whole-assistant reconcile', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
   // Replay begins mid-message: no message_start, no content_block_start — just the tail of
@@ -1320,7 +1324,7 @@ test('REPLAY CUT: a message whose content_block_start was trimmed still renders 
   expect(result.current.items).toHaveLength(0);
   expect(result.current.busy).toBe(true); // streamingRef is now sticky true
 
-  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'text', text: 'The whole answer, tail of the sentence.' }] } }));
+  act(() => cbs.onEvent(claudeWhole({ type: 'text', text: 'The whole answer, tail of the sentence.' }, 'real-1')));
   const txt = result.current.items.filter((i) => i.kind === 'assistant');
   expect(txt).toHaveLength(1);
   expect(txt[0].text).toBe('The whole answer, tail of the sentence.'); // the AUTHORITATIVE text, not the delta tail
@@ -1332,7 +1336,7 @@ test('REPLAY CUT: a cut thinking block is recovered too', () => {
   act(() => cbs.onEvent(thinkDelta(0, 'in progress')));
   drainRaf();
   expect(result.current.items).toHaveLength(0);
-  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [{ type: 'thinking', thinking: 'the full reasoning' }] } }));
+  act(() => cbs.onEvent(claudeWhole({ type: 'thinking', thinking: 'the full reasoning' }, 'real-1')));
   const think = result.current.items.filter((i) => i.kind === 'thinking');
   expect(think).toHaveLength(1);
   expect(think[0].text).toBe('the full reasoning');
@@ -1340,29 +1344,37 @@ test('REPLAY CUT: a cut thinking block is recovered too', () => {
 
 test('REPLAY CUT: recovers only the blocks that were cut — a block that DID stream is not duplicated', () => {
   const { result } = renderHook(() => useStructuredChat('t1'));
-  // The cut lands between block 0 (text — start and deltas gone) and block 1 (tool_use,
-  // whose content_block_start survived and streamed normally).
+  // The cut lands inside block 0 (text — its start and first deltas are gone). Its whole frame
+  // is in the replay, then block 1 (tool_use) streams normally and gets its own whole frame.
+  act(() => cbs.onEvent(textDelta(0, 'the file.')));
+  drainRaf();
+  expect(result.current.items).toHaveLength(0);
+  act(() => cbs.onEvent(claudeWhole({ type: 'text', text: 'Reading the file.' }, 'real-1')));
   act(() => cbs.onEvent(start(1, { type: 'tool_use', name: 'Read', id: 'tu-1' })));
   act(() => cbs.onEvent(jsonDelta(1, '{"file_path":"/a.ts"}')));
   flushRaf();
-  expect(result.current.items.map((i) => i.kind)).toEqual(['tool']);
-
-  act(() => cbs.onEvent({ type: 'assistant', uuid: 'real-1', message: { content: [
-    { type: 'text', text: 'Reading the file.' },
-    { type: 'tool_use', name: 'Read', id: 'tu-1', input: { file_path: '/a.ts' } },
-  ] } }));
+  act(() => cbs.onEvent(claudeWhole({ type: 'tool_use', name: 'Read', id: 'tu-1', input: { file_path: '/a.ts' } }, 'real-2')));
   // The lost text is recovered exactly once; the streamed tool is reconciled in place, not
-  // appended a second time.
+  // appended a second time. Each block comes in its own frame, so the order is the message's.
   expect(result.current.items.filter((i) => i.kind === 'assistant').map((i) => i.text)).toEqual(['Reading the file.']);
   expect(result.current.items.filter((i) => i.kind === 'tool')).toHaveLength(1);
   expect(result.current.items.find((i) => i.kind === 'tool')?.toolInput).toContain('/a.ts');
-  // ACCEPTED TRADEOFF, pinned here on purpose: a recovered block is APPENDED at reconcile
-  // time, so it lands after the blocks of the same message that did stream, not back at its
-  // original content position. Content is complete and correctly identified; only the
-  // intra-message order of the cut-off head is approximate — the same caveat the pre-existing
-  // "append any tool we never saw start" rule already carries, and it only ever affects the
-  // single oldest message the replay window bisects.
-  expect(result.current.items.map((i) => i.kind)).toEqual(['tool', 'assistant']);
+  expect(result.current.items.map((i) => i.kind)).toEqual(['assistant', 'tool']);
+});
+
+test('REPLAY CUT: a text block that streamed after a cut thinking block is not added again by its whole frame', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // The replay starts past the message_start, inside block 0 (thinking). The view never learns
+  // the id of the message, so it cannot count the whole frames: the frame position of the text
+  // block (0) is not its stream index (1). The streamed bubble holds the same text: no second one.
+  act(() => cbs.onEvent(thinkDelta(0, 'reasoning.')));
+  act(() => cbs.onEvent(claudeWhole({ type: 'thinking', thinking: 'the full reasoning.' }, 'real-1')));
+  act(() => cbs.onEvent(start(1, { type: 'text' })));
+  act(() => cbs.onEvent(textDelta(1, 'The answer.')));
+  drainRaf();
+  act(() => cbs.onEvent(claudeWhole({ type: 'text', text: 'The answer.' }, 'real-2')));
+  expect(result.current.items.map((i) => `${i.kind}:${i.text}`)).toEqual(['thinking:the full reasoning.', 'assistant:The answer.']);
+  expect(result.current.items[1].uuid).toBe('real-2');
 });
 
 test('REPLAY CUT: an empty text block in the whole event does not append a blank bubble', () => {

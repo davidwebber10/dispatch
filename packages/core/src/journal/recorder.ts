@@ -52,7 +52,13 @@ interface OpenBlock {
   toolName?: string;
 }
 
-interface StreamState { messageId?: string; wholes: number }
+/**
+ * The message that one stream (the lead agent, or a sub-agent by its parent tool id) sends now.
+ * `wholes`: how many whole frames of the message came already. Claude sends each block again as a
+ * whole frame of ONE block, so the stream index of the block in the next whole frame is `wholes`.
+ * `open`: the message started and neither its `message_stop` nor the turn end came.
+ */
+interface StreamState { messageId?: string; wholes: number; open: boolean }
 
 /** The ring's hook. EventRing has it; a test can pass any object with the field. */
 export interface CommitSource { onCommit?: (event: unknown) => void }
@@ -191,11 +197,18 @@ export class ThreadRecorder {
 
   /**
    * The blocks that stream now, as events a client folds: a message start, then for each block
-   * its start and one delta with the text so far. Empty when nothing is open.
+   * its start and one delta with the text so far. Empty when nothing is in flight.
+   *
+   * The message start carries the id of the lead agent's message and `wholes`, the count of whole
+   * frames that the message had already. A client needs both to know which streamed block a later
+   * whole frame finishes: the position of a block in a Claude whole frame is always 0, its stream
+   * index is not. So the start is sent between two blocks of a message too, when no block is open.
    */
   openEvents(): unknown[] {
-    if (!this.blocks.size) return [];
-    const out: unknown[] = [streamFrame({ type: 'message_start' }, '')];
+    const lead = this.streams.get('');
+    const id = lead?.messageId;
+    if (!this.blocks.size && !(id && lead.open)) return [];
+    const out: unknown[] = [streamFrame(id ? { type: 'message_start', message: { id }, wholes: lead.wholes } : { type: 'message_start' }, '')];
     for (const b of this.blocks.values()) {
       const content_block = b.type === 'text' ? { type: 'text', text: '' }
         : b.type === 'thinking' ? { type: 'thinking', thinking: '' }
@@ -304,7 +317,12 @@ export class ThreadRecorder {
     if (se.type === 'message_start') {
       this.flush(parent); // what the last message of this stream left open
       const messageId = se.message?.id;
-      this.streams.set(parent, { messageId: typeof messageId === 'string' && messageId ? messageId : undefined, wholes: 0 });
+      this.streams.set(parent, { messageId: typeof messageId === 'string' && messageId ? messageId : undefined, wholes: 0, open: true });
+      return;
+    }
+    if (se.type === 'message_stop') {
+      const stream = this.streams.get(parent);
+      if (stream) stream.open = false;
       return;
     }
     const index: unknown = se.index;
@@ -338,6 +356,7 @@ export class ThreadRecorder {
 
   private result(e: Frame): void {
     this.flush(); // a turn end closes every block; their rows come before the footer
+    for (const stream of this.streams.values()) stream.open = false; // and every message
     this.compacting = null;
     if (e.subtype === 'backfill') return; // the settle that the daemon adds; no client renders it
     if (e.is_error !== true) this.auth = null; // a turn that worked proves the login works

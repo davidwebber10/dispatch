@@ -279,6 +279,35 @@ describe('JournalRecorder: what is not finished yet', () => {
     expect(recorder.openEvents('unknown')).toEqual([]);
   });
 
+  // Final review of v4.5.0, C1: Claude sends each block again as a whole frame of ONE block, so the
+  // position of a block in its frame is always 0. A viewer that connects in the middle of a message
+  // needs the id of the message and the count of whole frames it had, or it cannot tell which
+  // streamed block a later whole frame finishes (it showed the text block two times).
+  it('openEvents of a Claude message gives the id of the message and the count of its whole frames', () => {
+    const { ring, recorder } = setup(true);
+    const frame = (block: Record<string, unknown>) => ({ type: 'assistant', uuid: `u-${String(block.type)}`, message: { id: 'msg_1', role: 'assistant', content: [block] } });
+    ring.push(se({ type: 'message_start', message: { id: 'msg_1', role: 'assistant', content: [] } }));
+    ring.push(se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    ring.push(se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hm' } }));
+    ring.push(se({ type: 'content_block_stop', index: 0 }));
+    ring.push(frame({ type: 'thinking', thinking: 'hm' }));
+    // Between two blocks: no block is open, and the message is still in flight.
+    const head = se({ type: 'message_start', message: { id: 'msg_1' }, wholes: 1 });
+    expect(recorder.openEvents('t')).toEqual([head]);
+    ring.push(se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }));
+    ring.push(se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'so ' } }));
+    ring.push(se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'far' } }));
+    expect(recorder.openEvents('t')).toEqual([
+      head,
+      se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+      se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'so far' } }),
+    ]);
+    ring.push(se({ type: 'content_block_stop', index: 1 }));
+    ring.push(frame({ type: 'text', text: 'so far' }));
+    ring.push(se({ type: 'message_stop' }));
+    expect(recorder.openEvents('t')).toEqual([]); // the message ended: nothing is in flight
+  });
+
   it('stateEvents gives the last usage and a standing sign-in notice; a good result clears the notice', () => {
     const { ring, recorder } = setup(true);
     const frame = whole({ type: 'text', text: 'x' }, { uuid: 'u1', context_window: 1000 }) as any;

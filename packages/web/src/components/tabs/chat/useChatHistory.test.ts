@@ -234,6 +234,74 @@ test('live items carry the seq of their event', () => {
   expect(seqs(result.current.items)).toEqual([1, 2, 3]);
 });
 
+// ---- a connect in the middle of a Claude message (final review of v4.5.0, C1) ----
+// Claude sends each content block again as a whole `assistant` frame of ONE block, with the id of
+// the message. The position of that block in the frame is always 0; its stream index is the count
+// of whole frames the message had before it. The daemon gives that count with the open blocks.
+
+const streamStart = (index: number, content_block: object) => ({ type: 'stream_event', event: { type: 'content_block_start', index, content_block } });
+const streamText = (index: number, text: string) => ({ type: 'stream_event', event: { type: 'content_block_delta', index, delta: { type: 'text_delta', text } } });
+const claudeWhole = (messageId: string, block: object, extra: object = {}) => ({ type: 'assistant', message: { id: messageId, role: 'assistant', content: [block] }, ...extra });
+
+test('a journal connect in the middle of a Claude message (thinking, then text) shows the text once', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // Block 0 (thinking) is finished: it is journal item 2. Block 1 (text) streams now.
+  journal(frame([row(1, userEvent('question')), row(2, claudeWhole('msg_1', { type: 'thinking', thinking: 'let me think' }, { uuid: 'u-think' }))]));
+  live({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_1' }, wholes: 1 } });
+  live(streamStart(1, { type: 'text', text: '' }));
+  live(streamText(1, 'The ans')); // the text so far, as one delta
+  // Live from here on.
+  live(streamText(1, 'wer.'));
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } });
+  live(claudeWhole('msg_1', { type: 'text', text: 'The answer.' }, { uuid: 'u-text', seq: 3 }));
+  live({ ...resultEvent(), seq: 4 });
+  expect(texts(result.current.items)).toEqual(['user:question', 'thinking:let me think', 'assistant:The answer.', 'result:']);
+  expect(result.current.items[2].uuid).toBe('u-text'); // the streamed bubble took the identity of its whole frame
+});
+
+test('a journal connect between two blocks of a Claude message shows the next block once', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  // Block 0 is finished and no block is open: the daemon still says which message is in flight.
+  journal(frame([row(1, userEvent('question')), row(2, claudeWhole('msg_1', { type: 'thinking', thinking: 'let me think' }, { uuid: 'u-think' }))]));
+  live({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_1' }, wholes: 1 } });
+  live(streamStart(1, { type: 'text', text: '' }));
+  live(streamText(1, 'The answer.'));
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } });
+  live(claudeWhole('msg_1', { type: 'text', text: 'The answer.' }, { uuid: 'u-text', seq: 3 }));
+  expect(texts(result.current.items)).toEqual(['user:question', 'thinking:let me think', 'assistant:The answer.']);
+});
+
+test('a whole Claude message from start to end: each block shows once, with its own whole frame', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  live({ ...userEvent('question'), seq: 1 });
+  live({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_1' } } });
+  live(streamStart(0, { type: 'thinking', thinking: '' }));
+  live({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'let me think' } } });
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } });
+  live(claudeWhole('msg_1', { type: 'thinking', thinking: 'let me think' }, { uuid: 'u-think', seq: 2 }));
+  live(streamStart(1, { type: 'text', text: '' }));
+  live(streamText(1, 'The answer.'));
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } });
+  live(claudeWhole('msg_1', { type: 'text', text: 'The answer.' }, { uuid: 'u-text', seq: 3 }));
+  expect(texts(result.current.items)).toEqual(['user:question', 'thinking:let me think', 'assistant:The answer.']);
+  expect(result.current.items.map((i) => i.uuid)).toEqual([undefined, 'u-think', 'u-text']);
+});
+
+test('a whole frame that comes after the next block started finishes its own block only', () => {
+  const { result } = renderHook(() => useStructuredChat('t1'));
+  live({ type: 'stream_event', event: { type: 'message_start', message: { id: 'msg_1' } } });
+  live(streamStart(0, { type: 'thinking', thinking: '' }));
+  live({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'let me think' } } });
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } });
+  live(streamStart(1, { type: 'text', text: '' }));
+  live(claudeWhole('msg_1', { type: 'thinking', thinking: 'let me think' }, { uuid: 'u-think', seq: 1 })); // late
+  live(streamText(1, 'The answer.'));
+  live({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } });
+  live(claudeWhole('msg_1', { type: 'text', text: 'The answer.' }, { uuid: 'u-text', seq: 2 }));
+  expect(texts(result.current.items)).toEqual(['thinking:let me think', 'assistant:The answer.']);
+  expect(result.current.items.map((i) => i.uuid)).toEqual(['u-think', 'u-text']);
+});
+
 // ---- an older daemon ----
 
 test('a daemon with no journal (no frame, no seq) works as before, and no cursor is sent', async () => {
