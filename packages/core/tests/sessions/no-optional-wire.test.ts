@@ -44,7 +44,7 @@ const COMPATIBILITY: Record<string, string> = {
 };
 
 /** Private helpers whose name starts with `set`. They take no collaborator. */
-const PRIVATE_HELPERS = ['setTerminalStatus', 'setThreadModelLocked', 'setThreadEffortLocked'];
+const PRIVATE_HELPERS = ['setTerminalStatus'];
 
 const ALLOWED = new Set([...THREAD_SETTINGS, ...PRIVATE_HELPERS, ...Object.keys(CYCLE), ...Object.keys(COMPATIBILITY)]);
 
