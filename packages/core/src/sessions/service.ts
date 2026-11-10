@@ -7,6 +7,7 @@ import { SpawnInjection } from './spawn-injection.js';
 import { ThreadSpawner } from './thread-spawner.js';
 import { BootRecovery } from './boot-recovery.js';
 import { ThreadQuestions } from './thread-questions.js';
+import { HarnessRegistry } from './harness-registry.js';
 import { emptySessionWiring, type SessionWiring, type StatusContext } from './session-wiring.js';
 import { ThreadSettings } from './thread-settings-service.js';
 import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
@@ -20,7 +21,6 @@ import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as agentsDb from '../db/agents.js';
 import * as appState from '../db/app-state.js';
-import * as messageSourceDb from '../db/message-source.js';
 import * as watchesDb from '../db/watches.js';
 import * as coordinatorMessagesDb from '../db/coordinator-messages.js';
 import { computeBatchState, type BatchOptions, type BatchState } from './batch-state.js';
@@ -37,8 +37,7 @@ import { ThreadKeys } from './thread-keys.js';
 import { type McpServerSpec } from '../mcp/injection.js';
 import { type ConvItem } from '../conversation/transcript.js';
 import { type ConvPage, type ConvPageOptions, type SearchMatch } from '../conversation/reader.js';
-import { findNewestUnresolvedUserUuid, resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
-import { resolveTranscriptPath } from './transcript-path.js';
+import { resumeAdvice as readResumeAdvice, type ResumeAdvice } from './cc-sessions.js';
 import { DeliveryOutbox, type DeliverResult, type OutboxKind } from '../delivery/outbox.js';
 import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { findLiveCoordinator } from '../auth/key-scope.js';
@@ -124,7 +123,8 @@ export class SessionService {
   setAccountDirectory(d: { has: (type: string, accountId: string) => boolean; defaultId: (type: string) => string }): void { this.wiring.accountDirectory = d; }
   /** The service's clock. Tests replace it to pin times (message log, interim recap timer). */
   clock: () => number = () => Date.now();
-  private structuredManagers = new Map<string, import('../structured/manager.js').IStructuredManager>();
+  /** The structured manager of each harness and their events (sessions/harness-registry.ts). */
+  private readonly harnesses: HarnessRegistry;
   setOverseerMemoryHome(home: string): void { this.wiring.overseerMemoryHome = home; }
 
   /** What the daemon hands over after the service is built (sessions/session-wiring.ts). The parts read it at each use. */
@@ -144,6 +144,10 @@ export class SessionService {
   ) {
     this.configStore = opts.configStore ?? new ThreadConfigStore(db);
     this.transcripts = new ThreadTranscripts(db);
+    this.harnesses = new HarnessRegistry({
+      db, configStore: this.configStore, wiring: this.wiring,
+      threads: { undoRefusedPick: (id, info) => this.undoRefusedPick(id, info) },
+    });
     // The parts call back through `this`, so a caller that replaces a facade method still reaches every path.
     this.notifier = new CoordinatorNotifier({
       db, configStore: this.configStore, pty: ptyManager, transcripts: this.transcripts,
@@ -231,13 +235,7 @@ export class SessionService {
         if (typeof pid === 'number') tk.onPtyExit(id, pid);
       });
     }
-    for (const manager of this.structuredManagers.values()) this.revokeKeysOnExit(manager);
-  }
-  private keyedManagers = new WeakSet<object>();
-  private revokeKeysOnExit(manager: import('../structured/manager.js').IStructuredManager): void {
-    if (this.keyedManagers.has(manager)) return;
-    this.keyedManagers.add(manager);
-    manager.on('exit', (terminalId: string) => this.wiring.threadKeys?.onStructuredExit(terminalId));
+    this.harnesses.revokeKeysOnExitForAll();
   }
 
   /** The daemon's own stop: every key, the sticky Codex Pretty keys too. */
@@ -270,103 +268,10 @@ export class SessionService {
     this.wiring.toolsAwareness = fn;
   }
 
-  registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void {
-    getProvider(type); // reject an unregistered harness instead of silently accepting it
-    const existing = this.structuredManagers.get(type);
-    if (existing && existing !== manager) throw new Error(`Structured manager already registered: ${type}`);
-    if (existing) return;
-    this.structuredManagers.set(type, manager);
-    if (this.wiring.threadKeys) this.revokeKeysOnExit(manager);
-    this.persistStructuredSessionIds(manager, type);
-    // A shared harness process (Codex app-server) that restarts gets a new pid; keep the stored one current.
-    manager.on('process-restarted', (terminalId: string, pid: number) => {
-      try { if (pid > 0 && terminalsDb.getById(this.db, terminalId)) terminalsDb.updatePid(this.db, terminalId, pid); } catch { /* best effort */ }
-    });
-    manager.on('usage-limit', (terminalId: string, limit: import('../limits/detect.js').UsageLimit) => {
-      try { this.wiring.usageLimits?.park(terminalId, type, limit); } catch (err) { console.warn('[usage-limit] park failed:', err); }
-    });
-    for (const edge of ['idle', 'needs-help', 'failed']) manager.on(edge, (terminalId: string) => this.wiring.usageLimits?.onTurnEnded(terminalId));
-    // A model or effort the harness refused LATE (Codex: on the turn that first carries it): the saved pick goes back.
-    manager.on('settings-refused', (terminalId: string, info: { model?: string; effort?: string; restoredModel?: string }) => this.undoRefusedPick(terminalId, info));
-    if (type === 'claude-code') {
-      this.persistMessageSources(manager);
-      this.forgetLostConversations(manager);
-    }
-  }
+  registerStructuredManager(type: string, manager: import('../structured/manager.js').IStructuredManager): void { this.harnesses.registerStructuredManager(type, manager); }
 
   setStructuredManager(m: import('../structured/manager.js').IStructuredManager): void {
     this.registerStructuredManager('claude-code', m);
-  }
-
-  /**
-   * #76: Claude reported that it no longer has the conversation behind `-r <id>` (its
-   * transcript was cleaned up). Every revive used to run the same doomed resume again. Clear
-   * the stored id, so the next revive starts a fresh conversation, and keep the old id in
-   * config for the record. Only when the stored id is still the lost one: a newer
-   * conversation may have replaced it.
-   */
-  private forgetLostConversations(m: import('../structured/manager.js').IStructuredManager): void {
-    m.on('conversation-lost', (terminalId: string, lostId: string) => {
-      try {
-        const t = terminalsDb.getById(this.db, terminalId);
-        if (!t || t.external_id !== lostId) return;
-        this.configStore.patch(terminalId, { lostConversation: { externalId: lostId, at: new Date().toISOString() } });
-        terminalsDb.updateExternalId(this.db, terminalId, null);
-        console.warn(`[structured] thread ${terminalId}: conversation ${lostId} is gone; the next message starts a new one`);
-      } catch { /* best effort — the worst case is the old retry */ }
-    });
-  }
-
-  private persistMessageSources(m: import('../structured/manager.js').IStructuredManager): void {
-    // Durable source persistence: the manager emits this once a tagged turn's `result`
-    // lands (its transcript lines are guaranteed flushed by then — see manager.ts's
-    // `result` handler). Resolve it to the newest not-yet-recorded real user-text uuid in
-    // this terminal's transcript and persist the pair, so a later disk-hydrated chat (after
-    // the CLI process has exited) can still show the "via Dispatch" badge (see
-    // readSessionBackfill's caller below and getConversation, both of which merge this back in).
-    m.on('message-source', (terminalId: string, source: messageSourceDb.MessageSource) => {
-      try {
-        const t = terminalsDb.getById(this.db, terminalId);
-        if (!t) return;
-        const session = sessionsDb.getById(this.db, t.session_id);
-        const workDir = t.working_dir || session?.working_dir;
-        const sessionId = t.external_id;
-        if (!workDir || !sessionId) return;
-        const exclude = messageSourceDb.listUuids(this.db, terminalId);
-        const uuid = findNewestUnresolvedUserUuid(workDir, sessionId, exclude);
-        if (uuid) messageSourceDb.record(this.db, terminalId, uuid, source);
-      } catch { /* best effort — a missed tag just degrades to a plain bubble, never an error */ }
-    });
-  }
-
-  /**
-   * Persist a structured manager's session id (surfaced from its init/session event) onto
-   * the terminal's external_id, mirroring how the PTY path captures session ids. This is
-   * what lets us resume the SAME conversation after a daemon restart. First-write-wins
-   * for a HEALTHY identity — but a stored id whose transcript exists NOWHERE (captured
-   * from a boot that never ran a turn) is a ghost: it can never be resumed or read, and
-   * leaving it locked the terminal onto an empty history forever (the Dispatch
-   * coordinator served 0 items and every resume referenced a nonexistent session). The
-   * live process's self-reported id is authoritative over a ghost.
-   *
-   * The ghost check reads the CLAUDE transcript store, so for non-claude managers (Grok,
-   * whose ids never resolve there) an existing external_id simply always wins — which is
-   * right: a Grok id comes from session/new exactly once and never changes thereafter.
-   */
-  private persistStructuredSessionIds(m: import('../structured/manager.js').IStructuredManager, type: string): void {
-    m.on('session', (terminalId: string, sessionId: string) => {
-      try {
-        const t = terminalsDb.getById(this.db, terminalId);
-        if (!t || t.type !== type || !sessionId || t.external_id === sessionId) return;
-        if (t.external_id) {
-          if (t.type !== 'claude-code') return;
-          const session = sessionsDb.getById(this.db, t.session_id);
-          const workDir = t.working_dir || session?.working_dir || '';
-          if (resolveTranscriptPath(workDir, t.external_id)) return; // healthy — never clobber
-        }
-        terminalsDb.updateExternalId(this.db, terminalId, sessionId);
-      } catch { /* best effort */ }
-    });
   }
 
   setStructuredCommandOverride(cmd: { command: string; args: string[] }): void { this.wiring.structuredCommandOverride = cmd; }
@@ -397,24 +302,10 @@ export class SessionService {
     this.registerStructuredManager('opencode', m);
   }
 
-  /**
-   * The structured manager for a terminal type, or undefined when that type has no
-   * structured transport. Both managers satisfy IStructuredManager, so every structured
-   * operation routes through this one accessor:
-   *   claude-code → the Claude stream-json manager
-   *   codex       → the Codex app-server manager (only when CODEX_PRETTY_ENABLED)
-   *   grok        → the Grok ACP manager (only when GROK_PRETTY_ENABLED)
-   */
-  structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined {
-    return this.structuredManagers.get(type);
-  }
+  structuredManagerFor(type: string): import('../structured/manager.js').IStructuredManager | undefined { return this.harnesses.structuredManagerFor(type); }
 
-  /** Resolve the structured manager for a terminal id (looks up its type first). Public so the
-   *  structured-ws upgrade handler can pick the RIGHT manager (claude vs codex) per connection. */
-  structuredManagerForTerminal(terminalId: string): import('../structured/manager.js').IStructuredManager | undefined {
-    const t = terminalsDb.getById(this.db, terminalId);
-    return t ? this.structuredManagerFor(t.type) : undefined;
-  }
+  /** Public so the structured-ws upgrade handler can pick the RIGHT manager per connection (sessions/harness-registry.ts). */
+  structuredManagerForTerminal(terminalId: string): import('../structured/manager.js').IStructuredManager | undefined { return this.harnesses.structuredManagerForTerminal(terminalId); }
 
   setStatusContext(ctx: StatusContext): void {
     this.wiring.statusContext = ctx;
