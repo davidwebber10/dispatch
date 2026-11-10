@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLineLeft, CaretRight, Copy, DownloadSimple, FolderOpen, GitBranch, ImageSquare, MagnifyingGlass, PencilSimple, TrashSimple } from '@phosphor-icons/react';
+import { ArrowLineLeft, CaretRight, Copy, DownloadSimple, FolderOpen, GitBranch, GitDiff, ImageSquare, MagnifyingGlass, PencilSimple, TrashSimple } from '@phosphor-icons/react';
 import { api } from '../../api/client';
 import type { FileEntry } from '../../api/types';
 import { useTabs } from '../../stores/tabs';
@@ -12,6 +12,7 @@ import { fuzzyFilter } from '../../lib/fuzzy';
 import { saveFilesAs, type RemoteFile } from '../../lib/saveFiles';
 import { clipboardImageSupported, copyImageToClipboard, copyText } from '../../lib/clipboard';
 import { isImage } from '../../lib/fileType';
+import { DiffReview } from './DiffReview';
 
 const INDENT = 14;
 const HIDDEN_KEY = 'dispatch:files-hidden';
@@ -121,7 +122,9 @@ function HighlightedPath({ path, indices }: { path: string; indices: number[] })
   );
 }
 
-export function FilesPane({ projectId, onOpenFile }: { projectId: string | null; onOpenFile: (terminalId: string) => void }) {
+export function FilesPane({ projectId, terminalId = null, onOpenFile }: { projectId: string | null; /** The open thread: the diff review starts in its directory (W3-G). */ terminalId?: string | null; onOpenFile: (terminalId: string) => void }) {
+  // W3-G: the diff review takes the place of the file list until Back.
+  const [review, setReview] = useState(false);
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
@@ -454,6 +457,8 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
     ? targets[0]
     : null;
 
+  if (review) return <DiffReview projectId={projectId} terminalId={terminalId} onClose={() => { setReview(false); refresh(); }} />;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* root + branch */}
@@ -500,6 +505,11 @@ export function FilesPane({ projectId, onOpenFile }: { projectId: string | null;
         <button onClick={() => { setMode('changed'); setQuery(''); }} style={segStyle(mode === 'changed')}>
           Changed{git.count > 0 && <span style={{ color: 'var(--color-status-yellow)', marginLeft: 4 }}>{git.count}</span>}
         </button>
+        {git.branch && (
+          <button onClick={() => setReview(true)} title="Review the uncommitted changes: see the diff, approve or discard" style={{ ...segStyle(false), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+            <GitDiff size={12} />Review
+          </button>
+        )}
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '0 6px 8px', font: `400 ${fs}px/1.4 var(--font-mono)` }}>

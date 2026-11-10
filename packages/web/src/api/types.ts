@@ -714,3 +714,36 @@ export interface JournalFrame extends JournalPage {
   reset: boolean;
   after: number | null;
 }
+
+// ── Diff review and thread worktrees (W3-G) ─────────────────────────────────────────────────────────────
+export type DiffFileStatus = 'added' | 'modified' | 'deleted' | 'untracked' | 'renamed';
+export interface DiffFile {
+  path: string;
+  status: DiffFileStatus;
+  additions: number;
+  deletions: number;
+  /** Unified diff text, from the first `@@` on. Absent for a binary file or when the patch was left out. */
+  patch?: string;
+  oldPath?: string;
+  /** The whole change is in the git index (Approve was used). */
+  staged: boolean;
+  binary?: boolean;
+  patchCut?: boolean;
+  patchOmitted?: 'large' | 'secret' | 'directory';
+}
+export interface ThreadDiff {
+  files: DiffFile[];
+  truncated: boolean;
+  /** Other live threads use this directory: the changes can come from more than one thread. */
+  shared: boolean;
+  repo: boolean;
+  branch: string | null;
+  workDir: string;
+}
+export interface DiscardResult {
+  /** `backup` is a git object id: `git cat-file -p <id>` prints the content from before the discard. */
+  discarded: { path: string; backup?: string }[];
+  errors: { path: string; error: string }[];
+}
+export interface ThreadWorktree { path: string; branch: string }
+export interface ThreadWorktreeState extends ThreadWorktree { dirty: boolean; inUse: boolean }

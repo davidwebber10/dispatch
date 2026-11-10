@@ -126,6 +126,16 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   const [installing, setInstalling] = useState<ProviderName | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  // W3-G: "Run in a new worktree". The row shows only in a git repository; off by default.
+  const [inRepo, setInRepo] = useState(false);
+  const [worktree, setWorktree] = useState(false);
+  const [worktreeError, setWorktreeError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    // An older daemon or a bare test mock has no such call: then there is no row.
+    void Promise.resolve(api.getGitStatus?.(sessionId)).then((s) => { if (live) setInRepo(!!s?.branch); }).catch(() => {});
+    return () => { live = false; };
+  }, [sessionId]);
 
   const spec = harnesses.find((h) => h.id === harness)!;
   const accountProvider: AccountProvider | null = spec.type === 'claude-code' ? 'claude' : spec.type === 'codex' ? 'codex' : null;
@@ -335,12 +345,23 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
       // Pinned at creation once there is a choice, so a later change of the default never moves a
       // resumed thread to another account. With only the CLI login there is nothing to pin.
       if (accountProvider && effectiveAccountId && accountList.length > 1) config.accountId = effectiveAccountId;
+      // W3-G: each new thread gets its own worktree (a new branch from the current commit). A resumed session
+      // stays in the project directory: the CLI keys its sessions by directory.
+      setWorktreeError(null);
+      const ownDir = async (): Promise<{ workingDir?: string }> => {
+        if (!worktree || !inRepo || externalId) return {};
+        try { return { workingDir: (await api.createWorktree(sessionId, {})).path }; } catch (err) {
+          const text = err instanceof Error ? err.message : String(err);
+          setWorktreeError(`Could not make the worktree. ${text.includes(' — ') ? text.slice(text.indexOf(' — ') + 3) : text}`);
+          throw err;
+        }
+      };
 
       if (batch && !externalId) {
         // One thread per prompt, the same settings for each; each gets its prompt as its first message.
         const ids: string[] = [];
         for (const text of batch) {
-          const t = await api.createTerminal(sessionId, { type: spec.type, ...(Object.keys(config).length ? { config } : {}) });
+          const t = await api.createTerminal(sessionId, { type: spec.type, ...(await ownDir()), ...(Object.keys(config).length ? { config } : {}) });
           ids.push(t.id);
           await api.sendStructuredMessage(t.id, text);
         }
@@ -353,6 +374,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
       const t = await api.createTerminal(sessionId, {
         type: spec.type,
         externalId,
+        ...(await ownDir()),
         ...(Object.keys(config).length ? { config } : {}),
       });
       await useTabs.getState().loadTabs(sessionId);
@@ -614,6 +636,21 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
           {harness === 'terminal' && (
             <Row mobile={m}>
               <span style={{ fontSize: m ? 14 : 12.5, color: 'var(--color-text-tertiary)' }}>Plain shell. No mode or model to choose.</span>
+            </Row>
+          )}
+          {/* WORKTREE (W3-G) — one option row, only in a git repository. */}
+          {inRepo && (
+            <Row mobile={m}>
+              <span onClick={() => setWorktree((v) => !v)} style={{ display: 'flex', flexDirection: 'column', gap: 2, cursor: 'pointer', flex: 1 }}>
+                <span style={rowLabel}>Run in a new worktree</span>
+                <span style={worktreeError ? { ...rowHint, color: 'var(--color-status-red)' } : rowHint}>
+                  {worktreeError ?? (worktree ? 'A new branch from the current commit. The project files stay as they are.' : 'Off: the thread works in the project directory')}
+                </span>
+              </span>
+              <button type="button" role="switch" aria-checked={worktree} aria-label="Run in a new worktree" onClick={() => setWorktree((v) => !v)}
+                style={{ flex: 'none', width: m ? 44 : 34, height: m ? 26 : 20, borderRadius: 'var(--radius-lg)', border: 'none', padding: m ? 3 : 2, cursor: 'pointer', background: worktree ? ACCENT : BORDER, transition: 'background .15s', display: 'block' }}>
+                <span style={{ display: 'block', width: m ? 20 : 16, height: m ? 20 : 16, borderRadius: 'var(--radius-md)', background: 'var(--color-text-primary)', transform: worktree ? `translateX(${m ? 18 : 14}px)` : 'translateX(0)', transition: 'transform .15s' }} />
+              </button>
             </Row>
           )}
           {/* AUTO-ARCHIVE — the whole row toggles (title or switch). While on, the duration

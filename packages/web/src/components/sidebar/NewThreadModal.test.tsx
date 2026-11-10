@@ -36,6 +36,10 @@ vi.mock('../../api/client', () => ({
     accountsCodexLoginStatus: vi.fn().mockImplementation(async (id: string) => ({ accountId: id, status: id === 'cx-2' ? 'complete' : 'awaiting_user', url: 'https://auth.openai.com/codex/device', code: 'ABCD-12345', error: null, createdAt: 'x' })),
     accountsCodexLoginCancel: vi.fn().mockResolvedValue(undefined),
     claudeLoginCode: vi.fn().mockResolvedValue({ status: 'complete' }),
+    // W3-G: most tests run in a folder that is not a repository, so there is no worktree row.
+    getGitStatus: vi.fn().mockResolvedValue({ branch: null, files: [] }),
+    createWorktree: vi.fn().mockResolvedValue({ path: '/proj/.claude/worktrees/thread', branch: 'dispatch/thread' }),
+    sendStructuredMessage: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -648,5 +652,76 @@ describe('NewThreadModal accounts', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sign in again to Old' }));
     await waitFor(() => expect(api.accountsCodexLogin).toHaveBeenCalledWith('cx-3'));
     expect(await screen.findByText('ABCD-12345')).toBeInTheDocument();
+  });
+});
+
+describe('NewThreadModal worktree option (W3-G)', () => {
+  const inRepo = () => (api.getGitStatus as any).mockResolvedValue({ branch: 'main', files: [] });
+  afterEach(() => { (api.getGitStatus as any).mockResolvedValue({ branch: null, files: [] }); (api.recentCcSessions as any).mockResolvedValue([]); });
+
+  it('with the worktree option on, the create call carries the worktree path', async () => {
+    inRepo();
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    const sw = await screen.findByRole('switch', { name: 'Run in a new worktree' });
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(sw);
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(api.createWorktree).toHaveBeenCalledWith('s1', {});
+    expect(lastInput().workingDir).toBe('/proj/.claude/worktrees/thread');
+  });
+
+  it('with the option off (the default), no worktree is made and no directory is sent', async () => {
+    inRepo();
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await screen.findByRole('switch', { name: 'Run in a new worktree' });
+    start();
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(api.createWorktree).not.toHaveBeenCalled();
+    expect(lastInput().workingDir).toBeUndefined();
+  });
+
+  it('a project that is not a git repository has no worktree row', async () => {
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    await waitFor(() => expect(api.getGitStatus).toHaveBeenCalledWith('s1'));
+    expect(screen.queryByRole('switch', { name: 'Run in a new worktree' })).not.toBeInTheDocument();
+  });
+
+  it('when the worktree cannot be made, no thread starts and the reason shows', async () => {
+    inRepo();
+    (api.createWorktree as any).mockRejectedValueOnce(new Error('POST /api/sessions/s1/worktrees failed: 400 — This repository has no commit yet.'));
+    const onClose = vi.fn();
+    render(<NewThreadModal sessionId="s1" onClose={onClose} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Run in a new worktree' }));
+    start();
+    expect(await screen.findByText(/no commit yet/i)).toBeInTheDocument();
+    expect(api.createTerminal).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('a split into several threads gives each thread its own worktree', async () => {
+    inRepo();
+    (api.createWorktree as any)
+      .mockResolvedValueOnce({ path: '/proj/.claude/worktrees/thread', branch: 'dispatch/thread' })
+      .mockResolvedValueOnce({ path: '/proj/.claude/worktrees/thread-2', branch: 'dispatch/thread-2' });
+    render(<NewThreadModal sessionId="s1" prompts={['one', 'two']} onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Run in a new worktree' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Start 2 threads' }));
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalledTimes(2));
+    expect((api.createTerminal as any).mock.calls.map((c: any) => c[1].workingDir)).toEqual(['/proj/.claude/worktrees/thread', '/proj/.claude/worktrees/thread-2']);
+  });
+
+  it('resuming a session does not use a worktree: the session belongs to its own directory', async () => {
+    inRepo();
+    (api.recentCcSessions as any).mockResolvedValue([{ id: 'cc-1', preview: 'Earlier work', mtime: Date.now(), messageCount: 3, truncated: false }]);
+    render(<NewThreadModal sessionId="s1" onClose={() => {}} onCreated={() => {}} />);
+    fireEvent.click(await screen.findByRole('switch', { name: 'Run in a new worktree' }));
+    await openResume();
+    fireEvent.click(await screen.findByText(/Earlier work/));
+    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    expect(api.createWorktree).not.toHaveBeenCalled();
+    expect(lastInput().workingDir).toBeUndefined();
+    expect(lastInput().externalId).toBe('cc-1');
   });
 });

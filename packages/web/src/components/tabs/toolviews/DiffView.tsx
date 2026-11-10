@@ -3,7 +3,8 @@ import { langFromPath } from '../../../lib/markdown';
 import { HighlightedCode } from '../../HighlightedCode';
 import { lineDiff, type DiffLine } from './diff';
 
-function Hunk({ lines }: { lines: DiffLine[] }) {
+/** One block of diff lines. Exported for the diff review (W3-G), which shows git's own patch with it. */
+export function Hunk({ lines }: { lines: DiffLine[] }) {
   const bg = (t: DiffLine['type']) => t === 'add' ? 'color-mix(in srgb, var(--color-status-green) 14%, transparent)' : t === 'del' ? 'color-mix(in srgb, var(--color-status-red) 14%, transparent)' : 'transparent';
   const fg = (t: DiffLine['type']) => t === 'add' ? 'var(--color-status-green)' : t === 'del' ? 'var(--color-status-red)' : 'var(--color-text-secondary)';
   const sign = (t: DiffLine['type']) => t === 'add' ? '+' : t === 'del' ? '-' : ' ';

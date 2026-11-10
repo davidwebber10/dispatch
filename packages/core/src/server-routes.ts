@@ -48,7 +48,7 @@ import { createUsageLimitSettingsRouter } from './routes/usage-limit-settings.js
 import { createTranscribeRouter } from './routes/transcribe.js';
 import { createSetupRouter } from './routes/setup.js';
 import { createFilesRouter } from './routes/files.js';
-import { createGitRouter } from './routes/git.js';
+import { createGitRouter, createWorktreesRouter } from './routes/git.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createClaudeAuthRouter } from './routes/claude-auth.js';
 import { createAccountsRouter } from './routes/accounts.js';
@@ -192,6 +192,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   app.use('/api/setup', createSetupRouter(d.db, d.secretsService));
   app.use('/api/sessions/:id/files', createFilesRouter(d.db));
   app.use('/api/sessions/:id/git', createGitRouter(d.db));
+  app.use('/api/sessions/:id/worktrees', createWorktreesRouter(d.db)); // W3-G
   app.use('/api/auth-requests', createAuthRouter(d.authRequestService));
   app.use('/api/claude-auth', createClaudeAuthRouter(d.claudeLogin));
   if (d.accounts) {
