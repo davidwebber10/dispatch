@@ -146,3 +146,17 @@ describe('helpers', () => {
     ]);
   });
 });
+
+// Final review of v4.5.0: no script ran this check, so nothing enforced the budget.
+describe('the web build runs the check', () => {
+  it('`pnpm build` of the web package runs check-bundle.mjs after `vite build`, and a failed check fails the build', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    const steps = pkg.scripts.build.split('&&').map((s) => s.trim());
+    const vite = steps.indexOf('vite build');
+    const check = steps.indexOf('node scripts/check-bundle.mjs');
+    expect(vite).toBeGreaterThanOrEqual(0);
+    expect(check).toBeGreaterThan(vite);
+    // Every step is joined with `&&`: an exit code of 1 from the check is the exit code of the build.
+    expect(pkg.scripts.build).not.toMatch(/\|\||;/);
+  });
+});
