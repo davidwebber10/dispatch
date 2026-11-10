@@ -14,7 +14,7 @@ import { insideRealRoot, within } from '../files/confine.js';
 import { openInside } from '../files/confinedOpen.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
-import { defaultSecretRoots, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
+import { defaultSecretRoots, holdsSecret, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -352,6 +352,9 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         st = await fh.stat();
       }
       try {
+        // The identity of the OPEN file (v4.5.0 review, I4): a hard link to a secret, or a second mount path to it,
+        // has a text that the check above does not know. No byte of such a file is read.
+        if (await holdsSecret(real ?? resolved, secretRoots, fh)) return res.status(403).json({ error: SECRET_PATH_ERROR });
         if (!st.isFile()) return res.status(400).json({ error: 'Not a regular file' });
         // ?sniff=1 (file chips): read the first 8 KB only and say whether the file is binary (it has a NUL byte).
         // The chip downloads such a file instead of opening it as text. No content comes back.
@@ -393,8 +396,10 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     '.bmp': 'image/bmp',
   };
   // Credentials are never served by any file route (W1-B for /read; /image and /download since the Wave 1
-  // integration). The path as written and the real path are both checked, so a link cannot go around it.
-  const holdsSecret = async (resolved: string): Promise<boolean> => {
+  // integration). Before the open, the path as written and the real path are both checked, so a link cannot go
+  // around it and a missing file in a secret folder gets the same answer. After the open, `holdsSecret` checks the
+  // identity of the open file (v4.5.0 review, I4): a hard link and a second mount path cannot go around it.
+  const namesSecret = async (resolved: string): Promise<boolean> => {
     if (isSecretPath(resolved, secretRoots)) return true;
     try { return isSecretPath(await fs.promises.realpath(resolved), secretRoots); } catch { return false; }
   };
@@ -410,7 +415,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const mime = IMAGE_MIME[path.extname(resolved).toLowerCase()];
     if (!mime) return res.status(415).json({ error: 'Unsupported image type' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
-    if (await holdsSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
+    if (await namesSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
@@ -418,6 +423,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       if (o.kind === 'outside') return res.status(403).json({ error: 'Path traversal not allowed' });
       if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
       if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
+      if (await holdsSecret(resolved, secretRoots, o.fh).catch(() => true)) { await o.fh.close().catch(() => {}); return res.status(403).json({ error: SECRET_PATH_ERROR }); }
       res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', String(o.st.size));
       // Hardening: stop MIME sniffing, and sandbox the response so a (theoretically)
@@ -445,7 +451,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     const resolved = resolveSafe(session.workingDir, requestedPath);
     if (!resolved) return res.status(403).json({ error: 'Path traversal not allowed' });
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
-    if (await holdsSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
+    if (await namesSecret(resolved)) return res.status(403).json({ error: SECRET_PATH_ERROR });
 
     try {
       // The bytes come from the descriptor openInside checked, never from a second look at the path.
@@ -453,6 +459,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       if (o.kind === 'outside') return res.status(403).json({ error: 'Path traversal not allowed' });
       if (o.kind === 'missing') return res.status(404).json({ error: 'File not found' });
       if (!o.st.isFile()) { await o.fh.close().catch(() => {}); return res.status(404).json({ error: 'Not a file' }); }
+      if (await holdsSecret(resolved, secretRoots, o.fh).catch(() => true)) { await o.fh.close().catch(() => {}); return res.status(403).json({ error: SECRET_PATH_ERROR }); }
 
       const name = path.basename(resolved);
       // Sanitize for the header: drop anything outside printable ASCII (this also kills CR/LF

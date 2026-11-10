@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { git, gitOrNull, GitFailed } from './exec.js';
 import { checkRelPath, confine, realDir, PathRefused } from './paths.js';
-import { isSecretPath, type SecretRoots } from '../files/secret-paths.js';
+import { holdsSecret, type SecretRoots } from '../files/secret-paths.js';
 
 export type DiffStatus = 'added' | 'modified' | 'deleted' | 'untracked' | 'renamed';
 
@@ -193,9 +193,9 @@ async function loadTracked(workDir: string, base: string, c: Change, cap: number
 
 async function isSecret(workDir: string, rel: string, roots: SecretRoots | undefined): Promise<boolean> {
   if (!roots) return false;
-  const abs = path.join(realDir(workDir), ...rel.split('/'));
-  if (isSecretPath(abs, roots)) return true;
-  try { return isSecretPath(await fs.promises.realpath(abs), roots); } catch { return false; }
+  // The text and the identity of the file (v4.5.0 review, I4): the patch of a new file carries its content, so a
+  // hard link in the repository to a secret file must not get a patch. An error of the check omits the patch.
+  return holdsSecret(path.join(realDir(workDir), ...rel.split('/')), roots).catch(() => true);
 }
 
 export async function threadDiff(workDir: string, opts: ThreadDiffOptions = {}): Promise<ThreadDiff> {

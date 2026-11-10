@@ -33,6 +33,7 @@ import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { createLedgerRouter } from './routes/ledger.js';
 import { createPluginsRouter } from './routes/plugins.js';
+import { defaultSecretRoots } from './files/secret-paths.js';
 import type { PluginRegistry } from './plugins/registry.js';
 import type { AssistRunner } from './assist/run.js';
 import { createEventsRouter } from './routes/events.js';
@@ -176,6 +177,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     defaultAccount: accountsForAssist ? (h) => accountsForAssist.defaultId(h) : undefined,
     hasAccount: accountsForAssist ? (h, id) => accountsForAssist.has(h, id) : undefined,
     push: d.pushService,
+    secretRoots: defaultSecretRoots(d.dataDir),
   }));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));

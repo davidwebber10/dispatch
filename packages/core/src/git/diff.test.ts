@@ -109,6 +109,28 @@ describe('threadDiff', () => {
     } finally { fs.rmSync(outside, { force: true }); }
   });
 
+  // v4.5.0 review, I4: the patch of a new file carries its content. The credential list is a check of the file, not of
+  // the text of its path only.
+  it('a hard link in the repository to a secret file gets no patch', async () => {
+    const home = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(repo.dir), 'dispatch-w3g-home-')));
+    try {
+      fs.mkdirSync(path.join(home, '.ssh'));
+      fs.mkdirSync(path.join(home, '.dispatch'));
+      fs.writeFileSync(path.join(home, '.ssh', 'id_ed25519'), 'PRIVATE-KEY-BYTES\n');
+      fs.writeFileSync(path.join(home, '.dispatch', 'access-token'), 'OWNER-TOKEN-BYTES\n');
+      fs.linkSync(path.join(home, '.ssh', 'id_ed25519'), path.join(repo.dir, 'key.txt'));
+      fs.linkSync(path.join(home, '.dispatch', 'access-token'), path.join(repo.dir, 'token.txt'));
+      repo.write('plain.txt', 'plain\n');
+      const d = await threadDiff(repo.dir, { secretRoots: { home, dataDir: path.join(home, '.dispatch') } });
+      const f = byPath(d.files);
+      expect(f['key.txt']).toMatchObject({ status: 'untracked', patchOmitted: 'secret' });
+      expect(f['token.txt']).toMatchObject({ status: 'untracked', patchOmitted: 'secret' });
+      expect(JSON.stringify(d)).not.toContain('PRIVATE-KEY-BYTES');
+      expect(JSON.stringify(d)).not.toContain('OWNER-TOKEN-BYTES');
+      expect(f['plain.txt'].patch).toContain('+plain');
+    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+  });
+
   it('a repository with no commit lists every file as new', async () => {
     const empty = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(repo.dir), 'dispatch-w3g-empty-')));
     try {
