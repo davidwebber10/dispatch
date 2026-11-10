@@ -45,9 +45,10 @@ export async function runBootRecovery(s: DaemonServices, opts: { network: boolea
     // A Chat thread whose turn completed while no one listened owes Chat its report.
     endless.reportCompletedAtBoot(completed);
   } catch (err) {
-    console.error('kickstart failed', err);
+    // A daemon that stopped while the kickstart waited has closed its database: that is not a failure.
+    if (db.open) console.error('kickstart failed', err);
   }
-  if (!db.open) return; // the daemon stopped while the kickstart waited
+  if (!db.open) return;
   try {
     const alive = (id: string) => ptyManager.isAlive(id) || !!sessionService.structuredManagerForTerminal(id)?.isAlive(id);
     // W2-C: a scheduled wake that the restart killed is flagged, and a thread that waits on a saved

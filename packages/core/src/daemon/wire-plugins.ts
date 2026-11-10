@@ -47,7 +47,8 @@ export interface PluginServices {
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md): the registry, marketplaces and installs,
  * skills, the thread events that plugins observe, hook scripts and workers. The folder watcher and the
- * marketplace check are timers (daemon/timers.ts); this function starts neither.
+ * marketplace check are timers (daemon/timers.ts); this function starts neither. It starts no worker
+ * process either: `Daemon.listening()` does the first sync, when the workers can be told the daemon's address.
  */
 export function wirePlugins(i: PluginInputs): PluginServices {
   const { db, dataDir, broadcaster } = i;
@@ -71,6 +72,5 @@ export function wirePlugins(i: PluginInputs): PluginServices {
   const pluginWorkers = new PluginWorkers(plugins, threadEvents, { logDir: i.logDir, runDir: path.join(dataDir, 'run'), api: i.daemonApi, ...(i.timers ? {} : { tickMs: null }) });
   plugins.setWorkerStatsProvider((id) => pluginWorkers.stats(id));
   plugins.setWorkerSync(() => pluginWorkers.sync());
-  pluginWorkers.sync();
   return { plugins, marketplaces, installer, skills, threadEvents, pluginHooks, pluginWorkers };
 }

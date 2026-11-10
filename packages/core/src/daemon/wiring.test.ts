@@ -6,6 +6,7 @@ import { createSign, generateKeyPairSync } from 'node:crypto';
 import { WebSocket } from 'ws';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import * as sessionsDb from '../db/sessions.js';
 import * as terminalsDb from '../db/terminals.js';
 import * as appState from '../db/app-state.js';
@@ -360,6 +361,25 @@ describe('a thread through the build', () => {
     const mcp = fs.readFileSync(path.join(k.dir, 'thread-t1.mcp.json'), 'utf8');
     expect(mcp).toContain('"DISPATCH_API": "http://127.0.0.1:4131"');
     expect(mcp).toContain('"DISPATCH_PORT": "4131"');
+  });
+
+  test('the build starts no plugin worker; listening() starts them, with the address of the daemon', async () => {
+    const plugins = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daemon-workers-')), 'plugins');
+    fs.mkdirSync(path.join(plugins, 'w'), { recursive: true });
+    fs.writeFileSync(path.join(plugins, 'w', 'worker.js'), "require('fs').writeFileSync(process.argv[2], process.env.DISPATCH_API || 'none'); setInterval(() => {}, 1000); process.on('SIGTERM', () => process.exit(0));");
+    const mark = path.join(plugins, 'started.txt');
+    fs.writeFileSync(path.join(plugins, 'w', 'plugin.json'), JSON.stringify({ id: 'w', name: 'w', version: '1.0.0', permissions: [], worker: { command: process.execPath, args: ['worker.js', mark] } }));
+    const k = kit({ pluginsDir: plugins });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      expect(fs.existsSync(mark)).toBe(false);
+      k.daemon.listening(4131);
+      await expect.poll(() => fs.existsSync(mark), { timeout: 5000 }).toBe(true);
+      expect(fs.readFileSync(mark, 'utf8')).toBe('http://127.0.0.1:4131');
+    } finally {
+      await k.daemon.services.pluginWorkers.stop();
+      fs.rmSync(path.dirname(plugins), { recursive: true, force: true });
+    }
   });
 
   test('before listening, the spawn env names no daemon address: a test build never points a thread at a daemon', () => {

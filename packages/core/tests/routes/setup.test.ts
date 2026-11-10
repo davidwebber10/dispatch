@@ -11,6 +11,7 @@ import { createApp } from '../../src/server.js';
 vi.mock('../../src/setup/detect.js', () => ({
   detectAllProviders: async () => ([{ name: 'claude', installed: true, signedIn: true }, { name: 'codex', installed: false, signedIn: false }]),
   detectTailscale: async () => ({ installed: false, running: false }),
+  setProviderProbeEnv: () => {}, // W3-A: the test build runs the spawn-env refresh of the daemon, which sets it
 }));
 
 describe('setup routes', () => {

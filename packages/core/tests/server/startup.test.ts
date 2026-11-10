@@ -79,7 +79,8 @@ test('startServer on a random port answers /api/sessions and stops cleanly', asy
   const code = await Promise.race([d.exited, new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 8000))]);
   expect(code, d.out()).toBe(0);
   expect(d.out()).toMatch(/Shutting down Dispatch server/);
-  expect(d.out()).not.toMatch(/Error|database connection is not open/);
+  // The update check fails on purpose (fetch is offline in this test); nothing else may fail.
+  expect(d.out().replace(/update check failed Error: offline test/g, '')).not.toMatch(/Error:|database connection is not open|boot recovery failed|kickstart failed/);
 }, 40000);
 
 test('the cleanup function that startServer returns stops the daemon, and a second call is a no-op', async () => {

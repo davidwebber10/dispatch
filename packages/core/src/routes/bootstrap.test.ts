@@ -168,12 +168,14 @@ describe('GET /api/bootstrap on the full app (W2-H)', () => {
     expect(Object.keys(res.body)).toEqual(['stalls']);
   });
 
-  it('a route that is not mounted gives null for its part, not an error', async () => {
+  // W3-A: the test build mounts the usage routes, as the daemon always did. (An absent route still gives null:
+  // 'a route that fails or that is absent gives null' below, on a hand-made app.)
+  it('a build with no usage stand-in gives the summary of its own gauge', async () => {
     const bare = createApp({ db, skipPty: true, pluginsDir: path.join(tmp, 'plugins'), bundledDir: null, secretsDir: tmp });
-    expect((await request(await on(bare)).get('/api/usage-limits/summary')).status).toBe(404);
+    expect((await request(await on(bare)).get('/api/usage-limits/summary')).status).toBe(200);
     const res = await request(await on(bare)).get('/api/bootstrap');
     expect(res.status).toBe(200);
-    expect(res.body.usageSummary).toBeNull();
+    expect(res.body.usageSummary).toMatchObject({ type: 'usage-limits' });
     expect(res.body.sessions).toHaveLength(3);
   });
 

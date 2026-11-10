@@ -472,7 +472,7 @@ export class EndlessService {
       this.store.setState('turn_status', e.status);
       this.store.setState('turn_error', e.error ?? '');
     }
-    this.o.broadcaster.broadcast(e as unknown as Record<string, unknown>);
+    this.o.broadcaster.broadcast(e);
   }
 
   private note(kind: 'turns' | 'compactions', u: Usage): void {

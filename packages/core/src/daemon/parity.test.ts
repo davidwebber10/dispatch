@@ -67,7 +67,7 @@ describe('the test build and the production build', () => {
       const spies: [string, { mock: { calls: unknown[] } }][] = [];
       for (const [cls, ctor] of Object.entries(classes)) {
         for (const name of Object.getOwnPropertyNames(ctor.prototype)) {
-          if (!/^(set|register|add|on)[A-Z]/.test(name) || typeof (ctor.prototype as Record<string, unknown>)[name] !== 'function') continue;
+          if (!/^(set|register|add|on)[A-Z]/.test(name) || typeof (ctor.prototype as unknown as Record<string, unknown>)[name] !== 'function') continue;
           spies.push([`${cls}.${name}`, vi.spyOn(ctor.prototype as never, name as never) as never]);
         }
       }

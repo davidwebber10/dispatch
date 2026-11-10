@@ -1,8 +1,13 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { sendOrDrop } from './backpressure.js';
+import type { BroadcastEvent } from './server-events.js';
 
+/**
+ * Sends one event to every client of the `/api/events` socket. The event is typed (ws/server-events.ts):
+ * `broadcast({ type: 'terminal:status', ... })` must have the fields of that event.
+ */
 export interface EventBroadcaster {
-  broadcast(event: Record<string, unknown>): void;
+  broadcast<T extends string>(event: BroadcastEvent<T> & { type: T }): void;
 }
 
 /** The page's liveness check: it sends this text and expects PONG back (2026-11-05). */

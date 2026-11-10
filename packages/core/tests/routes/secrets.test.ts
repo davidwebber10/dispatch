@@ -80,7 +80,10 @@ describe('secrets routes: errors name no server path', () => {
     const err = Object.assign(new Error("ENOTDIR: not a directory, mkdir '/Users/someone/.dispatch/secrets'"), { code: 'ENOTDIR' });
     const db = new Database(':memory:');
     initSchema(db);
-    const failing = createApp({ db, skipPty: true, secretsService: { setConnection: async () => { throw err; } } as any });
+    const failing = createApp({ db, skipPty: true, 
+      // W3-A: the test build wires the whole service (onChange, the spawn env), so the stand-in is a real one with a failing save.
+      secretsService: Object.assign(new SecretsService(fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-secrets-fail-'))), { setConnection: async () => { throw err; } }),
+    });
     const r = await request(failing).put('/api/secrets/connection').send({ token: 'x' });
     expect(r.status).toBe(400);
     expect(r.text).not.toContain('/Users/');

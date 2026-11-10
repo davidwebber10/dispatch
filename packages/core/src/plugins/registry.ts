@@ -379,7 +379,7 @@ export class PluginRegistry {
   }
 
   /** Send any plugin event to every client (the routes use it for storage changes). */
-  broadcast(event: Record<string, unknown>): void {
+  broadcast(event: { type: string; [k: string]: unknown }): void {
     this.broadcaster.broadcast(event);
     for (const fn of this.taps) { try { fn(event); } catch { /* a tap must not break a broadcast */ } }
   }

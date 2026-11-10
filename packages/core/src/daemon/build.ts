@@ -605,6 +605,8 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
         if (update?.shimEnv) shimEnv = update.shimEnv;
         spawnEnv.refresh();
       }
+      // Workers (plugins design, section 4): start the worker of each enabled plugin, now that its address is known.
+      pluginWorkers.sync();
       // Store port in app state
       appState.set(db, 'port', String(port));
       // Endless Chat needs the real port for its memory MCP server config. A failed start

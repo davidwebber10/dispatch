@@ -74,7 +74,7 @@ export class ThreadEvents {
     const info = this.lookup(terminalId);
     if (!info) return;
     const e = { terminalId, sessionId: info.sessionId, harness: info.harness, at: new Date(this.now()).toISOString(), ...body } as ThreadEvent;
-    this.broadcaster.broadcast(e as unknown as Record<string, unknown>);
+    this.broadcaster.broadcast(e);
     for (const fn of this.subscribers) { try { fn(e); } catch (err) { console.warn('[plugins] a thread-event subscriber failed:', err instanceof Error ? err.message : err); } }
   }
 
