@@ -110,7 +110,8 @@ export const Popover = forwardRef<HTMLDivElement, PopoverProps>(function Popover
   }, [open, place, returnFocus]);
 
   if (!open) return null;
-  const box: CSSProperties = { ...style, left: pos?.left ?? 0, top: pos?.top ?? 0, maxHeight: pos?.maxHeight, visibility: pos ? undefined : 'hidden' };
+  // Not placed yet: drawn clear, not `visibility: hidden`, so a menu can already give focus to its first item.
+  const box: CSSProperties = { ...style, left: pos?.left ?? 0, top: pos?.top ?? 0, maxHeight: pos?.maxHeight, ...(pos ? null : { opacity: 0, pointerEvents: 'none' }) };
   return createPortal(
     <div ref={setRef} role={role} aria-label={label} tabIndex={-1} className={['ui-popover', className ?? ''].filter(Boolean).join(' ')} style={{ position: 'fixed', ...box }} {...rest}>
       {children}
