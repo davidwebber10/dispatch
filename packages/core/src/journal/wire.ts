@@ -8,13 +8,11 @@ import { setDurableIdempotencyStore } from '../http/idempotency.js';
 import { journalIdempotencyStore } from './idempotency.js';
 import { MessageJournal } from './journal.js';
 import { JournalRecorder } from './recorder.js';
-import { createJournalReplay, type JournalReplaySource } from './replay.js';
 
 export interface JournalWiring {
   journal: MessageJournal;
+  /** Each manager carries it (`manager.journal`): it writes the journal, and the structured socket asks it for a replay. */
   recorder: JournalRecorder;
-  /** For the structured socket: the replay of a thread from the journal. */
-  replay: JournalReplaySource;
 }
 
 /** A structured manager that can write the journal: the three real managers have the field. */
@@ -32,5 +30,5 @@ export function wireJournal(db: Database.Database, managers: Iterable<unknown>):
     if (typeof manager === 'object' && manager !== null) (manager as JournalWriter).journal = recorder;
   }
   setDurableIdempotencyStore(journalIdempotencyStore(journal));
-  return { journal, recorder, replay: createJournalReplay(journal, recorder) };
+  return { journal, recorder };
 }

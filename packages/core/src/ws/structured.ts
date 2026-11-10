@@ -4,7 +4,6 @@ import type { IncomingMessage } from 'node:http';
 import type { IStructuredManager } from '../structured/manager.js';
 import { sendOrDrop, waitForRoom, hasRoom, HARD_CEILING_FACTOR } from './backpressure.js';
 import { wsMaxBufferedBytes } from '../caps.js';
-import type { JournalReplay, JournalReplaySource } from '../journal/replay.js';
 
 /**
  * True iff at least one ring event would fold into a VISIBLE conversation item in the
@@ -33,6 +32,7 @@ export function hasRenderableEvents(events: unknown[]): boolean {
         || (b.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0)));
     }
     if (e.type === 'stream_event') return e.event?.type === 'content_block_start';
+    if (e.type === 'journal') return true; // W3-D: the journal frame is the history; no REST rescue is needed
     return false;
   });
 }
@@ -104,14 +104,6 @@ export function handleStructuredConnection(
    * database kept it. Sent as the same `permission` frame as a live one, so the same inline card shows.
    */
   restoredPending?: (terminalId: string) => unknown,
-  /**
-   * The message journal (W3-D). A client that asks with `journal=1` gets its replay from it: one
-   * `journal` frame of finished items, each with its `seq`, then the events of what still streams.
-   * With `after=<seq>` (the newest sequence the client holds) the frame has only the items after it.
-   * A client that does not ask (an older web build) gets the ring as before. So does a thread the
-   * journal has nothing for, and any connect on which the journal throws.
-   */
-  journal?: JournalReplaySource,
 ): void {
   const m = req.url?.match(/\/api\/terminals\/([^/]+)\/structured-ws/);
   const id = m?.[1];
@@ -133,20 +125,35 @@ export function handleStructuredConnection(
   // Same failure posture: on a throwing predicate, prefer the full replay over amputation.
   let tailRecoverable = restCanPageHistory === undefined;
   try { tailRecoverable = restCanPageHistory ? restCanPageHistory(id) === true : tailRecoverable; } catch { tailRecoverable = false; }
-  // W3-D: the replay from the journal, for a client that asked for it. A thread whose history REST owns
-  // (Codex) gets no first window from it, so the REST page and the journal never show one item twice;
-  // its reconnect with a cursor is served, because the items after a cursor are the journal's alone.
-  let fromJournal: JournalReplay | null = null;
-  if (journal && query.get('journal') === '1') {
+  // W3-D: the replay from the message journal, for a client that asks with `journal=1`. The manager carries
+  // the journal's recorder (journal/wire.ts sets it); a manager with none, a client that does not ask (an
+  // older web build), a thread the journal has nothing for and a journal that throws all get the ring as before.
+  //   - The first frame is `{ type: 'journal', reset, items, firstSeq, lastSeq, hasMore }`: finished items,
+  //     each with its `seq`. After it come the events of what still streams.
+  //   - With `after=<seq>` (the newest sequence the client holds) the frame has only the items after it.
+  //   - A thread whose history REST owns (Codex) gets no first window from the journal, so the REST page and
+  //     the journal never show one item twice. Its reconnect with a cursor is served: the items after a
+  //     cursor are the journal's alone.
+  let fromJournal: unknown[] | null = null;
+  if (manager.journal && query.get('journal') === '1') {
     const afterParam = query.get('after');
     const after = afterParam !== null && /^\d+$/.test(afterParam) ? Number(afterParam) : undefined;
     try {
-      fromJournal = journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(tailParam) && tailParam > 0 ? { limit: tailParam } : {}) });
-    } catch { fromJournal = null; } // the ring is still there
+      const replay = manager.journal.replay(id, { after, allowReset: !restOwned, ...(Number.isFinite(tailParam) && tailParam > 0 ? { limit: tailParam } : {}) });
+      if (replay) {
+        // The journal frame holds finished items only, and they do not move an older fold's busy flag. A thread
+        // that works with no block open right now (a tool runs) would show no spinner: a message start says a
+        // turn is in flight, as the ring's own events did. Known only with the predicate, like the settle below.
+        let working = false;
+        try { working = isThreadSettled ? isThreadSettled(id) !== true : false; } catch { working = false; }
+        const streaming = replay.tail.some((e) => (e as { type?: unknown } | null)?.type === 'stream_event');
+        fromJournal = [replay.frame, ...(working && !streaming ? [{ type: 'stream_event', event: { type: 'message_start' } }] : []), ...replay.tail];
+      }
+    } catch { fromJournal = null; }
   }
-  const events = fromJournal ? fromJournal.tail : restOwned
+  const events = fromJournal ?? (restOwned
     ? []
-    : (tailRecoverable && Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id));
+    : (tailRecoverable && Number.isFinite(tailParam) && tailParam > 0 ? manager.getEventsTail(id, tailParam) : manager.getEvents(id)));
   // Nothing RENDERABLE to replay ⇒ the client would sit on an empty view: the live channel
   // only carries FUTURE turns, and any history not in the ring never reaches it this way.
   // Tell the client to hydrate its initial view from the REST transcript instead. Covers a
@@ -160,20 +167,13 @@ export function handleStructuredConnection(
   // The frames the client gets first, in order: the sentinel, the replay, the settle, the pending permission.
   // They are sent in step with the client's free buffer space (see below); live events that arrive meanwhile wait behind them.
   const frames: unknown[] = [];
-  let settled = false;
-  try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
-  if (fromJournal) {
-    frames.push(fromJournal.frame);
-    // The journal frame holds finished items only, and they do not move the client's busy flag. A thread
-    // that works with no block open right now (a tool runs) would show no spinner: a message start says
-    // a turn is in flight, as the ring's own events did. Known only with the predicate, like the settle.
-    const streaming = events.some((e) => (e as { type?: unknown } | null)?.type === 'stream_event');
-    if (isThreadSettled && !settled && !streaming) frames.push({ type: 'stream_event', event: { type: 'message_start' } });
-  } else if (!hasRenderableEvents(events)) frames.push({ type: 'system', subtype: 'inactive' });
+  if (!hasRenderableEvents(events)) frames.push({ type: 'system', subtype: 'inactive' });
   for (const e of events) frames.push(e);
   // Phantom-"Working…" guard: a replay that ends mid-turn latches the client's busy spinner.
   // If the daemon's own status says this thread is settled — and no pending permission is
   // about to be surfaced (that frame clears busy itself) — append the swallowed settle.
+  let settled = false;
+  try { settled = isThreadSettled?.(id) === true; } catch { settled = false; }
   if (settled && !manager.getPending(id) && replayLeavesBusy(events)) {
     frames.push({ type: 'result', subtype: 'backfill', is_error: false });
   }

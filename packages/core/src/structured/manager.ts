@@ -253,6 +253,12 @@ export interface IStructuredManager extends EventEmitter {
    * untested, so a reply there falls back to a normal send.
    */
   readonly repliesToQuestions?: boolean;
+  /**
+   * The recorder of the message journal (W3-D), set by the daemon (journal/wire.ts). The manager gives
+   * it the ring of each session it spawns; the structured socket asks it for the replay of a thread.
+   * Absent: the manager writes no journal and the socket replays the ring.
+   */
+  journal?: JournalRecorder;
   setDefaultEnv(env: Record<string, string>): void;
   spawn(terminalId: string, opts: StructuredSpawnOpts): number;
   sendMessage(terminalId: string, content: string | ContentBlock[], source?: MessageSource): void;

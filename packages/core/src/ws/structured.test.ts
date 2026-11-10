@@ -509,7 +509,6 @@ import Database from 'better-sqlite3';
 import { initSchema } from '../db/schema.js';
 import { MessageJournal } from '../journal/journal.js';
 import { JournalRecorder } from '../journal/recorder.js';
-import { createJournalReplay } from '../journal/replay.js';
 import { EventRing } from '../structured/shared/event-ring.js';
 
 describe('replay from the message journal', () => {
@@ -539,12 +538,13 @@ describe('replay from the message journal', () => {
     };
     const manager = Object.assign(emitter, {
       getEvents: () => ring.snapshot(), getEventsTail: (_id: string, n: number) => ring.tail(n), getPending: () => null,
+      journal: recorder, // the daemon sets it on each manager (journal/wire.ts)
     }) as any;
-    return { journal, recorder, ring, manager, push, turn, source: createJournalReplay(journal, recorder) };
+    return { journal, recorder, ring, manager, push, turn };
   }
   const connect = (t: ReturnType<typeof thread>, req: any, opts: { restOwned?: boolean; settled?: boolean } = {}) => {
     const { ws, sent } = fakeWs();
-    handleStructuredConnection(ws, req, t.manager, undefined, () => opts.restOwned === true, () => false, () => opts.settled !== false, undefined, undefined, t.source);
+    handleStructuredConnection(ws, req, t.manager, undefined, () => opts.restOwned === true, () => false, () => opts.settled !== false);
     return sent;
   };
 
@@ -641,8 +641,12 @@ describe('replay from the message journal', () => {
     const { ws, sent } = fakeWs();
     const db = new Database(':memory:');
     initSchema(db);
-    handleStructuredConnection(ws, JOURNAL_REQ(), ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, undefined, undefined, createJournalReplay(new MessageJournal(db)));
+    handleStructuredConnection(ws, JOURNAL_REQ(), { ...ringManager([REAL_TURN]), journal: new JournalRecorder(new MessageJournal(db)) });
     expect(sent).toEqual([REAL_TURN]);
+    // And a manager with no journal at all.
+    const plain = fakeWs();
+    handleStructuredConnection(plain.ws, JOURNAL_REQ(), ringManager([REAL_TURN]));
+    expect(plain.sent).toEqual([REAL_TURN]);
   });
 
   it('a thread whose history REST owns (Codex) gets no first window from the journal, but a resume is served', () => {
@@ -656,7 +660,7 @@ describe('replay from the message journal', () => {
 
   it('a journal source that throws falls back to the ring', () => {
     const { ws, sent } = fakeWs();
-    handleStructuredConnection(ws, JOURNAL_REQ(), ringManager([REAL_TURN]), undefined, undefined, undefined, undefined, undefined, undefined, { replay: () => { throw new Error('db gone'); } });
+    handleStructuredConnection(ws, JOURNAL_REQ(), { ...ringManager([REAL_TURN]), journal: { replay: () => { throw new Error('db gone'); } } });
     expect(sent).toEqual([REAL_TURN]);
   });
 
@@ -664,7 +668,7 @@ describe('replay from the message journal', () => {
     const t = thread();
     t.turn(1);
     const { ws, sent } = fakeWs();
-    handleStructuredConnection(ws, JOURNAL_REQ('&batch=1'), { ...t.manager, on: () => {}, off: () => {}, getPending: () => ({ requestId: 'r1' }) }, undefined, undefined, undefined, undefined, () => 'model-x', undefined, t.source);
+    handleStructuredConnection(ws, JOURNAL_REQ('&batch=1'), { ...t.manager, on: () => {}, off: () => {}, getPending: () => ({ requestId: 'r1' }) }, undefined, undefined, undefined, undefined, () => 'model-x');
     expect(sent).toHaveLength(1);
     expect(sent[0].events.map((e: any) => e.type)).toEqual(['journal', 'system', 'permission']);
   });

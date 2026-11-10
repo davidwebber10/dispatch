@@ -38,7 +38,7 @@ async function threadWithTurns(turns: string[]) {
   const socket = (query: string): any[] => {
     const sent: any[] = [];
     const ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)), close: () => {}, on: () => {} } as any;
-    handleStructuredConnection(ws, { url: `/api/terminals/t1/structured-ws?${query}` } as any, manager, undefined, () => false, () => true, () => true, undefined, undefined, wiring.replay);
+    handleStructuredConnection(ws, { url: `/api/terminals/t1/structured-ws?${query}` } as any, manager, undefined, () => false, () => true, () => true);
     return sent;
   };
   return { db, manager, wiring, app, socket };

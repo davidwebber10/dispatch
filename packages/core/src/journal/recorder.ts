@@ -25,6 +25,7 @@
 
 import { classifyUserText } from '../conversation/task-notification.js';
 import type { JournalKind, MessageJournal } from './journal.js';
+import { createJournalReplay, type JournalReplay, type JournalReplayOptions, type JournalReplaySource } from './replay.js';
 
 type Frame = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any -- an untyped wire event
 
@@ -383,10 +384,18 @@ export class ThreadRecorder {
 }
 
 /** The recorders of the live sessions, by thread. One for the daemon; the three managers share it. */
-export class JournalRecorder {
+export class JournalRecorder implements JournalReplaySource {
   private threads = new Map<string, ThreadRecorder>();
+  private readonly source: JournalReplaySource;
 
-  constructor(readonly journal: MessageJournal) {}
+  constructor(readonly journal: MessageJournal) {
+    this.source = createJournalReplay(journal, this);
+  }
+
+  /** The replay of a thread for a viewer that connects (see replay.ts), or null when the journal cannot serve it. */
+  replay(terminalId: string, opts: JournalReplayOptions): JournalReplay | null {
+    return this.source.replay(terminalId, opts);
+  }
 
   /**
    * Record the session behind `ring` from now on. A manager calls this in `spawn`, right after it

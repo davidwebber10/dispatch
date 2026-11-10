@@ -1196,7 +1196,6 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
           (tid) => sessionService.getTerminal(tid)?.status !== 'working',
           (tid) => sessionService.activeModel(tid),
           (tid) => sessionService.getPendingPermission(tid),
-          journalWiring.replay, // W3-D: `journal=1` replays from the message journal; `after=<seq>` resumes
         );
       });
     } else if (url.match(/\/api\/terminals\/[^/]+\/ws/) || url.match(/\/api\/sessions\/[^/]+\/terminal/)) {
