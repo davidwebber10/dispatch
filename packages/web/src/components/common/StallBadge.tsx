@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { HourglassMedium } from '@phosphor-icons/react';
 import { ensureStallsLoaded, useThreadStatus } from '../../stores/threadStatus';
+import { useMinuteTick } from '../../lib/autoArchive';
 
 /** The badge text. The daemon flags after 10 minutes of silence, so the count is never under 1. */
 export function stallTitle(stalledSince: number, now: number): string {
@@ -15,15 +16,10 @@ export function stallTitle(stalledSince: number, now: number): string {
  */
 export function StallBadge({ terminalId, size = 13 }: { terminalId: string; size?: number }) {
   const stalledSince = useThreadStatus((s) => s.stalls[terminalId]);
-  const [now, setNow] = useState(() => Date.now());
   useEffect(() => { ensureStallsLoaded(); }, []);
-  // The minute count moves only while the badge shows.
-  useEffect(() => {
-    if (stalledSince === undefined) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, [stalledSince]);
+  // The minute count moves only while the badge shows, on the one minute clock that every badge and
+  // every other minute label shares (lib/autoArchive.ts): a list of stalled threads runs one timer.
+  const now = useMinuteTick(stalledSince !== undefined);
   if (stalledSince === undefined) return null;
   const title = stallTitle(stalledSince, now);
   return (

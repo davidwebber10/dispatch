@@ -234,9 +234,22 @@ function ToolCard({ m, warn, current, dense, email, access }: { m: RingModel; wa
  * a read now. It says when the newest figure was read, shows "Refreshing…" while the daemon reads,
  * and says so when the daemon could not be asked (the old figures stay).
  */
+/** How long "some figures still loading" may stay when no late broadcast comes. */
+export const PARTIAL_NOTE_MS = 30_000;
+
 function RefreshRow({ summary, now }: { summary: UsageSummary; now: number }) {
   const [state, setState] = useState<'idle' | 'loading' | 'error' | 'partial'>('idle');
   const newest = summary.providers.reduce((m, p) => Math.max(m, p.asOf ?? 0), 0);
+  // A partial answer: the late figures arrive by the `usage-limits` broadcast. The note goes when the
+  // store takes a newer summary, or after a short time when none comes (it stayed until the next Refresh).
+  useEffect(() => {
+    if (state !== 'partial') return;
+    const done = () => setState((s) => (s === 'partial' ? 'idle' : s));
+    const shown = useUsageLimits.getState().summary;
+    const off = useUsageLimits.subscribe((s) => { if (s.summary !== shown) done(); });
+    const timer = setTimeout(done, PARTIAL_NOTE_MS);
+    return () => { off(); clearTimeout(timer); };
+  }, [state]);
   const run = async () => {
     if (state === 'loading') return;
     setState('loading');

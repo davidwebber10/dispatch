@@ -483,3 +483,45 @@ describe('W2-I: connect timeout, forced reconnect, desktop first replay', () => 
     expect(made).toHaveLength(2);
   });
 });
+
+// ---- I3 (final review of v4.5.0): a closed socket reaches nobody ----
+describe('close() detaches the handlers', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** A browser socket: close() does not fire `onclose` at once. A dead link fires it much later. */
+  class LateCloseWS implements TerminalWS {
+    onopen: (() => void) | null = null;
+    onclose: (() => void) | null = null;
+    onmessage: ((ev: { data: string }) => void) | null = null;
+    closeCalls = 0;
+    sent: string[] = [];
+    send(d: string) { this.sent.push(d); }
+    close() { this.closeCalls++; }
+  }
+
+  test('a late close or message of the closed socket reaches nobody', () => {
+    const made: LateCloseWS[] = [];
+    const chunks: string[] = [];
+    let closes = 0;
+    const sock = openTerminalSocket({
+      terminalId: 't1', onData: (c) => chunks.push(c), onClose: () => { closes++; },
+      wsFactory: () => { const w = new LateCloseWS(); made.push(w); return w; },
+    });
+    const ws = made[0];
+    const { onopen, onclose, onmessage } = ws;
+    ws.onopen!();
+    sock.close();
+    expect(ws.closeCalls).toBe(1);
+    expect(ws.onopen).toBeNull();
+    expect(ws.onclose).toBeNull();
+    expect(ws.onmessage).toBeNull();
+    onmessage!({ data: 'late bytes' });
+    onclose!();
+    onopen!();
+    expect(chunks).toEqual([]);
+    expect(closes).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(made).toHaveLength(1);
+  });
+});

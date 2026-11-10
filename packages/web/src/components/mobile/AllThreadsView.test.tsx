@@ -461,3 +461,93 @@ describe('Active within filter', () => {
     expect(labels()).toEqual(['Ten minutes', 'This morning']);
   });
 });
+
+// I9 (final review of v4.5.0): "Active within" used only the last activity stamp, and its cut-off was
+// computed once.
+describe('Active within: a thread that works now, an idle page, and the empty text (I9)', () => {
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const MIN = 60_000, DAY = 86_400_000;
+  beforeEach(() => {
+    vi.useFakeTimers(); // the clock and the timers: the cut-off moves on the shared minute tick
+    vi.setSystemTime(new Date(2026, 10, 12, 15, 0, 0)); // Thursday 12 November 2026, 15:00 local
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const seed = (A: unknown[], B: unknown[] = []) => useTabs.setState({ byProject: { A, B }, loading: {} } as any);
+  /** Render, then let the load of the mount end (the empty text shows only after it). */
+  const show = async (ui: React.ReactElement) => { const r = rtlRender(ui); await act(async () => { await Promise.resolve(); await Promise.resolve(); }); return r; };
+  const setStatus = (id: string, status: string) => act(() => { useTabs.setState((s) => ({ byProject: { ...s.byProject, A: s.byProject.A.map((x) => (x.id === id ? { ...x, status } : x)) } }) as any); });
+
+  it('Last hour keeps a thread whose turn has run for 70 minutes, and one that needs input', async () => {
+    seed([
+      t('w', 'A', 'Long turn', ago(70 * MIN), { status: 'working' }),
+      t('n', 'A', 'Waits for you', ago(3 * DAY), { status: 'needs_input' }),
+      t('i', 'A', 'Idle since 70 min', ago(70 * MIN)),
+      t('r', 'A', 'Ten minutes', ago(10 * MIN)),
+    ]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'hour');
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual(['Ten minutes', 'Long turn', 'Waits for you']);
+  });
+
+  it('a thread that was hidden shows when it starts to work, and goes when its turn ends', async () => {
+    seed([t('i', 'A', 'Idle since 70 min', ago(70 * MIN)), t('r', 'A', 'Ten minutes', ago(10 * MIN))]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'hour');
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual(['Ten minutes']);
+    // The status event carries no activity stamp: the old stamp stays.
+    setStatus('i', 'working');
+    expect(labels()).toEqual(['Ten minutes', 'Idle since 70 min']);
+    setStatus('i', 'idle');
+    expect(labels()).toEqual(['Ten minutes']);
+  });
+
+  it('the cut-off moves on an idle page: a thread leaves Last hour with no event, and no other row renders', async () => {
+    seed([t('old', 'A', 'Fifty-nine minutes', ago(59 * MIN)), t('new', 'A', 'Ten minutes', ago(10 * MIN))]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'hour');
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual(['Ten minutes', 'Fifty-nine minutes']);
+    const before = rowRenders.new;
+    act(() => { vi.advanceTimersByTime(2 * MIN); }); // nothing happens but the clock
+    expect(labels()).toEqual(['Ten minutes']);
+    expect(rowRenders.new).toBe(before); // the row that stays did not render again
+  });
+
+  it('with no Active within filter, the minute clock renders nothing', async () => {
+    seed([t('new', 'A', 'Ten minutes', ago(10 * MIN))]);
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    const before = rowRenders.new;
+    act(() => { vi.advanceTimersByTime(5 * MIN); });
+    expect(rowRenders.new).toBe(before);
+    expect(vi.getTimerCount()).toBe(0); // and no timer runs for it
+  });
+
+  it('a saved filter that hides every thread says so and offers to clear it', async () => {
+    seed([t('a', 'A', 'Yesterday', ago(DAY + 3600_000)), t('b', 'A', 'Last week', ago(6 * DAY))], [t('c', 'B', 'Last month', ago(40 * DAY))]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'hour');
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    expect(labels()).toEqual([]);
+    expect(screen.queryByText('No threads yet.')).toBeNull();
+    expect(screen.getByText('The filter "Active within: Last hour" hides 3 threads.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear the filter' }));
+    expect(labels()).toEqual(['Yesterday', 'Last week', 'Last month']);
+    expect(localStorage.getItem('dispatch:threadsActiveWithin')).toBeNull();
+  });
+
+  it('counts only the threads that the other filters keep, and says "No threads match." when they keep none', async () => {
+    seed([t('a', 'A', 'Yesterday', ago(DAY + 3600_000))], [t('c', 'B', 'Last month', ago(40 * DAY))]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'today');
+    const { rerender } = await show(<AllThreadsView onOpenThread={() => {}} query="yesterday" />);
+    expect(screen.getByText('The filter "Active within: Today" hides 1 thread.')).toBeInTheDocument();
+    rerender(<AllThreadsView onOpenThread={() => {}} query="zzz" />);
+    expect(screen.getByText('No threads match.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear the filter' })).toBeNull();
+  });
+
+  it('with no thread at all, the text stays "No threads yet." whatever the saved filter', async () => {
+    seed([]);
+    localStorage.setItem('dispatch:threadsActiveWithin', 'hour');
+    await show(<AllThreadsView onOpenThread={() => {}} />);
+    expect(screen.getByText('No threads yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear the filter' })).toBeNull();
+  });
+});
