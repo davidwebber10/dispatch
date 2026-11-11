@@ -24,7 +24,6 @@ import { useTransportSwitch } from '../layout/TransportToggle';
 import { useShownStatus } from '../../stores/connection';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { ProjectCard } from '../sidebar/ProjectCard';
-import { NeedsYouSection } from '../sidebar/NeedsYouSection';
 import { SortMenu } from '../sidebar/SortMenu';
 import { AllAgentsView } from '../agents/AllAgentsView';
 import { AllThreadsView } from './AllThreadsView';
@@ -311,7 +310,6 @@ export function MobileApp() {
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', touchAction: 'pan-y', padding: '6px 4px 12px' }}>
               {/* The attention queue across all projects (W2-F): a list above the projects, hidden when empty.
                   Only while this list shows: the rail keeps level 0 mounted under a project or a thread. */}
-              {level === 0 && !query && <NeedsYouSection onOpen={openThreadFromList} />}
               <SortableList
                 items={sortedProjects}
                 disabled={!!query}

@@ -12,7 +12,6 @@ import { revealIn } from '../../lib/reveal';
 import { useProjectsView } from '../../stores/projectsView';
 import { AllThreadsView } from '../mobile/AllThreadsView';
 import { useAgentUI } from '../../stores/agentUI';
-import { NeedsYouSection } from './NeedsYouSection';
 
 type Sort = 'recent' | 'alpha' | 'custom';
 
@@ -172,7 +171,6 @@ export function ProjectSidebar({ onSelectTab, onSelectAgent, onNewAgent, onDispa
       {threads ? <AllThreadsView onOpenThread={openFromList} query={query} onQueryChange={setQuery} /> : (
       <div style={{ padding: '0 8px 8px' }}>
       {/* The attention queue across all projects (W2-F): a list in the navigation, hidden when empty. */}
-      <NeedsYouSection onOpen={openFromList} />
       <SortableList
         items={filtered}
         disabled={!!query || isMobile}
