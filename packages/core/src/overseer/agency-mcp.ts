@@ -446,8 +446,9 @@ export const TOOLS = [
       'Declare how YOUR OWN turn is ending. Call this as the last thing you do, every turn. ' +
       'It is how the human sees whether you finished, need them, or are blocked — without it ' +
       'a turn that ends by asking a question looks identical to one that finished the work. ' +
-      'After it returns, call no other tool. If your reply is already written, end with one short ' +
-      'closing line and never repeat the reply; if it is not, write it now. Never end with an empty ' +
+      'After it returns, your turn ends: call no other tool, and do not start new work or answer a ' +
+      'question nobody asked. If you have not written your reply yet, write it now. If you already ' +
+      'wrote it, end with one short closing line; never repeat the reply, and never end with an empty ' +
       'message. The human speaks next.',
     inputSchema: {
       type: 'object',
@@ -1061,8 +1062,9 @@ async function listWatches(): Promise<{ watching: any[]; watchedBy: any[] }> {
  */
 export const REPORT_STATUS_NOTE =
   'Status recorded. Your turn ends now: call no other tool, and do not start new work or answer a question nobody asked. ' +
-  'If your reply above is complete, end with one short closing line and do not repeat it. ' +
-  'If you have not written your reply yet, write it now. The human speaks next.';
+  'If you have not written your reply yet, write it now. ' +
+  'If you already wrote it, end with one short closing line; do not repeat the reply, and do not end with an empty message. ' +
+  'The human speaks next.';
 
 async function reportStatus(args: { state: string; summary: string; ask?: string; blocker?: string }): Promise<{ ok: true; note: string }> {
   if (!args?.state) throw new Error('state is required');

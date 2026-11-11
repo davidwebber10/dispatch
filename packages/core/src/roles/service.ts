@@ -380,7 +380,9 @@ export class RolesService implements RoleRunner {
     const lastOutcome = config.lastOutcome as
       | { summary?: string; needsHelp?: boolean; declaredState?: string }
       | undefined;
-    const contract = extractContract(lastOutcome?.summary);
+    // The whole last turn first: after report_status the runner ends with a short closing line
+    // (PR #159), so the last text alone can miss the contract, and it is clipped besides.
+    const contract = extractContract(this.sessionService.finalOutput?.(terminalId)) ?? extractContract(lastOutcome?.summary);
 
     let outcome: RunOutcome;
     let summary: string;

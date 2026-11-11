@@ -358,18 +358,26 @@ export class CoordinatorNotifier {
     this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'question-answered' });
   }
 
-  /** The agent's most recent assistant text, pulled live from the structured event ring
-   *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
+  /** What the agent said in its last ended turn: every text of that turn, oldest first, pulled
+   *  live from the structured manager (no transcript-file latency), truncated for a nudge. The
+   *  whole turn, not only its last text: after report_status an agent ends with one short closing
+   *  line (PR #159), and the report comes before it. Falls back to the newest text in the event
+   *  ring. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
-    const events = (this.structuredManagerForTerminal(terminalId)?.getEvents(terminalId) ?? []) as any[];
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
-        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-        if (text) { const safe = redactKeys(text); return safe.length > max ? safe.slice(0, max) + '…' : safe; }
+    const manager = this.structuredManagerForTerminal(terminalId);
+    let text = (manager?.getTurnTexts(terminalId) ?? []).join('\n\n').trim();
+    if (!text) {
+      const events = (manager?.getEvents(terminalId) ?? []) as any[];
+      for (let i = events.length - 1; i >= 0 && !text; i--) {
+        const e = events[i];
+        if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
+          text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+        }
       }
     }
-    return '';
+    if (!text) return '';
+    const safe = redactKeys(text);
+    return safe.length > max ? safe.slice(0, max) + '…' : safe;
   }
 
   /** Public wrapper — server.ts needs the same text for the outcome line. */
@@ -485,8 +493,12 @@ export class CoordinatorNotifier {
   private lastTurnTexts(terminalId: string): string[] {
     const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
     if (live) return [...live].reverse();
-    const items = this.conversationTail(terminalId, 50).filter((it) => it.kind === 'assistant' && it.text);
-    return items.length ? [String(items[items.length - 1].text)] : [];
+    // From the transcript: every assistant text since the last user message, so a report followed
+    // by a closing line after report_status keeps the report.
+    const tail = this.conversationTail(terminalId, 50);
+    let start = 0;
+    for (let i = tail.length - 1; i >= 0; i--) if (tail[i].kind === 'user') { start = i + 1; break; }
+    return tail.slice(start).filter((it) => it.kind === 'assistant' && it.text).map((it) => String(it.text)).reverse();
   }
 
   /**

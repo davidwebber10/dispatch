@@ -189,4 +189,11 @@ it('buildPeerPrompt ends a turn with one short closing line after report_status,
   expect(p).toMatch(/one short closing line/i);
   expect(p).toMatch(/never repeat/i);
   expect(p).not.toMatch(/write nothing more/i);
+  // The same two branches and the same guard as the tool result and the tool description.
+  expect(p).toMatch(/if you have not written your reply yet, write it now/i);
+  expect(p).toMatch(/question nobody asked/i);
+});
+
+it('agent prompts keep the summary in the reply, not in the closing line', () => {
+  for (const prompt of Object.values(AGENT_PROMPTS)) expect(prompt).not.toMatch(/make it the last thing you say/i);
 });

@@ -580,6 +580,11 @@ describe('agency-mcp', () => {
       expect(tool.description).toMatch(/call no other tool/i);
       expect(tool.description).toMatch(/one short closing line/i);
       expect(tool.description).not.toMatch(/write nothing more/i);
+      for (const t of [note, tool.description]) {
+        expect(t).toMatch(/if you have not written your reply yet, write it now/i);
+        expect(t).toMatch(/question nobody asked/i);
+        expect(t).toMatch(/empty message/i);
+      }
     });
 
     it('report_status refuses to report on another thread', async () => {
