@@ -73,6 +73,16 @@ describe('a closing line after report_status does not hide the report', () => {
     expect(String(sent.mock.calls[0][1])).toContain(ANSWER);
   });
 
+  it('a key that the cut of the earlier text would split is redacted first', () => {
+    const SECRET = 'Q'.repeat(43);
+    const KEY = `dtk_${SECRET}`;
+    // lastAssistantTextPublic keeps 400 - "Done.".length - 3 = 392 characters of the earlier text, from
+    // its end; with 347 characters after the key, the cut lands 2 characters into the key.
+    const earlier = 'start ' + 'p'.repeat(100) + KEY + ' ' + 'z'.repeat(346);
+    const { svc } = makeService([text(earlier), toolUse('mcp__dispatch__report_status'), text(CLOSING), result]);
+    expect(svc.lastAssistantTextPublic('a')).not.toContain(SECRET);
+  });
+
   it('the outcome summary (board, scheduled roles) carries the report', () => {
     const { svc } = makeService(TURN);
     expect(svc.lastAssistantTextPublic('a')).toContain(REPORT);

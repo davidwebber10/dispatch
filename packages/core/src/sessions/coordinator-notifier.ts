@@ -369,7 +369,7 @@ export class CoordinatorNotifier {
    *  the newest text in the event ring. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
     const manager = this.structuredManagerForTerminal(terminalId);
-    const turn = (manager?.getTurnTexts?.(terminalId) ?? []).map((t) => t.trim()).filter(Boolean);
+    const turn = (manager?.getTurnTexts?.(terminalId) ?? []).map((t) => redactKeys(t.trim())).filter(Boolean); // redacted BEFORE any cut, so a cut cannot split a key past the pattern
     let text = turn.length ? turn[turn.length - 1] : '';
     if (turn.length > 1 && text.length <= CLOSING_LINE_MAX) {
       // The last text stays whole; the text before it gets only the room that is left, from its end.
