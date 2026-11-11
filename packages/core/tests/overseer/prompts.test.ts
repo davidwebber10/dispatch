@@ -182,3 +182,11 @@ it('every agent prompt asks for the absolute path and branch of each doc it writ
     expect(p).not.toContain('end your report with');
   }
 });
+
+it('buildPeerPrompt ends a turn with one short closing line after report_status, never an empty message or a repeat', () => {
+  // An empty last message makes Claude Code ask the model to continue, and it wrote its answer twice (2026-11-11).
+  const p = buildPeerPrompt({ projectName: 'P', workingDir: '/w', selfLabel: 'me', selfId: 'id-1', peers: [] });
+  expect(p).toMatch(/one short closing line/i);
+  expect(p).toMatch(/never repeat/i);
+  expect(p).not.toMatch(/write nothing more/i);
+});
