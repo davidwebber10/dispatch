@@ -40,7 +40,13 @@ export interface InspectorTabProps { terminalId: string | null; sessionId: strin
 /** A tab in the desktop right column after Details and Files (a row in the phone thread's ⋯ menu). */
 /** An icon by name (the names `views` take: `note`, `eye`, …) or a phosphor icon component. */
 export type InspectorTabIcon = string | ComponentType<{ size?: number | string }>;
-export interface PluginInspectorTab { plugin: string; id: string; key: string; label: string; icon?: InspectorTabIcon; priority?: number; Component: ComponentType<InspectorTabProps> }
+/** What a right-column tab's badge is asked about: the open thread (v4.5.2). */
+export interface InspectorTabCtx { terminalId: string; sessionId: string | null }
+/**
+ * `badge` (v4.5.2): a live count for the open thread. The desktop tab shows it, the phone menu row shows
+ * it, and it puts the dot on the thread's ⋯ button.
+ */
+export interface PluginInspectorTab { plugin: string; id: string; key: string; label: string; icon?: InspectorTabIcon; priority?: number; badge?: MenuBadge<InspectorTabCtx>; Component: ComponentType<InspectorTabProps> }
 export type PluginStatus = { state: 'loading' | 'ready' | 'error'; error?: string; version?: string; at: number };
 
 /** What a plugin hands to `register`: the same lists, without the fields the store derives. */

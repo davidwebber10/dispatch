@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import type { Terminal } from '../api/types';
-import { useContributions, type MenuBadge, type ThreadMenuCtx } from './registry';
+import { useContributions, type InspectorTabCtx, type MenuBadge, type ThreadMenuCtx } from './registry';
 
 const NONE = () => () => {};
 const ZERO = () => 0;
@@ -21,13 +21,23 @@ function safeGet<C>(b: MenuBadge<C>, ctx: C): number {
  */
 export function useThreadMenuBadge(tab: Terminal | null | undefined): number {
   const items = useContributions('threadMenu');
+  // v4.5.2: the right-column tabs count too (they are rows of the phone's thread menu). v4.5.0 moved
+  // Previews from a thread-menu item to a tab, and the dot was gone.
+  const tabs = useContributions('inspectorTabs');
   const ctx = useMemo<ThreadMenuCtx | null>(() => (tab ? { tab } : null), [tab]);
+  const tabCtx = useMemo<InspectorTabCtx | null>(() => (tab ? { terminalId: tab.id, sessionId: tab.sessionId ?? null } : null), [tab]);
   const sources = useMemo(
     () => (ctx ? items.filter((i) => i.badge && (!i.when || safeWhen(i.when, ctx))).map((i) => i.badge as MenuBadge<ThreadMenuCtx>) : []),
     [items, ctx],
   );
-  const subscribe = useCallback((cb: () => void) => { const offs = sources.map((s) => s.subscribe(cb)); return () => offs.forEach((off) => off()); }, [sources]);
-  const get = useCallback(() => (ctx ? sources.reduce((n, s) => n + safeGet(s, ctx), 0) : 0), [sources, ctx]);
+  const tabSources = useMemo(() => tabs.filter((t) => t.badge).map((t) => t.badge as MenuBadge<InspectorTabCtx>), [tabs]);
+  const subscribe = useCallback((cb: () => void) => {
+    const offs = [...sources.map((s) => s.subscribe(cb)), ...tabSources.map((s) => s.subscribe(cb))];
+    return () => offs.forEach((off) => off());
+  }, [sources, tabSources]);
+  const get = useCallback(() => (ctx && tabCtx
+    ? sources.reduce((n, s) => n + safeGet(s, ctx), 0) + tabSources.reduce((n, s) => n + safeGet(s, tabCtx), 0)
+    : 0), [sources, tabSources, ctx, tabCtx]);
   return useSyncExternalStore(subscribe, get, ZERO);
 }
 

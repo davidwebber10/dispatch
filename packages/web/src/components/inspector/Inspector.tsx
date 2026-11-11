@@ -6,6 +6,7 @@ import { useGitStatus, gitStatusFor } from '../../stores/gitStatus';
 import { usePluginRegistry, useInspectorTabs } from '../../plugins/registry';
 import { PluginBoundary } from '../../plugins/PluginBoundary';
 import { tabIcon } from '../../plugins/sdk';
+import { MenuBadgeCount } from '../../plugins/menuBadge';
 
 const tabStyle = (on: boolean): React.CSSProperties => ({
   // Each tab is as wide as its name, then they share the rest (2026-11-09: four equal tabs cut "Previews").
@@ -63,6 +64,7 @@ export function Inspector({ projectId, terminalId, onOpenFile, detailsSlot }: { 
             <button key={p.key} role="tab" aria-selected={tab === p.key} title={`${p.label} (${p.plugin})`} onClick={() => setTab(p.key as `plugin:${string}`)} style={tabStyle(tab === p.key)}>
               {p.icon && <Icon size={14} aria-hidden />}
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.label}</span>
+              {p.badge && terminalId && <MenuBadgeCount badge={p.badge} ctx={{ terminalId, sessionId: projectId }} />}
             </button>
           );
         })}

@@ -1,5 +1,5 @@
 import { MenuBadgeCount } from '../../plugins/menuBadge';
-import { useContributions } from '../../plugins/registry';
+import { useContributions, type InspectorTabCtx, type MenuBadge } from '../../plugins/registry';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Terminal } from '../../api/types';
@@ -31,7 +31,7 @@ const BRANCHABLE: string[] = ['claude-code', 'codex', 'grok'];
 
 export type ThreadMenuAt = { tab: Terminal; x: number; y: number };
 /** A plugin row the caller adds (the phone's thread header: plugins' right-column tabs). */
-export type ThreadMenuPluginRow = { key: string; label: string; icon: Icon; onPick: (tab: Terminal) => void };
+export type ThreadMenuPluginRow = { key: string; label: string; icon: Icon; onPick: (tab: Terminal) => void; badge?: MenuBadge<InspectorTabCtx> };
 
 /** One body, two shells (2026-11-07): the phone's slide-up sheet and the desktop's fly-out show the
  *  same groups; only the sizes differ. `sheet` is finger-sized, `popover` is mouse-sized. */
@@ -246,7 +246,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
         : []),
     ];
     const plugins = [
-      ...(pluginRows ?? []).map((p) => row(`tab-${p.key}`, p.icon, p.label, pick(p.onPick))),
+      ...(pluginRows ?? []).map((p) => row(`tab-${p.key}`, p.icon, p.label, pick(p.onPick), undefined, {}, p.badge ? <MenuBadgeCount badge={p.badge} ctx={{ terminalId: t.id, sessionId: t.sessionId ?? null }} /> : undefined)),
       ...pluginItems.filter((p) => !p.when || p.when({ tab: t }))
         .map((p) => row(`item-${p.plugin}-${p.id}`, pluginIcon(p.icon), p.label, pick((x) => p.onPick({ tab: x })), undefined, {}, p.badge ? <MenuBadgeCount badge={p.badge} ctx={{ tab: t }} /> : undefined)),
     ];

@@ -326,7 +326,10 @@ export default function activate(d) {
 
   d.register({
     views: [{ id: 'history', label: 'Previews', icon: 'eye', Component: History }],
-    inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab }],
+    // The badge (v4.5.2): this thread's new previews. It puts the dot on the thread's ⋯ button and a
+    // count on the tab and on the phone's menu row (the thread-menu item that did it left in v4.5.0).
+    inspectorTabs: [{ id: 'thread', label: 'Previews', icon: 'eye', Component: ThreadTab,
+      badge: { subscribe: (cb) => usePv.subscribe(cb), get: ({ terminalId }) => usePv.getState().items.reduce((n, x) => n + (!x.seenAt && x.terminalId === terminalId ? 1 : 0), 0) } }],
     projectMenu: [{ id: 'open', label: 'Previews', onPick: ({ session }) => usePv.getState().openSheet(session.id) }],
     // No thread-menu item (2026-11-09): a thread shows its own previews (the Previews tab, a row in the
     // phone's thread menu), a project shows the project's (its menu and the eye), and the Previews

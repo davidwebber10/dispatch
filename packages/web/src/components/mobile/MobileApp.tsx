@@ -192,7 +192,7 @@ export function MobileApp() {
           );
         } : undefined}
         pluginRows={pluginTabs.map((p) => ({
-          key: p.key, label: p.label, icon: tabIcon(p.icon),
+          key: p.key, label: p.label, icon: tabIcon(p.icon), badge: p.badge,
           onPick: (tab) => setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }),
         }))} />
       <PluginTabSheet tabKey={pluginSheet?.key ?? null} terminalId={pluginSheet?.terminalId ?? null} sessionId={pluginSheet?.sessionId ?? null} onClose={() => setPluginSheet(null)} />
