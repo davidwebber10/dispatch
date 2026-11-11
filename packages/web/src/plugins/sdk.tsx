@@ -49,6 +49,9 @@ export const ICONS: Record<string, Icon> = {
   copy: Icons.Copy, check: Icons.Check, trash: Icons.Trash, image: Icons.Image, file: Icons.FileText, pdf: Icons.FilePdf, html: Icons.FileHtml, csv: Icons.FileCsv, x: Icons.X,
   'thumbs-up': Icons.ThumbsUp, 'thumbs-down': Icons.ThumbsDown, dots: Icons.DotsThree, 'bell-slash': Icons.BellSlash,
   'arrow-up': Icons.ArrowUp, 'arrow-down': Icons.ArrowDown, 'arrow-right': Icons.ArrowRight, target: Icons.Target, plus: Icons.Plus, 'caret-down': Icons.CaretDown, 'caret-right': Icons.CaretRight,
+  // Drops (2026-11-11): the kinds' chips and their buttons.
+  link: Icons.Link, code: Icons.Code, key: Icons.Key, 'list-numbers': Icons.ListNumbers, 'git-diff': Icons.GitDiff, table: Icons.Table,
+  'text-t': Icons.TextT, paperclip: Icons.Paperclip, 'eye-slash': Icons.EyeSlash, 'arrow-square-out': Icons.ArrowSquareOut, 'terminal-prompt': Icons.Terminal,
 };
 export const pluginIcon = (name: string | undefined): Icon => (name && ICONS[name]) || Icons.PuzzlePiece;
 /** A right-column tab's icon: a name from the list above, or the phosphor component itself. */

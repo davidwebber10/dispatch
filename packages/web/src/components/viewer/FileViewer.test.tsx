@@ -170,3 +170,51 @@ describe('an inline text file (2026-11-08)', () => {
     expect(screen.getByRole('dialog').style.background).toContain('100%');
   });
 });
+
+// Drops (2026-11-11): on a phone a 1.9 MB original showed nothing until all of it arrived. A caller may
+// hand a small copy to show at once (`placeholderSrc`) and a larger one to swap in when it has loaded
+// (`displaySrc`); `src` stays the original (Original, Download, Copy). Callers without them are unchanged.
+describe('FileViewer: a quick copy first, then the display copy', () => {
+  const progressive: ViewerFile[] = [
+    { src: '/f/big.png', name: 'big.png', mime: 'image/png', placeholderSrc: '/f/big.png?thumb=480', displaySrc: '/f/big.png?thumb=1600' },
+    { src: '/f/b.png', name: 'b.png', mime: 'image/png', placeholderSrc: '/f/b.png?thumb=480', displaySrc: '/f/b.png?thumb=1600' },
+  ];
+  const shown = () => screen.getByRole('img', { name: 'big.png' }) as HTMLImageElement;
+
+  it('shows the placeholder at once, and the display copy when it has loaded', () => {
+    render(<FileViewer files={progressive} onClose={() => {}} />);
+    expect(shown().getAttribute('src')).toBe('/f/big.png?thumb=480');
+    const loader = document.querySelector('img[data-viewer-preload][src="/f/big.png?thumb=1600"]') as HTMLImageElement;
+    expect(loader).not.toBeNull();
+    // The next file's display copy loads too, so a swipe lands on it ready.
+    expect(document.querySelector('img[data-viewer-preload][src="/f/b.png?thumb=1600"]')).not.toBeNull();
+    fireEvent.load(loader);
+    expect(shown().getAttribute('src')).toBe('/f/big.png?thumb=1600');
+    expect(document.querySelector('img[data-viewer-preload][src="/f/big.png?thumb=1600"]')).toBeNull();
+  });
+
+  it('the strip uses the small copies, and Original opens the full file in a new tab', () => {
+    render(<FileViewer files={progressive} onClose={() => {}} />);
+    const strip = screen.getAllByRole('tab').map((t) => t.querySelector('img')!.getAttribute('src'));
+    expect(strip).toEqual(['/f/big.png?thumb=480', '/f/b.png?thumb=480']);
+    const original = screen.getByRole('link', { name: 'Open the original' });
+    expect(original).toHaveAttribute('href', '/f/big.png');
+    expect(original).toHaveAttribute('target', '_blank');
+    expect(original.getAttribute('rel')).toContain('noopener');
+    expect(original).toHaveTextContent('Original');
+  });
+
+  it('a display copy that fails keeps the placeholder', () => {
+    render(<FileViewer files={progressive} onClose={() => {}} />);
+    fireEvent.error(document.querySelector('img[data-viewer-preload][src="/f/big.png?thumb=1600"]')!);
+    expect(shown().getAttribute('src')).toBe('/f/big.png?thumb=480');
+  });
+
+  it('a file without them is as before: the src, no preload, no Original button', () => {
+    render(<FileViewer files={files} onClose={() => {}} />);
+    expect((screen.getByRole('img', { name: 'one.png' }) as HTMLImageElement).getAttribute('src')).toBe('/f/one.png');
+    expect(document.querySelector('img[data-viewer-preload]')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open the original' })).toBeNull();
+    expect(screen.getAllByRole('tab')[0].querySelector('img')!.getAttribute('src')).toBe('/f/one.png');
+  });
+});

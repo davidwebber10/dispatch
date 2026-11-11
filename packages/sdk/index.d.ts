@@ -207,7 +207,8 @@ export interface SettingsRowProps {
 export interface UiKit {
   Modal: React.ComponentType<{ open: boolean; onClose(): void; title?: string; sheet?: boolean; maxWidth?: number; children: React.ReactNode }>;
   Markdown: React.ComponentType<{ source: string }>;
-  FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string> }[]; index?: number; onClose(): void; label?: string }>;
+  /** `placeholderSrc` (an image's small copy, shown at once) and `displaySrc` (the copy shown once loaded; default `src`); with either, an Original button opens `src`. */
+  FileViewer: React.ComponentType<{ files: { src: string; name: string; mime: string; size?: number; loadText?(): Promise<string>; placeholderSrc?: string; displaySrc?: string }[]; index?: number; onClose(): void; label?: string }>;
   Toggle: React.ComponentType<{ on: boolean; onClick(): void; label?: string }>;
   /**
    * The app's filter control: a search field with a Filters button to its right. The button

@@ -28,7 +28,18 @@ export interface ViewerFile {
   size?: number;
   /** The text of a markdown/text file; without it the file is fetched from `src`. */
   loadText?: () => Promise<string>;
+  /**
+   * An image only (Drops, 2026-11-11): a small copy to show at once (a list's cached thumbnail), while the
+   * display copy loads. With it, an Original button opens `src` itself.
+   */
+  placeholderSrc?: string;
+  /** An image only: the copy to show (a large thumbnail). Default `src`. Copy, Download and Share keep `src`. */
+  displaySrc?: string;
 }
+
+/** The address a slide shows when it has loaded, and the one it shows meanwhile (null: none). */
+const displayOf = (f: ViewerFile): string => f.displaySrc ?? f.src;
+const hasCopies = (f: ViewerFile): boolean => !!(f.placeholderSrc || f.displaySrc);
 
 export type ViewerKind = 'image' | 'pdf' | 'html' | 'markdown' | 'text';
 
@@ -122,6 +133,8 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
   const [live, setLive] = useState(false);
   const [copied, setCopied] = useState<'idle' | 'copied' | 'error'>('idle');
   const [text, setText] = useState<Record<number, string>>({});
+  // The display copies that have loaded (or failed): a slide swaps its placeholder for a loaded one.
+  const [loaded, setLoaded] = useState<Record<string, 'ok' | 'failed'>>({});
   // The latest view, also between renders: a gesture's end reads it in the same task as the
   // move that set it, before React has drawn that move.
   const viewRef = useRef(view);
@@ -411,6 +424,12 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
               {copied === 'copied' ? <Check size={17} weight="bold" color="var(--color-accent)" /> : <Copy size={17} weight="bold" color={copied === 'error' ? 'var(--color-status-red)' : undefined} />}
             </button>
           )}
+          {kind === 'image' && hasCopies(file) && (
+            <a href={file.src} target="_blank" rel="noopener noreferrer" title="Open the original" aria-label="Open the original"
+              style={{ ...btn(), width: 'auto', padding: '0 10px', gap: 5, textDecoration: 'none', font: '600 12.5px var(--font-sans)' }}>
+              <ArrowSquareOut size={15} weight="bold" />Original
+            </a>
+          )}
           {canShare && <button type="button" onClick={() => void shareFile(file)} title="Share" aria-label="Share" style={btn()}><ShareNetwork size={17} weight="bold" /></button>}
           <button type="button" onClick={() => void downloadFile(file)} title={kind === 'image' ? 'Download image' : 'Download'} aria-label={kind === 'image' ? 'Download image' : 'Download file'} style={btn()}><DownloadSimple size={17} weight="bold" /></button>
           {external && <a href={file.src} target="_blank" rel="noopener noreferrer" title="Open in a new tab" aria-label="Open in a new tab" style={{ ...btn(false, true), textDecoration: 'none' }}><ArrowSquareOut size={17} weight="bold" /></a>}
@@ -424,10 +443,18 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
         <div data-backdrop="1" style={{ position: 'absolute', inset: 0, transform: `translate(${swipe?.x ?? 0}px, ${sink}px)`, transition: swipe ? 'none' : 'transform 200ms ease-out' }}>
           {slides.map((i) => {
             const f = files[i]; const k = viewerKind(f.mime); const current = i === index;
+            // A placeholder shows until the display copy has loaded; a failed one leaves the placeholder.
+            const full = displayOf(f);
+            const waiting = k === 'image' && !!f.placeholderSrc && loaded[full] !== 'ok';
+            const shownSrc = waiting ? f.placeholderSrc! : full;
             return (
               <div key={i} data-backdrop="1" style={{ position: 'absolute', top: 0, bottom: 0, left: `${(i - index) * 100}%`, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: `${barPad}px ${mobile ? 0 : 56}px ${n > 1 ? 76 : 16}px` }}>
+                {k === 'image' && waiting && loaded[full] === undefined && (
+                  <img data-viewer-preload="1" src={full} alt="" aria-hidden="true" style={{ display: 'none' }}
+                    onLoad={() => setLoaded((m) => ({ ...m, [full]: 'ok' }))} onError={() => setLoaded((m) => ({ ...m, [full]: 'failed' }))} />
+                )}
                 {k === 'image' ? (
-                  <img ref={current ? imgRef : undefined} src={f.src} alt={current ? (f.name || '') : ''} draggable={false}
+                  <img ref={current ? imgRef : undefined} src={shownSrc} alt={current ? (f.name || '') : ''} draggable={false}
                     onClick={(e) => e.stopPropagation()} onMouseDown={current ? onMouseDown : undefined} onDoubleClick={current ? onDoubleClick : undefined}
                     style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block', borderRadius: mobile ? 0 : 'var(--radius-md)',
                       transform: current ? `translate(${view.x}px, ${view.y}px) scale(${view.scale})` : undefined, transition: current ? transition : undefined,
@@ -461,7 +488,7 @@ export function FileViewer({ files, index: initial = 0, onClose, label }: { file
               <button key={i} type="button" role="tab" aria-selected={on} aria-label={f.name} title={f.name} onClick={() => go(i)}
                 style={{ width: 48, height: 48, flexShrink: 0, padding: 0, borderRadius: 'var(--radius-sm)', overflow: 'hidden', cursor: 'pointer', background: 'color-mix(in srgb, color-mix(in srgb, var(--color-on-media) 11%, var(--color-media-bg)) 90%, transparent)',
                   border: on ? '2px solid var(--color-accent)' : '2px solid color-mix(in srgb, var(--color-on-media) 14%, transparent)', opacity: on ? 1 : 0.72, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-secondary)' }}>
-                {I ? <I size={22} /> : <img src={f.src} alt="" loading="lazy" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
+                {I ? <I size={22} /> : <img src={f.placeholderSrc ?? f.src} alt="" loading="lazy" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />}
               </button>
             );
           })}
