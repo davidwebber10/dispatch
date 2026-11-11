@@ -8,11 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { randomUUID } from 'node:crypto';
+import { KINDS, MAX_STEPS, checkArgs, expireSecret } from './kinds.mjs';
 
 const PLUGIN = process.env.DISPATCH_PLUGIN || 'previews';
 const API = (process.env.DISPATCH_API || `http://127.0.0.1:${process.env.DISPATCH_PORT || 3456}`).replace(/\/$/, '');
-const MAX_FILES = 20;
-const MAX_TEXT = 64 * 1024;
 const CALL_TIMEOUT_MS = 15_000;
 /** Past this many documents the oldest seen ones go (a plugin holds at most 2000). */
 const PRUNE_AT = 1800;
@@ -47,18 +46,28 @@ const TOOLS = [{
   name: 'preview',
   description:
     'Hand the user something to LOOK AT or COPY, wherever they are (phone or desktop, terminal mode ' +
-    'or Pretty mode): it lands in their Previews list with a badge, and opens in the app. Pass `paths` ' +
-    '(files inside this project: png/jpg/gif/webp/svg images, pdf, html, md, txt, csv, json; up to 20) ' +
-    'and/or `text` (a string they will copy: a URL, a command, a token, a snippet; up to 64 KB). ' +
-    'Add a short `title` and a one-line `note` for context. Use it for screenshots, rendered pages, ' +
-    'reports, HTML artifacts, and for any text the user must copy exactly; in terminal mode they cannot ' +
-    'select text. Prefer this over describing a picture or dictating a long string.',
+    'or Pretty mode): it lands in their Drops list with a badge, and opens in the app. In terminal mode ' +
+    'they cannot select text, so anything they must copy goes here, never only in your reply. ' +
+    'Pass `paths` (files inside this project: png/jpg/gif/webp/svg images, pdf, html, md, txt, csv, json; ' +
+    'up to 20) and/or `text` (up to 64 KB), a short `title` and a one-line `note`. Set `kind` for the look: ' +
+    '`command` for anything the user must run (one per line in `text`, or `commands`; optional `cwd`), each ' +
+    'with its own Copy button; `link` for a `url` (http/https) to open; `code` for a snippet (`language`); ' +
+    '`secret` for a token or password (masked, removed after 24 hours; never repeat it in title or note); ' +
+    '`steps` for a short procedure (`steps`: [{ text, command? }], max 30); `diff` for a unified diff; ' +
+    '`table` for CSV `text` or one .csv/.json file. Without `kind`, images show as pictures, a URL as a link, ' +
+    'markdown as a document and other text as text to copy.',
   inputSchema: {
     type: 'object',
     properties: {
+      kind: { type: 'string', enum: KINDS, description: 'The look of the drop. command: shell commands to run; link: a url; code: a snippet; secret: a token or password; steps: a procedure; diff: a unified diff; table: CSV or a .csv/.json file. Default: inferred.' },
       paths: { type: 'array', items: { type: 'string' }, description: 'Files inside the project working directory (relative or absolute).' },
-      text: { type: 'string', description: 'A string for the user to copy.' },
-      title: { type: 'string', description: 'A short name for the preview (default: the first file name, or "Text").' },
+      text: { type: 'string', description: 'A string for the user to copy. For command: one command per line. For table: CSV.' },
+      commands: { type: 'array', items: { type: 'string' }, description: 'kind=command: the commands, one per item (instead of text).' },
+      cwd: { type: 'string', description: 'kind=command: the folder the commands run in.' },
+      url: { type: 'string', description: 'kind=link: an http:// or https:// address.' },
+      language: { type: 'string', description: 'kind=code: the language name (ts, python, bash, ...).' },
+      steps: { type: 'array', maxItems: MAX_STEPS, items: { type: 'object', properties: { text: { type: 'string' }, command: { type: 'string' } }, required: ['text'] }, description: 'kind=steps: the steps in order; a step with a command gets its own Copy.' },
+      title: { type: 'string', description: 'A short name for the drop (default: the first file name, or a name for the kind).' },
       note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
     },
   },
@@ -68,12 +77,8 @@ const disabledIfGone = (e) => { if (e && e.status === 404 && /unknown plugin/i.t
 
 async function preview(args) {
   const a = args && typeof args === 'object' ? args : {};
-  const text = typeof a.text === 'string' && a.text.trim() ? a.text : null;
-  if (text && text.length > MAX_TEXT) throw new Error('text too long (max 64 KB)');
-  const paths = Array.isArray(a.paths) ? a.paths : [];
-  if (paths.length > MAX_FILES) throw new Error(`too many files (max ${MAX_FILES})`);
-  if (!text && paths.length === 0) throw new Error('a preview needs text or at least one path');
-  for (const p of paths) if (typeof p !== 'string' || !p.trim()) throw new Error('each path must be a non-empty string');
+  // The kind's checks (kinds.mjs): a plain message for each refusal, before anything is written.
+  const { kind, text, paths, fields, defaultTitle } = checkArgs(a);
   const who = await call('GET', '/api/whoami');
   if (who.kind !== 'thread' || !who.sessionId) throw new Error('the preview tool runs inside a Dispatch thread only');
   // Paths are made absolute from this server's cwd (the thread's folder, a worktree perhaps), so the
@@ -98,19 +103,30 @@ async function preview(args) {
     sessionName = row ? row.name : null;
   } catch { /* same */ }
   const id = randomUUID();
-  const title = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 200) : files.length ? files[0].name : 'Text';
+  const title = typeof a.title === 'string' && a.title.trim() ? a.title.trim().slice(0, 200) : files.length ? files[0].name : defaultTitle || 'Text';
   const note = typeof a.note === 'string' && a.note.trim() ? a.note.trim().slice(0, 1000) : null;
   const doc = { id, sessionId: who.sessionId, sessionName, terminalId: who.terminalId, terminalLabel, title, note, text, files, createdAt: new Date().toISOString(), seenAt: null };
+  // No kind: no `kind` key, as before (the app infers the look).
+  if (kind) Object.assign(doc, { kind }, fields);
   try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/preview:${id}`, { value: doc }); }
   catch (e) { throw disabledIfGone(e); }
   void prune().catch(() => {});
   return { ok: true, id, files: files.map((f) => f.name) };
 }
 
-/** Keep the store under the cap: past PRUNE_AT documents, the oldest seen previews go (their files with them). */
+/**
+ * Keep the store under the cap: past PRUNE_AT documents, the oldest seen previews go (their files with them).
+ * And a secret's text goes 24 hours after it was posted (Drops, 2026-11-11). This runs at each post; the
+ * app does the same when it loads the list. No timer.
+ */
 async function prune() {
   const list = await call('GET', `/api/plugins/${encodeURIComponent(PLUGIN)}/data?values=1`);
   const docs = ((list && list.docs) || []).filter((d) => d.key.startsWith('preview:') && d.value && typeof d.value === 'object');
+  for (const d of docs) {
+    const gone = expireSecret(d.value);
+    if (!gone) continue;
+    try { await call('PUT', `/api/plugins/${encodeURIComponent(PLUGIN)}/data/${encodeURIComponent(d.key)}`, { value: gone }); d.value = gone; } catch { /* the next post tries again */ }
+  }
   if (docs.length <= PRUNE_AT) return;
   const seen = docs.filter((d) => d.value.seenAt).sort((a, b) => (a.value.createdAt < b.value.createdAt ? -1 : 1));
   for (const d of seen.slice(0, Math.max(0, docs.length - PRUNE_TO))) {

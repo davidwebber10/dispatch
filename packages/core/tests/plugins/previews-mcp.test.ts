@@ -95,6 +95,58 @@ describe('the Previews plugin MCP server', () => {
     expect(none.text).toMatch(/needs text or at least one path/);
   });
 
+  // Drops (2026-11-11): one tool, a `kind`, its fields on the document.
+  it('stores the kind and its fields; refuses a bad url, too many steps and an unknown kind; describes the kinds', async () => {
+    const key = app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key as string;
+    start({ DISPATCH_AUTH: key, DISPATCH_API: `http://127.0.0.1:${port}`, DISPATCH_PLUGIN: 'previews' });
+    const list = await rpc('tools/list');
+    const tool = list.result.tools[0];
+    expect(tool.name).toBe('preview');
+    expect(tool.inputSchema.properties.kind.enum).toEqual(expect.arrayContaining(['command', 'link', 'code', 'secret', 'steps', 'diff', 'table']));
+    expect(tool.description).toMatch(/`command`/);
+    expect(tool.description).toMatch(/`secret`/);
+    const docOf = (id: string) => pluginData.getDoc(db, 'previews', `preview:${id}`)!.value as Record<string, unknown>;
+
+    const cmd = await callPreview({ kind: 'command', commands: ['cd ~/x', 'make'], cwd: '~/x' });
+    expect(cmd.isError).toBe(false);
+    expect(docOf(cmd.parsed.id)).toMatchObject({ kind: 'command', commands: ['cd ~/x', 'make'], cwd: '~/x', text: 'cd ~/x\nmake', title: '2 commands' });
+    const link = await callPreview({ kind: 'link', url: 'https://example.com/a' });
+    expect(docOf(link.parsed.id)).toMatchObject({ kind: 'link', url: 'https://example.com/a', title: 'example.com' });
+    const secret = await callPreview({ kind: 'secret', text: 'tok-123456' });
+    expect(docOf(secret.parsed.id)).toMatchObject({ kind: 'secret', text: 'tok-123456', title: 'Secret' });
+    expect(secret.text).not.toContain('tok-123456');
+    const table = await callPreview({ kind: 'table', paths: ['rows.csv'] });
+    expect(table.isError).toBe(true); // the file is not there
+    fs.writeFileSync(path.join(proj, 'rows.csv'), 'a,b\n1,2\n');
+    const t2 = await callPreview({ kind: 'table', paths: ['rows.csv'] });
+    expect(docOf(t2.parsed.id)).toMatchObject({ kind: 'table', title: 'rows.csv' });
+    // No kind: no `kind` key, as before.
+    const plain = await callPreview({ text: 'plain' });
+    expect('kind' in docOf(plain.parsed.id)).toBe(false);
+
+    const bad = await callPreview({ kind: 'link', url: 'javascript:alert(1)' });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toMatch(/url must be an http:\/\/ or https:\/\/ address/);
+    const many = await callPreview({ kind: 'steps', steps: Array.from({ length: 31 }, (_, i) => ({ text: `step ${i}` })) });
+    expect(many.text).toMatch(/too many steps \(max 30\)/);
+    const unknown = await callPreview({ kind: 'movie', text: 'x' });
+    expect(unknown.text).toMatch(/unknown kind "movie"/);
+  });
+
+  it('a post removes the text of secrets older than 24 hours (no timer: at the next post)', async () => {
+    const key = app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key as string;
+    const old = { id: 'old', sessionId: 'A', terminalId: 'tA', kind: 'secret', title: 'Secret', note: null, text: 'tok-OLD', files: [], createdAt: new Date(Date.now() - 25 * 3_600_000).toISOString(), seenAt: null };
+    const fresh = { ...old, id: 'fresh', text: 'tok-NEW', createdAt: new Date().toISOString() };
+    pluginData.setDoc(db, 'previews', 'preview:old', old, null);
+    pluginData.setDoc(db, 'previews', 'preview:fresh', fresh, null);
+    start({ DISPATCH_AUTH: key, DISPATCH_API: `http://127.0.0.1:${port}`, DISPATCH_PLUGIN: 'previews' });
+    await callPreview({ text: 'anything' });
+    const read = (k: string) => pluginData.getDoc(db, 'previews', k)!.value as Record<string, unknown>;
+    for (let i = 0; i < 50 && read('preview:old').text !== null; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(read('preview:old')).toMatchObject({ text: null, expired: true });
+    expect(read('preview:fresh')).toMatchObject({ text: 'tok-NEW' });
+  });
+
   it('refuses a path outside the project with the plain message, and a disabled plugin answers a plain error', async () => {
     const key = app.locals.keys.mint({ kind: 'thread', terminalId: 'tA' }).key as string;
     start({ DISPATCH_AUTH: key, DISPATCH_API: `http://127.0.0.1:${port}`, DISPATCH_PLUGIN: 'previews' });
