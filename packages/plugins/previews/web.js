@@ -247,7 +247,7 @@ export default function activate(d) {
     steps: { label: 'Steps', icon: 'list-numbers', color: 'var(--color-cyan)' },
     diff: { label: 'Diff', icon: 'git-diff', color: 'var(--color-pink)' },
     table: { label: 'Table', icon: 'table', color: 'var(--color-yellow)' },
-    doc: { label: 'Doc', icon: 'file', color: 'var(--color-accent)' },
+    doc: { label: 'Doc', icon: 'file', color: 'var(--color-text-emphasis)' }, // not the accent: the accent is the command's green in the default theme
     text: { label: 'Text', icon: 'text-t', color: 'var(--color-text-secondary)' },
     images: { label: 'Images', icon: 'image', color: 'var(--color-status-coral)' },
     files: { label: 'Files', icon: 'paperclip', color: 'var(--color-text-tertiary)' },
