@@ -54,6 +54,15 @@ describe('a closing line after report_status does not hide the report', () => {
     expect(String(sent.mock.calls[0][1])).toContain(REPORT);
   });
 
+  it('earlier narration in the turn stays out of the notice; a long last text stands alone', () => {
+    const LONG = 'FINAL: ' + 'details '.repeat(40);
+    const { svc, sent } = makeService([text('checking the tests now'), toolUse('Bash'), text(LONG), result]);
+    svc.noteAgentCompletion('a');
+    const notice = String(sent.mock.calls[0][1]);
+    expect(notice).toContain('FINAL:');
+    expect(notice).not.toContain('checking the tests now');
+  });
+
   it('the outcome summary (board, scheduled roles) carries the report', () => {
     const { svc } = makeService(TURN);
     expect(svc.lastAssistantTextPublic('a')).toContain(REPORT);

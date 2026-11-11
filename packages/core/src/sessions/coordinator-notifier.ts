@@ -59,6 +59,9 @@ export interface CoordinatorNotifierDeps {
  * message. It starts the queued threads that waited on a finished one, keeps the interim recap
  * timer, and saves the outcome of a turn.
  */
+/** A last text this short, after an earlier text in the same turn, is a closing line and not the report. */
+const CLOSING_LINE_MAX = 200;
+
 export class CoordinatorNotifier {
   constructor(private readonly deps: CoordinatorNotifierDeps) {}
 
@@ -358,14 +361,17 @@ export class CoordinatorNotifier {
     this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'question-answered' });
   }
 
-  /** What the agent said in its last ended turn: every text of that turn, oldest first, pulled
-   *  live from the structured manager (no transcript-file latency), truncated for a nudge. The
-   *  whole turn, not only its last text: after report_status an agent ends with one short closing
-   *  line (PR #159), and the report comes before it. Falls back to the newest text in the event
-   *  ring. '' when there's none yet. */
+  /** What the agent said at the end of its last ended turn, pulled live from the structured
+   *  manager (no transcript-file latency), truncated for a nudge: the turn's last text, plus the
+   *  text before it when the last one is only a short closing line. After report_status an agent
+   *  that already wrote its report ends with one short line (PR #159), and the report is the text
+   *  just before it. Earlier narration in the turn ("checking the tests…") stays out. Falls back to
+   *  the newest text in the event ring. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
     const manager = this.structuredManagerForTerminal(terminalId);
-    let text = (manager?.getTurnTexts(terminalId) ?? []).join('\n\n').trim();
+    const turn = (manager?.getTurnTexts?.(terminalId) ?? []).map((t) => t.trim()).filter(Boolean);
+    let text = turn.length ? turn[turn.length - 1] : '';
+    if (turn.length > 1 && text.length <= CLOSING_LINE_MAX) text = `${turn[turn.length - 2]}\n\n${text}`;
     if (!text) {
       const events = (manager?.getEvents(terminalId) ?? []) as any[];
       for (let i = events.length - 1; i >= 0 && !text; i--) {
