@@ -394,7 +394,6 @@ export default function activate(d) {
     const [viewing, setViewing] = useState(null);
     const [reading, setReading] = useState(false);
     const kind = inferKind(preview);
-    const accent = KIND[kind].color;
     const isDoc = kind === 'doc';
     const docName = /\.(md|markdown)$/i.test(preview.title) ? preview.title : `${preview.title}`;
     const unseen = !preview.seenAt;
@@ -410,7 +409,7 @@ export default function activate(d) {
     const hasImage = preview.files.some((f) => kindOf(f) === 'image');
     const hasOther = preview.files.some((f) => kindOf(f) !== 'image');
     const text = typeof preview.text === 'string' && preview.text ? preview.text : null;
-    return h('div', { 'data-testid': 'preview-item', 'data-kind': kind, 'data-unseen': unseen ? 'true' : undefined, style: { display: 'flex', flexDirection: 'column', gap: 9, padding: '11px 13px 12px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', borderLeft: `3px solid ${accent}`, background: 'var(--color-elevated)', position: 'relative' } },
+    return h('div', { 'data-testid': 'preview-item', 'data-kind': kind, 'data-unseen': unseen ? 'true' : undefined, style: { display: 'flex', flexDirection: 'column', gap: 9, padding: '11px 13px 12px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', background: 'var(--color-elevated)', position: 'relative' } },
       h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: 8 } },
         unseen && h('span', { 'aria-label': 'New', title: 'Not viewed yet', style: { width: 8, height: 8, borderRadius: '50%', background: 'var(--color-accent)', marginTop: 6, flexShrink: 0 } }),
         h('div', { style: { flex: 1, minWidth: 0 } },

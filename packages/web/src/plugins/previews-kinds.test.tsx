@@ -277,3 +277,22 @@ describe('Drops: the thread tab renders the kinds too', () => {
     expect(screen.getAllByRole('button', { name: /^Copy command \d$/ })).toHaveLength(2);
   });
 });
+
+// Owner rule (2026-11-11): no coloured or grey left-edge stripe on any card or block; the chip alone tells the kind.
+describe('Drops: no left-edge stripes', () => {
+  it('no card or block has a left border or an inset shadow', async () => {
+    const { History } = setup([
+      base('a', { kind: 'command', title: 'C', commands: ['ls'], text: 'ls' }),
+      base('b', { kind: 'diff', title: 'D', text: '+x\n-y' }),
+      base('c', { kind: 'code', title: 'K', text: 'x' }),
+      base('d', { kind: 'steps', title: 'S', steps: [{ text: 'a', command: 'b' }] }),
+    ]);
+    const { container } = render(<History />);
+    await screen.findByText('C');
+    for (const el of container.querySelectorAll<HTMLElement>('*')) {
+      expect(el.style.borderLeft, el.outerHTML.slice(0, 80)).toBe('');
+      expect(el.style.borderLeftWidth).toBe('');
+      expect(el.style.boxShadow).not.toMatch(/inset/);
+    }
+  });
+});
