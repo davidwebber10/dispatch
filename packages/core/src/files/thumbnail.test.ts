@@ -29,6 +29,16 @@ describe('createThumbnailer', () => {
     expect(THUMB_WIDTHS).toContain(480);
   });
 
+  // Drops (2026-11-11): the viewer shows the cached 480 copy at once, then a 1600 copy, not the 1.9 MB original.
+  it('offers 1600 for the viewer, and a 1600 copy is made like the others', async () => {
+    expect(THUMB_WIDTHS).toContain(1600);
+    const seen: number[] = [];
+    const t = createThumbnailer({ cacheDir: cache, probe: async () => ({ width: 4000, height: 3000 }), run: async (_s, w, out) => { seen.push(w); fs.writeFileSync(out, 'jpeg'); } });
+    fs.writeFileSync(path.join(dir, 'y.png'), 'png bytes');
+    expect(await t.thumbnail(path.join(dir, 'y.png'), 1600)).not.toBeNull();
+    expect(seen).toEqual([1600]);
+  });
+
   it.runIf(hasSips)('makes a JPEG no wider than asked, caches it, and makes it again when the source changes', async () => {
     const t = createThumbnailer({ cacheDir: cache });
     const a = await t.thumbnail(png, 480);

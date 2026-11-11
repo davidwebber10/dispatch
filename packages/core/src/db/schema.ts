@@ -635,4 +635,10 @@ function initializeSchema(db: Database.Database): void {
       DELETE FROM thread_journal_images WHERE terminal_id = OLD.id;
     END;
   `));
+  // Drops (2026-11-11): a plugin file is copied into the data folder when it is posted
+  // (`<dataDir>/plugin-files/<plugin>/<snapshot>`), and the copy is served. NULL: no copy (a row from
+  // before, a file over the copy limit, a copy that failed); the project file is served, as before.
+  migrate(db, 'drops-plugin-file-snapshot', () => db.exec(`
+    ALTER TABLE plugin_files ADD COLUMN snapshot TEXT;
+  `));
 }

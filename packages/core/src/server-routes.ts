@@ -178,6 +178,7 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     hasAccount: accountsForAssist ? (h, id) => accountsForAssist.has(h, id) : undefined,
     push: d.pushService,
     secretRoots: defaultSecretRoots(d.dataDir),
+    dataDir: d.dataDir,
   }));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));

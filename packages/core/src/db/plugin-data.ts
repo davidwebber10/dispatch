@@ -205,6 +205,20 @@ export function removeFile(db: Database.Database, pluginId: string, fileId: stri
 }
 
 /**
+ * The snapshot of a file reference (Drops, 2026-11-11): the name of its copy in
+ * `<dataDir>/plugin-files/<plugin>/`, or null (no copy: the project file is served). The name is
+ * kept apart from PluginFile, so no caller and no export sees it.
+ */
+export function setFileSnapshot(db: Database.Database, pluginId: string, fileId: string, snapshot: string | null): void {
+  db.prepare('UPDATE plugin_files SET snapshot = ? WHERE plugin_id = ? AND file_id = ?').run(snapshot, pluginId, fileId);
+}
+
+export function getFileSnapshot(db: Database.Database, pluginId: string, fileId: string): string | null {
+  const r = db.prepare('SELECT snapshot FROM plugin_files WHERE plugin_id = ? AND file_id = ?').get(pluginId, fileId) as { snapshot: string | null } | undefined;
+  return r?.snapshot ?? null;
+}
+
+/**
  * Export and import (owner, 2026-11-07): one JSON file with a plugin's documents, settings and
  * file references. A file reference is a path in a project, not the bytes: the bytes stay in the
  * project, and the daemon re-checks the path against the project's folder when it serves it.
@@ -304,7 +318,8 @@ export function importPlugin(
     // file_id is unique across all plugins: a reference that another plugin holds gets a new id here.
     const holder = db.prepare('SELECT plugin_id FROM plugin_files WHERE file_id = ?');
     const upsertFile = db.prepare(`INSERT INTO plugin_files (plugin_id, file_id, session_id, path, name, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(file_id) DO UPDATE SET session_id = excluded.session_id, path = excluded.path, name = excluded.name, mime = excluded.mime, size = excluded.size, created_at = excluded.created_at`);
+      ON CONFLICT(file_id) DO UPDATE SET session_id = excluded.session_id, path = excluded.path, name = excluded.name, mime = excluded.mime, size = excluded.size, created_at = excluded.created_at,
+        snapshot = CASE WHEN plugin_files.path = excluded.path THEN plugin_files.snapshot ELSE NULL END`); // a copy of another file is not this one
     for (const f of files) {
       const held = holder.get(f.fileId) as { plugin_id: string } | undefined;
       const fileId = held && held.plugin_id !== pluginId ? randomUUID() : f.fileId;

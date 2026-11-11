@@ -16,6 +16,7 @@ import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } 
 import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
+import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
 import { notionalValueUsd } from '../analytics/pricing.js';
@@ -37,6 +38,8 @@ function fail(res: import('express').Response, e: unknown): void {
 }
 
 const OK = { ok: true } as const;
+/** A snapshot never changes (Drops, 2026-11-11): its bytes and its thumbnails may be kept for a year. */
+const SNAPSHOT_CACHE = 'private, max-age=31536000, immutable';
 export const ASSIST_INFLIGHT_MAX = 3;
 /** A plugin sends at most one push in this time (coach plan, Task 5). */
 export const PUSH_GAP_MS = 3_600_000;
@@ -233,6 +236,8 @@ export interface AssistLimitsDeps {
   thumbs?: Thumbnailer;
   /** The credential deny-list of the file route (files/secret-paths.ts). Default: the roots of this machine. */
   secretRoots?: SecretRoots;
+  /** The data folder: the snapshots of plugin files and the thumbnail cache live in it. Default: platform.dataDir(). */
+  dataDir?: string;
   /** The web-push sender, for `notify:push` (coach spec section 9a.5). */
   push?: { notifyPlugin(input: { pluginId: string; title: string; body: string; url?: string }): Promise<void> };
 }
@@ -240,11 +245,12 @@ export interface AssistLimitsDeps {
 export function createPluginsRouter(plugins: PluginRegistry, db: Database.Database, assist: AssistRunner | null = null, limits: AssistLimitsDeps = {}): Router {
   const router = policyRouter();
   // Created on first use, so a test app that never asks for a thumbnail never touches the data folder.
+  const dataDir = (): string => limits.dataDir ?? platform.dataDir();
   let thumbs: Thumbnailer | null = limits.thumbs ?? null;
-  const thumbnailer = (): Thumbnailer => (thumbs ??= createThumbnailer({ cacheDir: path.join(platform.dataDir(), 'cache', 'thumbs') }));
+  const thumbnailer = (): Thumbnailer => (thumbs ??= createThumbnailer({ cacheDir: path.join(dataDir(), 'cache', 'thumbs') }));
   // Read on first use too: a router that serves no file never looks at the data folder.
   let roots: SecretRoots | null = limits.secretRoots ?? null;
-  const secretRoots = (): SecretRoots => (roots ??= defaultSecretRoots(platform.dataDir()));
+  const secretRoots = (): SecretRoots => (roots ??= defaultSecretRoots(dataDir()));
   const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -283,7 +289,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   router.delete('/plugins/:id', ownerOnlyStrict, (req, res) => {
     // ?keepData=1 keeps the plugin's documents, settings and files, so a reinstall finds them (owner, 2026-11-07).
-    try { plugins.remove(req.params.id); if (req.query.keepData !== '1') pluginData.clearPlugin(db, req.params.id); plugins.announce(req.params.id); res.status(204).end(); } catch (e) { fail(res, e); }
+    try {
+      plugins.remove(req.params.id);
+      if (req.query.keepData !== '1') { pluginData.clearPlugin(db, req.params.id); removeAllSnapshots(dataDir(), req.params.id); }
+      plugins.announce(req.params.id); res.status(204).end();
+    } catch (e) { fail(res, e); }
   });
 
   // ── a bound caller reaches its own plugin only (engineering program 2026-11-09, W3-F) ──
@@ -371,7 +381,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   // ── file references (spec section 5): a checked file of a project, served to the owner ──
   // A thread registers a file of its own project (the plugin must grant threads:write-storage);
   // the owner or the plugin's own key names the project in the body.
-  router.post('/plugins/:id/files', dataWrite, (req, res) => {
+  router.post('/plugins/:id/files', dataWrite, async (req, res) => {
     if (!known(req, res)) return;
     const body = (req.body ?? {}) as { path?: unknown; sessionId?: unknown };
     let principal: ReturnType<typeof principalOf> | null = null;
@@ -386,13 +396,25 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     }
     const session = sessionsDb.getById(db, sessionId);
     if (!session) return void res.status(404).json({ error: 'session not found' });
+    let ref: pluginData.PluginFile;
     try {
-      const file = checkProjectFile(session.working_dir, body.path);
-      res.status(201).json(pluginData.addFile(db, req.params.id, session.id, file));
+      ref = pluginData.addFile(db, req.params.id, session.id, checkProjectFile(session.working_dir, body.path));
     } catch (e) {
       if (e instanceof ProjectFileError) return void res.status(e.status).json({ error: e.message });
-      throw e;
+      return void res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); // an async handler: Express 4 would not catch a throw
     }
+    // Drops (2026-11-11): a snapshot of the checked file, served from now on (plugins/snapshots.ts). No copy
+    // (too large, a credential, an error) keeps the reference to the project file, as before.
+    if (ref.size <= SNAPSHOT_MAX_BYTES) {
+      const name = await takeSnapshot({ dataDir: dataDir(), pluginId: req.params.id, fileId: ref.fileId, src: ref.path, root: session.working_dir, roots: secretRoots() }).catch(() => null);
+      if (name) {
+        pluginData.setFileSnapshot(db, req.params.id, ref.fileId, name);
+        // The list's small copy is made now, so the first look on a phone does not wait for it. Not awaited.
+        const snap = snapshotPath(dataDir(), req.params.id, name);
+        if (snap && ref.mime.startsWith('image/') && ref.mime !== 'image/svg+xml') void thumbnailer().thumbnail(snap, 480).catch(() => null);
+      }
+    }
+    res.status(201).json(ref);
   });
 
   // The bytes, for the owner only. Re-checked against the project's CURRENT folder: a project moved
@@ -400,6 +422,28 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/:id/files/:fileId', async (req, res) => {
     if (!known(req, res)) return;
     const file = pluginData.getFile(db, req.params.id, req.params.fileId);
+    // Drops (2026-11-11): a snapshot was checked when it was made and never changes. It is served without the
+    // project (which may have moved since), and with a cache of a year. A recorded copy that is gone from the
+    // disk falls back to the project file below, with all of its checks.
+    const snap = file ? snapshotPath(dataDir(), req.params.id, pluginData.getFileSnapshot(db, req.params.id, file.fileId)) : null;
+    if (file && snap && fs.existsSync(snap)) {
+      const mime = PROJECT_FILE_MIME[path.extname(snap).toLowerCase()] ?? 'application/octet-stream';
+      const width = Number(req.query.thumb);
+      if (req.query.thumb !== undefined && mime.startsWith('image/') && mime !== 'image/svg+xml' && Number.isInteger(width)) {
+        const small = await thumbnailer().thumbnail(snap, width).catch(() => null);
+        if (small) {
+          res.set({ 'Cache-Control': SNAPSHOT_CACHE, ETag: `"snap-${file.fileId}-${width}"` });
+          setFileHeaders(res, 'image/jpeg', 'sandbox');
+          res.type('image/jpeg');
+          return void res.sendFile(small);
+        }
+      }
+      res.set({ 'Cache-Control': SNAPSHOT_CACHE, ETag: `"snap-${file.fileId}"` });
+      res.setHeader('Content-Disposition', `inline; filename="${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}"`);
+      setFileHeaders(res, mime, mime === 'text/html' ? HTML_SANDBOX_CSP : 'sandbox');
+      res.type(mime);
+      return void res.sendFile(snap);
+    }
     const session = file ? sessionsDb.getById(db, file.sessionId) : null;
     if (!file || !session || !insideRealRoot(session.working_dir, file.path) || !fs.existsSync(file.path)) {
       return void res.status(404).json({ error: 'file not found' });
@@ -431,7 +475,9 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
 
   router.delete('/plugins/:id/files/:fileId', settingsRule, (req, res) => {
     if (!known(req, res)) return;
+    const snapshot = pluginData.getFileSnapshot(db, req.params.id, req.params.fileId);
     if (!pluginData.removeFile(db, req.params.id, req.params.fileId)) return void res.status(404).json({ error: 'file not found' });
+    removeSnapshot(dataDir(), req.params.id, snapshot);
     res.status(204).end();
   });
 
@@ -461,6 +507,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const before = mode === 'replace' ? pluginData.listDocs(db, id).map((d) => d.key) : [];
     try {
       const out = pluginData.importPlugin(db, id, req.body, { mode, force: req.query.force === '1' });
+      if (mode === 'replace') removeAllSnapshots(dataDir(), id); // the rows that held them are gone
       const now = new Set(pluginData.listDocs(db, id).map((d) => d.key));
       for (const key of before) if (!now.has(key)) plugins.broadcast({ type: 'plugin:data', id, key, deleted: true });
       for (const key of now) plugins.broadcast({ type: 'plugin:data', id, key });

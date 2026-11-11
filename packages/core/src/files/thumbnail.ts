@@ -18,8 +18,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 
-/** The widths a caller may ask for: a fixed list keeps the cache small and the input checked. */
-export const THUMB_WIDTHS = [240, 480, 960] as const;
+/** The widths a caller may ask for: a fixed list keeps the cache small and the input checked. 1600 is the viewer's copy (Drops, 2026-11-11). */
+export const THUMB_WIDTHS = [240, 480, 960, 1600] as const;
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.tif', '.tiff', '.bmp']);
 const SIPS = '/usr/bin/sips';
 const MAX_AT_ONCE = 2;

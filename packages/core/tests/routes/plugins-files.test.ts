@@ -30,6 +30,8 @@ describe('plugin file routes (2026-11-07)', () => {
   };
   const asPlugin = (id: string) => ({ Authorization: `Bearer ${fs.readFileSync(path.join(tmp, 'keys', `plugin-${id}`), 'utf8').trim()}` });
   const asThread = (terminalId = 'tA') => ({ Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId }).key}` });
+  // A row from before the snapshots (Drops, 2026-11-11): no copy, the project file is served.
+  const asOldRow = (fileId: string) => pluginData.setFileSnapshot(db, 'previews', fileId, null);
   const register = (auth: Record<string, string>, id: string, body: Record<string, unknown>) =>
     request(app).post(`/api/plugins/${id}/files`).set(auth).set('Content-Type', 'application/json').send(JSON.stringify(body));
 
@@ -62,6 +64,7 @@ describe('plugin file routes (2026-11-07)', () => {
     fs.writeFileSync(path.join(proj, 'tiny.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
     execFileSync('/usr/bin/sips', ['-z', '1200', '2000', path.join(proj, 'tiny.png'), '--out', path.join(proj, 'big.png')], { stdio: 'ignore' });
     const reg = await register(asThread(), 'previews', { path: 'big.png' });
+    asOldRow(reg.body.fileId);
     const full = await request(app).get(`/api/plugins/previews/files/${reg.body.fileId}`).buffer(true);
     const thumb = await request(app).get(`/api/plugins/previews/files/${reg.body.fileId}?thumb=480`).buffer(true);
     expect(full.headers['content-type']).toMatch(/^image\/png/);
@@ -160,8 +163,9 @@ describe('plugin file routes (2026-11-07)', () => {
     expect((await register(asThread('tB'), 'previews', { path: 'shot.png', sessionId: 'A' })).status).toBe(404);
   });
 
-  it('serve re-checks the real root: a file swapped for a link out of the project, or a project folder moved, 404s', async () => {
+  it('serve re-checks the real root: a file swapped for a link out of the project, or a project folder moved, 404s (a row without a snapshot)', async () => {
     const r = await register(asThread(), 'previews', { path: 'shot.png' });
+    asOldRow(r.body.fileId);
     fs.rmSync(path.join(proj, 'shot.png'));
     fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(proj, 'shot.png'));
     const swapped = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
@@ -205,6 +209,125 @@ describe('plugin file routes (2026-11-07)', () => {
     const ok = await request(app).get(`/api/plugins/previews/files/${plain.body.fileId}`);
     expect(ok.status).toBe(200);
     expect(ok.text).toBe('an ordinary file');
+  });
+
+  // ── Drops (2026-11-11): a snapshot of the file at post time, in the data folder ──────────────────
+  const snapDir = () => path.join(tmp, 'plugin-files', 'previews');
+  const snapOf = (fileId: string) => (db.prepare('SELECT snapshot FROM plugin_files WHERE file_id = ?').get(fileId) as { snapshot: string | null }).snapshot;
+
+  it('a posted file is copied into <dataDir>/plugin-files/<plugin>/ (folder 0700, file 0600), and the copy is served', async () => {
+    fs.writeFileSync(path.join(proj, 'report.txt'), 'version one');
+    const r = await register(asThread(), 'previews', { path: 'report.txt' });
+    expect(r.status).toBe(201);
+    expect(r.body.snapshot).toBeUndefined(); // the caller never sees the data folder
+    const name = snapOf(r.body.fileId);
+    expect(name).toBe(`${r.body.fileId}.txt`);
+    const copy = path.join(snapDir(), name!);
+    expect(fs.readFileSync(copy, 'utf8')).toBe('version one');
+    expect(fs.statSync(snapDir()).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(copy).mode & 0o777).toBe(0o600);
+    // The project file changes, moves, or goes: the preview still shows what was posted.
+    fs.writeFileSync(path.join(proj, 'report.txt'), 'version two');
+    const got = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(got.status).toBe(200);
+    expect(got.text).toBe('version one');
+    expect(got.headers['content-type']).toMatch(/^text\/plain/);
+    expect(got.headers['content-disposition']).toBe('inline; filename="report.txt"');
+    fs.rmSync(path.join(proj, 'report.txt'));
+    expect((await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`)).text).toBe('version one');
+  });
+
+  it('a snapshot is served with an immutable cache and a stable ETag; a row without one keeps the short cache', async () => {
+    const r = await register(asThread(), 'previews', { path: 'notes.md' });
+    const a = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(a.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+    expect(a.headers.etag).toBe(`"snap-${r.body.fileId}"`);
+    const b = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(b.headers.etag).toBe(a.headers.etag);
+    const again = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`).set('If-None-Match', a.headers.etag);
+    expect(again.status).toBe(304);
+    // A row from before snapshots (no copy): the project file, with the short cache, as before.
+    const old = pluginData.addFile(db, 'previews', 'A', { path: path.join(proj, 'notes.md'), name: 'notes.md', mime: 'text/markdown', size: 4 });
+    const c = await request(app).get(`/api/plugins/previews/files/${old.fileId}`);
+    expect(c.status).toBe(200);
+    expect(c.text).toBe('# hi');
+    expect(c.headers['cache-control']).toBe('private, max-age=60');
+    expect(c.headers.etag ?? '').not.toMatch(/snap-/);
+  });
+
+  it('a recorded snapshot that is gone from the disk falls back to the project file (with its checks)', async () => {
+    const r = await register(asThread(), 'previews', { path: 'notes.md' });
+    fs.rmSync(path.join(snapDir(), snapOf(r.body.fileId)!));
+    const got = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(got.status).toBe(200);
+    expect(got.text).toBe('# hi');
+    expect(got.headers['cache-control']).toBe('private, max-age=60');
+  });
+
+  it('a file over 25 MB is not copied: it is served from the project as before', async () => {
+    fs.writeFileSync(path.join(proj, 'huge.txt'), '');
+    fs.truncateSync(path.join(proj, 'huge.txt'), 25 * 1024 * 1024 + 1);
+    const r = await register(asThread(), 'previews', { path: 'huge.txt' });
+    expect(r.status).toBe(201);
+    expect(snapOf(r.body.fileId)).toBeNull();
+    expect(fs.existsSync(snapDir()) ? fs.readdirSync(snapDir()) : []).toEqual([]);
+    const got = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(got.status).toBe(200);
+    expect(got.headers['cache-control']).toBe('private, max-age=60');
+  });
+
+  it('a file that holds credentials is never copied', async () => {
+    sessionsDb.create(db, { id: 'D', provider: 'claude-code', name: 'Data', workingDir: tmp });
+    fs.writeFileSync(path.join(tmp, 'keys', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const key = await register({}, 'previews', { path: 'keys/shot.png', sessionId: 'D' });
+    expect(key.status).toBe(201);
+    expect(snapOf(key.body.fileId)).toBeNull();
+    expect((await request(app).get(`/api/plugins/previews/files/${key.body.fileId}`)).status).toBe(403);
+  });
+
+  it('deleting the reference removes its snapshot; removing the plugin removes the folder', async () => {
+    const r = await register(asThread(), 'previews', { path: 'notes.md' });
+    const r2 = await register(asThread(), 'previews', { path: 'page.html' });
+    const copy = path.join(snapDir(), snapOf(r.body.fileId)!);
+    expect(fs.existsSync(copy)).toBe(true);
+    expect((await request(app).delete(`/api/plugins/previews/files/${r.body.fileId}`)).status).toBe(204);
+    expect(fs.existsSync(copy)).toBe(false);
+    expect(fs.existsSync(path.join(snapDir(), snapOf(r2.body.fileId)!))).toBe(true);
+    // The owner removes a local plugin: its data and its copies go.
+    plugin('local', ['threads:write-storage']);
+    const l = await register({}, 'local', { path: 'notes.md', sessionId: 'A' });
+    expect(l.status).toBe(201);
+    expect(fs.existsSync(path.join(tmp, 'plugin-files', 'local'))).toBe(true);
+    const del = await request(app).delete('/api/plugins/local');
+    expect(del.status).toBe(204);
+    expect(fs.existsSync(path.join(tmp, 'plugin-files', 'local'))).toBe(false);
+    expect(fs.existsSync(snapDir())).toBe(true); // another plugin's copies stay
+  });
+
+  it('serving a snapshot does not need the project folder any more (the bytes were checked at post time)', async () => {
+    const r = await register(asThread(), 'previews', { path: 'shot.png' });
+    db.prepare('UPDATE sessions SET working_dir = ? WHERE id = ?').run(outside, 'A');
+    const got = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}`);
+    expect(got.status).toBe(200);
+    expect(got.headers['content-type']).toMatch(/^image\/png/);
+  });
+
+  it.runIf(process.platform === 'darwin' && fs.existsSync('/usr/bin/sips'))('a snapshot image gets its 480 copy at post time, and its thumbnails are immutable too', async () => {
+    const { execFileSync } = await import('node:child_process');
+    fs.writeFileSync(path.join(proj, 'tiny.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+    execFileSync('/usr/bin/sips', ['-z', '1200', '2000', path.join(proj, 'tiny.png'), '--out', path.join(proj, 'big.png')], { stdio: 'ignore' });
+    const r = await register(asThread(), 'previews', { path: 'big.png' });
+    // The 480 copy is made without the request waiting for it: it shows up in the cache soon after.
+    const cache = path.join(tmp, 'cache', 'thumbs');
+    for (let i = 0; i < 100 && !(fs.existsSync(cache) && fs.readdirSync(cache).some((n) => n.endsWith('.jpg'))); i++) await new Promise((res) => setTimeout(res, 50));
+    expect(fs.readdirSync(cache).filter((n) => /^[0-9a-f]{32}\.jpg$/.test(n))).toHaveLength(1);
+    for (const w of [480, 1600]) {
+      const t = await request(app).get(`/api/plugins/previews/files/${r.body.fileId}?thumb=${w}`).buffer(true);
+      expect(t.status).toBe(200);
+      expect(t.headers['content-type']).toMatch(/^image\/jpeg/);
+      expect(t.headers['cache-control']).toBe('private, max-age=31536000, immutable');
+      expect(t.headers.etag).toBe(`"snap-${r.body.fileId}-${w}"`);
+    }
   });
 
   it('a file reference is removed by the owner or the plugin key, and removing the plugin clears its files', async () => {
