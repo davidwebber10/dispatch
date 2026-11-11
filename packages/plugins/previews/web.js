@@ -240,7 +240,7 @@ export default function activate(d) {
 
   // The kinds (2026-11-11): a chip with an icon and a label, and a color, so a card tells its kind at a glance.
   const KIND = {
-    command: { label: 'Command', icon: 'terminal-prompt', color: 'var(--color-green)' },
+    command: { label: 'Command', icon: 'terminal', color: 'var(--color-green)' },
     link: { label: 'Link', icon: 'link', color: 'var(--color-blue)' },
     code: { label: 'Code', icon: 'code', color: 'var(--color-purple)' },
     secret: { label: 'Secret', icon: 'key', color: 'var(--color-orange)' },
@@ -344,7 +344,7 @@ export default function activate(d) {
     const [shown, setShown] = useState(false);
     const expired = !!preview.expired || !preview.text || !!expireSecret(preview);
     if (expired) return h('div', { style: { ...block, padding: '9px 12px', fontSize: 13, color: 'var(--color-text-tertiary)' } }, 'This secret expired (24 hours after it was sent). Ask the thread again if you still need it.');
-    const Eye = shown ? I('eye-slash') : icons.eye;
+    const Eye = icons.eye; // the label says Reveal or Hide; one icon keeps the app's first load small
     return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
       h('div', { 'data-testid': 'drop-secret', style: { ...block, ...mono, padding: '9px 12px', letterSpacing: shown ? 0 : '1px', userSelect: shown ? 'all' : 'none', WebkitUserSelect: shown ? 'all' : 'none' } }, shown ? preview.text : maskSecret(preview.text)),
       h('div', { style: row },
