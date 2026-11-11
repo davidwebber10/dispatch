@@ -53,6 +53,9 @@ export interface CoordinatorNotifierDeps {
   };
 }
 
+/** A last text this short, after an earlier text in the same turn, is a closing line and not the report. */
+const CLOSING_LINE_MAX = 200;
+
 /**
  * The membrane's "up" channel (W3-B: moved out of SessionService). It tells the thread that started
  * a worker what the worker did: finished, blocked, asked a question, was stopped, got a direct
@@ -358,18 +361,34 @@ export class CoordinatorNotifier {
     this.notifyStarterOfAgent(agentTerminalId, note, { kind: 'question-answered' });
   }
 
-  /** The agent's most recent assistant text, pulled live from the structured event ring
-   *  (no transcript-file latency), truncated for a nudge. '' when there's none yet. */
+  /** What the agent said at the end of its last ended turn, pulled live from the structured
+   *  manager (no transcript-file latency), truncated for a nudge: the turn's last text, plus the
+   *  text before it when the last one is only a short closing line. After report_status an agent
+   *  that already wrote its report ends with one short line (PR #159), and the report is the text
+   *  just before it. Earlier narration in the turn ("checking the tests…") stays out. Falls back to
+   *  the newest text in the event ring. '' when there's none yet. */
   private lastAssistantText(terminalId: string, max = 600): string {
-    const events = (this.structuredManagerForTerminal(terminalId)?.getEvents(terminalId) ?? []) as any[];
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
-        const text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-        if (text) { const safe = redactKeys(text); return safe.length > max ? safe.slice(0, max) + '…' : safe; }
+    const manager = this.structuredManagerForTerminal(terminalId);
+    const turn = (manager?.getTurnTexts?.(terminalId) ?? []).map((t) => redactKeys(t.trim())).filter(Boolean); // redacted BEFORE any cut, so a cut cannot split a key past the pattern
+    let text = turn.length ? turn[turn.length - 1] : '';
+    if (turn.length > 1 && text.length <= CLOSING_LINE_MAX) {
+      // The last text stays whole; the text before it gets only the room that is left, from its end.
+      const room = max - text.length - 3;
+      const before = turn[turn.length - 2];
+      if (room > 40) text = `${before.length > room ? '…' + before.slice(-room) : before}\n\n${text}`;
+    }
+    if (!text) {
+      const events = (manager?.getEvents(terminalId) ?? []) as any[];
+      for (let i = events.length - 1; i >= 0 && !text; i--) {
+        const e = events[i];
+        if (e?.type === 'assistant' && Array.isArray(e.message?.content)) {
+          text = e.message.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+        }
       }
     }
-    return '';
+    if (!text) return '';
+    const safe = redactKeys(text);
+    return safe.length > max ? safe.slice(0, max) + '…' : safe;
   }
 
   /** Public wrapper — server.ts needs the same text for the outcome line. */
@@ -483,10 +502,14 @@ export class CoordinatorNotifier {
    * back to the transcript's last assistant text when no harness runs the terminal.
    */
   private lastTurnTexts(terminalId: string): string[] {
-    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
+    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts?.(terminalId);
     if (live) return [...live].reverse();
-    const items = this.conversationTail(terminalId, 50).filter((it) => it.kind === 'assistant' && it.text);
-    return items.length ? [String(items[items.length - 1].text)] : [];
+    // From the transcript: every assistant text since the last user message, so a report followed
+    // by a closing line after report_status keeps the report.
+    const tail = this.conversationTail(terminalId, 50);
+    let start = 0;
+    for (let i = tail.length - 1; i >= 0; i--) if (tail[i].kind === 'user') { start = i + 1; break; }
+    return tail.slice(start).filter((it) => it.kind === 'assistant' && it.text).map((it) => String(it.text)).reverse();
   }
 
   /**

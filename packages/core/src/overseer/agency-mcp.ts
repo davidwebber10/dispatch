@@ -446,7 +446,10 @@ export const TOOLS = [
       'Declare how YOUR OWN turn is ending. Call this as the last thing you do, every turn. ' +
       'It is how the human sees whether you finished, need them, or are blocked — without it ' +
       'a turn that ends by asking a question looks identical to one that finished the work. ' +
-      'After it returns, stop: write nothing more and call no other tool. The human speaks next.',
+      'After it returns, your turn ends: call no other tool, and do not start new work or answer a ' +
+      'question nobody asked. If you have not written your reply yet, write it now. If you already ' +
+      'wrote it, end with one short closing line; never repeat the reply, and never end with an empty ' +
+      'message. The human speaks next.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1051,8 +1054,17 @@ async function listWatches(): Promise<{ watching: any[]; watchedBy: any[] }> {
  * going (seen 2026-11-06 with Qwen over OpenCode: after `{ok:true}` it invented the user's next
  * question and answered it, turn after turn) gets an explicit stop; a model that already stops
  * loses nothing.
+ *
+ * It asks for one short closing line, not silence (2026-11-11). "Write nothing more" made Claude
+ * models end with an empty message; Claude Code answers that with "Your previous response had no
+ * visible output", and the model then wrote its whole answer a second time (31 times in 14 days,
+ * 13 of them full repeats).
  */
-export const REPORT_STATUS_NOTE = 'Your turn is over. Write nothing more and call no other tool; the human speaks next.';
+export const REPORT_STATUS_NOTE =
+  'Status recorded. Your turn ends now: call no other tool, and do not start new work or answer a question nobody asked. ' +
+  'If you have not written your reply yet, write it now. ' +
+  'If you already wrote it, end with one short closing line; do not repeat the reply, and do not end with an empty message. ' +
+  'The human speaks next.';
 
 async function reportStatus(args: { state: string; summary: string; ask?: string; blocker?: string }): Promise<{ ok: true; note: string }> {
   if (!args?.state) throw new Error('state is required');

@@ -260,7 +260,9 @@ describe('RolesService — role run lifecycle (Task 6)', () => {
   /** Toggled per-test to exercise the seed-delivery-failure/orphan-cleanup path. */
   let sendThreadMessageShouldThrow: boolean;
 
+  let finalOutputText = '';
   beforeEach(() => {
+    finalOutputText = '';
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-run-'));
     db = new Database(':memory:');
     initSchema(db);
@@ -291,6 +293,7 @@ describe('RolesService — role run lifecycle (Task 6)', () => {
         return { transport: 'structured', droppedNonText: false };
       },
       removeTerminal: (terminalId: string) => { removeCalls.push(terminalId); },
+      finalOutput: () => finalOutputText,
     };
 
     agentService = new AgentService(
@@ -462,6 +465,42 @@ describe('RolesService — role run lifecycle (Task 6)', () => {
     expect(lines).toHaveLength(1);
     expect(agentsDb.getRun(db, runId)!.status).toBe('succeeded');
     expect(removeCalls.filter((id) => id === terminalId)).toHaveLength(1);
+  });
+
+  it('settled: reads the contract from the whole last turn when a closing line follows report_status', async () => {
+    // PR #159: after report_status the runner ends with one short closing line, so the last text
+    // (lastOutcome.summary) no longer holds the contract. A failed run must not be logged as ok.
+    const { runId, terminalId } = enableAndFire();
+    finalOutputText = 'The export failed twice.\n\n```json\n{"outcome":"failed","summary":"export failed","links":[]}\n```\n\nRun complete.';
+    setLastOutcome(terminalId, { summary: 'Run complete.', needsHelp: false, inferred: false, at: new Date().toISOString() });
+
+    settledListener!({ terminalId, sessionId: 'proj-1', threadStatus: 'idle' });
+    await flush();
+
+    const logPath = path.join(tmp, 'x', 'log.jsonl');
+    const [entry] = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(entry.outcome).toBe('failed');
+    expect(entry.summary).toBe('export failed');
+    expect(agentsDb.getRun(db, runId)!.status).toBe('failed');
+  });
+
+  it('settled: the LAST contract block of the turn wins; an earlier draft or an unrelated JSON block does not', async () => {
+    const { terminalId } = enableAndFire();
+    finalOutputText = [
+      'The API answered:\n```json\n{"rows":3}\n```',
+      'Draft:\n```json\n{"outcome":"ok","summary":"draft","links":[]}\n```',
+      'The export then failed.\n```json\n{"outcome":"failed","summary":"export failed","links":[]}\n```',
+      'Run complete.',
+    ].join('\n\n');
+    setLastOutcome(terminalId, { summary: 'Run complete.', needsHelp: false, inferred: false, at: new Date().toISOString() });
+
+    settledListener!({ terminalId, sessionId: 'proj-1', threadStatus: 'idle' });
+    await flush();
+
+    const logPath = path.join(tmp, 'x', 'log.jsonl');
+    const [entry] = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(entry.outcome).toBe('failed');
+    expect(entry.summary).toBe('export failed');
   });
 
   it('settled: falls back to needsHelp/summary when lastOutcome.summary has no contract block', async () => {

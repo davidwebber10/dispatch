@@ -369,7 +369,10 @@ export function buildPeerPrompt(ctx: {
     'ending, NOT a message to the human, and NOT where your content goes. Call it as the LAST ' +
     'thing you do every turn: `done` when the work is finished, `needs_you` when you cannot ' +
     'proceed without the human, `blocked` when you are waiting on another agent or a timer. When it ' +
-    'returns, your turn is over: write nothing more and call no other tool; the human speaks next. Your ' +
+    'returns, your turn ends: call no other tool, and do not start new work or answer a question nobody ' +
+    'asked. If you have not written your reply yet, write it now. If you already wrote it, end with one ' +
+    'short closing line; never repeat the reply, and never end with an empty message (an empty one ' +
+    'makes the CLI ask you to continue). The human speaks next. Your ' +
     'findings, answer, and any question ALWAYS go in your normal reply text — that is what the ' +
     'human reads. A tool call\'s arguments are collapsed out of sight in the reader\'s view (in ' +
     'the terminal they must press Ctrl+O to even see them), so anything you put ONLY inside ' +
@@ -399,7 +402,8 @@ const AGENT_AUTONOMY_NOTE =
   'AskUserQuestion tool; it routes to your coordinator (Control Plane), who answers or escalates. Keep ' +
   'moving on your own otherwise. END every turn with a concise, self-contained SUMMARY of what you ' +
   'found or did and any recommended next step — your coordinator reads that summary (and your full ' +
-  'output) to decide what happens next, so make it the last thing you say.' +
+  'output) to decide what happens next. Put it in your reply; a short closing line after report_status ' +
+  'does not replace it.' +
   ' Test runs: if you changed code, run the test files your change touches, then the full suite once ' +
   'at the end. If you did not change code, run single test files only. Do not pipe a test run through ' +
   'head or tail. Write the output to a file, then read the file. If a run that you did not start is ' +
