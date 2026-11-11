@@ -63,6 +63,16 @@ describe('a closing line after report_status does not hide the report', () => {
     expect(notice).not.toContain('checking the tests now');
   });
 
+  it('a short real answer after long narration stays whole in the notice and the outcome summary', () => {
+    const NARRATION = 'I looked at the parser. ' + 'More detail about the parser. '.repeat(25);
+    const ANSWER = 'ANSWER: PR 12 is safe to merge.';
+    const { svc, sent } = makeService([text(NARRATION), toolUse('mcp__dispatch__report_status'), text(ANSWER), result]);
+    expect(svc.lastAssistantTextPublic('a')).toContain(ANSWER);
+    expect(svc.lastAssistantTextPublic('a').length).toBeLessThanOrEqual(401);
+    svc.noteAgentCompletion('a');
+    expect(String(sent.mock.calls[0][1])).toContain(ANSWER);
+  });
+
   it('the outcome summary (board, scheduled roles) carries the report', () => {
     const { svc } = makeService(TURN);
     expect(svc.lastAssistantTextPublic('a')).toContain(REPORT);

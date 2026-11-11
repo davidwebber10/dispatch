@@ -53,15 +53,15 @@ export interface CoordinatorNotifierDeps {
   };
 }
 
+/** A last text this short, after an earlier text in the same turn, is a closing line and not the report. */
+const CLOSING_LINE_MAX = 200;
+
 /**
  * The membrane's "up" channel (W3-B: moved out of SessionService). It tells the thread that started
  * a worker what the worker did: finished, blocked, asked a question, was stopped, got a direct
  * message. It starts the queued threads that waited on a finished one, keeps the interim recap
  * timer, and saves the outcome of a turn.
  */
-/** A last text this short, after an earlier text in the same turn, is a closing line and not the report. */
-const CLOSING_LINE_MAX = 200;
-
 export class CoordinatorNotifier {
   constructor(private readonly deps: CoordinatorNotifierDeps) {}
 
@@ -371,7 +371,12 @@ export class CoordinatorNotifier {
     const manager = this.structuredManagerForTerminal(terminalId);
     const turn = (manager?.getTurnTexts?.(terminalId) ?? []).map((t) => t.trim()).filter(Boolean);
     let text = turn.length ? turn[turn.length - 1] : '';
-    if (turn.length > 1 && text.length <= CLOSING_LINE_MAX) text = `${turn[turn.length - 2]}\n\n${text}`;
+    if (turn.length > 1 && text.length <= CLOSING_LINE_MAX) {
+      // The last text stays whole; the text before it gets only the room that is left, from its end.
+      const room = max - text.length - 3;
+      const before = turn[turn.length - 2];
+      if (room > 40) text = `${before.length > room ? '…' + before.slice(-room) : before}\n\n${text}`;
+    }
     if (!text) {
       const events = (manager?.getEvents(terminalId) ?? []) as any[];
       for (let i = events.length - 1; i >= 0 && !text; i--) {
@@ -497,7 +502,7 @@ export class CoordinatorNotifier {
    * back to the transcript's last assistant text when no harness runs the terminal.
    */
   private lastTurnTexts(terminalId: string): string[] {
-    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts(terminalId);
+    const live = this.structuredManagerForTerminal(terminalId)?.getTurnTexts?.(terminalId);
     if (live) return [...live].reverse();
     // From the transcript: every assistant text since the last user message, so a report followed
     // by a closing line after report_status keeps the report.

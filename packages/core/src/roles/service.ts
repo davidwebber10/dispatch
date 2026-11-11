@@ -34,12 +34,20 @@ interface RunContract {
   proposedBriefChanges?: string;
 }
 
+/** The LAST valid contract block in the text: a turn can hold an earlier draft or an unrelated JSON block. */
 function extractContract(summary: string | undefined): RunContract | null {
   if (!summary) return null;
-  const m = /```json\s*([\s\S]*?)```/.exec(summary);
-  if (!m) return null;
+  const blocks = [...summary.matchAll(/```json\s*([\s\S]*?)```/g)];
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const contract = parseContract(blocks[i][1]);
+    if (contract) return contract;
+  }
+  return null;
+}
+
+function parseContract(json: string): RunContract | null {
   let parsed: unknown;
-  try { parsed = JSON.parse(m[1]); } catch { return null; }
+  try { parsed = JSON.parse(json); } catch { return null; }
   if (!parsed || typeof parsed !== 'object') return null;
   const obj = parsed as Record<string, unknown>;
   if (obj.outcome !== 'ok' && obj.outcome !== 'attention' && obj.outcome !== 'failed') return null;
