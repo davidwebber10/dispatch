@@ -10,7 +10,7 @@ import { __resetDeprecationWarningsForTest } from './sdk';
 import { useProjects } from '../stores/projects';
 import type { PluginRow } from '../api/types';
 // The bundled plugins are plain JS.
-import activatePreviews from '../../../plugins/previews/web.js';
+import activatePreviews, { NAME as DROPS } from '../../../plugins/previews/web.js';
 import activateCoach from '../../../plugins/coach/web.js';
 
 /**
@@ -129,13 +129,13 @@ describe('the bundled plugins run on SDK version 2 (W3-F)', () => {
     const Eye = c.slots.find((s) => s.slot === 'project.header.actions')!.Component;
     const Sheet = c.slots.find((s) => s.slot === 'app.overlay')!.Component;
     render(<><Eye session={{ id: 's1' }} /><Sheet /></>);
-    const eye = screen.getByRole('button', { name: 'Previews' });
+    const eye = screen.getByRole('button', { name: DROPS });
     await act(async () => { eye.click(); });
-    await screen.findByText('Previews · Alpha');
+    await screen.findByText(`${DROPS} · Alpha`);
     expect(screen.getAllByTestId('preview-item')).toHaveLength(20);
     expect(screen.getByRole('button', { name: /Show older \(5 more\)/ })).toBeTruthy();
     // Delete: the document and the file reference go through the bound routes.
-    await act(async () => { screen.getAllByRole('button', { name: 'Delete preview' })[0].click(); });
+    await act(async () => { screen.getAllByRole('button', { name: `Delete ${DROPS.replace(/s$/i, '').toLowerCase()}` })[0].click(); });
     await settle();
     expect(daemon.calls).toContain('DELETE /api/plugins/previews/data/preview%3Ap1');
     expect(daemon.calls).toContain('DELETE /api/plugins/previews/files/f1');

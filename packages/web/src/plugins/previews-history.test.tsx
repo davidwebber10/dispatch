@@ -6,7 +6,7 @@ import { FilterBar } from '../components/common/FilterBar';
 import { Select } from '../components/common/Select';
 import { useProjects } from '../stores/projects';
 // The bundled Previews plugin is plain JS.
-import activate from '../../../plugins/previews/web.js';
+import activate, { NAME } from '../../../plugins/previews/web.js';
 
 const p = (id: string, sessionId: string, terminalId: string, terminalLabel: string, createdAt: string) =>
   ({ id, sessionId, sessionName: sessionId, terminalId, terminalLabel, title: `Preview ${id}`, note: null, text: 'x', files: [], createdAt, seenAt: 'seen' });
@@ -43,7 +43,7 @@ describe('the Previews history filters are the shared FilterBar (2026-11-07)', (
   it('one row: the search, then Filters; no native select; Project and Thread are the facets', async () => {
     render(<History />);
     await screen.findByText('Preview a');
-    const search = screen.getByRole('searchbox', { name: 'Search previews' });
+    const search = screen.getByRole('searchbox', { name: `Search ${NAME.toLowerCase()}` });
     const filters = screen.getByRole('button', { name: 'Filters' });
     expect(search.closest('[data-filterbar-row]')).toBe(filters.closest('[data-filterbar-row]'));
     expect(document.querySelector('select')).toBeNull();

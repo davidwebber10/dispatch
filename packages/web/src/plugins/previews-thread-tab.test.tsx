@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { createPluginSdk } from './facade';
 import { useProjects } from '../stores/projects';
 // The bundled Previews plugin is plain JS.
-import activate from '../../../plugins/previews/web.js';
+import activate, { NAME } from '../../../plugins/previews/web.js';
 
 const doc = (id: string, terminalId: string, title: string) =>
   ({ id, sessionId: 's1', sessionName: 'Alpha', terminalId, terminalLabel: terminalId === 't1' ? 'Perf' : 'Other', title, note: null, text: `text ${id}`, files: [], createdAt: `2026-11-09T10:0${id.length}:00Z`, seenAt: 'seen' });
@@ -29,11 +29,11 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
   // row); the project's previews belong to the project view. Two "Previews" rows were in the phone menu.
   it('adds no thread-menu item: the thread tab is the only Previews row in a thread', () => {
     expect(menu).toEqual([]);
-    expect(tabs.map((t) => t.label)).toEqual(['Previews']);
+    expect(tabs.map((t) => t.label)).toEqual([NAME]);
   });
 
   it('registers a Previews tab', () => {
-    expect(tabs.map((t) => t.label)).toEqual(['Previews']);
+    expect(tabs.map((t) => t.label)).toEqual([NAME]);
   });
 
   it('shows only the previews of the open thread', async () => {
@@ -47,7 +47,7 @@ describe('Previews: a right-column tab for the open thread (2026-11-09)', () => 
   it('a thread with no previews says so', async () => {
     const Tab = tabs[0].Component;
     render(<Tab terminalId="t9" sessionId="s1" />);
-    expect(await screen.findByText(/No previews from this thread yet/)).toBeInTheDocument();
+    expect(await screen.findByText(new RegExp(`No ${NAME.toLowerCase()} from this thread yet`))).toBeInTheDocument();
   });
 });
 
@@ -100,7 +100,7 @@ describe('Previews thread tab: a page of 20 with Show older', () => {
     expect(screen.queryByText('Other 2')).not.toBeNull();
     expect(screen.queryByRole('button', { name: /Show older/ })).toBeNull(); // 3 previews: no more pages
     rerender(<Tab terminalId={null} sessionId="s1" />);
-    expect(screen.getByText('Open a thread to see its previews.')).toBeInTheDocument();
+    expect(screen.getByText(`Open a thread to see its ${NAME.toLowerCase()}.`)).toBeInTheDocument();
     rerender(<Tab terminalId="t1" sessionId="s1" />);
     expect(screen.queryByText('Preview 19')).not.toBeNull();
     expect(screen.queryByText('Preview 20')).toBeNull();

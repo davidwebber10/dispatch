@@ -16,7 +16,7 @@ const CALL_TIMEOUT_MS = 15_000;
 /** Past this many documents the oldest seen ones go (a plugin holds at most 2000). */
 const PRUNE_AT = 1800;
 const PRUNE_TO = 1500;
-const DISABLED = 'The Previews plugin is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
+const DISABLED = 'The Drops plugin (id previews) is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
 
 function key() {
   if (process.env.DISPATCH_AUTH) return process.env.DISPATCH_AUTH.trim();
