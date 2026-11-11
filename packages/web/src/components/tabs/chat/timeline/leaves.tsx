@@ -283,7 +283,7 @@ export const Thinking = memo(function Thinking({ id, text }: { id?: string; text
         )}
       </button>
       {open && (
-        <div style={{ marginTop: 5, paddingLeft: 12, borderLeft: '2px solid var(--color-border)', color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <div style={{ marginTop: 5, paddingLeft: 12, color: 'var(--color-text-secondary)', font: 'italic 400 13px var(--font-sans)', lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {text}
         </div>
       )}
