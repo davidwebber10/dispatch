@@ -7,8 +7,8 @@ export function BoxRestartPill() {
   return (
     <div role="status" aria-live="polite" data-testid="box-restart" style={{
       position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', zIndex: 1000,
-      padding: '6px 14px', borderRadius: 999, background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)',
-      color: 'var(--color-text-secondary)', fontSize: 12.5, boxShadow: '0 2px 8px rgba(0,0,0,.12)',
+      padding: '6px 14px', borderRadius: 'var(--radius-md)', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)',
+      color: 'var(--color-text-secondary)', fontSize: 12.5,
     }}>
       Reconnecting…
     </div>

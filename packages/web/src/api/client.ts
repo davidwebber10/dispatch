@@ -1,6 +1,6 @@
 import { isBoxDownAnswer, noteBoxDown } from '../lib/boxRestart';
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
-import { apiPath } from '../lib/basePath';
+import { apiPath, BASE } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
 import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
@@ -69,7 +69,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   // A hosted box restarting: the router's 503/redirect/launcher page is not data and not an error
   // to show. Quietly reconnect (lib/boxRestart.ts); the caller gets a 503 it can treat as "later".
-  if ((!res.ok || res.redirected || /text\/html/i.test(res.headers?.get?.('content-type') ?? '')) && await isBoxDownAnswer(res)) {
+  // Only under a base path (a hosted box): a local daemon at the origin root keeps its old behaviour.
+  if (BASE && (!res.ok || res.redirected || /text\/html/i.test(res.headers?.get?.('content-type') ?? '')) && await isBoxDownAnswer(res)) {
     noteBoxDown();
     throw new ApiError(`${init?.method ?? 'GET'} ${path}: Reconnecting…`, 503);
   }
