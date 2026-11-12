@@ -62,6 +62,18 @@ export class SpawnInjection {
     return row ? terminalsDb.rowToTerminal(row) : null;
   }
 
+  /**
+   * A chat thread on a hosted box (no role: not an agent, a coordinator or a role run). Owner decision
+   * 2026-11-12: such a thread has no status tool and no instruction to report a status. A thread with
+   * a role keeps both: its coordinator reads its reports.
+   */
+  isHostedChat(terminalId: string, hosted: boolean = isHostedBox()): boolean {
+    if (!hosted) return false;
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(terminalsDb.getById(this.db, terminalId)?.config || '{}'); } catch { /* default {} */ }
+    return !config.role;
+  }
+
   apiUrl(): string | null {
     if (this.wiring.daemonApi) return this.wiring.daemonApi;
     if (this.wiring.statusContext?.serverUrl) return this.wiring.statusContext.serverUrl.replace(/\/+$/, '');
@@ -322,6 +334,8 @@ export class SpawnInjection {
         DISPATCH_TERMINAL: terminalId,
         DISPATCH_SPAWN_DEPTH: String(spawnDepth),
         ...(api ? { DISPATCH_API: api } : {}),
+        // A chat thread on a hosted box gets no status tool (overseer/agency-mcp.ts listedTools).
+        ...(this.isHostedChat(terminalId) ? { DISPATCH_NO_STATUS_TOOL: '1' } : {}),
       },
       ...(authEnv ? { authEnv: true } : {}),
       // Ships with Dispatch: a hosted business thread keeps it (os/hosted-mcp-policy.ts). Its tools
@@ -350,8 +364,9 @@ export class SpawnInjection {
       selfLabel: terminal.label,
       selfId: terminal.id,
       peers,
-      // A hosted box: the person reads only the reply (overseer/prompts.ts HOSTED_REPLY_RULE).
-      hosted: isHostedBox(),
+      // A chat thread on a hosted box: no status tool, and the person reads only the reply
+      // (overseer/prompts.ts HOSTED_REPLY_RULE).
+      hosted: this.isHostedChat(terminal.id),
     });
   }
 }

@@ -199,18 +199,37 @@ it('agent prompts keep the summary in the reply, not in the closing line', () =>
 });
 
 // Hosted reply rule: the person reads only the reply, never the thinking or the status card.
-it('buildPeerPrompt on a hosted box: the reply is the answer; report_status is a one-line summary after it', () => {
+it('buildPeerPrompt for a hosted chat thread: the reply is the answer; no status tool or status instruction', () => {
   const local = buildPeerPrompt(SAMPLE_CTX);
   const hosted = buildPeerPrompt({ ...SAMPLE_CTX, hosted: true });
   expect(hosted).toContain(HOSTED_REPLY_RULE);
   expect(local).not.toContain('YOUR REPLY IS THE ANSWER');
   expect(hosted).not.toContain('a STATUS signal for how your turn is');
+  expect(hosted).not.toMatch(/report_status|report a status|status (tool|report|card)|thread list/i);
   // Everything else is the same text.
   expect(hosted.replace(HOSTED_REPLY_RULE, '')).toBe(local.slice(0, local.indexOf('- report_status(')) + local.slice(local.indexOf('Etiquette and limits')));
   expect(HOSTED_REPLY_RULE).toMatchInlineSnapshot(`
-    "YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, files). Your thinking, your tool calls and report_status are not shown as the answer. So every turn ends with a reply that holds the answer itself, in plain words: the facts that were asked for. For a record you looked up, give its key fields (for an order: number, date, status, customer, total, lines, shipping). When there are rows (order lines, lists, rankings), show them as a table with the \`display\` tools. Never reply only "see above", "that is the full record" or a pointer to work the person cannot see.
-    - report_status({ state, summary, ask?, blocker? }) — a one-line summary for the thread list, never the answer. Order of each turn: write the reply with the answer, then call report_status as the last tool (\`done\`, \`needs_you\` when the person must act, \`blocked\` when you wait on another thread), then end with one short closing line. Before you call it, check that your reply text already holds the answer; if it does not, write the answer first.
+    "YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, files). Your thinking and your tool calls are not shown as the answer. So every turn ends with a reply in this order: first the direct answer in one or two plain sentences (for example: "Acme Outdoor 2026 sales to date are $120,400, up 12% on the same period last year."), then any tables or charts, then at most a short note on method or limits. For a record you looked up, give its key fields (for an order: number, date, status, customer, total, lines, shipping). When there are rows (order lines, lists, rankings), show them as a table with the \`display\` tools. Never reply only "see above", "that is the full record" or a pointer to work the person cannot see. Compare like with like: a year-to-date figure goes with the same period of the prior year, never with a full prior year.
 
     "
   `);
+});
+
+it('the dispatch server of a hosted chat thread lists no status tool and refuses a call to it; read and list stay', async () => {
+  const { listedTools, statusToolHidden, handleRequest } = await import('../../src/overseer/agency-mcp.js');
+  const hidden = listedTools({ DISPATCH_NO_STATUS_TOOL: '1' } as NodeJS.ProcessEnv).map((t) => t.name);
+  expect(hidden).not.toContain('report_status');
+  expect(hidden).toEqual(expect.arrayContaining(['list_threads', 'read_thread', 'list_projects']));
+  expect(listedTools({} as NodeJS.ProcessEnv).map((t) => t.name)).toContain('report_status');
+  expect(statusToolHidden({} as NodeJS.ProcessEnv)).toBe(false);
+  const saved = process.env.DISPATCH_NO_STATUS_TOOL;
+  process.env.DISPATCH_NO_STATUS_TOOL = '1';
+  try {
+    const list = await handleRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' } as never);
+    expect((list as any).result.tools.map((t: any) => t.name)).not.toContain('report_status');
+    const call = await handleRequest({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'report_status', arguments: { state: 'done', summary: 'x' } } } as never);
+    expect(JSON.stringify(call)).toMatch(/not available in this thread/);
+  } finally {
+    if (saved === undefined) delete process.env.DISPATCH_NO_STATUS_TOOL; else process.env.DISPATCH_NO_STATUS_TOOL = saved;
+  }
 });

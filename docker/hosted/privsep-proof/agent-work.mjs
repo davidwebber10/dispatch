@@ -214,6 +214,7 @@ async function threads() {
   s.notify('notifications/initialized');
   const names = ((await s.call('tools/list')).result?.tools ?? []).map((t) => t.name);
   step('tools', names.filter((n) => /thread|project/.test(n)));
+  step('statusTool', names.includes('report_status'));
   const text = (r) => r.result?.content?.[0]?.text ?? JSON.stringify(r.error ?? r);
   const listed = await s.call('tools/call', { name: 'list_threads', arguments: {} });
   let rows = []; try { rows = JSON.parse(text(listed)); } catch { /* an error text */ }

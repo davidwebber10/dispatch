@@ -350,21 +350,21 @@ const REPORT_STATUS_RULE =
     'question indistinguishable from one where you finished.\n\n';
 
 /**
- * The same rule on a HOSTED box. There the person reads only the reply (not the thinking, the tool
- * calls or the status card), so the rule puts the answer first.
+ * A chat thread on a HOSTED box gets this rule in place of REPORT_STATUS_RULE. There the person reads
+ * only the reply (not the thinking, the tool calls or a status card), so the rule puts the answer
+ * first. Such a thread has no status tool at all (overseer/agency-mcp.ts listedTools), so nothing here
+ * names one.
  */
 export const HOSTED_REPLY_RULE =
   'YOUR REPLY IS THE ANSWER. The person reads only your reply text and what it shows (tables, charts, ' +
-  'files). Your thinking, your tool calls and report_status are not shown as the answer. So every turn ends ' +
-  'with a reply that holds the answer itself, in plain words: the facts that were asked for. For a record you ' +
-  'looked up, give its key fields (for an order: number, date, status, customer, total, lines, shipping). ' +
-  'When there are rows (order lines, lists, rankings), show them as a table with the `display` tools. Never ' +
-  'reply only "see above", "that is the full record" or a pointer to work the person cannot see.\n' +
-  '- report_status({ state, summary, ask?, blocker? }) — a one-line summary for the thread list, never ' +
-  'the answer. Order of each turn: write the reply with the answer, then call report_status as the last tool ' +
-  '(`done`, `needs_you` when the person must act, `blocked` when you wait on another thread), then end ' +
-  'with one short closing line. Before you call it, check that your reply text already holds the answer; ' +
-  'if it does not, write the answer first.\n\n';
+  'files). Your thinking and your tool calls are not shown as the answer. So every turn ends with a reply ' +
+  'in this order: first the direct answer in one or two plain sentences (for example: "Acme Outdoor 2026 ' +
+  'sales to date are $120,400, up 12% on the same period last year."), then any tables ' +
+  'or charts, then at most a short note on method or limits. For a record you looked up, give its key ' +
+  'fields (for an order: number, date, status, customer, total, lines, shipping). When there are rows ' +
+  '(order lines, lists, rankings), show them as a table with the `display` tools. Never reply only "see ' +
+  'above", "that is the full record" or a pointer to work the person cannot see. Compare like with like: ' +
+  'a year-to-date figure goes with the same period of the prior year, never with a full prior year.\n\n';
 
 export function buildPeerPrompt(ctx: {
   projectName: string;
@@ -372,7 +372,7 @@ export function buildPeerPrompt(ctx: {
   selfLabel: string;
   selfId: string;
   peers: { label: string; type: string; status: string }[];
-  /** A hosted box: the reply rule for a person who reads only the reply (HOSTED_REPLY_RULE). */
+  /** A chat thread on a hosted box: no status tool; the reply rule for a person who reads only the reply (HOSTED_REPLY_RULE). */
   hosted?: boolean;
 }): string {
   const roster = ctx.peers.length
