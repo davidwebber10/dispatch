@@ -224,6 +224,8 @@ export class ThreadSpawner {
     let assignedSessionId: string | undefined;
     /** Set for Grok: the per-thread config home carrying its hooks and MCP servers. */
     let grokHomeDir: string | undefined;
+    /** The model the CLI is started with (`--model`); undefined: the CLI's own default. For the box log. */
+    let launchModel: string | undefined;
 
     if (terminal.type === 'shell') {
       // A "Sign in — X" thread runs that CLI's login command DIRECTLY rather than a shell
@@ -278,6 +280,7 @@ export class ThreadSpawner {
         // modelFor returns config.model for a plain user thread (no role/agentType).
         this.adoptTranscriptSettings(terminal, config, workDir);
         const model = modelFor(config);
+        launchModel = model;
         const effort = terminal.type === 'codex' ? this.codexEffortFor(config, model) : effortFor(config);
         // A provider that names its own session (Grok) gets a fresh uuid here, which is
         // stored once the process is alive. Without it a relaunch after a daemon restart
@@ -308,7 +311,8 @@ export class ThreadSpawner {
       else spawnEnv.DISPATCH_AUTH = sk.key;
     }
     const pid = this.ptyManager.spawn(terminalId, command, args, workDir, spawnEnv);
-    boxLog('thread.start', { thread: terminalId, harness: terminal.type, transport: 'pty', resume: !!terminal.external_id });
+    // `model`: what the CLI was started with; null = its own default (the log line then cannot say which ran).
+    boxLog('thread.start', { thread: terminalId, harness: terminal.type, transport: 'pty', resume: !!terminal.external_id, model: launchModel ?? null });
     if (sk) this.wiring.threadKeys?.bindPty(terminalId, pid, sk.handle);
     terminalsDb.updatePid(this.db, terminalId, pid);
     // AFTER the spawn, never before: a stored id for a process that failed to start would
@@ -674,7 +678,9 @@ export class ThreadSpawner {
       // it did not pass (os/hosted-mcp-policy.ts).
       ...(isHostedBox() && terminal.type === 'claude-code' ? { mcpExpected: specs.map((s) => s.name) } : {}),
     });
-    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId });
+    // `model`: what the harness was asked to run; null = its own default. The model it reports back is the
+    // `thread.model` line (structured/manager.ts, structured/codex-manager.ts).
+    boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId, model: resolvedModel ?? null });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);
     terminalsDb.updatePid(this.db, terminal.id, pid);
   }

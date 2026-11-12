@@ -44,7 +44,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NAME_KEYS = new Set(['tools', 'unexpected']);
 const MCP_TOOL = /^mcp__[A-Za-z0-9_-]{1,64}__[A-Za-z0-9_-]{1,64}$/;
 
+/** A model id (`claude-sonnet-4-5-20250929`, `gpt-5.6-sol`): kept whole, so the log says which model ran. */
+const MODEL_KEYS = new Set(['model', 'requested', 'reported']);
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/\[\]~-]{0,120}$/;
+
 function clean(v: unknown, depth = 0, key?: string): unknown {
+  if (typeof v === 'string' && key !== undefined && MODEL_KEYS.has(key) && MODEL_ID.test(v)) return v;
   if (typeof v === 'string' && key !== undefined && ID_KEYS.has(key) && UUID.test(v)) return v;
   if (typeof v === 'string' && key !== undefined && NAME_KEYS.has(key) && MCP_TOOL.test(v)) return v;
   if (typeof v === 'string') return redactLogText(v);

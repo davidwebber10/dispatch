@@ -16,6 +16,7 @@ import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { boxLog } from '../os/box-log.js';
+import { logThreadModel } from './model-log.js';
 import { isHostedBox } from '../os/hosted-mode.js';
 import { forbiddenInitTools, initServerNames, unexpectedInitMcpTools, unexpectedServers, unexpectedServersNotice, NO_SERVER_LIST_NOTICE } from '../os/hosted-mcp-policy.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
@@ -137,6 +138,10 @@ interface Session {
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
   /** StructuredSpawnOpts.mcpExpected: every init frame of the process is checked against it. */
   mcpExpected?: string[] | null;
+  /** The model the thread was started with (StructuredSpawnOpts.model; null: the CLI default), for the `thread.model` log line. */
+  requestedModel?: string | null;
+  /** The `thread.model` line was written for this process (once, at its first init frame). */
+  modelLogged?: boolean;
   /** True once an init frame was checked (the first one always logs its servers). */
   mcpChecked?: boolean;
   /** Names already warned about, so a frame each turn does not repeat the same warning. */
@@ -487,7 +492,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null, requestedModel: opts.model ?? null };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -534,6 +539,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
+      if (event?.type === 'system' && event?.subtype === 'init' && !session.modelLogged) { session.modelLogged = true; logThreadModel(terminalId, 'claude-code', session.requestedModel ?? null, typeof event.model === 'string' ? event.model : null); }
       // Every init frame (Claude Code sends one each turn): a connector or server can load after the first.
       if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) this.checkMcpServers(terminalId, session, event);
       if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {

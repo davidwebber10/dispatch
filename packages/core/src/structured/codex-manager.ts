@@ -36,6 +36,7 @@ import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
 import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonrpc-client.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter } from './shared/events.js';
+import { logThreadModel } from './model-log.js';
 
 /**
  * The app-server ANSWERED a request with an error: a refusal (an effort or a model it does not take). Distinct from a
@@ -345,6 +346,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       throw new Error(`Codex thread ${threadId} is already open in another Dispatch thread`);
     }
     session.threadId = threadId;
+    logThreadModel(session.terminalId, 'codex', session.model ?? null, model ?? null);
     if (model) session.model = model;
     this.threadToTerminal.set(threadId, session.terminalId);
     if (!session.sessionId) {
