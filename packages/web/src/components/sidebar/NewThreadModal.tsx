@@ -472,8 +472,10 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               </span>
             </div>
             <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              Dispatch can run the sign-in for you and hand you the link. A thread that starts
-              without this just stops at a login screen you can't finish from a phone.
+              {cli
+                ? <>Dispatch can run the sign-in for you and hand you the link. A thread that starts
+              without this just stops at a login screen you can't finish from a phone.</>
+                : <>Connect your {spec.label} account first. Then start the chat.</>}
             </div>
             {cli && <div style={gateCommand}>{LOGIN_COMMAND[spec.provider!]}</div>}
             {/* No CLI sign-in shell without the CLI: Settings > Accounts signs in without a terminal. */}

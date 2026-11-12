@@ -13,7 +13,7 @@ export function ConnectAccountPrompt() {
   const connect = () => { setClosed(true); useNavigation.getState().navigate({ view: 'settings', section: 'accounts' }); };
   return (
     <div role="region" aria-label="Connect your Claude account" style={{
-      position: 'fixed', left: '50%', bottom: 'calc(84px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 'var(--z-overlay)',
+      position: 'fixed', left: '50%', top: 'calc(58px + env(safe-area-inset-top))', transform: 'translateX(-50%)', zIndex: 'var(--z-overlay)',
       width: 'min(440px, calc(100vw - 24px))', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 12px 12px 16px',
       background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-lg)',
       boxShadow: '0 20px 50px -20px var(--color-shadow-strong)',
