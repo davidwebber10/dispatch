@@ -1,3 +1,5 @@
+import { BOX_CAPABILITIES } from './capabilities.js';
+import { currentProfile } from '../os/profile.js';
 import type Database from 'better-sqlite3';
 import { getRunningVersion } from '../update/version.js';
 
@@ -34,6 +36,10 @@ export interface BoxHeartbeat {
   lastActivityAt: string | null;
   /** Whether OS-brokered tools resolved on the last attempt (design §4.2.1). */
   toolsReachable: boolean;
+  /** What this build enforces (platform/capabilities.ts): OS refuses an older image for a business person. */
+  capabilities?: string[];
+  /** The profile the box applies now (OS's live answer, else DISPATCH_PROFILE). */
+  profile?: string;
   /**
    * Dispatch version this box is running.
    *
@@ -100,6 +106,8 @@ export function collectHeartbeat(
     lastActivityAt,
     toolsReachable: extra.toolsReachable,
     version: getRunningVersion(),
+    capabilities: [...BOX_CAPABILITIES],
+    profile: currentProfile(),
   };
 }
 
@@ -156,7 +164,8 @@ export class HeartbeatService {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/api/dispatch/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-dispatch-box-token': this.boxToken! },
+        // The owner header, like the other box → OS calls (contract 2026-11-11). The body also carries it.
+        headers: { 'Content-Type': 'application/json', 'x-dispatch-box-token': this.boxToken!, ...(this.ownerEmail ? { 'x-dispatch-owner': this.ownerEmail } : {}) },
         body: JSON.stringify(this.current()),
         signal: controller.signal,
       });

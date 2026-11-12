@@ -15,6 +15,7 @@
 import { fileURLToPath } from 'node:url';
 import type { Request, Response, Router } from 'express';
 import type { McpServerSpec } from '../mcp/injection.js';
+import { BOX_CAPABILITIES } from '../platform/capabilities.js';
 import { keyRoute, ownerOnly, ownerOnlyStrict, policyRouter, type Rule } from '../auth/route-policy.js';
 import { principalOf } from '../auth/request-principal.js';
 import { isLoopbackAddress } from '../files/reveal.js';
@@ -130,7 +131,7 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
   // The page: what OS last said (profile, consent cards, reachability). No env, no tokens.
   router.get('/os/connections', ownerOnly, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json(deps.provider.publicSnapshot());
+    res.json({ ...deps.provider.publicSnapshot(), capabilities: [...BOX_CAPABILITIES] });
   });
 
   // "Check again": ask OS now (after the person connected a system in OS).
