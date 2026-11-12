@@ -7,10 +7,11 @@ import type { McpServerSpec } from '../mcp/injection.js';
 import { composeInjection } from '../mcp/injection.js';
 import {
   allowListFor, applyBusinessDropIn, BUSINESS_DROPIN_FILE, businessDropIn, dropInFolderProblem, hostedServerSpecs,
-  initServerNames, unexpectedServers, unexpectedServersNotice, CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV,
+  forbiddenInitTools, initServerNames, unexpectedServers, unexpectedServersNotice, CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV,
 } from './hosted-mcp-policy.js';
 import { BUSINESS_MCP_POLICY_MISSING, enforceHostedMcp } from '../sessions/spawn-injection.js';
 import { hostedClaudeArgs, hostedClaudeEnv } from '../sessions/thread-spawner.js';
+import { claudeChildEnv } from '../structured/manager.js';
 import { completeClaudePolicies } from './hosted-claude-policy.js';
 import { hostedSpinnerVerbs, parseWordSet, webWordSetsFile } from '../settings/word-sets.js';
 import { withHostedDefaults } from '../settings/harness-settings.js';
@@ -102,11 +103,17 @@ describe('the MCP servers of a hosted thread, per profile', () => {
     expect(hostedClaudeArgs('claude-code', args, false)).toEqual(args);
     expect(hostedClaudeArgs('codex', args, true)).toEqual(args);
     expect(hostedClaudeArgs('claude-code', ['--strict-mcp-config', ...args], true)).toEqual(['--strict-mcp-config', ...args]);
-    expect(hostedClaudeEnv('claude-code', true)).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' });
+    expect(hostedClaudeEnv('claude-code', true)).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_ARTIFACT: '0' });
     expect(hostedClaudeEnv('claude-code', false)).toEqual({});
     expect(hostedClaudeEnv('opencode', true)).toEqual({});
     expect(CLAUDE_HOSTED_MCP_ARGS).toEqual(['--strict-mcp-config']);
-    expect(CLAUDE_HOSTED_MCP_ENV).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' });
+    expect(CLAUDE_HOSTED_MCP_ENV).toEqual({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_ARTIFACT: '0' });
+    // The Pretty manager's own default (v4.6.1): Artifact on for a local install, off on a hosted box,
+    // whatever the daemon or the thread env says there.
+    expect(claudeChildEnv({}, {}, false).CLAUDE_CODE_ARTIFACT).toBe('1');
+    expect(claudeChildEnv({}, { CLAUDE_CODE_ARTIFACT: 'false' }, false).CLAUDE_CODE_ARTIFACT).toBe('false');
+    expect(claudeChildEnv({}, {}, true).CLAUDE_CODE_ARTIFACT).toBe('0');
+    expect(claudeChildEnv({ CLAUDE_CODE_ARTIFACT: '1' }, { CLAUDE_CODE_ARTIFACT: '1' }, true).CLAUDE_CODE_ARTIFACT).toBe('0');
   });
 });
 
@@ -179,7 +186,9 @@ describe('the init-frame check', () => {
     expect(initServerNames(init)).toEqual(['dispatch', 'claude.ai Gmail']);
     expect(initServerNames({ type: 'system', subtype: 'init' })).toBeNull();
     expect(unexpectedServers(['dispatch', 'acumatica'], ['dispatch', 'claude.ai Gmail'])).toEqual(['claude.ai Gmail']);
-    expect(unexpectedServersNotice(['claude.ai Gmail'])).toMatchInlineSnapshot(`"This thread's agent program loaded tool servers that the workspace did not give it: claude.ai Gmail. Do not use them for company data. Tell your administrator."`);
+    expect(forbiddenInitTools({ tools: ['Bash', 'Read', 'Artifact', 'ArtifactComments', 'ArtifactData', 'mcp__dispatch__read_thread'] })).toEqual(['Artifact', 'ArtifactComments', 'ArtifactData']);
+    expect(forbiddenInitTools({ tools: ['Bash'] })).toEqual([]);
+    expect(unexpectedServersNotice(['claude.ai Gmail'])).toMatchInlineSnapshot(`"This thread's agent program loaded tools that the workspace did not give it: claude.ai Gmail. Do not use them for company data. Tell your administrator."`);
   });
 });
 

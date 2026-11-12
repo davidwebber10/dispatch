@@ -3,7 +3,9 @@
 exports[`the managed policy files the image installs (generated at build) > every Claude Code file gets the POLYWOOD words of the web client, in mode replace 1`] = `
 {
   "claude-managed-settings.developer.json": {
+    "disableArtifact": true,
     "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
     "forceLoginMethod": "claudeai",
     "spinnerVerbs": {
       "mode": "replace",
@@ -24,7 +26,9 @@ exports[`the managed policy files the image installs (generated at build) > ever
   "claude-managed-settings.gateway.json": {
     "allowManagedHooksOnly": true,
     "allowManagedPermissionRulesOnly": true,
+    "disableArtifact": true,
     "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
     "permissions": {
       "disableBypassPermissionsMode": "disable",
     },
@@ -47,7 +51,9 @@ exports[`the managed policy files the image installs (generated at build) > ever
   "claude-managed-settings.json": {
     "allowManagedHooksOnly": true,
     "allowManagedPermissionRulesOnly": true,
+    "disableArtifact": true,
     "disableClaudeAiConnectors": true,
+    "enableArtifact": false,
     "forceLoginMethod": "claudeai",
     "permissions": {
       "disableBypassPermissionsMode": "disable",

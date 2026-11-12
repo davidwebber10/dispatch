@@ -33,7 +33,7 @@ if (rIdx > -1 && process.argv[rIdx + 1] === 'gone-session') {
   process.exit(1);
 }
 // `argv` echoes the launch args so resume tests can assert `-r <id>` was applied.
-send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2), mcp_servers: process.env.FAKE_MCP_SERVERS ? JSON.parse(process.env.FAKE_MCP_SERVERS) : undefined });
+send({ type: 'system', subtype: 'init', apiKeySource: 'none', model: 'claude', session_id: 'sess-fake', testEnv: process.env.DISPATCH_TEST_ENV ?? null, argv: process.argv.slice(2), mcp_servers: process.env.FAKE_MCP_SERVERS ? JSON.parse(process.env.FAKE_MCP_SERVERS) : undefined, tools: process.env.FAKE_TOOLS ? JSON.parse(process.env.FAKE_TOOLS) : undefined });
 const rl = readline.createInterface({ input: process.stdin });
 // The AskUserQuestion request this CLI is blocked on, if any (see TRIGGER_QUESTION).
 let pendingQuestion = null;

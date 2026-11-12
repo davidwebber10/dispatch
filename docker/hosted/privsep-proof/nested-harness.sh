@@ -39,6 +39,12 @@ if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$(head -c 2 "$REAL" 2>/dev/null)" != '
   claude_mode "a managed-settings path of its own, and the flag" "CLAUDE_CODE_MANAGED_SETTINGS_PATH=$WORKDIR/empty-policy.json" -- --dangerously-skip-permissions
   claude_mode "a config folder of its own, and the flag" "CLAUDE_CONFIG_DIR=$WORKDIR/own-config" -- --dangerously-skip-permissions
 
+  # ── The Artifact tools publish to the person's claude.ai account: off by the managed policy ──
+  art="$(cd "$WORKDIR" && CLAUDE_CODE_ARTIFACT=1 timeout 40 "$REAL" --settings '{"enableArtifact":true,"disableArtifact":false}' -p --output-format stream-json --verbose 'say hi' </dev/null 2>&1 | grep -m1 '"subtype":"init"' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log((JSON.parse(s).tools||[]).filter(t=>/^Artifact/.test(t)).join(",")||"none")}catch{console.log("?")}})')"
+  if [ "$art" = "?" ]; then info "nested Claude Code, CLAUDE_CODE_ARTIFACT=1 and --settings: no init frame" ""
+  elif [ "$art" = none ]; then ok "nested Claude Code, CLAUDE_CODE_ARTIFACT=1 and --settings enableArtifact: no Artifact tool" ""
+  else bad "nested Claude Code, CLAUDE_CODE_ARTIFACT=1 and --settings enableArtifact: Artifact tools present" "$art"; fi
+
   # ── MCP servers the agent adds itself, under the business profile (os/hosted-mcp-policy.ts) ──
   # The proof script switches the box to the business profile and starts a business thread; the daemon
   # then writes the root-owned allow-list into Claude Code's managed folder. Wait for it.

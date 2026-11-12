@@ -35,8 +35,8 @@ export const BUSINESS_DROPIN_FILE = '50-dispatch-business-mcp.json';
 
 /** The launch arguments every Claude Code thread on a hosted box gets. */
 export const CLAUDE_HOSTED_MCP_ARGS: readonly string[] = ['--strict-mcp-config'];
-/** The environment every Claude Code thread on a hosted box gets. */
-export const CLAUDE_HOSTED_MCP_ENV: Readonly<Record<string, string>> = { ENABLE_CLAUDEAI_MCP_SERVERS: 'false' };
+/** The environment every Claude Code thread on a hosted box gets: no account connectors, no Artifact tools. */
+export const CLAUDE_HOSTED_MCP_ENV: Readonly<Record<string, string>> = { ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_ARTIFACT: '0' };
 
 export type HostedProfile = 'business' | 'developer';
 
@@ -156,6 +156,17 @@ export function initServerNames(event: unknown): string[] | null {
   return list.map((m) => (m && typeof m === 'object' ? String((m as { name?: unknown }).name ?? '') : String(m))).filter(Boolean);
 }
 
+/**
+ * Built-in tools a hosted thread must not have: the Artifact tools (Artifact, ArtifactComments,
+ * ArtifactData) publish to the person's claude.ai account, outside the platform. Off by the image's
+ * managed policy (`enableArtifact: false`, `disableArtifact: true`) and by CLAUDE_CODE_ARTIFACT=0.
+ */
+export function forbiddenInitTools(event: unknown): string[] {
+  const tools = (event as { tools?: unknown } | null)?.tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.filter((t): t is string => typeof t === 'string' && /^Artifact/.test(t));
+}
+
 /** The servers in `reported` that Dispatch did not pass. */
 export function unexpectedServers(expected: readonly string[], reported: readonly string[]): string[] {
   const ok = new Set(expected);
@@ -164,6 +175,6 @@ export function unexpectedServers(expected: readonly string[], reported: readonl
 
 /** The line a thread shows when its harness reports a server Dispatch did not pass. */
 export function unexpectedServersNotice(names: readonly string[]): string {
-  return `This thread's agent program loaded tool servers that the workspace did not give it: ${names.join(', ')}. `
+  return `This thread's agent program loaded tools that the workspace did not give it: ${names.join(', ')}. `
     + 'Do not use them for company data. Tell your administrator.';
 }

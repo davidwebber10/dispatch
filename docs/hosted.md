@@ -292,6 +292,8 @@ stand-in account whose token carries the connector scope; the connector list cam
 | `--strict-mcp-config` | launch, every hosted Claude Code thread | only the `--mcp-config` servers; it alone also drops the connectors |
 | `ENABLE_CLAUDEAI_MCP_SERVERS=false` | thread environment | connectors absent |
 | Codex `[features] apps = false` | `/etc/codex/requirements.toml` (root) | `apps` stays off with `-c features.apps=true`, `--enable apps` and a `CODEX_HOME` with its own config |
+| `enableArtifact: false`, `disableArtifact: true` | managed settings (root) | the Artifact tools publish to the person's claude.ai account, so they are off on a hosted box: with `CLAUDE_CODE_ARTIFACT=1` the init frame lists `Artifact` without this policy and does not with it, also with a user `enableArtifact: true` |
+| `CLAUDE_CODE_ARTIFACT=0` | thread environment (the v4.6.1 default `1` applies to a local install only) | no Artifact tool |
 
 A business thread does not start when the drop-in cannot be written (the daemon is not root, or the
 folder or its parent could be changed by another user): "its tool policy could not be set". Under the
@@ -308,7 +310,7 @@ harness's first `system/init` frame, names only:
 
     {"event":"thread.mcp","thread":"<id>","harness":"claude-code","servers":[...],"expected":[...],"unexpected":[]}
 
-A name Dispatch did not pass adds `{"event":"thread.mcp.unexpected","level":"warn",...}`, a
+A name Dispatch did not pass, or an `Artifact` tool in the frame's `tools`, adds `{"event":"thread.mcp.unexpected","level":"warn",...}`, a
 `[mcp] WARNING` console line, and a notice in the thread. Stage must see `unexpected: []`, and no name
 that starts with `claude.ai `, for a person whose Claude account has connectors. The business drop-in
 logs `thread.mcp.policy` with `ok: false` only when it fails.

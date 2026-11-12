@@ -929,6 +929,13 @@ it('mcpExpected: the init frame servers are logged; an unexpected one warns in t
     await new Promise((r) => setTimeout(r, 50));
     expect(lines.map((l) => l.event)).toEqual(['thread.mcp']);
     expect(m.getEvents('t2').some((e: any) => e.subtype === 'dispatch_notice')).toBe(false);
+    // An Artifact tool in the init frame's tools is reported the same way (it publishes outside the platform).
+    m.kill('t2');
+    lines.length = 0;
+    m.spawn('t2', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(servers.slice(0, 2)), FAKE_TOOLS: JSON.stringify(['Bash', 'Artifact', 'ArtifactData']) }, mcpExpected: ['dispatch', 'acumatica'] });
+    const n2 = await waitForEvent(m, 't2', (e) => e.type === 'system' && e.subtype === 'dispatch_notice');
+    expect(n2.message).toContain('Artifact, ArtifactData');
+    expect(lines.find((l) => l.event === 'thread.mcp.unexpected')).toMatchObject({ level: 'warn', tools: ['Artifact', 'ArtifactData'] });
   } finally {
     warn.mockRestore();
     setBoxLogForTest();

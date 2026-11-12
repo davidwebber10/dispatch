@@ -4,5 +4,7 @@
   },
   "allowManagedHooksOnly": true,
   "allowManagedPermissionRulesOnly": true,
-  "disableClaudeAiConnectors": true
+  "disableClaudeAiConnectors": true,
+  "enableArtifact": false,
+  "disableArtifact": true
 }

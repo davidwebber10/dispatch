@@ -27,9 +27,12 @@ describe('the harness policy of the image', () => {
       allowManagedPermissionRulesOnly: true,
       // The connectors of the person's own claude.ai account never load (os/hosted-mcp-policy.ts).
       disableClaudeAiConnectors: true,
+      // The Artifact tools publish to the person's claude.ai account: off on a hosted box (measured).
+      enableArtifact: false,
+      disableArtifact: true,
     });
     const developer = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.developer.json'), 'utf8'));
-    expect(developer).toEqual({ forceLoginMethod: 'claudeai', disableClaudeAiConnectors: true });
+    expect(developer).toEqual({ forceLoginMethod: 'claudeai', disableClaudeAiConnectors: true, enableArtifact: false, disableArtifact: true });
     // The gateway mode drops only the login method: approvals are as strict.
     const gateway = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.gateway.json'), 'utf8'));
     expect(gateway).toEqual({ ...standard, forceLoginMethod: undefined });
