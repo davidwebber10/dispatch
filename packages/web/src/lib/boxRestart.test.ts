@@ -34,3 +34,23 @@ describe('a hosted box restarting', () => {
     expect(reloadTarget().endsWith('/')).toBe(true);
   });
 });
+
+describe('the router\'s 409', () => {
+  beforeEach(() => resetBoxRestart());
+  it('update-needed goes to the base path; a legacy move goes to its location; a daemon 409 is data', async () => {
+    const { routerConflictTarget } = await import('./boxRestart');
+    expect(await routerConflictTarget(res(409, '{"error":"x","reason":"update-needed"}'))).toBe(reloadTarget());
+    expect(await routerConflictTarget(res(409, '{"error":"x","location":"/dispatch/"}'))).toBe('/dispatch/');
+    expect(await routerConflictTarget(res(409, '{"error":"x","location":"//evil.example/"}'))).toBeNull();
+    expect(await routerConflictTarget(res(409, '{"error":"thread is busy"}'))).toBeNull();
+    expect(await routerConflictTarget(res(503, '{"state":"starting"}'))).toBeNull();
+  });
+  it('leaves once', async () => {
+    const { leaveFor } = await import('./boxRestart');
+    const go = vi.fn();
+    leaveFor('/dispatch/', go);
+    leaveFor('/dispatch/', go);
+    expect(go).toHaveBeenCalledTimes(1);
+    expect(useBoxRestart.getState().down).toBe(true);
+  });
+});

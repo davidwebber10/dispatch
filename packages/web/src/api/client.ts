@@ -1,4 +1,4 @@
-import { isBoxDownAnswer, noteBoxDown } from '../lib/boxRestart';
+import { isBoxDownAnswer, leaveFor, noteBoxDown, routerConflictTarget } from '../lib/boxRestart';
 import type { harnessCapabilities } from '../../../core/src/providers/capabilities';
 import { apiPath, BASE } from '../lib/basePath';
 import type { AccountsView, AccountThread, AccountProvider, ClaudeLoginSession as ClaudeLoginSessionT, CodexLoginSession, PluginRow, PluginDoc, PluginDocMeta, WorkerStats, Marketplace, CatalogEntry, PluginUpdate, MarketVersion, SkillRow } from './types';
@@ -71,6 +71,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   // A hosted box restarting: the router's 503/redirect/launcher page is not data and not an error
   // to show. Quietly reconnect (lib/boxRestart.ts); the caller gets a 503 it can treat as "later".
   // Only under a base path (a hosted box): a local daemon at the origin root keeps its old behaviour.
+  // The router's 409 (the box needs an update, or it moved to a new address): never data. Leave once.
+  const conflict = BASE && res.status === 409 ? await routerConflictTarget(res) : null;
+  if (conflict) {
+    leaveFor(conflict);
+    throw new ApiError(`${init?.method ?? 'GET'} ${path}: Reconnecting…`, 503);
+  }
   if (BASE && (!res.ok || res.redirected || /text\/html/i.test(res.headers?.get?.('content-type') ?? '')) && await isBoxDownAnswer(res)) {
     noteBoxDown();
     throw new ApiError(`${init?.method ?? 'GET'} ${path}: Reconnecting…`, 503);

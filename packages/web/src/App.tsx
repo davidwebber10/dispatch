@@ -29,6 +29,8 @@ import { useHost } from './stores/host';
 import { useAnalyticsFeed } from './stores/analytics';
 import { useOsConnections } from './stores/osConnections';
 import { BoxRestartPill } from './components/common/BoxRestartPill';
+import { watchHostContext } from './lib/hostContext';
+import { probeBox } from './lib/boxRestart';
 import { useReconnect } from './stores/reconnect';
 import { useResume } from './hooks/useResume';
 import { resumeSockets } from './lib/resumeSockets';
@@ -128,6 +130,8 @@ export default function App() {
     const sock = createEventsSocket({
       onStatus: (s) => {
         useConnection.getState().setStatus(s);
+        // Hosted: two closes with no open between them may be the router refusing the socket (503/409).
+        if (s === 'closed' && socketWasClosed) void probeBox();
         if (s === 'closed') socketWasClosed = true;
         else if (s === 'open' && socketWasClosed) {
           socketWasClosed = false;
@@ -155,6 +159,9 @@ export default function App() {
     sockRef.current = sock;
     return () => { clearTimeout(laterViews); unsubSnapProjects(); unsubSnapTabs(); clearTimeout(snapTimer); sock.close(); sockRef.current = null; document.removeEventListener('visibilitychange', onVisible); navigator.serviceWorker?.removeEventListener('message', onSwMessage); };
   }, []);
+
+  // Hosted: a profile change from OS reloads the page once (lib/hostContext.ts). Local: nothing.
+  useEffect(() => watchHostContext(), []);
 
   useEffect(() => {
     const report = () => {

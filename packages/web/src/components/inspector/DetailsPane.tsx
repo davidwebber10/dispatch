@@ -5,7 +5,7 @@ import { useActivity } from '../../stores/activity';
 import { useTabs, findTerminal } from '../../stores/tabs';
 import type { Terminal } from '../../api/types';
 import { useUsageLimits, UsageLimitsRows } from './UsageLimitsSection';
-import { useAccounts, threadAccount } from '../../stores/accounts';
+import { useAccounts, threadAccount, accountProviderOf } from '../../stores/accounts';
 import { AccountSwitchModal } from '../common/AccountSwitchModal';
 import { useActiveModel, activeModelOf } from '../../stores/activeModel';
 import { can } from '../../lib/profile';
@@ -39,6 +39,10 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
   const accountsView = useAccounts((s) => s.view);
   useEffect(() => { void useAccounts.getState().load(); }, []);
   const account = threadAccount(accountsView, tab ?? term);
+  // A business person sees "Switch Account" only when there is another account to switch to.
+  const maintenance = can('details.maintenance');
+  const provider = (tab ?? term) ? accountProviderOf((tab ?? term)!.type) : null;
+  const accountCount = provider && accountsView ? accountsView[provider].length : 0;
   const [switching, setSwitching] = useState(false);
   // Limits belong to the account: refetch when a turn updates the thread's numbers.
   const limitsRows = useUsageLimits(terminalId, `${activity?.tokens ?? ''}|${activity?.cost ?? ''}`);
@@ -101,9 +105,9 @@ export function DetailsPane({ projectId, terminalId }: { projectId: string | nul
       {machine && <Row label="Provider" value={project.provider} />}
       <Row label="Status" value={project.status} />
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-        {terminalId && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
-        {terminalId && <button onClick={() => { useTabs.getState().clearLoading(terminalId); void api.resetTerminalStatus(terminalId).then(() => { if (project) void useTabs.getState().loadTabs(project.id); }).catch(() => {}); }} style={btn} title="Clear a stuck working / needs-input / error status">Reset Status</button>}
-        {terminalId && account && <button onClick={() => setSwitching(true)} style={btn}>Switch Account</button>}
+        {terminalId && maintenance && <button onClick={() => { useTabs.getState().markLoading(terminalId); void api.relaunchTerminal(terminalId); }} style={btn}>Reload Thread</button>}
+        {terminalId && maintenance && <button onClick={() => { useTabs.getState().clearLoading(terminalId); void api.resetTerminalStatus(terminalId).then(() => { if (project) void useTabs.getState().loadTabs(project.id); }).catch(() => {}); }} style={btn} title="Clear a stuck working / needs-input / error status">Reset Status</button>}
+        {terminalId && account && (machine || accountCount > 1) && <button onClick={() => setSwitching(true)} style={btn}>Switch Account</button>}
         {terminalId && <button onClick={() => void api.archiveTerminal(terminalId)} style={btn}>Archive Thread</button>}
       </div>
       {switching && (tab ?? term) && <AccountSwitchModal tab={(tab ?? term)!} onClose={() => setSwitching(false)} />}

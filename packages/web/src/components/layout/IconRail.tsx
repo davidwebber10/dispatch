@@ -12,7 +12,7 @@ import { useTabs, isDispatchTab, findTerminal } from '../../stores/tabs';
 import { useAccounts, threadAccount } from '../../stores/accounts';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
-import { can, type Feature } from '../../lib/profile';
+import { can, pluginViewAllowed, type Feature } from '../../lib/profile';
 import { hostCopy } from '../../lib/hostCopy';
 import { pluginIcon } from '../../plugins/sdk';
 
@@ -112,7 +112,7 @@ export function IconRail() {
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}
-      {(can('settings.plugins') ? pluginViews : []).map((v) => (
+      {pluginViews.filter((v) => pluginViewAllowed(v.key)).map((v) => (
         <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}
           active={view === v.key} onClick={() => setView(v.key as View)} badge={badges[v.key] ?? 0} />
       ))}

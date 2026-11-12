@@ -379,6 +379,7 @@ export type Route =
   | { view: 'settings'; section?: string; subPage?: string }
   | { view: 'chat' }
   | { view: 'analytics' }
+  | { view: 'automations' }
   | { view: `plugin:${string}` };
 
 export interface AssistRequest {

@@ -9,6 +9,7 @@ import { OverseerView } from '../overseer/LazyOverseerView';
 import { EmptyWorkspace } from './EmptyWorkspace';
 import { Inspector } from '../inspector/Inspector';
 import { PanelToggle } from './PanelToggle';
+import { AlertBell } from './AlertBell';
 import { DispatchWorkPane } from '../overseer/components/DispatchWorkPane';
 import { AgentPane } from '../agents/AgentPane';
 import { closeAgentPane } from '../agents/closeAgentPane';
@@ -30,7 +31,8 @@ import { useReconnect } from '../../stores/reconnect';
 import { useSettings } from '../../stores/settings';
 import { useGroups } from '../panes/store';
 import { useUI } from '../../stores/ui';
-import { can } from '../../lib/profile';
+import { can, pluginViewAllowed } from '../../lib/profile';
+import { AllAgentsView } from '../agents/AllAgentsView';
 import { usesOsLook } from '../../lib/hostContext';
 import { useActiveTheme } from '../../themes/apply';
 import { useNavigation } from '../../stores/navigation';
@@ -61,7 +63,7 @@ export function DesktopShell() {
   const openDecisions = useLedgerCard((s) => openDecisionCount((activeId && s.byProject[activeId]?.card) || null));
   // A view the profile hides (a link, a remembered view, a plugin screen) shows the workspace instead.
   const rawView = useUI((s) => s.view);
-  const view = (rawView === 'analytics' && !can('analytics')) || (rawView === 'chat' && !can('endless')) || (isPluginView(rawView) && !can('settings.plugins')) ? 'workspace' : rawView;
+  const view = (rawView === 'analytics' && !can('analytics')) || (rawView === 'chat' && !can('endless')) || (rawView === 'automations' && !can('automations')) || (isPluginView(rawView) && !pluginViewAllowed(rawView)) ? 'workspace' : rawView;
   const agentFocused = useAgentUI((s) => s.focused);
   const agentSelected = useAgents((s) => s.selectedId);
   const editing = useAgentUI((s) => s.editing);
@@ -97,6 +99,8 @@ export function DesktopShell() {
           ? <PluginView viewKey={view} />
           : view === 'chat'
           ? <ChatMode />
+          : view === 'automations'
+          ? <AutomationsView />
           : view === 'analytics'
           ? <Suspense fallback={viewFallback}><AnalyticsView /></Suspense>
           : (
@@ -117,7 +121,7 @@ export function DesktopShell() {
                           <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
                         </div>
                         <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
-                        {os && <Suspense fallback={null}><OsTopBarActions kind={themeKind} onFlipTheme={() => useSettings.getState().setTheme(themeKind === 'dark' ? 'os-light' : 'os-dark')} onAccount={() => useNavigation.getState().navigate({ view: 'settings', section: 'accounts' })} /></Suspense>}
+                        {os && <Suspense fallback={null}><OsTopBarActions before={activeTerminalId && !isDispatchTab(activeTerminalId) ? <AlertBell terminalId={activeTerminalId} bar /> : null} kind={themeKind} onFlipTheme={() => useSettings.getState().setTheme(themeKind === 'dark' ? 'os-light' : 'os-dark')} onAccount={() => useNavigation.getState().navigate({ view: 'settings', section: 'accounts' })} /></Suspense>}
                       </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)
@@ -139,5 +143,22 @@ export function DesktopShell() {
       {editing && <EditAgentModal scheduleId={editing.scheduleId} presetProjectId={editing.preset} onClose={() => useAgentUI.getState().closeEdit()} onSaved={(id) => useAgentUI.getState().selectAgent(id)} />}
       <PluginDialogs />
     </>
+  );
+}
+
+/** Every automation across the projects (the list the phone shows); a row opens it in its project. */
+function AutomationsView() {
+  const open = (projectId: string, scheduleId: string) => {
+    useProjects.getState().setActive(projectId);
+    useUI.getState().setView('workspace');
+    useAgentUI.getState().selectAgent(scheduleId);
+  };
+  return (
+    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--color-base)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', height: 56, padding: '0 20px', flexShrink: 0, borderBottom: '1px solid var(--color-border)', font: '600 16px var(--font-sans)', color: 'var(--color-text-primary)' }}>Automations</div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', maxWidth: 900, width: '100%', margin: '0 auto' }}>
+        <AllAgentsView onOpenAgent={open} />
+      </div>
+    </div>
   );
 }

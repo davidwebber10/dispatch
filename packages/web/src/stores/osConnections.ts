@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api, type OsConnections, type OsToolsList } from '../api/client';
+import { checkHostContextNow } from '../lib/hostContext';
 
 /**
  * The person's company connections on a hosted box (core os/tools-proxy.ts): what OS last said
@@ -40,6 +41,8 @@ export const useOsConnections = create<OsConnectionsState>((set, get) => ({
   applyEvent: (e) => {
     if (e?.type !== 'os:connections' || !e.state) return;
     set({ state: e.state });
+    // OS's answer changed: the profile may have too (core os/profile.ts). The page checks at once.
+    void checkHostContextNow();
     if (e.state.osToolsEnabled && get().tools) void api.getOsTools().then((tools) => set({ tools })).catch(() => {});
   },
 }));

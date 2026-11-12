@@ -16,7 +16,7 @@ describe('the feature map', () => {
   it('the business profile hides the power-user features and keeps the rest', () => {
     const hidden = keys.filter((k) => !featureFor(k, 'business')).sort();
     expect(hidden).toEqual([
-      'about.report', 'analytics', 'control-plane', 'details.machine', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
+      'about.report', 'analytics', 'approvals.choose', 'control-plane', 'details.machine', 'details.maintenance', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
       'settings.agents', 'settings.devices', 'settings.dictation', 'settings.editor', 'settings.integrations', 'settings.plugins',
       'settings.secrets', 'settings.servers', 'settings.skills', 'settings.telemetry', 'settings.tools', 'settings.usage',
       'setup', 'themes.all', 'threads.browser', 'threads.cli', 'threads.git', 'threads.shell', 'tool-json',

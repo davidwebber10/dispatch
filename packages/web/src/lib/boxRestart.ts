@@ -33,6 +33,48 @@ export async function isBoxDownAnswer(res: Response): Promise<boolean> {
   }
 }
 
+/**
+ * The router's 409 (contract: the profile rule failed → `{error, reason: "update-needed"}`; a legacy
+ * `/u/<slug>` box rebuilt to `/dispatch` → `{error, location: "/dispatch/"}`): where the page must go
+ * by a full navigation, where the router answers with its redirect (the OS launcher's "needs an
+ * update" page, or the new address). Null for any other answer, including the daemon's own 409s.
+ */
+export async function routerConflictTarget(res: Response): Promise<string | null> {
+  if (res.status !== 409) return null;
+  try {
+    const body = await (res.clone ? res.clone() : res).json();
+    if (!body || typeof body !== 'object') return null;
+    if (body.reason === 'update-needed') return reloadTarget();
+    if (typeof body.location === 'string' && body.location.startsWith('/') && !body.location.startsWith('//')) return body.location;
+  } catch { /* not JSON: not the router's 409 */ }
+  return null;
+}
+
+let leaving = false;
+/** Leave the page once for the router's address (routerConflictTarget). */
+export function leaveFor(target: string, go: (url: string) => void = (url) => location.replace(url)): void {
+  if (leaving) return;
+  leaving = true;
+  useBoxRestart.setState({ down: true });
+  go(target);
+}
+
+/**
+ * The events socket keeps failing to open (the router answers a WebSocket with 503/409, which the
+ * browser shows only as a close). Ask the box once over HTTP, redirects not followed: the router's
+ * "not ready" starts the quiet reconnect, its 409 leaves for the router's address. A plain network
+ * error (a local daemon restarting) does nothing: the socket's own retry brings it back.
+ */
+export async function probeBox(opts: { fetchImpl?: typeof fetch; go?: (url: string) => void; reload?: (url: string) => void; pollMs?: number } = {}): Promise<void> {
+  if (!BASE) return;
+  try {
+    const res = await (opts.fetchImpl ?? fetch)(apiPath('/api/whoami'), { redirect: 'manual', cache: 'no-store' });
+    const target = await routerConflictTarget(res);
+    if (target) { leaveFor(target, opts.go); return; }
+    if (await isBoxDownAnswer(res)) noteBoxDown({ fetchImpl: opts.fetchImpl, reload: opts.reload, pollMs: opts.pollMs });
+  } catch { /* offline, or the daemon itself is restarting: the socket retries */ }
+}
+
 /** The page the reload goes to: the base path with its trailing slash, never the bare `/dispatch`. */
 export function reloadTarget(): string {
   return `${BASE}/`;
@@ -56,4 +98,4 @@ export function noteBoxDown(opts: { fetchImpl?: typeof fetch; reload?: (url: str
 }
 
 /** Test seam. */
-export function resetBoxRestart(): void { polling = false; useBoxRestart.setState({ down: false }); }
+export function resetBoxRestart(): void { polling = false; leaving = false; useBoxRestart.setState({ down: false }); }

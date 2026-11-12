@@ -91,3 +91,48 @@ export const usesOsLook = (): boolean => real.hosted || preview;
 
 /** The page uses plain wording (lib/hostCopy.ts): a hosted box, or the business preview. */
 export const usesPlainWording = (): boolean => real.hosted || preview;
+
+/**
+ * A profile change from OS (core os/profile.ts) without a restart: on a hosted workspace the page asks
+ * the daemon for the host context every minute, and at once when the daemon says OS's answer changed
+ * (`os:connections`). When the profile differs from the one this page was built with, the page
+ * reloads ONCE at the base path, so every part (feature map, theme, wording) follows. Anything that is
+ * not the daemon's JSON (the OS launcher page, a router 302/503/409) is ignored here: lib/boxRestart.ts
+ * owns that case. A local install never polls.
+ */
+const WATCH_MS = 60_000;
+let watching: ReturnType<typeof setInterval> | null = null;
+let reloading = false;
+
+export async function checkHostContextNow(opts: { fetchImpl?: typeof fetch; reload?: () => void; url?: string } = {}): Promise<boolean> {
+  if (!real.hosted || reloading) return false;
+  try {
+    const f = opts.fetchImpl ?? fetch;
+    const res = await f(opts.url ?? hostContextUrl(), { redirect: 'manual', cache: 'no-store', headers: { Accept: 'application/json' } });
+    const json = /application\/json/i.test(res.headers?.get?.('content-type') ?? '');
+    if (!res.ok || !json || res.redirected || res.type === 'opaqueredirect') return false;
+    const next = parseHostContext(await res.json());
+    if (next.profile === real.profile) return false;
+    reloading = true;
+    (opts.reload ?? (() => location.replace(reloadUrl())))();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function watchHostContext(): () => void {
+  if (!real.hosted || watching) return () => {};
+  watching = setInterval(() => { void checkHostContextNow(); }, WATCH_MS);
+  return () => { if (watching) clearInterval(watching); watching = null; };
+}
+
+// The base path from <base href> (the same rule as lib/basePath.ts, which this first-load module does not import).
+function base(): string {
+  try { return new URL(document.baseURI).pathname.replace(/\/+$/, ''); } catch { return ''; }
+}
+function hostContextUrl(): string { return `${base()}/api/host-context`; }
+function reloadUrl(): string { return `${base()}/${location.pathname.startsWith(base() + '/') ? location.pathname.slice(base().length + 1) : ''}${location.search}`; }
+
+/** Test seam. */
+export function resetHostContextWatch(): void { reloading = false; if (watching) clearInterval(watching); watching = null; }

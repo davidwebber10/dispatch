@@ -12,7 +12,7 @@ import { useHint } from '../../stores/hint';
  * context that can't receive web push — per design, incapable contexts show no
  * alert UI at all. Enabling from an un-enrolled device runs enrollment inline.
  */
-export function AlertBell({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
+export function AlertBell({ terminalId, floating = false, bar = false }: { terminalId: string | null | undefined; floating?: boolean; /** The OS top bar's 32px icon button (hosted look). */ bar?: boolean }) {
   const tab = useTabs((s) => (terminalId ? findTerminal(s.byProject, terminalId) : undefined));
   const [busy, setBusy] = useState(false);
   if (!terminalId || !tab || (tab.type !== 'claude-code' && tab.type !== 'codex')) return null;
@@ -26,6 +26,15 @@ export function AlertBell({ terminalId, floating = false }: { terminalId: string
       await useTabs.getState().setAlertsEnabled(terminalId, !on);
     } finally { setBusy(false); }
   };
+  if (bar) {
+    return (
+      <button type="button" className="os-icon-btn" aria-pressed={on} title={on ? 'Alerts on for this thread' : 'Alerts off for this thread'}
+        aria-label={on ? 'Turn off alerts for this thread' : 'Turn on alerts for this thread'} onClick={() => void toggle()}
+        style={{ width: 32, height: 32, color: on ? 'var(--color-accent)' : undefined }}>
+        <Bell size={16} weight={on ? 'fill' : 'regular'} />
+      </button>
+    );
+  }
   const dim = floating ? { w: 46, h: 32, icon: 19, radius: 'var(--radius-md)', pad: 3 } : { w: 36, h: HEADER_INNER, icon: 17, radius: 'var(--radius-sm)', pad: HEADER_PAD };
   return (
     <div style={{

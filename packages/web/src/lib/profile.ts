@@ -75,6 +75,8 @@ export const FEATURES = {
   'tool-json': hide(), // Raw tool-call JSON expanders (the one-line tool row stays)
   'projects.path': hide(), // The folder path picker of New Project (a hosted developer keeps it under Advanced)
   'details.machine': hide(), // Details pane: thread ID, folder, branch, PID, tool servers, provider
+  'details.maintenance': hide(), // Details pane: "Reload Thread" and "Reset Status" (repair buttons; Archive stays)
+  'approvals.choose': hide(), // The per-thread approvals setting (Auto / Ask / Smart). A business thread is always Smart
   'settings.editor': hide(), // Settings > Appearance > "Open docs in" (an editor on the computer)
   'themes.all': hide(), // Every theme; a business person picks only OS light, OS dark or System
 } as const satisfies Record<string, FeatureRule>;
@@ -98,6 +100,17 @@ export function can(feature: Feature): boolean {
 /** The same, for a component. The profile does not change while the page runs, so this needs no store. */
 export function useFeature(feature: Feature): boolean {
   return can(feature);
+}
+
+/** The Inbox (the bundled `previews` plugin's screen). */
+export const INBOX_VIEW = 'plugin:previews:history';
+
+/**
+ * May this page show the plugin screen `key`? Plugin screens follow 'settings.plugins', except the
+ * bundled Inbox, which follows 'previews' (a business person keeps their Inbox).
+ */
+export function pluginViewAllowed(key: string): boolean {
+  return can('settings.plugins') || (key === INBOX_VIEW && can('previews'));
 }
 
 /** True for the business profile. Prefer `can()`; this is for wording, not for gates. */
