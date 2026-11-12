@@ -16,7 +16,8 @@ import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { boxLog } from '../os/box-log.js';
-import { initServerNames, unexpectedServers, unexpectedServersNotice } from '../os/hosted-mcp-policy.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { forbiddenInitTools, initServerNames, unexpectedServers, unexpectedServersNotice } from '../os/hosted-mcp-policy.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -136,6 +137,21 @@ interface Session {
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
   /** StructuredSpawnOpts.mcpExpected; cleared once the first init frame was checked. */
   mcpExpected?: string[] | null;
+}
+
+/**
+ * The environment of a Pretty Claude Code thread. CLAUDE_CODE_ARTIFACT=1 (2026-11-12): print mode
+ * (`claude -p`) turns the Artifact tools off by default ("sdk_default_off"), so a Pretty thread had
+ * none and the CLI thread had them. It is only a default: a value in the daemon's environment or the
+ * thread's env wins. On a HOSTED box never: the Artifact tools publish to the person's claude.ai
+ * account, outside the platform (os/hosted-mcp-policy.ts); the spawner passes 0 there and the image's
+ * managed policy turns them off.
+ */
+export function claudeChildEnv(defaultEnv: Record<string, string> | undefined, threadEnv: Record<string, string> | undefined, hosted: boolean = isHostedBox()): Record<string, string> {
+  const env = childEnv(defaultEnv, threadEnv);
+  if (hosted) env.CLAUDE_CODE_ARTIFACT = '0';
+  else if (env.CLAUDE_CODE_ARTIFACT === undefined) env.CLAUDE_CODE_ARTIFACT = '1';
+  return env;
 }
 
 /** How long a set_model control request may wait for the CLI's answer. */
@@ -460,7 +476,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: childEnv(this.defaultEnv, opts.env),
+      env: claudeChildEnv(this.defaultEnv, opts.env),
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
@@ -910,12 +926,12 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
    * (`thread.mcp.unexpected`, the console too) and a notice in the thread's stream.
    */
   private checkMcpServers(terminalId: string, expected: readonly string[], event: unknown): void {
-    const reported = initServerNames(event);
-    if (reported === null) return;
-    const extra = unexpectedServers(expected, reported);
+    const reported = initServerNames(event) ?? [];
+    const tools = forbiddenInitTools(event);
+    const extra = [...unexpectedServers(expected, reported), ...tools];
     boxLog('thread.mcp', { thread: terminalId, harness: 'claude-code', servers: reported, expected: [...expected], unexpected: extra });
     if (extra.length === 0) return;
-    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra }, 'warn');
+    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra, ...(tools.length ? { tools } : {}) }, 'warn');
     console.warn(`[mcp] WARNING thread ${terminalId}: the harness loaded MCP servers Dispatch did not pass: ${extra.join(', ')}`);
     this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: unexpectedServersNotice(extra) });
   }
