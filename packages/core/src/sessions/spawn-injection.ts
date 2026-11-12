@@ -20,6 +20,10 @@ import { PLATFORM_NAME } from '../os/platform-name.js';
 import type { SessionWiring } from './session-wiring.js';
 import { publishToAgent } from '../privsep/paths.js';
 import { grokHomeDir } from '../providers/grok-home.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { currentProfile, type Profile } from '../os/profile.js';
+import { boxLog } from '../os/box-log.js';
+import { applyBusinessDropIn, businessDropIn, hostedServerSpecs } from '../os/hosted-mcp-policy.js';
 
 /** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
 export const AGENCY_MCP_SERVER = 'dispatch';
@@ -81,6 +85,8 @@ export class SpawnInjection {
     }
     // Company-system servers last: every other server keeps its name (os/os-servers.ts).
     finalizeOsServers(specs, prompts, undefined, harness);
+    // A hosted box: only the servers the profile allows, and the business drop-in (os/hosted-mcp-policy.ts).
+    if (isHostedBox()) enforceHostedMcp(specs, currentProfile());
     if (!this.wiring.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
     const toolsAvailable = specs.map((s) => s.name);
     try { this.configStore.patch(terminalId, { toolsAvailable }); } catch { /* the record is informational */ }
@@ -318,6 +324,9 @@ export class SpawnInjection {
         ...(api ? { DISPATCH_API: api } : {}),
       },
       ...(authEnv ? { authEnv: true } : {}),
+      // Ships with Dispatch: a hosted business thread keeps it (os/hosted-mcp-policy.ts). Its tools
+      // list and read the owner's other threads (list_threads, read_thread).
+      bundled: true,
     };
   }
 
@@ -359,6 +368,27 @@ export function userClaudeServerNames(file = path.join(process.env.CLAUDE_CONFIG
     userServersCache = { mtimeMs: st.mtimeMs, names };
     return names;
   } catch { return []; }
+}
+
+/** A business thread refused because the root-owned MCP policy could not be put in place. */
+export const BUSINESS_MCP_POLICY_MISSING = 'This workspace cannot run a thread yet: its tool policy could not be set. Ask your administrator.';
+
+/**
+ * The MCP rule of a hosted box (os/hosted-mcp-policy.ts), in place: the profile's servers only. Under
+ * the business profile the root-owned drop-in that limits every Claude Code on the box to exactly these
+ * servers is written first, and the thread does not start when it cannot be (fail closed). Under the
+ * developer profile the drop-in is removed, so the developer's own Dispatch integrations load.
+ */
+export function enforceHostedMcp(specs: McpServerSpec[], profile: Profile, apply: typeof applyBusinessDropIn = applyBusinessDropIn): void {
+  const kept = hostedServerSpecs(specs, profile);
+  const dropped = specs.filter((s) => !kept.includes(s)).map((s) => s.name);
+  specs.splice(0, specs.length, ...kept);
+  if (dropped.length) boxLog('thread.mcp.dropped', { profile, servers: dropped });
+  const problem = apply(profile === 'business' ? businessDropIn(kept) : null);
+  if (problem) {
+    boxLog('thread.mcp.policy', { profile, ok: false, reason: problem }, 'error');
+    if (profile === 'business') throw new Error(BUSINESS_MCP_POLICY_MISSING);
+  }
 }
 
 /**

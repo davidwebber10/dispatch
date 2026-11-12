@@ -905,3 +905,32 @@ it('lastFrameAt moves when a frame arrives', async () => {
   m.kill('t1');
   expect(m.lastFrameAt('t1')).toBeUndefined();
 });
+
+// Hosted MCP rule (os/hosted-mcp-policy.ts): the first init frame's servers are logged, and a server
+// Dispatch did not pass gives a warning line and a notice in the thread.
+it('mcpExpected: the init frame servers are logged; an unexpected one warns in the log and in the thread', async () => {
+  const { setBoxLogForTest } = await import('../../src/os/box-log.js');
+  const lines: any[] = [];
+  setBoxLogForTest({ sink: (l) => lines.push(JSON.parse(l)), enabled: true });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const servers = [{ name: 'dispatch', status: 'connected' }, { name: 'acumatica', status: 'connected' }, { name: 'claude.ai Gmail', status: 'pending' }];
+    m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(servers) }, mcpExpected: ['dispatch', 'acumatica'] });
+    const notice = await waitForEvent(m, 't1', (e) => e.type === 'system' && e.subtype === 'dispatch_notice');
+    expect(notice).toMatchObject({ level: 'warning' });
+    expect(notice.message).toContain('claude.ai Gmail');
+    expect(lines.find((l) => l.event === 'thread.mcp')).toMatchObject({ level: 'info', thread: 't1', servers: ['dispatch', 'acumatica', 'claude.ai Gmail'], unexpected: ['claude.ai Gmail'] });
+    expect(lines.find((l) => l.event === 'thread.mcp.unexpected')).toMatchObject({ level: 'warn', unexpected: ['claude.ai Gmail'] });
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('WARNING thread t1'))).toBe(true);
+    // Only the expected servers: one info line, no warning, no notice.
+    lines.length = 0;
+    m.spawn('t2', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(servers.slice(0, 2)) }, mcpExpected: ['dispatch', 'acumatica'] });
+    await waitForEvent(m, 't2', (e) => e.type === 'system' && e.subtype === 'init');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(lines.map((l) => l.event)).toEqual(['thread.mcp']);
+    expect(m.getEvents('t2').some((e: any) => e.subtype === 'dispatch_notice')).toBe(false);
+  } finally {
+    warn.mockRestore();
+    setBoxLogForTest();
+  }
+});

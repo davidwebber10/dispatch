@@ -43,6 +43,9 @@ COPY . .
 # Dev-only dependencies are needed to BUILD (tsc, vite), so install the full tree.
 RUN NODE_ENV=development pnpm install --frozen-lockfile \
     && NODE_ENV=development pnpm -r run build
+# The harness policy files as installed: the Claude Code ones get the POLYWOOD spinner words, read from
+# the web client's word-set file (packages/core/src/os/hosted-claude-policy.ts). Fails when the set is missing.
+RUN node packages/core/dist/os/hosted-claude-policy-cli.js docker/hosted/policy /out/policy
 
 # ── agents: the agent CLIs, each checked against a pinned hash ──────────────────────────────────────
 FROM ${NODE_IMAGE} AS agents
@@ -131,10 +134,14 @@ RUN bash -lc 'command -v claude && command -v codex && command -v opencode && co
 # ── Harness policy: root-owned, in each harness's system location (docker/hosted/policy/README.md) ──
 # A harness reads these above every user, project and command-line setting. So an agent that starts a
 # second `claude` or `codex` from a shell cannot make it skip approvals: the files are not its to change.
-COPY --chown=root:root docker/hosted/policy/ /opt/dispatch/policy/
+COPY --from=build --chown=root:root /out/policy/ /opt/dispatch/policy/
+# managed-settings.d: Claude Code's drop-in folder, a link to a root-owned folder on the run volume. The
+# daemon (root, with privilege separation) writes the business MCP allow-list there
+# (packages/core/src/os/hosted-mcp-policy.ts); nobody else can write it. A missing target is no policy.
 RUN install -d -m 755 /etc/claude-code /etc/codex \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.json /etc/claude-code/managed-settings.json \
     && install -m 644 /opt/dispatch/policy/codex-requirements.toml /etc/codex/requirements.toml \
+    && ln -s /run/dispatch/claude-policy /etc/claude-code/managed-settings.d \
     && chmod -R a-w /opt/dispatch/policy
 
 COPY --chown=root:root docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -155,7 +162,7 @@ RUN find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
 # /run/dispatch is declared a volume so that a platform volume mounted there (a read-only root file
 # system) takes these folders' owner and mode.
 RUN install -d -o root -g root -m 0700 /var/lib/dispatch /var/lib/dispatch/state \
-    && install -d -o root -g root -m 0755 /run/dispatch /run/dispatch/agent \
+    && install -d -o root -g root -m 0755 /run/dispatch /run/dispatch/agent /run/dispatch/claude-policy \
     && install -d -o root -g root -m 0700 /run/dispatch/private
 VOLUME ["/run/dispatch"]
 
@@ -197,7 +204,7 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 curl unzip \
     && rm -rf /var/lib/apt/lists/* \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.developer.json /etc/claude-code/managed-settings.json \
-    && rm -f /etc/codex/requirements.toml \
+    && install -m 644 /opt/dispatch/policy/codex-requirements.developer.toml /etc/codex/requirements.toml \
     && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
 ENV DISPATCH_IMAGE_VARIANT=developer
 USER dispatch

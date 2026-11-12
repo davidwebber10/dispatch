@@ -3,5 +3,6 @@
     "disableBypassPermissionsMode": "disable"
   },
   "allowManagedHooksOnly": true,
-  "allowManagedPermissionRulesOnly": true
+  "allowManagedPermissionRulesOnly": true,
+  "disableClaudeAiConnectors": true
 }

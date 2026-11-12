@@ -194,5 +194,46 @@ async function live() {
   bridge.stop();
 }
 
-await (mode === 'inbox' ? inbox() : mode === 'live' ? live() : Promise.resolve(step('error', `unknown mode ${mode}`)));
+/**
+ * A thread reads the owner's other threads through Dispatch's own server (`dispatch`): list_threads,
+ * then read_thread of the thread named in $HOME/proof/tid. Then the same key on owner-level routes.
+ */
+async function threads() {
+  const all = servers();
+  step('servers', all ? Object.keys(all) : null);
+  // The launch layer of the hosted MCP rule, as the harness received it.
+  step('launch', { strictMcpConfig: harnessArgs.includes('--strict-mcp-config'), claudeAiConnectorsEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS ?? null });
+  const spec = all?.dispatch;
+  step('serverInConfig', !!spec);
+  if (!spec) return;
+  let target = '';
+  try { target = fs.readFileSync(path.join(OUT, 'tid'), 'utf8').trim(); } catch { /* none */ }
+  const s = stdio(spec);
+  const init = await s.call('initialize', INIT);
+  step('initialize', init.result ? { serverInfo: init.result.serverInfo } : init);
+  s.notify('notifications/initialized');
+  const names = ((await s.call('tools/list')).result?.tools ?? []).map((t) => t.name);
+  step('tools', names.filter((n) => /thread|project/.test(n)));
+  const text = (r) => r.result?.content?.[0]?.text ?? JSON.stringify(r.error ?? r);
+  const listed = await s.call('tools/call', { name: 'list_threads', arguments: {} });
+  let rows = []; try { rows = JSON.parse(text(listed)); } catch { /* an error text */ }
+  step('listThreads', { isError: listed.result?.isError === true, count: Array.isArray(rows) ? rows.length : 0, target: (Array.isArray(rows) ? rows : []).find((r) => r.id === target)?.label ?? null, text: Array.isArray(rows) ? undefined : text(listed).slice(0, 200) });
+  const read = await s.call('tools/call', { name: 'read_thread', arguments: { id: target, tail: 20 } });
+  const readText = text(read);
+  step('readThread', { isError: read.result?.isError === true, hasFirstTurn: readText.includes('echo:first turn'), text: readText.slice(0, 160) });
+  s.stop();
+  // The same key on routes that only the owner may use: settings, accounts, approvals, tokens, secrets.
+  const asThread = {};
+  for (const [name, method, route, body] of [
+    ['harness settings', 'PUT', '/api/settings/harnesses', { 'claude-code': { defaultModel: 'x' } }],
+    ['claude account sign-in', 'POST', '/api/claude-auth/login', {}],
+    ['answer an approval', 'POST', `/api/terminals/${target}/permission`, { decision: 'allow' }],
+    ['devices and tokens', 'GET', '/api/access/devices'],
+    ['secrets', 'GET', '/api/secrets'],
+    ['message another thread', 'POST', `/api/terminals/${target}/message`, { text: 'hi', source: 'coordinator' }],
+  ]) asThread[name] = (await daemon(method, route, body)).status;
+  step('ownerRoutesAsThread', asThread);
+}
+
+await (mode === 'inbox' ? inbox() : mode === 'live' ? live() : mode === 'threads' ? threads() : Promise.resolve(step('error', `unknown mode ${mode}`)));
 finish();

@@ -188,7 +188,8 @@ export class OsConnectionsProvider {
     // Stale, or OS was not reachable at the last try: ask again now (coalesced, 5 s timeout). This
     // spawn still gets the cache; a company-system server lists its tools live when the thread starts.
     if (this.isStale() || !this.state.reachable) void this.refresh();
-    return this.state.servers;
+    // Servers the platform itself attaches: a hosted business thread keeps them (os/hosted-mcp-policy.ts).
+    return this.state.servers.map((s) => ({ ...s, platform: true }));
   }
 
   /** Env the specs' ${VAR} placeholders resolve against (short-lived tokens). */

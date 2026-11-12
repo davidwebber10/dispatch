@@ -152,6 +152,9 @@ export function osServersNote(specs: readonly McpServerSpec[], platformName: str
       + '(the person gets a Connect card) instead of saying that you cannot do it, and follow what its result says.');
   }
   if (conn) parts.push(`The \`list\` tool of the \`${conn}\` server shows which company systems are connected.`);
+  parts.push('If a system is not set up in this workspace (it has no server here, or its result says it cannot be connected), '
+    + 'say in plain words that the system is not set up yet and that an administrator must set it up, and offer what you can do instead, '
+    + 'for example a file in their Inbox. Never send the person to the settings of an AI vendor or its connectors.');
   return parts.join(' ');
 }
 

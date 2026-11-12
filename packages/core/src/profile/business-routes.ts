@@ -164,7 +164,9 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   [`PATCH ${T}`]: check('thread.config', safeConfigOnly),
   [`DELETE ${T}`]: allow(),
   [`GET ${T}/scrollback`]: refuse('thread.pty-output', NO_TERMINAL),
-  [`GET ${T}/conversation`]: allow(),
+  // A thread key may read the owner's other threads (read_thread of the `dispatch` server); the key
+  // rules (auth/key-rules.ts readRule) keep it to threads its key may read.
+  [`GET ${T}/conversation`]: allow(THREAD),
   [`GET ${T}/conversation/search`]: allow(),
   [`GET ${T}/diagnostics`]: allow(),
   [`GET ${T}/status`]: allow(),

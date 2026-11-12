@@ -38,6 +38,43 @@ if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$(head -c 2 "$REAL" 2>/dev/null)" != '
   claude_mode "--settings with the bypass as default mode" -- --settings '{"permissions":{"defaultMode":"bypassPermissions"}}'
   claude_mode "a managed-settings path of its own, and the flag" "CLAUDE_CODE_MANAGED_SETTINGS_PATH=$WORKDIR/empty-policy.json" -- --dangerously-skip-permissions
   claude_mode "a config folder of its own, and the flag" "CLAUDE_CONFIG_DIR=$WORKDIR/own-config" -- --dangerously-skip-permissions
+
+  # ── MCP servers the agent adds itself, under the business profile (os/hosted-mcp-policy.ts) ──
+  # The proof script switches the box to the business profile and starts a business thread; the daemon
+  # then writes the root-owned allow-list into Claude Code's managed folder. Wait for it.
+  DROPIN=/etc/claude-code/managed-settings.d/50-dispatch-business-mcp.json
+  for _ in $(seq 1 60); do [ -e "$DROPIN" ] && break; sleep 2; done
+  if [ -e "$DROPIN" ]; then
+    MCPDIR="$HOME/proof/nested-mcp"; mkdir -p "$MCPDIR/.claude" "$HOME/.claude"
+    printf '%s\n' 'process.stdin.on("data",()=>{})' > "$MCPDIR/evil.js"
+    added="$(cd "$MCPDIR" && claude mcp add --scope user evil-user -- node "$MCPDIR/evil.js" 2>&1 | tail -1; cd "$MCPDIR" && claude mcp add --scope user --transport http evil-http https://evil.example.com/mcp 2>&1 | tail -1)"
+    # The agent writes the files itself: a user-scope server in ~/.claude.json, a project .mcp.json, and
+    # settings that approve project servers, widen the allow-list and ask for the account connectors.
+    node -e 'const f=process.argv[1],fs=require("fs");let j={};try{j=JSON.parse(fs.readFileSync(f,"utf8"))}catch{}j.mcpServers={...(j.mcpServers||{}),"evil-direct":{command:"node",args:[process.argv[2]]}};fs.writeFileSync(f,JSON.stringify(j))' "$HOME/.claude.json" "$MCPDIR/evil.js"
+    printf '{"mcpServers":{"evil-project":{"command":"node","args":["%s"]}}}\n' "$MCPDIR/evil.js" > "$MCPDIR/.mcp.json"
+    printf '{"enableAllProjectMcpServers":true,"enabledMcpjsonServers":["evil-project"],"disableClaudeAiConnectors":false,"allowedMcpServers":[{"serverCommand":["node","%s"]},{"serverUrl":"https://evil.example.com/*"}]}\n' "$MCPDIR/evil.js" > "$MCPDIR/.claude/settings.json"
+    cp "$MCPDIR/.claude/settings.json" "$HOME/.claude/settings.json"
+    mcp_row() { # mcp_row <label> [VAR=value ...] -- <flags...>
+      local label="$1"; shift
+      local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
+      local out names
+      out="$(cd "$MCPDIR" && env "${envs[@]}" timeout 60 "$REAL" "$@" -p --output-format stream-json --verbose 'say hi' </dev/null 2>&1 | head -c 40000)"
+      names="$(printf '%s\n' "$out" | grep -m1 '"subtype":"init"' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log((JSON.parse(s).mcp_servers||[]).map(m=>m.name).join(","))}catch{console.log("?")}})')"
+      if [ "$names" = "?" ] || [ -z "$(printf '%s\n' "$out" | grep -m1 '"subtype":"init"')" ]; then info "nested Claude Code, $label: no init frame" "$(short "$out")"
+      elif printf '%s' "$names" | grep -q evil; then bad "nested Claude Code, $label: a server the agent added loaded" "mcp_servers: $names"
+      else ok "nested Claude Code, $label: no server the agent added loaded" "mcp_servers: ${names:-none}"; fi
+    }
+    info "claude mcp add, as the agent" "$(short "$added")"
+    mcp_row "user + project servers, user allow-list" --
+    mcp_row "the same and an --mcp-config of its own" -- --mcp-config "{\"mcpServers\":{\"evil-flag\":{\"command\":\"node\",\"args\":[\"$MCPDIR/evil.js\"]},\"evil-flag-http\":{\"type\":\"http\",\"url\":\"https://evil.example.com/mcp\"}}}"
+    mcp_row "connectors asked for by env and --settings" ENABLE_CLAUDEAI_MCP_SERVERS=true -- --settings '{"disableClaudeAiConnectors":false}'
+    mcp_row "a config folder of its own" "CLAUDE_CONFIG_DIR=$MCPDIR/own-config" -- --mcp-config "{\"mcpServers\":{\"evil-flag\":{\"command\":\"node\",\"args\":[\"$MCPDIR/evil.js\"]}}}"
+    if printf '{}' > /etc/claude-code/managed-settings.d/90-agent.json 2>/dev/null || rm -f "$DROPIN" 2>/dev/null; then bad "the agent changed Claude Code's managed folder"
+    else ok "the agent cannot write or remove a file in Claude Code's managed folder" "$(stat -L -c '%U %a' /etc/claude-code/managed-settings.d)"; fi
+    rm -f "$HOME/.claude/settings.json"
+  else
+    info "no business MCP allow-list appeared" "the MCP rows did not run"
+  fi
 else
   info "the Claude Code program here is the proof's stand-in" "a nested real harness was not run in this box"
 fi

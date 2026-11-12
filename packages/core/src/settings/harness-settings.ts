@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import * as appState from '../db/app-state.js';
 import { AGENT_TYPES, type AgentType } from '../providers/agent-types.js';
 import { OPENCODE_DEFAULT_MODELS, type OpencodeModel } from '../providers/opencode.js';
+import { isHostedBox } from '../os/hosted-mode.js';
+import { hostedSpinnerVerbs } from './word-sets.js';
 
 /**
  * Per-harness preferences, persisted DAEMON-side (one app_state JSON blob, the
@@ -190,6 +192,18 @@ export function skipClaudeAgentSummaries(db: Database.Database): boolean {
 }
 
 /** The spinner words every Claude Code thread is started with, or undefined for Claude's own. */
-export function claudeSpinnerVerbs(db: Database.Database): SpinnerVerbs | undefined {
-  return readHarnessSettings(db)['claude-code']?.spinnerVerbs;
+export function claudeSpinnerVerbs(db: Database.Database, hosted: boolean = isHostedBox()): SpinnerVerbs | undefined {
+  return withHostedDefaults(readHarnessSettings(db), hosted)['claude-code']?.spinnerVerbs;
+}
+
+/**
+ * The settings as the daemon USES and SHOWS them. On a hosted box a person who chose no words gets
+ * the POLYWOOD set (mode `replace`) for the "Working…" indicator; the image's managed Claude Code
+ * policy has the same words. Never written back: a saved choice stays the person's own.
+ */
+export function withHostedDefaults(settings: AllHarnessSettings, hosted: boolean = isHostedBox(), defaults: () => SpinnerVerbs | null = hostedSpinnerVerbs): AllHarnessSettings {
+  if (!hosted || settings['claude-code']?.spinnerVerbs) return settings;
+  const verbs = defaults();
+  if (!verbs) return settings;
+  return { ...settings, 'claude-code': { ...(settings['claude-code'] ?? {}), spinnerVerbs: verbs } };
 }

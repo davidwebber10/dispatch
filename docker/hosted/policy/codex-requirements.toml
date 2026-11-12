@@ -4,3 +4,11 @@
 # the sandbox has no effect, for a thread Dispatch starts and for a `codex` an agent starts itself.
 allowed_approval_policies = ["untrusted", "on-request"]
 allowed_sandbox_modes = ["read-only", "workspace-write"]
+
+# Company systems reach a thread only through the platform's gateway. `apps` is Codex's switch for the
+# apps and connectors of the person's ChatGPT account (the `codex_apps` server); `plugins` is its
+# plugin marketplace, which can bring MCP servers of its own. Pinned off: `-c features.apps=true`,
+# `--enable apps` and a CODEX_HOME with its own config.toml do not turn them on (measured, 0.167.0).
+[features]
+apps = false
+plugins = false

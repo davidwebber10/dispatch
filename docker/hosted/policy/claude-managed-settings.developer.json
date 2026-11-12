@@ -1,3 +1,4 @@
 {
-  "forceLoginMethod": "claudeai"
+  "forceLoginMethod": "claudeai",
+  "disableClaudeAiConnectors": true
 }

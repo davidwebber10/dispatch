@@ -207,6 +207,8 @@ export class PluginRegistry {
           // DISPATCH_HOSTED: a hosted box (os/hosted-mode.ts); a plugin may word its tool for the platform (the Inbox does).
           env: { ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}), ...(isHostedBox() ? { DISPATCH_HOSTED: '1' } : {}) },
           authEnv: true,
+          // A hosted business thread keeps only the servers of plugins that ship with Dispatch (os/hosted-mcp-policy.ts).
+          ...(where?.bundled ? { bundled: true } : {}),
         });
         toolNames.push(`plugin-${row.id}`);
       }

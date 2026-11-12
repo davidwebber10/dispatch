@@ -140,3 +140,12 @@ describe('the gateway instructions', () => {
     expect(p2.join('\n')).not.toContain('guide first');
   });
 });
+
+describe('the company-systems note: a system that is not set up', () => {
+  test('the agent says it is not set up, names an administrator, offers the Inbox, and never sends the person to an AI vendor', () => {
+    const list = osServerSpecs({ daemonApi: 'http://127.0.0.1:1/dispatch', systems: ['os', 'google_sheets'], bridgePath: '/b.js' });
+    expect(osServersNote(list, 'POLYWOOD OS')).toMatchInlineSnapshot(`"Company systems from POLYWOOD OS are MCP servers of their own: google-sheets. A system the person has not connected yet has one tool, \`connect\`. When a request needs that system, call its \`connect\` tool (the person gets a Connect card) instead of saying that you cannot do it, and follow what its result says. The \`list\` tool of the \`connections\` server shows which company systems are connected. If a system is not set up in this workspace (it has no server here, or its result says it cannot be connected), say in plain words that the system is not set up yet and that an administrator must set it up, and offer what you can do instead, for example a file in their Inbox. Never send the person to the settings of an AI vendor or its connectors."`);
+    // Only the connections server: the not-set-up line is there too.
+    expect(osServersNote(osServerSpecs({ daemonApi: 'http://127.0.0.1:1', systems: ['os'], bridgePath: '/b.js' }), 'X')).toContain('not set up yet');
+  });
+});

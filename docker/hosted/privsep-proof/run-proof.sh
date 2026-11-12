@@ -236,10 +236,16 @@ type_in "$SHID" 'rm -f ~/projects/evil ~/projects/proj1/redirect'
 
 echo
 echo "################ C. the same attacks under the business profile, run by the harness process itself"
+# The stand-in harness keeps no transcript. Claude Code writes one, as the agent, where the daemon reads a
+# thread's conversation (read_thread): put the first thread's answer there, the way Claude Code would.
+TDIR=/home/dispatch/.claude/projects/-home-dispatch-projects-proj1
+inbox sh -c "mkdir -p $TDIR && printf '%s\n' '{\"type\":\"user\",\"uuid\":\"proof-u1\",\"timestamp\":\"2026-11-12T10:00:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"first turn\"}}' '{\"type\":\"assistant\",\"uuid\":\"proof-a1\",\"parentUuid\":\"proof-u1\",\"timestamp\":\"2026-11-12T10:00:01.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"claude\",\"content\":[{\"type\":\"text\",\"text\":\"echo:first turn\"}]}}' > $TDIR/sess-fake.jsonl && chown -R 1000:1000 /home/dispatch/.claude"
+# An integration the developer added through Dispatch's own screen: a business thread must not get it.
+api POST /api/integrations '{"name":"proof-integration","type":"stdio","command":"env"}' >/dev/null
 set_profile business
 [ "$(apic POST "/api/sessions/$SID/terminals" '{"type":"shell"}')" = 403 ] && fok "business profile: the owner cannot open a shell" || fbad "business profile: the owner cannot open a shell" "HTTP $(apic POST "/api/sessions/$SID/terminals" '{"type":"shell"}')"
 # The harness of a business chat thread first does an agent's work (the Inbox tool), then turns hostile.
-hook biz 1 "node \"\$HOME/proof/agent-work.mjs\" inbox biz -- \"\$@\"; bash \"\$HOME/proof/attack.sh\" $(sha "$IN") $(sha "$OUT") http://host.docker.internal:$STUB_PORT $(sha "$SECRET") business > \"\$HOME/proof/attack-biz.out\" 2>&1; echo done > \"\$HOME/proof/attack-biz.done\""
+hook biz 1 "node \"\$HOME/proof/agent-work.mjs\" inbox biz -- \"\$@\"; node \"\$HOME/proof/agent-work.mjs\" threads biz -- \"\$@\"; bash \"\$HOME/proof/attack.sh\" $(sha "$IN") $(sha "$OUT") http://host.docker.internal:$STUB_PORT $(sha "$SECRET") business > \"\$HOME/proof/attack-biz.out\" 2>&1; echo done > \"\$HOME/proof/attack-biz.done\""
 BT="$(api POST "/api/sessions/$SID/terminals" '{"type":"claude-code","label":"business chat"}')"
 BTID="$(echo "$BT" | jget id)"; sleep 2
 api POST "/api/terminals/$BTID/message" '{"content":"business turn"}' >/dev/null
@@ -249,6 +255,19 @@ RB="$(pfile inbox-biz.json)"; BDROP="$(echo "$RB" | jget dropId)"; BFID="$(echo 
 api GET /api/inbox | grep -q "\"id\":\"$BDROP\"" && [ "$(api GET "/api/inbox/drops/$BDROP/files/$BFID")" = "$(printf 'region,units\nnorth,12\nsouth,30')" ] && fok "business profile: the owner route lists the drop and serves the file" || fbad "business profile: the owner route lists the drop and serves the file"
 [ "$(echo "$RB" | jget steps.ownerRoutesAsThread)" = '{"list":403,"counts":403,"one drop":403,"mark read":403}' ] && [ "$(echo "$RB" | jget steps.fileRoutesAsThread)" = '{"inbox":403,"plugin":403}' ] && fok "business profile: the thread's own key gets 403 on the owner's routes and on the file" || fbad "business profile: the thread's own key gets 403 on the owner's routes" "$(echo "$RB" | jget steps.ownerRoutesAsThread) $(echo "$RB" | jget steps.fileRoutesAsThread)"
 [ "$(apic GET "/api/inbox/drops/$SDROP/secret")" = 403 ] && fok "business profile: a secret drop's value is refused, to the owner too" || fbad "business profile: a secret drop's value is refused" "HTTP $(apic GET "/api/inbox/drops/$SDROP/secret")"
+# Threads read each other: the `dispatch` server of a business thread lists the owner's threads and reads one.
+wait_file /home/dispatch/proof/threads-biz.done 45
+RT="$(pfile threads-biz.json)"
+[ "$(echo "$RT" | jget steps.serverInConfig)" = true ] && [ "$(echo "$RT" | jget steps.listThreads.isError)" = false ] && [ -n "$(echo "$RT" | jget steps.listThreads.target)" ] && fok "business profile: list_threads of the dispatch server lists the owner's threads" "$(echo "$RT" | jget steps.listThreads.count) threads, the other one: $(echo "$RT" | jget steps.listThreads.target); tools $(echo "$RT" | jget steps.tools)" || fbad "business profile: list_threads lists the owner's threads" "$(echo "$RT" | jget steps.servers) $(echo "$RT" | jget steps.listThreads) $(echo "$RT" | jget steps.error | head -c 160)"
+[ "$(echo "$RT" | jget steps.readThread.isError)" = false ] && [ "$(echo "$RT" | jget steps.readThread.hasFirstTurn)" = true ] && fok "business profile: read_thread reads another thread's turns with the thread's own key" || fbad "business profile: read_thread reads another thread's turns" "$(echo "$RT" | jget steps.readThread)"
+OR="$(echo "$RT" | jget steps.ownerRoutesAsThread)"
+echo "$OR" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const o=JSON.parse(s||"{}");process.exit(Object.keys(o).length===6&&Object.values(o).every(v=>v===403||v===401)?0:1)})' && fok "business profile: the same key is refused on owner routes (settings, sign-in, approvals, devices, secrets, messages)" "$OR" || fbad "business profile: the same key is refused on owner routes" "$OR"
+# The hosted MCP rule (os/hosted-mcp-policy.ts): the launch layer and the root-owned drop-in.
+[ "$(echo "$RT" | jget steps.launch.strictMcpConfig)" = true ] && [ "$(echo "$RT" | jget steps.launch.claudeAiConnectorsEnv)" = false ] && fok "business profile: the harness got --strict-mcp-config and ENABLE_CLAUDEAI_MCP_SERVERS=false" || fbad "business profile: the harness got the MCP launch layer" "$(echo "$RT" | jget steps.launch)"
+SV="$(echo "$RT" | jget steps.servers)"
+echo "$SV" | grep -q '"dispatch"' && echo "$SV" | grep -q '"plugin-previews"' && ! echo "$SV" | grep -q -e '"proof-integration"' -e '"doppler"' && fok "business profile: the thread's MCP config holds only the platform systems, dispatch and the Inbox" "$(echo "$RT" | jget steps.servers)" || fbad "business profile: only the allowed servers" "$(echo "$RT" | jget steps.servers)"
+DROPIN=/etc/claude-code/managed-settings.d/50-dispatch-business-mcp.json
+[ "$(inbox stat -L -c '%U %a' "$DROPIN" 2>/dev/null)" = "root 644" ] && inbox grep -q '"allowManagedMcpServersOnly": true' "$DROPIN" && fok "business profile: the daemon wrote the root-owned MCP allow-list into Claude Code's managed folder" "$(inbox cat "$DROPIN" | tr -d ' \n' | cut -c1-150)" || fbad "business profile: the root-owned MCP allow-list is in place" "$(inbox ls -la /run/dispatch/claude-policy 2>&1 | tr '\n' ' ')"
 wait_file /home/dispatch/proof/attack-biz.done 240
 inbox cat /home/dispatch/proof/attack-biz.out > "$WORK/attack-biz.out" 2>/dev/null
 grep -E '^(==|FAIL|NOTE)' "$WORK/attack-biz.out" | sed "s/$IN/<inbound>/g"
@@ -360,7 +379,14 @@ if api GET /api/host-context | grep -q '"privsep-v1"'; then
   inbox mkdir -p /home/dispatch/proof; inbox chown 1000:1000 /home/dispatch/proof
   copy_in "$HERE/nested-harness.sh" nested-harness.sh
   type_in "$NSH" 'bash ~/proof/nested-harness.sh > ~/proof/nested.out 2>&1; echo done > ~/proof/nested.done'
-  wait_file /home/dispatch/proof/nested.done 200
+  # The MCP rows of the nested harness run under the business profile: a business thread makes the
+  # daemon write its root-owned allow-list (the thread itself needs no sign-in for that).
+  set_profile business
+  api POST "/api/sessions/$NSID/terminals" '{"type":"claude-code","label":"business chat"}' >/dev/null
+  wait_file /home/dispatch/proof/nested.done 300
+  set_profile developer
+  api POST "/api/sessions/$NSID/terminals" '{"type":"claude-code","label":"developer chat","config":{"transport":"structured"}}' >/dev/null; sleep 3
+  inbox test ! -e /run/dispatch/claude-policy/50-dispatch-business-mcp.json && fok "developer profile: the next thread removes the business allow-list (a developer's own integrations load)" || fbad "developer profile: the business allow-list is removed" "$(inbox ls /run/dispatch/claude-policy 2>&1 | tr '\n' ' ')"
   inbox cat /home/dispatch/proof/nested.out > "$WORK/nested.out" 2>/dev/null
   grep -E '^(==|PASS|FAIL|NOTE)' "$WORK/nested.out"
   A3="$(grep -c '^FAIL' "$WORK/nested.out")"; P3="$(grep -c '^PASS' "$WORK/nested.out")"

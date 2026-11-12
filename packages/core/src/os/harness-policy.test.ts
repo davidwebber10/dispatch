@@ -25,7 +25,11 @@ describe('the harness policy of the image', () => {
       permissions: { disableBypassPermissionsMode: 'disable' },
       allowManagedHooksOnly: true,
       allowManagedPermissionRulesOnly: true,
+      // The connectors of the person's own claude.ai account never load (os/hosted-mcp-policy.ts).
+      disableClaudeAiConnectors: true,
     });
+    const developer = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.developer.json'), 'utf8'));
+    expect(developer).toEqual({ forceLoginMethod: 'claudeai', disableClaudeAiConnectors: true });
     // The gateway mode drops only the login method: approvals are as strict.
     const gateway = JSON.parse(fs.readFileSync(path.join(POLICY, 'claude-managed-settings.gateway.json'), 'utf8'));
     expect(gateway).toEqual({ ...standard, forceLoginMethod: undefined });
@@ -34,6 +38,10 @@ describe('the harness policy of the image', () => {
     expect(codex).toMatch(/^allowed_sandbox_modes = \["read-only", "workspace-write"\]$/m);
     const settings = codex.split('\n').filter((l) => !l.startsWith('#')).join('\n');
     expect(settings).not.toMatch(/never|danger-full-access/);
+    // The apps and connectors of the person's ChatGPT account, and Codex's plugin marketplace: pinned off.
+    expect(settings).toMatch(/^\[features\]\napps = false\nplugins = false$/m);
+    const codexDev = fs.readFileSync(path.join(POLICY, 'codex-requirements.developer.toml'), 'utf8');
+    expect(codexDev.split('\n').filter((l) => l && !l.startsWith('#')).join('\n')).toBe('[features]\napps = false');
   });
 
   test('the image installs the policy root-owned, strips setuid bits and does not run as root by default', () => {
@@ -41,6 +49,13 @@ describe('the harness policy of the image', () => {
     expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/claude-managed-settings\.json \/etc\/claude-code\/managed-settings\.json/);
     expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/codex-requirements\.toml \/etc\/codex\/requirements\.toml/);
     expect(dockerfile).toMatch(/find \/ -xdev -type f -perm \/6000 -exec chmod a-s/);
+    // The policy files come from the build step that adds the spinner words, and Claude Code's drop-in
+    // folder is a link to the root-owned folder the daemon writes (os/hosted-mcp-policy.ts).
+    expect(dockerfile).toMatch(/RUN node packages\/core\/dist\/os\/hosted-claude-policy-cli\.js docker\/hosted\/policy \/out\/policy/);
+    expect(dockerfile).toMatch(/COPY --from=build --chown=root:root \/out\/policy\/ \/opt\/dispatch\/policy\//);
+    expect(dockerfile).toMatch(/ln -s \/run\/dispatch\/claude-policy \/etc\/claude-code\/managed-settings\.d/);
+    expect(dockerfile).toMatch(/install -d -o root -g root -m 0755 \/run\/dispatch \/run\/dispatch\/agent \/run\/dispatch\/claude-policy/);
+    expect(dockerfile).toMatch(/install -m 644 \/opt\/dispatch\/policy\/codex-requirements\.developer\.toml \/etc\/codex\/requirements\.toml/);
     expect(dockerfile).toMatch(/^FROM \$\{NODE_IMAGE\} AS runtime$/m);
     expect(dockerfile).toMatch(/^ARG NODE_IMAGE=node:[\w.-]+@sha256:[0-9a-f]{64}$/m);
     expect(dockerfile).toMatch(/^ARG CLAUDE_SHA256_ARM64=[0-9a-f]{64}$/m);

@@ -15,6 +15,8 @@ import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { ClaudeStreamCompactor } from './shared/stream-compaction.js';
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { blockedEvent, blockedResolvedEvent, approvalTitle, allowedOnceMessage, sameToolCall, inputDetail, SMART_FALLBACK_NOTICE, ALLOW_ONCE_MS, type BlockedAction, type Approvals } from '../os/approvals.js';
+import { boxLog } from '../os/box-log.js';
+import { initServerNames, unexpectedServers, unexpectedServersNotice } from '../os/hosted-mcp-policy.js';
 import { StructuredEmitter, type AnyStructuredListener, type StructuredListener, type StructuredManagerEventName, type StructuredManagerEvents } from './shared/events.js';
 
 /**
@@ -132,6 +134,8 @@ interface Session {
   allowOnce?: { toolName: string; input: unknown; known: boolean; timer: NodeJS.Timeout; /** Turn ends to let pass: the turn that was open when the person allowed the call. */ skipResults: number } | null;
   /** Our own control requests awaiting the CLI's control_response (set_model). */
   controls?: Map<string, { resolve: (r: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>;
+  /** StructuredSpawnOpts.mcpExpected; cleared once the first init frame was checked. */
+  mcpExpected?: string[] | null;
 }
 
 /** How long a set_model control request may wait for the CLI's answer. */
@@ -156,6 +160,12 @@ export interface StructuredSpawnOpts {
    *  back to the CLI with the policy's message (no pending, no human involvement). */
   toolPolicy?: (toolName: string, input: unknown) => { allow: true } | { allow: false; message: string };
   seedEvents?: unknown[];
+  /**
+   * Claude only, on a hosted box: the MCP server names Dispatch passed. The first `system/init`
+   * frame's `mcp_servers` is logged (`thread.mcp`, names only), and a name not in this list gives a
+   * warning line and a notice in the thread (os/hosted-mcp-policy.ts).
+   */
+  mcpExpected?: string[];
   /**
    * App-server-style managers (Codex) resume/model out-of-band over JSON-RPC rather than via
    * `args`: `resumeId` is the external thread id to `thread/resume`, `model` the thread's
@@ -457,7 +467,7 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
 
     const counterScope = randomUUID(); // Claude result counters restart with each CLI invocation.
     const rl = readline.createInterface({ input: child.stdout });
-    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [] };
+    const session: Session = { child, rl, ring: new EventRing(), compactor: new ClaudeStreamCompactor(), escalate: opts.escalate ?? false, toolPolicy: opts.toolPolicy, pending: null, accountId: opts.accountId, smart: opts.approvals === 'smart', blocked: [], mcpExpected: opts.mcpExpected ?? null };
     // Resume backfill: seed the ring with prior history (restored from the claude
     // transcript) BEFORE any live event lands, so a ws (re)connect replays the past
     // conversation first and the View isn't blank after a daemon restart.
@@ -504,6 +514,11 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
       // The active model: init carries it on every turn; a lead assistant frame carries what
       // answered. A sub-agent's frame (parent_tool_use_id) and a synthetic frame never count.
       if (event?.type === 'system' && event?.subtype === 'init' && typeof event.model === 'string' && event.model) session.model = event.model;
+      if (event?.type === 'system' && event?.subtype === 'init' && session.mcpExpected) {
+        const expected = session.mcpExpected;
+        session.mcpExpected = null; // the first init of this process only
+        this.checkMcpServers(terminalId, expected, event);
+      }
       if (event?.type === 'assistant' && event?.parent_tool_use_id == null) {
         const m = event.message?.model;
         if (typeof m === 'string' && m && m !== SYNTHETIC) session.model = m;
@@ -889,6 +904,22 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
   }
 
   /** A line in the thread for the viewers and the replay: a model/effort change the CLI refused. */
+  /**
+   * The init-frame check of a hosted Claude Code thread (os/hosted-mcp-policy.ts). One `thread.mcp`
+   * line with the names the harness reports; a name Dispatch did not pass gives a warning line
+   * (`thread.mcp.unexpected`, the console too) and a notice in the thread's stream.
+   */
+  private checkMcpServers(terminalId: string, expected: readonly string[], event: unknown): void {
+    const reported = initServerNames(event);
+    if (reported === null) return;
+    const extra = unexpectedServers(expected, reported);
+    boxLog('thread.mcp', { thread: terminalId, harness: 'claude-code', servers: reported, expected: [...expected], unexpected: extra });
+    if (extra.length === 0) return;
+    boxLog('thread.mcp.unexpected', { thread: terminalId, harness: 'claude-code', unexpected: extra }, 'warn');
+    console.warn(`[mcp] WARNING thread ${terminalId}: the harness loaded MCP servers Dispatch did not pass: ${extra.join(', ')}`);
+    this.postEvent(terminalId, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: unexpectedServersNotice(extra) });
+  }
+
   postEvent(terminalId: string, event: Record<string, unknown>): void {
     const s = this.sessions.get(terminalId);
     if (!s) return;

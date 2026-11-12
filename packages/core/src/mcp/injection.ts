@@ -26,6 +26,10 @@ export interface McpServerSpec {
   http?: { url: string };
   /** Set on a company-system server (os/os-servers.ts): the OS system id it serves. */
   osSystem?: string;
+  /** Set on Dispatch's own server and on the server of a plugin that ships with Dispatch (a root-owned folder). */
+  bundled?: boolean;
+  /** Set on a server the platform attaches itself (integrations/os-provider.ts, `servers` of its answer). */
+  platform?: boolean;
 }
 
 /** The variable that carries the key into a server; the Codex CLI view carries a key-file path. */

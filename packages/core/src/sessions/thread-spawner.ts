@@ -22,6 +22,7 @@ import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
 import { harnessPolicyIsStrict, NOT_A_BUSINESS_IMAGE } from '../os/harness-policy.js';
 import { isHostedBox } from '../os/hosted-mode.js';
 import { boxLog } from '../os/box-log.js';
+import { CLAUDE_HOSTED_MCP_ARGS, CLAUDE_HOSTED_MCP_ENV } from '../os/hosted-mcp-policy.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
 import { ROLE_DISALLOWED_TOOLS, roleToolPolicy } from '../roles/role-policy.js';
@@ -55,6 +56,21 @@ export function disallowedToolsFor(config: Record<string, any>): string[] | unde
   if (config.role === 'coordinator') return [...COORDINATOR_DISALLOWED_TOOLS];
   if (typeof config.roleAuthority === 'string') return [...ROLE_DISALLOWED_TOOLS];
   return undefined;
+}
+
+/**
+ * The launch layer of the hosted MCP rule (os/hosted-mcp-policy.ts): a Claude Code thread on a hosted
+ * box loads only the servers Dispatch passes (`--strict-mcp-config`). First on the line, so it can
+ * never fall inside a list flag or after the prompt. Every other harness and a local install: unchanged.
+ */
+export function hostedClaudeArgs(type: string, args: string[], hosted: boolean = isHostedBox()): string[] {
+  if (!hosted || type !== 'claude-code' || args.includes('--strict-mcp-config')) return args;
+  return [...CLAUDE_HOSTED_MCP_ARGS, ...args];
+}
+
+/** The environment layer of the same rule: the account's claude.ai connectors are not fetched. */
+export function hostedClaudeEnv(type: string, hosted: boolean = isHostedBox()): Record<string, string> {
+  return hosted && type === 'claude-code' ? { ...CLAUDE_HOSTED_MCP_ENV } : {};
 }
 
 /** What ThreadSpawner needs. Every field is required. */
@@ -265,14 +281,14 @@ export class ThreadSpawner {
             : provider.buildNewCommand({ workDir, secretsMcp, statusHooks, model, effort, sessionId: assignedSessionId });
       }
       command = cmd.command;
-      args = cmd.args;
+      args = hostedClaudeArgs(terminal.type, cmd.args);
     }
 
     // GROK_HOME is how Grok's hooks and MCP servers reach the thread — argv cannot carry
     // them for the top-level command. Everything but `plugins` links back to the real home.
     // The account overlay first, so a thread's own Claude token or Codex home rides every launch
     // (new, resume, relaunch), and the per-process keys below can never be shadowed by it.
-    const spawnEnv: Record<string, string> = { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminalId };
+    const spawnEnv: Record<string, string> = { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminalId };
     if (grokHomeDir) spawnEnv.GROK_HOME = grokHomeDir;
     // The key travels in the environment of this one process, never in argv and never in the shared
     // default env. The Codex CLI view writes its environment to a snapshot file, so it gets the path
@@ -492,6 +508,7 @@ export class ThreadSpawner {
       if (!built) throw new Error('structured transport not supported for this provider');
       sc = built;
     }
+    sc = { command: sc.command, args: hostedClaudeArgs(terminal.type, sc.args) };
 
     // On resume, restore prior conversation from the claude transcript JSONL. Claude-only:
     // the Codex manager has no Claude transcript to read — it backfills its own history from
@@ -642,7 +659,10 @@ export class ThreadSpawner {
       // thread always runs on the CLI login; an added Codex account is for CLI-mode threads.
       env: terminal.type === 'codex'
         ? {}
-        : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+        : { ...(this.wiring.accountEnv?.(terminal.type, config) ?? {}), ...hostedClaudeEnv(terminal.type), [TERMINAL_ID_ENV_VAR]: terminal.id, ...(sk ? { DISPATCH_AUTH: sk.key } : {}), ...(opencodeEnv ?? {}) },
+      // A hosted Claude Code thread: the box logs the servers its init frame names and warns about any
+      // it did not pass (os/hosted-mcp-policy.ts).
+      ...(isHostedBox() && terminal.type === 'claude-code' ? { mcpExpected: specs.map((s) => s.name) } : {}),
     });
     boxLog('thread.start', { thread: terminal.id, harness: terminal.type, transport: 'structured', resume: !!resumeSessionId });
     if (sk) this.wiring.threadKeys?.bindStructured(terminal.id, sk.handle);

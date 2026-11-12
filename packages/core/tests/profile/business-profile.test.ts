@@ -369,7 +369,7 @@ describe('business profile: what a thread\'s own key may do', () => {
     refusedForAgent(await request(s).post('/api/watches').set(auth).send({ targetTerminalId: b }));
     refusedForAgent(await request(s).post(`/api/sessions/${sid}/ledger/note`).set(auth).send({ text: 'x' }));
     refusedForAgent(await request(s).delete(`/api/terminals/${b}`).set(auth));
-    refusedForAgent(await request(s).get(`/api/terminals/${b}/conversation`).set(auth));
+    refusedForAgent(await request(s).get(`/api/terminals/${b}/conversation/search?q=x`).set(auth));
     refusedForAgent(await request(s).get(`/api/sessions/${sid}/files/read?path=x`).set(auth));
   });
 
@@ -384,6 +384,17 @@ describe('business profile: what a thread\'s own key may do', () => {
       const r = await request(s)[method](url).set(auth).send(method === 'post' ? {} : undefined);
       expect(r.body?.code, `${method} ${url}`).not.toBe('not_available_in_profile');
     }
+  });
+
+  // Owner requirement 2026-11-12: threads read each other. read_thread of the `dispatch` server reads
+  // another thread's conversation with the thread's own key; messaging that thread stays refused.
+  test('it reads another thread of the owner (read_thread), and still cannot message it', async () => {
+    const k = business();
+    const { s, b, auth } = await setup(k);
+    const r = await request(s).get(`/api/terminals/${b}/conversation?limit=20`).set(auth);
+    expect(r.status).toBe(200);
+    expect(r.body).toHaveProperty('items');
+    refusedForAgent(await request(s).post(`/api/terminals/${b}/message`).set(auth).send({ text: 'hi', source: 'coordinator' }));
   });
 
   test('developer: the same key keeps every rule it had', async () => {

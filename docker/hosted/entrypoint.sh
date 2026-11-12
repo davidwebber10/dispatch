@@ -58,6 +58,24 @@ if [ ! -r "$MANAGED" ]; then
   echo "FATAL: $MANAGED is missing. The image must carry the harness policy. Refusing to start." >&2
   exit 1
 fi
+# Claude Code's drop-in folder (/etc/claude-code/managed-settings.d) leads to this folder. A file there is
+# managed policy, so only root may ever write it: the daemon writes the business MCP allow-list there
+# when it runs as root (privilege separation). Emptied at every start. A folder (or its parent) that
+# another user could change stops the start: an agent could write its own policy there.
+POLICY_DROPIN=/run/dispatch/claude-policy
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "$POLICY_DROPIN"
+  chown 0:0 /run/dispatch "$POLICY_DROPIN"
+  chmod 755 /run/dispatch "$POLICY_DROPIN"
+  find "$POLICY_DROPIN" -mindepth 1 -delete
+fi
+for d in /run/dispatch "$POLICY_DROPIN"; do
+  [ -e "$d" ] || continue
+  if [ "$(stat -c '%u' "$d")" != "0" ] || [ $(( 0$(stat -c '%a' "$d") & 022 )) -ne 0 ]; then
+    echo "FATAL: $d must belong to root and be writable by root only (it holds harness policy). Refusing to start." >&2
+    exit 1
+  fi
+done
 if grep -q '"disableBypassPermissionsMode"' "$MANAGED"; then
   echo "dispatch box: harness policy: strict (no harness can skip approvals)"
 else

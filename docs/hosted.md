@@ -236,8 +236,9 @@ every user, project and command-line setting, so they also hold for a harness an
 
 | Harness | File | What it does |
 | --- | --- | --- |
-| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `forceLoginMethod: "claudeai"` |
-| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write"]` |
+| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.json` | `permissions.disableBypassPermissionsMode: "disable"`; `allowManagedHooksOnly: true`; `allowManagedPermissionRulesOnly: true`; `forceLoginMethod: "claudeai"`; `disableClaudeAiConnectors: true`; `spinnerVerbs` (the POLYWOOD set, mode `replace`, added at build from `packages/web/src/lib/spinnerWords.ts`) |
+| Claude Code 2.1.322 | `/etc/claude-code/managed-settings.d/` | a link to `/run/dispatch/claude-policy` (root, `0755`); under the business profile the daemon writes `50-dispatch-business-mcp.json` there (see "Company systems only through the platform") |
+| Codex 0.167.0 | `/etc/codex/requirements.toml` | `allowed_approval_policies = ["untrusted", "on-request"]`; `allowed_sandbox_modes = ["read-only", "workspace-write"]`; `[features] apps = false`, `plugins = false` |
 | OpenCode 1.19.5 | none | It has a managed config folder (`/etc/opencode`), but an environment variable moves it, and its effect on the flag that skips permissions was not measured (that needs a model). No policy is shipped for it |
 
 Measured in the image, as uid 1000 (the `permissionMode` of the session's own `init` frame; Codex's
@@ -259,6 +260,63 @@ What the policy does not close: an agent can still start a second harness in its
 or give a second harness its own program to answer the questions (`--permission-prompt-tool`), or call
 the model with a client of its own. The harness's risk judgement sees the command that would do so; no
 file in the image can forbid it. It closes the flags, which is what the review asked for.
+
+## Company systems only through the platform (MCP servers of a thread)
+
+Observed on stage (2026-11-12): a thread's Claude Code, signed in with the person's Claude account,
+loaded that account's own claude.ai connectors next to the platform's servers, and the agent sent the
+person to claude.ai settings. Such a connector goes around the platform's gateway: no grant, no tool
+log, no approval, and its traffic goes to the model provider. The rule (`packages/core/src/os/hosted-mcp-policy.ts`):
+
+| Profile | A thread's MCP servers |
+| --- | --- |
+| business | exactly the platform's per-system servers, Dispatch's own `dispatch` server (list_threads, read_thread, status) and the servers of bundled plugins (the Inbox, `plugin-previews`) |
+| developer | the same, plus what the developer added through Dispatch's own screens (integrations, the Doppler server, local plugins) |
+| local install | unchanged |
+
+Never, under any hosted profile: the connectors of the person's AI account, a server from user or
+project scope (`~/.claude.json`, `.mcp.json`), a server added at run time (`claude mcp add`).
+
+What a developer loses on a hosted box: the claude.ai connectors of their account (in every Claude Code
+process, nested ones included), the ChatGPT apps and connectors in Codex, and, in Dispatch's own Claude
+Code threads, their own user-scope and project-scope servers (`--strict-mcp-config`). A `claude` the
+developer starts in a terminal still loads user and project servers, but no account connector.
+
+The layers, and what each was measured to do (Claude Code 2.1.322 in the image, as uid 1000, with a
+stand-in account whose token carries the connector scope; the connector list came from a local stub):
+
+| Layer | Where | Measured |
+| --- | --- | --- |
+| `disableClaudeAiConnectors: true` | managed settings (root) | connectors absent; a user `false`, `--settings` `false` and `ENABLE_CLAUDEAI_MCP_SERVERS=true` do not bring them back |
+| business drop-in: `allowManagedMcpServersOnly` + `allowedMcpServers` (the loopback URL of the box, the commands of `dispatch` and the Inbox) | `/etc/claude-code/managed-settings.d` → `/run/dispatch/claude-policy` (root writes, at each business spawn) | `claude mcp add` refused ("not allowed by enterprise policy"); a server written into `~/.claude.json`, a project `.mcp.json` with `enableAllProjectMcpServers`, a user allow-list, an `--mcp-config` of a nested harness and a `CLAUDE_CONFIG_DIR` of its own: none loads |
+| `--strict-mcp-config` | launch, every hosted Claude Code thread | only the `--mcp-config` servers; it alone also drops the connectors |
+| `ENABLE_CLAUDEAI_MCP_SERVERS=false` | thread environment | connectors absent |
+| Codex `[features] apps = false` | `/etc/codex/requirements.toml` (root) | `apps` stays off with `-c features.apps=true`, `--enable apps` and a `CODEX_HOME` with its own config |
+
+A business thread does not start when the drop-in cannot be written (the daemon is not root, or the
+folder or its parent could be changed by another user): "its tool policy could not be set". Under the
+developer profile the daemon removes the drop-in at the next spawn. Claude Code reads a drop-in owned
+by any user (measured), so the entrypoint refuses to start when `/run/dispatch` or
+`/run/dispatch/claude-policy` is not root's with no group or other write.
+
+Not covered: Codex keeps the servers of the person's own `~/.codex/config.toml` (its `[mcp_servers]`
+requirement needs fixed names; the platform's systems are per person). OpenCode has no account
+connectors; its global config still loads. Grok was not measured.
+
+**The check stage runs.** At each start of a hosted Claude Code thread the box logs one line from the
+harness's first `system/init` frame, names only:
+
+    {"event":"thread.mcp","thread":"<id>","harness":"claude-code","servers":[...],"expected":[...],"unexpected":[]}
+
+A name Dispatch did not pass adds `{"event":"thread.mcp.unexpected","level":"warn",...}`, a
+`[mcp] WARNING` console line, and a notice in the thread. Stage must see `unexpected: []`, and no name
+that starts with `claude.ai `, for a person whose Claude account has connectors. The business drop-in
+logs `thread.mcp.policy` with `ok: false` only when it fails.
+
+**Wording.** The company-systems note in a thread's prompt (`os/os-servers.ts` `osServersNote`) tells
+the agent: a system that is not set up in this workspace is "not set up yet", an administrator must set
+it up, offer what it can do instead (a file in the Inbox), and never send the person to an AI vendor's
+settings.
 
 ## Task definition settings for the platform
 
