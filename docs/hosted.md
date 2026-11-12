@@ -155,6 +155,13 @@ a business person's thread on it.
 A copy of a CLI the image ships found in `$HOME/.dispatch/tools/bin` (the in-app installer) is renamed
 `*.shadowed-by-image`: the image wins.
 
+**Registry scan (2026-11-12, the image of this change).** 0 critical, 10 high (the image before: 16
+high). What went: the findings in `sqlite3` (it came with python), `util-linux` and `zlib`. What stays,
+each at Debian 13's newest version on the build day (`apt-get upgrade` ran, so no fixed package existed):
+`git` (1); `krb5` (6) and `cyrus-sasl2` (1), which are libraries of git's HTTP transport
+(`libcurl3t64-gnutls`) and go only if git goes; `glibc` (2). Rebuild to take the fixes when Debian
+publishes them: the base digest and `apt-get upgrade` are the two places a rebuild picks them up.
+
 ## Harness policy
 
 Root-owned files in each harness's system location (`docker/hosted/policy/`). A harness reads them above
