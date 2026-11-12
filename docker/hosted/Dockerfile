@@ -84,6 +84,9 @@ RUN cd /out/agent-clis/node_modules && rm -rf opencode-linux-*-musl \
          if cmp -s "$d/bin/opencode" opencode-ai/bin/opencode.exe; then ln -sf "../../$d/bin/opencode" opencode-ai/bin/opencode.exe; fi; \
        done \
     && ./.bin/opencode --version
+# Every user may read the CLIs and enter their folders. Set HERE, not after the copy into the runtime: a
+# `chmod -R` there wrote a second full copy of the CLIs into a new layer (about 400 MB more to pull).
+RUN chmod -R a+rX /out/agent-clis /out/claude
 
 # ── pytools: the Python document libraries, each file checked against its pinned hash ───────────────
 # The same base as the runtime, so the same Python (3.13). pip and the compilers stay in this stage: the
@@ -170,7 +173,7 @@ RUN mkdir -p /opt/agents/.local/bin \
     && ln -sf /opt/agents/.local/bin/claude /usr/local/bin/claude \
     && for cli in codex opencode mcp-remote; do ln -sf "/opt/agent-clis/node_modules/.bin/${cli}" "/usr/local/bin/${cli}"; done \
     && printf '%s\n' 'export PATH="/opt/agents/.local/bin:$PATH"' > /etc/profile.d/agent-clis.sh \
-    && chmod -R a+rX /opt/agents /opt/agent-clis
+    && chmod a+rX /opt/agents /opt/agents/.local /opt/agents/.local/bin /opt/agents/.local/share /opt/agents/.local/share/claude /opt/agents/.local/share/claude/versions /opt/agent-clis
 
 # Verify the CLIs resolve on a LOGIN shell's PATH (startServer() replaces process.env.PATH with the
 # login shell's), and that each runs.
