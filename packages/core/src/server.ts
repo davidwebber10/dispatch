@@ -27,8 +27,7 @@ import type { ApiRouteDeps } from './server-routes.js';
 import { buildDaemon, NoopPTYManager } from './daemon/build.js';
 import { createDaemonHttpServer } from './daemon/http-server.js';
 import { boxLog } from './os/box-log.js';
-import { privsep } from './privsep/config.js';
-import { prepareSeparatedBox, proveSeparatedBox } from './privsep/boot.js';
+import { prepareSeparationAtStart, proveSeparationAtStart } from './privsep/boot.js';
 import { runDirFor } from './privsep/paths.js';
 import { getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
@@ -127,11 +126,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   const dataDir = platform.dataDir();
   // Privilege separation (hosted): check the roots and move an older box's state out of the home.
-  const separated = privsep();
-  if (separated) {
-    const { migration } = prepareSeparatedBox(separated);
-    boxLog('privsep.prepare', { imported: migration.imported.length, removed: migration.removed.length, ...(migration.skipped ? { skipped: migration.skipped } : {}) });
-  }
+  const separated = prepareSeparationAtStart();
   // Private to the user before anything else is written (network exposure spec 7.14).
   lockDownDataDir(dataDir, [platform.logDir()]);
   const db = createDatabase(path.join(dataDir, 'dispatch.db'));
@@ -148,14 +143,8 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   sessionService.setOverseerMemoryHome(os.homedir());
   if (daemon.webDist) console.log(`Serving web client from ${daemon.webDist}${basePath ? ` under ${basePath}` : ''}`);
 
-  // Prove the separation before anything listens. A spawn entry point that would start a child as
-  // the daemon user is fatal. A failed self-check is logged and the capability is not reported.
-  if (separated) {
-    const proof = await proveSeparatedBox(separated);
-    boxLog('privsep.proof', { guardOk: proof.guardOk, selfCheck: proof.selfCheck.ok, failures: proof.selfCheck.failures.slice(0, 20) });
-    if (!proof.guardOk) throw new Error(`privilege separation: a child process did not start as the agent user (${proof.guard.map((g) => `${g.via}=${g.uid}`).join(', ')})`);
-    if (!proof.selfCheck.ok) console.error(`[privsep] self-check FAILED; "privsep-v1" is not reported: ${proof.selfCheck.failures.join('; ')}`);
-  }
+  // Prove the separation before anything listens (a child that would run as the daemon user is fatal).
+  await proveSeparationAtStart(separated);
 
   // Attach and listen. DISPATCH_BIND unset: every interface, the same call as before. Set: that address only (platform/bind.ts).
   const server = createDaemonHttpServer(daemon.app);

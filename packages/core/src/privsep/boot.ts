@@ -3,7 +3,8 @@
 // (prepare) and before it listens (prove). See docs/hosted-privilege-separation.md.
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PrivsepConfig } from './config.js';
+import { privsep, type PrivsepConfig } from './config.js';
+import { boxLog } from '../os/box-log.js';
 import { migrateLegacyHome, type MigrationResult } from './migrate.js';
 import { giveToAgent } from './paths.js';
 import { probeSpawnGuard } from './spawn-guard.js';
@@ -65,4 +66,25 @@ export async function proveSeparatedBox(cfg: PrivsepConfig): Promise<ProofResult
   const selfCheck = guardOk ? await runSelfCheck(cfg) : { ok: false, failures: ['the spawn guard is not in effect'], lines: [] };
   setSelfCheckVerdict(selfCheck);
   return { guardOk, guard, selfCheck };
+}
+
+/** The prepare step of the daemon's start: nothing on a local install; the roots and the migration on a box. */
+export function prepareSeparationAtStart(): PrivsepConfig | null {
+  const cfg = privsep();
+  if (!cfg) return null;
+  const { migration } = prepareSeparatedBox(cfg);
+  boxLog('privsep.prepare', { imported: migration.imported.length, removed: migration.removed.length, ...(migration.skipped ? { skipped: migration.skipped } : {}) });
+  return cfg;
+}
+
+/**
+ * The proof step of the daemon's start. Throws when a child process would run as the daemon user.
+ * A failed self-check is logged and `privsep-v1` is not reported.
+ */
+export async function proveSeparationAtStart(cfg: PrivsepConfig | null): Promise<void> {
+  if (!cfg) return;
+  const proof = await proveSeparatedBox(cfg);
+  boxLog('privsep.proof', { guardOk: proof.guardOk, selfCheck: proof.selfCheck.ok, failures: proof.selfCheck.failures.slice(0, 20) });
+  if (!proof.guardOk) throw new Error(`privilege separation: a child process did not start as the agent user (${proof.guard.map((g) => `${g.via}=${g.uid}`).join(', ')})`);
+  if (!proof.selfCheck.ok) console.error(`[privsep] self-check FAILED; "privsep-v1" is not reported: ${proof.selfCheck.failures.join('; ')}`);
 }

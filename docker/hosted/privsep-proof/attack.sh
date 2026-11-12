@@ -112,6 +112,7 @@ must_fail "signal the daemon (0)" kill -0 "$D"
 must_fail "stop the daemon (STOP)" kill -STOP "$D"
 must_fail "terminate the daemon (TERM)" kill -TERM "$D"
 must_fail "signal the init process" kill -TERM 1
+if command -v python3 >/dev/null 2>&1; then
 py() { python3 - "$@" 2>/dev/null; }
 must_fail "attach a debugger to the daemon (ptrace)" py "$D" <<'PY'
 import ctypes, sys
@@ -126,48 +127,55 @@ import ctypes, sys, platform
 libc = ctypes.CDLL(None, use_errno=True)
 class iovec(ctypes.Structure): _fields_ = [("base", ctypes.c_void_p), ("len", ctypes.c_size_t)]
 buf = ctypes.create_string_buffer(64)
-maps_ok = False
 local = iovec(ctypes.cast(buf, ctypes.c_void_p), 64); remote = iovec(0x400000, 64)
 nr = 270 if platform.machine() in ("aarch64", "arm64") else 310
 r = libc.syscall(nr, int(sys.argv[1]), ctypes.byref(local), 1, ctypes.byref(remote), 1, 0)
 # EPERM (1) is the refusal; EFAULT (14) would mean the kernel let us try.
 sys.exit(1 if (r < 0 and ctypes.get_errno() == 1) else 0)
 PY
+else
+  info "no interpreter in this image can call ptrace" "the kernel rule is the same one that hides /proc/<pid>/mem (tested above)"
+fi
 
 echo "== 6. the daemon's API from inside the box"
 SID="$(cat "$HOME/proof/sid" 2>/dev/null)"; TID="$(cat "$HOME/proof/tid" 2>/dev/null)"
-code() { # code <method> <path> <body> <curl auth args...>
+# One HTTP request with node (the image has no curl): prints the status code. 000: no answer.
+REQ_JS='const [m,u,b,...h]=process.argv.slice(1);const headers={};for(const x of h){const i=x.indexOf(":");headers[x.slice(0,i).trim()]=x.slice(i+1).trim()}if(b)headers["content-type"]="application/json";const url=new URL(u);const r=require("http").request({host:url.hostname.replace(/^\[|\]$/g,""),port:url.port||80,path:url.pathname+url.search,method:m,headers,timeout:8000},res=>{res.resume();res.on("end",()=>process.stdout.write(String(res.statusCode)))});r.on("upgrade",(res,sock)=>{process.stdout.write(String(res.statusCode));sock.destroy()});r.on("timeout",()=>{r.destroy()});r.on("error",()=>process.stdout.write("000"));if(b)r.write(b);r.end()'
+BODY_JS='const [u,...h]=process.argv.slice(1);const headers={};for(const x of h){const i=x.indexOf(":");headers[x.slice(0,i).trim()]=x.slice(i+1).trim()}fetch(u,{headers,signal:AbortSignal.timeout(8000)}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(()=>{})'
+code() { # code <method> <path> <body> <header>...   (against $TARGET)
   local m="$1" p="$2" b="$3"; shift 3
-  curl -s -o /dev/null -w '%{http_code}' -m 8 -X "$m" ${b:+-H 'content-type: application/json' -d "$b"} "$@" "$TARGET$p" 2>/dev/null
+  node -e "$REQ_JS" "$m" "$TARGET$p" "$b" "$@" 2>/dev/null
 }
-owner_calls() { # owner_calls <label> <curl auth args...>
+refused() { case "$1" in 401|403|404|405) return 0 ;; *) return 1 ;; esac; }
+OWNER_ROWS=(
+  "GET|/api/sessions||list projects"
+  "POST|/api/sessions/$SID/terminals|{\"type\":\"shell\"}|create a shell thread"
+  "POST|/api/sessions/$SID/terminals|{\"type\":\"claude-code\",\"config\":{\"approvals\":\"auto\"}}|create a thread with approvals off"
+  "POST|/api/terminals/$TID/approvals|{\"mode\":\"auto\"}|change a thread's approval mode"
+  "POST|/api/terminals/$TID/autonomy|{\"level\":\"autonomous\"}|change a thread's autonomy"
+  "POST|/api/terminals/$TID/permission|{\"decision\":\"allow\",\"requestId\":\"req-1\"}|allow a held action"
+  "POST|/api/terminals/$TID/input|{\"data\":\"id\\r\"}|type into a terminal"
+  "POST|/api/terminals/$TID/message|{\"content\":\"do it\",\"source\":\"user\"}|send a message as the owner"
+  "POST|/api/terminals/$TID/transport|{\"transport\":\"pty\"}|switch a thread to a terminal"
+  "PATCH|/api/terminals/$TID|{\"config\":{\"approvals\":\"auto\"}}|replace a thread's config"
+  "GET|/api/integrations/export||export integrations"
+  "GET|/api/os/connections||read the company connections state"
+  "POST|/api/os/connections/refresh||refresh the company connections"
+  "GET|/api/secrets/status||read the secrets status"
+  "POST|/api/plugins/install|{\"url\":\"https://example.com/x\"}|install a plugin"
+  "GET|/api/sessions/$SID/files/read?path=/proc/self/environ||read a file through the daemon"
+  "GET|/api/access/no-credential-stats||read the access counters"
+)
+owner_calls() { # owner_calls <label> <header>...
   local label="$1"; shift
-  local rows=(
-    "GET|/api/sessions||list projects"
-    "POST|/api/sessions/$SID/terminals|{\"type\":\"shell\"}|create a shell thread"
-    "POST|/api/sessions/$SID/terminals|{\"type\":\"claude-code\",\"config\":{\"approvals\":\"auto\"}}|create a thread with approvals off"
-    "POST|/api/terminals/$TID/approvals|{\"mode\":\"auto\"}|change a thread's approval mode"
-    "POST|/api/terminals/$TID/autonomy|{\"level\":\"autonomous\"}|change a thread's autonomy"
-    "POST|/api/terminals/$TID/permission|{\"decision\":\"allow\",\"requestId\":\"req-1\"}|approve a held action"
-    "POST|/api/terminals/$TID/input|{\"data\":\"id\\r\"}|type into a terminal"
-    "POST|/api/terminals/$TID/message|{\"content\":\"do it\",\"source\":\"user\"}|send a message as the owner"
-    "POST|/api/terminals/$TID/transport|{\"transport\":\"pty\"}|switch a thread to a terminal"
-    "PATCH|/api/terminals/$TID|{\"config\":{\"approvals\":\"auto\"}}|replace a thread's config"
-    "GET|/api/integrations/export||export integrations"
-    "GET|/api/os/connections||read the company connections state"
-    "POST|/api/os/connections/refresh||refresh the company connections"
-    "GET|/api/secrets/status||read the secrets status"
-    "POST|/api/plugins/install|{\"url\":\"https://example.com/x\"}|install a plugin"
-    "GET|/api/sessions/$SID/files/read?path=/proc/self/environ||read a file through the daemon"
-    "GET|/api/access/no-credential-stats||read the access counters"
-  )
   local r m p b what c
-  for r in "${rows[@]}"; do
+  for r in "${OWNER_ROWS[@]}"; do
     IFS='|' read -r m p b what <<< "$r"
     c="$(code "$m" "$p" "$b" "$@")"
-    case "$c" in 401|403|404|405) ok "$label: $what" "HTTP $c" ;; *) bad "$label: $what" "HTTP $c" ;; esac
+    if refused "$c"; then ok "$label: $what" "HTTP $c"; else bad "$label: $what" "HTTP $c"; fi
   done
 }
+upgrade() { node -e "$REQ_JS" GET "$TARGET/api/terminals/$TID/ws" "" "Connection: Upgrade" "Upgrade: websocket" "Sec-WebSocket-Version: 13" "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" "$@" 2>/dev/null; }
 OWN_IP="$(hostname -i 2>/dev/null | awk '{print $1}')"
 PORT="$(printf '%s' "$API" | sed -E 's#^https?://[^:/]+:?([0-9]*).*#\1#')"; PORT="${PORT:-3456}"
 BASE="$(printf '%s' "$API" | sed -E 's#^https?://[^/]+##')"
@@ -175,68 +183,54 @@ for host in 127.0.0.1 "[::1]" "$OWN_IP"; do
   [ -z "$host" ] && continue
   TARGET="http://$host:$PORT$BASE"
   owner_calls "no credential @ $host"
-  owner_calls "wrong box token @ $host" -H "x-dispatch-box-token: not-the-token"
-  [ -n "$LEAKED" ] && owner_calls "LEAKED inbound token @ $host" -H "x-dispatch-box-token: $LEAKED"
-  [ -n "$LEAKED" ] && owner_calls "LEAKED token as bearer @ $host" -H "Authorization: Bearer $LEAKED"
+  owner_calls "wrong box token @ $host" "x-dispatch-box-token: not-the-token"
+  if [ -n "$LEAKED" ]; then
+    owner_calls "LEAKED inbound token @ $host" "x-dispatch-box-token: $LEAKED"
+    owner_calls "LEAKED token as bearer @ $host" "Authorization: Bearer $LEAKED"
+    c="$(upgrade "x-dispatch-box-token: $LEAKED")"
+    case "$c" in 401|403) ok "LEAKED inbound token @ $host: open a terminal socket" "HTTP $c" ;; *) bad "LEAKED inbound token @ $host: open a terminal socket" "HTTP $c" ;; esac
+  fi
 done
 TARGET="$API"
 # Every key this user can obtain: its own, those of other workload processes, key files.
 keys="$( { echo "${DISPATCH_AUTH:-}"; cat /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | sed -n 's/^DISPATCH_AUTH=//p'; cat "$RUN"/keys/* 2>/dev/null; grep -rhoE 'd[tcsp]k_[A-Za-z0-9_-]{43}' "$RUN" "$HOME/.dispatch" 2>/dev/null; } | grep -oE 'd[tcsp]k_[A-Za-z0-9_-]{43}' | sort -u)"
 nk=0
+KEY_ROWS=("${OWNER_ROWS[@]:1:11}" "POST|/api/plugins/install|{\"url\":\"https://example.com/x\"}|install a plugin" "POST|/api/access/login|{\"token\":\"x\"}|sign in as the owner" "GET|/api/access/no-credential-stats||read the access counters")
 for k in $keys; do
-  nk=$((nk+1))
-  kind="$(curl -s -m 5 -H "Authorization: Bearer $k" "$TARGET/api/whoami" | grep -oE '"kind":"[a-z]+"' | head -1 | cut -d'"' -f4)"
+  kind="$(node -e "$BODY_JS" "$TARGET/api/whoami" "Authorization: Bearer $k" | grep -oE '"kind":"[a-z]+"' | head -1 | cut -d'"' -f4)"
   [ -z "$kind" ] && continue
-  rows=(
-    "POST|/api/sessions/$SID/terminals|{\"type\":\"shell\"}|create a shell thread"
-    "POST|/api/sessions/$SID/terminals|{\"type\":\"claude-code\",\"config\":{\"approvals\":\"auto\"}}|create a thread with approvals off"
-    "POST|/api/terminals/$TID/approvals|{\"mode\":\"auto\"}|change a thread's approval mode"
-    "POST|/api/terminals/$TID/autonomy|{\"level\":\"autonomous\"}|change a thread's autonomy"
-    "POST|/api/terminals/$TID/permission|{\"decision\":\"allow\",\"requestId\":\"req-1\"}|allow a held action"
-    "POST|/api/terminals/$TID/input|{\"data\":\"id\\r\"}|type into a terminal"
-    "POST|/api/terminals/$TID/message|{\"content\":\"do it\",\"source\":\"user\"}|send a message as the owner"
-    "POST|/api/terminals/$TID/transport|{\"transport\":\"pty\"}|switch a thread to a terminal"
-    "PATCH|/api/terminals/$TID|{\"config\":{\"approvals\":\"auto\"}}|replace a thread's config"
-    "GET|/api/integrations/export||export integrations"
-    "GET|/api/os/connections||read the company connections state"
-    "POST|/api/plugins/install|{\"url\":\"https://example.com/x\"}|install a plugin"
-    "POST|/api/access/login|{\"token\":\"x\"}|sign in as the owner"
-    "GET|/api/access/no-credential-stats||read the access counters"
-  )
-  for r in "${rows[@]}"; do
+  nk=$((nk+1))
+  for r in "${KEY_ROWS[@]}"; do
     IFS='|' read -r m p b what <<< "$r"
-    c="$(code "$m" "$p" "$b" -H "Authorization: Bearer $k")"
-    case "$c" in 401|403|404|405) ok "$kind key #$nk: $what" "HTTP $c" ;; *) bad "$kind key #$nk: $what" "HTTP $c" ;; esac
+    c="$(code "$m" "$p" "$b" "Authorization: Bearer $k")"
+    if refused "$c"; then ok "$kind key #$nk: $what" "HTTP $c"; else bad "$kind key #$nk: $what" "HTTP $c"; fi
   done
-  # A terminal or a structured socket with a key: refused at the upgrade.
-  c="$(curl -s -o /dev/null -w '%{http_code}' -m 5 -H "Authorization: Bearer $k" -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$TARGET/api/terminals/$TID/ws")"
-  case "$c" in 401|403|404|400) ok "$kind key #$nk: open a terminal socket" "HTTP $c" ;; *) bad "$kind key #$nk: open a terminal socket" "HTTP $c" ;; esac
+  c="$(upgrade "Authorization: Bearer $k")"
+  case "$c" in 400|401|403|404) ok "$kind key #$nk: open a terminal socket" "HTTP $c" ;; *) bad "$kind key #$nk: open a terminal socket" "HTTP $c" ;; esac
 done
-[ "$nk" -gt 0 ] && info "keys this user could collect" "$nk" || info "no key could be collected" "the key rows did not run"
-if [ -n "$LEAKED" ]; then
-  c="$(curl -s -o /dev/null -w '%{http_code}' -m 5 -H "x-dispatch-box-token: $LEAKED" -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "$TARGET/api/terminals/$TID/ws")"
-  case "$c" in 401|403) ok "LEAKED inbound token: open a terminal socket from inside" "HTTP $c" ;; *) bad "LEAKED inbound token: open a terminal socket from inside" "HTTP $c" ;; esac
-fi
+[ "$nk" -gt 0 ] && info "live keys this user could collect and use" "$nk" || info "no live key could be collected" "the key rows did not run"
 
 echo "== 7. the platform, directly (skipping the daemon)"
 if [ -n "$PLATFORM" ]; then
-  gw() { curl -s -o /dev/null -w '%{http_code}' -m 8 -X POST -H 'content-type: application/json' "$@" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"crm_update_customer","arguments":{}}}' "$PLATFORM/api/dispatch/mcp"; }
-  c="$(gw -H 'x-dispatch-owner: person@example.com')"; [ "$c" = 401 ] && ok "tool gateway with no token" "HTTP $c" || bad "tool gateway with no token" "HTTP $c"
-  for k in $keys; do c="$(gw -H "x-dispatch-box-token: $k" -H 'x-dispatch-owner: person@example.com')"; [ "$c" = 401 ] && ok "tool gateway with a collected key as the token" "HTTP $c" || bad "tool gateway with a collected key as the token" "HTTP $c"; break; done
-  if [ -n "$LEAKED" ]; then c="$(gw -H "x-dispatch-box-token: $LEAKED" -H 'x-dispatch-owner: person@example.com')"; [ "$c" = 401 ] && ok "tool gateway with the LEAKED inbound token (it is not the outbound one)" "HTTP $c" || bad "tool gateway with the LEAKED inbound token" "HTTP $c"; fi
-  c="$(curl -s -o /dev/null -w '%{http_code}' -m 8 -H 'x-dispatch-owner: person@example.com' "$PLATFORM/api/dispatch/connections")"; [ "$c" = 401 ] && ok "connections broker with no token" "HTTP $c" || bad "connections broker with no token" "HTTP $c"
+  CALL='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"crm_update_customer","arguments":{}}}'
+  gw() { node -e "$REQ_JS" POST "$PLATFORM/api/dispatch/mcp" "$CALL" "x-dispatch-owner: person@example.com" "$@" 2>/dev/null; }
+  c="$(gw)"; [ "$c" = 401 ] && ok "tool gateway with no token" "HTTP $c" || bad "tool gateway with no token" "HTTP $c"
+  for k in $keys; do c="$(gw "x-dispatch-box-token: $k")"; [ "$c" = 401 ] && ok "tool gateway with a collected key as the token" "HTTP $c" || bad "tool gateway with a collected key as the token" "HTTP $c"; break; done
+  if [ -n "$LEAKED" ]; then c="$(gw "x-dispatch-box-token: $LEAKED")"; [ "$c" = 401 ] && ok "tool gateway with the LEAKED inbound token (it is not the outbound one)" "HTTP $c" || bad "tool gateway with the LEAKED inbound token" "HTTP $c"; fi
+  c="$(node -e "$REQ_JS" GET "$PLATFORM/api/dispatch/connections" "" "x-dispatch-owner: person@example.com" 2>/dev/null)"; [ "$c" = 401 ] && ok "connections broker with no token" "HTTP $c" || bad "connections broker with no token" "HTTP $c"
 fi
 
 echo "== 8. persistence with MORE rights"
 must_fail "plant a role definition the daemon would run" sh -c "mkdir -p $STATE/roles && : > $STATE/roles/x.md"
 must_fail "plant a plugin the daemon would load" sh -c "mkdir -p $STATE/plugins/x"
-must_fail "edit another thread's hook settings" sh -c "f=\$(ls $RUN/hooks/*.json 2>/dev/null | head -1); [ -n \"\$f\" ] && echo x >> \"\$f\""
-must_fail "edit another thread's MCP config" sh -c "f=\$(ls $RUN/mcp/*.json 2>/dev/null | head -1); [ -n \"\$f\" ] && echo x >> \"\$f\""
-# A link in the home that points into the state root must not make the daemon read it for us.
+must_fail "edit a thread's hook settings" sh -c "f=\$(ls $RUN/hooks/*.json 2>/dev/null | head -1); [ -n \"\$f\" ] && echo x >> \"\$f\""
+must_fail "edit a thread's MCP config" sh -c "f=\$(ls $RUN/mcp/*.json 2>/dev/null | head -1); [ -n \"\$f\" ] && echo x >> \"\$f\""
+must_fail "edit the managed policy of the other harness" sh -c ": >> /etc/codex/requirements.toml"
+# A link in the project that points into the state root must not make the daemon read it for us.
 mkdir -p "$HOME/projects/proj1" 2>/dev/null; ln -sfn "$STATE/dispatch.db" "$HOME/projects/proj1/innocent.txt" 2>/dev/null
 for k in $keys; do
-  c="$(curl -s -o /dev/null -w '%{http_code}' -m 8 -H "Authorization: Bearer $k" "$TARGET/api/sessions/$SID/files/read?path=innocent.txt")"
-  case "$c" in 401|403|404) ok "make the daemon read its database through a link in the project" "HTTP $c" ;; *) bad "make the daemon read its database through a link in the project" "HTTP $c" ;; esac
+  c="$(code GET "/api/sessions/$SID/files/read?path=innocent.txt" "" "Authorization: Bearer $k")"
+  if refused "$c"; then ok "make the daemon read its database through a link in the project" "HTTP $c"; else bad "make the daemon read its database through a link in the project" "HTTP $c"; fi
   break
 done
 rm -f "$HOME/projects/proj1/innocent.txt" 2>/dev/null

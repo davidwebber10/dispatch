@@ -55,7 +55,10 @@ sleep 1
 start_box() { # start_box <name> <image> <home volume> <state volume or ""> [extra docker args...]
   local name="$1" image="$2" home="$3" state="$4"; shift 4
   docker rm -f "$name" >/dev/null 2>&1
-  docker run -d --name "$name" --platform linux/arm64 --init -p "127.0.0.1:$BOX_PORT:3456" \
+  # Started as root (the task definition's `user: "0"`), with a read-only root file system for the
+  # image under test: what the platform is asked to set.
+  local ro=""; [ "$image" = "$IMAGE" ] && ro="--read-only"
+  docker run -d --name "$name" --platform linux/arm64 --init --user 0 $ro -p "127.0.0.1:$BOX_PORT:3456" \
     -v "$home:/home/dispatch" ${state:+-v "$state:/var/lib/dispatch/state"} \
     -v "$HERE/fake-claude:/opt/agents/.local/bin/claude:ro" ${DIST:+-v "$DIST:/app/packages/core/dist:ro"} \
     -e DISPATCH_BOX_TOKEN="$IN" -e OS_BOX_TOKEN="$OUT" -e OS_BASE_URL="http://host.docker.internal:$STUB_PORT" \
