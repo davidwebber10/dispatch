@@ -113,12 +113,12 @@ function InsightCallout({ content, tokens, ledger, docs, streaming }: { content:
 function InsightRail({ content, ledger, docs, streaming }: { content: string; ledger?: LedgerChips; docs?: DocChips; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
-    // Accent left rail + a faint accent wash ("insight needs visual distinction" — David):
-    // still quieter than the coordinator's callout card, but unmistakably not prose.
+    // A faint accent wash and the INSIGHT label set it apart from prose. No left rail (owner,
+    // 2026-11-11: left lines on cards look machine-made).
     <div
       data-testid="insight-rail"
       onClick={() => setOpen((o) => !o)}
-      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px 13px', borderLeft: '2px solid color-mix(in srgb, var(--color-accent) 55%, transparent)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', background: 'color-mix(in srgb, var(--color-accent) 5%, transparent)', cursor: 'pointer', minWidth: 0 }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '7px 12px 8px', borderRadius: 'var(--radius-md)', background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', cursor: 'pointer', minWidth: 0 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Lightbulb size={12} weight="fill" color="var(--color-accent)" style={{ flex: 'none' }} />

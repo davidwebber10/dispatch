@@ -224,7 +224,6 @@ export function DirectMessageNoticeMsg({ notice, ledger }: { notice: DirectMessa
             lineHeight: 1.5,
             color: 'var(--tp)',
             paddingLeft: 20,
-            borderLeft: '2px solid var(--border)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
           }}

@@ -127,7 +127,7 @@ body { background: var(--color-canvas); color: var(--color-text-primary); font-f
 .md-view code { background: var(--color-code-bg); padding: 1px 5px; border-radius: var(--radius-xs); font-family: var(--font-mono); font-size: .88em; overflow-wrap: anywhere; }
 .md-view pre { background: none; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0; margin: .8em 0; overflow: hidden; }
 .md-view pre code, .md-view pre code.hljs { display: block; padding: 12px 14px; overflow-x: auto; background: var(--color-code-bg); color: var(--color-text-primary); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: .82em; line-height: 1.55; }
-.md-view blockquote { border-left: 3px solid var(--color-accent); margin: .6em 0; padding: 2px 0 2px 14px; color: var(--color-text-secondary); }
+.md-view blockquote { margin: .6em 0; padding: 6px 12px; border-radius: var(--radius-md); background: var(--color-pane); color: var(--color-text-secondary); }
 .md-view ul, .md-view ol { padding-left: 1.4em; }
 .md-view li { margin: .2em 0; }
 .md-view input[type="checkbox"] { margin-right: 6px; vertical-align: middle; }

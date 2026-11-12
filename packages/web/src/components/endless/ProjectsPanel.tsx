@@ -60,7 +60,7 @@ function ThreadRow({ t, onOpen, mobile, needCard = false, project }: { t: Endles
       style={{
         display: 'flex', flexDirection: 'column', justifyContent: 'center', width: '100%', textAlign: 'left', cursor: 'pointer', color: 'var(--color-text-primary)', font: 'inherit',
         ...(needCard
-          ? { ...card, borderLeft: '2px solid var(--color-status-yellow)', padding: '10px 12px', minHeight: mobile ? 44 : undefined }
+          ? { ...card, padding: '10px 12px', minHeight: mobile ? 44 : undefined }
           : { background: 'transparent', border: 0, padding: '6px 0', minHeight: mobile ? 48 : undefined, opacity: finished ? 0.6 : 1 }),
       }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', fontSize: mobile ? 13.5 : 13 }}>

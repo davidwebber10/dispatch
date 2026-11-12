@@ -223,21 +223,12 @@ describe('the attention queue on the phone', () => {
     useTabs.setState({ byProject: { ...lists } });
   });
 
-  it('"Needs you" heads the project list; a row opens the thread; there is no Answer button and nothing inside the thread', async () => {
+  // Owner, 2026-11-11: no Needs you section on the project list; the queue stays reachable.
+  it('the project list has no Needs you section, even when threads wait', () => {
     render(<MobileApp />);
-    const section = screen.getByRole('region', { name: 'Needs you' });
-    expect(section).toHaveTextContent('Needs you (2)');
-    expect(within(section).getAllByRole('listitem').map((r) => r.getAttribute('data-attention-id'))).toEqual(['ask', 't2']);
-    expect(within(section).queryByRole('button', { name: /answer/i })).toBeNull();
-    fireEvent.click(within(section).getByRole('button', { name: /Which database/ }));
-    expect(level()).toBe(2);
-    expect(path()).toBe('/p/s1/t/ask');
-    expect(screen.getByTestId('thread-title')).toHaveTextContent('Which database?');
-    // The thread screen has no strip and no Answer shortcut for the question.
-    expect(screen.queryByText(/asking you/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /^answer/i })).toBeNull();
-    await go(-1, '/');
-    await waitFor(() => expect(level()).toBe(0));
+    expect(level()).toBe(0);
+    expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
+    expect(screen.queryByTestId('needs-you')).toBeNull();
   });
 
   it('"next" opens the first item, then the one after it', async () => {

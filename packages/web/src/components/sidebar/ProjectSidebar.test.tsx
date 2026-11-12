@@ -556,65 +556,12 @@ describe('the attention queue in the sidebar (W2-F)', () => {
     expect(rowLabels()).not.toContain('Broke down');
   });
 
-  it('the Needs you section lists the queue across projects, above the projects: needs input, error, stalled; oldest first', async () => {
+  // Owner, 2026-11-11: "drop the needs you thing on project view". The section above the projects is
+  // gone; the Status filter, the palette row and Alt+N still reach the queue.
+  it('shows no Needs you section above the projects, even when threads wait', async () => {
     render(<ProjectSidebar onSelectTab={vi.fn()} />);
-    const section = await screen.findByRole('region', { name: 'Needs you' });
-    expect(within(section).getByRole('button', { name: /needs you/i })).toHaveTextContent('Needs you (4)');
-    const rows = within(section).getAllByRole('listitem');
-    expect(rows.map((r) => r.getAttribute('data-attention-id'))).toEqual(['ask-old', 'ask-new', 'broke', 'stuck']);
-    expect(rows[0]).toHaveTextContent('Asks an old question');
-    expect(rows[0]).toHaveTextContent('beta');
-    expect(rows[0]).toHaveTextContent('Needs input');
-    expect(rows[2]).toHaveTextContent('Error');
-    expect(rows[3]).toHaveTextContent('No output');
-    // Above the project cards.
-    const card = document.querySelector('[data-project-id="s1"]')!;
-    expect(section.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // An archived thread is not in it.
-    expect(section).not.toHaveTextContent('Archived question');
-  });
-
-  it('the Needs you section has no button with the name Answer', async () => {
-    render(<ProjectSidebar onSelectTab={vi.fn()} />);
-    const section = await screen.findByRole('region', { name: 'Needs you' });
-    expect(within(section).queryByRole('button', { name: /answer/i })).toBeNull();
-    expect(section).not.toHaveTextContent(/answer/i);
-    expect(section).not.toHaveTextContent(/asking you/i);
-    // One control per row (the row itself), plus the fold of the section.
-    expect(within(section).getAllByRole('button')).toHaveLength(1 + 4);
-  });
-
-  it('a row of the Needs you section opens the thread in its project', async () => {
-    const onSelectTab = vi.fn();
-    render(<ProjectSidebar onSelectTab={onSelectTab} />);
-    const section = await screen.findByRole('region', { name: 'Needs you' });
-    fireEvent.click(within(section).getByRole('button', { name: /Asks an old question/ }));
-    expect(useProjects.getState().activeId).toBe('s2');
-    expect(onSelectTab).toHaveBeenCalledWith('ask-old');
-  });
-
-  it('the Needs you section folds, remembers that, and is absent when nothing waits', async () => {
-    const { unmount } = render(<ProjectSidebar onSelectTab={vi.fn()} />);
-    const section = await screen.findByRole('region', { name: 'Needs you' });
-    const fold = within(section).getByRole('button', { name: /needs you/i });
-    expect(fold).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(fold);
-    expect(fold).toHaveAttribute('aria-expanded', 'false');
-    expect(within(section).queryAllByRole('listitem')).toHaveLength(0);
-    expect(fold).toHaveTextContent('Needs you (4)'); // the count stays while folded
-    unmount();
-    render(<ProjectSidebar onSelectTab={vi.fn()} />);
-    expect(within(await screen.findByRole('region', { name: 'Needs you' })).getByRole('button', { name: /needs you/i })).toHaveAttribute('aria-expanded', 'false');
-    act(() => { useTabs.setState({ byProject: { s1: [th('quiet', 's1', 'Rests', 'waiting', '2026-11-09T10:50:00Z')] } }); });
+    await screen.findByText('alpha');
     expect(screen.queryByRole('region', { name: 'Needs you' })).toBeNull();
-  });
-
-  it('the Needs you section does not render the project cards on a status event (W1-F stays true)', async () => {
-    render(<ProjectSidebar onSelectTab={vi.fn()} />);
-    await screen.findByRole('region', { name: 'Needs you' });
-    const before = { ...renders.card };
-    act(() => { useTabs.getState().applyEvent({ type: 'terminal:status', terminalId: 'ask-new', status: 'working' } as any); });
-    expect(within(screen.getByRole('region', { name: 'Needs you' })).getAllByRole('listitem')).toHaveLength(3);
-    expect(renders.card.s2).toBe(before.s2);
+    expect(screen.queryByTestId('needs-you')).toBeNull();
   });
 });
