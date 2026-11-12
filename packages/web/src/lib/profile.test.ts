@@ -16,12 +16,12 @@ describe('the feature map', () => {
   it('the business profile hides the power-user features and keeps the rest', () => {
     const hidden = keys.filter((k) => !featureFor(k, 'business')).sort();
     expect(hidden).toEqual([
-      'about.report', 'analytics', 'approvals.choose', 'control-plane', 'details.machine', 'details.maintenance', 'effort-picker', 'missions', 'model-picker', 'projects.path', 'review.diff',
+      'about.report', 'analytics', 'approvals.choose', 'control-plane', 'details.machine', 'details.maintenance', 'effort-picker', 'endless', 'missions', 'model-picker', 'projects.path', 'review.diff',
       'settings.agents', 'settings.devices', 'settings.dictation', 'settings.editor', 'settings.integrations', 'settings.plugins',
       'settings.secrets', 'settings.servers', 'settings.skills', 'settings.telemetry', 'settings.tools', 'settings.usage',
       'setup', 'themes.all', 'threads.browser', 'threads.cli', 'threads.git', 'threads.shell', 'tool-json',
     ]);
-    for (const k of ['threads.chat', 'tabs.notes', 'tabs.files', 'previews', 'needs-you', 'automations', 'endless', 'accounts', 'approvals', 'attachments', 'update'] as Feature[]) {
+    for (const k of ['threads.chat', 'tabs.notes', 'tabs.files', 'previews', 'needs-you', 'automations', 'accounts', 'approvals', 'attachments', 'update'] as Feature[]) {
       expect(featureFor(k, 'business'), k).toBe(true);
     }
   });

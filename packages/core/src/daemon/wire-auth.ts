@@ -13,6 +13,8 @@ import { reachableAddresses, type Reachable } from '../auth/reachable-addresses.
 import { createAccessConfig } from '../auth/known-hosts.js';
 import { createTailscaleAccess, type TailscaleAccess } from '../auth/tailscale-access.js';
 import { platform } from '../platform/index.js';
+import { policyRouter, publicRoute } from '../auth/route-policy.js';
+import { mountRouter } from '../http/route-registry.js';
 
 export interface AuthInputs {
   db: Database.Database;
@@ -22,6 +24,13 @@ export interface AuthInputs {
   basePath: string;
   /** The shared secret of a hosted box (DISPATCH_BOX_TOKEN). With it, the box gate replaces the access gate. */
   boxToken: string | undefined;
+  /**
+   * The live profile (os/profile.ts). On a hosted box under the BUSINESS profile the owner access token
+   * (`~/.dispatch/access-token`, a file every program of the box's user can read) admits nobody: a
+   * business person's requests come through the platform's router with the box token, and an agent
+   * that reads the file must not become the owner with it. Absent: developer.
+   */
+  profile?: () => 'business' | 'developer';
   /** False: the gate never asks the tailscale CLI, and the address list is not offered. */
   network: boolean;
   keys?: KeyRegistry;
@@ -65,6 +74,9 @@ export function wireAuth(i: AuthInputs): AuthServices {
   // The owner token file exists in both modes (a box admits the token as well as the box header).
   const getAccessToken = createTokenSource(i.dataDir);
   const boxToken = i.boxToken;
+  // What admits a caller as the owner besides the box header: the access token, except for a business
+  // person on a hosted box (see `profile` above).
+  const ownerToken = (): string | null => (boxToken && i.profile?.() === 'business' ? null : getAccessToken());
   // The request gate (network exposure spec, section 7). On a hosted box the box token is
   // the credential and the router is the only caller, so the gate stays out of the way there.
   // One-time sign-in codes (Settings → Devices & access) that stand in for the token on the login route.
@@ -95,14 +107,17 @@ export function wireAuth(i: AuthInputs): AuthServices {
         }
       : undefined,
     install(app) {
-      if (boxToken) app.use(createBoxGate({ boxToken, registry: keys, getToken: getAccessToken }));
+      if (boxToken) app.use(createBoxGate({ boxToken, registry: keys, getToken: ownerToken }));
       if (accessGate) {
         // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
-        app.post('/api/access/login', createLoginKeyCheck({ registry: keys }), ...accessGate.loginRoute);
+        // Through a policyRouter like every route (the profile guard first; `publicRoute`: anyone may try to sign in).
+        const login = policyRouter();
+        login.post('/api/access/login', publicRoute, createLoginKeyCheck({ registry: keys }), ...accessGate.loginRoute);
+        mountRouter(app, '', login);
         app.use(accessGate.middleware);
       }
       app.use(createPrincipalMiddleware({
-        registry: keys, scope: createKeyScope(i.db), getToken: getAccessToken, boxToken, stats: noCredentialStats, devices,
+        registry: keys, scope: createKeyScope(i.db), getToken: ownerToken, boxToken, stats: noCredentialStats, devices,
       }));
     },
   };

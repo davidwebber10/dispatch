@@ -29,7 +29,7 @@ import { CodexTranslator, buildApprovalResponse, type ApprovalMethod, type Trans
 import { adaptForPolicy } from '../overseer/policy-adapter.js';
 import { inheritedEnv } from '../platform/inherited-env.js';
 import { randomUUID } from 'node:crypto';
-import { blockedEvent, blockedResolvedEvent, approvalTitle, approvalMessage, type BlockedAction, type Approvals } from '../os/approvals.js';
+import { blockedEvent, blockedResolvedEvent, approvalTitle, type BlockedAction, type Approvals } from '../os/approvals.js';
 import { EventRing } from './shared/event-ring.js';
 import type { JournalRecorder, ThreadRecorder } from '../journal/recorder.js';
 import { BlockDeltaCoalescer } from './shared/stream-compaction.js';
@@ -716,14 +716,15 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     session.blocked = session.blocked!.filter((b) => b.block.id !== id);
     this.pushEvent(session, blockedResolvedEvent(id, decision));
     if (decision !== 'allow') return true;
-    // Codex's own override. Its `event` is a serialized GuardianAssessmentEvent; we hand back the
-    // review notification we got (UNTESTED against a real denial). If Codex refuses it, the same
-    // naming-and-approving message as Claude's goes in as the next turn.
+    // Codex's own override, a request only the daemon sends. Its `event` is a serialized
+    // GuardianAssessmentEvent; we hand back the review notification we got (UNTESTED against a real
+    // denial). If Codex refuses it, NOTHING is allowed: no sentence in the conversation stands in for
+    // the person's decision (os/approvals.ts). The person asks again and is asked first.
     try {
       if (!this.conn || !session.threadId) throw new Error('no thread');
       await this.conn.request('thread/approveGuardianDeniedAction', { threadId: session.threadId, event: hit.raw });
     } catch {
-      this.sendMessage(terminalId, approvalMessage(hit.block));
+      this.pushEvent(session, { type: 'system', subtype: 'dispatch_notice', level: 'warning', message: 'Dispatch could not allow that action. Ask for it again: you will be asked before it runs.' });
     }
     return true;
   }

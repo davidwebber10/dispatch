@@ -11,6 +11,10 @@
 //   headless-v1     the API contract of docs/headless-api.md (a view in OS drives this daemon; GET /api/chats)
 //   idle-info       the heartbeat reports `automations` and a real `lastActivityAt` (os/idle-info.ts), so OS
 //                   may sleep an idle box without stepping on scheduled work
+//   gate-v2         the profile gate decides from the MATCHED ROUTE, with default deny: every route and
+//                   WebSocket has a row in profile/business-routes.ts, an unclassified one is refused, and a
+//                   path has one spelling (http/canonical-path.ts). The file routes serve the person's own
+//                   folders only (files/path-policy.ts). OS should require it before it admits a business person.
 // Served by GET /api/host-context (OS reads it at provisioning) and sent on every heartbeat.
-export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info'] as const;
+export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2'] as const;
 export type BoxCapability = (typeof BOX_CAPABILITIES)[number];

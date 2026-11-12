@@ -75,13 +75,13 @@ describe('plugin routes', () => {
     expect(r.headers['x-content-type-options']).toBe('nosniff');
   });
 
-  it('a path that escapes the folder is 404 (encoded dot segments reach the handler; a client normalises plain ones away)', async () => {
+  it('a path that escapes the folder is refused (an encoded separator or dot is not a canonical path; a client normalises plain ones away)', async () => {
     plugin('p');
     // A URL client folds `%2e%2e/` into a plain `..` segment and resolves it before the request
     // leaves, so only encoded-slash forms reach the handler; the registry test covers the rest.
-    await request(app).get('/plugins/p/..%2f..%2fsecret').expect(404);
-    await request(app).get('/plugins/p/%2e%2e%2f%2e%2e%2fsecret').expect(404);
-    await request(app).get('/plugins/p/sub%2f..%2f..%2f..%2fsecret').expect(404);
+    await request(app).get('/plugins/p/..%2f..%2fsecret').expect(400);
+    await request(app).get('/plugins/p/%2e%2e%2f%2e%2e%2fsecret').expect(400);
+    await request(app).get('/plugins/p/sub%2f..%2f..%2f..%2fsecret').expect(400);
   });
 
   it('scaffold, enable, disable, reload and remove are owner-only; a thread key gets 403', async () => {

@@ -18,6 +18,7 @@ import { systemPromptFor, modelFor } from '../overseer/prompts.js';
 import { approvalsFor, claudeSmartAskRules, claudeSmartSettings } from '../os/approvals.js';
 import { osServerNames } from '../os/os-servers.js';
 import { currentProfile } from '../os/profile.js';
+import { businessMayDrive, NOT_A_CHAT } from '../profile/business-gate.js';
 import { boxLog } from '../os/box-log.js';
 import { resolveSpawnModel, isClaudeTierAlias } from '../overseer/spawn-model.js';
 import { COORDINATOR_DISALLOWED_TOOLS, makeCoordinatorPolicy } from '../overseer/coordinator-policy.js';
@@ -179,6 +180,7 @@ export class ThreadSpawner {
     try { config = JSON.parse(terminal.config || '{}'); } catch { /* default {} */ }
     const runnerPrompt: string | undefined =
       config.runner && typeof config.runnerPrompt === 'string' ? config.runnerPrompt : undefined;
+    this.assertProfileAllowsSpawn(terminal, config);
 
     // Fail closed for a coordinator that cannot run governed — see assertCoordinatorGoverned.
     // Checked HERE, before the shell branch and before composeInjection writes a per-thread MCP file,
@@ -345,7 +347,20 @@ export class ThreadSpawner {
     try { this.configStore.patch(terminal.id, adopted); } catch { /* best effort */ }
   }
 
+  /**
+   * The business profile, enforced where a process STARTS. The route gate (profile/business-gate.ts)
+   * decides what a person may ask for; this decides what may run, whatever wrote the thread's row: a
+   * thread made while the person was a developer, a schedule that falls due, a row changed on disk.
+   * Under the business profile only a chat thread starts (structured transport, no role, approvals
+   * `smart`): never a shell, a CLI, an agent, a runner or a coordinator.
+   */
+  private assertProfileAllowsSpawn(terminal: terminalsDb.TerminalRow, config: Record<string, any>): void {
+    if (currentProfile() !== 'business') return;
+    if (!businessMayDrive({ type: terminal.type, config })) throw new Error(NOT_A_CHAT);
+  }
+
   private spawnStructured(terminal: terminalsDb.TerminalRow, config: Record<string, any>, workDir: string): void {
+    this.assertProfileAllowsSpawn(terminal, config);
     this.assertCoordinatorGoverned(terminal, config);
     this.adoptTranscriptSettings(terminal, config, workDir);
     const manager = this.structuredManagerFor(terminal.type);

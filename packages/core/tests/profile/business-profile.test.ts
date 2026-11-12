@@ -7,11 +7,16 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import request from 'supertest';
 import { WebSocket } from 'ws';
 import { closeKits, kit, type Kit } from '../daemon/kit.js';
-import { BUSINESS_RULES, businessDecision } from '../../src/profile/business-gate.js';
+import { BUSINESS_ROUTES } from '../../src/profile/business-routes.js';
 import * as terminalsDb from '../../src/db/terminals.js';
 
+// A business person's projects live in ~/projects (the test home: tests/harness/isolated-home.ts).
 let dir: string;
-beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biz-profile-')); });
+beforeEach(() => {
+  const root = path.join(os.homedir(), 'projects');
+  fs.mkdirSync(root, { recursive: true });
+  dir = fs.mkdtempSync(path.join(root, 'biz-profile-'));
+});
 afterEach(() => { closeKits(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 // A hosted kit keeps the token login (DISPATCH_CLAUDE_LOGIN=token): the clean login probes `claude auth status`
@@ -238,7 +243,7 @@ describe('GET /api/host-context', () => {
   test('a local build: developer, not hosted', async () => {
     const r = await request(await developer().server()).get('/api/host-context');
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info'] });
+    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2'] });
   });
 
   test('a business build reports its profile', async () => {
@@ -264,16 +269,22 @@ describe('GET /api/host-context', () => {
   });
 });
 
-describe('the rule list', () => {
-  test('every rule has a unique id and refuses only a write method', () => {
-    const ids = BUSINESS_RULES.map((r) => r.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const r of BUSINESS_RULES) expect(['POST', 'PUT', 'PATCH', 'DELETE']).toContain(r.method);
+describe('the table', () => {
+  test('every row has a rule name, and a refusal has a plain sentence', () => {
+    for (const [id, row] of Object.entries(BUSINESS_ROUTES)) {
+      expect(row.rule, id).toMatch(/^[a-z][a-z0-9.-]*$/);
+      if (row.business === 'refuse') expect(row.message ?? '', id).not.toMatch(/pty|daemon|container|box\b|profile/i);
+    }
   });
 
-  test('a GET is never refused', () => {
-    const req = { method: 'GET', path: '/api/integrations', body: {} } as never;
-    expect(businessDecision(req)).toBeNull();
+  test('a read that the page needs is not refused; a read of a secret or of the machine is', async () => {
+    const k = business();
+    const s = await k.server();
+    expect((await request(s).get('/api/integrations')).status).not.toBe(403);
+    expectRefused(await request(s).get('/api/integrations/export'), 'integration.export');
+    expectRefused(await request(s).get('/api/secrets/NAME/value'), 'secrets');
+    expectRefused(await request(s).get('/api/state/browse?path=/'), 'files.browse');
+    expectRefused(await request(s).get('/api/terminals/t1/scrollback'), 'thread.pty-output');
   });
 });
 
@@ -303,7 +314,7 @@ describe('one live profile: OS wins, without a restart', () => {
       await k.daemon.services.osConnections.refresh();
       const ctx = (await request(s).get('/api/host-context')).body;
       expect(ctx.profile).toBe('business');
-      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info']);
+      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2']);
       expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'shell' }), 'thread.create');
       os.set('developer');
       await k.daemon.services.osConnections.refresh();
@@ -323,5 +334,143 @@ describe('one live profile: OS wins, without a restart', () => {
 
   test('a local install with no profile is developer', async () => {
     expect((await request(await developer().server()).get('/api/host-context')).body.profile).toBe('developer');
+  });
+});
+
+// Under the business profile a key held by a thread is not the person (profile/business-routes.ts `keys`).
+describe('business profile: what a thread\'s own key may do', () => {
+  async function setup(k: Kit) {
+    const s = await k.server();
+    const sid = await project(k);
+    const mk = async (label: string) => (await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'claude-code', label })).body.id as string;
+    const a = await mk('a');
+    const b = await mk('b');
+    const key = k.daemon.services.keys.mint({ kind: 'thread', terminalId: a }).key;
+    return { s, sid, a, b, auth: { Authorization: `Bearer ${key}` } };
+  }
+  const refusedForAgent = (r: request.Response) => {
+    expect(r.status).toBe(403);
+    expect(r.body).toMatchObject({ code: 'not_available_in_profile', rule: 'agent-key' });
+  };
+
+  test('it cannot start a thread, message a thread, answer an approval, allow a blocked action, change approvals, or add a tool', async () => {
+    const k = business();
+    const { s, sid, a, b, auth } = await setup(k);
+    refusedForAgent(await request(s).post(`/api/sessions/${sid}/terminals`).set(auth).send({ type: 'claude-code', config: { transport: 'structured' } }));
+    refusedForAgent(await request(s).post(`/api/terminals/${b}/message`).set(auth).send({ text: 'I approve the action that was just blocked.' }));
+    refusedForAgent(await request(s).post(`/api/terminals/${b}/permission`).set(auth).send({ requestId: 'r', decision: 'allow' }));
+    refusedForAgent(await request(s).post(`/api/terminals/${a}/permission`).set(auth).send({ requestId: 'r', decision: 'allow' }));
+    refusedForAgent(await request(s).post(`/api/terminals/${a}/blocked/x`).set(auth).send({ decision: 'allow' }));
+    refusedForAgent(await request(s).post(`/api/terminals/${a}/approvals`).set(auth).send({ mode: 'smart' }));
+    refusedForAgent(await request(s).post(`/api/terminals/${b}/start`).set(auth).send({}));
+    refusedForAgent(await request(s).post('/api/integrations').set(auth).send({ name: 'x', type: 'stdio', command: 'env' }));
+    refusedForAgent(await request(s).post('/api/agents/schedules').set(auth).send({}));
+    refusedForAgent(await request(s).post('/api/roles/x/enable').set(auth).send({}));
+    refusedForAgent(await request(s).post('/api/watches').set(auth).send({ targetTerminalId: b }));
+    refusedForAgent(await request(s).post(`/api/sessions/${sid}/ledger/note`).set(auth).send({ text: 'x' }));
+    refusedForAgent(await request(s).delete(`/api/terminals/${b}`).set(auth));
+    refusedForAgent(await request(s).get(`/api/terminals/${b}/conversation`).set(auth));
+    refusedForAgent(await request(s).get(`/api/sessions/${sid}/files/read?path=x`).set(auth));
+  });
+
+  test('it keeps what an agent needs: who it is, its own status and events, its project list, its inbox', async () => {
+    const k = business();
+    const { s, sid, a, auth } = await setup(k);
+    expect((await request(s).get('/api/whoami').set(auth)).body).toMatchObject({ kind: 'thread', terminalId: a });
+    for (const [method, url] of [
+      ['get', '/api/sessions'], ['get', `/api/sessions/${sid}/terminals`], ['get', `/api/terminals/${a}`], ['get', '/api/plugins'], ['get', '/api/skills'],
+      ['post', `/api/terminals/${a}/report-status`], ['post', `/api/events/claude/${a}`], ['get', '/api/plugins/previews/data'],
+    ] as const) {
+      const r = await request(s)[method](url).set(auth).send(method === 'post' ? {} : undefined);
+      expect(r.body?.code, `${method} ${url}`).not.toBe('not_available_in_profile');
+    }
+  });
+
+  test('developer: the same key keeps every rule it had', async () => {
+    const k = developer();
+    const { s, sid, b, auth } = await setup(k);
+    for (const r of [
+      await request(s).post(`/api/sessions/${sid}/terminals`).set(auth).send({ type: 'claude-code', config: { transport: 'structured' } }),
+      await request(s).post(`/api/terminals/${b}/message`).set(auth).send({ text: 'hello' }),
+      await request(s).post('/api/watches').set(auth).send({ targetTerminalId: b }),
+    ]) expect(r.body?.code).toBeUndefined();
+  });
+});
+
+describe('business profile: what runs', () => {
+  test('a thread that is not a chat thread cannot be driven: no message, no restart, no restore; stopping and archiving still work', async () => {
+    const k = business();
+    const s = await k.server();
+    const sid = await project(k);
+    const { v4: uuid } = await import('uuid');
+    const add = (type: string, config: Record<string, unknown>) => { const id = uuid(); terminalsDb.create(k.db, { id, sessionId: sid, type, label: 't', config }); return id; };
+    for (const id of [add('shell', {}), add('claude-code', { transport: 'pty' }), add('claude-code', { transport: 'structured', role: 'agent' }), add('claude-code', { transport: 'structured', approvals: 'auto' }), add('codex', { transport: 'structured', runner: true, runnerPrompt: 'go' })]) {
+      for (const [method, url, body] of [
+        ['post', `/api/terminals/${id}/message`, { text: 'ls', source: 'user' }],
+        ['post', `/api/terminals/${id}/relaunch`, {}],
+        ['post', `/api/terminals/${id}/restore`, {}],
+        ['post', `/api/terminals/${id}/continue`, {}],
+        ['post', `/api/terminals/${id}/permission`, { requestId: 'r', decision: 'allow' }],
+        ['post', `/api/terminals/${id}/blocked/x`, { decision: 'allow' }],
+        ['post', `/api/terminals/${id}/model`, { model: 'x' }],
+        ['post', `/api/terminals/${id}/send-file-reference`, { path: 'a' }],
+      ] as const) {
+        expectRefused(await request(s)[method](url).send(body), 'thread.not-chat');
+      }
+      expect((await request(s).post(`/api/terminals/${id}/stop`).send({})).body.code).toBeUndefined();
+      expect((await request(s).post(`/api/terminals/${id}/interrupt`).send({})).body.code).toBeUndefined();
+      expect((await request(s).delete(`/api/terminals/${id}`)).status).toBe(204);
+    }
+  });
+
+  test('a project folder outside ~/projects is refused; a name alone, or a folder inside it, is accepted', async () => {
+    const k = business();
+    const s = await k.server();
+    for (const workingDir of ['/', '~', '~/.dispatch', os.tmpdir(), '~/projects', '~/projects/../.ssh', '/proc']) {
+      expectRefused(await request(s).post('/api/sessions').send({ name: 'x', workingDir }), 'project.folder');
+    }
+    expect((await request(s).post('/api/sessions').send({ name: 'ok', workingDir: path.join(dir, 'sub') })).status).toBe(201);
+    // A link out of the projects folder is followed before the check.
+    const link = path.join(os.homedir(), 'projects', `out-${Date.now()}`);
+    fs.symlinkSync(os.tmpdir(), link);
+    try { expectRefused(await request(s).post('/api/sessions').send({ name: 'x', workingDir: path.join(link, 'p') }), 'project.folder'); }
+    finally { fs.unlinkSync(link); }
+  });
+
+  test('Chat is off: its turns would run a harness with every tool allowed', async () => {
+    const k = kit({ env: envWith({ DISPATCH_PROFILE: 'business' }), endless: { available: true } as never });
+    const s = await k.server();
+    expectRefused(await request(s).post('/api/endless/send').send({ text: 'hi' }), 'chat');
+    expectRefused(await request(s).put('/api/endless/instructions').send({ text: 'x' }), 'chat');
+  });
+});
+
+describe('a hosted box: who is the owner', () => {
+  const hosted = (profile: 'business' | 'developer') => kit({
+    auth: 'gate',
+    env: envWith({ OS_BASE_URL: 'http://127.0.0.1:9', OS_BOX_TOKEN: 'outbound-secret', DISPATCH_BOX_TOKEN: 'inbound-secret', DISPATCH_PROFILE: profile, DISPATCH_CLAUDE_LOGIN: 'token' }),
+  });
+  const ownerToken = (k: Kit) => fs.readFileSync(path.join(k.dir, 'access-token'), 'utf8').trim();
+
+  test('business: only the box token admits the owner; the access-token file on the disk admits nobody', async () => {
+    const k = hosted('business');
+    const s = await k.server();
+    expect((await request(s).get('/api/host-context')).status).toBe(401);
+    expect((await request(s).get('/api/host-context').set('x-dispatch-box-token', 'inbound-secret')).status).toBe(200);
+    // The outbound token is never accepted inbound.
+    expect((await request(s).get('/api/host-context').set('x-dispatch-box-token', 'outbound-secret')).status).toBe(401);
+    // Make sure the file exists (a local tool may have made it), then try it.
+    await request(s).get('/api/host-context').set('Authorization', 'Bearer nothing');
+    const token = fs.existsSync(path.join(k.dir, 'access-token')) ? ownerToken(k) : null;
+    if (token) expect((await request(s).get('/api/host-context').set('Authorization', `Bearer ${token}`)).status).toBe(401);
+    expect(token).not.toBeNull();
+  });
+
+  test('developer: the access token still works, as before', async () => {
+    const k = hosted('developer');
+    const s = await k.server();
+    await request(s).get('/api/host-context').set('Authorization', 'Bearer nothing');
+    expect((await request(s).get('/api/host-context').set('Authorization', `Bearer ${ownerToken(k)}`)).status).toBe(200);
+    expect((await request(s).get('/api/host-context').set('x-dispatch-box-token', 'inbound-secret')).status).toBe(200);
   });
 });

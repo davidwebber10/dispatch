@@ -88,17 +88,18 @@ export function createApp(options: CreateAppOptions): express.Express {
   return app;
 }
 
-export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
-  const preferredPort = options?.port ?? 3456;
-  // FIRST, before anything is spawned (the login-shell PATH probe below is a child process): take the
-  // two box secrets out of the environment, so no child can inherit them, and refuse one value in both
-  // roles (platform/box-secrets.ts). A local install has neither: nothing changes for it.
-  const tokenMode = takeBoxSecrets();
-  if (tokenMode !== 'local') console.log(`[dispatch] ${describeBoxTokenMode(tokenMode)}`);
-  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
-  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+/**
+ * Take the two box secrets out of the environment and refuse one value in both roles
+ * (platform/box-secrets.ts). A local install has neither: nothing changes for it.
+ */
+function takeBoxSecretsAtStart(): BoxTokenMode {
+  const mode = takeBoxSecrets();
+  if (mode !== 'local') console.log(`[dispatch] ${describeBoxTokenMode(mode)}`);
+  return mode;
+}
 
-  // Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches)
+/** Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches). */
+function adoptLoginPath(): void {
   const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;
@@ -110,6 +111,15 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
       `ts=${new Date().toISOString()}\nSHELL=${process.env.SHELL}\nshellPath=${shellPath}\nprocess.env.PATH=${process.env.PATH}\n`,
     );
   } catch {}
+}
+
+export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
+  const preferredPort = options?.port ?? 3456;
+  // FIRST, before anything is spawned (the PATH probe below starts a shell): no child inherits a box secret.
+  const tokenMode = takeBoxSecretsAtStart();
+  // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
+  const bindHost = parseBindHost(process.env.DISPATCH_BIND);
+  adoptLoginPath();
 
   const dataDir = platform.dataDir();
   // Private to the user before anything else is written (network exposure spec 7.14).
