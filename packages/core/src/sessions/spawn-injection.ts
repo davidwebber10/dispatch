@@ -18,6 +18,8 @@ import { ThreadConfigStore } from './thread-config.js';
 import { gatewayInfo, instructionsHome, osServerNames, osServersNote, PROMPT_INSTRUCTIONS_HARNESSES, resolveOsServerNames, rewriteInstructions, setCurrentOsServerNames } from '../os/os-servers.js';
 import { PLATFORM_NAME } from '../os/platform-name.js';
 import type { SessionWiring } from './session-wiring.js';
+import { publishToAgent } from '../privsep/paths.js';
+import { grokHomeDir } from '../providers/grok-home.js';
 
 /** The MCP server name every eligible thread gets its Dispatch (agency) tools under. */
 export const AGENCY_MCP_SERVER = 'dispatch';
@@ -129,7 +131,7 @@ export class SpawnInjection {
       try {
         const mcpServers = this.mcpEntries(mcpSpecs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
-          dir: path.join(ctx.hooksDir, 'grok-homes', terminalId),
+          dir: grokHomeDir(ctx.hooksDir, terminalId),
           realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
           eventsUrl: plan.grokHooks.eventsUrl,
@@ -151,6 +153,7 @@ export class SpawnInjection {
         const settings = spinnerVerbs ? { ...plan.claudeSettings, spinnerVerbs } : plan.claudeSettings;
         fs.writeFileSync(file, JSON.stringify(settings, null, 2), { mode: 0o600 });
         try { fs.chmodSync(file, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+        publishToAgent(file);
         return { claudeSettingsPath: file };
       } catch {
         return undefined; // hooks are best-effort; never block a spawn

@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { agentDirFor, giveToAgent, giveTreeToAgent } from '../privsep/paths.js';
 
 export const SHARED_DIRS = ['projects', 'skills', 'commands', 'agents', 'plugins'] as const;
 export const SHARED_FILES = ['settings.json', 'CLAUDE.md'] as const;
@@ -27,7 +28,7 @@ export function primaryClaudeConfigDir(env: NodeJS.ProcessEnv = process.env): st
 /** `<dataDir>/claude-accounts/<id>`. The id is a short id the store makes; anything else is refused. */
 export function accountConfigDir(dataDir: string, id: string): string {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error('bad account id');
-  return path.join(dataDir, 'claude-accounts', id);
+  return path.join(agentDirFor(dataDir, 'claude-accounts'), id);
 }
 
 /**
@@ -54,5 +55,9 @@ export function prepareAccountConfigDir(dataDir: string, id: string, primary: st
   };
   for (const d of SHARED_DIRS) link(d, true);
   for (const f of SHARED_FILES) link(f, false);
+  // Privilege separation: the harness runs as another user and must own what it writes.
+  giveToAgent(primary);
+  for (const d of SHARED_DIRS) giveToAgent(path.join(primary, d));
+  giveTreeToAgent(dir);
   return dir;
 }

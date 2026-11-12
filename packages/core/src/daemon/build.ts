@@ -104,6 +104,9 @@ import { createDaemonSockets, createUpgradeHandler, type DaemonSockets } from '.
 import { defaultWebDist, mountWeb } from './web.js';
 import { daemonTimers, startDaemonTimers } from './timers.js';
 import { runBootRecovery } from './boot-recover.js';
+import { boxSecret } from '../privsep/secrets.js';
+import { privsep } from '../privsep/config.js';
+import { agentDirFor, runDirFor } from '../privsep/paths.js';
 
 export { NoopPTYManager, type PtyLike };
 
@@ -334,7 +337,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const timersOn = opts.timers ?? true;
   const basePath = normalizeBasePath(env.DISPATCH_BASE_PATH);
   /** Shared secret the router injects on every request to a hosted box. Unset ⇒ open (local). */
-  const boxToken = env.DISPATCH_BOX_TOKEN?.trim() || undefined;
+  const boxToken = boxSecret('DISPATCH_BOX_TOKEN', env);
   // The host facts at boot (profile/host-context.ts). The profile in them is only the fallback: the
   // live one is OS's answer (os/profile.ts), read by `hostContext()` below once the provider exists.
   const bootHostContext = readHostContext(env);
@@ -421,7 +424,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
     : {});
 
   // ── Threads: SessionService, agents, roles, delivery, status ────────────────
-  const sessionService = createSessionService({ db, pty: ptyManager, mcpConfigPath: path.join(dataDir, 'mcp.json'), keys, keyDir: path.join(dataDir, 'keys') });
+  const sessionService = createSessionService({ db, pty: ptyManager, mcpConfigPath: path.join(privsep() ? runDirFor(dataDir, 'mcp') : dataDir, 'mcp.json'), keys, keyDir: runDirFor(dataDir, 'keys') });
   if (opts.port !== undefined) sessionService.setDaemonPort(opts.port); // corrected by listening() if the daemon falls back to another port
   if (opts.structuredCommand) sessionService.setStructuredCommandOverride(opts.structuredCommand);
   const agentService = new AgentService(db, sessionService, broadcaster, path.join(dataDir, 'runs'));
@@ -472,7 +475,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const endless = new EndlessService({
     ledger: ledgerService,
     db, broadcaster, manager: endlessManager,
-    chatDir: path.join(dataDir, 'chat'),
+    chatDir: agentDirFor(dataDir, 'chat'),
     home: os.homedir(),
     limits: limitsFromEnv(env.DISPATCH_ENDLESS_LIMITS),
     openRouterKey: resolveOpenRouterKey,
@@ -531,7 +534,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // an MCP server) so Claude Code / Codex agents can add & retrieve secrets.
   const integrationsService = new IntegrationsService(db, integrationLauncher(dataDir), () => { const st = secretsService.status(); return st.connected && st.enabled; });
   // Tools brokered by OS, resolved per spawn (design §4.2.1).
-  const osConnections = new OsConnectionsProvider({ baseUrl: env.OS_BASE_URL, boxToken: env.OS_BOX_TOKEN, ownerEmail: env.DISPATCH_OWNER_EMAIL });
+  const osConnections = new OsConnectionsProvider({ baseUrl: env.OS_BASE_URL, boxToken: boxSecret('OS_BOX_TOKEN', env), ownerEmail: env.DISPATCH_OWNER_EMAIL });
   // OS's tool list: which company systems get a server (os/tools-proxy.ts). Follows every change of OS's answer.
   const osToolCatalog = new OsToolCatalog({ provider: osConnections });
   if (osConnections.enabled) osToolCatalog.start();
@@ -540,7 +543,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   const profileNow = () => resolveProfile(osConnections.snapshot().profile, env);
   setProfileSource(profileNow);
   const hostContext = () => liveHostContext(bootHostContext, { profile: profileNow(), osPublicUrl: osConnections.snapshot().osPublicUrl });
-  const toolsBase = opts.toolsDir ?? path.join(dataDir, 'tools');
+  const toolsBase = opts.toolsDir ?? agentDirFor(dataDir, 'tools');
   // Whether each bundled CLI can really sign in from a thread: runs its authCheck with the
   // thread spawn env (kept current by the refresh below), not this daemon's bare env.
   const toolsAuth = new ToolAuthProber({ base: toolsBase });
@@ -661,7 +664,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   let stopTimers: (() => void) | null = null;
   let stopped = false;
   const onUpgrade = createUpgradeHandler({
-    sockets, basePath, boxToken: auth.boxToken, profile: profileNow, accessGate: auth.accessGate, devices: auth.devices,
+    sockets, basePath, boxToken: auth.boxToken, ownerPeerOk: auth.ownerPeerOk, profile: profileNow, accessGate: auth.accessGate, devices: auth.devices,
     sessionService, statusService, ptyManager, terminalMonitor, claudeManager: harnesses.claude,
   });
   return {
@@ -691,7 +694,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       const here = path.dirname(fileURLToPath(import.meta.url));
       sessionService.setStatusContext({
         serverUrl: api,
-        hooksDir: path.join(dataDir, 'hooks'),
+        hooksDir: runDirFor(dataDir, 'hooks'),
         codexHelperPath: path.resolve(here, '../../scripts/codex-notify.mjs'),
         grokHelperPath: path.resolve(here, '../../scripts/grok-hook.mjs'),
       });

@@ -33,6 +33,7 @@ import { redactKeys, redactKeysDeep } from '../auth/redact-keys.js';
 import { resolveProject, overseerOf, type ProjectRef } from './projects.js';
 import type { LedgerService } from '../overseer/ledger-service.js';
 import { DocsService } from '../docs/service.js';
+import { giveToAgent } from '../privsep/paths.js';
 
 export class UserError extends Error {}
 
@@ -193,6 +194,8 @@ export class EndlessService {
     const memoryMcp = fileURLToPath(new URL('./memory-mcp.js', import.meta.url));
     fs.writeFileSync(this.mcpConfigPath, JSON.stringify({ mcpServers: { memory: { command: 'node', args: [memoryMcp], env: { DISPATCH_PORT: String(port), DISPATCH_AUTH: '${DISPATCH_AUTH}' } } } }, null, 2), { mode: 0o600 });
     fs.chmodSync(this.mcpConfigPath, 0o600); // an older file keeps its mode on overwrite
+    giveToAgent(this.mcpConfigPath);
+    giveToAgent(this.mediaDir);
     const last = this.store.getState('turn_status');
     if (last === 'running' || last === 'waiting') this.store.setState('turn_status', 'interrupted');
     this.compactor.recover();

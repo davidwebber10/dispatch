@@ -15,6 +15,7 @@ import { openInside } from '../files/confinedOpen.js';
 import { clientMessage } from '../http/client-message.js';
 import { GIT_NO_FSMONITOR } from '../docs/git.js';
 import { defaultSecretRoots, holdsSecret, isSecretPath, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
+import { giveToAgent, mkdirForAgent } from '../privsep/paths.js';
 
 /** Upper bound on a single reveal: no native file manager can usefully select more, and this is
  *  the only route that shells out — an unbounded argv is not worth the risk. */
@@ -535,6 +536,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
 
     try {
       fs.writeFileSync(resolved, req.body.content);
+      giveToAgent(resolved);
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });
@@ -564,6 +566,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         const dest = path.join(resolved, req.file.originalname);
         if (!dest.startsWith(session.workingDir) || !insideRealRoot(session.workingDir, dest)) { unlinkQuiet(tmpFile); return res.status(403).json({ error: 'Path traversal not allowed' }); }
         fs.copyFileSync(req.file.path, dest);
+        giveToAgent(dest);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: path.relative(session.workingDir, dest) });
       } catch (err: any) {
@@ -590,7 +593,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       try {
         const inboxDir = path.join(session.workingDir, '.dispatch', 'inbox');
         if (!insideRealRoot(session.workingDir, inboxDir)) { unlinkQuiet(req.file.path); return res.status(403).json({ error: 'Path traversal not allowed' }); }
-        fs.mkdirSync(inboxDir, { recursive: true });
+        mkdirForAgent(inboxDir, { confine: false });
 
         const safeFilename = sanitizeFilename(req.file.originalname);
         const suffix = Math.random().toString(36).slice(2, 10) || 'upload';
@@ -599,6 +602,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
         const relativePath = path.relative(session.workingDir, absolutePath);
 
         fs.copyFileSync(req.file.path, absolutePath);
+        giveToAgent(absolutePath);
         fs.unlinkSync(req.file.path);
         res.json({ ok: true, path: relativePath, absolutePath });
       } catch (copyErr: any) {
@@ -622,7 +626,7 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
     if (!insideRealRoot(session.workingDir, resolved)) return res.status(403).json({ error: 'Path traversal not allowed' });
 
     try {
-      fs.mkdirSync(resolved, { recursive: true });
+      mkdirForAgent(resolved, { confine: false });
       res.json({ ok: true, path: requestedPath });
     } catch (err: any) {
       res.status(400).json({ error: clientMessage(err) });

@@ -22,6 +22,8 @@ import { withShimPath } from '../auth/shim.js';
 import { installAgentSummaryHook, withAgentSummaryPreload } from '../providers/claude-agent-summary.js';
 import { getToolsSpawnEnv } from '../tools/status.js';
 import type { PtyLike } from './noop-pty.js';
+import { privsep } from '../privsep/config.js';
+import { runDirFor } from '../privsep/paths.js';
 
 export interface SpawnEnvInputs {
   db: Database.Database;
@@ -57,7 +59,7 @@ export interface SpawnEnv {
 export function wireSpawnEnv(i: SpawnEnvInputs): SpawnEnv {
   const { db, dataDir, claudeLogin, osConnections, secretsService, toolsAuth } = i;
   let current: Record<string, string> = {};
-  const agentSummaryHook = installAgentSummaryHook(dataDir);
+  const agentSummaryHook = installAgentSummaryHook(privsep() ? runDirFor(dataDir, 'preload-root') : dataDir);
   // Resolve the OpenCode/OpenRouter key from Doppler BY CONFIGURED NAME (settings/harness-
   // settings.ts) and layer it onto the opencode children's env as OPENROUTER_API_KEY.
   // Async on purpose (Doppler round-trip) atop the sync env refresh; re-fired on boot,

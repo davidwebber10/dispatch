@@ -13,6 +13,8 @@ import { reachableAddresses, type Reachable } from '../auth/reachable-addresses.
 import { createAccessConfig } from '../auth/known-hosts.js';
 import { createTailscaleAccess, type TailscaleAccess } from '../auth/tailscale-access.js';
 import { platform } from '../platform/index.js';
+import { privsep } from '../privsep/config.js';
+import { isLocalPeer } from '../privsep/local-peer.js';
 
 export interface AuthInputs {
   db: Database.Database;
@@ -40,6 +42,8 @@ export interface AuthServices {
   /** Signed-in devices. Present only with the access gate. */
   devices?: DeviceStore;
   boxToken: string | undefined;
+  /** Set with privilege separation: the owner credential counts only from a peer this accepts. */
+  ownerPeerOk?: (remoteAddress: string | undefined) => boolean;
   /** Addresses a phone could use to reach this computer. Absent with `open` or without the network. */
   reachableAddresses?: () => Promise<Reachable>;
   /**
@@ -63,20 +67,25 @@ export function wireAuth(i: AuthInputs): AuthServices {
     };
   }
   // The owner token file exists in both modes (a box admits the token as well as the box header).
-  const getAccessToken = createTokenSource(i.dataDir);
   const boxToken = i.boxToken;
+  // Privilege separation on a hosted box: the owner credential is taken only from a peer outside the
+  // box, and the owner token file of a local install is neither written nor accepted (a workload
+  // must have no way to learn or to present owner authority).
+  const separated = !!boxToken && privsep() !== null;
+  const ownerPeerOk = separated ? (addr: string | undefined) => !isLocalPeer(addr) : undefined;
+  const getAccessToken: () => string | null = separated ? () => null : createTokenSource(i.dataDir);
   // The request gate (network exposure spec, section 7). On a hosted box the box token is
   // the credential and the router is the only caller, so the gate stays out of the way there.
   // One-time sign-in codes (Settings → Devices & access) that stand in for the token on the login route.
   const pairCodes = createPairCodes();
   // Signed-in devices: one row per browser or phone that signed in. Not on a hosted box, where
   // the router holds the box token and there is no sign-in page.
-  const devices = boxToken ? undefined : createDeviceStore(i.db, { getToken: getAccessToken });
+  const devices = boxToken ? undefined : createDeviceStore(i.db, { getToken: getAccessToken as () => string });
   const tailscaleAccess = i.tailscale ?? (i.network ? createTailscaleAccess() : NO_TAILSCALE);
   const accessGate = boxToken
     ? undefined
     : createAccessGate({
-        getToken: getAccessToken,
+        getToken: getAccessToken as () => string,
         isGatewayPeer: (a) => platform.isHostGatewayPeer(a),
         config: createAccessConfig(i.dataDir),
         tailscale: tailscaleAccess,
@@ -87,7 +96,7 @@ export function wireAuth(i: AuthInputs): AuthServices {
         ...(i.cfAccess ? { cfAccess: i.cfAccess } : {}),
       });
   return {
-    keys, noCredentialStats, accessGate, pairCodes, devices, boxToken,
+    keys, noCredentialStats, accessGate, pairCodes, devices, boxToken, ownerPeerOk,
     reachableAddresses: i.network
       ? async () => {
           const me = await tailscaleAccess.self().catch(() => null);
@@ -95,14 +104,14 @@ export function wireAuth(i: AuthInputs): AuthServices {
         }
       : undefined,
     install(app) {
-      if (boxToken) app.use(createBoxGate({ boxToken, registry: keys, getToken: getAccessToken }));
+      if (boxToken) app.use(createBoxGate({ boxToken, registry: keys, getToken: getAccessToken, ownerPeerOk }));
       if (accessGate) {
         // Before the gate, which has no login exemption. A key never signs in (spec 6.4).
         app.post('/api/access/login', createLoginKeyCheck({ registry: keys }), ...accessGate.loginRoute);
         app.use(accessGate.middleware);
       }
       app.use(createPrincipalMiddleware({
-        registry: keys, scope: createKeyScope(i.db), getToken: getAccessToken, boxToken, stats: noCredentialStats, devices,
+        registry: keys, scope: createKeyScope(i.db), getToken: getAccessToken, boxToken, ownerPeerOk, stats: noCredentialStats, devices,
       }));
     },
   };

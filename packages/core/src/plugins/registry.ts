@@ -6,6 +6,7 @@ import type { PluginFacts } from '../auth/plugin-facts.js';
 import type { McpServerSpec } from '../mcp/injection.js';
 import { PLUGIN_ID_RE, parseManifest, satisfiesDispatch, type PluginManifest } from './manifest.js';
 import { pluginTemplate } from './template.js';
+import { publishToAgent } from '../privsep/paths.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, sections 1 and 2.1): the folders
@@ -148,6 +149,7 @@ export class PluginRegistry {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, key + '\n', { mode: 0o600 });
     try { fs.chmodSync(file, 0o600); } catch { /* best effort */ }
+    publishToAgent(file); // privilege separation: the worker reads it as another user
   }
 
   private revokeKey(id: string): void {

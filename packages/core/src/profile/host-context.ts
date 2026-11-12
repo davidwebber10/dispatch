@@ -8,7 +8,7 @@
 // A local install sets none of these variables, so it is a developer with `hosted: false`, which is
 // what it always was.
 import { hostedTarget } from '../update/hosted.js';
-import { BOX_CAPABILITIES } from '../platform/capabilities.js';
+import { boxCapabilities } from '../platform/capabilities.js';
 import { envProfile } from '../os/profile.js';
 
 export type Profile = 'business' | 'developer';
@@ -82,7 +82,7 @@ export function liveHostContext(base: HostContext, live: { profile: Profile; osP
 }
 
 export function hostContextResponse(ctx: HostContext): HostContextResponse {
-  return { ...ctx, capabilities: [...BOX_CAPABILITIES] };
+  return { ...ctx, capabilities: boxCapabilities() };
 }
 
 /** True when the page must be told: a hosted box, or a profile set on purpose. Else the page keeps its defaults. */

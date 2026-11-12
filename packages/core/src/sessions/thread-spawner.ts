@@ -37,6 +37,7 @@ import { LOGIN_ARGV, isProviderName } from '../setup/install.js';
 import { ThreadConfigStore, type ConfigPatch } from './thread-config.js';
 import type { SessionWiring } from './session-wiring.js';
 import { AGENCY_MCP_SERVER, type SpawnInjection } from './spawn-injection.js';
+import { grokHomeDir } from '../providers/grok-home.js';
 
 type IStructuredManager = import('../structured/manager.js').IStructuredManager;
 
@@ -401,7 +402,7 @@ export class ThreadSpawner {
       try {
         const mcpServers = this.mcpEntries(specs, '${DISPATCH_AUTH}');
         const dir = writeGrokHome({
-          dir: path.join(this.wiring.statusContext.hooksDir, 'grok-homes', terminal.id),
+          dir: grokHomeDir(this.wiring.statusContext.hooksDir, terminal.id),
           realHome: path.join(os.homedir(), '.grok'),
           mcpServers,
         });

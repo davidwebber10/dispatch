@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { publishToAgent } from '../privsep/paths.js';
 
 export interface McpServerSpec {
   name: string;
@@ -100,6 +101,7 @@ export function composeInjection(
     // when it creates the file, so tighten an older 0644 file too.
     fs.writeFileSync(opts.configPath, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
     try { fs.chmodSync(opts.configPath, 0o600); } catch { /* best effort on FS that lacks chmod */ }
+    publishToAgent(opts.configPath); // privilege separation: the CLI runs as another user
     claudeConfigPath = opts.configPath;
   }
 

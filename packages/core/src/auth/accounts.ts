@@ -11,6 +11,7 @@ import os from 'os';
 import path from 'path';
 import { createHash, randomUUID } from 'crypto';
 import type { UsageAccess } from '../limits/gauge.js';
+import { agentDirFor, giveToAgent } from '../privsep/paths.js';
 
 export const CLI_ACCOUNT_ID = 'cli';
 export const ACCOUNT_PROVIDERS = ['claude', 'codex'] as const;
@@ -188,8 +189,9 @@ export class AccountsStore {
   /** A new Codex account: its own folder, to be signed in by a "Sign in — Codex" thread under that CODEX_HOME. */
   addCodex(label: string): CodexAccount {
     const id = randomUUID().slice(0, 8);
-    const dir = path.join(this.dataDir, 'codex-accounts', id);
+    const dir = path.join(agentDirFor(this.dataDir, 'codex-accounts'), id);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    giveToAgent(dir);
     const a: CodexAccount = { id, label: label.trim() || 'Codex account', dir, addedAt: new Date().toISOString() };
     this.data.codex.push(a);
     this.save();

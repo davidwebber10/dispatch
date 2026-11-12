@@ -132,8 +132,19 @@ RUN bash -lc 'command -v claude && command -v codex && command -v opencode && co
 COPY --chown=root:root docker/hosted/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 755 /usr/local/bin/entrypoint.sh
 
-# The entrypoint starts as root ONLY to write /etc/claude-code/managed-settings.json and prepare
-# $HOME, then runs the daemon as `dispatch` (uid 1000) with setpriv. Nothing else runs as root.
+# --- Privilege separation (docs/hosted-privilege-separation.md) ---------------
+#   /var/lib/dispatch        root, 0700: the lock. A volume for the daemon's state is mounted at
+#                            /var/lib/dispatch/state; no other user can walk through the parent.
+#   /run/dispatch/agent      root, 0755: what the daemon writes for workloads to read.
+# No program in the image keeps a set-uid or set-gid bit: workloads run with no_new_privs, which
+# already makes the bits inert, and removing them leaves nothing to rely on.
+RUN install -d -o root -g root -m 0700 /var/lib/dispatch /var/lib/dispatch/state /var/lib/dispatch/tmp \
+    && install -d -o root -g root -m 0755 /run/dispatch /run/dispatch/agent \
+    && find / -xdev -type f -perm /6000 -exec chmod a-s {} +
+
+# The entrypoint starts as root to write /etc/claude-code/managed-settings.json and prepare the
+# folders. With a state volume the daemon stays root (six capabilities, no_new_privs) and starts
+# every other process as `dispatch` (uid 1000); without one, the daemon itself drops to `dispatch`.
 USER root
 ENV HOME=/home/dispatch
 WORKDIR /home/dispatch

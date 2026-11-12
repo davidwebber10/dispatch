@@ -2,6 +2,7 @@
  * The entry of the daemon. Everything is built in `daemon/build.ts` (W3-A): `createApp` is the test
  * build of it, and `startServer` is the daemon: build, attach, listen, boot recover, start timers.
  */
+import './privsep/install.js'; // FIRST: on a box with privilege separation, before any module can start a process or read a token
 import { KILL_GRACE_MS } from './platform/kill-grace.js';
 import fs from 'fs';
 import path from 'path';
@@ -26,9 +27,12 @@ import type { ApiRouteDeps } from './server-routes.js';
 import { buildDaemon, NoopPTYManager } from './daemon/build.js';
 import { createDaemonHttpServer } from './daemon/http-server.js';
 import { boxLog } from './os/box-log.js';
+import { privsep } from './privsep/config.js';
+import { prepareSeparatedBox, proveSeparatedBox } from './privsep/boot.js';
+import { runDirFor } from './privsep/paths.js';
 import { getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
-import { BOX_CAPABILITIES } from './platform/capabilities.js';
+import { boxCapabilities } from './platform/capabilities.js';
 
 export { buildDaemon, wireLedger } from './daemon/build.js';
 export type { BuildDaemonOptions, Daemon, DaemonServices } from './daemon/build.js';
@@ -100,12 +104,18 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   }
   try {
     fs.writeFileSync(
-      path.join(os.homedir(), '.dispatch', 'path-debug.log'),
+      path.join(platform.dataDir(), 'path-debug.log'),
       `ts=${new Date().toISOString()}\nSHELL=${process.env.SHELL}\nshellPath=${shellPath}\nprocess.env.PATH=${process.env.PATH}\n`,
     );
   } catch {}
 
   const dataDir = platform.dataDir();
+  // Privilege separation (hosted): check the roots and move an older box's state out of the home.
+  const separated = privsep();
+  if (separated) {
+    const { migration } = prepareSeparatedBox(separated);
+    boxLog('privsep.prepare', { imported: migration.imported.length, removed: migration.removed.length, ...(migration.skipped ? { skipped: migration.skipped } : {}) });
+  }
   // Private to the user before anything else is written (network exposure spec 7.14).
   lockDownDataDir(dataDir, [platform.logDir()]);
   const db = createDatabase(path.join(dataDir, 'dispatch.db'));
@@ -113,12 +123,23 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 
   // Build: every service and the app (daemon/build.ts). The browser shim points at the daemon's own address.
   const basePath = normalizeBasePath(process.env.DISPATCH_BASE_PATH);
-  const shimFor = (port: number) => platform.installBrowserShim({ dataDir, serverUrl: `http://127.0.0.1:${port}${basePath}` });
+  // With privilege separation the shim is written where workloads can read it (and cannot change it).
+  const shimDir = separated ? runDirFor(dataDir, 'shim') : dataDir;
+  const shimFor = (port: number) => platform.installBrowserShim({ dataDir: shimDir, serverUrl: `http://127.0.0.1:${port}${basePath}` });
   const daemon = buildDaemon({ db, dataDir, auth: 'gate', port: preferredPort, shimEnv: shimFor(preferredPort) });
   const { sessionService, keys } = daemon.services;
   // A Claude overseer loads only its own memory folder under this home (overseer memory scope spec 2026-10-07, Unit 1).
   sessionService.setOverseerMemoryHome(os.homedir());
   if (daemon.webDist) console.log(`Serving web client from ${daemon.webDist}${basePath ? ` under ${basePath}` : ''}`);
+
+  // Prove the separation before anything listens. A spawn entry point that would start a child as
+  // the daemon user is fatal. A failed self-check is logged and the capability is not reported.
+  if (separated) {
+    const proof = await proveSeparatedBox(separated);
+    boxLog('privsep.proof', { guardOk: proof.guardOk, selfCheck: proof.selfCheck.ok, failures: proof.selfCheck.failures.slice(0, 20) });
+    if (!proof.guardOk) throw new Error(`privilege separation: a child process did not start as the agent user (${proof.guard.map((g) => `${g.via}=${g.uid}`).join(', ')})`);
+    if (!proof.selfCheck.ok) console.error(`[privsep] self-check FAILED; "privsep-v1" is not reported: ${proof.selfCheck.failures.join('; ')}`);
+  }
 
   // Attach and listen. DISPATCH_BIND unset: every interface, the same call as before. Set: that address only (platform/bind.ts).
   const server = createDaemonHttpServer(daemon.app);
@@ -170,7 +191,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 /** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
 function logDaemonStart(port: number, basePath: string): void {
   boxLog('daemon.start', {
-    version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: [...BOX_CAPABILITIES],
+    version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: boxCapabilities(),
     port, node: process.version, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
   });
 }

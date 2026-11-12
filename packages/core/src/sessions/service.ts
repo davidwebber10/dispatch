@@ -48,6 +48,7 @@ import { isAgentType, type AgentType } from '../providers/agent-types.js';
 import { findLiveCoordinator } from '../auth/key-scope.js';
 import { DEFAULT_AUTO_ARCHIVE_MS } from './auto-archive.js';
 import { ThreadConfigStore, pickClientSettable } from './thread-config.js';
+import { mkdirForAgent } from '../privsep/paths.js';
 
 export { disallowedToolsFor, type SpawnKey } from './thread-spawner.js';
 
@@ -346,7 +347,7 @@ export class SessionService {
     // than refusing to create the project at all.
     if (workingDir !== '~' && !workingDir.startsWith('~')) {
       try {
-        fs.mkdirSync(workingDir, { recursive: true });
+        mkdirForAgent(workingDir, { confine: false });
       } catch (err) {
         console.warn(`could not create project directory ${workingDir}:`, err);
       }

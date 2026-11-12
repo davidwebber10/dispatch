@@ -39,6 +39,8 @@ export interface UpgradeInputs {
   sockets: DaemonSockets;
   basePath: string;
   boxToken: string | undefined;
+  /** Privilege separation: the owner credential counts only from a peer outside the box. */
+  ownerPeerOk?: (remoteAddress: string | undefined) => boolean;
   /** The business profile opens no PTY terminal socket (profile/business-gate.ts). Absent: developer. */
   profile?: ProfileSource;
   accessGate: AccessGate | undefined;
@@ -89,7 +91,7 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
     // Express middleware never runs for an upgrade, so the box-token check has to be
     // repeated here. Protecting only the HTTP routes would leave every terminal and
     // structured socket — full interactive access to the box — wide open.
-    if (!upgradeAllowed(i.boxToken, request)) {
+    if (!upgradeAllowed(i.boxToken, request, i.ownerPeerOk)) {
       // A real HTTP answer, not a dropped socket: a client (and the router's logs) can tell
       // "refused" from "the box is down" (box defects 2026-11-11, #9).
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 26\r\n\r\n{"error":"unauthorized"}\r\n');
