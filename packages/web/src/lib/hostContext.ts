@@ -86,11 +86,19 @@ export function setHostContextForTest(ctx?: Partial<HostContext>, previewOn = fa
 
 export const isHosted = (): boolean => real.hosted;
 
-/** The workspace looks like OS (OS theme pair, product brand control): a hosted box, or the business preview. */
-export const usesOsLook = (): boolean => real.hosted || preview;
+/**
+ * The workspace looks like OS (OS theme pair, OS left rail, product brand control): ONLY when it is asked
+ * for, by the business preview (an explicit switch, off by default). Since 2026-11-11 a hosted box does
+ * NOT imply it: a person on a hosted box uses the chat view inside OS (docs/headless-api.md), and this
+ * page is the developer's "native" window, which looks like a local install (standard theme, IconRail).
+ */
+export const usesOsLook = (): boolean => preview;
 
-/** The page uses plain wording (lib/hostCopy.ts): a hosted box, or the business preview. */
-export const usesPlainWording = (): boolean => real.hosted || preview;
+/**
+ * The page uses plain wording (lib/hostCopy.ts): a business person on a hosted box, or the business
+ * preview. A developer's native window on a hosted box reads like a local install.
+ */
+export const usesPlainWording = (): boolean => (real.hosted && real.profile === 'business') || preview;
 
 /**
  * A profile change from OS (core os/profile.ts) without a restart: on a hosted workspace the page asks

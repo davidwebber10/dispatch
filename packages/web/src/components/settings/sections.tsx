@@ -6,7 +6,8 @@ import { PaintBrush, Bell, Microphone, Robot, Gauge, PlugsConnected, Key, Wrench
 import type { Icon } from '@phosphor-icons/react';
 import { Spinner } from '../common/Spinner';
 import { can, type Feature } from '../../lib/profile';
-import { hostCopy } from '../../lib/hostCopy';
+import { hostCopy, PLAIN } from '../../lib/hostCopy';
+import { isHosted } from '../../lib/hostContext';
 
 // The sections' code is not in the first load (engineering program 2026-11-09, W2-E): this list
 // (labels and icons, used by the navigation, the phone's list and the command palette) is, and the
@@ -109,6 +110,8 @@ export function settingsSection(key: string): SettingsSection | undefined {
 
 /** The heading of a group. "THIS MAC" names the machine, so a hosted workspace says WORKSPACE (lib/hostCopy.ts). */
 export function settingsGroupLabel(g: SettingsGroup): string {
+  // A hosted box is no Mac, whatever the wording: the developer's native window names it a workspace too.
+  if (g === 'THIS MAC' && isHosted()) return PLAIN['settings.group.machine'];
   return g === 'THIS MAC' ? hostCopy('settings.group.machine', g) : g;
 }
 

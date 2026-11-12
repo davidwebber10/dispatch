@@ -35,9 +35,12 @@ describe('settings follow the profile', () => {
 });
 
 describe('account names', () => {
-  it('the stock CLI login name is plain on a hosted workspace only', () => {
+  it('the stock CLI login name is plain for a business person on a hosted workspace only', () => {
     expect(accountDisplayLabel('claude', STOCK_CLI_ACCOUNT_LABEL, true)).toBe(STOCK_CLI_ACCOUNT_LABEL);
     setHostContextForTest({ hosted: true });
+    // The developer's native window reads like a local install.
+    expect(accountDisplayLabel('claude', STOCK_CLI_ACCOUNT_LABEL, true)).toBe(STOCK_CLI_ACCOUNT_LABEL);
+    setHostContextForTest({ hosted: true, profile: 'business' });
     expect(accountDisplayLabel('claude', STOCK_CLI_ACCOUNT_LABEL, true)).toBe('Your Claude account');
     expect(accountDisplayLabel('codex', STOCK_CLI_ACCOUNT_LABEL, true)).toBe('Your Codex account');
     expect(accountDisplayLabel('claude', 'Work', true)).toBe('Work');

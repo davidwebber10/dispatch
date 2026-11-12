@@ -166,8 +166,9 @@ export function AppearanceSection() {
 
   return (
     <SettingsPage intro="These settings apply to this device only, so a phone and a computer can differ.">
-      {/* Developer profile only (the real one, so the switch stays to turn the preview off). */}
-      {realHostContext().profile === 'developer' && (
+      {/* Developer profile only (the real one, so the switch stays to turn the preview off). Not on a hosted
+          box: there the business view lives in OS, and this window stays the standard one. */}
+      {realHostContext().profile === 'developer' && (!realHostContext().hosted || isBusinessPreview()) && (
         <SettingsGroup title="Profile preview" footer="A preview in this browser only. The workspace stays in the developer profile: nothing is blocked, and terminal threads still work for other devices. The page reloads.">
           <SettingsRow label="Preview as business user" hint={`Hides the developer features and uses the ${PLATFORM_NAME} theme, as a business person sees it.`}
             control={<Toggle on={isBusinessPreview()} label="Preview as business user" onClick={() => setBusinessPreview(!isBusinessPreview())} />} />

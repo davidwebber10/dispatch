@@ -21,8 +21,9 @@ export const THEMES: readonly Theme[] = [
 ];
 
 /**
- * A hosted workspace (Dispatch inside Polywood OS) looks like OS: its 'system' pair is the OS pair and
- * its default is 'system'. A local install keeps Dispatch Dark and the Dispatch pair, as before.
+ * With the OS look (lib/hostContext.ts usesOsLook: the business preview only, since 2026-11-11) the
+ * 'system' pair is the OS pair and the default is 'system'. Every other page, a hosted box included,
+ * keeps Dispatch Dark and the Dispatch pair.
  * The host context is fixed for the life of the page (lib/hostContext.ts), so these are read per call.
  */
 const hosted = () => usesOsLook();

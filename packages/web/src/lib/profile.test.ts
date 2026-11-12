@@ -88,6 +88,15 @@ describe('the business preview', () => {
     expect(usesPlainWording()).toBe(true);
   });
 
+  it('a hosted box no longer implies the OS look: the native window is standard Dispatch (2026-11-11)', () => {
+    setHostContextForTest({ hosted: true, profile: 'developer' });
+    expect(usesOsLook()).toBe(false);
+    expect(usesPlainWording()).toBe(false);
+    setHostContextForTest({ hosted: true, profile: 'business' });
+    expect(usesOsLook()).toBe(false);
+    expect(usesPlainWording()).toBe(true);
+  });
+
   it('is not possible for a business person (nothing to preview)', () => {
     setHostContextForTest({ profile: 'business', hosted: true }, true);
     expect(isBusinessPreview()).toBe(false);
@@ -112,8 +121,14 @@ describe('themes by host', () => {
     expect(themeFor('system', false).id).toBe(dispatchLight.id);
   });
 
-  it('a hosted workspace defaults to System, which is the OS pair', () => {
+  it('a hosted workspace looks like a local install (standard Dispatch theme) since 2026-11-11', () => {
     setHostContextForTest({ hosted: true });
+    expect(defaultThemeSetting()).toBe('dispatch-dark');
+    expect(themeFor('system', true).id).not.toBe(osDark.id);
+  });
+
+  it('the OS look is an explicit opt-in (the business preview): System is then the OS pair', () => {
+    setHostContextForTest({ hosted: false }, true);
     expect(defaultThemeSetting()).toBe('system');
     expect(themeFor('system', true).id).toBe(osDark.id);
     expect(themeFor('system', false).id).toBe(osLight.id);
@@ -137,8 +152,10 @@ describe('hostCopy', () => {
     setHostContextForTest({ hosted: true, profile: 'business' });
     expect(hostCopy('conn.reconnecting', 'Reconnecting…')).toBe('Your workspace is reconnecting…');
     expect(hostDetail('The daemon restarted')).toBeNull();
+    // A developer's native window on a hosted box reads like a local install: the technical line, no plain one.
     setHostContextForTest({ hosted: true, profile: 'developer' });
-    expect(hostDetail('The daemon restarted')).toBe('The daemon restarted');
+    expect(hostCopy('conn.reconnecting', 'Reconnecting…')).toBe('Reconnecting…');
+    expect(hostDetail('The daemon restarted')).toBeNull();
   });
 
   it('no plain sentence has a machine word', () => {
