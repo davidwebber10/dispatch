@@ -15,6 +15,8 @@ import { createThumbnailer, thumbnailHeaders, type Thumbnailer } from '../files/
 import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } from '../files/secret-paths.js';
 import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
+import { PATH_REFUSALS } from '../files/path-policy.js';
+import { pathPolicyFor } from '../files/path-policy-default.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
 import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
 import type { PluginRegistry } from '../plugins/registry.js';
@@ -251,6 +253,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   // Read on first use too: a router that serves no file never looks at the data folder.
   let roots: SecretRoots | null = limits.secretRoots ?? null;
   const secretRoots = (): SecretRoots => (roots ??= defaultSecretRoots(dataDir()));
+  // Which folders a project file may be in (files/path-policy.ts), as for every route that takes a path.
+  const filePolicy = pathPolicyFor(db);
   const knownAccount = (h: 'claude' | 'codex', id: string): boolean => (limits.hasAccount ? limits.hasAccount(h, id) : id === (limits.defaultAccount?.(h) ?? 'cli'));
 
   // The list is for the owner and for any thread key (a thread may ask what plugins exist).
@@ -398,7 +402,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     if (!session) return void res.status(404).json({ error: 'session not found' });
     let ref: pluginData.PluginFile;
     try {
-      ref = pluginData.addFile(db, req.params.id, session.id, checkProjectFile(session.working_dir, body.path));
+      const checked = checkProjectFile(session.working_dir, body.path);
+      const why = filePolicy.problem(checked.path, { project: session.working_dir, use: 'read' })
+        ?? filePolicy.openedProblem(fs.statSync(checked.path), fs.realpathSync(checked.path));
+      if (why) return void res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+      ref = pluginData.addFile(db, req.params.id, session.id, checked);
     } catch (e) {
       if (e instanceof ProjectFileError) return void res.status(e.status).json({ error: e.message });
       return void res.status(500).json({ error: e instanceof Error ? e.message : String(e) }); // an async handler: Express 4 would not catch a throw
@@ -452,6 +460,11 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     // or the data folder, or a hard link in a project to a secret file. The check is before the thumbnail, so no
     // small copy of such a file is made either. An error of the check refuses the file.
     if (await holdsSecret(file.path, secretRoots()).catch(() => true)) return void res.status(403).json({ error: SECRET_PATH_ERROR });
+    {
+      let why = filePolicy.problem(file.path, { project: session.working_dir, use: 'read' });
+      try { why ??= filePolicy.openedProblem(fs.statSync(file.path), fs.realpathSync(file.path)); } catch { /* gone: sendFile answers */ }
+      if (why) return void res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+    }
     const mime = PROJECT_FILE_MIME[path.extname(file.path).toLowerCase()] ?? 'application/octet-stream';
     // `?thumb=<width>` (2026-11-09): a list's small copy of an image. Anything that cannot be made small
     // (not an image, a width that is not offered, a broken file, no resizer) gets the original below.

@@ -11,6 +11,10 @@ import type { StatusService } from '../status/service.js';
 import { redactKeysDeep } from '../auth/redact-keys.js';
 import { modelSupportsTools } from '../settings/model-capabilities.js';
 import { clientMessage } from '../http/client-message.js';
+import path from 'node:path';
+import { PATH_REFUSALS } from '../files/path-policy.js';
+import { daemonPathPolicy } from '../files/path-policy-default.js';
+import { expandHome } from '../sessions/project-dir.js';
 import { createIdempotencyCache } from '../http/idempotency.js';
 import type { StallState } from '../runtime/stall-watchdog.js';
 import { explainThread, threadStatusOf, toDeliveryInfo, type DeliveryInfo } from '../status/explain.js';
@@ -40,6 +44,7 @@ function markThreadMessage(payload: unknown, id: string, label: string | undefin
 
 export function createTerminalsRouter(sessionService: SessionService, broadcaster?: EventBroadcaster, statusService?: StatusService): Router {
   const router = policyRouter();
+  const filePolicy = daemonPathPolicy(() => sessionService.list().map((s) => expandHome(s.workingDir)));
   const answerPermissionRule = answerRule((id) => sessionService.getPendingPermission(id));
   // Answered message POSTs by `Idempotency-Key`, per thread (W1-D). In memory: a restart forgets them.
   const messageKeys = createIdempotencyCache();
@@ -613,6 +618,14 @@ export function createTerminalsRouter(sessionService: SessionService, broadcaste
     }
 
     try {
+      // The file must be one the person may open (files/path-policy.ts), like every path a route takes.
+      const thread = sessionService.getTerminal(req.params.terminalId);
+      const project = thread ? sessionService.get(thread.sessionId) : null;
+      if (project) {
+        const root = expandHome(project.workingDir);
+        const why = filePolicy.problem(path.resolve(root, requestedPath), { project: root, use: 'read' });
+        if (why) return res.status(403).json({ error: PATH_REFUSALS[why], code: 'path_refused', reason: why });
+      }
       const result = sessionService.sendFileReference(
         req.params.terminalId,
         requestedPath,
