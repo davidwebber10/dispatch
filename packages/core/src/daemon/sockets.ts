@@ -95,7 +95,7 @@ export function createUpgradeHandler(i: UpgradeInputs): (request: http.IncomingM
     if (!upgradeAllowed(i.boxToken, request)) {
       // A real HTTP answer, not a dropped socket: a client (and the router's logs) can tell
       // "refused" from "the box is down" (box defects 2026-11-11, #9).
-      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 26\r\n\r\n{"error":"unauthorized"}\r\n');
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\nContent-Length: 26\r\n\r\n{"error":"unauthorized"}\r\n');
       return;
     }
     const url = stripped;

@@ -502,6 +502,8 @@ export function createFilesRouter(db: Database.Database, opts: { secretRoots?: S
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Length', String(o.st.size));
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      // A download is never a page: if a browser shows it anyway, it runs nothing and belongs to no origin.
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
       res.setHeader(
         'Content-Disposition',
         `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(name)}`,

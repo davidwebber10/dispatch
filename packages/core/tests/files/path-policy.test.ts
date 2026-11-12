@@ -2,6 +2,7 @@
 // the system's own trees are never served; a hosted box serves the person's folders only; a business
 // person gets the project, without the folders that configure an agent program.
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
@@ -137,7 +138,12 @@ describe('the policy itself', () => {
 
 // ── every file route ────────────────────────────────────────────────────────────────────────────────
 
-function app(policy: PathPolicy, workingDir: string = w.project): express.Express {
+// One listening server for each app (closed after the test): a new listener for every request would
+// churn through local ports, and a port another process just took answers with that process's status.
+const servers: http.Server[] = [];
+afterEach(() => { for (const s of servers.splice(0)) { s.close(); s.closeAllConnections(); } });
+
+async function app(policy: PathPolicy, workingDir: string = w.project): Promise<http.Server> {
   const db = new Database(':memory:');
   initSchema(db);
   sessionsDb.create(db, { id: 's1', provider: 'claude-code', name: 'mine', workingDir });
@@ -146,11 +152,14 @@ function app(policy: PathPolicy, workingDir: string = w.project): express.Expres
   e.use(express.json());
   e.use('/api/sessions/:id/files', createFilesRouter(db, { secretRoots: defaultSecretRoots(w.dataDir, w.home), policy }));
   e.use('/api/state', createStateRouter(db, { policy }));
-  return e;
+  const server = http.createServer(e);
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  return server;
 }
 
 const F = '/api/sessions/s1/files';
-type Call = (e: express.Express, p: string) => request.Test;
+type Call = (e: http.Server, p: string) => request.Test;
 /** Each route that takes a path, as one call with the path under test. */
 const ROUTES: Record<string, Call> = {
   list: (e, p) => request(e).get(F).query({ path: p }),
@@ -184,7 +193,7 @@ describe.each([
   ['hosted developer', () => hostedDev()],
 ] as const)('every file route, %s', (_name, make) => {
   test.each(Object.keys(ROUTES))('%s: traversal, encodings, another project, the system trees, Dispatch and harness folders', async (route) => {
-    const e = app(make());
+    const e = await app(make());
     const attacks = [
       '../other/theirs.txt', '../../../outside/secret.txt', 'sub/../../other/theirs.txt', '..', '../..', 'report.txt/../../other/theirs.txt',
       path.join(w.outside, 'secret.txt'), '/etc/passwd', '/proc/self/environ', '/proc/1/environ', '/proc/1/cmdline', '/sys/kernel/x', '/dev/null',
@@ -210,7 +219,7 @@ describe.each([
     fs.symlinkSync(path.join(w.dataDir, 'dispatch.db'), path.join(w.project, 'db.png'));
     fs.symlinkSync('/proc/self/environ', path.join(w.project, 'env.txt'));
     fs.symlinkSync(path.join(w.home, '.claude'), path.join(w.project, 'claude'));
-    const e = app(make());
+    const e = await app(make());
     const paths = ['out/secret.txt', 'out/new.txt', 'leak.txt', 'db.png', 'env.txt', 'claude/settings.json', 'claude/new.json'];
     // Rename and delete act on the link itself (a person may remove a bad link); the others follow it.
     const followed = route === 'delete' || route === 'rename-from' || route === 'rename-to' ? ['out/secret.txt', 'out/new.txt', 'claude/settings.json', 'claude/new.json'] : paths;
@@ -222,7 +231,7 @@ describe('business: the reads that serve bytes', () => {
   test('a hard link to an outside file is not read, shown or downloaded, and not written through', async () => {
     fs.linkSync(path.join(w.outside, 'secret.txt'), path.join(w.project, 'innocent.txt'));
     fs.linkSync(path.join(w.outside, 'secret.txt'), path.join(w.project, 'innocent.png'));
-    const e = app(business());
+    const e = await app(business());
     for (const [route, p] of [['read', 'innocent.txt'], ['download', 'innocent.txt'], ['image', 'innocent.png'], ['write', 'innocent.txt']] as const) {
       const r = await ROUTES[route](e, p);
       expect(r.status, route).toBe(403);
@@ -238,7 +247,7 @@ describe('business: the reads that serve bytes', () => {
     fs.writeFileSync(path.join(w.project, '.mcp.json'), '{}');
     fs.writeFileSync(path.join(w.project, '.dispatch', 'inbox', 'a.csv'), 'a,b');
     fs.writeFileSync(path.join(w.project, 'docs', 'x.md'), 'doc');
-    const e = app(business());
+    const e = await app(business());
     const names = (await ROUTES.list(e, '.')).body.map((x: { name: string }) => x.name).sort();
     expect(names).toEqual(['.dispatch', 'docs', 'pic.png', 'report.txt']);
     expect((await ROUTES.list(e, '.dispatch')).body.map((x: { name: string }) => x.name)).toEqual(['inbox']);
@@ -258,7 +267,7 @@ describe('business: the reads that serve bytes', () => {
   });
 
   test('the ordinary work of a person still works: read, write, list, upload, rename, delete in the project', async () => {
-    const e = app(business());
+    const e = await app(business());
     expect((await ROUTES.read(e, 'report.txt')).body.content).toBe('the report');
     expect((await ROUTES.read(e, path.join(w.project, 'report.txt'))).body.content).toBe('the report'); // its own absolute path
     expect((await ROUTES.write(e, 'new.txt')).status).toBe(200);
@@ -271,7 +280,7 @@ describe('business: the reads that serve bytes', () => {
   });
 
   test('a project that is not under ~/projects serves nothing to a business person', async () => {
-    const e = app(business(), path.join(w.home, 'notes'));
+    const e = await app(business(), path.join(w.home, 'notes'));
     for (const route of ['list', 'read', 'write', 'download'] as const) {
       const r = await ROUTES[route](e, route === 'list' ? '.' : 'todo.txt');
       expect(r.status, route).toBe(403);
@@ -282,14 +291,14 @@ describe('business: the reads that serve bytes', () => {
 
 describe('hosted developer and local installs', () => {
   test('hosted developer: "View file" ends at the home folder', async () => {
-    const e = app(hostedDev());
+    const e = await app(hostedDev());
     expect((await ROUTES.read(e, path.join(w.home, 'notes', 'todo.txt'))).body.content).toBe('a note in the home folder');
     expect((await ROUTES.read(e, path.join(w.other, 'theirs.txt'))).body.content).toBe('other project');
     expect((await ROUTES.read(e, path.join(w.outside, 'secret.txt'))).status).toBe(403);
   });
 
   test('local: an absolute path outside the project is still read; the system trees are not', async () => {
-    const e = app(local());
+    const e = await app(local());
     expect((await ROUTES.read(e, path.join(w.outside, 'secret.txt'))).body.content).toBe('outside secret');
     for (const p of ['/proc/self/environ', '/proc/1/environ', '/sys/kernel/x', '/dev/null']) {
       const r = await ROUTES.read(e, p);
@@ -301,14 +310,14 @@ describe('hosted developer and local installs', () => {
   });
 
   test('the folder browser and "make a folder": the same policy', async () => {
-    const dev = app(hostedDev());
+    const dev = await app(hostedDev());
     expect((await request(dev).get('/api/state/browse').query({ path: w.home })).status).toBe(200);
     for (const p of ['/', '/etc', '/proc', w.dataDir, w.appDir, w.outside, path.join(w.home, '.claude')]) {
       expect((await request(dev).get('/api/state/browse').query({ path: p })).status, `browse ${p}`).toBe(403);
       expect((await request(dev).post('/api/state/mkdir').query({ path: path.join(p, 'made-by-test') })).status, `mkdir ${p}`).toBe(403);
     }
     expect(fs.existsSync(path.join(w.outside, 'made-by-test'))).toBe(false);
-    const loc = app(local());
+    const loc = await app(local());
     expect((await request(loc).get('/api/state/browse').query({ path: w.outside })).status).toBe(200);
     expect((await request(loc).get('/api/state/browse').query({ path: '/proc' })).status).toBe(403);
   });

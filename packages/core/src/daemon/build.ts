@@ -357,6 +357,7 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
   // the first `use`: Express reads both settings when it makes the app's router.
   app.set('case sensitive routing', true);
   app.set('strict routing', true);
+  app.disable('x-powered-by'); // no answer names the framework
   app.use(securityHeaders);
   // Strip the mount prefix ONCE, before anything routes. Everything downstream —
   // all the route mounts, the static handler, the SPA fallback — keeps its existing

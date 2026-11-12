@@ -466,6 +466,27 @@ describe('a hosted box: who is the owner', () => {
     expect(token).not.toBeNull();
   });
 
+  test('with no token every path gives the same answer, and no answer names the framework', async () => {
+    const k = hosted('business');
+    const s = await k.server();
+    const answers = new Set<string>();
+    for (const [method, url] of [
+      ['get', '/'], ['get', '/some/page'], ['get', '/api/whoami'], ['get', '/api/host-context'], ['get', '/api/sessions'], ['get', '/api/no-such-route'],
+      ['get', '/assets/index.js'], ['get', '/plugins/previews/web.js'], ['get', '/icons/icon-192.png'], ['post', '/api/access/login'], ['post', '/api/sessions/x/terminals'],
+    ] as const) {
+      const r = await request(s)[method](url);
+      expect(r.status, url).toBe(401);
+      expect(r.headers['x-powered-by'], url).toBeUndefined();
+      expect(r.headers['x-content-type-options'], url).toBe('nosniff');
+      answers.add(r.text);
+    }
+    expect([...answers]).toEqual(['{"error":"unauthorized"}']);
+    // A path that is not canonical is refused for its form alone, with or without a token: it says nothing else.
+    const bad = await request(s).get('/api//whoami');
+    expect(bad.status).toBe(400);
+    expect(bad.body).toEqual({ error: 'bad_path', message: 'The request path is not in canonical form.' });
+  });
+
   test('developer: the access token still works, as before', async () => {
     const k = hosted('developer');
     const s = await k.server();
