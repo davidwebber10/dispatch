@@ -48,18 +48,23 @@ export function parseSecrets(text: string): Partial<Record<SecretName, string>> 
   return out;
 }
 
+/** Read the descriptor to its end and close it (also when the read fails). */
 function readFd(fd: number): string {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  const buf = Buffer.alloc(4096);
-  for (;;) {
-    const n = fs.readSync(fd, buf, 0, buf.length, null);
-    if (n <= 0) break;
-    total += n;
-    if (total > MAX_BYTES) throw new Error('The secrets descriptor holds too much data.');
-    chunks.push(Buffer.from(buf.subarray(0, n)));
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const buf = Buffer.alloc(4096);
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n <= 0) break;
+      total += n;
+      if (total > MAX_BYTES) throw new Error('The secrets descriptor holds too much data.');
+      chunks.push(Buffer.from(buf.subarray(0, n)));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    try { fs.closeSync(fd); } catch { /* already closed */ }
   }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 /**
@@ -72,8 +77,7 @@ export function loadBoxSecrets(env: NodeJS.ProcessEnv = process.env, read: (fd: 
   if (fdText) {
     if (!/^\d{1,4}$/.test(fdText) || Number(fdText) < 3) throw new Error('DISPATCH_SECRETS_FD is not a descriptor number.');
     const fd = Number(fdText);
-    let text: string;
-    try { text = read(fd); } finally { try { fs.closeSync(fd); } catch { /* a test reader has no real descriptor */ } }
+    const text = read(fd);
     for (const [name, value] of Object.entries(parseSecrets(text))) held.set(name as SecretName, value!);
   }
   for (const name of SECRET_NAMES) {

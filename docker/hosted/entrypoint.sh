@@ -109,7 +109,13 @@ chown 0:0 /run/dispatch "$AGENT_RUN_DIR" && chmod 755 /run/dispatch "$AGENT_RUN_
 
 # The two tokens go through a pipe (descriptor 3) and leave the environment. PID 1 keeps the
 # container's original environment; it runs as root, so a workload cannot read it.
-exec 3< <(node -e 'process.stdout.write(JSON.stringify({ DISPATCH_BOX_TOKEN: process.env.DISPATCH_BOX_TOKEN || "", OS_BOX_TOKEN: process.env.OS_BOX_TOKEN || "" }))')
+# A here-string leaves no helper process behind. It is used when both values are plain token
+# characters (they are: the platform mints them); anything else is encoded by node instead.
+if [[ "${DISPATCH_BOX_TOKEN:-}${OS_BOX_TOKEN:-}" =~ ^[A-Za-z0-9._~+/=-]*$ ]]; then
+  exec 3<<<"{\"DISPATCH_BOX_TOKEN\":\"${DISPATCH_BOX_TOKEN:-}\",\"OS_BOX_TOKEN\":\"${OS_BOX_TOKEN:-}\"}"
+else
+  exec 3< <(node -e 'process.stdout.write(JSON.stringify({ DISPATCH_BOX_TOKEN: process.env.DISPATCH_BOX_TOKEN || "", OS_BOX_TOKEN: process.env.OS_BOX_TOKEN || "" }))')
+fi
 unset DISPATCH_BOX_TOKEN OS_BOX_TOKEN
 
 echo "dispatch box: privilege separation is ON (daemon: root with a reduced capability set; workloads: uid $RUN_UID)"

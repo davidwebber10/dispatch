@@ -133,7 +133,8 @@ export async function probeSpawnGuard(): Promise<GuardCheck[]> {
   out.push({ via: 'exec', uid: await new Promise<string>((resolve) => { cp.exec('id -u', (err, stdout) => resolve(err ? 'error' : text(stdout))); }) });
   out.push({ via: 'fork', uid: await new Promise<string>((resolve) => {
     let s = '';
-    const c = cp.fork('-e', [], { execArgv: ['-e', 'process.stdout.write(String(process.getuid()))'], silent: true });
+    // `node -e CODE probe`: the module path is only an argument of the inline script.
+    const c = cp.fork('probe', [], { execArgv: ['-e', 'process.stdout.write(String(process.getuid()))'], silent: true });
     c.stdout?.on('data', (d) => { s += d; }); c.on('error', () => resolve('error')); c.on('close', () => resolve(s.trim()));
   }) });
   try {

@@ -18,6 +18,9 @@ function checkSub(sub: string): void {
   if (!SUB.test(sub)) throw new Error(`not a plain folder name: ${sub}`);
 }
 
+/** The daemon's own user: root on a box (privsep/config.ts refuses anything else). */
+const daemonUid = (): number => (typeof process.getuid === 'function' ? process.getuid() : 0);
+
 /** Group read (and search, for a folder or an executable) for the agent's group; never write. */
 function groupBits(mode: number): number {
   const owner = (mode >> 6) & 0o7;
@@ -32,7 +35,7 @@ export function publishToAgent(target: string, cfg: PrivsepConfig | null = privs
   if (!cfg) return;
   const st = fs.lstatSync(target);
   if (st.isSymbolicLink()) throw new Error(`refusing to publish a symbolic link: ${target}`);
-  fs.chownSync(target, 0, cfg.agentGid);
+  fs.chownSync(target, daemonUid(), cfg.agentGid);
   fs.chmodSync(target, groupBits(st.mode & 0o777));
 }
 
@@ -44,7 +47,7 @@ export function runDirFor(dataDir: string, sub: string, cfg: PrivsepConfig | nul
   if (!cfg) return path.join(dataDir, sub);
   const dir = path.join(cfg.agentRunDir, sub);
   fs.mkdirSync(dir, { recursive: true, mode: 0o750 });
-  fs.chownSync(dir, 0, cfg.agentGid);
+  fs.chownSync(dir, daemonUid(), cfg.agentGid);
   fs.chmodSync(dir, 0o750);
   return dir;
 }

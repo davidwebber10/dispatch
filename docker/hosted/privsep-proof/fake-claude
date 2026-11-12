@@ -1,0 +1,10 @@
+#!/bin/bash
+# A stand-in for the `claude` CLI in the privilege-separation proof: no model, no network.
+# It answers the few probes the daemon makes and otherwise runs the stream-json fake of the test suite.
+case " $* " in
+  *" --version "*) echo "2.1.322 (Claude Code)"; exit 0 ;;
+  *" auth status "*) echo '{"loggedIn":true,"authMethod":"claude.ai","email":"person@example.com","subscriptionType":"max"}'; exit 0 ;;
+esac
+# Record who ran it and what it could see, for the proof (the agent run dir is not writable: use the home).
+{ echo "uid=$(id -u) gid=$(id -g) nnp=$(sed -n 's/^NoNewPrivs:[[:space:]]*//p' /proc/self/status) capeff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)"; env | grep -cE '^(DISPATCH_BOX_TOKEN|OS_BOX_TOKEN)=' ; } >> "$HOME/fake-claude-runs.log" 2>/dev/null
+exec node /app/packages/core/tests/structured/fake-claude.mjs "$@"
