@@ -927,7 +927,9 @@ it('mcpExpected: the init frame servers are logged; an unexpected one warns in t
     m.spawn('t2', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(servers.slice(0, 2)) }, mcpExpected: ['dispatch', 'acumatica'] });
     await waitForEvent(m, 't2', (e) => e.type === 'system' && e.subtype === 'init');
     await new Promise((r) => setTimeout(r, 50));
-    expect(lines.map((l) => l.event)).toEqual(['thread.mcp']);
+    expect(lines.map((l) => l.event).filter((e) => e !== 'thread.model')).toEqual(['thread.mcp']);
+    // The first init frame also names the model the CLI runs (no model was asked for: it matches).
+    expect(lines.find((l) => l.event === 'thread.model')).toMatchObject({ thread: 't2', harness: 'claude-code', requested: null, match: true });
     expect(m.getEvents('t2').some((e: any) => e.subtype === 'dispatch_notice')).toBe(false);
     // An Artifact tool in the init frame's tools is reported the same way (it publishes outside the platform).
     m.kill('t2');

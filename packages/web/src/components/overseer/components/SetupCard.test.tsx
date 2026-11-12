@@ -110,7 +110,7 @@ describe('ControlPlaneSetupCard', () => {
     // its options from the newly-selected coordinator harness's own model list.
     expect(screen.getByRole('combobox', { name: 'Coordinator model' })).toHaveTextContent('Default');
     fireEvent.click(screen.getByRole('combobox', { name: 'Coordinator model' }));
-    expect(screen.getByText('6 Astra')).toBeInTheDocument();
+    expect(screen.getByText('GPT-6 Astra')).toBeInTheDocument();
     expect(screen.queryByText('Sonnet')).not.toBeInTheDocument();
   });
   // M3 is fixed (each Codex thread carries its own Dispatch MCP identity), so a Codex coordinator

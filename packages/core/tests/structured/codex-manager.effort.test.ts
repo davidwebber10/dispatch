@@ -123,6 +123,10 @@ it('a model the app-server refuses on turn/start goes back to the model before i
   await f;
   expect(seen).toEqual([{ model: 'bad-model', restoredModel: 'gpt-6-luna' }]);
   expect(m.getModel('t1')).toBe('gpt-6-luna');
+  // A plain sentence the view shows, on the notice and on the failed turn; Codex's own words stay in `detail`.
+  const events = m.getEvents('t1') as any[];
+  expect(events.find((e) => e.subtype === 'settings_refused')).toMatchObject({ message: 'This account cannot use bad-model. Pick another model.', detail: 'unknown model: bad-model' });
+  expect(events.some((e) => e.type === 'result' && e.is_error && e.result === 'This account cannot use bad-model. Pick another model.')).toBe(true);
   await turn('second');
   const sent = logged('turn/start');
   expect(sent[sent.length - 1].params).not.toHaveProperty('model');
@@ -194,4 +198,12 @@ it('a refused model puts the chip back too: the restored model is sent to connec
   expect(frames).toEqual([{ type: 'system', subtype: 'model', model: 'gpt-6-luna' }]);
   const ring = m.getEvents('t1').filter((e: any) => e.type === 'system' && e.subtype === 'model');
   expect((ring[ring.length - 1] as any).model).toBe('gpt-6-luna');   // a reconnecting client replays the restored model last
+});
+
+it('a new thread on a model the account cannot use fails with a plain sentence, never on another model', async () => {
+  m.spawn('t1', { command: process.execPath, args: [fake], workDir: process.cwd(), model: 'gpt-6.1-terra', env: { CODEX_FAKE_LOG: logPath, CODEX_FAKE_START_REJECT_MODEL: 'gpt-6.1-terra' } });
+  await until(() => m.getEvents('t1').some((e: any) => e.subtype === 'spawn_error'), 'spawn_error');
+  const err = (m.getEvents('t1') as any[]).find((e) => e.subtype === 'spawn_error');
+  expect(err.message).toBe('This account cannot use GPT-6.1 Terra. Pick another model.');
+  expect(m.getEvents('t1').some((e: any) => e.type === 'system' && e.subtype === 'init')).toBe(false);
 });

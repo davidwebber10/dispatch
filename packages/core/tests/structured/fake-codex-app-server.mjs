@@ -87,6 +87,11 @@ rl.on('line', (line) => {
     // CODEX_FAKE_START_HANG_ONCE=<marker file>: same as the resume variant below, for a fresh start.
     const startMarker = process.env.CODEX_FAKE_START_HANG_ONCE;
     if (startMarker && !fs.existsSync(startMarker)) { fs.writeFileSync(startMarker, '1'); return; }
+    // CODEX_FAKE_START_REJECT_MODEL=<id>: thread/start refuses that model, as an account that cannot use it does.
+    if (process.env.CODEX_FAKE_START_REJECT_MODEL && msg.params?.model === process.env.CODEX_FAKE_START_REJECT_MODEL) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: `The '${msg.params.model}' model is not supported when using Codex with a ChatGPT account.` } });
+      return;
+    }
     respond(msg.id, { thread: { id: THREAD, turns: [] }, model: msg.params?.model ?? 'gpt-5.6-sol' });
     notify('thread/started', { thread: { id: THREAD, sessionId: THREAD, turns: [] } });
     return;

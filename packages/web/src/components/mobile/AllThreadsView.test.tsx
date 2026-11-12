@@ -350,7 +350,7 @@ describe('the filter sheet (2026-11-06): folded sections for Project, Account, H
     const { unmount } = rtlRender(<AllThreadsView onOpenThread={() => {}} />);
     openFilters();
     openSection('Model');
-    expect(rows('Model')).toEqual(['All models', '6 Astra', 'Default', 'Opus']);
+    expect(rows('Model')).toEqual(['All models', 'Default', 'GPT-6 Astra', 'Opus']);
     fireEvent.click(screen.getByRole('button', { name: 'Opus' }));
     expect(labels()).toEqual(['Fix login']);
     expect(JSON.parse(localStorage.getItem('dispatch:mobileThreadsFacets')!)).toEqual({ account: null, harness: null, model: 'opus' });

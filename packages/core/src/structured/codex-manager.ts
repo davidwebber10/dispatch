@@ -37,6 +37,16 @@ import { JsonRpcStdioClient, METHOD_NOT_FOUND, type RpcId } from './shared/jsonr
 import { settleTurn, type SettleDeps } from './shared/settle-turn.js';
 import { StructuredEmitter } from './shared/events.js';
 import { logThreadModel } from './model-log.js';
+import { refusedModelMessage } from '../providers/catalog.js';
+
+/** A refusal said in plain words for the person: shown as its message alone, with no "Error:" in front. */
+class PlainRefusal extends Error {}
+const shown = (err: unknown): string => (err instanceof PlainRefusal ? err.message : String(err));
+
+/** An app-server ANSWER that refuses a model (its message names the model), not a dead connection. */
+function isModelRefusal(err: unknown): boolean {
+  return err instanceof CodexRpcError && /model/i.test(err.message);
+}
 
 /**
  * The app-server ANSWERED a request with an error: a refusal (an effort or a model it does not take). Distinct from a
@@ -263,7 +273,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     const gen = ++session.startGen;
     return this.startThread(session, conn).catch((err) => {
       if (session.startGen !== gen || this.sessions.get(session.terminalId) !== session) return;
-      this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: String(err) });
+      this.pushEvent(session, { type: 'system', subtype: 'spawn_error', message: shown(err) });
       this.fire('failed', session.terminalId);
     });
   }
@@ -301,6 +311,10 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         // TOP-LEVEL, camelCase — NOT `settings.developer_instructions` (the OpenAI-documented
         // spelling is silently ignored by codex-cli; verified live on codex-cli 0.155.1).
         ...(session.systemPrompt ? { developerInstructions: session.systemPrompt } : {}),
+      }).catch((err) => {
+        // A new thread on a model this account cannot use fails with a plain sentence (spawn_error), never on another model.
+        if (session.model && isModelRefusal(err)) throw new PlainRefusal(refusedModelMessage(session.model));
+        throw err;
       });
       const threadId = res?.thread?.id;
       if (typeof threadId !== 'string' || !threadId) throw new Error('thread/start returned no threadId');
@@ -593,7 +607,7 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
     // Deliver once the thread is started (queued via the ready promise if still starting).
     session.ready = session.ready.then(() => this.startTurn(session, content)).catch((err) => {
       if (this.sessions.get(terminalId) !== session) return;
-      this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: String(err) });
+      this.pushEvent(session, { type: 'result', subtype: 'error', is_error: true, result: shown(err) });
       this.fire('failed', terminalId);
     });
   }
@@ -612,6 +626,8 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
         await this.conn.request('turn/start', { threadId: session.threadId, input, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
       } catch (err) {
         if (model || effort) this.dropRefusedPick(session, model, effort, err);
+        // The turn's error result says the same plain sentence (the view shows it on the failed turn).
+        if (model && !effort && isModelRefusal(err)) throw new PlainRefusal(refusedModelMessage(model));
         throw err;
       }
       if (session.nextTurnModel === model) { session.nextTurnModel = undefined; session.modelBeforePick = undefined; }
@@ -645,7 +661,12 @@ export class CodexStructuredSessionManager extends StructuredEmitter implements 
       session.modelBeforePick = undefined;
     }
     const what = [dropModel ? `model ${model}` : '', dropEffort ? `effort ${effort}` : ''].filter(Boolean).join(' and ');
-    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message: `Codex refused the ${what}: ${msg}. It will not be sent again.` });
+    // A refused model: a plain sentence the view shows as it is (the account cannot use it), never a silent switch back.
+    // Codex's own words stay in `detail`.
+    const message = dropModel && model && !dropEffort
+      ? refusedModelMessage(model)
+      : `Codex refused the ${what}: ${msg}. It will not be sent again.`;
+    this.pushEvent(session, { type: 'system', subtype: 'settings_refused', message, ...(message !== msg ? { detail: msg } : {}) });
     // The chip shows the newest model frame, which beats the saved config: tell connected clients (and the replay) which model
     // the thread runs again. No `switched`, so no "Model switched" line.
     if (info.restoredModel) this.pushEvent(session, { type: 'system', subtype: 'model', model: info.restoredModel });
