@@ -8,6 +8,8 @@
 # Three stages, two images:
 #   build        compilers + pnpm: installs and builds /app. Never shipped.
 #   agents       downloads the agent CLIs and checks each against a pinned hash. Never shipped.
+#   pytools      installs the Python document libraries (docker/hosted/tools/requirements.lock, every file
+#                checked against its hash) into /opt/dispatch/python. Never shipped; the runtime copies the folder.
 #   runtime      THE image (`dispatch-box:<version>`): no compiler, no setuid file, a non-root default
 #                user, the harness policy files in their system locations, nothing written outside
 #                $HOME and /tmp. This is what a business person's box runs.
@@ -83,6 +85,21 @@ RUN cd /out/agent-clis/node_modules && rm -rf opencode-linux-*-musl \
        done \
     && ./.bin/opencode --version
 
+# ── pytools: the Python document libraries, each file checked against its pinned hash ───────────────
+# The same base as the runtime, so the same Python (3.13). pip and the compilers stay in this stage: the
+# runtime gets only the installed folder. Some dependencies are source packages (pure Python), which pip
+# builds here. pip writes the compiled .pyc files (the root file system is read-only at run time). To change the list: edit docker/hosted/tools/requirements.in and make the lock again (the
+# command is in that file).
+FROM ${NODE_IMAGE} AS pytools
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-setuptools python3-wheel build-essential \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/hosted/tools/requirements.lock /tmp/requirements.lock
+RUN python3 -m pip install --no-cache-dir --break-system-packages --no-warn-script-location --require-hashes \
+      --target /opt/dispatch/python -r /tmp/requirements.lock \
+    && cd /opt/dispatch/python \
+    && rm -rf bin pandas/tests numpy/*/tests numpy/tests pyarrow/tests matplotlib/tests \
+    && chmod -R a+rX,go-w .
+
 # ── runtime: the image ──────────────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runtime
 
@@ -93,12 +110,40 @@ FROM ${NODE_IMAGE} AS runtime
 #   ripgrep         Claude Code's search tool
 #   procps          platform.listProcessIds() shells out to `ps`
 #   less            the pager of git and of the CLIs
-# Not here: compilers and make (build stage only), python3, curl, unzip, pnpm, corepack.
+# Not here: compilers and make (build stage only), curl, pip, pnpm, corepack.
 # (util-linux, which has `setpriv`, is part of the base system.)
 RUN apt-get update && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends git ca-certificates ripgrep procps less \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && rm -rf /usr/local/lib/node_modules/corepack /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
+# ── Document tools: what an agent needs to read a person's attachments (docker/hosted/tools/tools.txt) ──
+# One layer per group, so the size of each is visible in `docker history`. No ImageMagick and no
+# Ghostscript (their security history; Pillow and poppler cover the same files), no LibreOffice, no
+# browser, no LaTeX, no Java. The setuid sweep below covers these packages too.
+#   archives, PDF, OCR and small data CLIs
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip zip 7zip poppler-utils qpdf tesseract-ocr tesseract-ocr-eng jq sqlite3 file \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+#   pandoc (document conversion)
+RUN apt-get update && apt-get install -y --no-install-recommends pandoc \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+#   fonts for charts, PDFs and OCR output
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-liberation fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+#   Python (no pip) and the libraries of the pytools stage. A .pth file puts /opt/dispatch/python on the
+#   path of the system python3, so `python3 -c "import pandas"` works for every user. Root-owned, read-only.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
+    && ! python3 -m pip --version >/dev/null 2>&1
+COPY --from=pytools --chown=root:root /opt/dispatch/python /opt/dispatch/python
+RUN echo /opt/dispatch/python > /usr/lib/python3/dist-packages/dispatch-tools.pth \
+    && python3 -I -c "import pptx, docx, openpyxl, xlsxwriter, pypdf, pdfplumber, reportlab, PIL, matplotlib, pandas, numpy, duckdb, pyarrow, tabulate, dateutil, chardet, extract_msg, icalendar, markdown, bs4, lxml"
+# The list of these tools, with versions, for the agent (the daemon's environment note points to it).
+COPY docker/hosted/tools/tools.txt docker/hosted/tools/write-tools-json.py /tmp/tools/
+RUN install -d -m 755 /etc/dispatch \
+    && python3 -I /tmp/tools/write-tools-json.py /tmp/tools/tools.txt /etc/dispatch/tools.json \
+    && chmod 644 /etc/dispatch/tools.json && rm -rf /tmp/tools
 
 # The runtime user. uid/gid 1000 must match the EFS access point's POSIX owner. The node base image
 # already ships a `node` user at 1000:1000, so rename it rather than creating a second account.
@@ -201,7 +246,7 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # CLI threads and unattended agents work as on a local install). Never for a business person.
 FROM runtime AS runtime-dev
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 curl unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl \
     && rm -rf /var/lib/apt/lists/* \
     && install -m 644 /opt/dispatch/policy/claude-managed-settings.developer.json /etc/claude-code/managed-settings.json \
     && install -m 644 /opt/dispatch/policy/codex-requirements.developer.toml /etc/codex/requirements.toml \

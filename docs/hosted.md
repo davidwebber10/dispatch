@@ -188,9 +188,21 @@ distribution's current fixes at build time; a rebuild can differ by those).
 through `npx`); `git` (the daemon's git routes and every harness); `ripgrep` (Claude Code's search);
 `procps` (`ps`, for the daemon's process list); `less` (the pager of git and the CLIs);
 `ca-certificates`; `bash` and the Debian base (`apt`, `dpkg`, `perl-base`, `tar`, `sed`, `awk`:
-part of the base system; `apt` can do nothing without root). Removed: `gcc`, `g++`, `make`,
-`python3`, `curl`, `unzip`, `pnpm`, `corepack`. A developer who needs a toolchain gets the developer
-image (below), not this one.
+part of the base system; `apt` can do nothing without root). Removed: `gcc`, `g++`, `make`, `pip`,
+`curl`, `pnpm`, `corepack`. A developer who needs a toolchain gets the developer image (below), not
+this one.
+
+**Document tools** (`docker/hosted/tools`), so an agent can read and write what a person attaches:
+`unzip`, `zip`, `7z`, `poppler-utils` (`pdftotext`, `pdfinfo`, `pdftoppm`, `pdfimages`), `qpdf`,
+`tesseract` (English), `pandoc`, `jq`, `sqlite3`, `file`, the DejaVu, Liberation and Noto core fonts,
+and `python3` (no pip) with pandas, numpy, openpyxl, xlsxwriter, python-docx, python-pptx, pypdf,
+pdfplumber, reportlab, Pillow, matplotlib, duckdb, pyarrow, tabulate, python-dateutil, chardet,
+extract-msg, icalendar, markdown, beautifulsoup4 and lxml. The Python libraries are installed in a
+separate stage from a lock with a hash for every file (`requirements.lock`) and copied, root-owned and
+read-only, to `/opt/dispatch/python`; a `.pth` file puts them on the system `python3`'s path. Not here:
+LibreOffice, ImageMagick, Ghostscript, a browser, LaTeX, Java. `/etc/dispatch/tools.json` lists each
+tool with its version and purpose; a thread's environment note has one line that points to it. Cost:
+about 940 MB on disk and 290 MB more to pull (compressed), most of it pyarrow, duckdb and pandoc.
 
 **No program gains rights.** Every setuid and setgid bit is removed at build (`su`, `mount`, `umount`,
 `passwd`, `chsh`, `chfn`, `newgrp`, `gpasswd`, `chage`, `expiry`, `unix_chkpwd`). `/app`, the CLIs and
@@ -209,7 +221,7 @@ with mode 1777, so a volume the platform mounts there is writable by uid 1000. T
 `docker run --read-only --security-opt no-new-privileges --cap-drop ALL` and a home volume.
 
 **The developer image** (`--target runtime-dev`, its own tag, never `latest`): the same, plus
-`build-essential`, `python3`, `curl`, `unzip`, and the developer harness policy (a harness may skip
+`build-essential`, `curl`, and the developer harness policy (a harness may skip
 approvals, so CLI threads and unattended agents work as on a local install). The daemon does not start
 a business person's thread on it.
 

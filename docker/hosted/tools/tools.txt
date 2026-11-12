@@ -1,0 +1,39 @@
+# The document and data tools of the hosted runtime image. write-tools-json.py turns this list into
+# /etc/dispatch/tools.json with the installed version of each (from dpkg or the Python package).
+# name | source (deb:<package> or py:<distribution>) | purpose
+unzip | deb:unzip | extract .zip archives
+zip | deb:zip | make .zip archives
+7z | deb:7zip | extract and make .7z, .rar and other archives
+pdftotext, pdfinfo, pdftoppm, pdfimages | deb:poppler-utils | read the text, metadata, pages and images of a PDF
+qpdf | deb:qpdf | split, merge, decrypt and repair PDF files
+tesseract | deb:tesseract-ocr | OCR: read text from an image or a scanned page (English data installed)
+pandoc | deb:pandoc | convert between Markdown, HTML, .docx, .odt, .epub and more
+jq | deb:jq | read and change JSON
+sqlite3 | deb:sqlite3 | open and query SQLite files
+file | deb:file | name the type of a file
+rg | deb:ripgrep | search text in files
+fonts | deb:fonts-dejavu-core | DejaVu fonts for charts and PDFs
+fonts | deb:fonts-liberation | Liberation fonts (metric-compatible with Arial, Times New Roman, Courier New)
+fonts | deb:fonts-noto-core | Noto fonts for many scripts
+python3 | deb:python3 | Python, with the libraries below (no pip)
+pandas | py:pandas | tables: read and write CSV, Excel, Parquet; analyse data
+numpy | py:numpy | numbers and arrays
+openpyxl | py:openpyxl | read and write .xlsx (formulas are kept, not calculated)
+xlsxwriter | py:xlsxwriter | write .xlsx with formats and charts
+python-docx | py:python-docx | read and write Word .docx (import docx)
+python-pptx | py:python-pptx | read and write PowerPoint .pptx (import pptx)
+pypdf | py:pypdf | read, split, merge and fill PDF files
+pdfplumber | py:pdfplumber | extract text and tables from a PDF
+reportlab | py:reportlab | make PDF files
+pillow | py:pillow | open, change and convert images (import PIL)
+matplotlib | py:matplotlib | draw charts to PNG, SVG or PDF
+duckdb | py:duckdb | SQL over CSV, Parquet and data frames
+pyarrow | py:pyarrow | Parquet and Arrow files
+tabulate | py:tabulate | print tables as text or Markdown
+python-dateutil | py:python-dateutil | parse dates (import dateutil)
+chardet | py:chardet | guess the character encoding of a text file
+extract-msg | py:extract-msg | read Outlook .msg e-mails and their attachments (import extract_msg)
+icalendar | py:icalendar | read and write .ics calendar files
+markdown | py:markdown | Markdown to HTML
+beautifulsoup4 | py:beautifulsoup4 | read HTML and XML (import bs4)
+lxml | py:lxml | fast XML and HTML parsing

@@ -1,0 +1,25 @@
+# Python libraries of the hosted runtime image (docker/hosted/Dockerfile, stage `pytools`), so an agent can
+# read and write the files a person attaches. Lock: requirements.lock (hashes for every file), made with
+#   uv pip compile requirements.in --universal --python-version 3.13 --generate-hashes -o requirements.lock
+# No AGPL library (no PyMuPDF). extract-msg is GPL-3.0 (a separate tool the agent runs, not linked into Dispatch).
+pandas
+numpy
+openpyxl
+xlsxwriter
+python-docx
+python-pptx
+pypdf
+pdfplumber
+reportlab
+pillow
+matplotlib
+duckdb
+pyarrow
+tabulate
+python-dateutil
+chardet
+extract-msg
+icalendar
+markdown
+beautifulsoup4
+lxml

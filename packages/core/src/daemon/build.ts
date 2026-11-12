@@ -62,6 +62,7 @@ import { setProfileSource, resolveProfile } from '../os/profile.js';
 import { IntegrationsService, type IntegrationLauncher } from '../integrations/service.js';
 import { HeartbeatService } from '../platform/heartbeat.js';
 import { bestEffort, compactLimits, diskUse } from '../platform/fleet-stats.js';
+import { imageToolsNote } from '../tools/image-tools.js';
 import { childEnv } from '../platform/inherited-env.js';
 import { platform } from '../platform/index.js';
 import { UsageRecorder } from '../usage/recorder.js';
@@ -618,7 +619,9 @@ export function buildDaemon(opts: BuildDaemonOptions): Daemon {
       // Sync, so it can only serve the cache; a stale one is refreshed behind this spawn.
       // Not without the network: the check runs each bundled CLI, and a test's tools folder can be a real one.
       if (network && toolsAuth.isStale()) void toolsAuth.refresh();
-      return awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
+      const cli = awarenessNote(toolStatuses({ base: toolsBase, env: toolsAuth.threadEnv(), checks: toolsAuth.snapshot().results }));
+      // A hosted image lists its document tools in /etc/dispatch/tools.json: one line points to it.
+      return [cli, imageToolsNote()].filter(Boolean).join('\n\n');
     },
   });
   const spawnEnv = wireSpawnEnv({
