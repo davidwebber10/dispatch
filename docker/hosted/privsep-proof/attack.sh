@@ -248,9 +248,11 @@ else
   info "this image's managed policy does not turn the approval bypass off" "a nested harness gains no daemon or platform right; see the harness policy"
 fi
 REAL="$(ls /opt/agents/.local/share/claude/versions/* 2>/dev/null | head -1)"
-if [ -n "$REAL" ] && [ -x "$REAL" ]; then
-  out="$(cd /tmp && timeout 20 "$REAL" --dangerously-skip-permissions -p 'say hi' 2>&1 | head -c 300 | tr '\n' ' ')"
+if [ -n "$REAL" ] && [ -x "$REAL" ] && [ "$(head -c 2 "$REAL" 2>/dev/null)" != '#!' ]; then
+  out="$(cd /tmp && timeout 20 "$REAL" --dangerously-skip-permissions -p 'say hi' 2>&1 | head -c 200 | tr '\n' ' ')"
   info "a nested harness with the bypass flag answered" "${out:-nothing}"
+else
+  info "the CLI in this container is the proof's stand-in" "a nested real harness was not run"
 fi
 info "another AI account's credential" "not isolated by design (one person, one agent user)"
 
