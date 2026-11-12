@@ -1,3 +1,4 @@
+import { isHostedBox } from '../os/hosted-mode.js';
 import type { Response, Router } from 'express';
 import { policyRouter } from '../auth/route-policy.js';
 import type { ClaudeLoginService } from '../auth/claude-login.js';
@@ -132,7 +133,13 @@ export function createAccountsRouter(accounts: AccountsStore, claudeLogin: Claud
   // browser flow's callback goes to 127.0.0.1 on whichever machine opened the link
   // (see auth/codex-login.ts). This is also "Sign in again" for an account with no login.
   const codexAccount = (id: string, res: Response): string | null => {
-    if (id === 'cli') { res.status(400).json({ error: 'the CLI login is signed in on its own computer (codex login)' }); return null; }
+    // A hosted box has no terminal to run `codex login` in: its CLI login is signed in here, with the
+    // device code, in the box's own CODEX_HOME (box defect #7). A local install keeps the refusal.
+    if (id === 'cli') {
+      if (!isHostedBox()) { res.status(400).json({ error: 'the CLI login is signed in on its own computer (codex login)' }); return null; }
+      if (!extras.codexLogin) { res.status(501).json({ error: 'this daemon cannot sign Codex accounts in' }); return null; }
+      return accounts.codexHomeOrCli('cli');
+    }
     const home = accounts.codexHome(id);
     if (!home) { res.status(404).json({ error: 'unknown account' }); return null; }
     if (!extras.codexLogin) { res.status(501).json({ error: 'this daemon cannot sign Codex accounts in' }); return null; }
