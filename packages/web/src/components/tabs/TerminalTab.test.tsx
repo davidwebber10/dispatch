@@ -169,6 +169,26 @@ test('mounts the terminal and wires the socket for replayed output', async () =>
   expect(() => onData('hello-from-pty')).not.toThrow();
 });
 
+// The thread's details are optional (the header's working directory and branch). A failed read
+// (daemon away, thread gone) must not become an unhandled rejection: in a test run Vitest turns
+// one into a failed run even when every test passes (CI, 2026-11-09 to 11-12: a slow first render
+// ran this effect after a test had restored its api mock, and the real fetch rejected).
+test('a failed read of the thread details raises no unhandled rejection', async () => {
+  const seen: unknown[] = [];
+  const onRej = (e: unknown) => { seen.push(e); };
+  process.on('unhandledRejection', onRej);
+  try {
+    vi.spyOn(api, 'getTerminal').mockRejectedValue(new TypeError('Failed to parse URL from /api/terminals/t1'));
+    const { factory } = makeSocketFactory();
+    render(<TerminalTab terminalId="t1" socketFactory={factory as any} />);
+    await waitFor(() => expect(api.getTerminal).toHaveBeenCalledWith('t1'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toEqual([]);
+  } finally {
+    process.off('unhandledRejection', onRej);
+  }
+});
+
 // ---- themes: the terminal wears the theme's terminal palette and follows a change live ----
 
 test("the terminal gets the theme's terminal palette, and a theme change repaints it live", async () => {

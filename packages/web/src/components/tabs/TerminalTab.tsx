@@ -955,10 +955,11 @@ export function TerminalTab({ terminalId, socketFactory = openTerminalSocket, fo
     updateAtBottom();
     scrollToEndRef.current = () => { stopInertia(); stopSpring(); subPx = 0; overscroll = 0; applyTransform(); term.scrollToBottom(); updateAtBottom(); };
 
+    // The details are optional (the header's directory and branch): a failed read leaves them empty.
     void api.getTerminal(terminalId).then((m) => {
       if (disposed) return;
       setMeta(m);
-    });
+    }).catch(() => { /* daemon away or thread gone: the terminal still works without the details */ });
 
     return () => {
       disposed = true;
