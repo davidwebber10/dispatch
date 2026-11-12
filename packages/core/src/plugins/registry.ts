@@ -7,6 +7,7 @@ import type { McpServerSpec } from '../mcp/injection.js';
 import { PLUGIN_ID_RE, parseManifest, satisfiesDispatch, type PluginManifest } from './manifest.js';
 import { pluginTemplate } from './template.js';
 import { publishToAgent } from '../privsep/paths.js';
+import { isHostedBox } from '../os/hosted-mode.js';
 
 /**
  * Plugins (docs/superpowers/specs/2026-11-07-plugins-design.md, sections 1 and 2.1): the folders
@@ -203,7 +204,8 @@ export class PluginRegistry {
         const keyFile = this.keyFile(row.id);
         specs.push({
           name: `plugin-${row.id}`, command: abs(model.mcp.command), args: (model.mcp.args ?? []).map(abs),
-          env: { ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}) },
+          // DISPATCH_HOSTED: a hosted box (os/hosted-mode.ts); a plugin may word its tool for the platform (the Inbox does).
+          env: { ...(model.mcp.env ?? {}), DISPATCH_PLUGIN: row.id, ...(keyFile ? { DISPATCH_PLUGIN_AUTH_FILE: keyFile } : {}), ...(isHostedBox() ? { DISPATCH_HOSTED: '1' } : {}) },
           authEnv: true,
         });
         toolNames.push(`plugin-${row.id}`);

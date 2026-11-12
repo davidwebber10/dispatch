@@ -19,13 +19,22 @@
 //
 // The owner's web page reads the state through GET /api/os/connections and asks OS for its tool list
 // through GET /api/os/tools (no thread id: the page is not a thread).
+//
+// Live tool changes (2026-11-12). A system the person may use but has not connected has ONE gateway
+// tool, `<system>_connect`; once connected, its real tools. A running thread learns of the change by
+// MCP `notifications/tools/list_changed`, sent on the streamable-HTTP GET event stream of the route
+// (the stdio bridge opens that stream for its harness). The daemon learns of it from the OS poll
+// (catalog refresh on a changed answer), from a fast re-check after a `connect` call (every 5 s for
+// 5 minutes, that system only), from `POST /api/os/connections/refresh` (the platform's signal), and
+// from the `refresh` tool of the `connections` server. A system that appears mid-thread gets no new
+// server in that thread: servers are fixed at spawn, so it reaches new threads only.
 import { fileURLToPath } from 'node:url';
 import { PLATFORM_NAME } from './platform-name.js';
 import type { Request, Response, Router } from 'express';
 import type { McpServerSpec } from '../mcp/injection.js';
 import { boxCapabilities } from '../platform/capabilities.js';
 import { keyRoute, ownerOnly, ownerOnlyStrict, policyRouter, type Rule } from '../auth/route-policy.js';
-import { principalOf } from '../auth/request-principal.js';
+import { principalOf, scopeOf } from '../auth/request-principal.js';
 import { isLoopbackAddress } from '../files/reveal.js';
 import type { OsConnectionsProvider } from '../integrations/os-provider.js';
 import { OS_SELF_SYSTEM, gatewayInfo, instructionsHome, isSystemId, localToolName, osServerSpecs, realToolName, renameTool, rewriteInstructions, serverNameFor, setGatewayInfo, toolSystem } from './os-servers.js';
@@ -40,6 +49,42 @@ export interface OsToolsProxyDeps {
   systemsFor?: (terminalId: string) => string[] | null;
   /** OS's tool list (which servers exist, and tools/list while OS is away). */
   catalog?: OsToolCatalog;
+}
+
+/** The gateway's one tool of a system the person has not connected yet (`<system>_connect`, thread name `connect`). */
+export const CONNECT_TOOL = 'connect';
+/** The daemon's own tool on the `connections` server: check the connections again now. */
+export const REFRESH_TOOL = 'refresh';
+export const REFRESH_TOOL_DEF = Object.freeze({
+  name: REFRESH_TOOL,
+  title: 'Check connections again',
+  description: 'Check the company connections again now, after the person connected a system (for example from a Connect card). '
+    + 'Answers which systems changed and which tools they have now.',
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  annotations: { title: 'Check connections again', readOnlyHint: true },
+});
+
+/**
+ * Harnesses that load a server's new tool list into a RUNNING session after list_changed, measured
+ * 2026-11-12 with a stub model (docs/hosted.md "Live tool changes"): Claude Code 2.1.322 (HTTP and
+ * stdio) and OpenCode 1.18.34 (HTTP and stdio; the image's 1.19.5 not measured). Codex 0.167.0 does
+ * not (not on the next turn either, not after `config/mcpServer/reload`); Grok was not measured.
+ */
+export const LIVE_TOOLS_HARNESSES: readonly string[] = ['claude-code', 'opencode'];
+
+/**
+ * The sentence added to a `connect` call's result: what happens next, and what to do when the tools do
+ * not come. `live`: whether the thread's harness loads new tools mid-session (null: not known).
+ */
+export function connectFollowUp(system: string, live: boolean | null = null): string {
+  const server = serverNameFor(system);
+  if (live === false) {
+    return `This thread cannot load new tools while it runs. When the person has connected ${server}, ask them to send the request again in a new thread: `
+      + `a new thread gets the ${server} tools.`;
+  }
+  return `When the person has connected ${server}, its tools reach this thread by themselves within a few seconds; then use them for the request. `
+    + `If they do not appear, call the \`${REFRESH_TOOL}\` tool of the \`${serverNameFor(OS_SELF_SYSTEM)}\` server. `
+    + 'If they still do not appear, ask the person to send the request again in a new thread.';
 }
 
 /** The plain sentence a person reads when the company tools cannot be reached. */
@@ -122,7 +167,9 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     const limit = deps.systemsFor?.(terminalId) ?? null;
     const allowed = system === OS_SELF_SYSTEM || !limit || limit.includes(system);
     const proto = typeof req.headers['mcp-protocol-version'] === 'string' ? req.headers['mcp-protocol-version'] : null;
-    const ctx: CallCtx = { terminalId, system, allowed, proto };
+    let harness: string | null = null;
+    try { harness = scopeOf(req).caller(terminalId)?.type ?? null; } catch { harness = null; }
+    const ctx: CallCtx = { terminalId, system, allowed, proto, harness };
     const body = req.body;
     if (Array.isArray(body)) {
       const out = (await Promise.all(body.map((m) => handleOne(ctx, m)))).filter((x): x is Json => x !== null);
@@ -132,13 +179,49 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     if (one === null) return void res.status(202).end();
     res.json(one);
   });
-  // Streamable HTTP: no server-initiated stream and no session to end on this route.
-  const noStream = (_req: Request, res: Response) => { res.setHeader('Allow', 'POST'); res.status(405).json({ error: 'method_not_allowed', message: 'POST only.' }); };
-  router.get('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), noStream);
+  // Streamable HTTP, server-to-client: the GET event stream carries `notifications/tools/list_changed`
+  // when this system's tools change (the person connected it). No session to end on this route.
+  const streams = new Map<string, Set<{ terminalId: string; res: Response }>>();
+  const LIST_CHANGED = `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })}\n\n`;
+  deps.catalog?.onToolsChanged((systems) => {
+    for (const system of systems) {
+      for (const s of streams.get(system) ?? []) {
+        const limit = deps.systemsFor?.(s.terminalId) ?? null;
+        if (system !== OS_SELF_SYSTEM && limit && !limit.includes(system)) continue;
+        try { s.res.write(LIST_CHANGED); } catch { /* a closed stream is removed on close */ }
+      }
+    }
+  });
+  const noStream = (_req: Request, res: Response) => { res.setHeader('Allow', 'POST, GET'); res.status(405).json({ error: 'method_not_allowed', message: 'POST, or GET with Accept: text/event-stream.' }); };
+  router.get('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), (req: Request, res: Response) => {
+    if (!/text\/event-stream/i.test(String(req.headers.accept ?? ''))) return noStream(req, res);
+    const terminalId = threadOnly(req, res);
+    if (!terminalId) return;
+    const system = String(req.params.system ?? '');
+    if (!isSystemId(system)) return void res.status(404).json({ error: 'unknown_system', message: 'No such company system.' });
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    res.write(': open\n\n');
+    const entry = { terminalId, res };
+    const set = streams.get(system) ?? new Set();
+    set.add(entry);
+    streams.set(system, set);
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* closed */ } }, 25_000);
+    ping.unref?.();
+    req.on('close', () => {
+      clearInterval(ping);
+      set.delete(entry);
+      if (set.size === 0) streams.delete(system);
+    });
+  });
   router.delete('/os/mcp/:system', keyRoute({ thread: threadOnLoopback, roleRun: threadOnLoopback }), noStream);
 
   type Json = Record<string, any>;
-  interface CallCtx { terminalId: string; system: string; allowed: boolean; proto: string | null }
+  interface CallCtx { terminalId: string; system: string; allowed: boolean; proto: string | null; harness: string | null }
+  const liveOf = (ctx: CallCtx): boolean | null => (ctx.harness ? LIVE_TOOLS_HARNESSES.includes(ctx.harness) : null);
 
   /** OS could not be reached: flag it, and tell the thread once (per outage) in plain words. */
   const unreachable = (ctx: CallCtx, err: unknown) => {
@@ -183,7 +266,13 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
         : local.result.instructions);
       try {
         const a = answerOf((await toOs(ctx, msg)).body, id);
-        if (a?.result) return { ...a, result: { ...a.result, serverInfo: { name: server, version: String(a.result.serverInfo?.version ?? '1') }, instructions: withText(a.result.instructions) } };
+        // `tools.listChanged` is the box's promise, whatever the gateway declares: a harness subscribes
+        // to list_changed only when the server declares it (measured with Claude Code 2.1.322).
+        if (a?.result) {
+          const caps = a.result.capabilities && typeof a.result.capabilities === 'object' ? a.result.capabilities : {};
+          const tools = caps.tools && typeof caps.tools === 'object' ? caps.tools : {};
+          return { ...a, result: { ...a.result, capabilities: { ...caps, tools: { ...tools, listChanged: true } }, serverInfo: { name: server, version: String(a.result.serverInfo?.version ?? '1') }, instructions: withText(a.result.instructions) } };
+        }
       } catch (err) { unreachable(ctx, err); }
       return { ...local, result: { ...local.result, instructions: withText(gatewayInfo().instructions) } };
     }
@@ -193,26 +282,41 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     if (method === 'prompts/list') return { jsonrpc: '2.0', id, result: { prompts: [] } };
     if (method === 'tools/list') {
       if (!ctx.allowed || !deps.provider.osToolsUrl()) return { jsonrpc: '2.0', id, result: { tools: [] } };
+      // The `connections` server also lists the daemon's own `refresh` tool (unless the gateway has one).
+      const withLocal = (tools: Json[]): Json[] => (ctx.system === OS_SELF_SYSTEM && deps.catalog && !tools.some((t) => t.name === REFRESH_TOOL)
+        ? [...tools, { ...REFRESH_TOOL_DEF }]
+        : tools);
       try {
         const r = await toOs(ctx, msg);
         const a = answerOf(r.body, id);
         const tools: unknown[] = Array.isArray(a?.result?.tools) ? a!.result.tools : [];
         if (r.status < 300 && a?.result) {
-          return { jsonrpc: '2.0', id, result: { tools: tools.filter((t) => toolSystem(t, deps.catalog?.knownSystems() ?? []) === ctx.system).map((t) => renameTool(ctx.system, t as Json)) } };
+          return { jsonrpc: '2.0', id, result: { tools: withLocal(tools.filter((t) => toolSystem(t, deps.catalog?.knownSystems() ?? []) === ctx.system).map((t) => renameTool(ctx.system, t as Json))) } };
         }
         if (r.status === 404) return { jsonrpc: '2.0', id, result: { tools: [] } };
       } catch (err) { unreachable(ctx, err); }
       // OS away: the last list this box saw, so a thread that starts now still has its tools.
-      return { jsonrpc: '2.0', id, result: { tools: (deps.catalog?.tools(ctx.system) ?? []).map((t) => renameTool(ctx.system, t)) } };
+      return { jsonrpc: '2.0', id, result: { tools: withLocal((deps.catalog?.tools(ctx.system) ?? []).map((t) => renameTool(ctx.system, t))) } };
     }
     if (method === 'tools/call') {
       const local = typeof msg.params?.name === 'string' ? msg.params.name : '';
       if (!ctx.allowed) return errorResult(id, 'not_permitted', 'This thread may not use this company system.');
       if (!deps.provider.osToolsUrl()) return errorResult(id, 'not_permitted', `Company tools are turned off for you in ${PLATFORM_NAME}.`);
-      const real = realToolName(ctx.system, local, deps.catalog?.realNames(ctx.system) ?? []);
+      const realNames = deps.catalog?.realNames(ctx.system) ?? [];
+      if (ctx.system === OS_SELF_SYSTEM && local === REFRESH_TOOL && deps.catalog && !realNames.some((n) => localToolName(ctx.system, n) === REFRESH_TOOL)) {
+        return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: await refreshNow(deps.provider, deps.catalog, liveOf(ctx)) }] } };
+      }
+      const real = realToolName(ctx.system, local, realNames);
       try {
         const r = await toOs(ctx, { ...msg, params: { ...(msg.params ?? {}), name: real } });
         const a = answerOf(r.body, id);
+        if (a && local === CONNECT_TOOL && real === `${ctx.system}_${CONNECT_TOOL}`) {
+          // The person gets a Connect card now: watch this system closely for a while, and tell the agent what comes next.
+          deps.catalog?.watchAfterConnect(ctx.system);
+          if (a.result && Array.isArray(a.result.content)) {
+            return { ...a, result: { ...a.result, content: [...a.result.content, { type: 'text', text: connectFollowUp(ctx.system, liveOf(ctx)) }] } };
+          }
+        }
         if (a) return a;
         return errorResult(id, r.status === 404 ? 'not_permitted' : 'tool_failed', (r.body as Json | null)?.message ?? `Company tools failed (HTTP ${r.status}).`);
       } catch (err) {
@@ -229,9 +333,11 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     res.json({ ...deps.provider.publicSnapshot(), capabilities: boxCapabilities() });
   });
 
-  // "Check again": ask OS now (after the person connected a system in OS).
+  // "Check again": ask OS now (after the person connected a system in OS). The platform's signal too: a
+  // changed tool list reaches every running thread of this box (list_changed on its event stream).
   router.post('/os/connections/refresh', ownerOnlyStrict, async (_req, res) => {
     await deps.provider.refresh();
+    await deps.catalog?.refresh();
     res.setHeader('Cache-Control', 'no-store');
     res.json(deps.provider.publicSnapshot());
   });
@@ -274,6 +380,29 @@ function publicTool(t: unknown): { name: string; server: string | null; tool: st
   };
 }
 
+/**
+ * The `refresh` tool of the `connections` server: ask OS again now, and say in plain words what changed.
+ * A changed system's tools reach the thread through list_changed (the catalog's change event).
+ */
+export async function refreshNow(provider: OsConnectionsProvider, catalog: OsToolCatalog, live: boolean | null = null): Promise<string> {
+  await provider.refresh();
+  const changed = (await catalog.refresh()).filter((s) => s !== OS_SELF_SYSTEM);
+  const lines: string[] = ['Checked the company connections again.'];
+  const describe = (s: string) => {
+    const names = catalog.realNames(s).map((n) => localToolName(s, n));
+    return names.length === 1 && names[0] === CONNECT_TOOL
+      ? `${serverNameFor(s)} (not connected yet: call \`${serverNameFor(s)}.${CONNECT_TOOL}\`)`
+      : `${serverNameFor(s)} (tools: ${names.join(', ') || 'none'})`;
+  };
+  if (changed.length) lines.push(`Changed now: ${changed.map(describe).join('; ')}.`);
+  else lines.push('Nothing changed since the last check.');
+  const waiting = catalog.systems().filter((s) => s !== OS_SELF_SYSTEM && !changed.includes(s) && catalog.realNames(s).every((n) => localToolName(s, n) === CONNECT_TOOL));
+  if (waiting.length) lines.push(`Not connected yet: ${waiting.map(serverNameFor).join(', ')}.`);
+  if (changed.length && live === false) lines.push('This thread cannot load the new tools while it runs: ask the person to send the request again in a new thread.');
+  else if (changed.length) lines.push('If the new tools are not in your tool list, ask the person to send the request again in a new thread: this thread cannot load them.');
+  return lines.join('\n');
+}
+
 /** The stdio bridge script (the per-system server for a harness that takes no loopback HTTP entry). */
 export const OS_BRIDGE_PATH = fileURLToPath(new URL('./os-mcp-bridge.js', import.meta.url));
 
@@ -285,10 +414,89 @@ export const OS_BRIDGE_PATH = fileURLToPath(new URL('./os-mcp-bridge.js', import
 export class OsToolCatalog {
   private bySystem = new Map<string, Array<Record<string, unknown>>>();
   private loadedAt: number | null = null;
-  private inFlight: Promise<void> | null = null;
+  private inFlight: Promise<string[]> | null = null;
   private readonly ttlMs: number;
-  constructor(private readonly deps: Pick<OsToolsProxyDeps, 'provider' | 'fetchImpl' | 'timeoutMs'> & { ttlMs?: number }) {
+  private readonly connectCheckMs: number;
+  private readonly connectWindowMs: number;
+  private readonly changeListeners = new Set<(systems: string[]) => void>();
+  private readonly watches = new Map<string, { timer: NodeJS.Timeout; until: number; busy: boolean }>();
+  constructor(private readonly deps: Pick<OsToolsProxyDeps, 'provider' | 'fetchImpl' | 'timeoutMs'> & {
+    ttlMs?: number;
+    /** After a `connect` call: how often that system is checked (default 5 s) and for how long (default 5 min). */
+    connectCheckMs?: number;
+    connectWindowMs?: number;
+  }) {
     this.ttlMs = deps.ttlMs ?? 5 * 60_000;
+    this.connectCheckMs = deps.connectCheckMs ?? 5_000;
+    this.connectWindowMs = deps.connectWindowMs ?? 5 * 60_000;
+  }
+
+  /** Called with the systems whose tool set changed (never on a refresh that changed nothing, never on the first load). */
+  onToolsChanged(fn: (systems: string[]) => void): () => void {
+    this.changeListeners.add(fn);
+    return () => { this.changeListeners.delete(fn); };
+  }
+
+  private emit(systems: string[]): void {
+    if (systems.length === 0) return;
+    for (const fn of this.changeListeners) { try { fn(systems); } catch { /* a listener never breaks a refresh */ } }
+  }
+
+  /**
+   * A `connect` call returned for `system`: check that system now and then every `connectCheckMs` for
+   * `connectWindowMs`, so its tools reach the thread seconds after the person connects it. The watch
+   * ends at the first change. A second call during the window only extends it.
+   */
+  watchAfterConnect(system: string): void {
+    if (!isSystemId(system)) return;
+    const until = Date.now() + this.connectWindowMs;
+    const have = this.watches.get(system);
+    if (have) { have.until = until; return; }
+    const tick = async () => {
+      const w = this.watches.get(system);
+      if (!w || w.busy) return;
+      if (Date.now() > w.until) { this.stopWatch(system); return; }
+      w.busy = true;
+      try { if (await this.refreshSystem(system)) this.stopWatch(system); } finally { w.busy = false; }
+    };
+    const timer = setInterval(() => { void tick(); }, this.connectCheckMs);
+    timer.unref?.();
+    this.watches.set(system, { timer, until, busy: false });
+    void tick();
+  }
+
+  /** The systems watched after a `connect` call (tests, diagnostics). */
+  watching(): string[] { return [...this.watches.keys()]; }
+
+  private stopWatch(system: string): void {
+    const w = this.watches.get(system);
+    if (w) clearInterval(w.timer);
+    this.watches.delete(system);
+  }
+
+  /** Stop every watch (daemon stop, tests). */
+  stop(): void { for (const s of [...this.watches.keys()]) this.stopWatch(s); }
+
+  /**
+   * Ask OS for ONE system's tools (`x-dispatch-systems: <system>`) and keep them. True when they changed
+   * (list_changed then goes to every thread with that system's server).
+   */
+  async refreshSystem(system: string): Promise<boolean> {
+    if (!this.deps.provider.osToolsUrl() || !isSystemId(system)) return false;
+    try {
+      const list = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'list', method: 'tools/list', params: {} }, { 'x-dispatch-systems': system });
+      const tools = (list.body as { result?: { tools?: unknown[] } } | null)?.result?.tools;
+      if (list.status >= 300 || !Array.isArray(tools)) return false;
+      const known = this.knownSystems();
+      const mine = tools.filter((t): t is Record<string, unknown> => !!t && typeof t === 'object' && typeof (t as any).name === 'string' && toolSystem(t, known) === system);
+      if (JSON.stringify(mine) === JSON.stringify(this.bySystem.get(system) ?? [])) return false;
+      const next = new Map(this.bySystem);
+      if (mine.length) next.set(system, mine); else next.delete(system);
+      this.bySystem = next;
+      setGatewayInfo({ instructions: gatewayInfo().instructions, tools: this.toolNames() });
+      this.emit([system]);
+      return true;
+    } catch { return false; }
   }
 
   /** Follow OS: refresh when its answer changes; forget the list when OS turns the tools off. */
@@ -316,17 +524,18 @@ export class OsToolCatalog {
   /** Systems with at least one tool, in OS's order. */
   systems(): string[] { return [...this.bySystem.keys()]; }
 
-  async refresh(): Promise<void> {
+  /** Ask OS for the whole list. Answers the systems whose tool set changed (empty on the first load). */
+  async refresh(): Promise<string[]> {
     if (this.inFlight) return this.inFlight;
-    this.inFlight = (async () => {
-      if (!this.deps.provider.osToolsUrl()) return;
+    this.inFlight = (async (): Promise<string[]> => {
+      if (!this.deps.provider.osToolsUrl()) return [];
       try {
         const init = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dispatch-catalog', version: '1' } } }, {});
-        if (init.status >= 300) return;
+        if (init.status >= 300) return [];
         const initText = (init.body as { result?: { instructions?: unknown } } | null)?.result?.instructions;
         const list = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'list', method: 'tools/list', params: {} }, {});
         const tools = (list.body as { result?: { tools?: unknown[] } } | null)?.result?.tools;
-        if (list.status >= 300 || !Array.isArray(tools)) return;
+        if (list.status >= 300 || !Array.isArray(tools)) return [];
         const known = this.knownSystems();
         const next = new Map<string, Array<Record<string, unknown>>>();
         for (const t of tools) {
@@ -335,12 +544,20 @@ export class OsToolCatalog {
           if (!sys || !isSystemId(sys)) continue;
           next.set(sys, [...(next.get(sys) ?? []), t as Record<string, unknown>]);
         }
+        const before = this.loadedAt === null ? null : this.bySystem;
         this.bySystem = next;
         this.loadedAt = Date.now();
         setGatewayInfo({ instructions: typeof initText === 'string' && initText.trim() ? initText : null, tools: this.toolNames() });
-      } catch { /* OS away: keep the last list */ }
+        if (!before) return [];
+        const changed = [...new Set([...before.keys(), ...next.keys()])]
+          .filter((s) => JSON.stringify(before.get(s) ?? []) !== JSON.stringify(next.get(s) ?? []));
+        // A system the person connected by another way leaves the fast watch.
+        for (const s of changed) this.stopWatch(s);
+        this.emit(changed);
+        return changed;
+      } catch { return []; /* OS away: keep the last list */ }
     })();
-    try { await this.inFlight; } finally { this.inFlight = null; }
+    try { return await this.inFlight; } finally { this.inFlight = null; }
   }
 
   /** Older than the ttl (or never loaded): refresh in the background. */
@@ -350,17 +567,17 @@ export class OsToolCatalog {
 }
 
 /**
- * The systems that get a server at this spawn: those with a tool in the catalog (before the first
- * load: the entitled ones), plus OS's own `connections`, minus a system that still needs the
- * person's consent (its tools are absent until the person connects it in OS).
+ * The systems that get a server at this spawn: every system with a tool in the catalog, including one
+ * whose only tool is `connect` (the person has not connected it yet; the agent calls `connect`, and
+ * the real tools arrive in the same thread by list_changed). Before the first load: the entitled
+ * systems. OS's own `connections` always.
  */
 export function systemsForSpawn(provider: OsConnectionsProvider, catalog: OsToolCatalog): string[] {
   if (!provider.osToolsUrl()) return [];
   catalog.refreshIfStale();
   const st = provider.snapshot();
-  const consent = new Set(st.needsConsent.map((c) => c.system));
-  const base = catalog.loaded ? catalog.systems() : [...(st.entitled ?? []), OS_SELF_SYSTEM];
-  return base.filter((s) => s === OS_SELF_SYSTEM || !consent.has(s));
+  const base = catalog.loaded ? catalog.systems() : [...(st.entitled ?? [])];
+  return [...new Set([...base, OS_SELF_SYSTEM])];
 }
 
 /** The company-system server specs for a thread (os/os-servers.ts), reaching OS only through this daemon. */

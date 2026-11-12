@@ -29,7 +29,13 @@ of a business person). See `packages/core/src/os/approvals.ts`.
 - **Company tools.** One MCP server per company system with a tool for the person (`acumatica`,
   `data`, `display`, `connections`, …), reaching the daemon's loopback `POST /api/os/mcp/<system>`,
   which renames the tools and adds the box token, owner, thread id and `x-dispatch-systems`
-  (docs/integrations.md). The gateway's instructions ride the `data` server only.
+  (docs/integrations.md). The gateway's instructions ride the `data` server only. A system the person
+  has not connected yet gets a server too, with its one `connect` tool; when the person connects it,
+  a running thread gets the real tools by MCP `list_changed` where its harness allows it (see "Live
+  tool changes" below). The `connections` server also has the box's own `refresh` tool.
+- **The Inbox for a headless view.** `GET /api/inbox` and the routes of docs/headless-api.md section 11:
+  the drops of the Inbox plugin and their files, for the owner only. The tool and server titles read
+  "Inbox" on a hosted box (the plugin MCP server gets `DISPATCH_HOSTED=1`).
 - **The native window.** The web client on a hosted box looks like a local install: the Dispatch
   theme and layout, the technical wording for a developer. The OS look stays behind the business
   preview switch (off, hidden on a hosted box). A business person uses the chat view in OS, which
@@ -94,6 +100,41 @@ of a business person). See `packages/core/src/os/approvals.ts`.
   only to a box that lists `gate-v2`. `privsep-v1` is added to the list only when THIS START proved
   privilege separation (hosted-privilege-separation.md): OS should require it for a business person
   too.
+
+## Live tool changes
+
+The person asks a thread for something that needs a system they have not connected (the gateway lists
+it with one tool, `<system>_connect`). The agent calls `connect`; the person gets a Connect card. After
+the person connects, the thread should get the real tools without a restart.
+
+How the box learns of the change: a fast re-check of that one system right after the `connect` call
+and then every 5 s for 5 minutes (`os/tools-proxy.ts` `OsToolCatalog.watchAfterConnect`); the
+platform's signal `POST /api/os/connections/refresh`; the OS poll (60 s); the agent's `refresh` tool on
+the `connections` server. A change of a system's tool set (never a poll with the same answer) sends
+`notifications/tools/list_changed` on the event stream of that system's route (`GET
+/api/os/mcp/<system>`, `Accept: text/event-stream`). The stdio bridge passes it on to its harness.
+
+What each harness does with it, measured 2026-11-12 with the real CLI and a stub model (no real model),
+on an HTTP entry and on stdio:
+
+| Harness | After the person connects | What was seen |
+| --- | --- | --- |
+| Claude Code 2.1.322 | the running thread gets the tools | `tools/list` again at once; the new tool in the next model request; called. Also end to end through the daemon's own route with the fast re-check |
+| OpenCode 1.18.34 | the running thread gets the tools | the same. The image's 1.19.5 was not run |
+| Codex 0.167.0 | a new thread is needed | no event stream opened, list_changed ignored (also on stdio), the next turn has the old list, `config/mcpServer/reload` does not change a loaded thread |
+| Grok | not measured; treated as "a new thread is needed" | |
+
+The `connect` result carries one line from the box per harness: "its tools reach this thread by
+themselves within a few seconds … if they do not appear, call `refresh` … else ask the person to send
+the request again in a new thread" (Claude Code, OpenCode), or "this thread cannot load new tools while
+it runs … ask the person to send the request again in a new thread" (Codex, Grok). The platform view
+can show that as a button.
+
+Not covered: a system that appears mid-thread (just granted) gets no new server in a running thread;
+servers are fixed at thread start, so it reaches new threads only. For Codex, a thread resumed after
+the app-server unloaded it (`thread/unsubscribe`, then `thread/resume` after
+`thread_unload_delay_secs`) does load the new tools with its history (measured); Dispatch does not do
+that by itself yet.
 
 ## The two tokens
 

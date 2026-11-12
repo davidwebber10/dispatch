@@ -13,6 +13,9 @@
 // When the daemon is not reachable, the bridge stays up: `initialize` is answered locally,
 // `tools/list` is empty, a tools call returns a plain error, and the bridge tries again in the
 // background. When the list comes back it sends `notifications/tools/list_changed`.
+//
+// After `initialize` it also opens the route's event stream (GET, Accept: text/event-stream) and passes
+// each notification on it to the CLI: `list_changed` when the person connected this system mid-thread.
 import * as readline from 'node:readline';
 import { PLATFORM_NAME } from './platform-name.js';
 import { authHeaders } from '../overseer/agency-shared.js';
@@ -30,6 +33,27 @@ export interface BridgeOptions {
   headers?: (url: string) => Record<string, string> | undefined;
   /** Background retry of a failed tools/list, in ms. 0: off (tests). */
   retryMs?: number;
+  /**
+   * Open the route's event stream after `initialize` and pass each notification from it to the CLI
+   * (`notifications/tools/list_changed` when the person connected the system). Off by default (tests).
+   */
+  stream?: boolean;
+  /** Wait before the event stream is opened again after it dropped, in ms (default 5 s). */
+  streamRetryMs?: number;
+}
+
+/** The JSON-RPC messages of a text/event-stream chunk sequence: complete events only; the rest is kept. */
+export function takeSseMessages(buffer: string): { messages: unknown[]; rest: string } {
+  const text = buffer.replace(/\r\n/g, '\n');
+  const blocks = text.split('\n\n');
+  const rest = blocks.pop() ?? '';
+  const messages: unknown[] = [];
+  for (const block of blocks) {
+    const data = block.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).replace(/^ /, '')).join('\n');
+    if (!data.trim()) continue;
+    try { messages.push(JSON.parse(data)); } catch { /* not JSON: skipped */ }
+  }
+  return { messages, rest };
 }
 
 const localInit = (system: string) => ({
@@ -56,6 +80,47 @@ export function createBridge(opts: BridgeOptions) {
   let protocolVersion: string | null = null;
   let listFailed = false;
   let retryTimer: NodeJS.Timeout | null = null;
+  let stopped = false;
+  let streamAbort: AbortController | null = null;
+  let streamTimer: NodeJS.Timeout | null = null;
+  let streamOpened = 0;
+
+  /**
+   * The daemon's event stream for this system: each notification on it goes to the CLI as one line.
+   * When it drops (a daemon restart), it opens again; the CLI then gets one list_changed, because a
+   * change may have happened while it was closed. A daemon without the stream (405) is left alone.
+   */
+  async function openStream(): Promise<void> {
+    if (!opts.stream || stopped || streamAbort) return;
+    const ac = new AbortController();
+    streamAbort = ac;
+    let reopen = true;
+    try {
+      const res = await doFetch(url, {
+        method: 'GET',
+        headers: { accept: 'text/event-stream', ...(protocolVersion ? { 'mcp-protocol-version': protocolVersion } : {}), ...(headers(url) ?? {}) },
+        signal: ac.signal,
+      });
+      if (res.status === 405 || res.status === 404) { reopen = false; return; }
+      if (res.status >= 300 || !res.body) return;
+      if (streamOpened++ > 0) send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+      const decoder = new TextDecoder();
+      let buf = '';
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        const got = takeSseMessages(buf + decoder.decode(chunk, { stream: true }));
+        buf = got.rest;
+        for (const m of got.messages) {
+          if (m && typeof m === 'object' && typeof (m as Json).method === 'string' && (m as Json).id === undefined) send(m);
+        }
+      }
+    } catch { /* dropped: opened again below */ } finally {
+      if (streamAbort === ac) streamAbort = null;
+      if (reopen && !stopped && opts.stream) {
+        streamTimer = setTimeout(() => { streamTimer = null; void openStream(); }, opts.streamRetryMs ?? 5_000);
+        streamTimer.unref?.();
+      }
+    }
+  }
 
   async function post(msg: Json): Promise<{ status: number; body: any }> {
     const res = await doFetch(url, {
@@ -102,12 +167,14 @@ export function createBridge(opts: BridgeOptions) {
       const out = answers(r.body);
       for (const a of out) send(a);
       if (msg?.method === 'tools/list' && out.some((a) => a.result)) listFailed = false;
+      if (msg?.method === 'initialize') void openStream();
       return;
     }
     if (!isRequest) return; // a notification that failed: nothing to answer
     // Stay usable while OS is away: a local initialize, an empty tool list, a plain error for a call.
     if (msg.method === 'initialize') {
       send({ jsonrpc: '2.0', id: msg.id, result: { ...LOCAL_INIT, protocolVersion: protocolVersion ?? LOCAL_INIT.protocolVersion } });
+      void openStream();
       return;
     }
     if (msg.method === 'tools/list') {
@@ -136,7 +203,15 @@ export function createBridge(opts: BridgeOptions) {
       await handle(msg);
     },
     get listFailed() { return listFailed; },
-    stop() { if (retryTimer) clearTimeout(retryTimer); retryTimer = null; },
+    stop() {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      if (streamTimer) clearTimeout(streamTimer);
+      streamTimer = null;
+      streamAbort?.abort();
+      streamAbort = null;
+    },
   };
 }
 
@@ -144,7 +219,7 @@ function main(): void {
   const api = process.env.DISPATCH_API || `http://127.0.0.1:${process.env.DISPATCH_PORT || 3456}`;
   const system = process.env.DISPATCH_OS_SYSTEM || '';
   if (!system) { process.stderr.write('DISPATCH_OS_SYSTEM is not set\n'); process.exit(2); }
-  const bridge = createBridge({ api, system, write: (l) => process.stdout.write(l + '\n'), retryMs: 30_000 });
+  const bridge = createBridge({ api, system, write: (l) => process.stdout.write(l + '\n'), retryMs: 30_000, stream: true });
   const rl = readline.createInterface({ input: process.stdin });
   // Requests run concurrently (a slow tool must not hold a tools/list); each answer carries its id.
   rl.on('line', (l) => { void bridge.line(l); });

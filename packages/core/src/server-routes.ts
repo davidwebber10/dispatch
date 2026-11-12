@@ -34,6 +34,7 @@ import { createSessionsRouter } from './routes/sessions.js';
 import { createTerminalsRouter } from './routes/terminals.js';
 import { createLedgerRouter } from './routes/ledger.js';
 import { createPluginsRouter } from './routes/plugins.js';
+import { createInboxRouter } from './routes/inbox.js';
 import { defaultSecretRoots } from './files/secret-paths.js';
 import type { PluginRegistry } from './plugins/registry.js';
 import type { AssistRunner } from './assist/run.js';
@@ -210,6 +211,8 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     secretRoots: defaultSecretRoots(d.dataDir),
     dataDir: d.dataDir,
   }));
+  // The Inbox for a view outside this web client (docs/headless-api.md section 11).
+  mount('/api', createInboxRouter(d.db, { broadcast: (e) => d.plugins.broadcast(e), secretRoots: defaultSecretRoots(d.dataDir), dataDir: d.dataDir }));
   mount('/api/events', createEventsRouter(d.statusService));
   mount('/api/agents', createAgentsRouter(d.agentService));
   mount('/api/roles', createRolesRouter(d.rolesService));
