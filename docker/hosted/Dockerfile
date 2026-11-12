@@ -72,6 +72,13 @@ RUN set -eu; \
 COPY docker/hosted/agent-clis/package.json docker/hosted/agent-clis/package-lock.json /out/agent-clis/
 RUN cd /out/agent-clis && npm ci --omit=dev --no-audit --no-fund && npm cache clean --force \
     && test -x node_modules/.bin/codex && test -x node_modules/.bin/opencode && test -x node_modules/.bin/mcp-remote
+# OpenCode ships one 200 MB binary per C library and its install step copies the one it picks: three
+# copies in all. Keep the one this image runs (glibc) and make the copy a link to it.
+RUN cd /out/agent-clis/node_modules && rm -rf opencode-linux-*-musl \
+    && for d in opencode-linux-*; do \
+         if cmp -s "$d/bin/opencode" opencode-ai/bin/opencode.exe; then ln -sf "../../$d/bin/opencode" opencode-ai/bin/opencode.exe; fi; \
+       done \
+    && ./.bin/opencode --version
 
 # ── runtime: the image ──────────────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runtime

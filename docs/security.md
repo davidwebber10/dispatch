@@ -57,6 +57,29 @@ The file routes follow symbolic links, so a link inside a project that stays ins
 works as before, and so do dependency links from one `node_modules` folder into another (a package inside a pnpm workspace). A link that leads outside the project is refused unless its target is under a
 folder in `DISPATCH_FILE_ROOTS`.
 
+## Files Dispatch never serves
+
+On every install, for every caller, the file routes refuse:
+
+- the system's own trees: `/proc`, `/sys`, `/dev`, `/run`. `/proc/<pid>/environ` is the environment of a
+  process, not a file of yours. A link that leads there is refused too;
+- credential files and folders (`~/.ssh`, `~/.aws`, `~/.gnupg`, the access token, the database, the saved
+  logins of the agent programs, and more: `packages/core/src/files/secret-paths.ts`), also under a second
+  name (a hard link);
+- what was typed into a shell or a REPL (`~/.bash_history`, `~/.zsh_history`, `~/.python_history`, …).
+
+On your own computer everything else is as before: a relative path stays in the project, and an absolute
+path may be read ("View file" for an agent that works in another repository). A hosted workspace serves the
+person's own folders only (`docs/hosted.md`).
+
+## Request paths
+
+A request path has one spelling. Dispatch matches routes case-sensitively and without a trailing slash,
+and refuses (`400 bad_path`) a path with a doubled slash, a `.` or `..` segment, a backslash, a `;`
+parameter, a control character, an escape that hides one of those (`%2f`, `%5c`, `%2e`, `%00`), an escape
+of a letter or a digit, or a double encoding. The web page, the `dispatch` CLI and the SDK never send such a
+path. If you call the API from a script, write the paths as the documentation writes them.
+
 ## Secrets
 
 - The Settings page lists the names of your Doppler secrets. A value is read one at a time,
