@@ -1,5 +1,6 @@
 import type { McpServerSpec } from '../mcp/injection.js';
 import { boxLog } from '../os/box-log.js';
+import { osBoxToken } from '../platform/box-secrets.js';
 
 /**
  * Tools brokered by OS.
@@ -140,7 +141,7 @@ export class OsConnectionsProvider {
 
   constructor(opts: OsConnectionsOptions = {}) {
     this.baseUrl = (opts.baseUrl ?? process.env.OS_BASE_URL)?.replace(/\/+$/, '') || undefined;
-    this.boxToken = opts.boxToken ?? process.env.OS_BOX_TOKEN;
+    this.boxToken = opts.boxToken ?? osBoxToken();
     this.ownerEmail = opts.ownerEmail ?? process.env.DISPATCH_OWNER_EMAIL;
     this.ttlMs = opts.ttlMs ?? 60_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;

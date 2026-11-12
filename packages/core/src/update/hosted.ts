@@ -1,3 +1,4 @@
+import { osBoxToken } from '../platform/box-secrets.js';
 /**
  * Updating a HOSTED box.
  *
@@ -40,7 +41,8 @@ export interface HostedTarget {
  */
 export function hostedTarget(env: NodeJS.ProcessEnv = process.env): HostedTarget | null {
   const baseUrl = env.OS_BASE_URL?.replace(/\/+$/, '');
-  const boxToken = env.OS_BOX_TOKEN;
+  // Through the one reader of the box secrets: the daemon removes them from process.env at start (platform/box-secrets.ts).
+  const boxToken = osBoxToken(env);
   if (!baseUrl || !boxToken) return null;
   return { baseUrl, boxToken };
 }

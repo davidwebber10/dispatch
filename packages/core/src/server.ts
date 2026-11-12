@@ -29,6 +29,7 @@ import { boxLog } from './os/box-log.js';
 import { getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
 import { BOX_CAPABILITIES } from './platform/capabilities.js';
+import { describeBoxTokenMode, takeBoxSecrets, type BoxTokenMode } from './platform/box-secrets.js';
 
 export { buildDaemon, wireLedger } from './daemon/build.js';
 export type { BuildDaemonOptions, Daemon, DaemonServices } from './daemon/build.js';
@@ -89,6 +90,11 @@ export function createApp(options: CreateAppOptions): express.Express {
 
 export async function startServer(options?: { port?: number; allowRandomPortFallback?: boolean }): Promise<{ port: number; cleanup: () => void; keys: KeyRegistry }> {
   const preferredPort = options?.port ?? 3456;
+  // FIRST, before anything is spawned (the login-shell PATH probe below is a child process): take the
+  // two box secrets out of the environment, so no child can inherit them, and refuse one value in both
+  // roles (platform/box-secrets.ts). A local install has neither: nothing changes for it.
+  const tokenMode = takeBoxSecrets();
+  if (tokenMode !== 'local') console.log(`[dispatch] ${describeBoxTokenMode(tokenMode)}`);
   // DISPATCH_BIND: checked first, so an invalid value stops the start before anything is opened or spawned.
   const bindHost = parseBindHost(process.env.DISPATCH_BIND);
 
@@ -145,7 +151,7 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
   writeListenInfo(dataDir, { port, bind: boundAddress }); // "dispatch status" prints it
   daemon.listening(port, port !== preferredPort ? { shimEnv: shimFor(port) } : undefined);
   console.log(`Dispatch server listening on port ${port}`);
-  logDaemonStart(port, basePath);
+  logDaemonStart(port, basePath, tokenMode);
   if (daemon.services.accessGate) console.log('Network: other devices need the access token (run "dispatch access"). Tailscale devices on your own account are allowed.');
 
   // Boot recovery does not block the start: it waits a short settle delay before it reads any status.
@@ -168,10 +174,10 @@ export async function startServer(options?: { port?: number; allowRandomPortFall
 }
 
 /** Hosted box log (os/box-log.ts): one line that says which build started, and how. Local: no line. */
-function logDaemonStart(port: number, basePath: string): void {
+function logDaemonStart(port: number, basePath: string, tokenMode: BoxTokenMode): void {
   boxLog('daemon.start', {
     version: getRunningVersion(), profile: currentProfile(), basePath: basePath || '/', capabilities: [...BOX_CAPABILITIES],
-    port, node: process.version, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
+    port, node: process.version, tokenMode, ...(process.env.DISPATCH_BOX_ID ? { boxId: process.env.DISPATCH_BOX_ID } : {}),
   });
 }
 
