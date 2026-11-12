@@ -77,7 +77,7 @@ export function installSpawnGuardOn(cfg: Pick<PrivsepConfig, 'agentUid' | 'agent
       if (Array.isArray(o.envPairs)) o.envPairs = scrubEnvPairs(o.envPairs as string[]);
       return original.call(this, o);
     };
-    for (const name of ['spawnSync', 'execFileSync', 'execSync'] as const) {
+    for (const name of SYNC_ENTRY_POINTS) {
       const fn = cp[name] as (...a: unknown[]) => unknown;
       (cp as unknown as Record<string, unknown>)[name] = function guardedSync(this: unknown, ...args: unknown[]) {
         return fn.apply(this, forceIdentityArgs(args, cfg));
@@ -86,24 +86,38 @@ export function installSpawnGuardOn(cfg: Pick<PrivsepConfig, 'agentUid' | 'agent
     cp[INSTALLED] = true;
     t.sync?.();
   }
-  const pty = t.pty as ({ spawn: (...a: any[]) => any } & { [INSTALLED]?: true }) | null | undefined;
+  const pty = t.pty as (Record<string, unknown> & { [INSTALLED]?: true }) | null | undefined;
   if (pty && !pty[INSTALLED]) {
-    const spawnPty = pty.spawn;
     const chown = t.chown ?? ((p, uid, gid) => fs.chownSync(p, uid, gid));
-    pty.spawn = function guardedPty(file: unknown, args: unknown, options: unknown) {
-      const base = isOptions(options) ? options : {};
-      const next: Record<string, unknown> = { ...base, uid: cfg.agentUid, gid: cfg.agentGid };
-      if (isOptions(base.env)) next.env = scrubEnv(base.env as Record<string, string | undefined>);
-      const term = spawnPty.call(pty, file, args, next);
-      // The slave device belongs to whoever opened it (the daemon). Programs that reopen their
-      // terminal by path need it to be the agent's.
-      const slave = (term as { _pty?: unknown })._pty;
-      if (typeof slave === 'string' && slave.startsWith('/dev/')) { try { chown(slave, cfg.agentUid, cfg.agentGid); } catch { /* the PTY still works through its open descriptors */ } }
-      return term;
-    };
+    // Every export of the PTY library that starts a process: `spawn` and its two older names.
+    for (const name of PTY_ENTRY_POINTS) {
+      const original = pty[name];
+      if (typeof original !== 'function') continue;
+      pty[name] = function guardedPty(file: unknown, args: unknown, options: unknown) {
+        const base = isOptions(options) ? options : {};
+        const next: Record<string, unknown> = { ...base, uid: cfg.agentUid, gid: cfg.agentGid };
+        if (isOptions(base.env)) next.env = scrubEnv(base.env as Record<string, string | undefined>);
+        const term = (original as (...a: unknown[]) => unknown).call(pty, file, args, next);
+        // The slave device belongs to whoever opened it (the daemon). Programs that reopen their
+        // terminal by path need it to be the agent's.
+        const slave = (term as { _pty?: unknown })._pty;
+        if (typeof slave === 'string' && slave.startsWith('/dev/')) { try { chown(slave, cfg.agentUid, cfg.agentGid); } catch { /* the PTY still works through its open descriptors */ } }
+        return term;
+      };
+    }
     pty[INSTALLED] = true;
   }
 }
+
+/**
+ * The exports of the PTY library that start a process. `fork` and `createTerminal` are older names of
+ * `spawn`; they are replaced too, so no name of the library starts a child as the daemon user. (Its
+ * `native` binding is never called by the daemon: tests/privsep/spawn-sites.test.ts keeps it so.)
+ */
+export const PTY_ENTRY_POINTS = ['spawn', 'fork', 'createTerminal'] as const;
+
+/** The process-creating exports of `child_process` that the guard replaces by name (the rest go through the prototype). */
+export const SYNC_ENTRY_POINTS = ['spawnSync', 'execFileSync', 'execSync'] as const;
 
 /** Install on the real modules of this process. */
 export function installSpawnGuard(cfg: PrivsepConfig): void {
@@ -138,10 +152,25 @@ export async function probeSpawnGuard(): Promise<GuardCheck[]> {
     c.stdout?.on('data', (d) => { s += d; }); c.on('error', () => resolve('error')); c.on('close', () => resolve(s.trim()));
   }) });
   try {
-    const pty = await import('node-pty');
-    out.push({ via: 'pty', uid: await new Promise<string>((resolve) => {
+    // The module object the guard changed (`require`), so every name of it is asked, the older ones too.
+    const pty = createRequire(import.meta.url)('node-pty') as Record<string, unknown>;
+    type Term = { onData(f: (d: string) => void): void; onExit(f: () => void): void };
+    for (const name of PTY_ENTRY_POINTS) {
+      const start = pty[name];
+      if (typeof start !== 'function') continue;
+      out.push({ via: name === 'spawn' ? 'pty' : `pty.${name}`, uid: await new Promise<string>((resolve) => {
+        let s = '';
+        try {
+          const t = (start as (...a: unknown[]) => Term).call(pty, 'id', ['-u'], { cwd: '/', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+          t.onData((d) => { s += d; }); t.onExit(() => resolve(s.trim()));
+        } catch { resolve('error'); }
+      }) });
+    }
+    // And the way the daemon's own code reaches it (an ES import of the same module).
+    const esm = await import('node-pty');
+    out.push({ via: 'pty.import', uid: await new Promise<string>((resolve) => {
       let s = '';
-      const t = pty.spawn('id', ['-u'], { cwd: '/', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+      const t = esm.spawn('id', ['-u'], { cwd: '/', env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
       t.onData((d) => { s += d; }); t.onExit(() => resolve(s.trim()));
     }) });
   } catch { out.push({ via: 'pty', uid: 'unavailable' }); }

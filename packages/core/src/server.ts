@@ -29,6 +29,7 @@ import { createDaemonHttpServer } from './daemon/http-server.js';
 import { boxLog } from './os/box-log.js';
 import { prepareSeparationAtStart, proveSeparationAtStart } from './privsep/boot.js';
 import { runDirFor } from './privsep/paths.js';
+import { privsep } from './privsep/config.js';
 import { getRunningVersion } from './update/version.js';
 import { currentProfile } from './os/profile.js';
 import { boxCapabilities } from './platform/capabilities.js';
@@ -103,6 +104,14 @@ function takeBoxSecretsAtStart(): BoxTokenMode {
 
 /** Resolve the user's shell PATH so PTYs inherit it (fixes Finder/login-items launches). */
 function adoptLoginPath(): void {
+  // On a box with privilege separation the PATH is the image's, as the container was given it. The
+  // login shell reads start files in the person's home (~/.profile, ~/.bashrc), and the home is the
+  // agent's: a workload could choose what `claude`, `codex` or `git` means for every later thread,
+  // and have its own commands run at each start of the daemon. So no login shell is asked there.
+  if (privsep()) {
+    console.log(`PATH: the image's (${(process.env.PATH ?? '').split(':').length} entries); no login shell is asked on a box with privilege separation`);
+    return;
+  }
   const shellPath = platform.resolveLoginPath();
   if (shellPath) {
     process.env.PATH = shellPath;

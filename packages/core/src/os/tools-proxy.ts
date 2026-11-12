@@ -199,6 +199,12 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     if (!terminalId) return;
     const system = String(req.params.system ?? '');
     if (!isSystemId(system)) return void res.status(404).json({ error: 'unknown_system', message: 'No such company system.' });
+    // A stream exists only for a system this thread has a server for: one the platform named for this
+    // person (the catalog's known systems), and inside the thread's own limit when it has one. Any
+    // other id gets no open socket, so a workload cannot hold streams for names of its choice.
+    const limit = deps.systemsFor?.(terminalId) ?? null;
+    if (system !== OS_SELF_SYSTEM && limit && !limit.includes(system)) return void res.status(403).json({ error: 'not_permitted', message: 'This thread may not use this company system.' });
+    if (deps.catalog && !deps.catalog.knownSystems().includes(system)) return void res.status(404).json({ error: 'unknown_system', message: 'No such company system.' });
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');

@@ -15,10 +15,17 @@
 //                   WebSocket has a row in profile/business-routes.ts, an unclassified one is refused, and a
 //                   path has one spelling (http/canonical-path.ts). The file routes serve the person's own
 //                   folders only (files/path-policy.ts). OS should require it before it admits a business person.
+//   inbox-v1        the Inbox routes for a view outside this web client (routes/inbox.ts, docs/headless-api.md
+//                   section 11): the owner lists the drops a thread handed over, reads their files by id, marks
+//                   them read and deletes them. A thread's or a plugin's key gets owner_only on them.
+//   live-tools-v1   a running thread learns of a changed tool list (os/tools-proxy.ts): each company system's
+//                   server declares `tools.listChanged`, the GET event stream of /api/os/mcp/<system> carries
+//                   `notifications/tools/list_changed`, a system the person has not connected has its `connect`
+//                   tool, and POST /api/os/connections/refresh is the platform's signal.
 // Served by GET /api/host-context (OS reads it at provisioning) and sent on every heartbeat.
 import { privsepProven } from '../privsep/selfcheck.js';
 
-export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2'] as const;
+export const BOX_CAPABILITIES = ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1'] as const;
 export type BoxCapability = (typeof BOX_CAPABILITIES)[number];
 
 /**

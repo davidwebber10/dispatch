@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Response } from 'express';
 import { insideRealRoot } from '../files/confine.js';
+import { privsep, type PrivsepConfig } from '../privsep/config.js';
+import { agentReadFile } from '../privsep/agent-fs.js';
 
 /**
  * A file of a project that a plugin references (docs/superpowers/specs/2026-11-07-plugins-design.md,
@@ -36,4 +39,22 @@ export function checkProjectFile(workingDir: string, requested: unknown): Projec
   if (!st.isFile()) throw new ProjectFileError(`not a file: ${requested}`);
   if (st.size > PROJECT_FILE_MAX_BYTES) throw new ProjectFileError(`file too large (max 50 MB): ${requested}`);
   return { path: abs, name: path.basename(abs), mime, size: st.size };
+}
+
+/**
+ * Send the bytes of a project file whose path the caller has checked (no snapshot of it exists). The
+ * caller has set the headers. On a box with privilege separation the daemon is root and the project
+ * is the agent's, so the file is read AS THE AGENT (privsep/agent-fs.ts) and not with the daemon's
+ * rights: a folder swapped for a link after the checks cannot make the daemon send a file of its own.
+ * Elsewhere it is `res.sendFile`, as before.
+ */
+export async function sendProjectFile(res: Response, filePath: string, cfg: PrivsepConfig | null = privsep()): Promise<void> {
+  const missing = () => { if (!res.headersSent) res.status(404).json({ error: 'file not found' }); };
+  if (!cfg) {
+    res.sendFile(filePath, (err) => { if (err) missing(); });
+    return;
+  }
+  const bytes = await agentReadFile(filePath, PROJECT_FILE_MAX_BYTES, cfg);
+  if (!bytes) return missing();
+  res.end(bytes);
 }

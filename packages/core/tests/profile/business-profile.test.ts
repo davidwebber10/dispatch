@@ -243,7 +243,7 @@ describe('GET /api/host-context', () => {
   test('a local build: developer, not hosted', async () => {
     const r = await request(await developer().server()).get('/api/host-context');
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2'] });
+    expect(r.body).toEqual({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null, capabilities: ['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1'] });
   });
 
   test('a business build reports its profile', async () => {
@@ -314,7 +314,7 @@ describe('one live profile: OS wins, without a restart', () => {
       await k.daemon.services.osConnections.refresh();
       const ctx = (await request(s).get('/api/host-context')).body;
       expect(ctx.profile).toBe('business');
-      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2']);
+      expect(ctx.capabilities).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1']);
       expectRefused(await request(s).post(`/api/sessions/${sid}/terminals`).send({ type: 'shell' }), 'thread.create');
       os.set('developer');
       await k.daemon.services.osConnections.refresh();

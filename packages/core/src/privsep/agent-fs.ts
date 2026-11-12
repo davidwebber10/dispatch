@@ -12,7 +12,7 @@
 // rights to every path component, and a planted link can only lead where the agent could already go.
 //
 // Without privilege separation each function is the plain `fs` call it replaces.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { privsep, type PrivsepConfig } from './config.js';
 
@@ -99,6 +99,73 @@ export function agentRename(from: string, to: string, cfg: PrivsepConfig | null 
 export function agentRemove(target: string, opts: { recursive?: boolean } = {}, cfg: PrivsepConfig | null = privsep()): void {
   if (!cfg) { if (opts.recursive) fs.rmSync(target, { recursive: true }); else fs.unlinkSync(target); return; }
   run(opts.recursive ? 'rm' : 'unlink', [target]);
+}
+
+/**
+ * The script of `agentReadFile` (`node -e`, as the agent). argv: the path, the largest size. It opens
+ * the file without following a link at the last part of the path, checks on the OPEN file that it is
+ * a regular file of at most that size, and sends at most one byte more than the limit to stdout.
+ * Exit codes: 0 sent; 3 not a regular file; 4 too large; 1 any error of the open or the read.
+ */
+const AGENT_READ_SCRIPT = `
+const fs = require('fs');
+const [file, maxText] = process.argv.slice(1);
+const max = Number(maxText);
+const fail = () => process.exit(1);
+try {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const st = fs.fstatSync(fd);
+  if (!st.isFile()) process.exit(3);
+  if (st.size > max) process.exit(4);
+  const input = fs.createReadStream(null, { fd, start: 0, end: max });
+  input.on('error', fail);
+  process.stdout.on('error', fail);
+  input.pipe(process.stdout);
+} catch (e) { fail(); }
+`;
+
+/**
+ * Read a file below the home AS THE AGENT: the bytes, or null when it is not a regular file, is larger
+ * than `maxBytes`, cannot be opened by the agent, or the read fails. The kernel applies the agent's
+ * rights to every part of the path, so a link or a swapped folder a workload planted leads only where
+ * that workload could already read; the last part of the path is never followed as a link.
+ *
+ * For a copy the daemon KEEPS or SERVES from a place of its own (a snapshot in the state root): the
+ * daemon must not open such a path with its own rights, because a check of the path before the open
+ * does not close the race with a swap. Without privilege separation it is the same open in this process.
+ */
+export function agentReadFile(file: string, maxBytes: number, cfg: PrivsepConfig | null = privsep()): Promise<Buffer | null> {
+  if (!cfg) {
+    return (async () => {
+      let fh: fs.promises.FileHandle | null = null;
+      try {
+        fh = await fs.promises.open(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+        const st = await fh.stat();
+        if (!st.isFile() || st.size > maxBytes) return null;
+        const bytes = await fh.readFile();
+        return bytes.length > maxBytes ? null : bytes;
+      } catch { return null; } finally { await fh?.close().catch(() => {}); }
+    })();
+  }
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let done = false;
+    const finish = (v: Buffer | null) => { if (!done) { done = true; resolve(v); } };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(process.execPath, ['-e', AGENT_READ_SCRIPT, file, String(maxBytes)], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 120_000 });
+    } catch { return finish(null); }
+    child.stdout?.on('data', (d: Buffer) => {
+      total += d.length;
+      if (total > maxBytes) { try { child.kill('SIGKILL'); } catch { /* gone */ } return finish(null); } // it grew after the size check
+      chunks.push(d);
+    });
+    // (The cast: the web package compiles this file too, with event types that lack `on` here.)
+    const events = child as unknown as NodeJS.EventEmitter;
+    events.on('error', () => finish(null));
+    events.on('close', (code: number | null) => finish(code === 0 && total <= maxBytes ? Buffer.concat(chunks) : null));
+  });
 }
 
 /**

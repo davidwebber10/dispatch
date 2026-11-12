@@ -5,7 +5,30 @@ import { createOsToolsRouter } from '../os/tools-proxy.js';
 
 describe('the advertised capabilities are true of this tree', () => {
   test('the list', () => {
-    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2']);
+    expect([...BOX_CAPABILITIES]).toEqual(['base-path', 'os-tools-proxy', 'profile', 'headless-v1', 'idle-info', 'gate-v2', 'inbox-v1', 'live-tools-v1']);
+  });
+  test('inbox-v1: the Inbox routes exist, each has a row in the business table, and the secret value is refused there', async () => {
+    const { createInboxRouter } = await import('../routes/inbox.js');
+    const { BUSINESS_ROUTES } = await import('../profile/business-routes.js');
+    expect(typeof createInboxRouter).toBe('function');
+    for (const id of [
+      'GET /api/inbox', 'GET /api/inbox/unread', 'POST /api/inbox/read', 'GET /api/inbox/drops/:dropId',
+      'POST /api/inbox/drops/:dropId/read', 'DELETE /api/inbox/drops/:dropId', 'GET /api/inbox/drops/:dropId/files/:fileId',
+    ]) {
+      expect(BUSINESS_ROUTES[id]?.business, id).toBe('allow');
+      // No key kind is named: a thread's or a plugin's key is refused on these rows.
+      expect(BUSINESS_ROUTES[id]?.keys, id).toBeUndefined();
+    }
+    expect(BUSINESS_ROUTES['GET /api/inbox/drops/:dropId/secret']?.business).toBe('refuse');
+  });
+  test('live-tools-v1: the event stream, the refresh signal and the refresh tool exist', async () => {
+    const { REFRESH_TOOL_DEF, CONNECT_TOOL, OsToolCatalog } = await import('../os/tools-proxy.js');
+    const { BUSINESS_ROUTES } = await import('../profile/business-routes.js');
+    expect(REFRESH_TOOL_DEF.name).toBe('refresh');
+    expect(CONNECT_TOOL).toBe('connect');
+    expect(typeof OsToolCatalog.prototype.onToolsChanged).toBe('function');
+    expect(BUSINESS_ROUTES['GET /api/os/mcp/:system']?.keys).toEqual(['thread']);
+    expect(BUSINESS_ROUTES['POST /api/os/connections/refresh']?.keys).toBeUndefined();
   });
   test('base-path', () => {
     expect(normalizeBasePath('/dispatch/')).toBe('/dispatch');

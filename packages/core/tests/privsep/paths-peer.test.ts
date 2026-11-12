@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { agentDirFor, assertInHome, isInside, privateRoots, publishToAgent, publishTreeToAgent, runDirFor, scratchDirFor } from '../../src/privsep/paths.js';
-import { agentCopyFrom, agentMkdir, agentRemove, agentRename, agentWriteFile } from '../../src/privsep/agent-fs.js';
+import { agentCopyFrom, agentMkdir, agentReadFile, agentRemove, agentRename, agentWriteFile } from '../../src/privsep/agent-fs.js';
 import { isLocalPeer, isLoopback } from '../../src/privsep/local-peer.js';
 import type { PrivsepConfig } from '../../src/privsep/config.js';
 
@@ -145,6 +145,32 @@ describe('file changes below the home, made as the agent', () => {
       expect(fs.existsSync(path.join(cfg.agentHome, 'p'))).toBe(false);
     });
   }
+
+  for (const mode of ['separated', 'local'] as const) {
+    const c = () => (mode === 'separated' ? cfg : null);
+    test(`${mode}: read a file as the agent: the bytes, the size limit, never a link or a folder`, async () => {
+      const f = path.join(cfg.agentHome, 'report.csv');
+      fs.writeFileSync(f, Buffer.from([0x61, 0x2c, 0x62, 0x0a, 0x00, 0xff]));
+      expect([...(await agentReadFile(f, 100, c()))!]).toEqual([0x61, 0x2c, 0x62, 0x0a, 0x00, 0xff]);
+      expect((await agentReadFile(f, 6, c()))!.length).toBe(6); // exactly the limit
+      expect(await agentReadFile(f, 5, c())).toBeNull(); // one byte over
+      fs.writeFileSync(path.join(cfg.agentHome, 'empty.txt'), '');
+      expect((await agentReadFile(path.join(cfg.agentHome, 'empty.txt'), 10, c()))!.length).toBe(0);
+      // A link as the last part of the path is not followed, wherever it points.
+      fs.writeFileSync(path.join(cfg.stateDir, 'settings.json'), '{"private":true}');
+      const link = path.join(cfg.agentHome, 'innocent.json');
+      fs.symlinkSync(path.join(cfg.stateDir, 'settings.json'), link);
+      expect(await agentReadFile(link, 100, c())).toBeNull();
+      expect(await agentReadFile(cfg.agentHome, 100, c())).toBeNull(); // a folder
+      expect(await agentReadFile(path.join(cfg.agentHome, 'missing.txt'), 100, c())).toBeNull();
+    });
+  }
+
+  test('a file with a name that looks like program text is read as a file', async () => {
+    const odd = path.join(cfg.agentHome, `x"; process.exit(0); ".txt`);
+    fs.writeFileSync(odd, 'plain');
+    expect((await agentReadFile(odd, 100, cfg))!.toString()).toBe('plain');
+  });
 
   test('a path is one argument, never program text', () => {
     const marker = 'privsep-injected-marker';

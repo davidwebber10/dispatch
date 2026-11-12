@@ -17,7 +17,7 @@ import { platform } from '../platform/index.js';
 import * as sessionsDb from '../db/sessions.js';
 import { PATH_REFUSALS } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
-import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
+import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME, sendProjectFile } from '../plugins/files.js';
 import { INBOX_PLUGIN } from './inbox.js';
 import { currentProfile } from '../os/profile.js';
 import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
@@ -496,7 +496,8 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     // HTML runs scripts in an opaque origin; SVG and other markup get the plain sandbox (no scripts at all).
     setFileHeaders(res, mime, mime === 'text/html' ? HTML_SANDBOX_CSP : 'sandbox');
     res.type(mime);
-    res.sendFile(file.path);
+    // The agent's own file: on a box with privilege separation it is read as the agent user (plugins/files.ts).
+    await sendProjectFile(res, file.path);
   });
 
   router.delete('/plugins/:id/files/:fileId', settingsRule, (req, res) => {

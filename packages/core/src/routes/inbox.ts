@@ -30,7 +30,8 @@ import { defaultSecretRoots, holdsSecret, SECRET_PATH_ERROR, type SecretRoots } 
 import { PATH_REFUSALS } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
 import { isActiveContent } from '../http/active-content.js';
-import { PROJECT_FILE_MIME } from '../plugins/files.js';
+import { PROJECT_FILE_MIME, sendProjectFile } from '../plugins/files.js';
+import { privsep } from '../privsep/config.js';
 import { snapshotPath, removeSnapshot } from '../plugins/snapshots.js';
 import { platform } from '../platform/index.js';
 
@@ -243,9 +244,11 @@ export function createInboxRouter(db: Database.Database, deps: InboxDeps = {}): 
     const file = listed ? pluginData.getFile(db, INBOX_PLUGIN, fileId) : null;
     if (!doc || !file) return void res.status(404).json({ error: 'file not found' });
     let source: string | null = null;
+    let fromProject = false;
     const snap = snapshotPath(dataDir(), INBOX_PLUGIN, pluginData.getFileSnapshot(db, INBOX_PLUGIN, file.fileId));
     if (snap && fs.existsSync(snap)) source = snap; // checked when it was made; never changes
     else {
+      fromProject = true;
       const session = sessionsDb.getById(db, file.sessionId);
       if (!session || !insideRealRoot(session.working_dir, file.path) || !fs.existsSync(file.path)) return void res.status(404).json({ error: 'file not found' });
       if (await holdsSecret(file.path, secretRoots()).catch(() => true)) return void res.status(403).json({ error: SECRET_PATH_ERROR });
@@ -262,6 +265,9 @@ export function createInboxRouter(db: Database.Database, deps: InboxDeps = {}): 
     res.setHeader('Content-Disposition', `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.type(type);
+    // A file with no snapshot is the agent's own: on a box with privilege separation it is read as the
+    // agent user, never with the daemon's rights (plugins/files.ts). A snapshot is the daemon's own file.
+    if (fromProject && privsep()) return void await sendProjectFile(res, source);
     res.sendFile(source, { headers: { 'Content-Type': type } }, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'file not found' });
     });

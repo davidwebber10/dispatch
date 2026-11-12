@@ -76,6 +76,20 @@ describe('the spawn guard', () => {
     expect(chowned).toEqual([['/dev/pts/7', 1000, 1000]]);
   });
 
+  test('the older names of the terminal library start a child as the agent too', () => {
+    const { cp } = fakeChildProcess();
+    const calls: Array<{ via: string; options: any }> = [];
+    const make = (via: string) => (_file: unknown, _args: unknown, options: unknown) => { calls.push({ via, options }); return {}; };
+    const open = () => ({ pair: true });
+    const pty: any = { spawn: make('spawn'), fork: make('fork'), createTerminal: make('createTerminal'), open };
+    installSpawnGuardOn(cfg, { cp, pty, chown: () => {} });
+    pty.fork('/bin/sh', [], { uid: 0, gid: 0, env: { OS_BOX_TOKEN: 's', A: '1' } });
+    pty.createTerminal('/bin/sh', [], undefined);
+    expect(calls.map((c) => [c.via, c.options.uid, c.options.gid])).toEqual([['fork', 1000, 1000], ['createTerminal', 1000, 1000]]);
+    expect(calls[0].options.env).toEqual({ A: '1' });
+    expect(pty.open).toBe(open); // makes no process: left as it is
+  });
+
   test('argument shapes of the synchronous calls', () => {
     expect(forceIdentityArgs(['id'], cfg)).toEqual(['id', { uid: 1000, gid: 1000 }]);
     expect(forceIdentityArgs(['id', ['-u']], cfg)).toEqual(['id', ['-u'], { uid: 1000, gid: 1000 }]);
