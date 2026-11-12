@@ -41,6 +41,15 @@ interface Opts {
 // ~10s one spent folding thousands of events into a non-virtualized list.
 const REPLAY_TAIL = 200;
 
+/**
+ * The size of the first journal window (`window=<n>`): the newest items only, so the open paints at once.
+ * The 200-item window was most of the open's cost on a phone link: about 1 MB of tool output for items
+ * above the fold. The items above this window come after the first paint, one journal page
+ * (useChatHistory's fill), and further pages when the person scrolls up. A daemon that does not know
+ * `window` sends `tail` items, as before.
+ */
+export const FIRST_WINDOW = 60;
+
 /** A socket that has not opened after this long is closed and tried again (a cellular link can
  *  swallow the handshake; the browser's own timeout is a minute or more). */
 export const CONNECT_TIMEOUT_MS = 8000;
@@ -48,10 +57,11 @@ export const CONNECT_TIMEOUT_MS = 8000;
 // `batch=1`: the daemon sends the replay as one compressed frame, `{ type: 'replay', events }` (W2-I).
 // `journal=1`: the daemon replays from its message journal, as one `journal` frame of finished items (W3-D).
 // `after=<seq>`: only the items after that sequence (a reconnect that kept its view).
+// `window=<n>`: the first journal window holds the newest n items (see FIRST_WINDOW).
 // A daemon that does not know a parameter ignores it and sends the frames as it always did.
 function url(terminalId: string, after?: number): string {
   const cursor = typeof after === 'number' && Number.isInteger(after) && after >= 0 ? `&after=${after}` : '';
-  return wsUrl(`/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}&batch=1&journal=1${cursor}`);
+  return wsUrl(`/api/terminals/${terminalId}/structured-ws?tail=${REPLAY_TAIL}&window=${FIRST_WINDOW}&batch=1&journal=1${cursor}`);
 }
 
 function isJournalFrame(v: unknown): v is JournalFrame {
