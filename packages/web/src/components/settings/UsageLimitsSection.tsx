@@ -8,6 +8,7 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { TYPE_LABEL, HIDDEN_TYPES, whenLabel, windowLabel } from '../inspector/usageLimits';
 import { liveValue, entryName, ringTone, bannerText, RING_COLOR, CLI_NOTE, STALE_MS, type RingTone } from '../layout/usageGauge';
 import { Segmented } from '../common/Segmented';
+import { hostCopy } from '../../lib/hostCopy';
 import { row, item, Toggle, SettingsPage, SettingsGroup, SettingsRow, EmptyState, ToneDot, sectionLabel } from './ui';
 
 export const WARN_MIN = 50;
@@ -60,7 +61,7 @@ export function useUsageLimitSettings() {
     api.setUsageLimitSettings(patch)
       .then((s) => { if (rev.current === started) install(s); })
       .catch(() => {
-        setErr('Could not save. The daemon kept the old value.');
+        setErr(hostCopy('settings.save.failed', 'Could not save. The daemon kept the old value.'));
         if (rev.current === started) install(prior); // a newer write (a broadcast, another save) already replaced what this one showed
       });
   };

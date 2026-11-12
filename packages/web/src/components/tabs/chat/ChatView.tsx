@@ -21,6 +21,7 @@ import { ContextIndicator } from '../../ContextIndicator';
 import { modLabel } from '../../../lib/hostkeys';
 import { openFileTab } from '../../../lib/openFileTab';
 import { Composer } from './Composer';
+import { can } from '../../../lib/profile';
 import { renderTimeline, EmptyState, ReconnectingState, StickToEndOnLoad, BootstrapOlderPages, LoadEarlierButton, LoadingOlderPill, JumpButton } from './timeline';
 
 /**
@@ -159,7 +160,7 @@ export function ChatView({ terminalId }: { terminalId: string }) {
         {/* thin status row: muted context-window fill indicator, tappable for detail */}
         <div style={{ maxWidth: 768, margin: '6px auto 0', display: 'flex', alignItems: 'center' }}>
           {/* The active model, always shown once a thread has one, and the switcher behind it. */}
-          {tab && tab.type !== 'shell' && <ModelSwitcher tab={tab} busy={turnRuns} />}
+          {tab && tab.type !== 'shell' && can('model-picker') && <ModelSwitcher tab={tab} busy={turnRuns} />}
           {/* OS-aware send hint (Control Plane parity): ⌘↵ on a Mac, Ctrl+↵ elsewhere. */}
           {!isMobile && (
             <span style={{ font: '400 10px var(--font-mono)', color: 'var(--color-text-tertiary)', marginLeft: 10 }}>{modLabel('↵')} send</span>

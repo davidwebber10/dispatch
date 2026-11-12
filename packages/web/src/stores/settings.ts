@@ -1,8 +1,13 @@
 import { create } from 'zustand';
-import { syncAppIcons } from '../lib/appIcon';
+import { syncAppIcons, applyHostedFavicon } from '../lib/appIcon';
 import { api } from '../api/client';
 import { setThemeSetting, useActiveTheme } from '../themes/apply';
-import { DEFAULT_THEME_ID, getTheme, type ThemeSetting } from '../themes';
+import { defaultThemeSetting, pickableThemes, type ThemeSetting } from '../themes';
+import { can } from '../lib/profile';
+import { isBusinessPreview } from '../lib/hostContext';
+
+// The business preview keeps its own theme choice, so turning it off gives back the developer's theme.
+const THEME_KEY = isBusinessPreview() ? 'dispatch:theme:preview' : 'dispatch:theme';
 
 // literal color: the accent swatches the user picks from (content, not chrome).
 export const ACCENTS = [
@@ -152,10 +157,15 @@ function scheduleIconSync(accent: string) {
   iconTimer = setTimeout(() => void syncAppIcons(accent), 600);
 }
 
-const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && getTheme(t)) ? t as ThemeSetting : DEFAULT_THEME_ID);
-const initialTheme = validTheme(load<string>('dispatch:theme', DEFAULT_THEME_ID));
-const initialAccent = load('dispatch:accent', '');
+// A theme the person may pick (lib/profile.ts 'themes.all': a business person picks only OS light,
+// OS dark or System), else the default (Dispatch Dark; 'system' = the OS pair on a hosted workspace).
+const validTheme = (t: unknown): ThemeSetting => (t === 'system' || (typeof t === 'string' && pickableThemes(can('themes.all')).some((x) => x.id === t)) ? t as ThemeSetting : defaultThemeSetting());
+const initialTheme = validTheme(load<string>(THEME_KEY, defaultThemeSetting()));
+// The accent picker belongs to 'themes.all': without it, the theme's own accent (the OS one).
+const initialAccent = can('themes.all') ? load('dispatch:accent', '') : '';
 setThemeSetting(initialTheme, initialAccent);
+// Hosted (or the business preview): the compass favicon, not the developer tool's `>_`.
+applyHostedFavicon(useActiveTheme.getState().accent);
 /** The accent on screen: the user's, else the theme's. */
 const effectiveAccent = () => useActiveTheme.getState().accent;
 // A non-default accent may predate the daemon growing the icons endpoint (or
@@ -201,7 +211,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   setTheme: (t) => {
     const theme = validTheme(t);
     const before = effectiveAccent();
-    save('dispatch:theme', theme); set({ theme }); setThemeSetting(theme, get().accent);
+    save(THEME_KEY, theme); set({ theme }); setThemeSetting(theme, get().accent);
     if (effectiveAccent() !== before) scheduleIconSync(effectiveAccent());
   },
   setSttProvider: (id) => { save('dispatch:sttProvider', id); set({ sttProvider: id }); putShared(() => api.putDictationSettings({ provider: id })); },

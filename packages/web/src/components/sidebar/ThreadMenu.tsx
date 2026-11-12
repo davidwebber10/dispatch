@@ -23,6 +23,7 @@ import {
   PencilSimple, GitBranch, UserSwitch, Bell, BellSlash, Info, Copy, ArrowClockwise, ArrowCounterClockwise,
   Timer, Archive, PushPinSlash, CaretDown, CaretRight, Key, Question,
 } from '@phosphor-icons/react';
+import { can } from '../../lib/profile';
 import type { Icon } from '@phosphor-icons/react';
 
 /** Harnesses whose CLI can fork a session (core providers' buildBranchCommand). OpenCode
@@ -150,7 +151,8 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
   // The Doppler token switch exists only when the owner chose "only threads that I turn on" (W1-C).
   const tokenOptIn = useSecrets((s) => !!s.status?.connected && s.status?.tokenScope === 'opted-in');
   const menuOpen = !!at;
-  useEffect(() => { if (menuOpen) void useSecrets.getState().loadScope(); }, [menuOpen]);
+  // No secrets call where Doppler is hidden (lib/profile.ts): the business workspace has none.
+  useEffect(() => { if (menuOpen && can('settings.secrets')) void useSecrets.getState().loadScope(); }, [menuOpen]);
   // The phone sheet's More disclosure starts closed each time the sheet opens.
   const [moreOpen, setMoreOpen] = useState(false);
   const [openedFor, setOpenedFor] = useState<ThreadMenuAt | null>(at);
@@ -239,7 +241,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
     // limit), Alerts (on/off at a glance, also from the Threads list, where no bell shows).
     const tiles: { key: string; Glyph: Icon; label: string; name: string; onClick: () => void; pressed?: boolean }[] = [
       { key: 'rename', Glyph: PencilSimple, label: 'Rename', name: t.type === 'file' ? 'Rename file' : 'Rename thread', onClick: pick(setRenameTarget) },
-      ...(BRANCHABLE.includes(t.type) ? [{ key: 'branch', Glyph: GitBranch, label: 'Branch', name: 'Branch thread', onClick: pick((x) => void branch(x)) }] : []),
+      ...(BRANCHABLE.includes(t.type) && can('threads.git') ? [{ key: 'branch', Glyph: GitBranch, label: 'Branch', name: 'Branch thread', onClick: pick((x) => void branch(x)) }] : []),
       ...(hasAccount(t) ? [{ key: 'account', Glyph: UserSwitch, label: 'Account', name: 'Switch account…', onClick: pick(setAccountTarget) }] : []),
       ...(hasAccount(t) && canReceiveAlerts()
         ? [{ key: 'alerts', Glyph: alertsOn(t) ? Bell : BellSlash, label: 'Alerts', name: alertsOn(t) ? 'Disable alerts' : 'Enable alerts', pressed: alertsOn(t), onClick: pick((x) => void toggleAlerts(x)) }]
@@ -272,7 +274,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
             {details && row('details', Info, 'Thread details', pick(setDetailsTarget))}
           </div>
         )}
-        {plugins.length > 0 && (
+        {plugins.length > 0 && can('settings.plugins') && (
           <div role="group" aria-label="Plugins" style={{ display: 'flex', flexDirection: 'column' }}>
             <div aria-hidden style={caption}>Plugins</div>
             {plugins}
@@ -292,7 +294,7 @@ export function ThreadMenu({ at, onClose, onBranched, leadView, pluginRows }: {
                 {row('reset', ArrowCounterClockwise, 'Reset status', pick((x) => void resetStatus(x)), 'Clear a stuck Working or Needs-you state')}
                 {row('why', Question, 'Why is this thread in this state?', pick(setWhyTarget), 'Explains the status and lists the last events')}
                 {row('auto-archive', Timer, 'Auto-archive…', pick(setAutoArchiveTarget), 'Archive the thread on its own after a set time')}
-                {tokenOptIn && canTakeToken(t) && (
+                {tokenOptIn && canTakeToken(t) && can('settings.secrets') && (
                   <button key="secrets-env" type="button" role="switch" aria-checked={secretsEnvOn(t)} aria-label="Doppler token in this thread's shell"
                     onClick={pick((x) => void toggleSecretsEnv(x))} style={{ ...z.row, alignItems: 'flex-start' }}>
                     <Key size={z.icon} style={{ flexShrink: 0, marginTop: 1 }} />

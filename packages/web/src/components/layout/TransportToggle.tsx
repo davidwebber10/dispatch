@@ -4,6 +4,7 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useThreadStatus } from '../../stores/threadStatus';
 import { api } from '../../api/client';
 import type { Terminal } from '../../api/types';
+import { can } from '../../lib/profile';
 import { ConfirmModal } from '../common/ConfirmModal';
 
 /**
@@ -85,7 +86,8 @@ export function useTransportSwitch(terminalId: string | null | undefined, given?
 
 export function TransportToggle({ terminalId, floating = false }: { terminalId: string | null | undefined; floating?: boolean }) {
   const { applies, tab, current, canSwitch, busy, request, confirmUi } = useTransportSwitch(terminalId);
-  if (!applies || !tab) return null;
+  // The Pretty <-> CLI switch is a CLI feature (lib/profile.ts 'threads.cli'); the daemon refuses the switch too.
+  if (!applies || !tab || !can('threads.cli')) return null;
 
   const dim = floating ? { w: 46, h: 32, radius: 'var(--radius-md)', pad: 3, font: 11 } : { w: 40, h: HEADER_INNER, radius: 'var(--radius-sm)', pad: HEADER_PAD, font: 11 };
   const opts: ['cli' | 'pretty', string][] = [['cli', 'CLI'], ['pretty', 'Pretty']];

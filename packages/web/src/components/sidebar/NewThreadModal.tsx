@@ -16,6 +16,9 @@ import { HARNESSES, INSTALL_COMMAND, LOGIN_COMMAND, defaultModeFor, type Harness
 import type { AccountsView, AccountProvider } from '../../api/types';
 import { Select } from '../common/Select';
 import { startCliSignIn } from '../../lib/cliSignIn';
+import { can } from '../../lib/profile';
+import { hostCopy } from '../../lib/hostCopy';
+import { useNavigation } from '../../stores/navigation';
 
 /** The harness (agent/shell) a new thread runs. Maps to the wire `type`. */
 type Harness = Harnesses['id'];
@@ -76,13 +79,18 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
 }) {
   const batch = prompts && prompts.length > 0 ? prompts : null;
   const [capabilitiesLoading, setCapabilitiesLoading] = useState(!!api.getHarnessCapabilities);
-  const [harnesses, setHarnesses] = useState<(Harnesses & { capabilities?: { resume: boolean } })[]>(HARNESSES);
+  // Profile (lib/profile.ts): without the CLI a person gets chat (Pretty) threads only, so the plain
+  // shell and every harness with no Pretty mode leave the list, and the mode row and the model,
+  // worktree and CLI sign-in options go too. The daemon refuses them as well (business-gate.ts).
+  const cli = can('threads.cli');
+  const chatOnly = <H extends Harnesses>(list: H[]): H[] => (cli ? list : list.filter((h) => h.id !== 'terminal' && h.modes.includes('pretty')));
+  const [harnesses, setHarnesses] = useState<(Harnesses & { capabilities?: { resume: boolean } })[]>(() => chatOnly(HARNESSES));
   useEffect(() => {
     let live = true;
     // Older daemon compatibility: presentation metadata comes from the shared catalog.
     api.getHarnessCapabilities?.().then(items => {
       if (!live) return;
-      const enabled = items.filter(h => h.modes.length > 0);
+      const enabled = chatOnly(items.filter(h => h.modes.length > 0));
       setHarnesses(enabled);
       setHarness(current => enabled.some(h => h.id === current) ? current : enabled[0]?.id ?? 'terminal');
     }).catch(() => {}).finally(() => { if (live) setCapabilitiesLoading(false); });
@@ -206,6 +214,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   // externalId today: Claude Code and Codex. Grok captures no session id yet, and the
   // plain shell has no sessions.
   const canResume = spec.capabilities?.resume ?? (harness === 'claude' || harness === 'codex');
+  // Without the CLI the mode is always Pretty: `showMode` still sends the transport, the row is hidden.
   const showMode = harness !== 'terminal';
   /** The models a harness offers. OpenCode's list is a daemon-side setting (Settings →
    *  Harnesses → OpenCode) that arrives with the harness settings; every other harness
@@ -220,7 +229,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
   const cliDisabled = !spec.modes.includes('cli');
   // A stale pick from a previously-selected harness must never survive onto one that
   // doesn't offer it (Grok is pretty-only; the shell is cli-only).
-  const effectiveMode: Mode = spec.modes.includes(mode) ? mode : spec.modes[0];
+  const effectiveMode: Mode = !cli && spec.modes.includes('pretty') ? 'pretty' : spec.modes.includes(mode) ? mode : spec.modes[0];
 
   const loadProviders = useCallback(async () => {
     try { setProviders(await api.recheckProviders()); } catch { setProviders(null); }
@@ -340,7 +349,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
       const config: Record<string, unknown> = {};
       // Pretty → structured transport. Only for harnesses that support it.
       if (showMode && effectiveMode === 'pretty') config.transport = 'structured';
-      if (harness !== 'terminal' && model) config.model = model;
+      if (harness !== 'terminal' && model && can('model-picker')) config.model = model;
       if (autoArchive) { config.autoArchive = true; config.autoArchiveMs = autoArchiveMs; }
       // Pinned at creation once there is a choice, so a later change of the default never moves a
       // resumed thread to another account. With only the CLI login there is nothing to pin.
@@ -463,12 +472,17 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
               </span>
             </div>
             <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              Dispatch can run the sign-in for you and hand you the link. A thread that starts
-              without this just stops at a login screen you can't finish from a phone.
+              {cli
+                ? <>Dispatch can run the sign-in for you and hand you the link. A thread that starts
+              without this just stops at a login screen you can't finish from a phone.</>
+                : <>Connect your {spec.label} account first. Then start the chat.</>}
             </div>
-            <div style={gateCommand}>{LOGIN_COMMAND[spec.provider!]}</div>
-            <button type="button" disabled={signingIn} onClick={() => void signIn(spec.provider!)} style={gateButton(signingIn)}>
-              {signingIn ? (<><Spinner size={13} /> Opening…</>) : (<><SignIn size={15} weight="bold" /> Sign in to {spec.label}</>)}
+            {cli && <div style={gateCommand}>{LOGIN_COMMAND[spec.provider!]}</div>}
+            {/* No CLI sign-in shell without the CLI: Settings > Accounts signs in without a terminal. */}
+            <button type="button" disabled={signingIn}
+              onClick={() => { if (cli) void signIn(spec.provider!); else { onClose(); useNavigation.getState().navigate({ view: 'settings', section: 'accounts' }); } }}
+              style={gateButton(signingIn)}>
+              {signingIn ? (<><Spinner size={13} /> Opening…</>) : cli ? (<><SignIn size={15} weight="bold" /> Sign in to {spec.label}</>) : (<><SignIn size={15} weight="bold" /> Sign in under Settings › Accounts</>)}
             </button>
           </div>
         ) : selectedAvailable && needsKey ? (
@@ -525,7 +539,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
         {/* OPTIONS — a short settings list. Mode and Model only for an agent harness; the
             plain shell says so in their place. Auto-archive is always the last row. */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {showMode && (
+          {showMode && cli && (
             <Row mobile={m}>
               <span style={rowLabel}>Mode</span>
               <div style={{ display: 'flex', background: 'var(--color-elevated)', border: `1px solid ${BORDER}`, borderRadius: m ? 'var(--radius-md)' : 'var(--radius-sm)', padding: m ? 3 : 2, gap: m ? 3 : 2, width: controlWidth, boxSizing: 'border-box' }}>
@@ -568,7 +582,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                     setAccountId(v || null);
                   }}
                   options={[
-                    ...accountList.map((a) => ({ value: a.id, label: a.label, hint: a.email ?? (a.isCli ? 'this computer' : undefined) })),
+                    ...accountList.map((a) => ({ value: a.id, label: a.label, hint: a.email ?? (a.isCli ? hostCopy('accounts.cli.hint', 'this computer') : undefined) })),
                     { value: ADD_ACCOUNT, label: 'Add account…', hint: `another ${spec.label} login` },
                   ]} />
               </div>
@@ -616,7 +630,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
                 style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, font: `500 ${m ? 14 : 12.5}px var(--font-sans)`, color: 'var(--color-text-tertiary)', cursor: 'pointer' }}>Cancel</button>
             </div>
           )}
-          {(models.length > 0 || harness === 'opencode') && (
+          {(models.length > 0 || harness === 'opencode') && can('model-picker') && (
             <Row mobile={m}>
               <span style={rowLabel}>Model</span>
               {/* A searchable select: it holds any number of models on one line, and the
@@ -639,7 +653,7 @@ export function NewThreadModal({ sessionId, prompts, onClose, onCreated }: {
             </Row>
           )}
           {/* WORKTREE (W3-G) — one option row, only in a git repository. */}
-          {inRepo && (
+          {inRepo && can('threads.git') && (
             <Row mobile={m}>
               <span onClick={() => setWorktree((v) => !v)} style={{ display: 'flex', flexDirection: 'column', gap: 2, cursor: 'pointer', flex: 1 }}>
                 <span style={rowLabel}>Run in a new worktree</span>

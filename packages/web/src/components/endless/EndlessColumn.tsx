@@ -24,6 +24,7 @@ import { useChatSettings } from './useChatSettings';
 import { useDictation } from '../../hooks/useDictation';
 import { useSettings } from '../../stores/settings';
 import type { EndlessImage, EndlessFile } from '../../api/types';
+import { hostCopy } from '../../lib/hostCopy';
 import { MODEL_IMAGE_MIME, fileToBase64, chatDocType, CHAT_ACCEPT, CHAT_DOC_MAX_BYTES } from '../../lib/image-attach';
 
 /** Pages older history in while the first page is too short to scroll (see useBootstrapOlderPages). */
@@ -176,7 +177,7 @@ export function Composer({ mobile = false }: { mobile?: boolean } = {}) {
     models: chatModels,
     run: async (name, args) => {
       if (name === 'stop') { await useEndless.getState().stop(); return; }
-      if (!chat.settings) throw new Error('Chat settings are not available on this daemon.');
+      if (!chat.settings) throw new Error(hostCopy('chat.settings.unavailable', 'Chat settings are not available on this daemon.'));
       if (name === 'model' || name === 'effort') {
         return runModelEffortCommand({
           harness: 'claude-code', name, args, models: chatModels,
@@ -412,7 +413,7 @@ export function EndlessColumn({ mobile = false }: { mobile?: boolean } = {}) {
               )}
               {busy && <MessageScroller.Item messageId="__working" style={{ display: 'flex' }}><WorkingIndicator /></MessageScroller.Item>}
               {turn.status === 'failed' && <TurnError mobile={mobile} text={`The last turn failed: ${turn.error ?? 'unknown error'}`} />}
-              {turn.status === 'interrupted' && <TurnError mobile={mobile} text="The daemon restarted during the last turn, so the turn stopped." />}
+              {turn.status === 'interrupted' && <TurnError mobile={mobile} text={hostCopy('thread.interrupted', 'The daemon restarted during the last turn, so the turn stopped.')} />}
             </MessageScroller.Content>
           </MessageScroller.Viewport>
           <BootstrapOlder />

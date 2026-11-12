@@ -15,6 +15,11 @@ import '@fontsource/jetbrains-mono/latin-500.css';
 import '@fontsource/jetbrains-mono/latin-600.css';
 import './theme.css';
 import './tailwind.css';
+import { usesOsLook } from './lib/hostContext';
+import { PRODUCT_NAME } from './lib/hostCopy';
+
+// A hosted workspace names the product from one constant (lib/hostCopy.ts), so a rename is one line.
+if (usesOsLook()) document.title = PRODUCT_NAME;
 
 // iOS PWA cold start: env(safe-area-inset-*) can resolve to 0px until the
 // viewport is "exercised" (a documented WebKit bug — otherwise it only corrects

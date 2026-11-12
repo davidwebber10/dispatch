@@ -4,7 +4,7 @@ import { useUI, type View } from '../stores/ui';
 import { useNavigation } from '../stores/navigation';
 import { openNextAttention } from '../lib/attention';
 import { useContributions } from '../plugins/registry';
-import { SETTINGS_SECTIONS } from './settings/sections';
+import { visibleSettingsSections } from './settings/sections';
 import { primaryMod } from '../lib/hostkeys';
 import { fuzzyScore } from '../lib/fuzzy';
 import { api } from '../api/client';
@@ -19,6 +19,7 @@ import { StatusDot } from './common/StatusDot';
 import { ConfirmModal } from './common/ConfirmModal';
 import { THREADS_ICON } from './common/viewIcons';
 import { NewThreadModal } from './sidebar/NewThreadModal';
+import { can, type Feature } from '../lib/profile';
 
 /**
  * The command palette: ⌘K / Ctrl+K on the desktop.
@@ -67,10 +68,10 @@ export function byAttention(a: Terminal, b: Terminal): number {
 }
 
 const ICON = 15;
-const VIEW_ROWS: { view: View; label: string; icon: ReactNode }[] = [
+const VIEW_ROWS: { view: View; label: string; icon: ReactNode; feature?: Feature }[] = [
   { view: 'workspace', label: 'Threads', icon: <THREADS_ICON size={ICON} /> },
-  { view: 'chat', label: 'Chat', icon: <ChatCircleDots size={ICON} /> },
-  { view: 'analytics', label: 'Analytics', icon: <ChartBar size={ICON} /> },
+  { view: 'chat', label: 'Chat', icon: <ChatCircleDots size={ICON} />, feature: 'endless' },
+  { view: 'analytics', label: 'Analytics', icon: <ChartBar size={ICON} />, feature: 'analytics' },
   { view: 'settings', label: 'Settings', icon: <Gear size={ICON} /> },
 ];
 
@@ -118,14 +119,15 @@ export function CommandPalette() {
       // The attention queue: needs input, then errors, then stalled threads; the one after the open thread.
       { key: 'attention:next', label: 'Next thread that needs you', hint: 'Alt+N', match: 'needs you attention next waiting', icon: <BellRinging size={ICON} />, run: () => { openNextAttention(); } },
       ...sessions.map((s) => ({ key: `project:${s.id}`, label: s.name, hint: 'Project', icon: <Folder size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'workspace', projectId: s.id }) })),
-      ...sessions.map((s) => ({
+      // The Control Plane (coordinator) and plugin commands follow the profile (lib/profile.ts).
+      ...(can('control-plane') ? sessions : []).map((s) => ({
         key: `coordinator:${s.id}`, label: coordinatorName, hint: s.name, match: `${s.name} ${coordinatorName}`, icon: <Network size={ICON} />,
         run: () => { showThreads(); useProjects.getState().setActive(s.id); useTabs.getState().openDispatch(s.id); },
       })),
       ...sessions.map((s) => ({ key: `new-thread:${s.id}`, label: `New thread in ${s.name}`, hint: 'Project', icon: <Plus size={ICON} />, run: () => usePickerRequest.getState().request(`${NEW_THREAD_OWNER}${s.id}`) })),
-      ...VIEW_ROWS.map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useNavigation.getState().navigate({ view }) })),
-      ...SETTINGS_SECTIONS.map((s) => ({ key: `settings:${s.key}`, label: s.label, hint: 'Settings', icon: <s.icon size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'settings', section: s.key }) })),
-      ...pluginCommands.map((c) => ({ key: `plugin:${c.plugin}:${c.id}`, label: c.label, hint: c.plugin, icon: <PuzzlePiece size={ICON} />, run: c.run })),
+      ...VIEW_ROWS.filter((r) => !r.feature || can(r.feature)).map(({ view, label, icon }) => ({ key: `view:${view}`, label, hint: 'View', icon, run: () => useNavigation.getState().navigate({ view }) })),
+      ...visibleSettingsSections().map((s) => ({ key: `settings:${s.key}`, label: s.label, hint: 'Settings', icon: <s.icon size={ICON} />, run: () => useNavigation.getState().navigate({ view: 'settings', section: s.key }) })),
+      ...(can('settings.plugins') ? pluginCommands : []).map((c) => ({ key: `plugin:${c.plugin}:${c.id}`, label: c.label, hint: c.plugin, icon: <PuzzlePiece size={ICON} />, run: c.run })),
     ];
     return { threadRows, otherRows };
   }, [sessions, byProject, activeTabId, coordinatorName, pluginCommands]);

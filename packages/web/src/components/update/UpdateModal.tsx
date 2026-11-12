@@ -4,6 +4,8 @@ import { IDLE_RELOAD_MS, UpdateBadge, UpdateDone, UpdateDoneBadge, UpdateFailed,
 import { useUpdate } from '../../stores/update';
 import { useApplyUpdate } from './useApplyUpdate';
 import { ReleaseNotes } from './ReleaseNotes';
+import { hostCopy, hostDetail, PLAIN } from '../../lib/hostCopy';
+import { usesPlainWording } from '../../lib/hostContext';
 import { blasterActivity } from './blaster/activity';
 
 // The waiting game is only drawn while an update runs, so its code loads then (W2-E). The update's
@@ -98,19 +100,21 @@ export function UpdateModal() {
         ) : (
           <>
             <ArrowCircleUp size={34} weight="fill" color="var(--color-accent)" />
-            <div style={{ marginTop: 8, fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>Update available</div>
+            <div style={{ marginTop: 8, fontWeight: 600, fontSize: 16, color: 'var(--color-text-primary)' }}>{hostCopy('update.available', 'Update available')}</div>
             <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              Dispatch {available!.version} is ready to install{currentVersion ? <> — you're on v{currentVersion}</> : null}.
+              {usesPlainWording() || !available!.version
+                ? hostCopy('update.apply.hint', 'A new version is ready to install.')
+                : <>Dispatch {available!.version} is ready to install{currentVersion ? <> — you're on v{currentVersion}</> : null}.</>}
             </div>
             <ReleaseNotes notes={notes} onToggle={setNotesOpen} />
             {failReason && (
               <div style={{ marginTop: 12, fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)', textAlign: 'left', background: 'var(--color-elevated)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-md)', padding: '9px 11px' }}>
-                Couldn't update automatically: {failReason}
-                <br />
+                {usesPlainWording() ? null : <>Couldn't update automatically: {failReason}<br /></>}
+                {usesPlainWording() && hostDetail(failReason) && <>{hostDetail(failReason)}<br /></>}
                 {/* A hosted workspace has no checkout and no shell, so the manual
                     command is advice the reader cannot follow. */}
-                {hosted
-                  ? 'Your workspace updates when it is rebuilt onto a newer image — ask an administrator if this keeps failing.'
+                {hosted || usesPlainWording()
+                  ? PLAIN['update.failed.hint']
                   : <>Run it manually instead: <code style={{ font: '400 11px var(--font-mono)' }}>dispatch update</code></>}
                 {failDirty && failDirty.length > 0 && (
                   <div style={{ marginTop: 8, maxHeight: 136, overflowY: 'auto', font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)', background: 'color-mix(in srgb, var(--color-canvas) 50%, transparent)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-sm)', padding: '6px 8px' }}>

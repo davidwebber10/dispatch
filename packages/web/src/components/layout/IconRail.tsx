@@ -12,13 +12,15 @@ import { useTabs, isDispatchTab, findTerminal } from '../../stores/tabs';
 import { useAccounts, threadAccount } from '../../stores/accounts';
 import { UpdateDot } from '../update/UpdateDot';
 import { usePluginViews, usePluginRegistry } from '../../plugins/registry';
+import { can, type Feature } from '../../lib/profile';
+import { hostCopy } from '../../lib/hostCopy';
 import { pluginIcon } from '../../plugins/sdk';
 
 const CONN = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Connecting…' },
-  reconnecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
-  closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
+  connecting: { color: 'var(--color-status-yellow)', label: hostCopy('conn.connecting', 'Connecting…') },
+  reconnecting: { color: 'var(--color-status-yellow)', label: hostCopy('conn.reconnecting', 'Reconnecting…') },
+  closed:     { color: 'var(--color-status-red)', label: hostCopy('conn.closed', 'Disconnected') },
 } as const;
 
 function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = false }: {
@@ -56,10 +58,10 @@ function RailItem({ icon: I, label, active, onClick, title, badge = 0, dot = fal
   );
 }
 
-const NAV: { view: View; label: string; icon: Icon }[] = [
+const NAV: { view: View; label: string; icon: Icon; feature?: Feature }[] = [
   { view: 'workspace', label: 'Threads', icon: THREADS_ICON },
-  { view: 'chat', label: 'Chat', icon: ChatCircleDots },
-  { view: 'analytics', label: 'Analytics', icon: ChartBar },
+  { view: 'chat', label: 'Chat', icon: ChatCircleDots, feature: 'endless' },
+  { view: 'analytics', label: 'Analytics', icon: ChartBar, feature: 'analytics' },
 ];
 
 /**
@@ -73,7 +75,8 @@ export function IconRail() {
   const status = useShownStatus();
   const servers = useServers((s) => s.servers);
   const conn = CONN[status];
-  const serverLabel = currentLabel(servers, window.location.origin);
+  // The server's name under the dot names the machine; a hosted workspace says "Workspace".
+  const serverLabel = hostCopy('conn.serverLabel', currentLabel(servers, window.location.origin));
   // Plugin screens sit after the built-in ones (docs/superpowers/specs/2026-11-07-plugins-design.md).
   const pluginViews = usePluginViews();
   // The first item is named after the Projects ⇄ Threads switch (2026-11-07).
@@ -105,11 +108,11 @@ export function IconRail() {
       padding: '10px 0 8px', gap: 4, background: 'var(--color-pane)', borderRight: '1px solid var(--color-border)',
     }}>
       <div style={{ marginBottom: 10 }}><BrandSwitcher /></div>
-      {NAV.map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
+      {NAV.filter((n) => !n.feature || can(n.feature)).map((n) => n.view === 'workspace' ? { ...n, label: projectsView === 'threads' ? 'Threads' : 'Projects', icon: projectsView === 'threads' ? THREADS_ICON : PROJECTS_ICON } : n).map((n) => (
         <RailItem key={n.view} icon={n.icon} label={n.label} title={n.label}
           active={view === n.view} onClick={() => setView(n.view)} />
       ))}
-      {pluginViews.map((v) => (
+      {(can('settings.plugins') ? pluginViews : []).map((v) => (
         <RailItem key={v.key} icon={pluginIcon(v.icon)} label={v.label} title={v.label}
           active={view === v.key} onClick={() => setView(v.key as View)} badge={badges[v.key] ?? 0} />
       ))}

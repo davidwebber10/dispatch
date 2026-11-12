@@ -1,5 +1,5 @@
 import { CaretRight } from '@phosphor-icons/react';
-import { settingsSection, useAllSettingsSections, useSettingsGroups } from './sections';
+import { settingsSection, useAllSettingsSections, useSettingsGroups, settingsGroupLabel } from './sections';
 import { UpdateBanner } from '../update/UpdateBanner';
 
 /**
@@ -22,7 +22,7 @@ export function MobileSettingsList({ onOpen }: { onOpen: (key: string) => void }
         const rows = sections.filter((s) => s.group === g);
         return (
           <section key={g} aria-label={g} style={{ marginTop: 10 }}>
-            <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 6px' }}>{g}</div>
+            <div style={{ font: '500 10.5px var(--font-mono)', letterSpacing: '0.12em', color: 'var(--color-text-tertiary)', padding: '8px 4px 6px' }}>{settingsGroupLabel(g)}</div>
             <div style={{ background: 'var(--color-pane)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
               {rows.map((s, i) => {
                 const Icon = s.icon;

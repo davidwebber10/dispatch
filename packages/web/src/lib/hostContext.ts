@@ -1,0 +1,93 @@
+// The host context: the person's profile and the facts about the host (daemon: core/src/profile/host-context.ts).
+//
+// The daemon puts it into index.html as `<meta name="dispatch-host-context">` on a hosted box or when a
+// profile is set, so it is known before the first paint and nothing flashes. A local install has no
+// meta: the defaults below are then exactly the old behaviour (developer, not hosted).
+
+export type Profile = 'business' | 'developer';
+
+export interface HostContext {
+  profile: Profile;
+  hosted: boolean;
+  /** The public address of Polywood OS (the way back). Null on a local install. */
+  osBaseUrl: string | null;
+  ownerEmail: string | null;
+}
+
+export const DEFAULT_HOST_CONTEXT: HostContext = Object.freeze({ profile: 'developer', hosted: false, osBaseUrl: null, ownerEmail: null });
+
+export const HOST_CONTEXT_META = 'dispatch-host-context';
+
+/** Accept only the shape the daemon sends; anything else is the default (developer, local). */
+export function parseHostContext(raw: unknown): HostContext {
+  if (!raw || typeof raw !== 'object') return DEFAULT_HOST_CONTEXT;
+  const r = raw as Record<string, unknown>;
+  const osBaseUrl = typeof r.osBaseUrl === 'string' && /^https?:\/\//i.test(r.osBaseUrl) ? r.osBaseUrl : null;
+  return {
+    profile: r.profile === 'business' ? 'business' : 'developer',
+    hosted: r.hosted === true,
+    osBaseUrl,
+    ownerEmail: typeof r.ownerEmail === 'string' && r.ownerEmail ? r.ownerEmail : null,
+  };
+}
+
+function readMeta(): HostContext {
+  try {
+    if (typeof document === 'undefined') return DEFAULT_HOST_CONTEXT;
+    const content = document.querySelector(`meta[name="${HOST_CONTEXT_META}"]`)?.getAttribute('content');
+    return content ? parseHostContext(JSON.parse(content)) : DEFAULT_HOST_CONTEXT;
+  } catch {
+    return DEFAULT_HOST_CONTEXT;
+  }
+}
+
+/**
+ * "Preview as business user" (Settings > Appearance, developer profile only): this browser shows the
+ * business feature map, the OS theme rules and the plain wording, so the owner can see what a business
+ * person sees. UI only: the daemon keeps its own profile (developer), so nothing is enforced.
+ * Saved per browser; switching it reloads the page (the profile is fixed for the life of a page).
+ */
+export const PREVIEW_BUSINESS_KEY = 'dispatch:previewBusiness';
+
+function readPreview(): boolean {
+  try { return typeof localStorage !== 'undefined' && localStorage.getItem(PREVIEW_BUSINESS_KEY) === '1'; } catch { return false; }
+}
+
+let real: HostContext = readMeta();
+let preview = real.profile === 'developer' && readPreview();
+
+/** The profile the daemon reports for this workspace (never the preview). */
+export function realHostContext(): HostContext {
+  return real;
+}
+
+/** The host context the UI follows: the real one, with profile 'business' while the preview is on. */
+export function hostContext(): HostContext {
+  return preview ? { ...real, profile: 'business' } : real;
+}
+
+/** True while a developer previews the business experience in this browser. */
+export function isBusinessPreview(): boolean {
+  return preview;
+}
+
+/** Turn the preview on or off in this browser, then reload so every part of the page follows. */
+export function setBusinessPreview(on: boolean, reload: () => void = () => window.location.reload()): void {
+  if (real.profile !== 'developer') return;
+  try { if (on) localStorage.setItem(PREVIEW_BUSINESS_KEY, '1'); else localStorage.removeItem(PREVIEW_BUSINESS_KEY); } catch { /* private mode */ }
+  reload();
+}
+
+/** Test seam: set the context and the preview. Pass nothing to read the page's meta and storage again. */
+export function setHostContextForTest(ctx?: Partial<HostContext>, previewOn = false): void {
+  real = ctx ? { ...DEFAULT_HOST_CONTEXT, ...ctx } : readMeta();
+  preview = ctx ? real.profile === 'developer' && previewOn : real.profile === 'developer' && readPreview();
+}
+
+export const isHosted = (): boolean => real.hosted;
+
+/** The workspace looks like OS (OS theme pair, product brand control): a hosted box, or the business preview. */
+export const usesOsLook = (): boolean => real.hosted || preview;
+
+/** The page uses plain wording (lib/hostCopy.ts): a hosted box, or the business preview. */
+export const usesPlainWording = (): boolean => real.hosted || preview;

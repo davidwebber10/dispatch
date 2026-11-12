@@ -8,6 +8,7 @@ import { Modal } from '../common/Modal';
 import { IconButton } from '../ui/IconButton';
 import { Children, useState } from 'react';
 import { CaretDown, CaretLeft, CaretRight, type Icon as PhosphorIcon } from '@phosphor-icons/react';
+import { hostCopy } from '../../lib/hostCopy';
 
 export const sectionLabel: React.CSSProperties = { font: '500 10px var(--font-mono)', letterSpacing: '1.2px', color: 'var(--color-text-tertiary)' };
 export const summaryLine: React.CSSProperties = { font: '400 11px var(--font-mono)', color: 'var(--color-text-tertiary)' };
@@ -33,8 +34,8 @@ export const iconBtn: React.CSSProperties = { width: 26, height: 26, flexShrink:
 /** This browser's link to the daemon, worded the same in the desktop nav and in Settings → Servers. */
 export const CONNECTION_STATUS = {
   open:       { color: 'var(--color-accent)', label: 'Connected' },
-  connecting: { color: 'var(--color-status-yellow)', label: 'Reconnecting…' },
-  closed:     { color: 'var(--color-status-red)', label: 'Disconnected' },
+  connecting: { color: 'var(--color-status-yellow)', label: hostCopy('conn.reconnecting', 'Reconnecting…') },
+  closed:     { color: 'var(--color-status-red)', label: hostCopy('conn.closed', 'Disconnected') },
 } as const;
 
 export function Divider() { return <div style={{ height: 1, background: 'var(--color-hover)' }} />; }

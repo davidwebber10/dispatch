@@ -44,7 +44,17 @@ export interface Theme {
   terminal: TerminalPalette;
   /** The theme's own accent; the user's accent setting overrides it. Defaults to the theme's blue. */
   accent?: string;
+  /**
+   * CSS variables that are not colors (fonts, radius), written onto <html> with the colors. Only
+   * names in THEME_EXTRA_VARS; a theme without one leaves theme.css's own value (apply.ts removes
+   * what the previous theme set).
+   */
+  vars?: Partial<Record<ThemeExtraVar, string>>;
 }
+
+/** The non-color variables a theme may set (theme.css holds their defaults). */
+export const THEME_EXTRA_VARS = ['--font-sans', '--font-mono', '--radius-lg'] as const;
+export type ThemeExtraVar = typeof THEME_EXTRA_VARS[number];
 
 /** Every token with a value: the theme's own, else derived from its core tokens. */
 export function resolveTokens(theme: Theme): Record<TokenName, string> {

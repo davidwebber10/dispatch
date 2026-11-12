@@ -5,6 +5,7 @@ import { reloadForSignIn } from '../lib/signInReload';
 import type { Session, Terminal, Provider, FileEntry, GitStatus, AuthRequest, SessionStats, InboxUpload, AgentSchedule, AgentRun, CreateScheduleInput, RunStep, AgentOverview, DopplerStatus, DopplerTokenScope, DopplerSecret, DopplerProject, DopplerConfig, Conversation, SearchMatch, SetupState, ProviderStatus, TailscaleStatus, HarnessSettingsResponse, CcRecentSession, CodexRecentSession, Integration, AddIntegrationInput, IntegrationsExport, ToolsResponse, PendingPermission, UpdateState, ProviderName, InstallResult, AnalyticsRange, AnalyticsMetric, AnalyticsGroupBy, AnalyticsDimension, AnalyticsSummary, AnalyticsPoint, AnalyticsTopRow, AnalyticsRecords, AnalyticsTracking, ControlPlaneAnalytics, OpencodeModel, OpencodeCatalogEntry, LedgerCard, LedgerSource } from './types';
 import type { SpinnerVerbs, SpinnerSet, ChatSettings, ThreadDiagnostics } from './types';
 import type { ThreadDiff, DiscardResult, ThreadWorktree, ThreadWorktreeState } from './types';
+import { accountDisplayLabel } from '../lib/hostCopy';
 import type { EndlessPage, EndlessState, EndlessSearchHit, EndlessView, EndlessProject, EndlessProjectsResponse, EndlessImage, EndlessFile, EndlessDocCopy, EndlessDocRow, ClaudeLoginSession, UpdateProgress, ThreadUsageLimits, UsageSummary, UsageLimitSettings } from './types';
 
 /**
@@ -223,7 +224,8 @@ export const api = {
   removeServer: (origin: string) => req<{ label: string; origin: string }[]>(`/api/servers?origin=${encodeURIComponent(origin)}`, { method: 'DELETE' }),
   listSessions: () => req<Session[]>('/api/sessions'),
   getSession: (id: string) => req<Session>(`/api/sessions/${id}`),
-  createSession: (input: { provider: string; name?: string; workingDir: string; prompt?: string }) =>
+  // workingDir is optional for a hosted workspace: the daemon makes ~/projects/<name> (the hosted branch).
+  createSession: (input: { provider: string; name?: string; workingDir?: string; prompt?: string }) =>
     req<Session>('/api/sessions', { method: 'POST', body: body(input) }),
   updateSession: (id: string, fields: { name?: string; notes?: string }) =>
     req<Session>(`/api/sessions/${id}`, { method: 'PATCH', body: body(fields) }),
@@ -503,7 +505,12 @@ export const api = {
     return req<DopplerSecret[]>(`/api/secrets${qs ? `?${qs}` : ''}`);
   },
   // Accounts per harness (multi-account spec 2026-11-06).
-  getAccounts: () => req<AccountsView>('/api/accounts'),
+  // The CLI login's stock name reads as "Your Claude account" on a hosted workspace (lib/hostCopy.ts).
+  getAccounts: () => req<AccountsView>('/api/accounts').then((v) => (v && Array.isArray(v.claude) && Array.isArray(v.codex) ? {
+    ...v,
+    claude: v.claude.map((a) => ({ ...a, label: accountDisplayLabel('claude', a.label, a.isCli) })),
+    codex: v.codex.map((a) => ({ ...a, label: accountDisplayLabel('codex', a.label, a.isCli) })),
+  } : v)),
   /** A new Claude account; with `accountId`, "Sign in again" for that saved account (its token is replaced in place). */
   accountsClaudeLogin: (label: string, accountId?: string) => req<ClaudeLoginSessionT>('/api/accounts/claude/login', { method: 'POST', body: body({ label, ...(accountId ? { accountId } : {}) }) }),
   /** "Check again": the daemon reads that Claude account's usage and profile now, whatever its wait. */

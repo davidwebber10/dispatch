@@ -11,6 +11,9 @@ import { AccountSwitchModal } from '../../common/AccountSwitchModal';
 import { startCliSignIn } from '../../../lib/cliSignIn';
 import { HARNESSES } from '../../../lib/harnesses';
 import type { AuthRequired } from './useStructuredChat';
+import { can } from '../../../lib/profile';
+import { usesPlainWording } from '../../../lib/hostContext';
+import { useNavigation } from '../../../stores/navigation';
 
 type Phase = 'idle' | 'signing-in' | 'cli-thread' | 'signed-in';
 
@@ -52,9 +55,15 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
       : tab.type === 'codex' && !isCliLogin ? 'codex-account'
         : 'cli-thread';
 
+  // Plain wording (hosted, or the business preview): "Your Claude account is not connected." and a
+  // Connect button; the CLI's own words stay for a developer only. Without the CLI there is no
+  // sign-in shell: a login that needs one goes to Settings > Accounts instead.
+  const plain = usesPlainWording();
+  const cli = can('threads.cli');
   const signIn = async () => {
     setError(null);
     if (flow !== 'cli-thread') { setPhase('signing-in'); return; }
+    if (!cli) { useNavigation.getState().navigate({ view: 'settings', section: 'accounts' }); return; }
     try {
       const id = await startCliSignIn(tab.sessionId, (harness?.provider ?? 'claude') as ProviderName, harnessLabel);
       useUI.getState().requestOpenTab(id);
@@ -102,7 +111,7 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
   } else {
     body = (
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button type="button" onClick={() => void signIn()} style={solid}><SignIn size={14} weight="bold" />Sign in</button>
+        <button type="button" onClick={() => void signIn()} style={solid}><SignIn size={14} weight="bold" />{plain ? 'Connect' : 'Sign in'}</button>
         {provider && <button type="button" onClick={() => setSwitching(true)} style={ghost}><UserSwitch size={14} weight="bold" />Switch account</button>}
       </div>
     );
@@ -113,13 +122,13 @@ export function SignedOutCard({ tab, auth, onRetry }: { tab: Terminal; auth: Aut
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
         <WarningCircle size={18} weight="fill" color="var(--color-status-yellow)" style={{ flexShrink: 0, marginTop: 1 }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: isMobile ? 15 : 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{`${who} is signed out`}</span>
-          <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{auth.reason}</span>
+          <span style={{ fontSize: isMobile ? 15 : 14, fontWeight: 600, color: 'var(--color-text-primary)' }}>{plain ? `${who} is not connected.` : `${who} is signed out`}</span>
+          {(!plain || cli) && <span style={{ fontSize: 12.5, color: 'var(--color-text-secondary)' }}>{auth.reason}</span>}
         </div>
       </div>
       {body}
       {error && <span role="alert" style={{ fontSize: 12.5, color: 'var(--color-status-red)' }}>{error}</span>}
-      {auth.detail && (
+      {auth.detail && cli && (
         <details style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>
           <summary style={{ cursor: 'pointer' }}>What the CLI said</summary>
           <span style={{ fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{auth.detail}</span>
