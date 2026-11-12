@@ -99,32 +99,65 @@ function collapseWs(s: string): string {
 }
 
 /**
+ * Context a harness puts in a `user`-role item by itself, never typed by the person:
+ *   Claude Code  `<system-reminder>`, `<local-command-caveat>`
+ *   Codex        `<environment_context>`, `<user_instructions>`, `<turn_aborted>`, and the AGENTS.md
+ *                injection (`# AGENTS.md instructions for <dir>` … `</INSTRUCTIONS>`)
+ * A body is context only when it is ENTIRELY such blocks (like the command-echo match), so a person
+ * who quotes one of the tags in a sentence keeps their message. `personText` cuts the blocks out of a
+ * mixed body (a person's message with a reminder appended).
+ */
+const CONTEXT_TAGS = ['system-reminder', 'local-command-caveat', 'environment_context', 'user_instructions', 'turn_aborted'] as const;
+const CONTEXT_BLOCK_G = new RegExp(`<(${CONTEXT_TAGS.join('|')})>[\\s\\S]*?</\\1>`, 'g');
+const AGENTS_MD_G = /(^|\n)\s*# AGENTS\.md instructions for[^\n]*\n[\s\S]*?<\/INSTRUCTIONS>/gi;
+
+function stripContext(text: string): string {
+  return text.replace(AGENTS_MD_G, '$1').replace(CONTEXT_BLOCK_G, '');
+}
+
+/** Whether `text` is harness-injected context and nothing else (see CONTEXT_TAGS). */
+export function isHarnessContext(text: string): boolean {
+  const rest = stripContext(text);
+  return rest !== text && rest.trim() === '';
+}
+
+/** The person's words of a `user` body: the text without any harness context block. */
+export function personText(text: string): string {
+  const rest = stripContext(text);
+  return rest === text ? text : rest.trim();
+}
+
+/**
  * Classify one `user`-role text body for the renderer: an ordinary human turn, an injected
  * event to show as a muted 'notice' (a task-notification summary or a slash-command echo
- * label), or a 'drop' (injected bookkeeping that carries no readable text). One predicate for
+ * label), harness 'context' (see isHarnessContext: never the person's message, never shown as
+ * one), or a 'drop' (injected bookkeeping that carries no readable text). One predicate for
  * every parse path, so the live ws fold, the transcript backfill and the REST page agree.
  */
-export type UserTextClass = { kind: 'user' } | { kind: 'notice'; text: string } | { kind: 'drop' };
+export type UserTextClass = { kind: 'user' } | { kind: 'notice'; text: string } | { kind: 'context' } | { kind: 'drop' };
 export function classifyUserText(text: string): UserTextClass {
   const summary = taskNotificationSummary(text);
   if (summary) return { kind: 'notice', text: summary };
-  const echo = commandEchoSummary(text);
+  if (isHarnessContext(text)) return { kind: 'context' };
+  // A command echo may carry a caveat block next to its tags: judge the echo without it.
+  const echo = commandEchoSummary(personText(text));
   if (echo !== null) return echo ? { kind: 'notice', text: echo } : { kind: 'drop' };
   return { kind: 'user' };
 }
 
 /**
  * Whether a whole `user` entry is injected bookkeeping the resume-anchor scan must skip — a
- * task notification OR a slash-command echo. Neither is a real prompt that a later assistant
+ * task notification, a slash-command echo or harness context. None is a real prompt that a later assistant
  * turn "answers", so anchoring a resume on one would restart from the wrong place.
  */
 export function isInjectedUserEntry(o: any): boolean {
   if (isTaskNotificationEntry(o)) return true;
   const c = o?.message?.content;
-  if (typeof c === 'string') return isCommandEcho(c);
+  const injected = (t: string) => isCommandEcho(t) || isHarnessContext(t);
+  if (typeof c === 'string') return injected(c);
   if (Array.isArray(c)) {
     const texts = c.filter((b: any) => b?.type === 'text' && typeof b.text === 'string');
-    return texts.length > 0 && texts.every((b: any) => isCommandEcho(b.text));
+    return texts.length > 0 && texts.every((b: any) => injected(b.text));
   }
   return false;
 }

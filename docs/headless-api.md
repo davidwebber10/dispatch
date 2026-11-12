@@ -189,6 +189,15 @@ are not in the journal: a turn cut by a drop shows when its `assistant` item lan
 `GET /api/terminals/:id/journal?before=<seq>&limit=<n>` (or `after=<seq>`) →
 `{"items":[{"seq":27,"kind":"assistant","at":"…","payload":{…}}],"firstSeq":1,"lastSeq":29,"hasMore":true}`.
 
+**Harness context is not the person.** A harness puts its own text in user-role items: Claude Code
+`<system-reminder>` and `<local-command-caveat>`; Codex `<environment_context>`, `<user_instructions>`,
+the AGENTS.md block (`# AGENTS.md instructions for …`) and `<turn_aborted>`. An item that holds only
+such text has `kind: "context"`, and its payload (and the live frame) carries `isMeta: true` and
+`dispatch_context: true`. Never show it as the person's message, never take a title from it, and do
+not count it as unread. When the person's own message has such a block appended, the journal keeps
+only the person's words. A slash command and its output (`<command-name>`, `<local-command-stdout>`)
+stay `kind: "notice"`: a short marker, not the person's words.
+
 ## 6. The events socket: `WS /api/events`
 
 One per page, all projects. No subscription; send the text `ping` to get `{"type":"pong"}`. Frames

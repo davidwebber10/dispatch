@@ -695,7 +695,8 @@ export interface StatusSnapshot {
  */
 export interface JournalItem {
   seq: number;
-  kind: 'user' | 'assistant' | 'tool' | 'result' | 'notice';
+  /** `context`: a user-role item the harness wrote by itself (its payload has `isMeta: true`): never the person's message. */
+  kind: 'user' | 'assistant' | 'tool' | 'result' | 'notice' | 'context';
   at: string;
   payload: unknown;
   truncated?: true;

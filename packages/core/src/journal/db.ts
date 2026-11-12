@@ -5,7 +5,8 @@
 
 import type Database from 'better-sqlite3';
 
-export type JournalKind = 'user' | 'assistant' | 'tool' | 'result' | 'notice';
+/** `context`: a user-role item the harness wrote by itself (a system reminder, Codex's environment block), never the person's. */
+export type JournalKind = 'user' | 'assistant' | 'tool' | 'result' | 'notice' | 'context';
 
 export interface JournalRow {
   terminal_id: string;

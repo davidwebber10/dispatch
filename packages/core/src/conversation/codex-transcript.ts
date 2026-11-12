@@ -26,6 +26,7 @@
  */
 
 import type { ConvItem } from './transcript.js';
+import { isHarnessContext, personText } from './task-notification.js';
 
 export function parseCodexRollout(text: string): ConvItem[] {
   const items: ConvItem[] = [];
@@ -81,7 +82,10 @@ function message(payload: Record<string, unknown>, ts?: string): ConvItem[] {
     // input_text on a human turn, output_text on the assistant's.
     if (block.type === 'input_text' || block.type === 'output_text') {
       const t = str(block.text);
-      if (t) texts.push(t);
+      // Codex puts its own context in user-role items (<environment_context>, <user_instructions>, the
+      // AGENTS.md injection, <turn_aborted>): never the person's message, so never a bubble.
+      if (t && role === 'user' && isHarnessContext(t)) continue;
+      if (t) texts.push(role === 'user' ? personText(t) : t);
     } else if (block.type === 'input_image') {
       const url = str(block.image_url) ?? str(block.url);
       if (url) out.push({ kind: 'image', imageUrl: url, imageFromUser: role === 'user', ts });

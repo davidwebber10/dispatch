@@ -8,7 +8,7 @@
  * render as user turns; see the queued_command branch in parseEntry).
  */
 
-import { classifyUserText } from './task-notification.js';
+import { classifyUserText, personText } from './task-notification.js';
 
 export interface ConvItem {
   /** 'notice' — a system-injected event Claude Code writes as a `user` line but which is not
@@ -174,9 +174,10 @@ function imageItem(b: any): ConvItem | undefined {
  */
 function userOrNotice(text: string, ts?: string, uuid?: string): ConvItem | null {
   const c = classifyUserText(text);
-  if (c.kind === 'drop') return null;
+  // Harness context (a system reminder, a caveat) is not the person's turn and no view shows it.
+  if (c.kind === 'drop' || c.kind === 'context') return null;
   if (c.kind === 'notice') return { kind: 'notice', text: c.text, ts, uuid };
-  return { kind: 'user', text, ts, uuid };
+  return { kind: 'user', text: personText(text), ts, uuid };
 }
 
 function toolTitle(name: string, input: any): string {

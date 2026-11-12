@@ -23,7 +23,7 @@
 //
 // A journal failure never stops a session: `commit` logs once and goes on.
 
-import { classifyUserText } from '../conversation/task-notification.js';
+import { classifyUserText, isHarnessContext, personText } from '../conversation/task-notification.js';
 import type { JournalKind, MessageJournal } from './journal.js';
 import { createJournalReplay, type JournalReplay, type JournalReplayOptions, type JournalReplaySource } from './replay.js';
 
@@ -71,6 +71,33 @@ export interface CommitSource { onCommit?: (event: unknown) => void }
 export const REPLAYED_MARK = 'journal_replayed';
 
 function isFrame(v: unknown): v is Frame { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
+/** Set (true) on a `user` item that is harness context only, with `isMeta` (journal kind `context`). */
+export const CONTEXT_MARK = 'dispatch_context';
+
+/**
+ * The user event without its harness context blocks (see isHarnessContext / personText), or the same
+ * event when it has none. A copy: the event the manager emits keeps its blocks.
+ */
+function withoutContext(e: Frame): Frame {
+  const content = e.message?.content;
+  if (typeof content === 'string') {
+    const kept = personText(content);
+    return kept === content ? e : { ...e, message: { ...e.message, content: kept } };
+  }
+  if (!Array.isArray(content)) return e;
+  let changed = false;
+  const blocks: unknown[] = [];
+  for (const b of content) {
+    if (isFrame(b) && b.type === 'text' && typeof b.text === 'string') {
+      if (isHarnessContext(b.text)) { changed = true; continue; }
+      const kept = personText(b.text);
+      if (kept !== b.text) { changed = true; blocks.push({ ...b, text: kept }); continue; }
+    }
+    blocks.push(b);
+  }
+  return changed ? { ...e, message: { ...e.message, content: blocks } } : e;
+}
 
 function streamFrame(event: Frame, parent: string): Frame {
   return parent ? { type: 'stream_event', event, parent_tool_use_id: parent } : { type: 'stream_event', event };
@@ -336,10 +363,21 @@ export class ThreadRecorder {
       return;
     }
     const classes = texts.filter((t) => t.trim()).map((t) => classifyUserText(t).kind);
-    const shown = classes.filter((k) => k !== 'drop');
-    if (!shown.length && !other) return; // nothing a client renders
+    const shown = classes.filter((k) => k !== 'drop' && k !== 'context');
+    if (!shown.length && !other) {
+      // Harness context only (a system reminder, Codex's environment or AGENTS.md block): a `context`
+      // item, marked `isMeta` so no client folds it into a bubble. The mark is set on the event itself,
+      // before the manager emits it, so a live viewer skips it the same way.
+      if (classes.includes('context')) {
+        e.isMeta = true;
+        e[CONTEXT_MARK] = true;
+        this.write('context', uuid, e, e);
+      }
+      return; // otherwise nothing a client renders
+    }
     const kind: JournalKind = shown.includes('user') || other ? 'user' : 'notice';
-    this.write(kind, uuid, e, e);
+    // A person's message with context appended (a reminder block): the journal keeps the person's words only.
+    this.write(kind, uuid, kind === 'user' ? withoutContext(e) : e, e);
   }
 
   private assistant(e: Frame): void {

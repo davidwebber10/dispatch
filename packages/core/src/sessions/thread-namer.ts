@@ -35,7 +35,7 @@ export function cleanName(raw: string): string | null {
 export function userPromptText(raw: string): string {
   let text = raw.trim();
   text = text.replace(/^# AGENTS\.md instructions for[^\n]*\n[\s\S]*?<\/INSTRUCTIONS>/i, '');
-  text = text.replace(/<(environment_context|user_instructions|system-reminder|local-command-caveat|context)>[\s\S]*?<\/\1>/gi, '');
+  text = text.replace(/<(environment_context|user_instructions|turn_aborted|system-reminder|local-command-caveat|context)>[\s\S]*?<\/\1>/gi, '');
   text = text.replace(/^Use this file as context:\s*[^\n]+\n?/gmi, '');
   return text.trim();
 }
