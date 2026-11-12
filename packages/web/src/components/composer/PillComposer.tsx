@@ -77,8 +77,9 @@ export function PillComposer({
   // 60 px tall on a phone (2026-11-06, was 48): 42 px keys inside 8 px padding and a 1 px border.
   const key = mobile ? 42 : 32;
   // The line height follows the text scale; the box grows if a scaled line no longer fits in it.
+  // On a phone the text does not go under 16px (fontVarInput), so its line height does not shrink either.
   const textScale = useSettings((s) => s.textScale);
-  const lineH = Math.round((mobile ? 22 : 21) * textScale);
+  const lineH = Math.round(mobile ? 22 * Math.max(1, textScale) : 21 * textScale);
   const minH = Math.max(key, lineH + 2);
 
   // Grow with the text, then scroll past half the window. Runs on every change, so a paste, a

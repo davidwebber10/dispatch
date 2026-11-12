@@ -5,6 +5,7 @@ import { useTabs, findTerminal } from '../../stores/tabs';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import type { AuthRequest } from '../../api/types';
 import { fontVar, fontVarInput } from '../../lib/fontSize';
+import { PHONE_HEADER_H } from '../layout/headerButton';
 
 /**
  * Mirrors AUTH_SIGNALS in core's auth/url-detect.ts (web cannot import core). The
@@ -88,10 +89,10 @@ export function AuthBanner() {
   const signIn = isSignIn(req);
   const title = signIn ? 'Authentication required' : 'Link to open';
 
-  // The phone header is calc(50px + env(safe-area-inset-top)) tall, so on a phone the card
+  // The phone header is calc(PHONE_HEADER_H + env(safe-area-inset-top)) tall, so on a phone the card
   // starts under it (header and tab bar stay tappable) and spans the width instead of
   // floating centred at top:48 over the nav. Desktop keeps its centred overlay.
-  const belowHeader = 'calc(50px + env(safe-area-inset-top) + 6px)';
+  const belowHeader = `calc(${PHONE_HEADER_H} + env(safe-area-inset-top) + 6px)`;
   const tap = isMobile ? 44 : undefined;
   const tapBtn = (b: React.CSSProperties): React.CSSProperties => (tap ? { ...b, height: 'auto', minHeight: tap, minWidth: tap } : b);
   const label = agentLabel ? `${title} — ${agentLabel}` : title;

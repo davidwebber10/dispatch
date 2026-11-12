@@ -141,7 +141,7 @@ function PercentStepper({ draft, setDraft, onCommit, onDec, onInc }: { draft: st
           onChange={(e) => setDraft(e.target.value.replace(/[^\d.]/g, ''))}
           onBlur={onCommit}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          style={{ width: lg ? 64 : 58, height: h, boxSizing: 'border-box', padding: '0 16px 0 4px', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', borderRadius: 0, color: 'var(--color-text-primary)', font: `500 ${lg ? fontVarInput(16) : fontVar(13)} var(--font-sans)` }} />
+          style={{ width: lg ? 'max(64px, 4rem)' : 'max(58px, 3.625rem)', height: h, boxSizing: 'border-box', padding: '0 max(16px, 1rem) 0 4px', textAlign: 'center', background: 'var(--color-elevated)', border: 'none', borderTop: '1px solid var(--color-border-strong)', borderBottom: '1px solid var(--color-border-strong)', borderRadius: 0, color: 'var(--color-text-primary)', font: `500 ${lg ? fontVarInput(16) : fontVar(13)} var(--font-sans)` }} />
         <span aria-hidden style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: fontVar(lg ? 14 : 12), color: 'var(--color-text-tertiary)', pointerEvents: 'none' }}>%</span>
       </span>
       <button type="button" aria-label="Raise the warning level" onClick={onInc} style={btn('r')}>+</button>

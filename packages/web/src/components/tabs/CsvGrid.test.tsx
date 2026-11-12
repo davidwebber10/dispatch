@@ -5,6 +5,7 @@ const { copyTextMock } = vi.hoisted(() => ({ copyTextMock: vi.fn((_t: string) =>
 vi.mock('../../lib/clipboard', async (orig) => ({ ...(await orig<typeof import('../../lib/clipboard')>()), copyText: copyTextMock }));
 
 import { CsvGrid } from './CsvGrid';
+import { useSettings } from '../../stores/settings';
 
 const CSV = 'name,qty\napples,3\npears,5\n';
 
@@ -227,6 +228,24 @@ describe('CsvGrid', () => {
 
       fireEvent.keyDown(grid, { key: 'Enter' });
       expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('v4');
+    });
+
+    it('at a large text scale the rows are taller, and the window arithmetic uses that height', () => {
+      // 150%: a 28px row cannot hold the text, so a row is 42px. The spacer above the rendered
+      // slice and the keyboard scroll must use 42, or the focused row leaves the view.
+      useSettings.setState({ textScale: 1.5 });
+      try {
+        const big = 'a,b\n' + Array.from({ length: 300 }, (_, i) => `v${i},${i}`).join('\n') + '\n';
+        const { container } = render(<CsvGrid content={big} path="d.csv" onChange={() => {}} />);
+        const grid = gridOf(container);
+        expect((screen.getByText('v4').closest('tr') as HTMLElement).style.height).toBe('42px');
+        fireEvent.scroll(grid, { target: { scrollTop: 42 * 100 } });
+        const spacer = container.querySelector('tbody tr[aria-hidden] td') as HTMLElement;
+        const firstShown = Number((container.querySelector('tbody tr:not([aria-hidden]) td') as HTMLElement).textContent);
+        expect(spacer.style.height).toBe(`${(firstShown - 1) * 42}px`);
+        expect(firstShown).toBeLessThanOrEqual(101);
+        expect(firstShown).toBeGreaterThan(80);
+      } finally { useSettings.setState({ textScale: 1 }); }
     });
 
     it('Enter in the editor advances into a row below the rendered window', () => {

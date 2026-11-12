@@ -13,5 +13,10 @@ export const HEADER_BOX: CSSProperties = {
   background: 'transparent', border: '1px solid transparent', borderRadius: 'var(--radius-md)',
 };
 /** Padding of a segmented header control, and its segments' height (36 - 2 border - 2 x 3 padding). */
+/**
+ * The phone header's height (without the safe-area inset). 50px at 100%. It follows a larger text
+ * scale (3.125rem = 50px at 100%, 75px at 150%), so a thread's name and status line fit in it.
+ */
+export const PHONE_HEADER_H = 'max(50px, 3.125rem)';
 export const HEADER_PAD = 3;
 export const HEADER_INNER = HEADER_H - 2 - 2 * HEADER_PAD;

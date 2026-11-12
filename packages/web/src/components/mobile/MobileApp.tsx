@@ -5,7 +5,7 @@ import { ConnectionStatus } from '../layout/ConnectionStatus';
 import { BrandSwitcher } from '../layout/BrandSwitcher';
 import { AlertBell } from '../layout/AlertBell';
 import { UsageChip } from '../layout/UsageChip';
-import { HEADER_BOX, HEADER_H } from '../layout/headerButton';
+import { HEADER_BOX, HEADER_H, PHONE_HEADER_H } from '../layout/headerButton';
 import { UsageBanner } from '../layout/UsageBanner';
 import { UpdateDot } from '../update/UpdateDot';
 import { PuzzlePiece } from '@phosphor-icons/react';
@@ -196,7 +196,7 @@ export function MobileApp() {
           onPick: (tab) => setPluginSheet({ key: p.key, terminalId: tab.id, sessionId: tab.sessionId }),
         }))} />
       <PluginTabSheet tabKey={pluginSheet?.key ?? null} terminalId={pluginSheet?.terminalId ?? null} sessionId={pluginSheet?.sessionId ?? null} onClose={() => setPluginSheet(null)} />
-      <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
+      <header style={{ position: 'relative', height: `calc(${PHONE_HEADER_H} + env(safe-area-inset-top))`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>
             <BrandSwitcher />
@@ -269,7 +269,7 @@ export function MobileApp() {
         {/* Centred section title, iOS-style, while drilled into a settings section
             (the back button on the left already reads "‹ Settings"). */}
         {level === 1 && inSettings && activeSettings && !settingsSubPage && (
-          <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: fontVar(16), fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
+          <span style={{ position: 'absolute', top: 'env(safe-area-inset-top)', left: 0, right: 0, height: PHONE_HEADER_H, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: fontVar(16), fontWeight: 600, color: 'var(--color-text-primary)' }}>{activeSettings.label}</span>
         )}
       </header>
       {/* Agents paused on a usage limit (#127): one line under the header, wraps to two. */}
