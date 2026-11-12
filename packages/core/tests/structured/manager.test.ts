@@ -947,7 +947,7 @@ it('mcpExpected: every init frame is checked; a later connector, a connector too
   const lines: any[] = [];
   setBoxLogForTest({ sink: (l) => lines.push(JSON.parse(l)), enabled: true });
   const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  const notices = () => m.getEvents('t3').filter((e: any) => e.subtype === 'dispatch_notice');
+  const notices = (): any[] => m.getEvents('t3').filter((e: any) => e.subtype === 'dispatch_notice');
   try {
     const ok = [{ name: 'dispatch', status: 'connected' }];
     m.spawn('t3', { command: process.execPath, args: [fake], workDir: process.cwd(), env: { FAKE_MCP_SERVERS: JSON.stringify(ok), FAKE_TOOLS: JSON.stringify(['Bash', 'mcp__dispatch__read_thread']) }, mcpExpected: ['dispatch'] });
