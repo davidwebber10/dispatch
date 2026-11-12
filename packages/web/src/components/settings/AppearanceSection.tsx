@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Check, Palette } from '@phosphor-icons/react';
 import { useSettings, ACCENTS, formatSidebarLimit, stepSidebarLimit, type DocEditor, type Density } from '../../stores/settings';
-import { THEMES, SYSTEM_DARK, SYSTEM_LIGHT, getTheme, resolveTokens, onAccent, type Theme } from '../../themes';
+import { pickableThemes, systemDark, systemLight, getTheme, resolveTokens, onAccent, type Theme } from '../../themes';
+import { useFeature } from '../../lib/profile';
+import { isBusinessPreview, realHostContext, setBusinessPreview } from '../../lib/hostContext';
 import { useActiveTheme } from '../../themes/apply';
 import { SettingsPage, SettingsGroup, SettingsRow, Toggle, Stepper, Sheet } from './ui';
 import { Select } from '../common/Select';
@@ -28,12 +30,12 @@ function Swatch({ theme, height = 44 }: { theme: Theme; height?: number }) {
   );
 }
 
-/** The "System" preview: half Dispatch Light, half Dispatch Dark (the device's setting picks). */
+/** The "System" preview: half the light theme, half the dark one of the system pair (Dispatch, or OS when hosted). */
 function SystemSwatch({ height = 44 }: { height?: number }) {
   return (
     <span style={{ position: 'relative', display: 'block', height }}>
-      <span style={{ position: 'absolute', inset: 0, clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}><Swatch theme={SYSTEM_LIGHT} height={height} /></span>
-      <span style={{ position: 'absolute', inset: 0, clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }}><Swatch theme={SYSTEM_DARK} height={height} /></span>
+      <span style={{ position: 'absolute', inset: 0, clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}><Swatch theme={systemLight()} height={height} /></span>
+      <span style={{ position: 'absolute', inset: 0, clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }}><Swatch theme={systemDark()} height={height} /></span>
     </span>
   );
 }
@@ -52,8 +54,10 @@ function ThemeTile({ label, on, onPick, children }: { label: string; on: boolean
 function ThemePicker() {
   const setting = useSettings((s) => s.theme);
   const pick = (id: string) => useSettings.getState().setTheme(id);
-  const light = THEMES.filter((t) => t.kind === 'light');
-  const dark = THEMES.filter((t) => t.kind === 'dark');
+  // A business person picks only OS light, OS dark or System (lib/profile.ts 'themes.all').
+  const themes = pickableThemes(useFeature('themes.all'));
+  const light = themes.filter((t) => t.kind === 'light');
+  const dark = themes.filter((t) => t.kind === 'dark');
   return (
     <div role="radiogroup" aria-label="Theme" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={tileGrid}>
@@ -151,20 +155,34 @@ export function AppearanceSection() {
   const editor = useSettings((s) => s.editor);
   const set = useSettings.getState;
   const [themesOpen, setThemesOpen] = useState(false);
+  // Profile gates (lib/profile.ts): the accent belongs to the full theme choice; the terminal
+  // settings to the CLI; "Open docs in" names an editor on the computer, which a hosted person has not.
+  const allThemes = useFeature('themes.all');
+  const cli = useFeature('threads.cli');
+  const editorRow = useFeature('settings.editor');
   // The swatches show the pick; only a custom color, which has no swatch of its own, says it in words.
   const accentName = accent !== '' && !ACCENTS.some((a) => a.toLowerCase() === accent.toLowerCase()) ? <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{accent.toUpperCase()}</span> : null;
 
   return (
     <SettingsPage intro="These settings apply to this device only, so a phone and a computer can differ.">
+      {/* Developer profile only (the real one, so the switch stays to turn the preview off). */}
+      {realHostContext().profile === 'developer' && (
+        <SettingsGroup title="Profile preview" footer="A preview in this browser only. The workspace stays in the developer profile: nothing is blocked, and terminal threads still work for other devices. The page reloads.">
+          <SettingsRow label="Preview as business user" hint="Hides the developer features and uses the POLYWOOD OS theme, as a business person sees it."
+            control={<Toggle on={isBusinessPreview()} label="Preview as business user" onClick={() => setBusinessPreview(!isBusinessPreview())} />} />
+        </SettingsGroup>
+      )}
       <SettingsGroup title="Theme">
         <SettingsRow label="Theme" ariaLabel={`Theme: ${themeName(theme)}`} value={<ThemeValue setting={theme} />} onClick={() => setThemesOpen(true)} />
-        <SettingsRow label="Accent" hint="Buttons, switches and highlights." value={accentName}>
-          <AccentPicker />
-        </SettingsRow>
+        {allThemes && (
+          <SettingsRow label="Accent" hint="Buttons, switches and highlights." value={accentName}>
+            <AccentPicker />
+          </SettingsRow>
+        )}
       </SettingsGroup>
 
       <SettingsGroup title="Text size">
-        <SettingsRow label="Terminal" control={<Stepper value={String(fontSize)} onDec={() => set().setFontSize(fontSize - 1)} onInc={() => set().setFontSize(fontSize + 1)} />} />
+        {cli && <SettingsRow label="Terminal" control={<Stepper value={String(fontSize)} onDec={() => set().setFontSize(fontSize - 1)} onInc={() => set().setFontSize(fontSize + 1)} />} />}
         <SettingsRow label="Project names" control={<Stepper value={String(projectFontSize)} onDec={() => set().setProjectFontSize(projectFontSize - 1)} onInc={() => set().setProjectFontSize(projectFontSize + 1)} />} />
         <SettingsRow label="Thread and file names" control={<Stepper value={String(sidebarFontSize)} onDec={() => set().setSidebarFontSize(sidebarFontSize - 1)} onInc={() => set().setSidebarFontSize(sidebarFontSize + 1)} />} />
       </SettingsGroup>
@@ -183,19 +201,21 @@ export function AppearanceSection() {
         )}
       </SettingsGroup>
 
-      <SettingsGroup title="Terminal">
+      {cli && <SettingsGroup title="Terminal">
         <SettingsRow label="Scrollback" control={<Stepper value={scrollback.toLocaleString()} unit=" lines" onDec={() => set().setScrollback(scrollback - 5000)} onInc={() => set().setScrollback(scrollback + 5000)} />} />
         <SettingsRow label="Autocorrect" hint="Spelling help in a CLI thread's composer on a phone."
           control={<Toggle on={ptyAutocorrect} label="Autocorrect in the terminal composer" onClick={() => set().setPtyAutocorrect(!ptyAutocorrect)} />} />
         <SettingsRow label="Pretty hint" hint="The “Read best in Pretty” bar on CLI threads."
           control={<Toggle on={showPrettyHint} label="Pretty hint" onClick={() => set().setShowPrettyHint(!showPrettyHint)} />} />
-      </SettingsGroup>
+      </SettingsGroup>}
 
       <SettingsGroup title="Workspace">
         <SettingsRow label="Multi-pane tabs (Operator)" hint="Drag tabs to rearrange or split them."
           control={<Toggle on={multiPane} label="Multi-pane tabs (Operator)" onClick={() => set().setMultiPane(!multiPane)} />} />
-        <SettingsRow label="Open docs in" hint="Where “Open in editor” opens a doc."
-          control={<Select ariaLabel="Open docs in" value={editor} onChange={(v) => set().setEditor(v as DocEditor)} style={{ width: 140 }} options={DOC_EDITORS} />} />
+        {editorRow && (
+          <SettingsRow label="Open docs in" hint="Where “Open in editor” opens a doc."
+            control={<Select ariaLabel="Open docs in" value={editor} onChange={(v) => set().setEditor(v as DocEditor)} style={{ width: 140 }} options={DOC_EDITORS} />} />
+        )}
       </SettingsGroup>
 
       <Sheet open={themesOpen} onClose={() => setThemesOpen(false)} title="Theme">

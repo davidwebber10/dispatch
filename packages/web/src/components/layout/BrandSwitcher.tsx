@@ -2,13 +2,21 @@ import { useState } from 'react';
 import { Terminal } from '@phosphor-icons/react';
 import { useServers, currentServer, currentLabel } from '../../stores/servers';
 import { useUpdate } from '../../stores/update';
+import { usesOsLook } from '../../lib/hostContext';
+import { HostedBrand } from './HostedBrand';
 
 /**
  * The rail's logo button. Compact by necessity — it lives in the 64px icon rail —
  * so the product name, daemon version, and server list all moved into the dropdown,
  * which opens to the RIGHT of the rail rather than below.
  */
-export function BrandSwitcher() {
+export function BrandSwitcher({ variant = 'rail' }: { variant?: 'rail' | 'header' } = {}) {
+  // A hosted workspace (or the business preview) has no servers to switch: the way back to OS instead.
+  if (usesOsLook()) return <HostedBrand variant={variant} />;
+  return <LocalBrandSwitcher />;
+}
+
+function LocalBrandSwitcher() {
   const [open, setOpen] = useState(false);
   // Same source as the Settings version line: the connected daemon's running version,
   // loaded into the update store at startup (App bootstrap → GET /api/state/update).

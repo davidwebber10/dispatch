@@ -198,7 +198,7 @@ export function MobileApp() {
       <header style={{ position: 'relative', height: 'calc(50px + env(safe-area-inset-top))', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px', paddingTop: 'env(safe-area-inset-top)', background: 'var(--color-pane)' }}>
         {level === 0 ? (
           <>
-            <BrandSwitcher />
+            <BrandSwitcher variant="header" />
             {/* One-line top bar: the project search lives IN the header beside the app icon
                 (it used to be a second full-width row below it). Sized down to the header's
                 50px; fontSize stays 16 — anything smaller makes iOS zoom the page on focus. */}
