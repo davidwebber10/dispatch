@@ -404,7 +404,10 @@ export class ClaudeStructuredSessionManager extends StructuredEmitter implements
     if (this.sessions.has(terminalId)) this.kill(terminalId);
     const child = spawn(opts.command, opts.args, {
       cwd: opts.workDir,
-      env: { ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
+      // CLAUDE_CODE_ARTIFACT=1 (2026-11-12): print mode (`claude -p`) turns the Artifact tools off by
+      // default ("sdk_default_off"), so a Pretty thread had none and the CLI thread had them. It comes
+      // first: a value in the daemon's environment or the thread's env still wins.
+      env: { CLAUDE_CODE_ARTIFACT: '1', ...inheritedEnv(), ...this.defaultEnv, ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
     child.stdin.on('error', () => {}); // Fix 2: suppress EPIPE if child closes stdin while alive
