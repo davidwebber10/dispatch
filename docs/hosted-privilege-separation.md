@@ -89,14 +89,30 @@ design does not change when that happens.
 
 `privsep/spawn-guard.ts` replaces the process-creation entry points of `child_process`
 (`ChildProcess.prototype.spawn`, which `spawn`, `exec`, `execFile` and `fork` all use, and the three
-synchronous functions) and wraps the PTY library. Each call gets `uid` and `gid` of the agent user,
+synchronous functions) and wraps the PTY library (`spawn` and its two older names, `fork` and
+`createTerminal`). Each call gets `uid` and `gid` of the agent user,
 and the environment is filtered (section 5). There is no option to
 start a child as the daemon user. In the forked child the runtime calls `setgroups(0)`, `setgid`,
 `setuid` and then `exec`. The kernel clears the permitted, effective and ambient capability sets on
 that uid change. `no_new_privs` and the bounding set are inherited.
 
-At start the daemon runs `id -u` through every entry point (asynchronous, synchronous, PTY) and
-refuses to start when any answer is not the agent uid.
+At start the daemon runs `id -u` through every entry point (asynchronous, synchronous, each PTY name)
+and refuses to start when any answer is not the agent uid.
+
+The guard changes the two modules, not their callers, so a new call site in any file is covered. What
+it cannot cover is another way to run code: a worker thread or the `vm` module (both run inside the
+daemon, as the daemon's user), a native add-on, the PTY library's native binding. A test
+(`tests/privsep/spawn-sites.test.ts`) keeps the list of files that can start a process, refuses
+every such other way in the daemon's source, and fails when the runtime or the PTY library gains a
+process-creating export that the guard does not replace.
+
+### The PATH
+
+On a box with privilege separation the daemon keeps the PATH the image gave the container. A local
+install asks a login shell for its PATH; on a box that shell would read `~/.profile` and `~/.bashrc`,
+which are the agent's. A workload could then put its own `claude` or `git` in front of the image's
+for every later thread, and have its commands run at each start of the daemon. No login shell is
+asked. (A developer's terminal thread is itself a login shell of the agent; that is the agent's own.)
 
 ### Terminals
 
@@ -171,6 +187,20 @@ table of section 6 and nothing else.
   Routes that change what a later thread runs (integrations, schedules, roles, plugins, skills) stay
   subject to the profile gate: a business profile refuses them for every principal.
 - The router-facing port stays reachable from the network and still needs the inbound token.
+- Routes added later follow the same two rules without any work of their own, because both rules sit
+  in front of the routes: the owner credential is refused from a local peer at the gate, and a route
+  with no key rule is the owner's. So the Inbox routes (`/api/inbox…`) and the connections refresh
+  (`POST /api/os/connections/refresh`) answer 401 or 403 to everything inside the box. The event
+  stream of a company system (`GET /api/os/mcp/<system>`) is a thread's: a thread key on loopback
+  opens it, and only for a system the platform named for the person (inside the thread's own limit
+  when it has one).
+- The Inbox. An agent hands the person a file or a text with the tool of the bundled Inbox plugin.
+  That tool runs under the thread's own key and uses the plugin's storage routes, which the plugin
+  grants to threads: `POST /api/plugins/previews/files` and `PUT /api/plugins/previews/data/<key>`.
+  The bytes of a drop's file go to the owner only (the plugin's file route and the Inbox file route
+  have no key rule). A thread's key CAN list the documents in the plugin's storage, so it can read
+  the title and text of another thread's drop: threads of one box are not isolated (D2). The value of
+  a `secret` drop is never read back under the business profile, by any principal.
 
 ## 7. State (question 4)
 
@@ -204,6 +234,18 @@ data, never authority:
 Reads are different: the daemon reads transcripts and project files with its own rights. What it
 reads is shown to the owner or parsed as data; the state root holds no secret (section 5), and the
 file routes refuse a path outside the person's folders after resolving it.
+
+One read is NOT made with the daemon's rights: the copy of a file that a thread posts (a drop for the
+Inbox, any plugin file). The daemon keeps that copy in its own state
+(`<state>/plugin-files/<plugin>/<file id><ext>`, root, `0600`, in a `0700` folder) and serves it later
+by id through an owner route. A workload chooses the path and can swap a folder of it for a link
+between the daemon's check and its read, so a read with root rights could put a file of the daemon
+into a copy. The bytes are therefore read AS THE AGENT (`agentReadFile` in `privsep/agent-fs.ts`: one
+small process under the agent's uid opens the path without following a link at its end, checks on the
+open file that it is a regular file within the size limit, and sends the bytes back on a pipe). The
+kernel applies the agent's rights to every part of the path, so the copy can hold only what the agent
+could read itself. A posted file that got no copy (too large, or the read was refused) is served from
+the project the same way, as the agent.
 
 ### What persists in agent-writable files (prompt-injection persistence)
 
@@ -370,6 +412,13 @@ credential endpoint cannot be learned by a workload; `fs.protected_symlinks`; us
   is in the state root); the Doppler secrets MCP server (its config is in the state root); per-thread
   Grok homes (a Grok thread runs without the injected servers and hooks); the in-app CLI installer
   (the image's CLIs are used). Skills installed from a marketplace were not exercised.
+- Working on a separated box, and in the proof: the Inbox (the bundled plugin `previews`). Its MCP
+  server is code of the image (`/app/packages/plugins`, readable by the agent), it runs as a child of
+  the harness with the thread's key, and it needs only the daemon's routes. Small copies of images
+  (thumbnails) are not made on a box: the image has no resizer; the original is served.
+- A thread can read the title and text of another thread's Inbox drop through the plugin's storage
+  route, and under the developer profile the value of a `secret` drop too (section 6). The files of a
+  drop, and under the business profile a secret's value, go to the owner only.
 - Proven only with a stand-in for the Claude CLI. The real Claude, Codex, OpenCode and Grok CLIs and
   the real sign-in flows were not run under the two-user layout.
 - If an agent obtains the task role's credentials, it can read and change its own box's daemon state
@@ -383,11 +432,33 @@ credential endpoint cannot be learned by a workload; `fs.protected_symlinks`; us
 root, read-only root file system, a volume for the home and one for the state), a stand-in for the
 platform and a stand-in for the Claude CLI. It prints:
 
-- what works: start and self-check, a chat thread, a developer terminal, files in both directions,
-  the sign-in state, the process table, a planted link that cannot redirect the owner's actions;
-- the attack list (`attack.sh`), run AS A WORKLOAD: once in a developer shell the daemon started,
-  once by the harness process itself under the business profile. Every attempt must fail;
-- restart: threads, history and sign-in state survive;
+- what works: start and self-check with the capabilities the platform's task definition leaves, the
+  capability list, the platform's two readiness calls, a chat thread, a developer terminal, files in
+  both directions, the sign-in state, the process table, a planted link that cannot redirect the
+  owner's actions;
+- the Inbox, end to end, under both profiles: a thread's harness starts an MCP client
+  (`agent-work.mjs`) with the harness's own arguments and key; it starts the Inbox server from the
+  thread's MCP config and sends a CSV file and a secret; the owner route lists the drop and serves
+  the file byte for byte; the thread's own key gets 403 on the owner routes and on the file;
+- live tools: a system that is not connected has a server with the one tool `connect`; the person
+  connects it on the stand-in platform; `list_changed` reaches the harness's client on the event
+  stream and through the stdio bridge; the same thread then lists the real tools;
+- the attack list, run AS A WORKLOAD: once in a developer shell the daemon started, once by the
+  harness process itself under the business profile. Every attempt must fail. `attack.sh`: identity,
+  the tokens, the state, the files the daemon writes for workloads, the managed policy files and the
+  harness programs, signals, the API with every credential a workload can collect, the platform
+  directly, persistence. `attack-routes.mjs`: the Inbox routes and the connections refresh with every
+  credential at loopback, `::1` and the box's own address; the event stream of a system the thread
+  was not given; a hunt for the token values and for a secret drop's value in every answer a key can
+  get; a link, a linked folder and a folder swapped for a link DURING the daemon's read of a posted
+  file (the proof script then reads every copy the daemon kept, from outside the box); twenty
+  spellings of each new path. `nested-harness.sh`, in a box with the image's real harness programs:
+  a second Claude Code and a second Codex with each flag that asks to skip approvals;
+- restart: threads, history, the Inbox and sign-in state survive; a `claude` that a workload put on
+  the login PATH before the restart is not the harness of a thread after it, and the daemon's start
+  ran no start file of the home;
+- the same image on the task definition the platform writes today (no user, one volume, ONE token
+  value): it starts as one user and does not report `privsep-v1`; and separated with one token value;
 - an existing box: a home made by an image from before this work is imported on the first start.
 
 `docker exec` is not used to run the attacks: it makes a process the daemon never started, with the

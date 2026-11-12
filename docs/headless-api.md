@@ -33,7 +33,7 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 
 ```json
 {"profile":"business","hosted":true,"osBaseUrl":"http://127.0.0.1:48812","ownerEmail":"person@example.com",
- "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2"]}
+ "capabilities":["base-path","os-tools-proxy","profile","headless-v1","idle-info","gate-v2","inbox-v1","live-tools-v1","privsep-v1"]}
 ```
 
 | Capability | Meaning |
@@ -44,6 +44,9 @@ stub OS, a scripted `claude`). Ids, times and paths are from that run; long valu
 | `headless-v1` | This document, including `GET /api/chats`. |
 | `idle-info` | The heartbeat reports `automations` and a real `lastActivityAt` (`docs/hosted.md`). |
 | `gate-v2` | The business gate decides from the route that matched, with default deny (section 9); a path has one spelling; the file routes serve the person's own folders only. |
+| `inbox-v1` | The Inbox routes of section 11 exist. A view that shows the Inbox checks for it first. |
+| `live-tools-v1` | A running thread learns of a changed tool list: `POST /api/os/connections/refresh` is the platform's signal, and a system that is not connected has a `connect` tool (`docs/hosted.md`, "Live tool changes"). |
+| `privsep-v1` | Only when THIS START proved privilege separation (`docs/hosted-privilege-separation.md`): absent on a box that runs as one user. Require it for a business person. |
 
 `automations-safe` is NOT advertised: a business person may not start automations (section 9).
 

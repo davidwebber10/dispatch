@@ -174,9 +174,13 @@ EXPOSE 3456
 ENV DISPATCH_WEB_DIST=/app/packages/web/dist \
     PORT=3456
 
-# TRANSITIONAL (2026-11-12): the platform still issues ONE value for DISPATCH_BOX_TOKEN and OS_BOX_TOKEN.
-# Without this switch the daemon refuses to start with one value in both roles (platform/box-secrets.ts).
-# With two different values the switch does nothing. REMOVE THIS LINE when the platform issues two.
+# TRANSITIONAL (kept on 2026-11-12, after a read of the platform's provisioner): the platform code that
+# runs today writes ONE value into DISPATCH_BOX_TOKEN and OS_BOX_TOKEN. Its code for privilege
+# separation mints two different values, but only when it registers a new task definition, so a box gets
+# them at its next rebuild. This image must start in both situations. Without this switch the daemon
+# refuses to start with one value in both roles (platform/box-secrets.ts); with two different values the
+# switch does nothing. REMOVE THIS LINE when every box has been rebuilt by platform code that mints two.
+# (The name holds the word TOKEN; the value is a switch, not a secret.)
 ENV DISPATCH_ALLOW_SHARED_BOX_TOKEN=1
 
 # The default user is the runtime user: the daemon, `docker exec` and any other command run as uid 1000.

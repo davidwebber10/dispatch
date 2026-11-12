@@ -95,11 +95,16 @@ of a business person). See `packages/core/src/os/approvals.ts`.
   CLI's error text, `claude auth status`). Every string is redacted: no code, token, e-mail, cookie or
   URL query. A local install writes none of these lines.
 - **Capabilities.** `platform/capabilities.ts` (`base-path`, `os-tools-proxy`, `profile`,
-  `headless-v1`, `idle-info`, `gate-v2`) rides the heartbeat, `GET /api/host-context` and
-  `GET /api/os/connections`. `automations-safe` is not advertised. OS should admit a business person
-  only to a box that lists `gate-v2`. `privsep-v1` is added to the list only when THIS START proved
-  privilege separation (hosted-privilege-separation.md): OS should require it for a business person
-  too.
+  `headless-v1`, `idle-info`, `gate-v2`, `inbox-v1`, `live-tools-v1`) rides the heartbeat,
+  `GET /api/host-context` and `GET /api/os/connections`. `inbox-v1`: the Inbox routes for a headless
+  view exist. `live-tools-v1`: the event stream of a company system, the `connect` tool of a system
+  that is not connected, and the refresh signal exist ("Live tool changes"). `automations-safe` is not
+  advertised. OS should admit a business person only to a box that lists `gate-v2`. `privsep-v1` is
+  added to the list only when THIS START proved privilege separation
+  (hosted-privilege-separation.md): OS should require it for a business person too.
+- **PATH.** On a box with privilege separation the daemon keeps the PATH the image gave the
+  container. It asks no login shell: the start files of a login shell are in the person's home, which
+  is the agent's, so a workload could otherwise choose what `claude` or `git` means for later threads.
 
 ## Live tool changes
 
@@ -147,12 +152,25 @@ platform. Each has that one job (`packages/core/src/platform/box-secrets.ts`):
   (compatibility, …)`. The box log's `daemon.start` carries `tokenMode` (`split`, `shared-compat`,
   `no-inbound`).
 - One value in both roles stops the start (`SharedBoxTokenError`), unless
-  `DISPATCH_ALLOW_SHARED_BOX_TOKEN=1`. **The image sets that switch today**, because the platform
-  still issues one value for both. When the platform issues two different values the daemon runs in
-  `split` mode with no other change; then remove the `ENV` line from `docker/hosted/Dockerfile`.
+  `DISPATCH_ALLOW_SHARED_BOX_TOKEN=1`. **The image sets that switch, and keeps it for now**
+  (decision of 2026-11-12, after a read of the platform's provisioner). The platform code that runs
+  today writes ONE value into both variables. The platform code for privilege separation mints two
+  different values, but only when it registers a new task definition for a box: a box gets them at its
+  next rebuild, not before. So this image must start in both situations, and it does (the proof starts
+  it with one value in the one-user layout and in the separated layout). With two different values
+  the switch does nothing and the start line says `split`. Remove the `ENV` line from
+  `docker/hosted/Dockerfile` when every box of every environment has been rebuilt by platform code
+  that mints two values; from then on one value in both roles is an error again.
 
-What this does not do: a process that runs as the daemon's own user can read the daemon's first
-environment block (`/proc/<pid>/environ`) and its memory. That needs the agents to run as another user.
+How the two values arrive depends on the layout:
+
+- **With privilege separation** (started as root with the state volume): the entrypoint writes both
+  into a pipe and removes them from the environment it gives the daemon; the daemon reads the pipe
+  once (`privsep/secrets.ts`). They are in no environment a workload can read and in no file.
+- **Without it** (one user): the daemon reads them from its environment and deletes them there. A
+  process that runs as the daemon's own user can still read the daemon's first environment block
+  (`/proc/<pid>/environ`) and its memory. Only the separated layout closes that, and only that layout
+  reports `privsep-v1`.
 
 ## Image
 
@@ -270,15 +288,122 @@ state is in that volume, below a folder only root can enter. The owner credentia
 peer inside the box. A self-check at each start, run as uid 1000, decides whether the box reports
 `privsep-v1`.
 
-What the platform sets for it (this replaces the rows above where they differ):
-
-| Setting | Value | Why |
-| --- | --- | --- |
-| `user` | `"0"` | Only root can start a process as another user. Without it (or without the state volume) the box runs as one user and does not report `privsep-v1` |
-| `mountPoints` | the home at `/home/dispatch`; a second access point at `/var/lib/dispatch/state`; task volumes at `/run/dispatch` and `/tmp` | State outside the home; two writable paths on the task's disk for a read-only root file system |
-| `linuxParameters.capabilities` | `drop` everything except `CHOWN DAC_OVERRIDE FOWNER KILL SETGID SETUID SETPCAP` | The daemon keeps the first six; the entrypoint needs `SETPCAP` once to drop the rest from the bounding set |
-| env `DISPATCH_PRIVSEP` | `1` (or unset: on when started as root with the state volume) | `0` forces the one-user layout |
-| env `DISPATCH_MIGRATE_LEGACY_HOME` | `1` until the box has reported `privsep-v1` once | One-time import of the state of a box that kept it in the home |
-
 Box log lines: `privsep.prepare` (imported, removed, skipped) and `privsep.proof` (guardOk, selfCheck,
 failures).
+
+## The task definition contract (image `4.6.0-os.5` and later)
+
+This section replaces "Task definition settings for the platform" above for a box with privilege
+separation. It is what the image EXPECTS. A row marked **start** stops the container when it is not
+met; a row marked **claim** lets the box run as one user without `privsep-v1`, so the platform then
+refuses a business person.
+
+### The container
+
+| Setting | Value | If it is not so |
+| --- | --- | --- |
+| `user` | `"0"` | With `DISPATCH_PRIVSEP=1` and another user: the entrypoint stops (**start**). With `DISPATCH_PRIVSEP` unset: one user (**claim**) |
+| `linuxParameters.initProcessEnabled` | `true` | Children of the harnesses are not reaped |
+| `linuxParameters.capabilities.drop` | `AUDIT_WRITE`, `FSETID`, `MKNOD`, `NET_BIND_SERVICE`, `NET_RAW`, `SETFCAP`, `SYS_CHROOT` | These seven are what the image never needs |
+| capabilities that must REMAIN | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL`, `SETGID`, `SETUID` (the daemon keeps them, in its bounding set) and `SETPCAP` (the entrypoint needs it once, to drop every other capability from the bounding set; the daemon does not keep it) | Without `SETPCAP`, `SETUID` or `SETGID`: `setpriv` fails and the container stops (**start**). Fargate can add no capability back, so none of the seven may be dropped. `drop: ["ALL"]` is for the one-user layout only |
+| `linuxParameters.capabilities.add` | nothing | |
+| `readonlyRootFilesystem` | `true` (the image supports `false` too) | With `true` the four mounts below are the only writable places |
+| `portMappings` | container port `3456`, TCP | |
+| `image` | by digest | |
+| `healthCheck` | none needed; the platform asks `GET <base path>/api/sessions` and `GET <base path>/api/providers` with the inbound token from another host | A call from inside the box with the inbound token gets 401: the owner credential is refused from a local peer |
+| ECS Exec | leave it off for a business person's box. A session is a root process the daemon did not start: it has the container's first environment (both tokens) and none of the limits of a workload. It also needs a writable root file system | |
+
+### Volumes and mount points
+
+| Volume | Kind | `containerPath` | `readOnly` | What the image needs of it |
+| --- | --- | --- | --- | --- |
+| `home` | EFS, access point 1, transit encryption on | `/home/dispatch` | `false` | The access point ENFORCES the POSIX user `1000:1000` (the agent). Root directory owned by `1000:1000`. The daemon (root) and the agent both act as uid 1000 on it |
+| `state` | EFS, access point 2, transit encryption on | `/var/lib/dispatch/state` | `false` | The access point enforces a POSIX user that NO process of the box runs as (the platform uses `990:990`), root directory mode `0700`, outside every home. The lock inside the box is the parent folder `/var/lib/dispatch`, which is the image's own (root, `0700`): the mount must leave that folder's owner and mode as the image made them, or the entrypoint stops (**start**). Without this volume and without `DISPATCH_PRIVSEP=1`: one user (**claim**). With `DISPATCH_PRIVSEP=1` and no volume: the box starts, proves the separation, and LOSES its state with the task |
+| `run` | task volume (the task's own disk) | `/run/dispatch` | `false` | Arrives empty or with the image's folders; the entrypoint (root) makes `agent/` (root, `0755`) and `private/` (root, `0700`) again. Emptied at every start. Needs `CHOWN` |
+| `tmp` | task volume | `/tmp` | `false` | Mode `1777`, taken from the image's `VOLUME` declaration. If the platform's volume arrives as `0755 root` the harnesses cannot write scratch files (threads fail, the daemon starts) |
+
+The two access points and their identities: access point 1 is the person's home, enforced user
+`1000:1000`. Access point 2 is the daemon's state of the same box, enforced user `990:990`. Each box
+has its own task role, whose only file-system permission is `ClientMount` and `ClientWrite` through
+these two access points; the volumes use IAM authorization (`authorizationConfig.iam: ENABLED`),
+which needs transit encryption. No `ClientRootAccess` is needed.
+
+### Environment variables
+
+| Variable | Value | Notes |
+| --- | --- | --- |
+| `DISPATCH_PRIVSEP` | `1` | Asks for the separation. With it the entrypoint refuses to start as another user than root. Unset: on only when started as root with a volume at the state path. `0`: one user |
+| `DISPATCH_BOX_TOKEN` | the INBOUND token | A plain `environment` value or a `secrets` value: the image reads it from the container's environment either way. The entrypoint moves it into a pipe; it is in no environment below PID 1 |
+| `OS_BOX_TOKEN` | the OUTBOUND token, a different value | The same delivery. One value in both is accepted only while the image carries `DISPATCH_ALLOW_SHARED_BOX_TOKEN=1` ("The two tokens") |
+| `OS_BASE_URL` | where the box calls the platform | With `OS_BOX_TOKEN` it is what "hosted" means |
+| `OS_PUBLIC_URL` | the browser-facing platform origin | |
+| `DISPATCH_OWNER_EMAIL`, `DISPATCH_BOX_ID`, `DISPATCH_BASE_PATH`, `DISPATCH_PROFILE` | as before | `DISPATCH_PROFILE` is the first profile only; the platform's live answer wins |
+| `DISPATCH_MIGRATE_LEGACY_HOME` | `1` until the box has reported `privsep-v1` once, then absent | The one-time import of state that an older image kept in the home. Without it an old home is left exactly as it is and the box starts with empty state |
+| `HOME` | `/home/dispatch` (the image sets it too) | |
+| proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, both spellings), `NODE_USE_ENV_PROXY` | when the platform locks the network | They pass through to the daemon and to every workload. `NO_PROXY` must name `127.0.0.1` and `localhost`: a thread reaches the daemon on loopback. Node in the image is 22.23, which reads `NODE_USE_ENV_PROXY` |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | NEVER | The entrypoint stops when one is set (**start**) |
+| `ANTHROPIC_AUTH_TOKEN` | only with `DISPATCH_ALLOW_MODEL_GATEWAY=1` | Otherwise the entrypoint stops (**start**). The model-gateway mode writes `/etc/claude-code`, so it does not work with a read-only root file system |
+| set by the container runtime: `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, `ECS_CONTAINER_METADATA_URI`, `ECS_CONTAINER_METADATA_URI_V4`, `ECS_AGENT_URI` | | The daemon removes them from its own environment and from every child's. PID 1 keeps them (root only) |
+
+What the image sets itself and the platform must not override: `DISPATCH_AGENT_UID`,
+`DISPATCH_AGENT_GID`, `DISPATCH_STATE_DIR`, `DISPATCH_AGENT_RUN_DIR`, `DISPATCH_SECRETS_FD` (the
+entrypoint), `DISPATCH_WEB_DIST`, `PORT`, `SHELL`, `PATH`.
+
+### What the box then reports
+
+`GET <base path>/api/host-context` and every heartbeat: `base-path`, `os-tools-proxy`, `profile`,
+`headless-v1`, `idle-info`, `gate-v2`, `inbox-v1`, `live-tools-v1`, and `privsep-v1` when the self-check
+of that start passed. Box log: `daemon.start` with `tokenMode: "split"`, `privsep.prepare`,
+`privsep.proof` with `guardOk: true, selfCheck: true`. A box that logs `selfCheck: false` names each
+failed check in `failures`.
+
+### Checked against the platform's provisioner (2026-11-12, its branch for privilege separation)
+
+What that provisioner writes agrees with this contract in: the user, the seven dropped capabilities,
+the four mount points and their paths, the two access points and their identities, IAM authorization
+with transit encryption, `DISPATCH_PRIVSEP=1`, the migration flag and when it ends, two different
+token values per task definition, and the two readiness calls. Where it differs, or where the image
+depends on something neither side has measured on the real platform:
+
+1. **The capability the platform requires for a business person.** It requires `profile` and
+   `privsep-v1`. It does not require `gate-v2`. This image reports all three, so nothing fails; but a
+   separated image without the default-deny gate would be admitted. The platform should require
+   `gate-v2` too.
+2. **The tokens are plain `environment` values**, not `secrets`. The image works with both. They are
+   readable in the task definition by anyone who may describe it, and in the environment of PID 1.
+3. **`readonlyRootFilesystem` is off unless the platform's switch is set.** The image works either
+   way; with it off, the image's own files are protected only by their owner and mode (root, and the
+   agent has no capability), which the proof covers. Turn the switch on after one clean start.
+4. **ECS Exec is enabled on a box whose network is not locked.** See the row above: with a read-only
+   root file system it does not work, and on a business person's box it is a root process outside the
+   separation. The platform should turn it off when it turns the read-only switch on.
+5. **No `ulimits`.** The design names `nofile` and `nproc` as the only per-task limits available. A
+   workload can exhaust the task's processes or memory; the task then restarts. Stated, not protected.
+6. **One token value arrives until a box is rebuilt.** The provisioner mints two values only when it
+   registers a task definition. A box that the platform wakes from sleep, or that simply keeps
+   running, keeps its old task definition and its one value. The image therefore keeps the
+   compatibility switch ("The two tokens").
+7. **A box that is rebuilt with `keep_image`** gets the NEW task definition (root, state volume,
+   `DISPATCH_PRIVSEP=1`, two token values) with its OLD image. An image from before privilege
+   separation ignores the variable and the state volume: its entrypoint, started as root, runs the
+   daemon as uid 1000 after a `setpriv` step (it needs `SETUID` and `SETGID`, which remain), keeps
+   its state in the home, and does not report `privsep-v1`. So such a box works for a developer and is
+   refused for a business person, which is the intended fail-closed result. Not measured: that start
+   on the real platform. The migration flag stays set for it, as it must.
+8. **Which image a rebuild takes.** The provisioner of that branch takes the NEWEST image in the
+   registry by push time. A pin by digest exists on another branch of the platform. Until the pin is
+   what runs, every push of a box image to an environment's registry changes what the next rebuild,
+   update or new workspace of that environment gets, and the update check names the pushed version.
+
+Not measured on the real platform (each is an assumption of the design, section 10 of
+hosted-privilege-separation.md; the stage engineer measures them at the first start):
+
+| # | Assumption | What to measure | If it does not hold |
+| --- | --- | --- | --- |
+| 1 | The runtime's default capability set holds `SETPCAP`, `SETUID`, `SETGID`, `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `KILL` when the container starts as root | The box log has `privilege separation is ON` and then `daemon.start`; `CapBnd` of the daemon is `00000000000000eb` | `setpriv` fails: the task stops at start |
+| 2 | A volume mounted at `/var/lib/dispatch/state` leaves `/var/lib/dispatch` as root, `0700` | No `FATAL: /var/lib/dispatch must be owned by root` line; `privsep.proof` has `selfCheck: true` (it lists `state-parent`, `state-root`) | The entrypoint stops; or the self-check fails and `privsep-v1` is not reported |
+| 3 | One task role authorizes both access points with IAM and transit encryption | The task reaches RUNNING (a refused mount stops it with `ResourceInitializationError`); a write in each mount works | The task never starts |
+| 4 | The state access point's enforced user lets the daemon (root in the box) create, write and lock its database | `daemon.start` is logged; a thread's history survives a restart | The daemon stops at "open the database" |
+| 5 | Task volumes at `/run/dispatch` and `/tmp` take the image's owner and mode (`/tmp` `1777`) | A chat thread answers a turn; `stat -c '%a' /tmp` is `1777` | Harnesses cannot write scratch files |
+| 6 | A workload cannot learn the path of the task's credential endpoint | As uid 1000 in the box: no `/proc/*/environ` it can read names `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` (the self-check's `env-clean` and `proc-environ-scan`); the task metadata endpoint without its identifier answers nothing useful | An agent can use the box's own role: its own two access points, nothing of another box |
+| 7 | `fs.protected_symlinks` is 1, and the platform's seccomp filter is active; whether a workload can make a user namespace | `cat /proc/sys/fs/protected_symlinks`; `unshare -Ur true` as uid 1000 | The proof shows a user namespace opens nothing; a 0 for protected links matters only for `/tmp`, which the daemon does not trust |
