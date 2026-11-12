@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  instructionsHome, rewriteInstructions,
   localToolName, osServerNames, osServerSpecs, osServersNote, realToolName, resolveOsServerNames, serverNameFor, toolSystem,
 } from './os-servers.js';
 import { composeInjection, type McpServerSpec } from '../mcp/injection.js';
@@ -113,5 +114,29 @@ describe('harness configs (snapshots)', () => {
     expect(JSON.parse(fs.readFileSync(inj.claudeConfigPath!, 'utf8')).mcpServers.acumatica).toEqual({
       command: 'node', args: ['/app/os-mcp-bridge.js'], env: { DISPATCH_API: API, DISPATCH_OS_SYSTEM: 'acumatica', DISPATCH_AUTH_FILE: '${DISPATCH_AUTH_FILE}' },
     });
+  });
+});
+
+describe('the gateway instructions', () => {
+  const HEAD = 'Tool names here are written <server>_<tool>: data_query is the `query` tool on\nthe `data` server. Call data_guide first. Show charts with display_chart.\nCall os_list_connections to see what is connected. Keep data_freshness notes. [[chart:<id>]]';
+  const tools = { data: ['data_query', 'data_guide'], display: ['display_chart'], os: ['os_list_connections'] };
+  test('gateway names become <server>.<tool>; unknown words and markers stay', () => {
+    expect(rewriteInstructions(HEAD, tools)).toBe('Tool names here are written <server>.<tool>: data.query is the `query` tool on\nthe `data` server. Call data.guide first. Show charts with display.chart.\nCall connections.list to see what is connected. Keep data_freshness notes. [[chart:<id>]]');
+    // A renamed server (a collision) is written with the name the thread sees.
+    expect(rewriteInstructions('Call data_guide.', tools, (s) => (s === 'data' ? 'os-data' : s))).toBe('Call os-data.guide.');
+  });
+  test('they ride the data server, else connections', () => {
+    expect(instructionsHome(['acumatica', 'data', 'display', 'os'])).toBe('data');
+    expect(instructionsHome(['acumatica', 'os'])).toBe('os');
+  });
+  test('a harness that drops MCP instructions gets them in its prompt; Claude Code does not', () => {
+    const info = { instructions: 'Call data_guide first.', tools: new Map([['data', ['data_guide']], ['os', ['os_list_connections']]]) };
+    const mk = () => osServerSpecs({ daemonApi: API, systems: ['data', 'os'], bridgePath: '/b.js' });
+    const p1: string[] = [];
+    finalizeOsServers(mk(), p1, [], 'opencode', info);
+    expect(p1).toContain('Call data.guide first.');
+    const p2: string[] = [];
+    finalizeOsServers(mk(), p2, [], 'claude-code', info);
+    expect(p2.join('\n')).not.toContain('guide first');
   });
 });

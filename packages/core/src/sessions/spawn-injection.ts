@@ -15,7 +15,7 @@ import { isAgentType } from '../providers/agent-types.js';
 import { writeGrokHome, type McpServerEntry } from '../providers/grok-home.js';
 import { claudeSpinnerVerbs } from '../settings/harness-settings.js';
 import { ThreadConfigStore } from './thread-config.js';
-import { osServerNames, osServersNote, resolveOsServerNames, setCurrentOsServerNames } from '../os/os-servers.js';
+import { gatewayInfo, instructionsHome, osServerNames, osServersNote, PROMPT_INSTRUCTIONS_HARNESSES, resolveOsServerNames, rewriteInstructions, setCurrentOsServerNames } from '../os/os-servers.js';
 import { PLATFORM_NAME } from '../os/platform-name.js';
 import type { SessionWiring } from './session-wiring.js';
 
@@ -78,7 +78,7 @@ export class SpawnInjection {
       prompts.push(...inj.prompts);
     }
     // Company-system servers last: every other server keeps its name (os/os-servers.ts).
-    finalizeOsServers(specs, prompts);
+    finalizeOsServers(specs, prompts, undefined, harness);
     if (!this.wiring.pluginInjection) return; // no plugin system wired (tests of the bare service): the row stays as it was
     const toolsAvailable = specs.map((s) => s.name);
     try { this.configStore.patch(terminalId, { toolsAvailable }); } catch { /* the record is informational */ }
@@ -363,11 +363,17 @@ export function userClaudeServerNames(file = path.join(process.env.CLAUDE_CONFIG
  * server already has becomes `os-<name>`; the names go to smart approvals; one line tells the thread
  * which servers are company systems.
  */
-export function finalizeOsServers(specs: McpServerSpec[], prompts: string[], taken: readonly string[] = userClaudeServerNames()): void {
+export function finalizeOsServers(specs: McpServerSpec[], prompts: string[], taken: readonly string[] = userClaudeServerNames(), harness?: string, info = gatewayInfo()): void {
   if (!specs.some((s) => s.osSystem)) return;
   const resolved = resolveOsServerNames(specs, taken);
   specs.splice(0, specs.length, ...resolved);
   setCurrentOsServerNames(osServerNames(resolved));
   const note = osServersNote(resolved, PLATFORM_NAME);
   if (note) prompts.push(note);
+  // A harness that drops MCP `instructions` gets the gateway's text in its prompt, named as it sees the tools.
+  if (harness && PROMPT_INSTRUCTIONS_HARNESSES.includes(harness) && info.instructions) {
+    const serverOf = new Map(resolved.filter((s) => s.osSystem).map((s) => [s.osSystem!, s.name]));
+    const tools = new Map([...info.tools].filter(([sys]) => serverOf.has(sys)));
+    if (instructionsHome([...serverOf.keys()])) prompts.push(rewriteInstructions(info.instructions, tools, (sys) => serverOf.get(sys) ?? sys));
+  }
 }

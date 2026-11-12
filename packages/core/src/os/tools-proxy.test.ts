@@ -187,6 +187,37 @@ describe('the catalog', () => {
   });
 });
 
+describe('built-in systems and the gateway instructions', () => {
+  test('data and display become servers from tools/list; instructions ride data only, renamed; results pass byte for byte', async () => {
+    const TEXT = 'Call data_guide first. Put the marker from display_chart on its own line.';
+    const RESULT = { content: [{ type: 'text', text: 'Chart ready.\n[[chart:abc-123]]\n' }], structuredContent: { id: 'abc-123', kind: 'chart', rows: 3 } };
+    const osFetch = vi.fn(async (_u: string, init: any) => {
+      const m = JSON.parse(init.body);
+      if (m.method === 'initialize') return json({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'os', version: '1' }, instructions: TEXT } });
+      if (m.method === 'tools/list') return json({ jsonrpc: '2.0', id: m.id, result: { tools: [
+        { name: 'data_query', system: 'data' }, { name: 'data_guide', system: 'data' }, { name: 'display_chart', system: 'display' },
+        { name: 'acumatica_get_customer', system: 'acumatica' }, { name: 'os_list_connections', system: 'os' },
+      ] } });
+      return json({ jsonrpc: '2.0', id: m.id, result: RESULT });
+    });
+    const { provider, catalog, registry, base } = await setup(osFetch, { catalog: true });
+    await catalog!.refresh();
+    expect(catalog!.systems()).toEqual(['data', 'display', 'acumatica', 'os']);
+    expect(systemsForSpawn(provider, catalog!)).toEqual(['data', 'display', 'acumatica', 'os']);
+    const { key } = registry.mint({ kind: 'thread', terminalId: 't-7' });
+    const init = (sys: string) => post(base, sys, key, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }).then((r) => r.json());
+    expect((await init('data')).result.instructions).toBe('Call data.guide first. Put the marker from display.chart on its own line.');
+    expect((await init('display')).result.instructions).not.toContain('guide');
+    expect((await init('os')).result.instructions).not.toContain('guide');
+    const list = await (await post(base, 'display', key, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json();
+    expect(list.result.tools.map((t: any) => t.name)).toEqual(['chart']);
+    const raw = await (await post(base, 'display', key, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'chart', arguments: {} } })).text();
+    expect(JSON.parse(raw).result).toEqual(RESULT);
+    expect(raw).toContain(JSON.stringify(RESULT.content[0].text));
+    provider.stop();
+  });
+});
+
 describe('the company-system bridge (stdio form)', () => {
   const mk = (status: number, body: unknown) => vi.fn(async () => ({ status, text: async () => (body === null ? '' : JSON.stringify(body)) }));
 

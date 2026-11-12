@@ -151,6 +151,52 @@ export function osServersNote(specs: readonly McpServerSpec[], platformName: str
   return parts.join(' ');
 }
 
+// ── The gateway's instructions ─────────────────────────────────────────────────
+// OS's `initialize` answer carries `instructions` (how to use the data tools, the display markers).
+// With one server per system they ride ONE server: `data` when the person has it, else `connections`.
+// The text names tools the gateway's way (`data_guide`, `display_chart`); a thread sees them as the
+// `guide` tool of the `data` server, so each gateway name the catalog knows is written `<server>.<tool>`.
+
+/** The built-in system that carries the instructions when present (2026-11-11 gateway). */
+export const INSTRUCTIONS_SYSTEM = 'data';
+
+/** The system whose server carries the gateway's instructions, among the systems a thread gets. */
+export function instructionsHome(systems: readonly string[]): string | null {
+  if (systems.includes(INSTRUCTIONS_SYSTEM)) return INSTRUCTIONS_SYSTEM;
+  if (systems.includes(OS_SELF_SYSTEM)) return OS_SELF_SYSTEM;
+  return systems[0] ?? null;
+}
+
+/**
+ * The gateway text with every known gateway tool name written as the thread sees it. `tools`: per
+ * system, the real names (the catalog); `serverOf`: the server name a system has in this thread.
+ */
+export function rewriteInstructions(text: string, tools: ReadonlyMap<string, readonly string[]> | Record<string, readonly string[]>, serverOf: (system: string) => string = serverNameFor): string {
+  const entries = tools instanceof Map ? [...tools.entries()] : Object.entries(tools);
+  const pairs: Array<[string, string]> = [];
+  for (const [system, reals] of entries) for (const real of reals) pairs.push([real, `${serverOf(system)}.${localToolName(system, real)}`]);
+  pairs.sort((a, b) => b[0].length - a[0].length);
+  let out = text.replace(/<server>_<tool>/g, '<server>.<tool>');
+  if (pairs.length === 0) return out;
+  const re = new RegExp(`(?<![A-Za-z0-9_.])(${pairs.map(([r]) => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![A-Za-z0-9_])`, 'g');
+  const map = new Map(pairs);
+  out = out.replace(re, (m) => map.get(m) ?? m);
+  return out;
+}
+
+/** What the box last learned from the gateway: its instructions and its tool names per system. */
+let gateway: { instructions: string | null; tools: Map<string, string[]> } = { instructions: null, tools: new Map() };
+export function setGatewayInfo(info: { instructions: string | null; tools: Map<string, string[]> }): void { gateway = info; }
+export function gatewayInfo(): { instructions: string | null; tools: Map<string, string[]> } { return gateway; }
+
+/**
+ * Harnesses that do not put an MCP server's `instructions` into the model's context, so the box adds
+ * the text to their system prompt instead. Measured 2026-11-11 by capturing the model request: Claude
+ * Code 2.1.322 and Codex 0.167 send the instructions; OpenCode 1.19 and Grok could not be measured,
+ * so they get the prompt copy (a copy too many costs tokens; a copy too few loses the rules).
+ */
+export const PROMPT_INSTRUCTIONS_HARNESSES: readonly string[] = ['opencode', 'grok'];
+
 // ── Which servers smart approvals count as company tools ───────────────────────
 // The names change per thread (collisions) and per person (systems), so the spawner sets them here
 // and the static rules (os/approvals.ts) read them.

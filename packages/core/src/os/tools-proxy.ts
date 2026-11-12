@@ -28,7 +28,7 @@ import { keyRoute, ownerOnly, ownerOnlyStrict, policyRouter, type Rule } from '.
 import { principalOf } from '../auth/request-principal.js';
 import { isLoopbackAddress } from '../files/reveal.js';
 import type { OsConnectionsProvider } from '../integrations/os-provider.js';
-import { OS_SELF_SYSTEM, isSystemId, localToolName, osServerSpecs, realToolName, renameTool, serverNameFor, toolSystem } from './os-servers.js';
+import { OS_SELF_SYSTEM, gatewayInfo, instructionsHome, isSystemId, localToolName, osServerSpecs, realToolName, renameTool, rewriteInstructions, serverNameFor, setGatewayInfo, toolSystem } from './os-servers.js';
 
 export interface OsToolsProxyDeps {
   provider: OsConnectionsProvider;
@@ -174,11 +174,18 @@ export function createOsToolsRouter(deps: OsToolsProxyDeps): Router {
     if (method === 'initialize') {
       const local = { jsonrpc: '2.0', id, result: { protocolVersion: typeof msg.params?.protocolVersion === 'string' ? msg.params.protocolVersion : '2025-06-18', capabilities: { tools: { listChanged: true } }, serverInfo: { name: server, version: '1' }, instructions: `Company tools from ${PLATFORM_NAME}.` } };
       if (!deps.provider.osToolsUrl()) return local;
+      // The gateway's instructions ride ONE server (os-servers.ts instructionsHome: `data`, else
+      // `connections`), with the tool names as a thread sees them; every other server gets one line.
+      const systems = deps.catalog?.loaded ? deps.catalog.systems() : [];
+      const home = instructionsHome(systems.length ? systems : [OS_SELF_SYSTEM]) === ctx.system;
+      const withText = (text: unknown) => (home && typeof text === 'string' && text.trim()
+        ? rewriteInstructions(text, deps.catalog?.toolNames() ?? gatewayInfo().tools)
+        : local.result.instructions);
       try {
         const a = answerOf((await toOs(ctx, msg)).body, id);
-        if (a?.result) return { ...a, result: { ...a.result, serverInfo: { name: server, version: String(a.result.serverInfo?.version ?? '1') } } };
+        if (a?.result) return { ...a, result: { ...a.result, serverInfo: { name: server, version: String(a.result.serverInfo?.version ?? '1') }, instructions: withText(a.result.instructions) } };
       } catch (err) { unreachable(ctx, err); }
-      return local;
+      return { ...local, result: { ...local.result, instructions: withText(gatewayInfo().instructions) } };
     }
     if (method === 'ping') return { jsonrpc: '2.0', id, result: {} };
     if (method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [] } };
@@ -303,6 +310,9 @@ export class OsToolCatalog {
   tools(system: string): Array<Record<string, unknown>> { return this.bySystem.get(system) ?? []; }
   realNames(system: string): string[] { return this.tools(system).map((t) => String(t.name ?? '')); }
 
+  /** The gateway's tool names per system. */
+  toolNames(): Map<string, string[]> { return new Map([...this.bySystem].map(([sys, ts]) => [sys, ts.map((t) => String(t.name ?? ''))])); }
+
   /** Systems with at least one tool, in OS's order. */
   systems(): string[] { return [...this.bySystem.keys()]; }
 
@@ -313,6 +323,7 @@ export class OsToolCatalog {
       try {
         const init = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'init', method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'dispatch-catalog', version: '1' } } }, {});
         if (init.status >= 300) return;
+        const initText = (init.body as { result?: { instructions?: unknown } } | null)?.result?.instructions;
         const list = await forwardToOs(this.deps, { jsonrpc: '2.0', id: 'list', method: 'tools/list', params: {} }, {});
         const tools = (list.body as { result?: { tools?: unknown[] } } | null)?.result?.tools;
         if (list.status >= 300 || !Array.isArray(tools)) return;
@@ -326,6 +337,7 @@ export class OsToolCatalog {
         }
         this.bySystem = next;
         this.loadedAt = Date.now();
+        setGatewayInfo({ instructions: typeof initText === 'string' && initText.trim() ? initText : null, tools: this.toolNames() });
       } catch { /* OS away: keep the last list */ }
     })();
     try { await this.inFlight; } finally { this.inFlight = null; }
