@@ -205,6 +205,14 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
       // The CLI login's profile comes from its own token (keychain or credentials file) and is
       // only shown; an added account's is written back so the next list needs no call.
       claudeProfile: async (accountId) => {
+        // The clean login (hosted): `claude auth status` in the account's own config dir; no token is read.
+        if (d.claudeLogin.usesCleanLogin) {
+          const st = await d.claudeLogin.cliStatus({ configDir: accountId === 'cli' ? null : accounts.claudeConfigDir(accountId) });
+          if (!st?.loggedIn) return null;
+          const p = { ...(st.email ? { email: st.email } : {}), ...(st.planTier || st.subscriptionType ? { plan: st.planTier || st.subscriptionType } : {}) };
+          if (accountId !== 'cli') accounts.updateClaude(accountId, p);
+          return p;
+        }
         const token = accountId === 'cli' ? await readClaudeToken({}) : accounts.claudeToken(accountId);
         if (!token) return null;
         const p = await fetchClaudeProfile(token);

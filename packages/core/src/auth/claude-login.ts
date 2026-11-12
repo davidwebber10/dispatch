@@ -177,8 +177,8 @@ export class ClaudeLoginService {
   get usesCleanLogin(): boolean { return this.clean !== null; }
 
   /** `claude auth status` of the primary login (clean login only; cached briefly). */
-  async cliStatus(o: { fresh?: boolean } = {}): Promise<ClaudeAuthStatus | null> {
-    return this.clean ? this.clean.login.authStatus(null, o) : null;
+  async cliStatus(o: { fresh?: boolean; configDir?: string | null } = {}): Promise<ClaudeAuthStatus | null> {
+    return this.clean ? this.clean.login.authStatus(o.configDir ?? null, o) : null;
   }
 
   /** A thread reported an auth error: ask Claude Code again at the next read (clean login only). */
