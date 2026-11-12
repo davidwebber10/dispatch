@@ -17,6 +17,13 @@ const CALL_TIMEOUT_MS = 15_000;
 const PRUNE_AT = 1800;
 const PRUNE_TO = 1500;
 const DISABLED = 'The Inbox plugin (id previews) is disabled in Dispatch: the owner can enable it in Settings → Plugins.';
+/**
+ * On a hosted box (DISPATCH_HOSTED=1, set by the daemon) the names a person reads say "Inbox": the tool's
+ * `title` and `annotations.title` and the server's `serverInfo.title` (MCP 2025-06-18). The ids stay
+ * (`preview`, `plugin-previews`, `dispatch-previews`): clients match on them.
+ */
+const HOSTED = process.env.DISPATCH_HOSTED === '1';
+const INBOX_TITLE = 'Put in Inbox';
 
 function key() {
   if (process.env.DISPATCH_AUTH) return process.env.DISPATCH_AUTH.trim();
@@ -71,6 +78,7 @@ const TOOLS = [{
       note: { type: 'string', description: 'One line of context: what this is and why it matters.' },
     },
   },
+  ...(HOSTED ? { title: INBOX_TITLE, annotations: { title: INBOX_TITLE } } : {}),
 }];
 
 const disabledIfGone = (e) => { if (e && e.status === 404 && /unknown plugin/i.test(String(e.message))) return new Error(DISABLED); return e; };
@@ -149,7 +157,7 @@ async function handle(req) {
   const notification = id === undefined || id === null;
   try {
     switch (method) {
-      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0' } } };
+      case 'initialize': return { jsonrpc: '2.0', id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'dispatch-previews', version: '1.0.0', ...(HOSTED ? { title: 'Inbox' } : {}) } } };
       case 'tools/list': return { jsonrpc: '2.0', id, result: { tools: TOOLS } };
       case 'tools/call': return { jsonrpc: '2.0', id, result: await callTool(params && params.name, params && params.arguments) };
       case 'ping': return { jsonrpc: '2.0', id, result: {} };

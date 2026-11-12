@@ -39,6 +39,7 @@ const NO_REVIEW = 'Change review is not available in your workspace.';
 const NO_FOLDERS = 'In your workspace a project is made from its name. Its folder is chosen for you.';
 const NO_DEVICES = 'Sign-in for other devices is not part of your workspace.';
 const NO_ANALYTICS = 'Analytics are not available in your workspace.';
+const NO_SECRET_DROP = 'A secret that a thread handed you is not shown in your workspace.';
 
 const body = (req: Request): Record<string, unknown> =>
   (req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}) as Record<string, unknown>;
@@ -254,6 +255,16 @@ export const BUSINESS_ROUTES: Readonly<Record<string, BusinessRow>> = {
   [`POST ${P}/assist`]: allow(PLUGIN),
   [`GET ${P}/assist/share`]: allow(PLUGIN),
   [`GET ${P}/assist/usage`]: allow(PLUGIN),
+  // The Inbox for a view outside this web client (routes/inbox.ts): read one's own drops and their files,
+  // mark them read, delete them. A secret's value is never shown to a business person.
+  'GET /api/inbox': allow(),
+  'GET /api/inbox/unread': allow(),
+  'POST /api/inbox/read': allow(),
+  'GET /api/inbox/drops/:dropId': allow(),
+  'POST /api/inbox/drops/:dropId/read': allow(),
+  'DELETE /api/inbox/drops/:dropId': allow(),
+  'GET /api/inbox/drops/:dropId/files/:fileId': allow(),
+  'GET /api/inbox/drops/:dropId/secret': refuse('inbox.secret', NO_SECRET_DROP),
   'GET /api/skills': allow(AGENT),
   'POST /api/skills': refuse('skill.install', NO_SKILLS),
   'POST /api/skills/install': refuse('skill.install', NO_SKILLS),

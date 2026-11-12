@@ -18,6 +18,8 @@ import * as sessionsDb from '../db/sessions.js';
 import { PATH_REFUSALS } from '../files/path-policy.js';
 import { pathPolicyFor } from '../files/path-policy-default.js';
 import { checkProjectFile, ProjectFileError, PROJECT_FILE_MIME } from '../plugins/files.js';
+import { INBOX_PLUGIN } from './inbox.js';
+import { currentProfile } from '../os/profile.js';
 import { SNAPSHOT_MAX_BYTES, takeSnapshot, snapshotPath, removeSnapshot, removeAllSnapshots } from '../plugins/snapshots.js';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { ASSIST_HARNESSES, ASSIST_CLAUDE_MODEL, ASSIST_OPENROUTER_MODEL, type AssistRunner, type AssistHarness, type AssistResult } from '../assist/run.js';
@@ -207,6 +209,17 @@ export function rangeOf(from: unknown, to: unknown, now = Date.now()): { from: s
   return { from: new Date(f).toISOString(), to: new Date(t).toISOString() };
 }
 
+/**
+ * Under the business profile the value of a `secret` Inbox drop is never read back (routes/inbox.ts,
+ * docs/headless-api.md section 11): the text is null and `redacted: true`. The developer profile is unchanged.
+ */
+function withoutSecret(pluginId: string, doc: pluginData.PluginDoc): pluginData.PluginDoc {
+  if (pluginId !== INBOX_PLUGIN || currentProfile() !== 'business') return doc;
+  const v = doc.value as Record<string, unknown> | null;
+  if (!v || typeof v !== 'object' || v.kind !== 'secret' || v.text === null || v.text === undefined) return doc;
+  return { ...doc, value: { ...v, text: null, redacted: true } };
+}
+
 /** The writer stamped on a document a thread key writes: from the key, never from the body. */
 function writerOf(req: Request): pluginData.Writer | null {
   let p;
@@ -335,7 +348,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
   router.get('/plugins/:id/data', dataRead, (req, res) => {
     if (!known(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ docs: req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }) : pluginData.listDocs(db, req.params.id) });
+    res.json({ docs: req.query.values === '1' ? pluginData.listDocs(db, req.params.id, { values: true }).map((d) => withoutSecret(req.params.id, d)) : pluginData.listDocs(db, req.params.id) });
   });
 
   router.get('/plugins/:id/data/:key', dataRead, (req, res) => {
@@ -343,7 +356,7 @@ export function createPluginsRouter(plugins: PluginRegistry, db: Database.Databa
     const doc = pluginData.getDoc(db, req.params.id, req.params.key);
     if (!doc) return void res.status(404).json({ error: 'document not found' });
     res.setHeader('Cache-Control', 'no-store');
-    res.json(doc);
+    res.json(withoutSecret(req.params.id, doc));
   });
 
   // The body is `{ value }`: any JSON value, including a string or a number.
