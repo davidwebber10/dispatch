@@ -17,6 +17,7 @@ export const STEP_LABEL: Record<UpdateStepName, string> = {
   build: 'Building',
   tools: 'Updating tools',
   restart: 'Restarting',
+  rollover: 'Moving your workspace to the new version',
 };
 
 /**
@@ -66,7 +67,7 @@ function StepList({ p, failed }: { p: UpdateProgress; failed: boolean }) {
               {state === 'current' ? <Spinner size={14} /> : state === 'failed' ? <XCircle size={16} weight="fill" />
                 : skipped ? <MinusCircle size={16} /> : state === 'done' ? <CheckCircle size={16} weight="fill" color="var(--color-accent)" /> : <Circle size={16} />}
             </span>
-            <span>{STEP_LABEL[step]}</span>
+            <span>{p.stepLabels?.[step] ?? STEP_LABEL[step]}</span>
             {skipped && <span style={{ fontSize: 11.5, color: 'var(--color-text-tertiary)' }}>· skipped, no changes</span>}
           </li>
         );

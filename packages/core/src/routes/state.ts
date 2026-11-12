@@ -1,3 +1,4 @@
+import { hostedTarget, cachedHostedUpdate } from '../update/hosted.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -109,7 +110,19 @@ export function createStateRouter(db: Database.Database): Router {
   // contains before it installs. `currentNotes` is the note for the version running
   // right now, read from this checkout — that one CAN come from disk, because the file
   // shipped with the code.
-  router.get('/update', (_req, res) => {
+  router.get('/update', async (_req, res) => {
+    // A hosted box updates by moving onto a newer IMAGE: the answer comes from OS (update/hosted.ts),
+    // never from the GitHub release poller (which does not run there). url/publishedAt are null.
+    const hosted = hostedTarget();
+    if (hosted) {
+      const currentVersion = getRunningVersion();
+      const st = await cachedHostedUpdate(hosted, currentVersion);
+      return void res.json({
+        available: st.available, version: st.available ? st.version : null, url: null, publishedAt: null,
+        currentVersion, notes: [], currentNotes: readLocalReleaseNote(currentVersion), hosted: true,
+        ...(st.error ? { error: st.error } : {}),
+      });
+    }
     const tag = appState.get(db, 'latest_release_tag');
     const url = appState.get(db, 'latest_release_url');
     const publishedAt = appState.get(db, 'latest_release_published_at');

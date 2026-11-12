@@ -8,7 +8,21 @@ import path from 'path';
  * The updater runs detached and restarts this daemon at its last step, so the file is the
  * only record that survives the restart.
  */
-export type UpdateStep = 'pull' | 'install' | 'build' | 'tools' | 'restart';
+export type UpdateStep = 'pull' | 'install' | 'build' | 'tools' | 'restart' | 'rollover';
+
+/**
+ * The plain label of each step, served with the progress (`stepLabels`) so the page needs no
+ * branch per deployment. A hosted box has ONE step: OS moves it onto the new image (update/hosted.ts).
+ */
+export const STEP_LABELS: Record<UpdateStep, string> = {
+  pull: 'Download the new version',
+  install: 'Install packages',
+  build: 'Build',
+  tools: 'Update tools',
+  restart: 'Restart',
+  rollover: 'Move your workspace to the new version',
+};
+export const HOSTED_STEPS: UpdateStep[] = ['rollover'];
 export type UpdateProgressState = 'idle' | 'running' | 'restarting' | 'failed' | 'done';
 export interface UpdateProgress {
   state: UpdateProgressState;
@@ -23,6 +37,8 @@ export interface UpdateProgress {
   finishedAt: string | null;
   /** The last lines of this update's output (update.log after its last start marker). */
   log: string[];
+  /** The label of each step in `steps` (STEP_LABELS). */
+  stepLabels: Record<string, string>;
 }
 
 interface StatusFile {
@@ -87,9 +103,11 @@ const pidAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 };
 
-export function readUpdateProgress(o: { dataDir: string; logPath: string; isAlive?: (pid: number) => boolean; now?: Date }): UpdateProgress {
+export function readUpdateProgress(o: { dataDir: string; logPath: string; isAlive?: (pid: number) => boolean; now?: Date; hosted?: boolean }): UpdateProgress {
   const s = readStatus(o.dataDir);
-  if (!s) return { state: 'idle', step: null, steps: STEPS, skipped: [], startedAt: null, stepStartedAt: null, error: null, version: null, finishedAt: null, log: [] };
+  const labels = (steps: UpdateStep[]) => Object.fromEntries(steps.map((x) => [x, STEP_LABELS[x] ?? x]));
+  const idleSteps = o.hosted ? HOSTED_STEPS : STEPS;
+  if (!s) return { state: 'idle', step: null, steps: idleSteps, skipped: [], startedAt: null, stepStartedAt: null, error: null, version: null, finishedAt: null, log: [], stepLabels: labels(idleSteps) };
   let state: UpdateProgressState = s.state;
   let error = s.error ?? null;
   if (state === 'running') {
@@ -102,8 +120,18 @@ export function readUpdateProgress(o: { dataDir: string; logPath: string; isAliv
     state, step: s.step ?? null, steps: s.steps?.length ? s.steps : STEPS, skipped: s.skipped ?? [],
     startedAt: s.startedAt ?? null, stepStartedAt: s.stepStartedAt ?? null, error,
     version: s.version ?? null, finishedAt: s.finishedAt ?? null,
-    log: tailLog(o.logPath),
+    log: s.steps?.includes('rollover') ? [] : tailLog(o.logPath),
+    stepLabels: labels(s.steps?.length ? s.steps : STEPS),
   };
+}
+
+/**
+ * A hosted box asked OS to move it onto the new image: one step, and the state is `restarting` at
+ * once (this process is replaced; the next boot marks it done, finishRestartedUpdate).
+ */
+export function markHostedUpdateStarted(dataDir: string, now: Date = new Date()): void {
+  const t = now.toISOString();
+  writeStatus(dataDir, { v: 1, state: 'restarting', pid: null, startedAt: t, step: 'rollover', stepStartedAt: t, steps: HOSTED_STEPS, skipped: [], error: null });
 }
 
 /** The daemon accepted an update: show "running" at once, before the updater writes its own status. */
