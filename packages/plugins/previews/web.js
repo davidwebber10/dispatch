@@ -161,9 +161,11 @@ export default function activate(d) {
 
   // ── the store ────────────────────────────────────────────────────────────────────────────
   // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread live in the daemon, not in this plugin's
-  // documents (a thread with a storage grant reads those). Owner routes, through the page's own session.
+  // documents (a thread with a storage grant reads those). Owner routes under this plugin's own path
+  // (/api/plugins/previews/secrets), through the page's own session, with the bound header as the SDK sends it.
   const secretApi = async (method, p, body) => {
-    const res = await fetch(d.url(p), { method, credentials: 'same-origin', ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+    const headers = { 'X-Dispatch-Plugin': ID, 'X-Dispatch-Plugin-Bound': ID, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) };
+    const res = await fetch(d.url(p), { method, credentials: 'same-origin', headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
     let data = null;
     try { data = await res.json(); } catch { data = null; }
     if (!res.ok) throw new Error((data && typeof data.error === 'string' && data.error) || `The daemon answered ${res.status}.`);
@@ -173,12 +175,12 @@ export default function activate(d) {
     items: [], loaded: false, loading: false, sheet: null,
     secrets: [],
     loadSecrets: async () => {
-      try { const r = await secretApi('GET', '/api/inbox/secrets'); set({ secrets: Array.isArray(r && r.secrets) ? r.secrets : [] }); } catch { /* the next open tries again */ }
+      try { const r = await secretApi('GET', '/api/plugins/previews/secrets'); set({ secrets: Array.isArray(r && r.secrets) ? r.secrets : [] }); } catch { /* the next open tries again */ }
     },
     addSecret: (r) => set({ secrets: [r, ...get().secrets.filter((x) => x.id !== r.id)] }),
     removeSecret: async (id) => {
       set({ secrets: get().secrets.filter((x) => x.id !== id) });
-      try { await secretApi('DELETE', `/api/inbox/secrets/${encodeURIComponent(id)}`); } catch { void get().loadSecrets(); }
+      try { await secretApi('DELETE', `/api/plugins/previews/secrets/${encodeURIComponent(id)}`); } catch { void get().loadSecrets(); }
     },
     load: async () => {
       void get().loadSecrets();
@@ -506,7 +508,7 @@ export default function activate(d) {
       if (!ready) return;
       setBusy(true); setError(null);
       try {
-        const r = await secretApi('POST', '/api/inbox/secrets', { name: name.trim(), value, sessionId: project, ...(terminalId ? { terminalId } : {}), allowReveal: reveal });
+        const r = await secretApi('POST', '/api/plugins/previews/secrets', { name: name.trim(), value, sessionId: project, ...(terminalId ? { terminalId } : {}), allowReveal: reveal });
         setValue(''); // the value leaves the page at once
         setMade(r);
         usePv.getState().addSecret(r);

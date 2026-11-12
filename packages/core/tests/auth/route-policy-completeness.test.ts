@@ -38,7 +38,7 @@ const EXPECTED_KEY_ROUTES: string[] = [
   'PUT /api/plugins/:id/settings',
   'POST /api/plugins/:id/files',
   // Inbox → Send a secret (2026-11-12): a thread uses a secret the owner sent it, by its ID (the daemon writes it).
-  'POST /api/inbox/secrets/use',
+  'POST /api/plugins/previews/secrets/use',
   'GET /api/skills',
   // One route with two patterns (the bare /worker and /worker/*): Express lists the array as one path.
   '_ALL /api/plugins/:id/worker,/plugins/:id/worker/*',

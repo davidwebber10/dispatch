@@ -34,8 +34,8 @@ describe('inbox secrets routes', () => {
   let logs: string[];
 
   const key = (terminalId: string) => ({ Authorization: `Bearer ${app.locals.keys.mint({ kind: 'thread', terminalId }).key}` });
-  const create = (body: Record<string, unknown>) => request(app).post('/api/inbox/secrets').send(body);
-  const use = (terminalId: string, body: Record<string, unknown>) => request(app).post('/api/inbox/secrets/use').set(key(terminalId)).send(body);
+  const create = (body: Record<string, unknown>) => request(app).post('/api/plugins/previews/secrets').send(body);
+  const use = (terminalId: string, body: Record<string, unknown>) => request(app).post('/api/plugins/previews/secrets/use').set(key(terminalId)).send(body);
   const valueDir = () => path.join(tmp, 'inbox-secrets');
 
   beforeEach(() => {
@@ -81,7 +81,7 @@ describe('inbox secrets routes', () => {
       expect(r.body.id).toMatch(/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6}$/);
       expect(r.body).toMatchObject({ name: 'Stripe key', sessionId: 'A', terminalId: null, allowReveal: false, state: 'waiting' });
       expect(JSON.stringify(r.body)).not.toContain(VALUE);
-      const l = await request(app).get('/api/inbox/secrets');
+      const l = await request(app).get('/api/plugins/previews/secrets');
       expect(l.status).toBe(200);
       expect(l.body.secrets).toHaveLength(1);
       expect(JSON.stringify(l.body)).not.toContain(VALUE);
@@ -93,7 +93,7 @@ describe('inbox secrets routes', () => {
       expect(r.status).toBe(201);
       expect(r.body).toMatchObject({ sessionId: 'A', terminalId: 'tA', terminalLabel: 'Worker A', allowReveal: true });
       await create({ name: 'k2', value: VALUE, sessionId: 'B' });
-      expect((await request(app).get('/api/inbox/secrets?sessionId=B')).body.secrets.map((s: any) => s.name)).toEqual(['k2']);
+      expect((await request(app).get('/api/plugins/previews/secrets?sessionId=B')).body.secrets.map((s: any) => s.name)).toEqual(['k2']);
     });
 
     it('refuses a missing name, a missing value, an unknown project or thread, a thread of another project', async () => {
@@ -111,18 +111,25 @@ describe('inbox secrets routes', () => {
 
     it('a thread key cannot create, list or delete', async () => {
       const made = await create({ name: 'k', value: VALUE, sessionId: 'A' });
-      expect((await request(app).post('/api/inbox/secrets').set(key('tA')).send({ name: 'k', value: VALUE, sessionId: 'A' })).status).toBe(403);
-      expect((await request(app).get('/api/inbox/secrets').set(key('tA'))).status).toBe(403);
-      expect((await request(app).delete(`/api/inbox/secrets/${made.body.id}`).set(key('tA'))).status).toBe(403);
+      expect((await request(app).post('/api/plugins/previews/secrets').set(key('tA')).send({ name: 'k', value: VALUE, sessionId: 'A' })).status).toBe(403);
+      expect((await request(app).get('/api/plugins/previews/secrets').set(key('tA'))).status).toBe(403);
+      expect((await request(app).delete(`/api/plugins/previews/secrets/${made.body.id}`).set(key('tA'))).status).toBe(403);
     });
 
     it('delete removes the record and the stored value', async () => {
       const made = await create({ name: 'k', value: VALUE, sessionId: 'A' });
       expect(fs.existsSync(path.join(valueDir(), made.body.id))).toBe(true);
-      expect((await request(app).delete(`/api/inbox/secrets/${made.body.id}`)).status).toBe(204);
+      expect((await request(app).delete(`/api/plugins/previews/secrets/${made.body.id}`)).status).toBe(204);
       expect(fs.existsSync(path.join(valueDir(), made.body.id))).toBe(false);
-      expect((await request(app).get('/api/inbox/secrets')).body.secrets).toEqual([]);
-      expect((await request(app).delete(`/api/inbox/secrets/${made.body.id}`)).status).toBe(404);
+      expect((await request(app).get('/api/plugins/previews/secrets')).body.secrets).toEqual([]);
+      expect((await request(app).delete(`/api/plugins/previews/secrets/${made.body.id}`)).status).toBe(404);
+    });
+
+    it("the routes are the Inbox plugin's: a request bound to another plugin is refused", async () => {
+      const r = await request(app).post('/api/plugins/previews/secrets').set('X-Dispatch-Plugin-Bound', 'coach').send({ name: 'k', value: VALUE, sessionId: 'A' });
+      expect(r.status).toBe(403);
+      expect((await request(app).get('/api/plugins/previews/secrets').set('X-Dispatch-Plugin-Bound', 'previews')).status).toBe(200);
+      expect(fs.existsSync(valueDir()) ? fs.readdirSync(valueDir()) : []).toEqual([]);
     });
 
     it('the value folder is on the credential deny-list of the file routes', () => {
@@ -142,7 +149,7 @@ describe('inbox secrets routes', () => {
       expect(fs.readFileSync(path.join(proj, '.env.local'), 'utf8')).toBe(`A=1\nSTRIPE_KEY=${VALUE}\n`);
       expect(fs.statSync(path.join(proj, '.env.local')).mode & 0o777).toBe(0o600);
       expect(fs.existsSync(path.join(valueDir(), made.body.id))).toBe(false);
-      const rec = (await request(app).get('/api/inbox/secrets')).body.secrets[0];
+      const rec = (await request(app).get('/api/plugins/previews/secrets')).body.secrets[0];
       expect(rec).toMatchObject({ state: 'used', usedBy: 'tA', usedByLabel: 'Worker A', usedTo: { kind: 'file', path: '.env.local', name: 'STRIPE_KEY' } });
       // One use only.
       const again = await use('tA', { id: made.body.id, file: { path: '.env.local', name: 'STRIPE_KEY' } });
@@ -199,7 +206,7 @@ describe('inbox secrets routes', () => {
       expect(fs.existsSync(path.join(os.homedir(), '.ssh/id_test_inbox'))).toBe(false);
       expect(fs.existsSync(path.join(outside, 'x.env'))).toBe(false);
       expect(fs.existsSync(path.join(outside, 'target.env'))).toBe(false);
-      expect((await request(app).get('/api/inbox/secrets?sessionId=A')).body.secrets[0].state).toBe('waiting');
+      expect((await request(app).get('/api/plugins/previews/secrets?sessionId=A')).body.secrets[0].state).toBe('waiting');
     });
 
     it('refuses a bad destination: none, two at once, a bad name', async () => {
@@ -220,7 +227,7 @@ describe('inbox secrets routes', () => {
       expect(r.body.message).toMatch(/STRIPE_KEY/);
       expect(r.body.message).toMatch(/doppler run/);
       expect(JSON.stringify(r.body)).not.toContain(VALUE);
-      expect((await request(app).get('/api/inbox/secrets')).body.secrets[0]).toMatchObject({ state: 'used', usedTo: { kind: 'doppler', name: 'STRIPE_KEY' } });
+      expect((await request(app).get('/api/plugins/previews/secrets')).body.secrets[0]).toMatchObject({ state: 'used', usedTo: { kind: 'doppler', name: 'STRIPE_KEY' } });
     });
 
     it('a Doppler failure keeps the secret unused, and the error never carries the value', async () => {
@@ -229,7 +236,7 @@ describe('inbox secrets routes', () => {
       const r = await use('tA', { id: made.body.id, doppler: { name: 'STRIPE_KEY' } });
       expect(r.status).toBe(502);
       expect(JSON.stringify(r.body)).not.toContain(VALUE);
-      expect((await request(app).get('/api/inbox/secrets')).body.secrets[0].state).toBe('waiting');
+      expect((await request(app).get('/api/plugins/previews/secrets')).body.secrets[0].state).toBe('waiting');
     });
 
     it('Doppler not connected: a plain message', async () => {
@@ -248,7 +255,7 @@ describe('inbox secrets routes', () => {
       expect(r.status).toBe(403);
       expect(r.body.error).toMatch(/owner did not allow/);
       expect(r.body.error).toMatch(/file|Doppler/);
-      expect((await request(app).get('/api/inbox/secrets')).body.secrets[0].state).toBe('waiting');
+      expect((await request(app).get('/api/plugins/previews/secrets')).body.secrets[0].state).toBe('waiting');
 
       const yes = await create({ name: 'k2', value: VALUE, sessionId: 'A', allowReveal: true });
       const ok = await use('tA', { id: yes.body.id, reveal: true });
@@ -287,7 +294,7 @@ describe('inbox secrets routes', () => {
 
     it('the owner (no thread key) cannot use a secret through this route', async () => {
       const made = await create({ name: 'k', value: VALUE, sessionId: 'A', allowReveal: true });
-      const r = await request(app).post('/api/inbox/secrets/use').send({ id: made.body.id, reveal: true });
+      const r = await request(app).post('/api/plugins/previews/secrets/use').send({ id: made.body.id, reveal: true });
       expect(r.status).toBe(403);
       expect(JSON.stringify(r.body)).not.toContain(VALUE);
     });
@@ -298,7 +305,7 @@ describe('inbox secrets routes', () => {
       const made = await create({ name: 'k', value: VALUE, sessionId: 'A', allowReveal: true });
       now += SECRET_TTL_MS + 1;
       expect(fs.existsSync(path.join(valueDir(), made.body.id))).toBe(true); // no timer
-      expect((await request(app).get('/api/inbox/secrets')).body.secrets[0].state).toBe('expired');
+      expect((await request(app).get('/api/plugins/previews/secrets')).body.secrets[0].state).toBe('expired');
       expect(fs.existsSync(path.join(valueDir(), made.body.id))).toBe(false);
       const r = await use('tA', { id: made.body.id, reveal: true });
       expect(r.status).toBe(410);

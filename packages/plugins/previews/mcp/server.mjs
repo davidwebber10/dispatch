@@ -184,7 +184,7 @@ async function inboxSecret(args) {
   }
   if (a.doppler !== undefined && a.doppler !== null) body.doppler = a.doppler;
   if (a.reveal !== undefined && a.reveal !== false) body.reveal = a.reveal;
-  const r = await call('POST', '/api/inbox/secrets/use', body);
+  const r = await call('POST', '/api/plugins/previews/secrets/use', body);
   const content = [{ type: 'text', text: String((r && r.message) || 'Done.') }];
   if (r && typeof r.value === 'string') content.push({ type: 'text', text: r.value });
   return content;

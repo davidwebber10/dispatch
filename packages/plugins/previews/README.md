@@ -12,7 +12,7 @@ the tool at their next start.
 
 Send a secret goes the other way: the owner sends a thread an API key by a 6-character ID (Inbox → Send a
 secret), and the thread's `inbox_secret` tool has the daemon write it to a project file or to Doppler. The
-value is kept by the daemon (`/api/inbox/secrets`, `<data dir>/inbox-secrets`), not in this plugin's storage.
+value is kept by the daemon (`/api/plugins/previews/secrets`, `<data dir>/inbox-secrets`), not in this plugin's storage.
 
 - `mcp/server.mjs`: the tools (`preview`, `inbox_secret`), a standalone MCP server that runs under the thread's key.
 - `mcp/kinds.mjs`: the kinds and the checks of the tool's arguments.

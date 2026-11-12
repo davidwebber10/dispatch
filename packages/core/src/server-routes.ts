@@ -172,6 +172,12 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
   if (d.journal) app.use('/api', createJournalRouter(d.journal, (id) => !!d.sessionService.getTerminal(id))); // W3-D
   app.use('/api', createThreadSecretsRouter(d.db, { broadcast: (e) => d.terminalsBroadcaster?.broadcast(e) }));
   app.use('/api', createLedgerRouter(d.ledgerService));
+  // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread, by a short ID. Under the Inbox plugin's path
+  // (/api/plugins/previews/secrets), mounted before the plugins router.
+  app.use('/api', createInboxSecretsRouter(d.db, {
+    dataDir: d.dataDir, secrets: d.secretsService, secretRoots: defaultSecretRoots(d.dataDir),
+    broadcast: (e) => d.broadcaster.broadcast(e),
+  }));
   const accountsForAssist = d.assistAccounts ?? d.accounts;
   app.use('/api', createPluginsRouter(d.plugins, d.db, d.assistRunner ?? null, {
     summary: d.usageLimits?.summary,
@@ -180,11 +186,6 @@ export function mountApiRoutes(app: Express, deps: ApiRouteDeps): void {
     push: d.pushService,
     secretRoots: defaultSecretRoots(d.dataDir),
     dataDir: d.dataDir,
-  }));
-  // Inbox → Send a secret (2026-11-12): the owner's secrets for a thread, by a short ID.
-  app.use('/api', createInboxSecretsRouter(d.db, {
-    dataDir: d.dataDir, secrets: d.secretsService, secretRoots: defaultSecretRoots(d.dataDir),
-    broadcast: (e) => d.broadcaster.broadcast(e),
   }));
   app.use('/api/events', createEventsRouter(d.statusService));
   app.use('/api/agents', createAgentsRouter(d.agentService));

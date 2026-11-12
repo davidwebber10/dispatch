@@ -16,10 +16,10 @@ import { writeSecretFile, SecretFileError } from '../inbox/write-file.js';
 /**
  * Inbox → Send a secret (2026-11-12), the routes:
  *
- *   POST   /api/inbox/secrets          owner: { name, value, sessionId? , terminalId?, allowReveal? } → the record and its ID
- *   GET    /api/inbox/secrets          owner: the records (?sessionId=, ?terminalId=); never a value
- *   DELETE /api/inbox/secrets/:id      owner: the record and the stored value
- *   POST   /api/inbox/secrets/use      a thread key: { id, file | doppler | reveal } — the DAEMON writes the value
+ *   POST   /api/plugins/previews/secrets          owner: { name, value, sessionId? , terminalId?, allowReveal? } → the record and its ID
+ *   GET    /api/plugins/previews/secrets          owner: the records (?sessionId=, ?terminalId=); never a value
+ *   DELETE /api/plugins/previews/secrets/:id      owner: the record and the stored value
+ *   POST   /api/plugins/previews/secrets/use      a thread key: { id, file | doppler | reveal } — the DAEMON writes the value
  *
  * The value is in no answer (except `reveal`, when the owner allowed it), no error, no log line.
  */
@@ -85,7 +85,15 @@ export function createInboxSecretsRouter(db: Database.Database, opts: InboxSecre
   /** One use at a time for each ID: a second call while the first writes is refused. */
   const busy = new Set<string>();
 
-  router.post('/inbox/secrets', ownerOnlyStrict, (req, res) => {
+  // The web part of a plugin names the plugin it is bound to (routes/plugins.ts, W3-F): these routes are the Inbox's
+  // (plugin id `previews`), so a request bound to another plugin is refused before any handler.
+  router.use('/plugins/previews/secrets', (req, res, next) => {
+    const bound = req.headers['x-dispatch-plugin-bound'];
+    if (bound === undefined || bound === 'previews') return void next();
+    res.status(403).json({ error: 'out_of_scope', message: 'A plugin reaches its own routes only.' });
+  });
+
+  router.post('/plugins/previews/secrets', ownerOnlyStrict, (req, res) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const name = typeof b.name === 'string' ? b.name.trim() : '';
     if (!name) return void res.status(400).json({ error: 'name is required (e.g. "Stripe key")' });
@@ -109,20 +117,20 @@ export function createInboxSecretsRouter(db: Database.Database, opts: InboxSecre
     res.status(201).json(rec);
   });
 
-  router.get('/inbox/secrets', ownerOnlyStrict, (req, res) => {
+  router.get('/plugins/previews/secrets', ownerOnlyStrict, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const q = (v: unknown) => (typeof v === 'string' && v ? v : null);
     res.json({ secrets: store.list({ sessionId: q(req.query.sessionId), terminalId: q(req.query.terminalId) }) });
   });
 
-  router.delete('/inbox/secrets/:id', ownerOnlyStrict, (req, res) => {
+  router.delete('/plugins/previews/secrets/:id', ownerOnlyStrict, (req, res) => {
     const id = normalizeSecretId(req.params.id);
     if (!id || !store.remove(id)) return void res.status(404).json({ error: 'secret not found' });
     changed(id);
     res.status(204).end();
   });
 
-  router.post('/inbox/secrets/use', keyRoute({ thread: allowRule, roleRun: allowRule }), async (req: Request, res: Response) => {
+  router.post('/plugins/previews/secrets/use', keyRoute({ thread: allowRule, roleRun: allowRule }), async (req: Request, res: Response) => {
     let p;
     try { p = principalOf(req); } catch { p = null; }
     if (!p || p.kind !== 'thread') return void res.status(403).json({ error: 'Only a thread uses an Inbox secret: the inbox_secret tool sends its key.' });

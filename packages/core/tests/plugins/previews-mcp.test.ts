@@ -162,7 +162,7 @@ describe('the Previews plugin MCP server', () => {
       const r = await rpc('tools/call', { name: 'inbox_secret', arguments: args });
       return { text: r.result?.content?.map((c: any) => c.text).join('\n') ?? '', isError: r.result?.isError === true };
     };
-    const made = await request(app).post('/api/inbox/secrets').send({ name: 'Stripe key', value: VALUE, sessionId: 'A' });
+    const made = await request(app).post('/api/plugins/previews/secrets').send({ name: 'Stripe key', value: VALUE, sessionId: 'A' });
     const wrote = await call({ id: made.body.id, file: { path: '.env.local', name: 'STRIPE_KEY' } });
     expect(wrote.isError).toBe(false);
     expect(wrote.text).toMatch(/Wrote STRIPE_KEY to \.env\.local \(0600\)\. The value was removed from the Inbox\./);
@@ -172,11 +172,11 @@ describe('the Previews plugin MCP server', () => {
     expect(again.isError).toBe(true);
     expect(again.text).toMatch(/already used/);
 
-    const hidden = await request(app).post('/api/inbox/secrets').send({ name: 'k', value: VALUE, sessionId: 'A' });
+    const hidden = await request(app).post('/api/plugins/previews/secrets').send({ name: 'k', value: VALUE, sessionId: 'A' });
     const no = await call({ id: hidden.body.id, reveal: true });
     expect(no.isError).toBe(true);
     expect(no.text).toMatch(/owner did not allow/);
-    const open = await request(app).post('/api/inbox/secrets').send({ name: 'k', value: VALUE, sessionId: 'A', allowReveal: true });
+    const open = await request(app).post('/api/plugins/previews/secrets').send({ name: 'k', value: VALUE, sessionId: 'A', allowReveal: true });
     const yes = await call({ id: open.body.id, reveal: true });
     expect(yes.isError).toBe(false);
     expect(yes.text).toContain(VALUE);

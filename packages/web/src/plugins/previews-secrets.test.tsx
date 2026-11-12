@@ -16,7 +16,7 @@ const rec = (id: string, extra: Record<string, unknown>) => ({
   createdAt: iso(60_000), expiresAt: iso(-3_600_000), usedAt: null, usedBy: null, usedByLabel: null, usedTo: null, state: 'waiting', ...extra,
 });
 
-type Call = { url: string; method: string; body: any };
+type Call = { url: string; method: string; body: any; bound: string | null };
 function setup(records: Record<string, unknown>[] = [], created = 'K7Q2M4') {
   useProjects.setState({ sessions: [{ id: 's1', name: 'Alpha' }, { id: 's2', name: 'Beta' }] as never });
   const calls: Call[] = [];
@@ -24,9 +24,9 @@ function setup(records: Record<string, unknown>[] = [], created = 'K7Q2M4') {
     const url = String(u);
     const method = init.method ?? 'GET';
     const body = init.body ? JSON.parse(String(init.body)) : null;
-    calls.push({ url, method, body });
-    if (url.includes('/api/inbox/secrets') && method === 'GET') return { ok: true, status: 200, json: async () => ({ secrets: records }) };
-    if (url.endsWith('/api/inbox/secrets') && method === 'POST') {
+    calls.push({ url, method, body, bound: new Headers(init.headers).get('X-Dispatch-Plugin-Bound') });
+    if (url.includes('/api/plugins/previews/secrets') && method === 'GET') return { ok: true, status: 200, json: async () => ({ secrets: records }) };
+    if (url.endsWith('/api/plugins/previews/secrets') && method === 'POST') {
       return { ok: true, status: 201, json: async () => rec(created, { name: body.name, sessionId: body.sessionId ?? 's1', terminalId: body.terminalId ?? null, allowReveal: !!body.allowReveal, createdAt: new Date().toISOString() }) };
     }
     if (method === 'DELETE') return { ok: true, status: 204, json: async () => null };
@@ -83,8 +83,10 @@ describe('Send a secret: the sheet', () => {
     expect(await screen.findByTestId('secret-id')).toHaveTextContent('K7Q2M4');
     const post = calls.filter((c) => c.method === 'POST');
     expect(post).toHaveLength(1);
-    expect(post[0].url).toMatch(/\/api\/inbox\/secrets$/);
+    expect(post[0].url).toMatch(/\/api\/plugins\/previews\/secrets$/);
     expect(post[0].body).toEqual({ name: 'Stripe key', value: VALUE, sessionId: 's1', allowReveal: true });
+    // The Inbox plugin's own routes, bound to it (W3-F).
+    expect(calls.every((c) => /\/api\/plugins\/previews\/secrets/.test(c.url) && c.bound === 'previews')).toBe(true);
     expect(document.body.innerHTML).not.toContain(VALUE);
     const sheet = screen.getByTestId('send-secret');
     fireEvent.click(within(sheet).getByRole('button', { name: 'Copy ID' }));
@@ -176,7 +178,7 @@ describe('Send a secret: the cards', () => {
     render(<History />);
     await screen.findByText('Stripe key');
     fireEvent.click(within(card('Stripe key')).getByRole('button', { name: 'Delete secret' }));
-    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/api/inbox/secrets/WAIT22'))).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/api/plugins/previews/secrets/WAIT22'))).toBe(true));
     await waitFor(() => expect(screen.queryByText('Stripe key')).toBeNull());
   });
 
