@@ -3,7 +3,7 @@
 # name | source (deb:<package> or py:<distribution>) | purpose
 unzip | deb:unzip | extract .zip archives
 zip | deb:zip | make .zip archives
-7z | deb:7zip | extract and make .7z, .rar and other archives
+7z | deb:7zip | extract and make .7z, .tar, .gz, .xz and .zip archives (no .rar)
 pdftotext, pdfinfo, pdftoppm, pdfimages | deb:poppler-utils | read the text, metadata, pages and images of a PDF
 qpdf | deb:qpdf | split, merge, decrypt and repair PDF files
 tesseract | deb:tesseract-ocr | OCR: read text from an image or a scanned page (English data installed)

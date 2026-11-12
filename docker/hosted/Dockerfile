@@ -97,7 +97,9 @@ FROM ${NODE_IMAGE} AS pytools
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-setuptools python3-wheel build-essential \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/hosted/tools/requirements.lock /tmp/requirements.lock
-RUN python3 -m pip install --no-cache-dir --break-system-packages --no-warn-script-location --require-hashes \
+# --no-build-isolation: a source package builds with the Debian setuptools and wheel installed above (signed by
+# apt), never with a build backend pip would download without a hash.
+RUN python3 -m pip install --no-cache-dir --break-system-packages --no-warn-script-location --require-hashes --no-build-isolation \
       --target /opt/dispatch/python -r /tmp/requirements.lock \
     && cd /opt/dispatch/python \
     && rm -rf bin pandas/tests numpy/*/tests numpy/tests pyarrow/tests matplotlib/tests \
