@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { CaretDown } from '@phosphor-icons/react';
 import { PRODUCT_NAME } from '../../../lib/hostCopy';
 import { loadOsShell, type OsShell } from './shellApi';
-import { osIcon, PRODUCT_ICON } from './OsIcon';
-import './os-shell.css';
+import { osIcon, PRODUCT_ICON, CaretDownGlyph as CaretDown } from './OsIcon';
 
 /** The OS app list, once per page (null while loading or when OS did not answer). */
 export function useOsShell(): OsShell | null {

@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChartBar, ChatCircleDots, Gear, Network, Sidebar as SidebarIcon, type Icon } from '@phosphor-icons/react';
-import { useUI, type View } from '../../../stores/ui';
-import { useProjects } from '../../../stores/projects';
-import { useTabs } from '../../../stores/tabs';
-import { useDispatchName } from '../../../stores/settings';
-import { can } from '../../../lib/profile';
-import { THREADS_ICON } from '../../common/viewIcons';
-import { usePluginViews } from '../../../plugins/registry';
-import { pluginIcon } from '../../../plugins/sdk';
+import type { ComponentType } from 'react';
+import { GearGlyph as Gear, SidebarGlyph as SidebarIcon } from './OsIcon';
+/** An icon component (a Phosphor icon from the host, or an OS glyph). */
+export type Icon = ComponentType<{ className?: string }>;
 import { OsAppSwitcher, OsSpotlight, useOsShell } from './OsAppSwitcher';
 import { PRODUCT_ICON } from './OsIcon';
-import './os-shell.css';
 
 // OS LeftRail (explorer web/src/shell/LeftRail.tsx): 288px by default, drag to resize up to 520,
 // below 160 it snaps to the 64px icon rail; a double-click or the bottom button toggles. Saved per browser.
@@ -45,12 +39,18 @@ export function OsRailItem({ icon: I, label, active, onSelect, collapsed, badge 
  * rest of the height, and at the bottom Settings and the collapse button. Entries follow the profile
  * feature map (lib/profile.ts).
  */
-export function OsLeftRail({ sidebar }: { sidebar?: ReactNode }) {
-  const view = useUI((s) => s.view);
-  const setView = useUI((s) => s.setView);
-  const activeProject = useProjects((s) => s.activeId);
-  const dispatchName = useDispatchName();
-  const pluginViews = usePluginViews();
+/** One entry of the rail's app navigation, built by the host (AppShell) from the profile feature map. */
+export interface OsNavItem { key: string; icon: Icon; label: string; active: boolean; onSelect: () => void }
+
+/**
+ * The left rail of a hosted workspace (and the business preview), in the look of Polywood OS: the app
+ * switcher, the app's own navigation (`nav`), then `sidebar` (Dispatch's Threads | Projects list) taking
+ * the rest of the height, and at the bottom Settings and the collapse button.
+ *
+ * This lazy chunk imports no app store: the host passes the entries and callbacks in. A lazy chunk that
+ * imported a shell's modules would move them into the first-load "index" chunk (scripts/build-plugins.mjs).
+ */
+export function OsLeftRail({ sidebar, nav, settingsActive, onSettings }: { sidebar?: ReactNode; nav: OsNavItem[]; settingsActive: boolean; onSettings: () => void }) {
   const shell = useOsShell();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [width, setWidth] = useState(() => readWidth(WIDTH_KEY, COLLAPSED));
@@ -83,15 +83,6 @@ export function OsLeftRail({ sidebar }: { sidebar?: ReactNode }) {
     window.addEventListener('pointerup', onUp);
   }, []);
 
-  const go = (v: View) => setView(v);
-  const nav: { key: string; icon: Icon; label: string; active: boolean; onSelect: () => void }[] = [
-    { key: 'threads', icon: THREADS_ICON, label: 'Threads', active: view === 'workspace', onSelect: () => go('workspace') },
-    ...(can('endless') ? [{ key: 'chat', icon: ChatCircleDots, label: 'Chat', active: view === 'chat', onSelect: () => go('chat') }] : []),
-    ...(can('control-plane') && activeProject ? [{ key: 'control', icon: Network, label: dispatchName, active: false, onSelect: () => { go('workspace'); useTabs.getState().openDispatch(activeProject); } }] : []),
-    ...(can('analytics') ? [{ key: 'analytics', icon: ChartBar, label: 'Analytics', active: view === 'analytics', onSelect: () => go('analytics') }] : []),
-    ...(can('settings.plugins') ? pluginViews.map((v) => ({ key: v.key, icon: pluginIcon(v.icon), label: v.label, active: view === v.key, onSelect: () => go(v.key as View) })) : []),
-  ];
-
   return (
     <aside aria-label="Navigation" style={{
       position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', flexShrink: 0, width,
@@ -121,7 +112,7 @@ export function OsLeftRail({ sidebar }: { sidebar?: ReactNode }) {
 
       <div style={{ flexShrink: 0, padding: 8, display: 'flex', flexDirection: collapsed ? 'column' : 'row', alignItems: 'center', gap: 4 }}>
         <div style={{ flex: collapsed ? undefined : 1, minWidth: 0 }}>
-          <OsRailItem icon={Gear} label="Settings" active={view === 'settings'} onSelect={() => go('settings')} collapsed={collapsed} />
+          <OsRailItem icon={Gear} label="Settings" active={settingsActive} onSelect={onSettings} collapsed={collapsed} />
         </div>
         <button type="button" className="os-icon-btn" onClick={toggle} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
           <SidebarIcon size={16} />

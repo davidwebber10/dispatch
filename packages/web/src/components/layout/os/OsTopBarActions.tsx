@@ -1,9 +1,5 @@
-import { Moon, Sun, User } from '@phosphor-icons/react';
-import { useActiveTheme } from '../../../themes/apply';
-import { useSettings } from '../../../stores/settings';
-import { useNavigation } from '../../../stores/navigation';
+import { MoonGlyph as Moon, SunGlyph as Sun, UserGlyph as User } from './OsIcon';
 import { useOsShell } from './OsAppSwitcher';
-import './os-shell.css';
 
 function initials(name: string): string {
   const parts = name.replace(/@.*/, '').split(/[\s._-]+/).filter(Boolean);
@@ -14,18 +10,17 @@ function initials(name: string): string {
  * The right end of the tab bar, as OS DesktopShell: a hairline, then the light/dark switch and the
  * person's avatar (initials; it opens Settings > Accounts). Hosted / business preview only.
  */
-export function OsTopBarActions() {
-  const kind = useActiveTheme((s) => s.theme.kind);
+export function OsTopBarActions({ kind, onFlipTheme, onAccount }: { kind: 'light' | 'dark'; onFlipTheme: () => void; onAccount: () => void }) {
   const shell = useOsShell();
   const name = shell?.user?.name ?? '';
-  const flip = () => useSettings.getState().setTheme(kind === 'dark' ? 'os-light' : 'os-dark');
+  const flip = onFlipTheme;
   return (
     <div style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: 4, padding: '0 12px', borderLeft: '1px solid var(--color-border)', background: 'var(--color-base)' }}>
       <button type="button" className="os-icon-btn" onClick={flip} title={kind === 'dark' ? 'Light theme' : 'Dark theme'} aria-label={kind === 'dark' ? 'Light theme' : 'Dark theme'} style={{ width: 32, height: 32 }}>
         {kind === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
       </button>
       <button type="button" className="os-icon-btn" title={shell?.user?.email ?? 'Account'} aria-label="Account"
-        onClick={() => useNavigation.getState().navigate({ view: 'settings', section: 'accounts' })}
+        onClick={onAccount}
         style={{ width: 32, height: 32, borderRadius: '50%', background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-text-primary)', font: '600 12px var(--font-sans)' }}>
         {name ? initials(name) : <UserGlyph />}
       </button>

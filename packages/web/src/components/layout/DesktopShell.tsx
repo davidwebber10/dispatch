@@ -32,7 +32,9 @@ import { useGroups } from '../panes/store';
 import { useUI } from '../../stores/ui';
 import { can } from '../../lib/profile';
 import { usesOsLook } from '../../lib/hostContext';
-const OsTopBarActions = lazy(() => import('./os/OsTopBarActions').then((m) => ({ default: m.OsTopBarActions })));
+import { useActiveTheme } from '../../themes/apply';
+import { useNavigation } from '../../stores/navigation';
+const OsTopBarActions = lazy(() => import('./os').then((m) => ({ default: m.OsTopBarActions })));
 
 // The desktop shell: the icon rail and the view it shows (engineering program 2026-11-09, W2-E).
 // App.tsx loads this module only at a desktop width, and the phone shell (mobile/MobileApp) only
@@ -70,6 +72,7 @@ export function DesktopShell() {
   const reconnectGen = useReconnect((s) => s.gen);
   const showAgent = agentFocused && !!agentSelected;
   const os = usesOsLook();
+  const themeKind = useActiveTheme((s) => s.theme.kind);
   const projectSidebar = (
     <ProjectSidebar
       onSelectTab={selectTab}
@@ -114,7 +117,7 @@ export function DesktopShell() {
                           <GroupedTabBar onSelect={() => useAgentUI.getState().blur()} />
                         </div>
                         <PanelToggle side="right" count={isDispatchTab(activeTerminalId) ? openDecisions : 0} />
-                        {os && <Suspense fallback={null}><OsTopBarActions /></Suspense>}
+                        {os && <Suspense fallback={null}><OsTopBarActions kind={themeKind} onFlipTheme={() => useSettings.getState().setTheme(themeKind === 'dark' ? 'os-light' : 'os-dark')} onAccount={() => useNavigation.getState().navigate({ view: 'settings', section: 'accounts' })} /></Suspense>}
                       </div>
                       {activeTerminalId
                         ? (isDispatchTab(activeTerminalId)

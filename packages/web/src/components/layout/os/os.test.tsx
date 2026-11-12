@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setHostContextForTest } from '../../../lib/hostContext';
 import { loadOsShell, parseShell, resetOsShellForTest } from './shellApi';
-import { osIcon } from './OsIcon';
-import { AppWindow, ChartBar } from '@phosphor-icons/react';
+import { osIcon, AppGlyph } from './OsIcon';
 import { OsAppSwitcher } from './OsAppSwitcher';
 
 afterEach(() => { setHostContextForTest({}); resetOsShellForTest(); vi.restoreAllMocks(); });
@@ -39,8 +38,9 @@ describe('the OS shell client', () => {
   });
 
   it('maps known icon names and falls back for the rest', () => {
-    expect(osIcon('ChartBar')).toBe(ChartBar);
-    expect(osIcon('NoSuchIcon')).toBe(AppWindow);
+    expect(osIcon('ChartBar')).not.toBe(AppGlyph);
+    expect(osIcon('NoSuchIcon')).toBe(AppGlyph);
+    expect(osIcon(undefined)).toBe(AppGlyph);
   });
 });
 

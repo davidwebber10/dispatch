@@ -1,18 +1,16 @@
 import { useState } from 'react';
-import { List, Gear } from '@phosphor-icons/react';
+import { ListGlyph as List, GearGlyph as Gear } from './OsIcon';
 import { PRODUCT_NAME } from '../../../lib/hostCopy';
-import { useNavigation } from '../../../stores/navigation';
 import { OsAppSwitcher, useOsShell } from './OsAppSwitcher';
 import { OsRailItem } from './OsLeftRail';
 import { PRODUCT_ICON } from './OsIcon';
-import './os-shell.css';
 
 /**
  * The phone's way into the OS shell (explorer AppShell, mobile): a menu button and the app's name in the
  * header; the button opens a left drawer with the same app switcher as the desktop rail, and Settings.
  * The rest of the phone app (its bottom tabs, Threads | Projects) stays as it is.
  */
-export function OsMobileMenu() {
+export function OsMobileMenu({ onSettings }: { onSettings: () => void }) {
   const [open, setOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const shell = useOsShell();
@@ -38,7 +36,7 @@ export function OsMobileMenu() {
             <OsAppSwitcher shell={shell} open={switcherOpen} setOpen={setSwitcherOpen} />
             <div style={{ flex: 1 }} />
             <div style={{ padding: '8px 8px calc(8px + env(safe-area-inset-bottom))' }}>
-              <OsRailItem icon={Gear} label="Settings" onSelect={() => { close(); useNavigation.getState().navigate({ view: 'settings' }); }} />
+              <OsRailItem icon={Gear} label="Settings" onSelect={() => { close(); onSettings(); }} />
             </div>
           </div>
         </div>
